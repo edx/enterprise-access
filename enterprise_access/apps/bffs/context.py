@@ -32,6 +32,9 @@ class HandlerContext:
         self.enterprise_customer_uuid = None
         self.lms_user_id = None
 
+        # Set common context attributes
+        self.initialize_common_context_data()
+
     @property
     def request(self):
         return self._request
@@ -39,6 +42,23 @@ class HandlerContext:
     @property
     def user(self):
         return self._request.user
+
+    def initialize_common_context_data(self):
+        """
+        Initialize commonly used context attributes, such as enterprise customer UUID and LMS user ID.
+        """
+        enterprise_customer_uuid = (
+            self.request.query_params.get('enterprise_customer_uuid', {}) or
+            self.request.data.get('enterprise_customer_uuid', None)
+        )
+        if enterprise_customer_uuid:
+            self.enterprise_customer_uuid = enterprise_customer_uuid
+        else:
+            raise ValueError("enterprise_customer_uuid is required for this request.")
+
+        # Set lms_user_id from the authenticated user object in the request
+        if hasattr(self.user, 'lms_user_id'):
+            self.lms_user_id = self.user.lms_user_id
 
     def add_error(self, **kwargs):
         """
