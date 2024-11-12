@@ -70,8 +70,6 @@ class BaseLearnerPortalHandler(BaseHandler):
         """
         try:
             # Retrieve and process subscription licenses. Handles activation and auto-apply logic.
-            # TODO: retrieve enterprise customer metadata,ENT-9629
-            # self.load_enterprise_customer()
             self.load_and_process_subscription_licenses()
 
             # Retrieve default enterprise courses and enroll in the redeemable ones
@@ -265,8 +263,9 @@ class BaseLearnerPortalHandler(BaseHandler):
             bool(customer_agreement.get('subscription_for_auto_applied_licenses')) and
             customer_agreement.get('net_days_until_expiration') > 0
         )
+        enterprise_customer = self.context.data.get('enterprise_customer', {})
         idp_or_univeral_link_enabled = (
-            # TODO: IDP from customer, ENT-9629
+            enterprise_customer.get('identity_provider') or
             customer_agreement.get('enable_auto_applied_subscriptions_with_universal_link')
         )
         is_eligible_for_auto_apply = has_subscription_plan_for_auto_apply and idp_or_univeral_link_enabled
