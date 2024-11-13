@@ -165,9 +165,13 @@ class HandlerContext:
             )
 
         # Determine the enterprise customer user to display
+        requested_enterprise_customer = (
+            enterprise_customer_user_for_requested_customer.get('enterprise_customer')
+            if enterprise_customer_user_for_requested_customer else None
+        )
         enterprise_customer = self._determine_enterprise_customer_for_display(
             active_enterprise_customer=active_enterprise_customer,
-            requested_enterprise_customer=enterprise_customer_user_for_requested_customer.get('enterprise_customer'),
+            requested_enterprise_customer=requested_enterprise_customer,
             staff_enterprise_customer=staff_enterprise_customer,
         )
 
