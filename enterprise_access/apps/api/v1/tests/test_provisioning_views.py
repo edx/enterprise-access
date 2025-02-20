@@ -2,6 +2,7 @@
 Tests for the provisioning views.
 """
 import uuid
+from unittest import mock
 
 import ddt
 from edx_rbac.constants import ALL_ACCESS_CONTEXT
@@ -43,11 +44,6 @@ class TestProvisioningAuth(APITest):
             {'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE, 'context': ALL_ACCESS_CONTEXT},
             status.HTTP_403_FORBIDDEN,
         ),
-        # Even operators can't provision
-        (
-            {'system_wide_role': SYSTEM_ENTERPRISE_OPERATOR_ROLE, 'context': ALL_ACCESS_CONTEXT},
-            status.HTTP_403_FORBIDDEN,
-        ),
         # No JWT based auth, no soup for you.
         (
             None,
@@ -66,15 +62,26 @@ class TestProvisioningAuth(APITest):
         response = self.client.post(PROVISIONING_CREATE_ENDPOINT)
         assert response.status_code == expected_response_code
 
-    def test_provisioning_create_allowed_for_provisioning_admins(self):
+    @ddt.data(
+        (
+            {'system_wide_role': SYSTEM_ENTERPRISE_OPERATOR_ROLE, 'context': ALL_ACCESS_CONTEXT},
+            status.HTTP_201_CREATED,
+        ),
+        (
+            {'system_wide_role': SYSTEM_ENTERPRISE_PROVISIONING_ADMIN_ROLE, 'context': ALL_ACCESS_CONTEXT},
+            status.HTTP_201_CREATED,
+        ),
+    )
+    @ddt.unpack
+    @mock.patch('enterprise_access.apps.api.v1.views.provisioning.provisioning_api')
+    def test_provisioning_create_allowed_for_provisioning_admins(
+            self, role_context_dict, expected_response_code, mock_provisioning_api,
+    ):
         """
         Tests that we get expected 200 response for the provisioning create view when
         the requesting user has the correct system role and provides a valid request payload.
         """
-        self.set_jwt_cookie([{
-            'system_wide_role': SYSTEM_ENTERPRISE_PROVISIONING_ADMIN_ROLE,
-            'context': ALL_ACCESS_CONTEXT,
-        }])
+        self.set_jwt_cookie([role_context_dict])
 
         request_payload = {
             "enterprise_customer": {
@@ -89,4 +96,14 @@ class TestProvisioningAuth(APITest):
             ],
         }
         response = self.client.post(PROVISIONING_CREATE_ENDPOINT, data=request_payload)
-        assert response.status_code == status.HTTP_201_CREATED
+        assert response.status_code == expected_response_code
+
+        mock_provisioning_api.get_or_create_enterprise_customer.assert_called_once_with(
+            **request_payload['enterprise_customer'],
+        )
+
+        created_customer = mock_provisioning_api.get_or_create_enterprise_customer.return_value
+        mock_provisioning_api.get_or_create_enterprise_admin_users.assert_called_once_with(
+            enterprise_customer_uuid=created_customer['uuid'],
+            user_emails=['test-admin@example.com'],
+        )
