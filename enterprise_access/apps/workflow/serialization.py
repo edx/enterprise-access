@@ -7,9 +7,13 @@ to turn an instance of an input/output class back into a dict (in other words
 to structure and unstructure, or to deserialize and then serialize).
 """
 import uuid
+from datetime import datetime
+from logging import getLogger
 
 import attrs
 import cattrs
+
+LOGGER = getLogger(__name__)
 
 CONVERTER = cattrs.Converter()
 
@@ -23,6 +27,8 @@ def uuid_structure_hook(val: str, _) -> uuid.UUID:
     default converter object (i.e. via inheritance from the ``BaseInputOutput``
     class below) ends up as an actual UUID.
     """
+    if not val:
+        return None
     return uuid.UUID(val)
 
 
@@ -36,7 +42,21 @@ def uuid_unstructure_hook(val: uuid.UUID) -> str:
     class below) ends up as a string representation of the UUID value
     stored in the field.
     """
+    if not val:
+        return None
     return str(val)
+
+
+@CONVERTER.register_structure_hook
+def datetime_structure_hook(val: datetime, _) -> datetime:
+    return val
+
+
+@CONVERTER.register_unstructure_hook
+def datetime_unstructure_hook(val: datetime) -> str:
+    if not val:
+        return None
+    return val.isoformat()
 
 
 @attrs.define
@@ -47,7 +67,15 @@ class BaseInputOutput:
     """
     @classmethod
     def from_dict(cls, data_dict):
-        return CONVERTER.structure(data_dict, cls)
+        try:
+            return CONVERTER.structure(data_dict, cls)
+        except Exception as exc:
+            LOGGER.exception('Exception structuring %s: %s', data_dict, exc)
+            raise
 
     def to_dict(self):
-        return CONVERTER.unstructure(self)
+        try:
+            return CONVERTER.unstructure(self)
+        except Exception as exc:
+            LOGGER.exception('Exception un-structuring %s: %s', self, exc)
+            raise 
