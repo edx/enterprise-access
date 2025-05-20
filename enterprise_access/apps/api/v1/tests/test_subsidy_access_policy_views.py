@@ -1722,6 +1722,7 @@ class TestSubsidyAccessPolicyRedeemViewset(APITestWithMocks):
             'per_learner_spend_limit': None,
             'assignment_configuration': str(assignment_configuration.uuid),
             'learner_credit_request_config': str(learner_credit_config.uuid),
+            'learner_requests': [],
         }
         self.assertEqual(response_json[0]['learner_content_assignments'][0], expected_learner_content_assignment)
         self.assertEqual(response_json[0], expected_response)
