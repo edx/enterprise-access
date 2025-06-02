@@ -359,6 +359,14 @@ class LearnerCreditRequest(SubsidyRequest):
         help_text="The learner credit request configuration associated with this request.",
     )
 
+    amount = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Course price in USD.",
+    )
+
     history = HistoricalRecords()
 
     class Meta:
