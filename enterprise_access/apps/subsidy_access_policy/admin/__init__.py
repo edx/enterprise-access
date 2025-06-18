@@ -25,6 +25,7 @@ from enterprise_access.apps.subsidy_access_policy.admin.views import (
     SubsidyAccessPolicyDepositFundsView,
     SubsidyAccessPolicySetLateRedemptionView
 )
+from enterprise_access.apps.subsidy_access_policy.utils import cents_to_usd_string
 
 from .forms import ForcedPolicyRedemptionForm, SubsidyAccessPolicyForm
 
@@ -47,16 +48,6 @@ GEAG_DATETIME_FMT = '%Y-%m-%dT%H:%M:%SZ'
 
 def super_admin_enabled():
     return getattr(settings, 'DJANGO_ADMIN_POLICY_SUPER_ADMIN', False)
-
-
-def cents_to_usd_string(cents):
-    """
-    Helper to convert cents as an int to dollars as a
-    nicely formatted string.
-    """
-    if cents is None:
-        return None
-    return "${:,.2f}".format(float(cents) / constants.CENTS_PER_DOLLAR)
 
 
 class BaseSubsidyAccessPolicyMixin(DjangoObjectActions, SimpleHistoryAdmin):
