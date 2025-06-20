@@ -7,7 +7,13 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.utils.translation import gettext as _
 
-from enterprise_access.apps.subsidy_access_policy.utils import get_versioned_subsidy_client
+from enterprise_access.apps.subsidy_access_policy.constants import (
+    VALIDATION_ERROR_SPEND_LIMIT_EXCEEDS_STARTING_BALANCE
+)
+from enterprise_access.apps.subsidy_access_policy.utils import (
+    cents_to_usd_string,
+    get_versioned_subsidy_client
+)
 
 from ..models import ForcedPolicyRedemption, SubsidyAccessPolicy
 
@@ -117,6 +123,23 @@ class SubsidyAccessPolicyForm(forms.ModelForm):
 
         if str(subsidy["enterprise_customer_uuid"]) != str(self.cleaned_data["enterprise_customer_uuid"]):
             raise ValidationError("Subsidy is not assigned to the same enterprise customer as the budget")
+
+        return self.cleaned_data["subsidy_uuid"]
+
+    def clean_spend_limit(self):
+        """
+        Clean the spend_limit field.
+        """
+        if self.instance.active and (self.instance.is_active_updated or self.instance.is_spend_limit_updated):
+            if self.instance.total_spend_limits_for_subsidy > self.instance.total_deposits_for_subsidy:
+                sum_of_spend_limits_str = cents_to_usd_string(
+                    self.instance.total_spend_limits_for_subsidy
+                )
+                sum_of_deposits_str = cents_to_usd_string(self.instance.total_deposits_for_subsidy)
+                raise ValidationError(
+                    f'{self.instance} {VALIDATION_ERROR_SPEND_LIMIT_EXCEEDS_STARTING_BALANCE} '
+                    f'Error: {sum_of_spend_limits_str} is greater than {sum_of_deposits_str}'
+                )
 
         return self.cleaned_data["subsidy_uuid"]
 
