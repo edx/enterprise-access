@@ -10,6 +10,9 @@ CHECKOUT_SESSION_ERROR_CODES = {
         'INVALID_FORMAT': ('invalid_format', 'Invalid format for given email address.'),
         'NOT_REGISTERED': ('not_registered', 'Given email address does not correspond to an existing user.'),
     },
+    'user': {
+        'IS_NULL': ('is_null', 'The user object cannot be null'),
+    },
     'enterprise_slug': {
         'INVALID_FORMAT': ('invalid_format', 'Invalid format for given slug.'),
         'EXISTING_ENTERPRISE_CUSTOMER': (
@@ -22,6 +25,10 @@ CHECKOUT_SESSION_ERROR_CODES = {
             'existing_enterprise_customer',
             'The slug conflicts with an existing customer.',
         ),
+        'SLUG_RESERVED': (
+            'slug_reserved',
+            'The slug is currently reserved by another user.',
+        ),
     },
     'quantity': {
         'INVALID_FORMAT': ('invalid_format', 'Must be a positive integer.'),
@@ -32,3 +39,5 @@ CHECKOUT_SESSION_ERROR_CODES = {
         'DOES_NOT_EXIST': ('does_not_exist', 'This stripe_price_id has not been configured.'),
     },
 }
+
+SLUG_RESERVATION_DURATION_MINUTES = 30
