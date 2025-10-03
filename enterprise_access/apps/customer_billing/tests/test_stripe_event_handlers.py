@@ -155,7 +155,7 @@ class TestStripeEventHandler(TestCase):
                 f'[StripeEventHandler] handling <stripe.Event id={mock_event.id} type=invoice.paid>.'
             )
             mock_logger.info.assert_any_call(
-                f'Found checkout_intent_id="{self.checkout_intent.id}" '
+                f'Found checkout_intent_id={self.checkout_intent.id} '
                 f'stored on the Subscription <subscription_id="{subscription_id}"> '
                 f'related to Invoice <invoice_id="{invoice_data["id"]}">.'
             )
