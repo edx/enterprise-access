@@ -51,10 +51,8 @@ class StripeWebhookAuthenticationTests(TestCase):
             't=1234567890,v1=valid_signature'
         )
 
-        result = self.auth.authenticate(request)
-
-        # Webhook authentication returns None (no user)
-        self.assertIsNone(result)
+        # Webhook authentication returns has no return value
+        self.auth.authenticate(request)
 
         # Verify construct_event was called with correct parameters
         mock_construct_event.assert_called_once_with(
