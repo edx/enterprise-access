@@ -4,12 +4,14 @@ Stripe event handlers
 import logging
 from collections.abc import Callable
 from functools import wraps
+from http import HTTPStatus
 from uuid import UUID
 
 import stripe
 from django.conf import settings
 
 from enterprise_access.apps.api_client.license_manager_client import LicenseManagerApiClient
+from enterprise_access.apps.customer_billing.constants import INVOICE_PAID_PARENT_TYPE_IDENTIFIER
 from enterprise_access.apps.customer_billing.models import (
     CheckoutIntent,
     SelfServiceSubscriptionRenewal,
@@ -184,6 +186,13 @@ def _try_enable_pending_updates(stripe_subscription_id):
     except stripe.StripeError as e:
         logger.error('Failed to enable pending updates for subscription %s: %s', stripe_subscription_id, e)
 
+def _valid_invoice_paid_type(event: stripe.Event):
+    invoice = event.data.object
+    try:
+        return invoice["lines"]["data"][0]["parent"]["type"] == INVOICE_PAID_PARENT_TYPE_IDENTIFIER
+    except (KeyError, IndexError, TypeError):
+        return False
+
 
 class StripeEventHandler:
     """
@@ -209,6 +218,15 @@ class StripeEventHandler:
                 # The default __repr__ is really long because it just barfs out the entire payload.
                 event_short_repr = f'<stripe.Event id={event.id} type={event.type}>'
                 logger.info(f'[StripeEventHandler] handling {event_short_repr}.')
+                try:
+                    if event.type == 'invoice.paid' and not _valid_invoice_paid_type(event):
+                        logger.warning(f'[StripeEventHandler] event {event_short_repr} is not a valid invoice.paid event')
+                        return
+                except Exception:
+                    if settings.STRIPE_GRACEFUL_EXCEPTION_MODE:
+                        logger.exception("Stripe event %s failed gracefully", event.id)
+                        return
+                    raise
                 event_record = persist_stripe_event(event)
                 handler_method(event)
                 # Mark event as handled if we persisted it successfully and no exception was raised
