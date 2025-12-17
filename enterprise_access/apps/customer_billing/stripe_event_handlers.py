@@ -12,9 +12,9 @@ from django.utils import timezone
 
 from enterprise_access.apps.api_client.license_manager_client import LicenseManagerApiClient
 from enterprise_access.apps.customer_billing.constants import (
-  INVOICE_PAID_PARENT_TYPE_IDENTIFIER,
-  STRIPE_CANCELED_STATUSES, 
-  StripeSubscriptionStatus,
+    INVOICE_PAID_PARENT_TYPE_IDENTIFIER,
+    STRIPE_CANCELED_STATUSES,
+    StripeSubscriptionStatus,
 )
 from enterprise_access.apps.customer_billing.models import (
     CheckoutIntent,
@@ -189,6 +189,7 @@ def _try_enable_pending_updates(stripe_subscription_id):
         logger.info('Successfully enabled pending updates for subscription %s', stripe_subscription_id)
     except stripe.StripeError as e:
         logger.error('Failed to enable pending updates for subscription %s: %s', stripe_subscription_id, e)
+
 
 def _valid_invoice_paid_type(event: stripe.Event):
     """

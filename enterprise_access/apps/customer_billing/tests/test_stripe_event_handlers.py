@@ -313,7 +313,12 @@ class TestStripeEventHandler(TestCase):
                 {
                     'parent': {
                         'type': INVOICE_PAID_PARENT_TYPE_IDENTIFIER
-                    }
+                    },
+                    'pricing': {
+                        'unit_amount': 42,
+                        'unit_amount_decimal': 42.0
+                    },
+                    'quantity': 12,
                 },
             ]
         }
