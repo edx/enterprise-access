@@ -250,17 +250,11 @@ class StripeEventHandler:
                 # The default __repr__ is really long because it just barfs out the entire payload.
                 event_short_repr = f'<stripe.Event id={event.id} type={event.type}>'
                 logger.info(f'[StripeEventHandler] handling {event_short_repr}.')
-                try:
-                    if event.type == 'invoice.paid' and not _valid_invoice_paid_type(event):
-                        logger.warning(
-                            f'[StripeEventHandler] event {event_short_repr} is not a valid invoice.paid event'
-                        )
-                        return
-                except Exception:
-                    if settings.STRIPE_GRACEFUL_EXCEPTION_MODE:
-                        logger.exception("Stripe event %s failed gracefully", event.id)
-                        return
-                    raise
+                if event.type == 'invoice.paid' and not _valid_invoice_paid_type(event):
+                    logger.warning(
+                        f'[StripeEventHandler] event {event_short_repr} is not a valid invoice.paid event'
+                    )
+                    return
                 event_record = persist_stripe_event(event)
                 handler_method(event)
                 # Mark event as handled if we persisted it successfully and no exception was raised
