@@ -1041,7 +1041,7 @@ class StripeEventSummary(TimeStampedModel):
             lines = invoice_obj.get('lines', {}).get('data', [])
             if lines:
                 primary_line = lines[0]
-                if 'pricing' and 'quantity' in primary_line:
+                if 'pricing' in primary_line and 'quantity' in primary_line:
                     self.invoice_unit_amount = getattr(primary_line.pricing, 'unit_amount', None)
                     self.invoice_unit_amount_decimal = Decimal(primary_line.pricing.unit_amount_decimal)
                     self.invoice_quantity = primary_line.quantity
