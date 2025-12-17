@@ -30,7 +30,6 @@ from enterprise_access.apps.customer_billing.models import (
 from enterprise_access.apps.customer_billing.stripe_event_handlers import (
     StripeEventHandler,
     cancel_all_future_plans,
-    _handlers_by_type,
     _valid_invoice_paid_type,
 )
 from enterprise_access.apps.customer_billing.tests.factories import (

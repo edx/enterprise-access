@@ -4,7 +4,6 @@ Stripe event handlers
 import logging
 from collections.abc import Callable
 from functools import wraps
-from http import HTTPStatus
 from uuid import UUID
 
 import stripe
@@ -192,6 +191,31 @@ def _try_enable_pending_updates(stripe_subscription_id):
         logger.error('Failed to enable pending updates for subscription %s: %s', stripe_subscription_id, e)
 
 def _valid_invoice_paid_type(event: stripe.Event):
+    """
+    Determine whether an ``invoice.paid`` Stripe event belongs to the SSP workflow.
+
+    Stripe emits ``invoice.paid`` events for multiple billing workflows. This helper
+    acts as a guard to identify only those invoices that were generated from a
+    subscription-based SSP checkout flow.
+
+    The check is performed by inspecting the first invoice line item and verifying
+    that its parent type matches ``INVOICE_PAID_PARENT_TYPE_IDENTIFIER`` (typically
+    ``"subscription_item_details"``). In practice, this distinguishes subscription
+    invoices from one-off invoice items and other non-SSP billing scenarios.
+
+    The function is intentionally defensive:
+    - If the invoice payload is missing expected fields
+      (e.g., no lines, no parent, or no type), the event is treated as invalid.
+    - Any structural mismatch results in ``False`` rather than raising, allowing
+      webhook handling to safely NOOP while still returning HTTP 200 to Stripe.
+
+    Args:
+        event (stripe.Event): A Stripe ``invoice.paid`` webhook event.
+
+    Returns:
+        bool: ``True`` if the event represents an SSP-related subscription invoice,
+        otherwise ``False``.
+    """
     invoice = event.data.object
     try:
         return invoice["lines"]["data"][0]["parent"]["type"] == INVOICE_PAID_PARENT_TYPE_IDENTIFIER
@@ -205,6 +229,9 @@ class StripeEventHandler:
     """
     @classmethod
     def dispatch(cls, event: stripe.Event) -> None:
+        """
+        Dispatches an event to the appropriate handler.
+        """
         if event.type not in _handlers_by_type:
             logger.warning('No stripe event handler configured for event type %s', event.type)
             return
@@ -225,7 +252,9 @@ class StripeEventHandler:
                 logger.info(f'[StripeEventHandler] handling {event_short_repr}.')
                 try:
                     if event.type == 'invoice.paid' and not _valid_invoice_paid_type(event):
-                        logger.warning(f'[StripeEventHandler] event {event_short_repr} is not a valid invoice.paid event')
+                        logger.warning(
+                            f'[StripeEventHandler] event {event_short_repr} is not a valid invoice.paid event'
+                        )
                         return
                 except Exception:
                     if settings.STRIPE_GRACEFUL_EXCEPTION_MODE:
