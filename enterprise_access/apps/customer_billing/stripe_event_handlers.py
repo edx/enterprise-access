@@ -14,7 +14,7 @@ from enterprise_access.apps.api_client.license_manager_client import LicenseMana
 from enterprise_access.apps.customer_billing.constants import (
     INVOICE_PAID_PARENT_TYPE_IDENTIFIER,
     STRIPE_CANCELED_STATUSES,
-    StripeSubscriptionStatus,
+    StripeSubscriptionStatus
 )
 from enterprise_access.apps.customer_billing.models import (
     CheckoutIntent,

@@ -16,10 +16,10 @@ from django.utils import timezone
 
 from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.customer_billing.constants import (
+    INVOICE_PAID_PARENT_TYPE_IDENTIFIER,
     STRIPE_CANCELED_STATUSES,
     CheckoutIntentState,
-    StripeSubscriptionStatus,
-    INVOICE_PAID_PARENT_TYPE_IDENTIFIER,
+    StripeSubscriptionStatus
 )
 from enterprise_access.apps.customer_billing.models import (
     CheckoutIntent,
@@ -29,8 +29,8 @@ from enterprise_access.apps.customer_billing.models import (
 )
 from enterprise_access.apps.customer_billing.stripe_event_handlers import (
     StripeEventHandler,
-    cancel_all_future_plans,
     _valid_invoice_paid_type,
+    cancel_all_future_plans
 )
 from enterprise_access.apps.customer_billing.tests.factories import (
     SelfServiceSubscriptionRenewalFactory,

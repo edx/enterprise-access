@@ -10,7 +10,7 @@ from factory.django import DjangoModelFactory
 from faker import Faker
 
 from enterprise_access.apps.core.tests.factories import UserFactory
-from enterprise_access.apps.customer_billing.constants import CheckoutIntentState, INVOICE_PAID_PARENT_TYPE_IDENTIFIER
+from enterprise_access.apps.customer_billing.constants import INVOICE_PAID_PARENT_TYPE_IDENTIFIER, CheckoutIntentState
 from enterprise_access.apps.customer_billing.models import (
     CheckoutIntent,
     SelfServiceSubscriptionRenewal,
