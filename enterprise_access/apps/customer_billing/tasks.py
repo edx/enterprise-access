@@ -3,7 +3,8 @@ Tasks for customer billing app.
 """
 
 import logging
-from datetime import datetime, timezone as tz
+from datetime import datetime
+from datetime import timezone as tz
 
 import stripe
 from celery import shared_task
@@ -12,7 +13,7 @@ from django.utils import timezone
 
 from enterprise_access.apps.api_client.braze_client import BrazeApiClient
 from enterprise_access.apps.api_client.lms_client import LmsApiClient
-from enterprise_access.apps.customer_billing.constants import BRAZE_TIMESTAMP_FORMAT, BRAZE_DATE_DD_MM_YYYY
+from enterprise_access.apps.customer_billing.constants import BRAZE_DATE_DD_MM_YYYY, BRAZE_TIMESTAMP_FORMAT
 from enterprise_access.apps.customer_billing.models import CheckoutIntent, StripeEventSummary
 from enterprise_access.apps.customer_billing.stripe_api import get_stripe_subscription, get_stripe_trialing_subscription
 from enterprise_access.apps.provisioning.utils import validate_trial_subscription
