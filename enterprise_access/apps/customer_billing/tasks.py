@@ -3,7 +3,7 @@ Tasks for customer billing app.
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone as tz
 
 import stripe
 from celery import shared_task
@@ -12,7 +12,7 @@ from django.utils import timezone
 
 from enterprise_access.apps.api_client.braze_client import BrazeApiClient
 from enterprise_access.apps.api_client.lms_client import LmsApiClient
-from enterprise_access.apps.customer_billing.constants import BRAZE_TIMESTAMP_FORMAT
+from enterprise_access.apps.customer_billing.constants import BRAZE_TIMESTAMP_FORMAT, BRAZE_DATE_DD_MM_YYYY
 from enterprise_access.apps.customer_billing.models import CheckoutIntent, StripeEventSummary
 from enterprise_access.apps.customer_billing.stripe_api import get_stripe_subscription, get_stripe_trialing_subscription
 from enterprise_access.apps.provisioning.utils import validate_trial_subscription
@@ -435,8 +435,8 @@ def send_trial_end_and_subscription_started_email_task(
     subscription_period = None
     next_payment_date = None
     if period_start and period_end:
-        start_str = format_datetime_obj(datetime.utcfromtimestamp(period_start))
-        end_str = format_datetime_obj(datetime.utcfromtimestamp(period_end))
+        start_str = format_datetime_obj(datetime.fromtimestamp(period_start, tz=tz.utc), BRAZE_DATE_DD_MM_YYYY)
+        end_str = format_datetime_obj(datetime.fromtimestamp(period_end, tz=tz.utc), BRAZE_DATE_DD_MM_YYYY)
         subscription_period = f"{start_str} – {end_str}"
         next_payment_date = end_str
 
@@ -520,7 +520,7 @@ def send_payment_receipt_email(
 
     # Format the payment date
     payment_date = datetime.fromtimestamp(invoice_data.get('created', 0))
-    formatted_date = format_datetime_obj(payment_date, '%d %B %Y')
+    formatted_date = format_datetime_obj(payment_date, BRAZE_DATE_DD_MM_YYYY)
 
     # Get payment method details
     payment_method = invoice_data.get('payment_intent', {}).get('payment_method', {})
