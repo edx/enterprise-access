@@ -1099,3 +1099,19 @@ class StripeEventSummary(TimeStampedModel):
             stripe_invoice_id=invoice_id,
             event_type='invoice.paid',
         ).order_by('-stripe_event_created_at').first()
+
+    @classmethod
+    def get_latest_subscription_created(cls, subscription_id):
+        """
+        Retrieve the most recent customer.subscription.created event summary for a given invoice ID.
+
+        Args:
+            subscription_id (str): The Stripe subscription ID to look up
+
+        Returns:
+            StripeEventSummary: The most recent customer.subscription.created event summary, or None if not found
+        """
+        return cls.objects.filter(
+            stripe_subscription_id=subscription_id,
+            event_type='customer.subscription.created',
+        ).order_by('-stripe_event_created_at').first()

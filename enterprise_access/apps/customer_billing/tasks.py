@@ -356,13 +356,15 @@ def send_trial_ending_reminder_email_task(checkout_intent_id):
 
         total_paid_amount_formatted = "$0.00 USD"
         if subscription.latest_invoice:
-            invoice_summary = StripeEventSummary.get_latest_invoice_paid(
-                subscription.latest_invoice
+            subscription_created_summary = StripeEventSummary.get_latest_subscription_created(
+                subscription.id
             )
 
-            if invoice_summary and invoice_summary.invoice_amount_paid is not None:
+            if subscription_created_summary and (
+                    upcoming_invoice_amount_due := subscription_created_summary.upcoming_invoice_amount_due
+            ) is not None:
                 total_paid_amount_formatted = format_cents_for_user_display(
-                    invoice_summary.invoice_amount_paid
+                    upcoming_invoice_amount_due
                 )
             else:
                 logger.warning(

@@ -378,6 +378,9 @@ class StripeEventHandler:
         )
         link_event_data_to_checkout_intent(event, checkout_intent)
 
+        checkout_intent.stripe_customer_id = subscription.get('customer')
+        checkout_intent.save()
+
         _try_enable_pending_updates(subscription.id)
 
         summary = StripeEventSummary.objects.get(event_id=event.id)
