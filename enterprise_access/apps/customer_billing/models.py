@@ -1102,7 +1102,7 @@ class StripeEventSummary(TimeStampedModel):
     @classmethod
     def get_latest_subscription_created(cls, subscription_id):
         """
-        Retrieve the most recent customer.subscription.created event summary for a given invoice ID.
+        Retrieve the most recent customer.subscription.created event summary for a given subscription ID.
 
         Args:
             subscription_id (str): The Stripe subscription ID to look up
