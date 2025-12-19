@@ -1104,28 +1104,28 @@ class TestStripeEventSummary(TestCase):
         from the upcoming invoice
         """
         subscription_data_object = {
-                'object': {
-                    'object': 'subscription',
-                    'id': 'sub_test_789',
-                    'status': 'active',
-                    'currency': 'usd',
-                    'customer': 'cus_test_456',
-                    'items': {
-                        'data': [
-                            {
-                                'object': 'subscription_item',
-                                'current_period_start': 1609459200,  # 2021-01-01 00:00:00 UTC
-                                'current_period_end': 1640995200,    # 2022-01-01 00:00:00 UTC
-                            }
-                        ]
-                    },
-                    'metadata': {
-                        'checkout_intent_id': self.checkout_intent.id,
-                        'enterprise_customer_name': 'Test Enterprise',
-                        'enterprise_customer_slug': 'test-enterprise',
-                    }
+            'object': {
+                'object': 'subscription',
+                'id': 'sub_test_789',
+                'status': 'active',
+                'currency': 'usd',
+                'customer': 'cus_test_456',
+                'items': {
+                    'data': [
+                        {
+                            'object': 'subscription_item',
+                            'current_period_start': 1609459200,  # 2021-01-01 00:00:00 UTC
+                            'current_period_end': 1640995200,    # 2022-01-01 00:00:00 UTC
+                        }
+                    ]
+                },
+                'metadata': {
+                    'checkout_intent_id': self.checkout_intent.id,
+                    'enterprise_customer_name': 'Test Enterprise',
+                    'enterprise_customer_slug': 'test-enterprise',
                 }
             }
+        }
         subscription_event_data = {
             'id': 'evt_test_sub_created',
             'type': 'customer.subscription.created',
