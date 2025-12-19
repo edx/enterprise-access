@@ -1047,7 +1047,6 @@ class StripeEventSummary(TimeStampedModel):
             return
         stripe_subscription_id = self.stripe_subscription_id
         stripe_customer_id = self.checkout_intent.stripe_customer_id
-
         if not (stripe_subscription_id and stripe_customer_id):
             logger.warning('Cannot update with upcoming invoice for event %s', self.event_id)
             return

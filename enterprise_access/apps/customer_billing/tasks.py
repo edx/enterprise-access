@@ -355,7 +355,7 @@ def send_trial_ending_reminder_email_task(checkout_intent_id):
                 payment_method_info = f"{brand} ending in {last4}"
 
         total_paid_amount_formatted = "$0.00 USD"
-        if subscription.latest_invoice:
+        if subscription.id:
             subscription_created_summary = StripeEventSummary.get_latest_subscription_created(
                 subscription.id
             )
