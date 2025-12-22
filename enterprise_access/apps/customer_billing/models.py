@@ -1,7 +1,6 @@
 """
 Models for customer billing app.
 """
-import datetime
 import logging
 from datetime import timedelta
 from decimal import Decimal
@@ -31,7 +30,6 @@ from .utils import datetime_from_timestamp
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
-
 
 
 class FailedCheckoutIntentConflict(Exception):

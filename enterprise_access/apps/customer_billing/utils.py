@@ -6,8 +6,10 @@ import datetime
 
 from django.utils import timezone
 
-def datetime_from_timestamp(timestamp, tzinfo=None):
+
+def datetime_from_timestamp(timestamp):
+    """
+    Convert a timestamp to a timezone-aware datetime.
+    """
     naive_dt = datetime.datetime.fromtimestamp(timestamp)
-    if tzinfo is None:
-        tzinfo = timezone.get_current_timezone()
-    return timezone.make_aware(naive_dt, tzinfo)
+    return timezone.make_aware(naive_dt)
