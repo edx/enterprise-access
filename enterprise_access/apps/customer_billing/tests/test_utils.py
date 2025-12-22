@@ -10,7 +10,6 @@ from django.utils import timezone
 from enterprise_access.apps.customer_billing.utils import datetime_from_timestamp
 
 
-@ddt.ddt
 class TestCustomerBillingUtils(TestCase):
     """
     Tests for customer billing utility functions.
