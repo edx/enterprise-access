@@ -2,7 +2,8 @@
 Tests for the ``enterprise_access.apps.customer_billing.utils`` module.
 """
 
-import ddt
+import datetime
+
 from django.test import TestCase
 from django.utils import timezone
 
@@ -33,3 +34,20 @@ class TestCustomerBillingUtils(TestCase):
         dt = datetime_from_timestamp(ts)
 
         self.assertEqual(dt.tzinfo, timezone.get_current_timezone())
+
+    def test_datetime_from_timestamp_has_expected_components(self):
+        """
+        Validate that datetime_from_timestamp returns the correct *local-date*
+        representation for the given timestamp.
+        """
+        ts = 1767285545
+
+        # Expected value computed the same way as the function
+        expected_naive = datetime.datetime.fromtimestamp(ts)
+        expected = timezone.make_aware(expected_naive)
+
+        dt = datetime_from_timestamp(ts)
+
+        self.assertIsInstance(dt, datetime.datetime)
+        self.assertTrue(timezone.is_aware(dt))
+        self.assertEqual(dt.date(), expected.date())
