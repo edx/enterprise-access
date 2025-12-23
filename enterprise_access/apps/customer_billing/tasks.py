@@ -12,7 +12,7 @@ from django.conf import settings
 from enterprise_access.apps.api_client.braze_client import BrazeApiClient
 from enterprise_access.apps.api_client.lms_client import LmsApiClient
 from enterprise_access.apps.api_client.tests.test_constants import DATE_FORMAT_ISO_8601
-from enterprise_access.apps.customer_billing.constants import BRAZE_DATE_DD_MM_YYYY, BRAZE_TIMESTAMP_FORMAT
+from enterprise_access.apps.customer_billing.constants import BRAZE_DATE_FORMAT, BRAZE_TIMESTAMP_FORMAT
 from enterprise_access.apps.customer_billing.models import CheckoutIntent, StripeEventSummary
 from enterprise_access.apps.customer_billing.stripe_api import get_stripe_subscription, get_stripe_trialing_subscription
 from enterprise_access.apps.customer_billing.utils import datetime_from_timestamp
@@ -521,8 +521,9 @@ def send_payment_receipt_email(
         return
 
     # Format the payment date
-    payment_date = datetime.fromtimestamp(invoice_data.get('created', 0))
-    formatted_date = format_datetime_obj(payment_date, BRAZE_DATE_DD_MM_YYYY)
+    formatted_payment_date = format_datetime_obj(
+        datetime_from_timestamp(invoice_data.get('created', 0)), BRAZE_DATE_FORMAT
+    )
 
     # Get payment method details
     payment_method = invoice_data.get('payment_intent', {}).get('payment_method', {})
@@ -546,7 +547,7 @@ def send_payment_receipt_email(
 
     braze_trigger_properties = {
         'total_paid_amount': cents_to_dollars(total_amount),
-        'date_paid': formatted_date,
+        'date_paid': formatted_payment_date,
         'payment_method': payment_method_display,
         'license_count': quantity,
         'price_per_license': cents_to_dollars(price_per_license),
