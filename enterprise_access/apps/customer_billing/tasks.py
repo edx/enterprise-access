@@ -11,6 +11,7 @@ from django.conf import settings
 
 from enterprise_access.apps.api_client.braze_client import BrazeApiClient
 from enterprise_access.apps.api_client.lms_client import LmsApiClient
+from enterprise_access.apps.api_client.tests.test_constants import DATE_FORMAT_ISO_8601
 from enterprise_access.apps.customer_billing.constants import BRAZE_DATE_DD_MM_YYYY, BRAZE_TIMESTAMP_FORMAT
 from enterprise_access.apps.customer_billing.models import CheckoutIntent, StripeEventSummary
 from enterprise_access.apps.customer_billing.stripe_api import get_stripe_subscription, get_stripe_trialing_subscription
@@ -432,13 +433,13 @@ def send_trial_end_and_subscription_started_email_task(
 
     period_start = subscription.get('current_period_start')
     period_end = subscription.get('current_period_end')
-    subscription_period = None
+    subscription_start_period = None
+    subscription_end_period = None
     next_payment_date = None
     if period_start and period_end:
-        start_str = format_datetime_obj(datetime_from_timestamp(period_start), BRAZE_DATE_DD_MM_YYYY)
-        end_str = format_datetime_obj(datetime_from_timestamp(period_end), BRAZE_DATE_DD_MM_YYYY)
-        subscription_period = f"{start_str} – {end_str}"
-        next_payment_date = end_str
+        subscription_start_period = format_datetime_obj(datetime_from_timestamp(period_start), DATE_FORMAT_ISO_8601)
+        subscription_end_period = format_datetime_obj(datetime_from_timestamp(period_end), DATE_FORMAT_ISO_8601)
+        next_payment_date = subscription_end_period
 
     organization_name = checkout_intent.enterprise_name
     enterprise_slug = checkout_intent.enterprise_slug
@@ -459,7 +460,8 @@ def send_trial_end_and_subscription_started_email_task(
     braze_trigger_properties = {
         'total_license': total_license,
         'billing_amount': billing_amount,
-        'subscription_period': subscription_period,
+        'subscription_start_period': subscription_start_period,
+        'subscription_end_period': subscription_end_period,
         'next_payment_date': next_payment_date,
         'organization': organization_name,
         'enterprise_admin_portal_url': f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/{enterprise_slug}',
