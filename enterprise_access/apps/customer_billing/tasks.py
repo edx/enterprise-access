@@ -14,7 +14,7 @@ from enterprise_access.apps.api_client.lms_client import LmsApiClient
 from enterprise_access.apps.customer_billing.constants import (
     BRAZE_DATE_FORMAT_1,
     BRAZE_DATE_FORMAT_2,
-    BRAZE_TIMESTAMP_FORMAT,
+    BRAZE_TIMESTAMP_FORMAT
 )
 from enterprise_access.apps.customer_billing.models import CheckoutIntent, StripeEventSummary
 from enterprise_access.apps.customer_billing.stripe_api import get_stripe_subscription, get_stripe_trialing_subscription
@@ -215,7 +215,10 @@ def send_trial_cancellation_email_task(
     )
 
     # Format trial end date for email template
-    trial_end_date = format_datetime_obj(datetime_from_timestamp(trial_end_timestamp))
+    trial_end_date = format_datetime_obj(
+        datetime_from_timestamp(trial_end_timestamp),
+        output_pattern=BRAZE_DATE_FORMAT_2
+    )
 
     braze_trigger_properties = {
         "trial_end_date": trial_end_date,

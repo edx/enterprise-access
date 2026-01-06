@@ -3,11 +3,10 @@ Utility functions for customer billing app
 """
 
 import datetime
+from typing import Union
 
 import pytz
-
 from django.utils import timezone
-from typing import Union
 
 
 def datetime_from_timestamp(timestamp: Union[int, float]) -> datetime.datetime:
