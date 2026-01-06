@@ -4,6 +4,7 @@ Tests for the ``enterprise_access.apps.customer_billing.utils`` module.
 
 import datetime
 
+import pytz
 from django.test import TestCase
 from django.utils import timezone
 
@@ -32,7 +33,7 @@ class TestCustomerBillingUtils(TestCase):
 
         dt = datetime_from_timestamp(ts)
 
-        self.assertEqual(dt.tzinfo, timezone.get_current_timezone())
+        self.assertEqual(dt.tzinfo, pytz.UTC)
 
     def test_datetime_from_timestamp_has_expected_components(self):
         """

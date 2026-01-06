@@ -15,11 +15,11 @@ def datetime_from_timestamp(timestamp: Union[int, float]) -> datetime.datetime:
 
     This function:
     - Interprets the input timestamp as seconds since the Unix epoch (1970-01-01T00:00:00).
-    - Creates a naive ``datetime.datetime`` from the timestamp.
+    - Creates a ``datetime.datetime`` from the timestamp.
     - Converts the result into a timezone-aware datetime explicitly set to UTC.
 
     Args:
-        timestamp (int | float): Unix timestamp in seconds.
+        timestamp (Union[int, float]): Unix timestamp in seconds.
 
     Returns:
         datetime.datetime: A timezone-aware datetime object with tzinfo set to UTC.
@@ -32,5 +32,5 @@ def datetime_from_timestamp(timestamp: Union[int, float]) -> datetime.datetime:
     Raises:
         (none): Any exceptions originate from invalid timestamp values passed to ``fromtimestamp``.
     """
-    naive_dt = datetime.datetime.fromtimestamp(timestamp)
-    return timezone.make_aware(naive_dt, timezone=pytz.UTC)
+    dt = datetime.datetime.fromtimestamp(timestamp)
+    return timezone.make_aware(dt, timezone=pytz.UTC)

@@ -148,7 +148,7 @@ def send_enterprise_provision_signup_confirmation_email(
 
     total_cost_cents = subscription['plan']['amount'] * number_of_licenses
 
-    # All trigger properties values must be JSON-serializable to eventuallly
+    # All trigger properties values must be JSON-serializable to eventually
     # send in the request payload to Braze.
     # TODO: Cleanup unused trigger properties for Enterprise Provision Signup Confirmation Email campaign
     braze_trigger_properties = {
