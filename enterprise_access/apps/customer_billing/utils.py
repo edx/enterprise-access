@@ -4,12 +4,34 @@ Utility functions for customer billing app
 
 import datetime
 
+import pytz
+
 from django.utils import timezone
+from typing import Union
 
 
-def datetime_from_timestamp(timestamp):
+def datetime_from_timestamp(timestamp: Union[int, float]) -> datetime.datetime:
     """
-    Convert a timestamp to a timezone-aware datetime.
+    Convert a Unix timestamp (seconds since epoch) into a timezone-aware UTC datetime.
+
+    This function:
+    - Interprets the input timestamp as seconds since the Unix epoch (1970-01-01T00:00:00).
+    - Creates a naive ``datetime.datetime`` from the timestamp.
+    - Converts the result into a timezone-aware datetime explicitly set to UTC.
+
+    Args:
+        timestamp (int | float): Unix timestamp in seconds.
+
+    Returns:
+        datetime.datetime: A timezone-aware datetime object with tzinfo set to UTC.
+
+    Guarantees:
+        - The returned datetime is always timezone-aware.
+        - The timezone is explicitly UTC (pytz.UTC).
+        - Safe for storage, comparison, and cross-system serialization.
+
+    Raises:
+        (none): Any exceptions originate from invalid timestamp values passed to ``fromtimestamp``.
     """
     naive_dt = datetime.datetime.fromtimestamp(timestamp)
-    return timezone.make_aware(naive_dt)
+    return timezone.make_aware(naive_dt, timezone=pytz.UTC)

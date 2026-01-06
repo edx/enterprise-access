@@ -11,8 +11,11 @@ from django.conf import settings
 
 from enterprise_access.apps.api_client.braze_client import BrazeApiClient
 from enterprise_access.apps.api_client.lms_client import LmsApiClient
-from enterprise_access.apps.api_client.tests.test_constants import DATE_FORMAT_ISO_8601
-from enterprise_access.apps.customer_billing.constants import BRAZE_DATE_FORMAT, BRAZE_TIMESTAMP_FORMAT
+from enterprise_access.apps.customer_billing.constants import (
+    BRAZE_DATE_FORMAT_1,
+    BRAZE_DATE_FORMAT_2,
+    BRAZE_TIMESTAMP_FORMAT,
+)
 from enterprise_access.apps.customer_billing.models import CheckoutIntent, StripeEventSummary
 from enterprise_access.apps.customer_billing.stripe_api import get_stripe_subscription, get_stripe_trialing_subscription
 from enterprise_access.apps.customer_billing.utils import datetime_from_timestamp
@@ -147,9 +150,10 @@ def send_enterprise_provision_signup_confirmation_email(
 
     # All trigger properties values must be JSON-serializable to eventuallly
     # send in the request payload to Braze.
+    # TODO: Cleanup unused trigger properties for Enterprise Provision Signup Confirmation Email campaign
     braze_trigger_properties = {
-        'subscription_start_date': format_datetime_obj(subscription_start_date),
-        'subscription_end_date': format_datetime_obj(subscription_end_date),
+        'subscription_start_date': format_datetime_obj(subscription_start_date, output_pattern=BRAZE_DATE_FORMAT_2),
+        'subscription_end_date': format_datetime_obj(subscription_end_date, output_pattern=BRAZE_DATE_FORMAT_2),
         'number_of_licenses': number_of_licenses,
         'organization': organization_name,
         'enterprise_admin_portal_url': f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/{enterprise_slug}',
@@ -437,8 +441,8 @@ def send_trial_end_and_subscription_started_email_task(
     subscription_end_period = None
     next_payment_date = None
     if period_start and period_end:
-        subscription_start_period = format_datetime_obj(datetime_from_timestamp(period_start), DATE_FORMAT_ISO_8601)
-        subscription_end_period = format_datetime_obj(datetime_from_timestamp(period_end), DATE_FORMAT_ISO_8601)
+        subscription_start_period = format_datetime_obj(datetime_from_timestamp(period_start), BRAZE_TIMESTAMP_FORMAT)
+        subscription_end_period = format_datetime_obj(datetime_from_timestamp(period_end), BRAZE_TIMESTAMP_FORMAT)
         next_payment_date = subscription_end_period
 
     organization_name = checkout_intent.enterprise_name
@@ -522,7 +526,7 @@ def send_payment_receipt_email(
 
     # Format the payment date
     formatted_payment_date = format_datetime_obj(
-        datetime_from_timestamp(invoice_data.get('created', 0)), BRAZE_DATE_FORMAT
+        datetime_from_timestamp(invoice_data.get('created', 0)), BRAZE_DATE_FORMAT_1
     )
 
     # Get payment method details
