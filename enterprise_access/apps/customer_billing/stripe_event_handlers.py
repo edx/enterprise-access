@@ -20,7 +20,8 @@ from enterprise_access.apps.customer_billing.models import (
     CheckoutIntent,
     SelfServiceSubscriptionRenewal,
     StripeEventData,
-    StripeEventSummary
+    StripeEventSummary,
+    _datetime_from_timestamp
 )
 from enterprise_access.apps.customer_billing.stripe_event_types import StripeEventType
 from enterprise_access.apps.customer_billing.tasks import (
