@@ -32,5 +32,4 @@ def datetime_from_timestamp(timestamp: Union[int, float]) -> datetime.datetime:
     Raises:
         (none): Any exceptions originate from invalid timestamp values passed to ``fromtimestamp``.
     """
-    dt = datetime.datetime.fromtimestamp(timestamp)
-    return timezone.make_aware(dt, timezone=pytz.UTC)
+    return datetime.datetime.utcfromtimestamp(timestamp)
