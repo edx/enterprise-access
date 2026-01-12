@@ -412,3 +412,46 @@ class LearnerCreditRequestRemindSerializer(serializers.Serializer):
         Return the already-fetched learner credit request object.
         """
         return getattr(self, '_learner_credit_request', None)
+
+
+class LearnerCreditRequestBulkApproveRequestSerializer(serializers.Serializer):
+    """
+    Serializer for bulk approving learner credit requests.
+    """
+    policy_uuid = serializers.UUIDField(
+        required=True,
+        help_text='The UUID of the subsidy access policy to use for approval.',
+    )
+    enterprise_customer_uuid = serializers.UUIDField(
+        required=True,
+        help_text='The UUID of the enterprise customer.',
+    )
+    approve_all = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text='If true, approve all pending requests for the enterprise customer.',
+    )
+    subsidy_request_uuids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        help_text='List of subsidy request UUIDs to approve.',
+    )
+
+    def validate(self, attrs):
+        """
+        Validate that either approve_all is True or subsidy_request_uuids is provided, but not both.
+        """
+        approve_all = attrs.get('approve_all', False)
+        subsidy_request_uuids = attrs.get('subsidy_request_uuids', [])
+
+        if approve_all and subsidy_request_uuids:
+            raise serializers.ValidationError(
+                'Cannot specify both approve_all and subsidy_request_uuids. Please choose one.'
+            )
+
+        if not approve_all and not subsidy_request_uuids:
+            raise serializers.ValidationError(
+                'Must specify either approve_all=True or provide subsidy_request_uuids.'
+            )
+
+        return attrs

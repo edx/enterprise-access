@@ -38,6 +38,7 @@ from enterprise_access.apps.api.tasks import (
     update_license_requests_after_assignments_task
 )
 from enterprise_access.apps.api.utils import (
+    add_bulk_approve_operation_result,
     get_enterprise_uuid_from_query_params,
     get_enterprise_uuid_from_request_data,
     validate_uuid
@@ -67,6 +68,7 @@ from enterprise_access.apps.subsidy_request.tasks import (
     send_learner_credit_bnr_admins_email_with_new_requests_task,
     send_learner_credit_bnr_cancel_notification_task,
     send_learner_credit_bnr_decline_notification_task,
+    send_learner_credit_bnr_request_approve_task,
     send_reminder_email_for_pending_learner_credit_request
 )
 from enterprise_access.apps.subsidy_request.utils import (
@@ -744,6 +746,11 @@ class CouponCodeRequestViewSet(SubsidyRequestViewSet):
     cancel=extend_schema(
         tags=['Learner Credit Requests'],
         summary='Learner credit request cancel endpoint.',
+    ),
+    bulk_approve=extend_schema(
+        tags=['Learner Credit Requests'],
+        summary='Bulk approve learner credit requests.',
+        request=serializers.LearnerCreditRequestBulkApproveRequestSerializer,
     )
 )
 class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
@@ -1234,6 +1241,110 @@ class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
                 )
 
         return Response(serialized_request, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['post'], url_path='bulk-approve')
+    @permission_required(
+        constants.REQUESTS_ADMIN_ACCESS_PERMISSION,
+        fn=lambda request: get_enterprise_uuid_from_request_data(request),
+    )
+    def bulk_approve(self, request, *args, **kwargs):
+        """
+        Bulk approve learner credit requests.
+        """
+        serializer = serializers.LearnerCreditRequestBulkApproveRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        policy_uuid = serializer.validated_data['policy_uuid']
+        enterprise_customer_uuid = serializer.validated_data['enterprise_customer_uuid']
+        approve_all = serializer.validated_data.get('approve_all', False)
+        subsidy_request_uuids = serializer.validated_data.get('subsidy_request_uuids', [])
+
+        try:
+            policy = SubsidyAccessPolicy.objects.get(uuid=policy_uuid)
+        except SubsidyAccessPolicy.DoesNotExist:
+            return Response(
+                {'error': f'Policy with uuid {policy_uuid} not found.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        results = {'approved': [], 'failed': []}
+
+        if approve_all:
+            pending_requests = LearnerCreditRequest.objects.filter(
+                enterprise_customer_uuid=enterprise_customer_uuid,
+                state=SubsidyRequestStates.REQUESTED
+            )
+        else:
+            pending_requests = LearnerCreditRequest.objects.filter(
+                uuid__in=subsidy_request_uuids,
+                enterprise_customer_uuid=enterprise_customer_uuid
+            )
+
+        # Filter to only REQUESTED state
+        valid_requests = []
+        for learner_credit_request in pending_requests:
+            if learner_credit_request.state != SubsidyRequestStates.REQUESTED:
+                add_bulk_approve_operation_result(
+                    results,
+                    'failed',
+                    learner_credit_request.uuid,
+                    learner_credit_request.state,
+                    error=f'Request is not in a requestable state: {learner_credit_request.state}'
+                )
+            else:
+                valid_requests.append(learner_credit_request)
+
+        if not valid_requests:
+            return Response(results, status=status.HTTP_200_OK)
+
+        # Allocate assignments in bulk
+        try:
+            assignment_map = assignments_api.allocate_assignment_for_requests(
+                policy.assignment_configuration,
+                valid_requests,
+            )
+        except Exception as exc:  # pylint: disable=broad-except
+            for learner_credit_request in valid_requests:
+                add_bulk_approve_operation_result(
+                    results,
+                    'failed',
+                    learner_credit_request.uuid,
+                    learner_credit_request.state,
+                    error=str(exc)
+                )
+            return Response(results, status=status.HTTP_200_OK)
+
+        # Process results
+        requests_to_approve = []
+        for learner_credit_request in valid_requests:
+            assignment = assignment_map.get(learner_credit_request.uuid)
+            if assignment:
+                learner_credit_request.assignment = assignment
+                requests_to_approve.append(learner_credit_request)
+            else:
+                add_bulk_approve_operation_result(
+                    results,
+                    'failed',
+                    learner_credit_request.uuid,
+                    learner_credit_request.state,
+                    error='Failed to allocate assignment'
+                )
+
+        if requests_to_approve:
+            LearnerCreditRequest.bulk_approve_requests(requests_to_approve, request.user)
+
+            for learner_credit_request in requests_to_approve:
+                add_bulk_approve_operation_result(
+                    results,
+                    'approved',
+                    learner_credit_request.uuid,
+                    SubsidyRequestStates.APPROVED
+                )
+                send_learner_credit_bnr_request_approve_task.delay(
+                    learner_credit_request.uuid
+                )
+
+        return Response(results, status=status.HTTP_200_OK)
 
 
 @extend_schema_view(
