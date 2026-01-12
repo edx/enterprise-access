@@ -13,7 +13,6 @@ from django.utils import timezone
 from enterprise_access.apps.api_client.license_manager_client import LicenseManagerApiClient
 from enterprise_access.apps.customer_billing.constants import (
     INVOICE_PAID_PARENT_TYPE_IDENTIFIER,
-    STRIPE_CANCELED_STATUSES,
     StripeSubscriptionStatus
 )
 from enterprise_access.apps.customer_billing.models import (
@@ -25,6 +24,7 @@ from enterprise_access.apps.customer_billing.models import (
 from enterprise_access.apps.customer_billing.stripe_event_types import StripeEventType
 from enterprise_access.apps.customer_billing.tasks import (
     send_billing_error_email_task,
+    send_finalized_cancelation_email_task,
     send_payment_receipt_email,
     send_trial_cancellation_email_task,
     send_trial_end_and_subscription_started_email_task,
@@ -394,7 +394,7 @@ class StripeEventHandler:
 
     @on_stripe_event('customer.subscription.updated')
     @staticmethod
-    def subscription_updated(event: stripe.Event) -> None:  # pylint: disable=too-many-statements
+    def subscription_updated(event: stripe.Event) -> None:
         """
         Handle customer.subscription.updated events.
         Track when subscriptions have pending updates and update related CheckoutIntent state.
@@ -481,31 +481,6 @@ class StripeEventHandler:
                 checkout_intent_id=checkout_intent.id,
             )
 
-        # Trial cancelation (or unpaid) transition
-        # This is a fallback in case the cancel_at detection didn't trigger
-        if current_status != prior_status and current_status in STRIPE_CANCELED_STATUSES:
-            logger.info(
-                f"Subscription {subscription.id} status changed from '{prior_status}' to '{current_status}'. "
-            )
-            trial_end = subscription.get("trial_end")
-            if trial_end:
-                # Check if we already sent email when cancel_at was set (duplicate prevention)
-                if not subscription.get('cancel_at'):
-                    logger.info(f"Queuing trial cancellation email for checkout_intent_id={checkout_intent_id}")
-                    send_trial_cancellation_email_task.delay(
-                        checkout_intent_id=checkout_intent.id,
-                        trial_end_timestamp=trial_end,
-                    )
-                else:
-                    logger.info(
-                        f"Subscription {subscription.id} has cancel_at set, "
-                        f"skipping duplicate cancellation email"
-                    )
-            else:
-                logger.info(
-                    f"Subscription {subscription.id} canceled but has no trial_end, skipping cancellation email"
-                )
-
         # Past due transition
         if current_status != prior_status and current_status == StripeSubscriptionStatus.PAST_DUE:
             logger.warning(
@@ -556,15 +531,16 @@ class StripeEventHandler:
             )
 
         previous_summary = checkout_intent.previous_summary(event, stripe_object_type='subscription')
-        if previous_summary.subscription_status == StripeSubscriptionStatus.TRIALING:
-            trial_end = subscription.get("trial_end") or timezone.now().timestamp()
+        if previous_summary.subscription_status == StripeSubscriptionStatus.ACTIVE:
+            # https://docs.stripe.com/api/subscriptions/object#subscription_object-ended_at
+            ended_at = subscription.get("ended_at") or timezone.now().timestamp()
             logger.info(
-                "Queuing trial cancelation (deletion) email for checkout_intent_id=%s",
+                "Queuing cancelation finalization email for checkout_intent_id=%s",
                 checkout_intent_id,
             )
-            send_trial_cancellation_email_task.delay(
+            send_finalized_cancelation_email_task.delay(
                 checkout_intent_id=checkout_intent.id,
-                trial_end_timestamp=trial_end,
+                ended_at_timestamp=ended_at,
             )
 
 
