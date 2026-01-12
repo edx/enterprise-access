@@ -3243,3 +3243,140 @@ class TestLearnerCreditRequestViewSet(BaseEnterpriseAccessTestCase):
         else:
             self.assertGreater(first_learner_credit_request_position, second_learner_credit_request_position,
                                "'approved' action type should sort after 'requested' in descending order")
+
+    @mock.patch(BNR_VIEW_PATH + '.send_learner_credit_bnr_request_approve_task')
+    @mock.patch(BNR_VIEW_PATH + '.assignments_api.allocate_assignment_for_requests')
+    def test_bulk_approve_mixed_success(
+        self, mock_allocate_assignment_for_requests, mock_send_approve_task
+    ):
+        """
+        Test bulk_approve with mixed success and failure results.
+        """
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': str(self.enterprise_customer_uuid_1)
+        }])
+
+        request_1 = LearnerCreditRequestFactory(
+            enterprise_customer_uuid=self.enterprise_customer_uuid_1,
+            user=self.user,
+            state=SubsidyRequestStates.REQUESTED,
+        )
+        request_2 = LearnerCreditRequestFactory(
+            enterprise_customer_uuid=self.enterprise_customer_uuid_1,
+            user=self.user,
+            state=SubsidyRequestStates.REQUESTED,
+        )
+
+        # Use a real LearnerContentAssignment instance instead of MagicMock
+        assignment_for_request_1 = LearnerContentAssignmentFactory(
+            assignment_configuration=self.assignment_config,
+            content_quantity=-500,
+            state='allocated',
+        )
+        # Only return assignment for request_1, not request_2
+        mock_allocate_assignment_for_requests.return_value = {
+            request_1.uuid: assignment_for_request_1,
+        }
+
+        response = self.client.post(
+            reverse('api:v1:learner-credit-requests-bulk-approve'),
+            data={
+                'policy_uuid': str(self.policy.uuid),
+                'enterprise_customer_uuid': str(self.enterprise_customer_uuid_1),
+                'subsidy_request_uuids': [str(request_1.uuid), str(request_2.uuid)],
+            },
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        results = response.json()
+        self.assertEqual(len(results['approved']), 1)
+        self.assertEqual(len(results['failed']), 1)
+        self.assertEqual(results['approved'][0]['uuid'], str(request_1.uuid))
+        self.assertEqual(results['failed'][0]['uuid'], str(request_2.uuid))
+        self.assertIn('error', results['failed'][0])
+
+    @mock.patch(BNR_VIEW_PATH + '.send_learner_credit_bnr_request_approve_task')
+    @mock.patch(BNR_VIEW_PATH + '.assignments_api.allocate_assignment_for_requests')
+    def test_bulk_approve_all_success(
+        self, mock_allocate_assignment_for_requests, mock_send_approve_task
+    ):
+        """
+        Test bulk_approve with approve_all=True.
+        """
+        # Change state of setup requests so they don't interfere with approve_all query
+        self.user_request_1.state = SubsidyRequestStates.APPROVED
+        self.user_request_1.save()
+        self.enterprise_request.state = SubsidyRequestStates.APPROVED
+        self.enterprise_request.save()
+
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': str(self.enterprise_customer_uuid_1)
+        }])
+
+        request_1 = LearnerCreditRequestFactory(
+            enterprise_customer_uuid=self.enterprise_customer_uuid_1,
+            user=self.user,
+            state=SubsidyRequestStates.REQUESTED,
+        )
+        request_2 = LearnerCreditRequestFactory(
+            enterprise_customer_uuid=self.enterprise_customer_uuid_1,
+            user=self.user,
+            state=SubsidyRequestStates.REQUESTED,
+        )
+
+        # Use real LearnerContentAssignment instances instead of MagicMock
+        assignment_1 = LearnerContentAssignmentFactory(
+            assignment_configuration=self.assignment_config,
+            content_quantity=-500,
+            state='allocated',
+        )
+        assignment_2 = LearnerContentAssignmentFactory(
+            assignment_configuration=self.assignment_config,
+            content_quantity=-500,
+            state='allocated',
+        )
+        mock_allocate_assignment_for_requests.return_value = {
+            request_1.uuid: assignment_1,
+            request_2.uuid: assignment_2,
+        }
+
+        response = self.client.post(
+            reverse('api:v1:learner-credit-requests-bulk-approve'),
+            data={
+                'policy_uuid': str(self.policy.uuid),
+                'enterprise_customer_uuid': str(self.enterprise_customer_uuid_1),
+                'approve_all': True,
+            },
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        results = response.json()
+        self.assertEqual(len(results['approved']), 2)
+        self.assertEqual(len(results['failed']), 0)
+
+    def test_bulk_approve_learner_permission_denied(self):
+        """
+        Test that a user with SYSTEM_ENTERPRISE_LEARNER_ROLE permission
+        is denied access to the bulk_approve endpoint.
+        """
+        # Set learner role instead of admin
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE,
+            'context': str(self.enterprise_customer_uuid_1)
+        }])
+
+        response = self.client.post(
+            reverse('api:v1:learner-credit-requests-bulk-approve'),
+            data={
+                'policy_uuid': str(self.policy.uuid),
+                'enterprise_customer_uuid': str(self.enterprise_customer_uuid_1),
+                'subsidy_request_uuids': [str(self.user_request_1.uuid)],
+            },
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
