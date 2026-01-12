@@ -17,7 +17,6 @@ from django.utils import timezone
 from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.customer_billing.constants import (
     INVOICE_PAID_PARENT_TYPE_IDENTIFIER,
-    STRIPE_CANCELED_STATUSES,
     CheckoutIntentState,
     StripeSubscriptionStatus
 )
@@ -298,7 +297,7 @@ class TestStripeEventHandler(TestCase):
     )
     def test_invoice_paid_handler(
         self,
-        mock_send_payment_receipt_email,  # pylint: disable=unused-argument
+        mock_send_payment_receipt_email,
         checkout_intent_state=CheckoutIntentState.CREATED,
         intent_id_override=None,
         expected_exception=None,
@@ -425,59 +424,6 @@ class TestStripeEventHandler(TestCase):
     @mock.patch(
         "enterprise_access.apps.customer_billing.stripe_event_handlers.send_trial_cancellation_email_task"
     )
-    @ddt.data(*STRIPE_CANCELED_STATUSES)
-    def test_subscription_updated_sends_cancellation_email_for_canceled_trial(
-            self, subscription_status, mock_email_task
-    ):
-        """Test that subscription_updated sends email when trial is canceled."""
-        trial_end_timestamp = 1234567890
-        subscription_id = "sub_test_canceled_123"
-        subscription_data = {
-            "id": subscription_id,
-            "status": subscription_status,
-            "trial_end": trial_end_timestamp,
-            "metadata": self._create_mock_stripe_subscription(
-                self.checkout_intent.id
-            ),
-        }
-
-        self._create_existing_event_data_records(subscription_id)
-
-        mock_event = self._create_mock_stripe_event(
-            "customer.subscription.updated", subscription_data
-        )
-
-        StripeEventHandler.dispatch(mock_event)
-
-        mock_email_task.delay.assert_called_once_with(
-            checkout_intent_id=self.checkout_intent.id,
-            trial_end_timestamp=trial_end_timestamp,
-        )
-
-    def test_subscription_updated_skips_email_when_no_trial_end(self):
-        """Test that subscription_updated skips email when trial_end is missing."""
-        subscription_data = {
-            "id": "sub_test_no_trial_123",
-            "status": "canceled",
-            "trial_end": None,
-            "metadata": self._create_mock_stripe_subscription(
-                self.checkout_intent.id
-            ),
-        }
-
-        mock_event = self._create_mock_stripe_event(
-            "customer.subscription.updated", subscription_data
-        )
-
-        with mock.patch(
-            "enterprise_access.apps.customer_billing.stripe_event_handlers.send_trial_cancellation_email_task"
-        ) as mock_task:
-            StripeEventHandler.dispatch(mock_event)
-            mock_task.delay.assert_not_called()
-
-    @mock.patch(
-        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_trial_cancellation_email_task"
-    )
     def test_subscription_updated_sends_email_when_cancel_at_set(self, mock_email_task):
         """Test that subscription_updated sends email when cancel_at is newly set."""
         subscription_id = "sub_test_cancel_at_123"
@@ -548,43 +494,6 @@ class TestStripeEventHandler(TestCase):
         StripeEventHandler.dispatch(mock_event)
 
         # Should NOT send email since cancel_at was already set
-        mock_email_task.delay.assert_not_called()
-
-    @mock.patch(
-        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_trial_cancellation_email_task"
-    )
-    def test_subscription_updated_status_change_with_cancel_at_no_duplicate(self, mock_email_task):
-        """Test that status change to canceled doesn't send duplicate email when cancel_at is set."""
-        subscription_id = "sub_test_no_dupe_123"
-        trial_end_timestamp = int((timezone.now() + timedelta(days=14)).timestamp())
-        cancel_at_timestamp = int((timezone.now() + timedelta(hours=1)).timestamp())
-
-        # Create prior event with trialing status and cancel_at already set
-        # (This would have triggered the cancel_at email previously)
-        _, prior_summary = self._create_existing_event_data_records(
-            subscription_id,
-            subscription_status=StripeSubscriptionStatus.TRIALING,
-        )
-        cancel_at_datetime = timezone.now() + timedelta(hours=1)
-        prior_summary.subscription_cancel_at = cancel_at_datetime
-        prior_summary.save()
-
-        # Now subscription status changes to canceled (at end of trial)
-        subscription_data = {
-            "id": subscription_id,
-            "status": "canceled",  # Status changed
-            "trial_end": trial_end_timestamp,
-            "cancel_at": cancel_at_timestamp,  # Still set
-            "metadata": self._create_mock_stripe_subscription(self.checkout_intent.id),
-        }
-
-        mock_event = self._create_mock_stripe_event(
-            "customer.subscription.updated", subscription_data
-        )
-
-        StripeEventHandler.dispatch(mock_event)
-
-        # Should NOT send email because cancel_at is set (indicates we already sent it)
         mock_email_task.delay.assert_not_called()
 
     @mock.patch(
@@ -709,12 +618,12 @@ class TestStripeEventHandler(TestCase):
         "enterprise_access.apps.customer_billing.stripe_event_handlers.cancel_all_future_plans"
     )
     @mock.patch(
-        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_trial_cancellation_email_task"
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_finalized_cancelation_email_task"
     )
     def test_subscription_deleted_cancels_future_plans(
         self, mock_send_cancelation_email, mock_cancel,
     ):
-        """Subscription deleted event triggers cancel_all_future_plans with expected args."""
+        """Subscription deleted event triggers cancel_all_future_plans and sends finalized cancellation email."""
         subscription_id = "sub_test_past_due_123"
         subscription_data = {
             "id": subscription_id,
@@ -725,7 +634,7 @@ class TestStripeEventHandler(TestCase):
 
         self._create_existing_event_data_records(
             subscription_id,
-            subscription_status=StripeSubscriptionStatus.TRIALING,
+            subscription_status=StripeSubscriptionStatus.ACTIVE,
         )
 
         # Ensure enterprise_uuid is present so handler proceeds with cancellation
@@ -741,13 +650,54 @@ class TestStripeEventHandler(TestCase):
         mock_cancel.assert_called_once_with(self.checkout_intent)
         mock_send_cancelation_email.delay.assert_called_once_with(
             checkout_intent_id=self.checkout_intent.id,
-            trial_end_timestamp=mock.ANY,
+            ended_at_timestamp=mock.ANY,
         )
-        trial_end_value = mock_send_cancelation_email.delay.call_args_list[0].kwargs['trial_end_timestamp']
+        trial_end_value = mock_send_cancelation_email.delay.call_args_list[0].kwargs['ended_at_timestamp']
         # Test that we use a default trial end of now if no value can be found in the event.
         # The different between these two integer timestamps should be small,
         # certainly less than one second.
         self.assertLess(timezone.now().timestamp() - trial_end_value, 1)
+
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.cancel_all_future_plans"
+    )
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_finalized_cancelation_email_task"
+    )
+    def test_subscription_deleted_sends_email_for_active_subscription(
+        self, mock_send_cancelation_email, mock_cancel,
+    ):
+        """Subscription deleted event sends finalized cancellation email for ACTIVE subscriptions too."""
+        subscription_id = "sub_test_active_deleted_123"
+        subscription_data = {
+            "id": subscription_id,
+            "status": "canceled",
+            "trial_end": 987654321,
+            "ended_at": 1234567890,
+            "metadata": self._create_mock_stripe_subscription(self.checkout_intent.id),
+        }
+
+        # Create prior event with ACTIVE status (not TRIALING)
+        self._create_existing_event_data_records(
+            subscription_id,
+            subscription_status=StripeSubscriptionStatus.ACTIVE,
+        )
+
+        # Ensure enterprise_uuid is present so handler proceeds with cancellation
+        self.checkout_intent.enterprise_uuid = uuid.uuid4()
+        self.checkout_intent.save(update_fields=["enterprise_uuid"])
+
+        mock_event = self._create_mock_stripe_event(
+            "customer.subscription.deleted", subscription_data
+        )
+
+        StripeEventHandler.dispatch(mock_event)
+
+        mock_cancel.assert_called_once_with(self.checkout_intent)
+        mock_send_cancelation_email.delay.assert_called_once_with(
+            checkout_intent_id=self.checkout_intent.id,
+            ended_at_timestamp=1234567890,
+        )
 
     @mock.patch(
         "enterprise_access.apps.customer_billing.stripe_event_handlers.send_trial_ending_reminder_email_task"
