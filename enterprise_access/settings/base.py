@@ -16,7 +16,6 @@ from enterprise_access.apps.core.constants import (
     PROVISIONING_ADMIN_ROLE,
     REQUESTS_ADMIN_ROLE,
     REQUESTS_LEARNER_ROLE,
-    STRIPE_EVENT_SUMMARY_ADMIN_ROLE,
     SUBSIDY_ACCESS_POLICY_LEARNER_ROLE,
     SUBSIDY_ACCESS_POLICY_OPERATOR_ROLE,
     SYSTEM_ENTERPRISE_ADMIN_ROLE,
@@ -355,7 +354,6 @@ SYSTEM_TO_FEATURE_ROLE_MAPPING = {
         BFF_ADMIN_ROLE,
         CUSTOMER_BILLING_ADMIN_ROLE,
         ADMIN_LEARNER_PROFILE_ADMIN_ROLE,
-        STRIPE_EVENT_SUMMARY_ADMIN_ROLE,
     ],
     SYSTEM_ENTERPRISE_LEARNER_ROLE: [
         SUBSIDY_ACCESS_POLICY_LEARNER_ROLE,
@@ -365,7 +363,6 @@ SYSTEM_TO_FEATURE_ROLE_MAPPING = {
     ],
     SYSTEM_ENTERPRISE_PROVISIONING_ADMIN_ROLE: [
         PROVISIONING_ADMIN_ROLE,
-        CUSTOMER_BILLING_OPERATOR_ROLE,
     ],
 }
 
@@ -506,12 +503,6 @@ BRAZE_LEARNER_CREDIT_BNR_REMIND_NOTIFICATION_CAMPAIGN = ''
 BRAZE_LEARNER_CREDIT_BNR_DECLINE_NOTIFICATION_CAMPAIGN = ''
 BRAZE_LEARNER_CREDIT_BNR_CANCEL_NOTIFICATION_CAMPAIGN = ''
 BRAZE_LEARNER_CREDIT_BNR_NEW_REQUESTS_NOTIFICATION_CAMPAIGN = ''
-BRAZE_LEARNER_CREDIT_BNR_AUTOMATIC_EXPIRATION_NOTIFICATION_CAMPAIGN = ''
-
-# Braze campaigns for enterprise provisioning (apps.provisioning)
-BRAZE_ENTERPRISE_PROVISION_SIGNUP_CONFIRMATION_CAMPAIGN = ''
-BRAZE_ENTERPRISE_PROVISION_PAYMENT_RECEIPT_CAMPAIGN = ''
-BRAZE_ENTERPRISE_PROVISION_TRIAL_END_SUBSCRIPTION_STARTED_CAMPAIGN = ''
 
 # Braze campaigns for browse and request (apps.subsidy_request)
 BRAZE_NEW_REQUESTS_NOTIFICATION_CAMPAIGN = ''
@@ -530,11 +521,6 @@ BRAZE_ASSIGNMENT_REMINDER_POST_LOGISTRATION_NOTIFICATION_CAMPAIGN = ''
 BRAZE_ASSIGNMENT_NUDGE_EXEC_ED_ACCEPTED_ASSIGNMENT_CAMPAIGN = ''
 BRAZE_ASSIGNMENT_CANCELLED_NOTIFICATION_CAMPAIGN = ''
 BRAZE_ASSIGNMENT_AUTOMATIC_CANCELLATION_NOTIFICATION_CAMPAIGN = ''
-
-# Braze campaigns for customer billing (apps.customer_billing)
-BRAZE_TRIAL_CANCELLATION_CAMPAIGN = ''
-BRAZE_ENTERPRISE_PROVISION_TRIAL_ENDING_SOON_CAMPAIGN = ''
-BRAZE_BILLING_ERROR_CAMPAIGN = ''
 
 # Braze configuration
 BRAZE_API_URL = ''
@@ -573,7 +559,7 @@ BRAZE_GROUPS_EMAIL_AUTO_REMINDER_DAY_50_CAMPAIGN = ''
 BRAZE_GROUPS_EMAIL_AUTO_REMINDER_DAY_65_CAMPAIGN = ''
 BRAZE_GROUPS_EMAIL_AUTO_REMINDER_DAY_85_CAMPAIGN = ''
 
-# The "Deposit Funds" button (custom django object action) triggers an API call which needs to pass a sales contract
+# The "Desposit Funds" button (custom django object action) triggers an API call which needs to pass a sales contract
 # reference provider slug matching one SalesContractReferenceProvider in the enterprise-subsidy database. Since these
 # slugs are operator-defined at runtime, this codebase cannot hard-code the value. However, the least we can do is
 # inherit the same default:
@@ -592,12 +578,9 @@ PROVISIONING_DEFAULTS = {
         'all_product_choices': [
             (1, 'Standard Paid'),
             (2, 'Trial'),
-            (3, 'Self-service Paid'),
-            (4, 'Self-service Trial'),
         ],
         'trial_product_choices': [
-            (2, 'Trial'),
-            (4, 'Self-service Trial'),
+            (1, 'Standard Paid'),
         ],
         'trial_catalog_query_choices': [
             (2, 'All open courses'),
@@ -621,8 +604,6 @@ PRODUCT_ID_TO_CATALOG_QUERY_ID_MAPPING = {
     '2': 2,
     # Add more mappings as needed
 }
-PROVISIONING_PAID_SUBSCRIPTION_PRODUCT_ID = 1
-PROVISIONING_TRIAL_SUBSCRIPTION_PRODUCT_ID = 2
 
 CRISPY_ALLOWED_TEMPLATE_PACKS = "bootstrap5"
 CRISPY_TEMPLATE_PACK = "bootstrap5"
@@ -631,10 +612,6 @@ CRISPY_TEMPLATE_PACK = "bootstrap5"
 
 # Stripe API key used for privileged read/write operations from a system user.
 STRIPE_API_KEY = None
-
-# Stripe webhook endpoint secret used to verify webhook request signatures.
-# This should be obtained from the Stripe dashboard when configuring the webhook endpoint.
-STRIPE_WEBHOOK_ENDPOINT_SECRET = None
 
 # Duration of trial period.
 SSP_TRIAL_PERIOD_DAYS = 14
@@ -663,22 +640,4 @@ DEFAULT_STRIPE_CACHE_TIMEOUT = 60
 # How long we consider Stripe prices valid for
 STRIPE_PRICE_DATA_CACHE_TIMEOUT = 300
 
-ENABLE_STRIPE_EVENT_SUMMARIES = False
-
-# Allows us to do per-environment exception raising vs. returning in our event handlers
-STRIPE_GRACEFUL_EXCEPTION_MODE = False
-
 ################# End Self-Service Purchasing (SSP) settings #################
-
-
-################### Embargo Settings ###################
-
-# List of 2-letter ISO country codes that are embargoed
-# Can be overridden via EMBARGOED_COUNTRY_CODES environment variable
-# Expected format: comma-separated string like "RU,IR,KP,SY,CU,BY"
-EMBARGOED_COUNTRY_CODES = os.environ.get(
-    'EMBARGOED_COUNTRY_CODES',
-    'RU,IR,KP,SY,CU,BY'
-).split(',')
-
-################# End Embargo Settings #################

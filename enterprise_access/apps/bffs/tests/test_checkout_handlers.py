@@ -2,7 +2,6 @@
 Tests for Checkout BFF handlers.
 """
 import random
-import re
 from datetime import datetime
 from decimal import Decimal
 from unittest import mock
@@ -211,56 +210,6 @@ class TestCheckoutContextHandler(APITest):
         self.assertIn('enterprise_slug', constraints)
         self.assertIn('pattern', constraints['enterprise_slug'])
         self.assertTrue(constraints['enterprise_slug']['pattern'].startswith('^'))
-
-    def test_get_field_constraints_includes_embargoed_countries(self):
-        """
-        Test that _get_field_constraints includes embargoed countries list.
-        """
-        context = self._create_context()
-        handler = CheckoutContextHandler(context)
-
-        constraints = handler._get_field_constraints()
-
-        self.assertIn('embargoed_countries', constraints)
-        self.assertIsInstance(constraints['embargoed_countries'], list)
-        self.assertEqual(constraints['embargoed_countries'], ['RU', 'IR', 'KP', 'SY', 'CU', 'BY'])
-
-    @ddt.data(
-        {
-            'constraint_name': 'enterprise_slug',
-            'should_match': ['valid-slug', '123', '0kay-slug'],
-            'should_not_match': ['Capitalization-fail', 'b&d-symbol', '/-and-burn']
-        },
-        {
-            'constraint_name': 'admin_email',
-            'should_match': ['a@b.com', 'First.Last@name.org'],
-            'should_not_match': ['notanemail', 'too@many@ats.com', 'forbidden spaces@bad.com']
-        },
-        {
-            'constraint_name': 'country',
-            'should_match': ['US', 'CN'],
-            'should_not_match': ['us', 'CANADA']
-        },
-    )
-    @ddt.unpack
-    def test_get_field_constraints_regexes(self, constraint_name, should_match, should_not_match):
-        """
-        Test that _get_field_constraints includes embargoed countries list.
-        """
-        context = self._create_context()
-        handler = CheckoutContextHandler(context)
-
-        constraints = handler._get_field_constraints()
-
-        self.assertIn(constraint_name, constraints)
-        constraint_definition = constraints[constraint_name]
-        self.assertIn('pattern', constraint_definition)
-        pattern = constraint_definition['pattern']
-
-        for str in should_match:
-            self.assertTrue(re.match(pattern, str))
-        for str in should_not_match:
-            self.assertFalse(re.match(pattern, str))
 
     @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_ssp_product_pricing')
     def test_handler_adds_error_on_pricing_failure(self, mock_get_pricing):
@@ -643,7 +592,6 @@ class TestCheckoutSuccessHandler(APITest):
             'id': 'pm_test_123',
             'card': {
                 'last4': '4242',
-                'brand': 'visa',
             },
             'billing_details': {
                 'address': {
@@ -729,7 +677,7 @@ class TestCheckoutSuccessHandler(APITest):
     def test_enhance_with_stripe_data_session_error(self, mock_session, mock_get_checkout_intent):
         """Test when there's an error retrieving the Stripe session."""
         mock_get_checkout_intent.return_value = self.checkout_intent_data
-        mock_session.side_effect = stripe.StripeError("API Error")
+        mock_session.side_effect = stripe.error.StripeError("API Error")
 
         self.handler.load_and_process()
 
@@ -744,7 +692,7 @@ class TestCheckoutSuccessHandler(APITest):
         """Test when there's an error retrieving the payment intent."""
         mock_get_checkout_intent.return_value = self.checkout_intent_data
         mock_session.return_value = self.stripe_session
-        mock_payment_intent.side_effect = stripe.StripeError("API Error")
+        mock_payment_intent.side_effect = stripe.error.StripeError("API Error")
 
         self.handler.load_and_process()
 
@@ -763,7 +711,7 @@ class TestCheckoutSuccessHandler(APITest):
         mock_get_checkout_intent.return_value = self.checkout_intent_data
         mock_session.return_value = self.stripe_session
         mock_payment_intent.return_value = self.stripe_payment_intent
-        mock_payment_method.side_effect = stripe.StripeError("API Error")
+        mock_payment_method.side_effect = stripe.error.StripeError("API Error")
 
         self.handler.load_and_process()
 
@@ -785,7 +733,7 @@ class TestCheckoutSuccessHandler(APITest):
         mock_session.return_value = {**self.stripe_session, 'invoice': None}  # Force subscription path
         mock_payment_intent.return_value = self.stripe_payment_intent
         mock_payment_method.return_value = self.stripe_payment_method
-        mock_subscription.side_effect = stripe.StripeError("API Error")
+        mock_subscription.side_effect = stripe.error.StripeError("API Error")
 
         self.handler.load_and_process()
 
@@ -809,7 +757,7 @@ class TestCheckoutSuccessHandler(APITest):
         mock_payment_intent.return_value = self.stripe_payment_intent
         mock_payment_method.return_value = self.stripe_payment_method
         mock_subscription.return_value = self.stripe_subscription
-        mock_invoice.side_effect = stripe.StripeError("API Error")
+        mock_invoice.side_effect = stripe.error.StripeError("API Error")
 
         self.handler.load_and_process()
 
@@ -842,7 +790,6 @@ class TestCheckoutSuccessHandler(APITest):
         # Assert all data is populated correctly
         first_billable_invoice = self.context.checkout_intent['first_billable_invoice']
         self.assertEqual(first_billable_invoice['last4'], '4242')
-        self.assertEqual(first_billable_invoice['card_brand'], 'visa')
         self.assertEqual(first_billable_invoice['quantity'], 35)
         self.assertEqual(first_billable_invoice['unit_amount_decimal'], 396.00)
         self.assertEqual(first_billable_invoice['customer_name'], 'Test Customer')
@@ -864,52 +811,16 @@ class TestCheckoutSuccessHandler(APITest):
 
     @mock.patch('enterprise_access.apps.bffs.checkout.handlers.CheckoutSuccessHandler._get_checkout_intent')
     @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_stripe_checkout_session')
-    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_stripe_subscription')
-    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_stripe_payment_method')
-    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_stripe_invoice')
-    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_stripe_customer')
-    def test_trial_subscription_gets_payment_method_from_subscription(
-        self, mock_customer, mock_invoice, mock_payment_method, mock_subscription, mock_session,
-        mock_get_checkout_intent,
-    ):
-        """Test trial subscription case where payment method comes from subscription.default_payment_method."""
-        mock_get_checkout_intent.return_value = self.checkout_intent_data
-        # Trial subscription: no payment_intent on session
-        session_no_payment = {**self.stripe_session}
-        session_no_payment.pop('payment_intent')
-        mock_session.return_value = session_no_payment
-
-        # Subscription has default_payment_method (set during checkout)
-        subscription_with_payment_method = {**self.stripe_subscription, 'default_payment_method': 'pm_test_123'}
-        mock_subscription.return_value = subscription_with_payment_method
-        mock_payment_method.return_value = self.stripe_payment_method
-        mock_invoice.return_value = self.stripe_invoice
-        mock_customer.return_value = self.stripe_customer
-
-        self.handler.load_and_process()
-
-        # Assert payment method data is populated from subscription
-        first_billable_invoice = self.context.checkout_intent['first_billable_invoice']
-        self.assertEqual(first_billable_invoice['last4'], '4242')
-        self.assertEqual(first_billable_invoice['card_brand'], 'visa')
-        self.assertIsNotNone(first_billable_invoice['billing_address'])
-        self.assertEqual(first_billable_invoice['quantity'], 35)
-
-    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.CheckoutSuccessHandler._get_checkout_intent')
-    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_stripe_checkout_session')
-    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_stripe_subscription')
-    def test_no_payment_intent_in_session(self, mock_subscription, mock_session, mock_get_checkout_intent):
-        """Test when session has no payment intent but has subscription (trial subscription case)."""
+    def test_no_payment_intent_in_session(self, mock_session, mock_get_checkout_intent):
+        """Test when session has no payment intent."""
         mock_get_checkout_intent.return_value = self.checkout_intent_data
         session_no_payment = {**self.stripe_session}
         session_no_payment.pop('payment_intent')
         mock_session.return_value = session_no_payment
-        # Mock subscription with no default_payment_method (edge case)
-        mock_subscription.return_value = {**self.stripe_subscription, 'default_payment_method': None}
 
         self.handler.load_and_process()
 
-        # Assert first_billable_invoice is initialized but empty since no payment method found
+        # Assert first_billable_invoice is initialized but empty
         self.assertIn('first_billable_invoice', self.context.checkout_intent)
         self.assertIsNone(self.context.checkout_intent['first_billable_invoice']['last4'])
 

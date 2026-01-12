@@ -22,7 +22,6 @@ from enterprise_access.apps.bffs.checkout.serializers import (
     EnterpriseCustomerSerializer,
     PriceSerializer
 )
-from enterprise_access.apps.bffs.tests.utils import default_field_constraints
 from enterprise_access.apps.core.constants import SYSTEM_ENTERPRISE_LEARNER_ROLE
 from enterprise_access.apps.customer_billing.constants import CheckoutIntentState
 from enterprise_access.apps.customer_billing.models import CheckoutIntent
@@ -41,19 +40,15 @@ class CheckoutBFFViewSetTests(APITest):
         # Create a mock checkout intent we can use in tests
         self.mock_checkout_intent_data = {
             'id': 123,
-            'uuid': '3d79ef51-7e91-476d-85f9-5cd97fb210e5',
             'state': 'created',
             'enterprise_name': 'Test Enterprise',
             'enterprise_slug': 'test-enterprise',
-            'enterprise_uuid': None,
             'stripe_checkout_session_id': 'cs_test_123abc',
-            'stripe_customer_id': None,
             'last_checkout_error': '',
             'last_provisioning_error': '',
             'workflow_id': None,
             'expires_at': '2025-08-02T13:52:11Z',
-            'country': 'US',
-            'terms_metadata': {},
+            'admin_portal_url': 'https://portal.edx.org/test-enterprise'
         }
 
     def test_context_endpoint_unauthenticated_access(self):
@@ -79,7 +74,9 @@ class CheckoutBFFViewSetTests(APITest):
         Test that authenticated users can access the context endpoint.
         """
         # Set up a mock checkout intent for the authenticated user
-        mock_intent = CheckoutIntent(**self.mock_checkout_intent_data)
+        mock_intent = mock.MagicMock()
+        for key, value in self.mock_checkout_intent_data.items():
+            setattr(mock_intent, key, value)
         mock_filter.return_value.first.return_value = mock_intent
 
         self.set_jwt_cookie([{
@@ -111,7 +108,14 @@ class CheckoutBFFViewSetTests(APITest):
                 'default_by_lookup_key': 'b2b_enterprise_self_service_yearly',
                 'prices': []
             },
-            'field_constraints': default_field_constraints
+            'field_constraints': {
+                'quantity': {'min': 5, 'max': 30},
+                'enterprise_slug': {
+                    'min_length': 3,
+                    'max_length': 30,
+                    'pattern': '^[a-z0-9-]+$'
+                }
+            }
         }
 
         # Validate using our serializer
@@ -129,7 +133,14 @@ class CheckoutBFFViewSetTests(APITest):
                 'default_by_lookup_key': 'b2b_enterprise_self_service_yearly',
                 'prices': []
             },
-            'field_constraints': default_field_constraints,
+            'field_constraints': {
+                'quantity': {'min': 5, 'max': 30},
+                'enterprise_slug': {
+                    'min_length': 3,
+                    'max_length': 30,
+                    'pattern': '^[a-z0-9-]+$'
+                }
+            },
             'checkout_intent': self.mock_checkout_intent_data
         }
 
@@ -147,7 +158,14 @@ class CheckoutBFFViewSetTests(APITest):
                 'default_by_lookup_key': 'b2b_enterprise_self_service_yearly',
                 'prices': []
             },
-            'field_constraints': default_field_constraints,
+            'field_constraints': {
+                'quantity': {'min': 5, 'max': 30},
+                'enterprise_slug': {
+                    'min_length': 3,
+                    'max_length': 30,
+                    'pattern': '^[a-z0-9-]+$'
+                }
+            },
             'checkout_intent': None
         }
 
@@ -160,7 +178,6 @@ class CheckoutBFFViewSetTests(APITest):
         """
         sample_data = {
             'id': 123,
-            'uuid': '3d79ef51-7e91-476d-85f9-5cd97fb210e5',
             'state': 'paid',
             'enterprise_name': 'Test Enterprise',
             'enterprise_slug': 'test-enterprise',
@@ -485,7 +502,7 @@ class CheckoutBFFSuccessViewSetTests(APITest):
             'first_billable_invoice': {
                 'start_time': datetime.now(tz=UTC).isoformat(),
                 'end_time': datetime.now(tz=UTC).isoformat(),
-                'last4': '4242',
+                'last4': 4242,
                 'quantity': 35,
                 'unit_amount_decimal': 396.00,
                 'customer_phone': '+15551234567',

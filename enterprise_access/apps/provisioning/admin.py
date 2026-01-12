@@ -167,7 +167,6 @@ class ProvisionWorkflowStepAdminBase(admin.ModelAdmin):
         'modified',
         'workflow_record_link',
     )
-    actions = ['process_input']
 
     @admin.display(
         description='Workflow Record'
@@ -183,14 +182,6 @@ class ProvisionWorkflowStepAdminBase(admin.ModelAdmin):
             reverse("admin:provisioning_provisionnewcustomerworkflow_change", args=(workflow_record.pk,)),
             workflow_record.pk,
         ))
-
-    @admin.action(description='Re-process the input for this step')
-    def process_input(self, request, queryset):
-        """Re-process the input for this step"""
-        for obj in queryset:
-            workflow = obj.get_workflow_record()
-            if workflow:
-                obj.process_input(accumulated_output=workflow.output_object)
 
 
 @admin.register(models.GetCreateCustomerStep)
@@ -272,10 +263,10 @@ class GetCreateCustomerAgreementStepAdmin(DjangoQLSearchMixin, ProvisionWorkflow
         ))
 
 
-@admin.register(models.GetCreateTrialSubscriptionPlanStep)
-class GetCreateTrialSubscriptionPlanStepAdmin(DjangoQLSearchMixin, ProvisionWorkflowStepAdminBase):
+@admin.register(models.GetCreateSubscriptionPlanStep)
+class GetCreateSubscriptionPlanStepAdmin(DjangoQLSearchMixin, ProvisionWorkflowStepAdminBase):
     """
-    Admin model for the trial subscription plan creation step.
+    Admin model for the subscription plan creation step.
     """
     fields = ProvisionWorkflowStepAdminBase.fields + ('preceding_step_link',)
     readonly_fields = ProvisionWorkflowStepAdminBase.readonly_fields + ('preceding_step_link',)
@@ -294,20 +285,6 @@ class GetCreateTrialSubscriptionPlanStepAdmin(DjangoQLSearchMixin, ProvisionWork
             reverse("admin:provisioning_getcreatecustomeragreementstep_change", args=(step_record.pk,)),
             step_record.pk,
         ))
-
-
-@admin.register(models.GetCreateSubscriptionPlanRenewalStep)
-class GetCreateSubscriptionPlanRenewalStepAdmin(DjangoQLSearchMixin, ProvisionWorkflowStepAdminBase):
-    """
-    Admin model for the subscription plan renewal creation step.
-    """
-
-
-@admin.register(models.NotificationStep)
-class NotificationStepAdmin(DjangoQLSearchMixin, ProvisionWorkflowStepAdminBase):
-    """
-    Admin model for the notification step.
-    """
 
 
 @admin.register(models.TriggerProvisionSubscriptionTrialCustomerWorkflow)
@@ -387,7 +364,6 @@ class AdminTriggerProvisioningSubscriptionTrialWorkflowAdmin(admin.ModelAdmin):
                 catalog_step_input,
                 agreement_step_input,
                 plan_step_input,
-                {},  # TODO: pass a real first paid dict argument
             )
             workflow_instance = models.ProvisionNewCustomerWorkflow.objects.create(
                 input_data=workflow_input_dict,

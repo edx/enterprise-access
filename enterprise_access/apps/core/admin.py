@@ -20,8 +20,3 @@ class CustomUserAdmin(DjangoQLSearchMixin, UserAdmin):
         (_('Important dates'), {'fields': ('last_login', 'date_joined')}),
     )
     readonly_fields = ('lms_user_id',)
-
-    search_fields = [
-        'email',
-        'username',
-    ]

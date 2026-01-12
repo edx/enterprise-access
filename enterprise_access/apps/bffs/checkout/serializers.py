@@ -1,8 +1,6 @@
 """
 Serializers for the checkout bff.
 """
-from django_countries.serializer_fields import CountryField
-from django_countries.serializers import CountryFieldMixin
 from rest_framework import serializers
 
 from enterprise_access.apps.bffs.serializers import MinimalBffResponseSerializer
@@ -60,13 +58,13 @@ class QuantityConstraintSerializer(serializers.Serializer):
     max = serializers.IntegerField(help_text="Maximum allowed quantity")
 
 
-class StringConstraintSerializer(serializers.Serializer):
+class SlugConstraintSerializer(serializers.Serializer):
     """
-    Serializer for enterprise string constraints.
+    Serializer for enterprise slug constraints.
     """
-    min_length = serializers.IntegerField(help_text="Minimum string length")
-    max_length = serializers.IntegerField(help_text="Maximum string length")
-    pattern = serializers.CharField(required=False, help_text="Regex pattern for valid ")
+    min_length = serializers.IntegerField(help_text="Minimum slug length")
+    max_length = serializers.IntegerField(help_text="Maximum slug length")
+    pattern = serializers.CharField(help_text="Regex pattern for valid slugs")
 
 
 class FieldConstraintsSerializer(serializers.Serializer):
@@ -77,19 +75,10 @@ class FieldConstraintsSerializer(serializers.Serializer):
     https://github.com/edx/frontend-app-enterprise-checkout/blob/main/src/constants.ts#L13-L39
     """
     quantity = QuantityConstraintSerializer(help_text="Constraints for license quantity")
-    enterprise_slug = StringConstraintSerializer(help_text="Constraints for enterprise slug")
-    full_name = StringConstraintSerializer(help_text="Constraints for enterprise user full name")
-    admin_email = StringConstraintSerializer(help_text="Constraints for admin email address")
-    country = StringConstraintSerializer(help_text="Constraints for enterprise country")
-    company_name = StringConstraintSerializer(help_text="Constraints for enterprise company name")
-    embargoed_countries = serializers.ListField(
-        child=serializers.CharField(max_length=2),
-        help_text="Embargoed country codes",
-        required=False,
-    )
+    enterprise_slug = SlugConstraintSerializer(help_text="Constraints for enterprise slug")
 
 
-class CheckoutIntentModelSerializer(CountryFieldMixin, serializers.ModelSerializer):
+class CheckoutIntentModelSerializer(serializers.ModelSerializer):
     """
     Model serializer to help convert CheckoutIntent objects to dicts
     in the course of response building and other internal data transformations.
@@ -108,9 +97,6 @@ class CheckoutIntentMinimalResponseSerializer(serializers.Serializer):
     id = serializers.IntegerField(
         help_text='CheckoutIntent id',
     )
-    uuid = serializers.UUIDField(
-        help_text='CheckoutIntent uuid',
-    )
     state = serializers.ChoiceField(
         help_text='The current state of this record',
         choices=CheckoutIntentState,
@@ -121,21 +107,8 @@ class CheckoutIntentMinimalResponseSerializer(serializers.Serializer):
     enterprise_slug = serializers.CharField(
         help_text='The enterprise slug associated with this record', required=False,
     )
-    enterprise_uuid = serializers.UUIDField(
-        help_text='The enterprise UUID associated with this record',
-        required=False,
-        allow_null=True,
-    )
-    quantity = serializers.IntegerField(
-        help_text='The amount of licences created with this checkout intent', required=False,
-    )
     stripe_checkout_session_id = serializers.CharField(
         help_text='The stripe checkout session id for this intent',
-        required=False,
-        allow_null=True,
-    )
-    stripe_customer_id = serializers.CharField(
-        help_text='The stripe checkout id for this intent',
         required=False,
         allow_null=True,
     )
@@ -143,13 +116,11 @@ class CheckoutIntentMinimalResponseSerializer(serializers.Serializer):
         help_text='The last checkout error related to this intent',
         required=False,
         allow_blank=True,
-        allow_null=True,
     )
     last_provisioning_error = serializers.CharField(
         help_text='The last provisioning error related to this intent',
         required=False,
         allow_blank=True,
-        allow_null=True,
     )
     workflow_id = serializers.CharField(
         help_text='The workflow id related to this intent',
@@ -161,16 +132,6 @@ class CheckoutIntentMinimalResponseSerializer(serializers.Serializer):
     )
     admin_portal_url = serializers.CharField(
         help_text='The admin portal URL related to this intent',
-        required=False,
-        allow_null=True,
-    )
-    country = CountryField(
-        help_text='The customer country code',
-        required=False,
-        allow_null=True,
-    )
-    terms_metadata = serializers.JSONField(
-        help_text='Metadata relating to the terms and conditions accepted by the user',
         required=False,
         allow_null=True,
     )
@@ -255,7 +216,6 @@ class FirstBillableInvoiceSerializer(serializers.Serializer):
     start_time = serializers.DateTimeField(allow_null=True)
     end_time = serializers.DateTimeField(allow_null=True)
     last4 = serializers.IntegerField(allow_null=True)
-    card_brand = serializers.CharField(allow_null=True, allow_blank=True)
     quantity = serializers.IntegerField(allow_null=True)
     unit_amount_decimal = serializers.DecimalField(max_digits=10, decimal_places=2, allow_null=True)
     customer_phone = serializers.CharField(allow_null=True, allow_blank=True)

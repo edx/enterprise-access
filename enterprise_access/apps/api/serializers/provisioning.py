@@ -59,7 +59,7 @@ class EnterpriseCatalogRequestSerializer(BaseSerializer):
     )
     catalog_query_id = serializers.ChoiceField(
         choices=settings.PROVISIONING_DEFAULTS['catalog']['all_catalog_query_choices'],
-        default=settings.PROVISIONING_DEFAULTS['subscription']['trial_catalog_query_choices'][0][0],
+        default=settings.PROVISIONING_DEFAULTS['subscription']['trial_catalog_query_choices'],
         help_text='The id of the related Catalog Query.',
     )
 
@@ -83,25 +83,20 @@ class SubscriptionPlanRequestSerializer(BaseSerializer):
         help_text='The title of the subscription plan.',
     )
     salesforce_opportunity_line_item = serializers.CharField(
-        required=True, allow_null=True,
         help_text='The Salesforce Opportunity Line Item id associated with this subscription plan.',
     )
     start_date = serializers.DateTimeField(
-        required=False, allow_null=False,
         help_text='The date and time at which the subscription plan becomes usable.',
     )
     expiration_date = serializers.DateTimeField(
-        help_text='The date and time at which the subscription plan becomes unusable.',
-        required=False, allow_null=False,
+        help_text='The date and time at which the subscription plan becomes unusable.'
     )
     product_id = serializers.ChoiceField(
         choices=settings.PROVISIONING_DEFAULTS['subscription']['all_product_choices'],
-        required=False, allow_null=False,
         help_text='The internal edX Enterprise Subscription Product record.',
     )
     desired_num_licenses = serializers.IntegerField(
-        required=False, allow_null=False,
-        help_text='The number of licenses to create for this plan.',
+        help_text='The number of licenses to create for this plan.'
     )
     enterprise_catalog_uuid = serializers.UUIDField(
         required=False, allow_null=True, default=None,
@@ -130,8 +125,7 @@ class ProvisioningRequestSerializer(BaseSerializer):
         required=False,
         allow_null=True,
     )
-    trial_subscription_plan = SubscriptionPlanRequestSerializer()
-    first_paid_subscription_plan = SubscriptionPlanRequestSerializer()
+    subscription_plan = SubscriptionPlanRequestSerializer()
 
 
 ## All the RESPONSE serializers go under here ##
@@ -194,7 +188,6 @@ class SubscriptionPlanResponseSerializer(BaseSerializer):
     is_current = serializers.BooleanField()
     plan_type = serializers.CharField()
     enterprise_catalog_uuid = serializers.UUIDField()
-    product = serializers.IntegerField()
 
 
 class CustomerAgreementResponseSerializer(BaseSerializer):
@@ -207,19 +200,6 @@ class CustomerAgreementResponseSerializer(BaseSerializer):
     subscriptions = SubscriptionPlanResponseSerializer(many=True)
 
 
-class SubscriptionPlanRenewalResponseSerializer(BaseSerializer):
-    """
-    Subscription Plan Renewal serializer for provisioning responses.
-    """
-    id = serializers.IntegerField()
-    prior_subscription_plan = serializers.UUIDField()
-    renewed_subscription_plan = serializers.UUIDField()
-    number_of_licenses = serializers.IntegerField()
-    effective_date = serializers.DateTimeField()
-    renewed_expiration_date = serializers.DateTimeField()
-    salesforce_opportunity_line_item = serializers.CharField(required=False)
-
-
 class ProvisioningResponseSerializer(BaseSerializer):
     """
     Response serializer for provisioning create view.
@@ -228,65 +208,4 @@ class ProvisioningResponseSerializer(BaseSerializer):
     customer_admins = AdminObjectResponseSerializer()
     enterprise_catalog = EnterpriseCatalogResponseSerializer()
     customer_agreement = CustomerAgreementResponseSerializer()
-    trial_subscription_plan = SubscriptionPlanResponseSerializer()
-    first_paid_subscription_plan = SubscriptionPlanResponseSerializer()
-    subscription_plan_renewal = SubscriptionPlanRenewalResponseSerializer()
-
-
-class SubscriptionPlanOLIUpdateSerializer(BaseSerializer):
-    """
-    Request serializer for updating a SubscriptionPlan's Salesforce OLI.
-    """
-    checkout_intent_id = serializers.IntegerField(
-        help_text='The integer ID of the CheckoutIntent associated with this subscription.',
-        required=False,
-        allow_null=True,
-    )
-    checkout_intent_uuid = serializers.UUIDField(
-        help_text='The UUID of the CheckoutIntent associated with this subscription.',
-        required=False,
-        allow_null=True,
-    )
-    salesforce_opportunity_line_item = serializers.CharField(
-        help_text='The Salesforce Opportunity Line Item ID to associate with the subscription plan.'
-    )
-    is_trial = serializers.BooleanField(
-        required=False,
-        default=False,
-        help_text='Whether this OLI is for the trial plan (True) or paid plan (False).'
-    )
-
-    def validate(self, attrs):
-        """
-        Validates that exactly one of CheckoutIntent ``id`` and ``uuid`` is provided.
-        """
-        if not (attrs.get('checkout_intent_id') or attrs.get('checkout_intent_uuid')):
-            raise serializers.ValidationError('One of CheckoutIntent id or uuid is required')
-        if attrs.get('checkout_intent_id') and attrs.get('checkout_intent_uuid'):
-            raise serializers.ValidationError('Only one of CheckoutIntent id or uuid can be provided')
-        return attrs
-
-
-class SubscriptionPlanOLIUpdateResponseSerializer(BaseSerializer):
-    """
-    Response serializer for SubscriptionPlan OLI update.
-    """
-    success = serializers.BooleanField(
-        help_text='Whether the update was successful',
-    )
-    subscription_plan_uuid = serializers.UUIDField(
-        help_text='The UUID identifier of the future plan (which receives the updated OLI value)',
-    )
-    salesforce_opportunity_line_item = serializers.CharField(
-        help_text='The Salesforce Opportunity Line Item ID to associate with the subscription plan.'
-    )
-    checkout_intent_uuid = serializers.UUIDField(
-        help_text='The UUID of the CheckoutIntent associated with this subscription.',
-        required=False,
-        allow_null=True,
-    )
-    checkout_intent_id = serializers.IntegerField(
-        help_text='The integer ID of the CheckoutIntent associated with this subscription.',
-        required=False,
-        allow_null=True,
-    )
+    subscription_plan = SubscriptionPlanResponseSerializer()

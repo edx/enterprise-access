@@ -240,8 +240,7 @@ class ForcedPolicyRedemptionAssignmentTests(BaseForcedRedemptionTestCase):
             content_price_cents=self.default_content_price,
         )
 
-        with self.captureOnCommitCallbacks(execute=True):
-            forced_redemption_record.force_redeem()
+        forced_redemption_record.force_redeem()
 
         forced_redemption_record.refresh_from_db()
         self.assertEqual(MOCK_DATETIME_1, forced_redemption_record.redeemed_at)

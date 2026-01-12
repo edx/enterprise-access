@@ -3,22 +3,18 @@ Python API for customer_billing app.
 """
 import logging
 from collections.abc import Mapping
+from functools import cache
 from typing import TypedDict, Unpack, cast
 
 import stripe
 from django.contrib.auth import get_user_model
-from django.contrib.auth.models import AbstractUser
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email, validate_slug
 from requests.exceptions import HTTPError
 
 from enterprise_access.apps.api_client.lms_client import LmsApiClient
 from enterprise_access.apps.customer_billing.constants import CHECKOUT_SESSION_ERROR_CODES
-from enterprise_access.apps.customer_billing.models import (
-    CheckoutIntent,
-    FailedCheckoutIntentConflict,
-    SlugReservationConflict
-)
+from enterprise_access.apps.customer_billing.models import CheckoutIntent
 from enterprise_access.apps.customer_billing.pricing_api import get_ssp_product_pricing
 from enterprise_access.apps.customer_billing.stripe_api import create_subscription_checkout_session
 
@@ -30,7 +26,7 @@ class CheckoutSessionInputValidatorData(TypedDict, total=False):
     """
     `total=False` so that validation does not require all fields to be provided.
     """
-    user: AbstractUser | None
+    user: User | None
     admin_email: str
     full_name: str
     enterprise_slug: str
@@ -42,7 +38,7 @@ class CheckoutSessionInputData(TypedDict, total=True):
     """
     Input parameters for checkout session creation.
     """
-    user: AbstractUser | None
+    user: User | None
     admin_email: str
     enterprise_slug: str
     company_name: str
@@ -55,6 +51,8 @@ class FieldValidationResult(TypedDict):
     developer_message: str | None
 
 
+# Basic in-memory cache to prevent multiple API calls within a single request.
+@cache
 def _get_lms_user_id(email: str | None) -> int | None:
     """
     Return the LMS user ID for an existing user with a specific email, or None if no user with that email exists.
@@ -76,11 +74,6 @@ class CheckoutSessionInputValidator():
     Loosely modeled after RegistrationValidationView:
     https://github.com/openedx/edx-platform/blob/f90e59e5/openedx/core/djangoapps/user_authn/views/register.py#L727
     """
-
-    def get_lms_user_id(self, email):
-        if not hasattr(self, '_cached_lms_user_id'):
-            self._cached_lms_user_id = _get_lms_user_id(email)  # pylint: disable=attribute-defined-outside-init
-        return self._cached_lms_user_id
 
     def handle_admin_email(self, input_data: CheckoutSessionInputValidatorData) -> FieldValidationResult:
         """
@@ -105,7 +98,7 @@ class CheckoutSessionInputValidator():
             return {'error_code': error_code, 'developer_message': developer_message}
 
         # Given email must be registered.
-        lms_user_id = self.get_lms_user_id(email=admin_email)
+        lms_user_id = _get_lms_user_id(email=admin_email)
         if not lms_user_id:
             error_code, developer_message = CHECKOUT_SESSION_ERROR_CODES['admin_email']['NOT_REGISTERED']
             logger.info(f'admin_email invalid: "{admin_email}". {developer_message}')
@@ -278,7 +271,7 @@ class CheckoutSessionInputValidator():
           **and** the lms_user_id is known and present in the User table.
         """
         if not (user_record := input_data.get('user')):
-            lms_user_id = self.get_lms_user_id(input_data.get('admin_email'))
+            lms_user_id = _get_lms_user_id(input_data.get('admin_email'))
             user_record = User.objects.filter(lms_user_id=lms_user_id).first()
             if not user_record:
                 error_code, developer_message = CHECKOUT_SESSION_ERROR_CODES['user']['IS_NULL']
@@ -390,24 +383,6 @@ class CreateCheckoutSessionValidationError(Exception):
         self.validation_errors_by_field = validation_errors_by_field
 
 
-class CreateCheckoutSessionSlugReservationConflict(Exception):
-    def __init__(self):
-        super().__init__()
-        self.non_field_errors = [{
-            'error_code': 'checkout_intent_conflict_slug_reserved',
-            'developer_message': 'enterprise_slug or enterprise_name has already been reserved.',
-        }]
-
-
-class CreateCheckoutSessionFailedConflict(Exception):
-    def __init__(self, non_field_errors=None):  # pylint: disable=unused-argument
-        super().__init__()
-        self.non_field_errors = [{
-            'error_code': 'checkout_intent_conflict_failed',
-            'developer_message': 'A failed checkout intent already exists for user.',
-        }]
-
-
 def create_free_trial_checkout_session(
     **input_data: Unpack[CheckoutSessionInputData],
 ) -> stripe.checkout.Session:
@@ -427,14 +402,19 @@ def create_free_trial_checkout_session(
     try:
         intent = CheckoutIntent.create_intent(
             user=user,
-            quantity=input_data.get('quantity'),
             slug=input_data.get('enterprise_slug'),
             name=input_data.get('company_name'),
+            quantity=input_data.get('quantity'),
         )
-    except SlugReservationConflict as exc:
-        raise CreateCheckoutSessionSlugReservationConflict() from exc
-    except FailedCheckoutIntentConflict as exc:
-        raise CreateCheckoutSessionFailedConflict() from exc
+    except ValidationError as exc:
+        raise CreateCheckoutSessionValidationError(
+            validation_errors_by_field={
+                'enterprise_slug': {
+                    'error_code': 'checkout_intent_conflict',
+                    'developer_message': str(exc)
+                }
+            },
+        ) from exc
 
     lms_user_id = user.lms_user_id
     checkout_session = create_subscription_checkout_session(
@@ -443,50 +423,7 @@ def create_free_trial_checkout_session(
         checkout_intent=intent,
     )
 
-    intent.update_stripe_identifiers(
-        session_id=checkout_session['id'],
-        customer_id=checkout_session.get('customer'),
-    )
+    intent.update_stripe_session_id(checkout_session['id'])
     logger.info(f'Updated checkout intent {intent.id} with Stripe session {checkout_session["id"]}')
 
     return checkout_session
-
-
-def create_stripe_billing_portal_session(
-    checkout_intent: CheckoutIntent, return_url: str
-) -> stripe.billing_portal.Session:
-    """
-    Create a Stripe billing portal session for a given CheckoutIntent.
-
-    Args:
-        checkout_intent: The CheckoutIntent record containing the stripe customer ID
-        return_url: The URL to redirect the user to after they're done in the portal
-
-    Returns:
-        A Stripe billing portal Session object with a 'url' attribute
-
-    Raises:
-        ValueError: If the checkout intent has no stripe_customer_id
-        stripe.StripeError: If the Stripe API call fails
-    """
-    if not checkout_intent.stripe_customer_id:
-        raise ValueError(
-            f"CheckoutIntent {checkout_intent.id} has no stripe_customer_id. "
-            "Cannot create billing portal session."
-        )
-
-    try:
-        portal_session = stripe.billing_portal.Session.create(
-            customer=checkout_intent.stripe_customer_id,
-            return_url=return_url,
-        )
-        logger.info(
-            f"Created Stripe billing portal session {portal_session.id} "
-            f"for CheckoutIntent {checkout_intent.id}, customer {checkout_intent.stripe_customer_id}"
-        )
-        return portal_session
-    except stripe.StripeError as exc:
-        logger.exception(
-            f"StripeError creating billing portal session for CheckoutIntent {checkout_intent.id}: {exc}"
-        )
-        raise

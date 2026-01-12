@@ -41,8 +41,7 @@ class CheckoutContext(BaseHandlerContext):
                 'min_length': 3,
                 'max_length': 30,
                 'pattern': '^[a-z0-9-]+$'
-            },
-            'embargoed_countries': []
+            }
         })
 
     @field_constraints.setter

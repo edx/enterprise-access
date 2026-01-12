@@ -1,18 +1,15 @@
 """
 Django admin configuration for customer billing app.
 """
-import stripe
 from django import forms
 from django.contrib import admin
 from django.core.exceptions import ValidationError
 from django.core.management import call_command
 from django.utils import timezone
 from django.utils.html import format_html
-from djangoql.admin import DjangoQLSearchMixin
 
 from .constants import CheckoutIntentState
-from .models import CheckoutIntent, SelfServiceSubscriptionRenewal, StripeEventData, StripeEventSummary
-from .stripe_event_handlers import StripeEventHandler
+from .models import CheckoutIntent
 
 
 class CheckoutIntentAdminForm(forms.ModelForm):
@@ -52,14 +49,13 @@ class CheckoutIntentAdminForm(forms.ModelForm):
 
 
 @admin.register(CheckoutIntent)
-class CheckoutIntentAdmin(DjangoQLSearchMixin, admin.ModelAdmin):
+class CheckoutIntentAdmin(admin.ModelAdmin):
     """
     Admin interface for managing checkout intents.
     """
     form = CheckoutIntentAdminForm
 
     list_display = (
-        'uuid',
         'enterprise_name',
         'enterprise_slug',
         'user_email',
@@ -78,9 +74,10 @@ class CheckoutIntentAdmin(DjangoQLSearchMixin, admin.ModelAdmin):
     )
 
     search_fields = (
-        'uuid',
         'enterprise_slug',
         'enterprise_name',
+        'user__email',
+        'user__username',
         'stripe_checkout_session_id',
     )
 
@@ -104,7 +101,6 @@ class CheckoutIntentAdmin(DjangoQLSearchMixin, admin.ModelAdmin):
             'fields': (
                 'enterprise_name',
                 'enterprise_slug',
-                'enterprise_uuid',
                 'quantity',
                 'admin_portal_url_display',
                 'country',
@@ -112,7 +108,6 @@ class CheckoutIntentAdmin(DjangoQLSearchMixin, admin.ModelAdmin):
         }),
         ('Status', {
             'fields': (
-                'uuid',
                 'user',
                 'state',
                 'state_display',
@@ -129,7 +124,6 @@ class CheckoutIntentAdmin(DjangoQLSearchMixin, admin.ModelAdmin):
         }),
         ('Integration Details', {
             'fields': (
-                'stripe_customer_id',
                 'stripe_checkout_session_id',
                 'stripe_session_link',
                 'workflow',
@@ -162,8 +156,7 @@ class CheckoutIntentAdmin(DjangoQLSearchMixin, admin.ModelAdmin):
             CheckoutIntentState.CREATED: 'blue',
             CheckoutIntentState.PAID: 'orange',
             CheckoutIntentState.FULFILLED: 'green',
-            CheckoutIntentState.ERRORED_BACKOFFICE: 'red',
-            CheckoutIntentState.ERRORED_FULFILLMENT_STALLED: 'red',
+            CheckoutIntentState.ERRORED_STRIPE_CHECKOUT: 'red',
             CheckoutIntentState.ERRORED_PROVISIONING: 'red',
             CheckoutIntentState.EXPIRED: 'gray',
         }
@@ -262,82 +255,3 @@ class CheckoutIntentAdmin(DjangoQLSearchMixin, admin.ModelAdmin):
             request,
             "Cleanup command executed successfully. Check server logs for details."
         )
-
-
-@admin.register(StripeEventData)
-class StripeEventDataAdmin(DjangoQLSearchMixin, admin.ModelAdmin):
-    """
-    The admin class for StripeEventData.
-    """
-    list_display = [
-        'event_id',
-        'event_type',
-        'created',
-        'modified',
-        'checkout_intent_id',
-    ]
-    list_filter = [
-        'event_type',
-    ]
-    search_fields = [
-        'event_id',
-    ]
-    actions = ['handle_event']
-    select_related = [
-        'checkout_intent',
-        'summary',
-    ]
-    readonly_fields = [
-        'summary',
-    ]
-
-    def checkout_intent_id(self, obj):
-        return obj.checkout_intent.id if obj.checkout_intent else None
-
-    @admin.action(description='Handle the selected events')
-    def handle_event(self, request, queryset):
-        for obj in queryset:
-            event = stripe.Event.construct_from(obj.data, stripe.api_key)
-            StripeEventHandler.dispatch(event)
-
-
-@admin.register(StripeEventSummary)
-class StripeEventSummaryAdmin(DjangoQLSearchMixin, admin.ModelAdmin):
-    """
-    The admin class for StripeEventSummary.
-    """
-    list_display = [
-        'event_id',
-        'event_type',
-        'created',
-        'checkout_intent_id',
-        'subscription_plan_uuid',
-    ]
-    list_filter = [
-        'event_type',
-    ]
-    search_fields = [
-        'event_id',
-        'subscription_plan_uuid',
-    ]
-    select_related = [
-        'checkout_intent',
-        'stripe_event_data',
-    ]
-    readonly_fields = [
-        'stripe_event_data',
-        'checkout_intent_state',
-    ]
-
-    def checkout_intent_id(self, obj):
-        return obj.checkout_intent.id if obj.checkout_intent else None
-
-    def checkout_intent_state(self, obj):
-        return obj.checkout_intent.state if obj.checkout_intent else None
-
-
-@admin.register(SelfServiceSubscriptionRenewal)
-class SelfServiceSubscriptionRenewalAdmin(DjangoQLSearchMixin, admin.ModelAdmin):
-    """
-    Admin class for SelfServiceSubscriptionRenewal.
-    """

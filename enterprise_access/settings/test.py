@@ -46,15 +46,14 @@ BRAZE_ASSIGNMENT_REMINDER_POST_LOGISTRATION_NOTIFICATION_CAMPAIGN = 'test-assign
 BRAZE_ASSIGNMENT_CANCELLED_NOTIFICATION_CAMPAIGN = 'test-assignment-cancelled-campaign'
 BRAZE_ASSIGNMENT_NOTIFICATION_CAMPAIGN = 'test-assignment-notification-campaign'
 BRAZE_ASSIGNMENT_AUTOMATIC_CANCELLATION_NOTIFICATION_CAMPAIGN = 'test-assignment-expired-campaign'
-BRAZE_LEARNER_CREDIT_BNR_AUTOMATIC_EXPIRATION_NOTIFICATION_CAMPAIGN = 'test-bnr-expired-campaign'
 BRAZE_GROUPS_EMAIL_AUTO_REMINDER_DAY_5_CAMPAIGN = 'test-day-5-reminder-campaign'
 BRAZE_GROUPS_EMAIL_AUTO_REMINDER_DAY_25_CAMPAIGN = 'test-day-25-reminder-campaign'
 BRAZE_GROUPS_EMAIL_AUTO_REMINDER_DAY_50_CAMPAIGN = 'test-day-50-reminder-campaign'
 BRAZE_GROUPS_EMAIL_AUTO_REMINDER_DAY_65_CAMPAIGN = 'test-day-65-reminder-campaign'
 BRAZE_GROUPS_EMAIL_AUTO_REMINDER_DAY_85_CAMPAIGN = 'test-day-85-reminder-campaign'
-BRAZE_TRIAL_CANCELLATION_CAMPAIGN = 'test-trial-cancellation-campaign'
-BRAZE_ENTERPRISE_PROVISION_TRIAL_ENDING_SOON_CAMPAIGN = 'test-trial-ending-reminder-campaign'
-BRAZE_BILLING_ERROR_CAMPAIGN = 'test-billing-error-campaign'
+
+# SEGMENT CONFIGURATION
+SEGMENT_KEY = 'test-key'
 
 ################### Kafka Related Settings ##############################
 KAFKA_ENABLED = False
@@ -77,11 +76,7 @@ KAFKA_TOPICS = [
 ]
 ################### End Kafka Related Settings ##############################
 
-### SSP Tests ###
 PRODUCT_ID_TO_CATALOG_QUERY_ID_MAPPING = {
     '1': 42,
 }
 ENABLE_CUSTOMER_BILLING_API = True
-
-ENABLE_STRIPE_EVENT_SUMMARIES = True
-### End SSP Tests ###

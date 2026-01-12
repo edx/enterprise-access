@@ -93,6 +93,7 @@ class AdminTriggerProvisioningWorkflowAdminTests(TestCase):
 
         response = self.model_admin.add_view(request)
 
+        # Should redirect to the workflow instance's change page
         assert response.status_code == 302
         assert reverse(
             "admin:provisioning_provisionnewcustomerworkflow_change",

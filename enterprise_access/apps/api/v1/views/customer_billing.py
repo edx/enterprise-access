@@ -1,9 +1,10 @@
 """
 REST API views for the billing provider (Stripe) integration.
 """
+import json
 import logging
-import uuid
 
+import requests
 import stripe
 from django.conf import settings
 from django.http import HttpResponseServerError
@@ -11,25 +12,19 @@ from django.views.decorators.csrf import csrf_exempt
 from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, OpenApiTypes, extend_schema, extend_schema_view
 from edx_rbac.decorators import permission_required
 from edx_rest_framework_extensions.auth.jwt.authentication import JwtAuthentication
-from rest_framework import exceptions, mixins, permissions, status, viewsets
+from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
 from enterprise_access.apps.api import serializers
-from enterprise_access.apps.api.authentication import StripeWebhookAuthentication
-from enterprise_access.apps.core.constants import (
-    ALL_ACCESS_CONTEXT,
-    CHECKOUT_INTENT_READ_WRITE_ALL_PERMISSION,
-    CUSTOMER_BILLING_CREATE_PORTAL_SESSION_PERMISSION,
-    STRIPE_EVENT_SUMMARY_READ_PERMISSION
-)
+from enterprise_access.apps.api_client.lms_client import LmsApiClient
+from enterprise_access.apps.core.constants import CUSTOMER_BILLING_CREATE_PORTAL_SESSION_PERMISSION
 from enterprise_access.apps.customer_billing.api import (
-    CreateCheckoutSessionFailedConflict,
-    CreateCheckoutSessionSlugReservationConflict,
     CreateCheckoutSessionValidationError,
     create_free_trial_checkout_session
 )
-from enterprise_access.apps.customer_billing.models import CheckoutIntent, StripeEventSummary
+from enterprise_access.apps.customer_billing.models import CheckoutIntent
 from enterprise_access.apps.customer_billing.stripe_event_handlers import StripeEventHandler
 
 from .constants import CHECKOUT_INTENT_EXAMPLES, ERROR_RESPONSES, PATCH_REQUEST_EXAMPLES
@@ -38,39 +33,6 @@ stripe.api_key = settings.STRIPE_API_KEY
 logger = logging.getLogger(__name__)
 
 CUSTOMER_BILLING_API_TAG = 'Customer Billing'
-STRIPE_EVENT_API_TAG = 'Stripe Event Summary'
-
-
-class CheckoutIntentPermission(permissions.BasePermission):
-    """
-    Check for existence of a CheckoutIntent related to the requesting user,
-    but only for some views.
-    """
-    def has_permission(self, request, view):
-        if view.action != 'create_checkout_portal_session':
-            return True
-
-        checkout_intent_pk = request.parser_context['kwargs']['pk']
-
-        # Try UUID lookup first, then fall back to id lookup
-        try:
-            uuid_value = uuid.UUID(checkout_intent_pk)
-            intent_record = CheckoutIntent.objects.filter(uuid=uuid_value).first()
-        except (ValueError, TypeError):
-            # Fall back to id lookup
-            try:
-                int_value = int(checkout_intent_pk)
-                intent_record = CheckoutIntent.objects.filter(pk=int_value).first()
-            except (ValueError, TypeError):
-                return False
-
-        if not intent_record:
-            return False
-
-        if intent_record.user != request.user:
-            return False
-
-        return True
 
 
 class CustomerBillingViewSet(viewsets.ViewSet):
@@ -78,7 +40,7 @@ class CustomerBillingViewSet(viewsets.ViewSet):
     Viewset supporting operations pertaining to customer billing.
     """
     authentication_classes = (JwtAuthentication,)
-    permission_classes = (permissions.IsAuthenticated, CheckoutIntentPermission)
+    permission_classes = (permissions.IsAuthenticated,)
 
     @extend_schema(
         tags=[CUSTOMER_BILLING_API_TAG],
@@ -88,7 +50,13 @@ class CustomerBillingViewSet(viewsets.ViewSet):
         detail=False,
         methods=['post'],
         url_path='stripe-webhook',
-        authentication_classes=(StripeWebhookAuthentication,),
+        # Authentication performed via signature validation.
+        # TODO: Move inline authentication logic to custom authentication class which returns a
+        # configured Stripe system user.
+        authentication_classes=(),
+        # TODO: After adopting a custom authentication class, replace this permission class with one
+        # that reads the request.user and validates it against the configured system user representing
+        # Stripe.
         permission_classes=(permissions.AllowAny,),
     )
     @csrf_exempt
@@ -96,22 +64,24 @@ class CustomerBillingViewSet(viewsets.ViewSet):
         """
         Listen for events from Stripe, and take specific actions. Typically the action is to send a confirmation email.
 
-        Authentication is performed via Stripe signature validation in StripeWebhookAuthentication.
-
         TODO:
         * For a real production implementation we should implement event de-duplication:
           - https://docs.stripe.com/webhooks/process-undelivered-events
           - This is a safeguard against the remote possibility that an event is sent twice. This could happen if the
             network connection cuts out at the exact moment between successfully processing an event and responding with
-            HTTP 200, in which case Stripe will attempt to re-send the event since it does not know we successfully
+            HTTP 200, in which case Stripe will attemt to re-send the event since it does not know we successfully
             received it.
         """
-        # Event must be parsed and verified by the authentication class.
-        event = getattr(request, '_stripe_event', None)
-        if event is None:
-            # This should not occur if StripeWebhookAuthentication is applied.
+        payload = request.body
+        event = None
+
+        # TODO: move inline authentication logic into a custom authentication class.
+        try:
+            # TODO: migrate deprecated `construct_from()` call to newer `construct_event()`.
+            event = stripe.Event.construct_from(json.loads(payload), stripe.api_key)
+        except ValueError:
             return Response(
-                'Stripe WebHook event missing after authentication.',
+                'Stripe WebHook event payload was invalid.',
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -202,13 +172,6 @@ class CustomerBillingViewSet(viewsets.ViewSet):
             if not response_serializer.is_valid():
                 return HttpResponseServerError()
             return Response(response_serializer.data, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
-        except (CreateCheckoutSessionSlugReservationConflict, CreateCheckoutSessionFailedConflict) as exc:
-            response_serializer = serializers.CustomerBillingCreateCheckoutSessionValidationFailedResponseSerializer(
-                errors=exc.non_field_errors,
-            )
-            if not response_serializer.is_valid():
-                return HttpResponseServerError()
-            return Response(response_serializer.data, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
 
         response_serializer = serializers.CustomerBillingCreateCheckoutSessionSuccessResponseSerializer(
             data={'checkout_session_client_secret': session.client_secret},
@@ -219,160 +182,46 @@ class CustomerBillingViewSet(viewsets.ViewSet):
 
     @extend_schema(
         tags=[CUSTOMER_BILLING_API_TAG],
-        summary='Create a new Customer Portal Session from the Admin portal MFE.',
-    )
-    @action(
-        detail=False,
-        methods=['get'],
-        url_path='create-enterprise-admin-portal-session',
-    )
-    # # UUID in path is used as the "permission object" for role-based auth.
-    @permission_required(
-        CUSTOMER_BILLING_CREATE_PORTAL_SESSION_PERMISSION,
-        fn=lambda request, **kwargs: request.GET.get('enterprise_customer_uuid') or kwargs.get(
-            'enterprise_customer_uuid')
-    )
-    def create_enterprise_admin_portal_session(self, request, **kwargs):
-        """
-        Create a new Customer Portal Session for the Admin Portal MFE.  Response dict contains "url" key
-        that should be attached to a button that the customer clicks.
-
-        Response structure defined here: https://docs.stripe.com/api/customer_portal/sessions/create
-        """
-        enterprise_uuid = request.query_params.get('enterprise_customer_uuid')
-        if not enterprise_uuid:
-            msg = "enterprise_customer_uuid parameter is required."
-            logger.error(msg)
-            return Response(msg, status=status.HTTP_400_BAD_REQUEST)
-
-        checkout_intent = CheckoutIntent.objects.filter(enterprise_uuid=enterprise_uuid).first()
-        origin_url = request.META.get("HTTP_ORIGIN")
-
-        if not checkout_intent:
-            msg = f"No checkout intent for id, for enterprise_uuid: {enterprise_uuid}"
-            logger.error(f"No checkout intent for id, for enterprise_uuid: {enterprise_uuid}")
-            return Response(msg, status=status.HTTP_404_NOT_FOUND)
-
-        stripe_customer_id = checkout_intent.stripe_customer_id
-        enterprise_slug = checkout_intent.enterprise_slug
-
-        if not (stripe_customer_id or enterprise_slug):
-            msg = f"No stripe customer id or enterprise slug associated to enterprise_uuid:{enterprise_uuid}"
-            logger.error(msg)
-            return Response(msg, status=status.HTTP_404_NOT_FOUND)
-
-        try:
-            customer_portal_session = stripe.billing_portal.Session.create(
-                customer=stripe_customer_id,
-                return_url=f"{origin_url}/{enterprise_slug}",
-            )
-        except stripe.StripeError as e:
-            # TODO: Long term we should be explicit to different types of Stripe error exceptions available
-            # https://docs.stripe.com/api/errors/handling, https://docs.stripe.com/error-handling
-            msg = f"StripeError creating billing portal session for CheckoutIntent {checkout_intent}: {e}"
-            logger.exception(msg)
-            return Response(msg, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
-        except Exception as e:  # pylint: disable=broad-except
-            msg = f"General exception creating billing portal session for CheckoutIntent {checkout_intent}: {e}"
-            logger.exception(msg)
-            return Response(msg, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
-
-        # TODO: pull out session fields actually needed, and structure a response.
-        return Response(
-            customer_portal_session,
-            status=status.HTTP_200_OK,
-            content_type='application/json',
-        )
-
-    @extend_schema(
-        tags=[CUSTOMER_BILLING_API_TAG],
-        summary='Create a new Customer Portal Session from the enterprise checkout MFE.',
+        summary='Create a new Customer Portal Session.',
     )
     @action(
         detail=True,
         methods=['get'],
-        url_path='create-checkout-portal-session',
+        url_path='create-portal-session',
     )
-    def create_checkout_portal_session(self, request, pk=None):
+    # UUID in path is used as the "permission object" for role-based auth.
+    @permission_required(CUSTOMER_BILLING_CREATE_PORTAL_SESSION_PERMISSION, fn=lambda request, pk: pk)
+    def create_portal_session(self, request, pk=None, **kwargs):
         """
-        Create a new Customer Portal Session for the enterprise checkout MFE.  Response dict contains "url" key
+        Create a new Customer Portal Session.  Response dict contains "url" key
         that should be attached to a button that the customer clicks.
 
         Response structure defined here: https://docs.stripe.com/api/customer_portal/sessions/create
         """
-        origin_url = request.META.get("HTTP_ORIGIN")
-
-        # Try UUID lookup first, then fall back to id lookup
+        lms_client = LmsApiClient()
+        # First, fetch the enterprise customer data.
         try:
-            uuid_value = uuid.UUID(pk)
-            checkout_intent = CheckoutIntent.objects.filter(uuid=uuid_value).first()
-        except (ValueError, TypeError):
-            # Fall back to id lookup
-            try:
-                int_value = int(pk)
-                checkout_intent = CheckoutIntent.objects.filter(pk=int_value).first()
-            except (ValueError, TypeError):
-                return Response(
-                    'Invalid lookup value: must be either a valid UUID or integer ID',
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+            enterprise_customer_data = lms_client.get_enterprise_customer_data(pk)
+        except requests.exceptions.HTTPError:
+            return Response(None, status=status.HTTP_404_NOT_FOUND)
 
-        if not checkout_intent:
-            msg = f"No checkout intent for id, for requesting user {request.user.id}"
-            logger.error(msg)
-            return Response(msg, status=status.HTTP_404_NOT_FOUND)
-
-        stripe_customer_id = checkout_intent.stripe_customer_id
-        if not stripe_customer_id:
-            msg = f"No stripe customer id associated to CheckoutIntent {checkout_intent}"
-            logger.error(msg)
-            return Response(msg, status=status.HTTP_404_NOT_FOUND)
-
-        if not checkout_intent:
-            msg = f"No checkout intent for id {pk}"
-            logger.error(f"No checkout intent for id {pk}")
-            return Response(msg, status=status.HTTP_404_NOT_FOUND)
-
-        stripe_customer_id = checkout_intent.stripe_customer_id
-        enterprise_slug = checkout_intent.enterprise_slug
-
-        if not (stripe_customer_id or enterprise_slug):
-            msg = f"No stripe customer id or enterprise slug associated to checkout_intent_id:{pk}"
-            logger.error(f"No stripe customer id or enterprise slug associated to checkout_intent_id:{pk}")
-            return Response(msg, status=status.HTTP_404_NOT_FOUND)
-
-        try:
-            customer_portal_session = stripe.billing_portal.Session.create(
-                customer=stripe_customer_id,
-                return_url=f"{origin_url}/billing-details/success",
-            )
-        except stripe.StripeError as e:
-            # TODO: Long term we should be explicit to different types of Stripe error exceptions available
-            # https://docs.stripe.com/api/errors/handling, https://docs.stripe.com/error-handling
-            msg = f"StripeError creating billing portal session for CheckoutIntent {checkout_intent}: {e}"
-            logger.exception(msg)
-            return Response(msg, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
-        except Exception as e:  # pylint: disable=broad-except
-            msg = f"General exception creating billing portal session for CheckoutIntent {checkout_intent}: {e}"
-            logger.exception(msg)
-            return Response(msg, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+        # Next, create a stripe customer portal session.
+        customer_portal_session = stripe.billing_portal.Session.create(
+            customer=enterprise_customer_data['stripe_customer_id'],
+            return_url=f"https://portal.edx.org/{enterprise_customer_data['slug']}",
+        )
 
         # TODO: pull out session fields actually needed, and structure a response.
-        return Response(
-            customer_portal_session,
-            status=status.HTTP_200_OK,
-            content_type='application/json',
-        )
+        return Response(customer_portal_session, status=status.HTTP_200_OK)
 
 
 @extend_schema_view(
     list=extend_schema(
         summary='List CheckoutIntents',
         description=(
-            'Retrieve a list of CheckoutIntent records for the authenticated user. '
+            'Retrieve a list of CheckoutIntent records for the authenticated user.\n'
             'This endpoint returns only the CheckoutIntent records that belong to the '
-            'currently authenticated user, unless the user is staff, in which case '
-            '**all** records are returned.'
+            'currently authenticated user.'
         ),
         responses={
             200: OpenApiResponse(
@@ -388,13 +237,10 @@ class CustomerBillingViewSet(viewsets.ViewSet):
     retrieve=extend_schema(
         summary='Retrieve CheckoutIntent',
         description=(
-            'Retrieve a specific CheckoutIntent by either ID or UUID. '
+            'Retrieve a specific CheckoutIntent by UUID.\n'
             'This endpoint is designed to support polling from the frontend to check '
-            'the fulfillment state after a successful Stripe checkout. '
-            'Users can only retrieve their own CheckoutIntent records. '
-            'Supports lookup by either:\n'
-            '- Integer ID (e.g., `/api/v1/checkout-intents/123/`)\n'
-            '- UUID (e.g., `/api/v1/checkout-intents/550e8400-e29b-41d4-a716-446655440000/`)\n'
+            'the fulfillment state after a successful Stripe checkout.\n'
+            'Users can only retrieve their own CheckoutIntent records.\n'
         ),
         responses={
             200: OpenApiResponse(
@@ -410,14 +256,10 @@ class CustomerBillingViewSet(viewsets.ViewSet):
     partial_update=extend_schema(
         summary='Update CheckoutIntent State',
         description=(
-            'Update the state of a CheckoutIntent. '
+            'Update the state of a CheckoutIntent.\n'
             'This endpoint is used to transition the CheckoutIntent through its lifecycle states. '
-            'Only valid state transitions are allowed. '
-            'Users can only update their own CheckoutIntent records. '
-            'Supports lookup by either:\n'
-            '- Integer ID (e.g., `/checkout-intents/123/`)\n'
-            '- UUID (e.g., `/checkout-intents/550e8400-e29b-41d4-a716-446655440000/`)\n'
-            '\n'
+            'Only valid state transitions are allowed.\n'
+            'Users can only update their own CheckoutIntent records.\n'
             '## Allowed State Transitions\n'
             '```\n'
             'created → paid\n'
@@ -429,16 +271,16 @@ class CustomerBillingViewSet(viewsets.ViewSet):
             '```\n'
             '## Integration Points\n'
             '- **Stripe Webhook**: Transitions from `created` to `paid` after successful payment\n'
-            '- **Fulfillment**: Transitions from `paid` to `fulfilled` after provisioning\n'
+            '- **Fulfillment Service**: Transitions from `paid` to `fulfilled` after provisioning\n'
             '- **Error Recovery**: Allows retry from error states back to `paid`\n\n'
         ),
         parameters=[
             OpenApiParameter(
                 name='id',
-                type=OpenApiTypes.STR,
+                type=OpenApiTypes.UUID,
                 location=OpenApiParameter.PATH,
                 required=True,
-                description='ID or UUID of the CheckoutIntent to update',
+                description='id of the CheckoutIntent to update',
             ),
         ],
         request=serializers.CheckoutIntentUpdateRequestSerializer,
@@ -460,15 +302,7 @@ class CheckoutIntentViewSet(viewsets.ModelViewSet):
     ViewSet for CheckoutIntent model.
 
     Provides list, retrieve, and partial_update actions for CheckoutIntent records.
-    Users can only access their own CheckoutIntent records, unless the user is staff,
-    in which case all records can be accessed.
-
-    This ViewSet intentionally does not utilize edx-rbac for permission checking,
-    because most use cases involve requesting users who are not yet expected
-    to have been granted any enterprise roles. Instead, we manage authorization
-    via the ``get_queryset()`` method.
-
-    Supports lookup by either 'id' (integer) or 'uuid' (UUID).
+    Users can only access their own CheckoutIntent records.
     """
     authentication_classes = (JwtAuthentication,)
     permission_classes = (permissions.IsAuthenticated,)
@@ -490,131 +324,28 @@ class CheckoutIntentViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         """
         Filter queryset to only include CheckoutIntent records
-        belonging to the authenticated user, unless the requesting user
-        has permission to read and write *all* CheckoutIntent records.
+        belonging to the authenticated user.
         """
         user = self.request.user
-        base_queryset = CheckoutIntent.objects.filter(user=user)
-        if user.is_staff:
-            base_queryset = CheckoutIntent.objects.all()
-        return base_queryset.select_related('user')
+        return CheckoutIntent.objects.filter(user=user).select_related('user')
 
-    def get_object(self):
+    def partial_update(self, request, *args, **kwargs):
         """
-        Override get_object to support lookup by either id or uuid.
-
-        Attempts to parse the lookup value as UUID first, then falls back to integer id.
-        This allows clients to use either field for retrieving CheckoutIntent objects.
+        Override partial_update to validate state transitions.
         """
-        queryset = self.filter_queryset(self.get_queryset())
-        lookup_value = self.kwargs[self.lookup_url_kwarg or self.lookup_field]
+        instance = self.get_object()
 
-        try:
-            uuid_value = uuid.UUID(lookup_value)
-            filter_kwargs = {'uuid': uuid_value}
-        except (ValueError, TypeError):
-            try:
-                int_value = int(lookup_value)
-                filter_kwargs = {'id': int_value}
-            except (ValueError, TypeError) as exc:
-                raise exceptions.ValidationError(
-                    'Lookup value must be either a valid UUID or integer ID'
-                ) from exc
+        # Check if state is being updated
+        new_state = request.data.get('state')
+        if new_state:
+            if not CheckoutIntent.is_valid_state_transition(instance.state, new_state):
+                raise ValidationError(detail={
+                    'state': f'Invalid state transition from {instance.state} to {new_state}'
+                })
 
-        try:
-            obj = queryset.get(**filter_kwargs)
-        except CheckoutIntent.DoesNotExist as exc:
-            raise exceptions.NotFound('CheckoutIntent not found') from exc
+            logger.info(
+                f'CheckoutIntent {instance.id} state transition: '
+                f'{instance.state} -> {new_state} by user {request.user.id}'
+            )
 
-        self.check_object_permissions(self.request, obj)
-        return obj
-
-
-def stripe_event_summary_permission_detail_fn(request, *args, **kwargs):
-    """
-    Helper to use with @permission_required on retrieve endpoint.
-
-    Args:
-        uuid (str): UUID representing an SubscriptionPlan object.
-    """
-    if not (subs_plan_uuid := request.query_params.get('subscription_plan_uuid')):
-        raise exceptions.ValidationError(detail='subscription_plan_uuid query param is required')
-
-    summary = StripeEventSummary.objects.filter(
-        subscription_plan_uuid=subs_plan_uuid,
-    ).select_related(
-        'checkout_intent',
-    ).first()
-    if not (summary and summary.checkout_intent):
-        return None
-    return summary.checkout_intent.enterprise_uuid
-
-
-class StripeEventSummaryViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
-    """
-    ViewSet for StripeEventSummary model.
-
-    Provides retrieve action for StripeEventSummary records.
-    """
-    authentication_classes = (JwtAuthentication,)
-    permission_classes = (permissions.IsAuthenticated,)
-
-    def get_serializer_class(self):
-        """
-        Return read only serializer.
-        """
-        return serializers.StripeEventSummaryReadOnlySerializer
-
-    def get_queryset(self):
-        """
-        Either return full queryset, or filter by all objects associated with
-        a subscription_plan_uuid
-        """
-        subscription_plan_uuid = self.request.query_params.get('subscription_plan_uuid')
-        if not subscription_plan_uuid:
-            raise exceptions.ValidationError(detail='subscription_plan_uuid query param is required')
-        return StripeEventSummary.objects.filter(
-            subscription_plan_uuid=subscription_plan_uuid,
-        ).select_related(
-            'checkout_intent',
-        )
-
-    @extend_schema(
-        tags=[STRIPE_EVENT_API_TAG],
-        summary='Retrieves stripe event summaries.',
-        responses={
-            status.HTTP_200_OK: serializers.StripeEventSummaryReadOnlySerializer,
-            status.HTTP_403_FORBIDDEN: None,
-        },
-    )
-    @permission_required(
-        STRIPE_EVENT_SUMMARY_READ_PERMISSION,
-        fn=stripe_event_summary_permission_detail_fn,
-    )
-    def list(self, request, *args, **kwargs):
-        """
-        Lists ``StripeEventSummary`` records, filtered by given subscription plan uuid.
-        """
-        return super().list(request, *args, **kwargs)
-
-    @action(
-        detail=False,
-        methods=['get'],
-        url_path='first-invoice-upcoming-amount-due',
-    )
-    def first_upcoming_invoice_amount_due(self, request, *args, **kwargs):
-        """
-        Given a license-manager SubscriptionPlan uuid, returns an upcoming
-        invoice amount due, dervied from Stripe's preview invoice API.
-        """
-        subscription_plan_uuid = self.request.query_params.get('subscription_plan_uuid')
-        summary = StripeEventSummary.objects.filter(
-            event_type='customer.subscription.created',
-            subscription_plan_uuid=subscription_plan_uuid,
-        ).first()
-        if not (subscription_plan_uuid and summary):
-            return Response({})
-        return Response({
-            'upcoming_invoice_amount_due': summary.upcoming_invoice_amount_due,
-            'currency': summary.currency,
-        })
+        return super().partial_update(request, *args, **kwargs)

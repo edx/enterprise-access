@@ -29,9 +29,7 @@ class CleanupCheckoutIntentsCommandTests(TestCase):
             enterprise_name="Expired Enterprise",
             enterprise_slug="expired-enterprise",
             quantity=10,
-            expires_at=timezone.now() - timedelta(hours=1),
-            country='US',
-            terms_metadata={'version': '1.0', 'expired_test': True}
+            expires_at=timezone.now() - timedelta(hours=1)
         )
 
         # Create a non-expired intent
@@ -41,9 +39,7 @@ class CleanupCheckoutIntentsCommandTests(TestCase):
             enterprise_name="Active Enterprise",
             enterprise_slug="active-enterprise",
             quantity=5,
-            expires_at=timezone.now() + timedelta(hours=1),
-            country='CA',
-            terms_metadata={'version': '1.1', 'active_test': True}
+            expires_at=timezone.now() + timedelta(hours=1)
         )
 
         # Create an intent that's already in a non-CREATED state
@@ -53,9 +49,7 @@ class CleanupCheckoutIntentsCommandTests(TestCase):
             enterprise_name="Paid Enterprise",
             enterprise_slug="paid-enterprise",
             quantity=15,
-            expires_at=timezone.now() - timedelta(hours=1),  # Expired time but PAID state
-            country='GB',
-            terms_metadata={'version': '2.0', 'paid_test': True}
+            expires_at=timezone.now() - timedelta(hours=1)  # Expired time but PAID state
         )
 
     def test_dry_run_mode(self):

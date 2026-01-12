@@ -7,12 +7,9 @@ from urllib.parse import parse_qs, urlparse
 
 from django.conf import settings
 from django.test import RequestFactory, TestCase
-from requests.exceptions import HTTPError
 
-from enterprise_access.apps.api_client.exceptions import APIClientException
 from enterprise_access.apps.api_client.license_manager_client import (
     NEW_SUBSCRIPTION_CHANGE_REASON,
-    OTHER_SUBSCRIPTION_CHANGE_REASON,
     LicenseManagerApiClient,
     LicenseManagerUserApiClient
 )
@@ -92,49 +89,6 @@ class TestLicenseManagerApiClient(TestCase):
         )
 
     @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient', autospec=True)
-    def test_list_subscriptions_params(self, mock_oauth_client):
-        mock_get = mock_oauth_client.return_value.get
-        mock_get.return_value.json.return_value = {'results': []}
-
-        lm_client = LicenseManagerApiClient()
-        enterprise_uuid = 'ec-uuid-123'
-
-        # Should only set enterprise_customer_uuid parameter
-        result = lm_client.list_subscriptions(enterprise_uuid)
-        self.assertEqual(result, {'results': []})
-
-        # Verify URL and params
-        expected_url = (
-            'http://license-manager.example.com'
-            '/api/v1/subscriptions/'
-        )
-        mock_get.assert_called_with(
-            expected_url,
-            params={'enterprise_customer_uuid': enterprise_uuid},
-            timeout=settings.LICENSE_MANAGER_CLIENT_TIMEOUT,
-        )
-
-    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient', autospec=True)
-    def test_update_subscription_plan_patch(self, mock_oauth_client):
-        mock_patch = mock_oauth_client.return_value.patch
-        mock_patch.return_value.json.return_value = {'uuid': 'plan-uuid', 'is_active': False}
-
-        lm_client = LicenseManagerApiClient()
-        payload = {'is_active': False, 'change_reason': 'delayed_payment'}
-        result = lm_client.update_subscription_plan('plan-uuid', **payload)
-
-        self.assertEqual(result, mock_patch.return_value.json.return_value)
-        expected_url = (
-            'http://license-manager.example.com'
-            '/api/v1/provisioning-admins/subscriptions/plan-uuid/'
-        )
-        mock_patch.assert_called_once_with(
-            expected_url,
-            json=payload,
-            timeout=settings.LICENSE_MANAGER_CLIENT_TIMEOUT,
-        )
-
-    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient', autospec=True)
     def test_create_subscription_plan(self, mock_oauth_client):
         mock_post = mock_oauth_client.return_value.post
         customer_agreement_uuid = uuid.uuid4()
@@ -175,33 +129,6 @@ class TestLicenseManagerApiClient(TestCase):
         mock_post.assert_called_once_with(
             expected_url,
             json=expected_payload,
-        )
-
-    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient', autospec=True)
-    def test_update_subscription_plan_oli(self, mock_oauth_client):
-        mock_patch = mock_oauth_client.return_value.patch
-        subs_plan_uuid = uuid.uuid4()
-        new_oli_value = '1234512345'
-
-        lm_client = LicenseManagerApiClient()
-
-        result = lm_client.update_subscription_plan(
-            subs_plan_uuid, new_oli_value,
-        )
-
-        self.assertEqual(result, mock_patch.return_value.json.return_value)
-        expected_url = (
-            'http://license-manager.example.com'
-            f'/api/v1/provisioning-admins/subscriptions/{subs_plan_uuid}/'
-        )
-        expected_payload = {
-            'salesforce_opportunity_line_item': new_oli_value,
-            'change_reason': OTHER_SUBSCRIPTION_CHANGE_REASON,
-        }
-        mock_patch.assert_called_once_with(
-            expected_url,
-            json=expected_payload,
-            timeout=settings.LICENSE_MANAGER_CLIENT_TIMEOUT,
         )
 
 
@@ -373,56 +300,3 @@ class TestLicenseManagerUserApiClient(MockLicenseManagerMetadataMixin):
         self.assertEqual(prepared_request_kwargs['timeout'], settings.LICENSE_MANAGER_CLIENT_TIMEOUT)
 
         self.assertEqual(result, expected_result)
-
-
-class TestLicenseManagerRenewalProcessing(TestCase):
-    """
-    Test License Manager client renewal processing functionality.
-    """
-
-    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient', autospec=True)
-    def test_process_subscription_plan_renewal_success(self, mock_oauth_client):
-        """Test successful subscription plan renewal processing."""
-        mock_post = mock_oauth_client.return_value.post
-        expected_response = {
-            'id': 123,
-            'status': 'processed',
-            'processed_at': '2024-01-15T10:30:00Z'
-        }
-        mock_post.return_value.json.return_value = expected_response
-
-        lm_client = LicenseManagerApiClient()
-        result = lm_client.process_subscription_plan_renewal(123)
-
-        self.assertEqual(result, expected_response)
-        expected_url = (
-            'http://license-manager.example.com'
-            '/api/v1/provisioning-admins/subscription-plan-renewals/123/process/'
-        )
-        mock_post.assert_called_once_with(
-            expected_url,
-            timeout=settings.LICENSE_MANAGER_CLIENT_TIMEOUT
-        )
-
-    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient', autospec=True)
-    def test_process_subscription_plan_renewal_http_error(self, mock_oauth_client):
-        """Test that HTTP errors are properly raised during renewal processing."""
-        mock_post = mock_oauth_client.return_value.post
-        mock_post.return_value.raise_for_status.side_effect = HTTPError("404 Client Error")
-
-        lm_client = LicenseManagerApiClient()
-
-        with self.assertRaises(APIClientException) as context:
-            lm_client.process_subscription_plan_renewal(123)
-
-        # Verify the error message contains the renewal ID
-        self.assertIn('Could not process subscription plan renewal 123', str(context.exception))
-
-        expected_url = (
-            'http://license-manager.example.com'
-            '/api/v1/provisioning-admins/subscription-plan-renewals/123/process/'
-        )
-        mock_post.assert_called_once_with(
-            expected_url,
-            timeout=settings.LICENSE_MANAGER_CLIENT_TIMEOUT
-        )

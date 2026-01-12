@@ -13,7 +13,6 @@ from django.test import RequestFactory, TestCase
 from faker import Faker
 from rest_framework import status
 
-from enterprise_access.apps.api_client.exceptions import APIClientException
 from enterprise_access.apps.api_client.lms_client import LmsApiClient, LmsUserApiClient
 from enterprise_access.apps.api_client.tests.test_utils import MockResponse
 from enterprise_access.apps.core.tests.factories import UserFactory
@@ -478,8 +477,6 @@ class TestLmsApiClient(TestCase):
             'name': 'New Customer',
             'slug': 'new-customer',
             'country': 'US',
-            'enable_analytics_screen': False,
-            'enable_portal_subscription_management_screen': True,
             'other_field': True,
         }
 
@@ -487,8 +484,6 @@ class TestLmsApiClient(TestCase):
             'name': 'New Customer',
             'slug': 'new-customer',
             'country': 'US',
-            'enable_analytics_screen': False,
-            'enable_portal_subscription_management_screen': True,
             'other_field': True,
         }
         mock_json.return_value = mock_created_customer_payload
@@ -609,12 +604,10 @@ class TestLmsApiClient(TestCase):
         )
 
         self.assertEqual(response_payload, mock_created_admin_payload)
-        expected_url = (
-            'http://edx-platform.example.com/enterprise/api/v1/enterprise-customer-admin/create_admin_by_email/'
-        )
+        expected_url = 'http://edx-platform.example.com/enterprise/api/v1/pending-enterprise-admin/'
         expected_input = {
-            'enterprise_customer_uuid': customer_uuid,
-            'email': 'test-admin@example.com',
+            'enterprise_customer': customer_uuid,
+            'user_email': 'test-admin@example.com',
         }
         mock_post.assert_called_once_with(
             expected_url,
@@ -632,8 +625,6 @@ class TestLmsApiClient(TestCase):
             'name': 'New Customer',
             'slug': 'new-customer',
             'country': 'US',
-            'enable_analytics_screen': False,
-            'enable_portal_subscription_management_screen': True,
             'other_field': True,
         }
 
@@ -676,12 +667,10 @@ class TestLmsApiClient(TestCase):
                 customer_uuid, 'test-admin@example.com',
             )
 
-        expected_url = (
-            'http://edx-platform.example.com/enterprise/api/v1/enterprise-customer-admin/create_admin_by_email/'
-        )
+        expected_url = 'http://edx-platform.example.com/enterprise/api/v1/pending-enterprise-admin/'
         expected_input = {
-            'enterprise_customer_uuid': customer_uuid,
-            'email': 'test-admin@example.com',
+            'enterprise_customer': customer_uuid,
+            'user_email': 'test-admin@example.com',
         }
         mock_post.assert_called_once_with(
             expected_url,
@@ -702,7 +691,7 @@ class TestLmsApiClient(TestCase):
         mock_get.return_value.status_code = 400
 
         client = LmsApiClient()
-        with self.assertRaises(APIClientException):
+        with self.assertRaises(requests.exceptions.HTTPError):
             client.get_enterprise_pending_admin_users(customer_uuid)
 
         expected_url = (

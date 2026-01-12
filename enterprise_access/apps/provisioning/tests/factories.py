@@ -36,20 +36,13 @@ class ProvisionNewCustomerWorkflowFactory(DjangoModelFactory):
             },
             'create_catalog_input': {},
             'create_customer_agreement_input': {},
-            'create_trial_subscription_plan_input': {
-                'title': 'Test Trial Subscription Plan',
+            'create_subscription_plan_input': {
+                'title': 'Test Subscription Plan',
                 'salesforce_opportunity_line_item': str(uuid.uuid4()),
                 'start_date': timezone.now().date().isoformat(),
                 'expiration_date': (timezone.now() + timezone.timedelta(days=365)).date().isoformat(),
                 'desired_num_licenses': 10,
                 'product_id': 123,
-            },
-            'create_first_paid_subscription_plan_input': {
-                'title': 'Test First Paid Subscription Plan',
-                'product_id': 123,
-                'start_date': timezone.now().date().isoformat(),
-                'expiration_date': (timezone.now() + timezone.timedelta(days=730)).date().isoformat(),
-                'salesforce_opportunity_line_item': str(uuid.uuid4()),
             },
         }
 
@@ -84,31 +77,17 @@ class ProvisionNewCustomerWorkflowFactory(DjangoModelFactory):
                 'uuid': str(uuid.uuid4()),
                 'enterprise_customer_uuid': str(uuid.uuid4()),
             },
-            'create_trial_subscription_plan_output': {
+            'create_subscription_plan_output': {
                 'uuid': str(uuid.uuid4()),
-                'title': 'Test Trial Subscription Plan',
+                'title': 'Test Subscription Plan',
                 'salesforce_opportunity_line_item': str(uuid.uuid4()),
                 'created': timezone.now().isoformat(),
                 'start_date': timezone.now().date().isoformat(),
                 'expiration_date': (timezone.now() + timezone.timedelta(days=365)).date().isoformat(),
                 'is_active': True,
                 'is_current': True,
-                'plan_type': 'trial',
-                'enterprise_catalog_uuid': str(uuid.uuid4()),
-                'product': 1,
-            },
-            'create_first_paid_subscription_plan_output': {
-                'uuid': str(uuid.uuid4()),
-                'title': 'Test First Paid Subscription Plan',
-                'salesforce_opportunity_line_item': str(uuid.uuid4()),
-                'created': timezone.now().isoformat(),
-                'start_date': timezone.now().date().isoformat(),
-                'expiration_date': (timezone.now() + timezone.timedelta(days=730)).date().isoformat(),
-                'is_active': True,
-                'is_current': True,
                 'plan_type': 'subscription',
                 'enterprise_catalog_uuid': str(uuid.uuid4()),
-                'product': 1,
             },
         }
 

@@ -23,7 +23,6 @@ from enterprise_access.apps.bffs.checkout.response_builder import (
     CheckoutValidationResponseBuilder
 )
 from enterprise_access.apps.bffs.checkout.serializers import CheckoutSuccessResponseSerializer
-from enterprise_access.apps.bffs.tests.utils import default_field_constraints
 from test_utils import APITest
 
 
@@ -44,7 +43,6 @@ class TestCheckoutContextResponseBuilder(APITest):
             'state': 'created',
             'enterprise_name': 'Test Enterprise',
             'enterprise_slug': 'test-enterprise',
-            'quantity': 5,
             'expires_at': timezone.now() + timedelta(hours=24),
             'stripe_checkout_session_id': 'cs_test_123abc',
             'last_checkout_error': '',
@@ -69,7 +67,14 @@ class TestCheckoutContextResponseBuilder(APITest):
             'default_by_lookup_key': 'subscription_licenses_yearly',
             'prices': []
         }
-        context.field_constraints = default_field_constraints
+        context.field_constraints = {
+            'quantity': {'min': 5, 'max': 30},
+            'enterprise_slug': {
+                'min_length': 3,
+                'max_length': 30,
+                'pattern': '^[a-z0-9-]+$'
+            }
+        }
         return context
 
     def test_build_complete_context(self):
@@ -102,7 +107,15 @@ class TestCheckoutContextResponseBuilder(APITest):
                 }
             ]
         }
-        context.field_constraints = default_field_constraints
+        context.field_constraints = {
+            'quantity': {'min': 5, 'max': 30},
+            'enterprise_slug': {
+                'min_length': 3,
+                'max_length': 30,
+                'pattern': '^[a-z0-9-]+$'
+            }
+        }
+
         # Create and build response
         builder = CheckoutContextResponseBuilder(context)
         builder.build()
@@ -141,19 +154,9 @@ class TestCheckoutContextResponseBuilder(APITest):
         constraints = data['field_constraints']
         self.assertEqual(constraints['quantity']['min'], 5)
         self.assertEqual(constraints['quantity']['max'], 30)
-        self.assertEqual(constraints['enterprise_slug']['min_length'], 1)
-        self.assertEqual(constraints['enterprise_slug']['max_length'], 255)
+        self.assertEqual(constraints['enterprise_slug']['min_length'], 3)
+        self.assertEqual(constraints['enterprise_slug']['max_length'], 30)
         self.assertEqual(constraints['enterprise_slug']['pattern'], '^[a-z0-9-]+$')
-        self.assertEqual(constraints['full_name']['min_length'], 1)
-        self.assertEqual(constraints['full_name']['max_length'], 150)
-        self.assertEqual(constraints['admin_email']['min_length'], 6)
-        self.assertEqual(constraints['admin_email']['max_length'], 253)
-        self.assertEqual(constraints['admin_email']['pattern'], '^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$')
-        self.assertEqual(constraints['country']['min_length'], 2)
-        self.assertEqual(constraints['country']['max_length'], 2)
-        self.assertEqual(constraints['country']['pattern'], '^[A-Z]{2}$')
-        self.assertEqual(constraints['company_name']['min_length'], 1)
-        self.assertEqual(constraints['company_name']['max_length'], 255)
 
     def test_build_minimal_context(self):
         """
@@ -212,7 +215,14 @@ class TestCheckoutContextResponseBuilder(APITest):
                 }
             ]
         }
-        context.field_constraints = default_field_constraints
+        context.field_constraints = {
+            'quantity': {'min': 5, 'max': 30},
+            'enterprise_slug': {
+                'min_length': 3,
+                'max_length': 30,
+                'pattern': '^[a-z0-9-]+$'
+            }
+        }
 
         # Build response
         builder = CheckoutContextResponseBuilder(context)
@@ -252,19 +262,9 @@ class TestCheckoutContextResponseBuilder(APITest):
         constraints = data['field_constraints']
         self.assertEqual(constraints['quantity']['min'], 5)
         self.assertEqual(constraints['quantity']['max'], 30)
-        self.assertEqual(constraints['enterprise_slug']['min_length'], 1)
-        self.assertEqual(constraints['enterprise_slug']['max_length'], 255)
+        self.assertEqual(constraints['enterprise_slug']['min_length'], 3)
+        self.assertEqual(constraints['enterprise_slug']['max_length'], 30)
         self.assertEqual(constraints['enterprise_slug']['pattern'], '^[a-z0-9-]+$')
-        self.assertEqual(constraints['full_name']['min_length'], 1)
-        self.assertEqual(constraints['full_name']['max_length'], 150)
-        self.assertEqual(constraints['admin_email']['min_length'], 6)
-        self.assertEqual(constraints['admin_email']['max_length'], 253)
-        self.assertEqual(constraints['admin_email']['pattern'], '^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$')
-        self.assertEqual(constraints['country']['min_length'], 2)
-        self.assertEqual(constraints['country']['max_length'], 2)
-        self.assertEqual(constraints['country']['pattern'], '^[A-Z]{2}$')
-        self.assertEqual(constraints['company_name']['min_length'], 1)
-        self.assertEqual(constraints['company_name']['max_length'], 255)
 
     def test_serializer_validation_error(self):
         """
@@ -355,7 +355,6 @@ class TestCheckoutContextResponseBuilder(APITest):
         self.assertEqual(intent_data['enterprise_slug'], 'test-enterprise')
         self.assertEqual(intent_data['stripe_checkout_session_id'], 'cs_test_123abc')
         self.assertEqual(intent_data['admin_portal_url'], 'https://portal.edx.org/test-enterprise')
-        self.assertEqual(intent_data['quantity'], 5)
 
     def test_build_context_with_no_checkout_intent(self):
         """
@@ -406,8 +405,8 @@ class TestCheckoutContextResponseBuilder(APITest):
         # Setup context with a checkout intent that has errors
         context = self._create_minimal_valid_context()
         error_intent = self.mock_checkout_intent
-        error_intent['state'] = 'errored_backoffice'
-        error_intent['last_provisioning_error'] = 'Salesforce integration failed'
+        error_intent['state'] = 'errored_stripe_checkout'
+        error_intent['last_checkout_error'] = 'Payment processing failed'
         context.checkout_intent = error_intent
 
         # Create and build response
@@ -420,8 +419,8 @@ class TestCheckoutContextResponseBuilder(APITest):
         # Assertions
         self.assertEqual(status_code, status.HTTP_200_OK)
         self.assertIn('checkout_intent', data)
-        self.assertEqual(data['checkout_intent']['state'], 'errored_backoffice')
-        self.assertEqual(data['checkout_intent']['last_provisioning_error'], 'Salesforce integration failed')
+        self.assertEqual(data['checkout_intent']['state'], 'errored_stripe_checkout')
+        self.assertEqual(data['checkout_intent']['last_checkout_error'], 'Payment processing failed')
 
 
 @ddt.ddt
@@ -638,22 +637,12 @@ class TestCheckoutSuccessResponseBuilder(APITest):
             'state': 'created',
             'enterprise_name': 'Test Enterprise',
             'enterprise_slug': 'test-enterprise',
-            'enterprise_uuid': str(uuid4()),
-            'quantity': 5,
             'stripe_checkout_session_id': 'cs_test_123',
-            'stripe_customer_uuid': 'cus_test_123',
             'last_checkout_error': '',
             'last_provisioning_error': '',
             'workflow_id': str(uuid4()),
             'expires_at': timezone.now().isoformat(),
             'admin_portal_url': 'https://portal.edx.org/test-enterprise',
-            'country': 'US',
-            'terms_metadata': {
-                'version': '2.1',
-                'accepted_at': '2024-01-15T10:30:00Z',
-                'user_agent': 'Mozilla/5.0 (compatible)',
-                'accepted_sections': ['privacy', 'terms', 'cookies']
-            },
             'first_billable_invoice': {
                 'start_time': timezone.now().isoformat(),
                 'end_time': timezone.now().isoformat(),
@@ -715,8 +704,6 @@ class TestCheckoutSuccessResponseBuilder(APITest):
             'enterprise_name': 'Test Enterprise',
             'enterprise_slug': 'test-enterprise',
             'stripe_checkout_session_id': 'cs_test_123',
-            'country': 'CA',
-            'terms_metadata': {'version': '1.0', 'minimal': True},
         }
         self.context.checkout_intent = partial_data
 

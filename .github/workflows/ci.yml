@@ -23,14 +23,12 @@ jobs:
       run: make requirements
     - name: Upgrade packages
       run: |
-        pip install -U pip wheel -c requirements/constraints.txt
+        pip install -U pip wheel
         if [[ "${{ matrix.django-version }}" != "pinned" ]]; then
           pip install "django~=${{ matrix.django-version }}.0"
           pip check # fail if this test-reqs/Django combination is broken
         fi
     - name: Validate translations
       run: make validate_translations
-    - name: Run tests
-      run: make test
-    - name: Run style
-      run: make style isort_check pii_check check_keywords
+    - name: Run tests and style checks
+      run: make validate

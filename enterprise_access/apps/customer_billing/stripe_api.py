@@ -3,7 +3,6 @@ Python API for interacting with Stripe (aside from functions contained in ``pric
 """
 import logging
 from functools import wraps
-from typing import Optional
 
 import stripe
 from django.conf import settings
@@ -46,9 +45,8 @@ def create_subscription_checkout_session(input_data, lms_user_id, checkout_inten
                 'enterprise_customer_slug': input_data['enterprise_slug'],
                 # Store the lms_user_id for improved debugging experience.
                 'lms_user_id': str(lms_user_id),
-                # Store the checkout_intent ID for cross-service reference
+                # Store the checkout_intent ID
                 'checkout_intent_id': str(checkout_intent.id),
-                'checkout_intent_uuid': str(checkout_intent.uuid),
             }
         },
         # Always collect payment method, not just when the amount is greater than zero.  This is influential for
@@ -73,8 +71,6 @@ def create_subscription_checkout_session(input_data, lms_user_id, checkout_inten
     )
     if found_stripe_customer_by_email:
         create_kwargs['customer'] = found_stripe_customer_by_email['id']
-    else:
-        create_kwargs['customer_email'] = input_data['admin_email']
 
     return stripe.checkout.Session.create(**create_kwargs)
 
@@ -213,49 +209,3 @@ def get_stripe_subscription(subscription_id) -> stripe.Subscription:
     Docs: https://stripe.com/docs/api/subscriptions/retrieve
     """
     return stripe.Subscription.retrieve(subscription_id)
-
-
-@stripe_cache()
-def get_stripe_trialing_subscription(
-        stripe_customer_id: str, status: str = 'trialing'
-) -> Optional[stripe.Subscription]:
-    """
-    Retrieve the most recent subscription with given status for a Stripe customer.
-
-    Args:
-        stripe_customer_id (str): The Stripe Customer ID to search subscriptions for.
-        status (str): The subscription status to filter by, defaults to 'trialing'.
-                     See https://stripe.com/docs/api/subscriptions/list#list_subscriptions-status
-                     for possible values.
-
-    Returns:
-        Optional[stripe.Subscription]: The most recent subscription matching the criteria,
-                                     or None if no matching subscription is found.
-
-    Docs: https://stripe.com/docs/api/subscriptions/list
-    """
-    subscription_list = stripe.Subscription.list(
-        customer=stripe_customer_id,
-        status=status,
-        limit=1,
-    )
-    return subscription_list.data[0] if subscription_list.data else None
-
-
-@stripe_cache()
-def get_upcoming_invoice(stripe_customer_id: str, stripe_subscription_id: str):
-    """
-    Retrieve the upcoming invoice for a subscription in the trial period.
-
-    Args:
-        stripe_customer_id (str): The Stripe Customer ID to search subscriptions for.
-        stripe_subscription_id (str): The Stripe Subscription ID
-
-    Docs:
-        https://docs.stripe.com/changelog/basil/2025-03-31/invoice-preview-api-deprecations
-        https://docs.stripe.com/api/invoices/create_preview?architecture-style=resources
-    """
-    return stripe.Invoice.create_preview(
-        customer=stripe_customer_id,
-        subscription=stripe_subscription_id,
-    )

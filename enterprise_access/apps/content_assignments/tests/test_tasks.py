@@ -22,12 +22,11 @@ from enterprise_access.apps.content_assignments.constants import (
     AssignmentActions,
     LearnerContentAssignmentStateChoices
 )
-from enterprise_access.apps.content_assignments.content_metadata_api import get_human_readable_date
+from enterprise_access.apps.content_assignments.content_metadata_api import format_datetime_obj, get_human_readable_date
 from enterprise_access.apps.content_assignments.tasks import (
     BrazeCampaignSender,
     create_pending_enterprise_learner_for_assignment_task,
     send_assignment_automatically_expired_email,
-    send_bnr_automatically_expired_email,
     send_cancel_email_for_pending_assignment,
     send_email_for_new_assignment,
     send_reminder_email_for_pending_assignment
@@ -38,9 +37,8 @@ from enterprise_access.apps.content_assignments.tests.factories import (
 )
 from enterprise_access.apps.subsidy_access_policy.models import REQUEST_CACHE_NAMESPACE
 from enterprise_access.apps.subsidy_access_policy.tests.factories import AssignedLearnerCreditAccessPolicyFactory
-from enterprise_access.apps.subsidy_request.tests.factories import LearnerCreditRequestFactory
 from enterprise_access.cache_utils import request_cache
-from enterprise_access.utils import format_datetime_obj, get_automatic_expiration_date_and_reason
+from enterprise_access.utils import get_automatic_expiration_date_and_reason
 from test_utils import APITestWithMocks
 
 TEST_COURSE_KEY = 'edX+DemoX'
@@ -654,66 +652,6 @@ class TestBrazeEmailTasks(APITestWithMocks):
         )
         assert mock_braze_client.return_value.send_campaign_message.call_count == 1
 
-    @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.objects')
-    @mock.patch('enterprise_access.apps.content_assignments.tasks.LmsApiClient')
-    @mock.patch('enterprise_access.apps.content_assignments.tasks.BrazeApiClient')
-    @ddt.data(
-        {'is_assigned_course_run': False},
-        {'is_assigned_course_run': True},
-    )
-    @ddt.unpack
-    def test_send_bnr_automatically_expired_email(
-        self,
-        mock_braze_client,
-        mock_lms_client,
-        mock_subsidy_model,  # pylint: disable=unused-argument
-        is_assigned_course_run,
-    ):
-        """
-        Verify `send_bnr_automatically_expired_email` task works as expected
-        """
-        admin_email = 'test@admin.com'
-        mock_lms_client.return_value.get_enterprise_customer_data.return_value = {
-            'uuid': TEST_ENTERPRISE_UUID,
-            'slug': 'test-slug',
-            'admin_users': [{
-                'email': admin_email,
-                'lms_user_id': 1
-            }],
-            'name': self.enterprise_customer_name,
-        }
-        mock_recipient = {
-            'external_user_id': 1
-        }
-        mock_braze_client.return_value.create_recipient.return_value = mock_recipient
-        mock_admin_mailto = f'mailto:{admin_email}'
-        mock_braze_client.return_value.generate_mailto_link.return_value = mock_admin_mailto
-        mock_learner_portal_link = f'{settings.ENTERPRISE_LEARNER_PORTAL_URL}/test-slug'
-
-        assignment = self.assignment_course_run if is_assigned_course_run else self.assignment_course
-
-        # Create a learner credit request associated with the assignment
-        learner_credit_request = LearnerCreditRequestFactory.create(
-            assignment=assignment,
-            course_id=assignment.content_key,
-            enterprise_customer_uuid=assignment.assignment_configuration.enterprise_customer_uuid,
-            learner_credit_request_config__active=False,
-        )
-
-        send_bnr_automatically_expired_email(learner_credit_request.uuid)
-
-        mock_braze_client.return_value.send_campaign_message.assert_any_call(
-            'test-bnr-expired-campaign',
-            recipients=[mock_recipient],
-            trigger_properties={
-                'contact_admin_link': mock_admin_mailto,
-                'course_title': assignment.content_title,
-                'organization': self.enterprise_customer_name,
-                'learner_portal_link': mock_learner_portal_link,
-            },
-        )
-        assert mock_braze_client.return_value.send_campaign_message.call_count == 1
-
     @mock.patch('enterprise_access.apps.content_assignments.tasks.LmsApiClient')
     @mock.patch('enterprise_access.apps.content_assignments.tasks.BrazeApiClient')
     @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_client')
@@ -885,128 +823,3 @@ class TestBrazeEmailTasks(APITestWithMocks):
             output_pattern=BRAZE_TIMESTAMP_FORMAT
         )
         self.assertEqual(expected_result, action_required_by)
-
-
-class TestClearPiiForExpiredAssignmentsTask(APITestWithMocks):
-    """
-    Tests for clear_pii_for_expired_assignments task.
-    """
-
-    @classmethod
-    def setUpTestData(cls):
-        super().setUpTestData()
-
-        cls.enterprise_uuid = TEST_ENTERPRISE_UUID
-        cls.assignment_configuration = AssignmentConfigurationFactory(
-            enterprise_customer_uuid=cls.enterprise_uuid,
-        )
-        cls.policy = AssignedLearnerCreditAccessPolicyFactory(
-            display_name='An assigned learner credit policy, for the test customer.',
-            enterprise_customer_uuid=cls.enterprise_uuid,
-            active=True,
-            assignment_configuration=cls.assignment_configuration,
-            spend_limit=1000000,
-        )
-
-    def setUp(self):
-        super().setUp()
-        self.expired_assignment = LearnerContentAssignmentFactory(
-            assignment_configuration=self.assignment_configuration,
-            learner_email='expired@test.com',
-            lms_user_id=TEST_LMS_USER_ID,
-            content_key=TEST_COURSE_KEY,
-            content_title='Test Course',
-            content_quantity=-100,
-            state=LearnerContentAssignmentStateChoices.EXPIRED,
-            expired_at=now() - timedelta(hours=2),
-        )
-        self.expired_assignment.created = now() - timedelta(days=100)
-        self.expired_assignment.save()
-
-    @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient')
-    @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_client')
-    def test_clear_pii_for_expired_assignments_task(
-        self,
-        mock_subsidy_client,
-        mock_catalog_client,
-    ):
-        """
-        Test that the task clears PII for assignments expired due to 90-day timeout
-        after expiration email has been sent.
-        """
-        import re
-
-        from enterprise_access.apps.content_assignments.constants import RETIRED_EMAIL_ADDRESS_FORMAT
-        from enterprise_access.apps.content_assignments.tasks import clear_pii_for_expired_assignments
-
-        self.expired_assignment.add_successful_expiration_action()
-
-        subsidy_expiry = now() + timedelta(days=365)
-        enrollment_end = now() + timedelta(days=365)
-
-        mock_subsidy_client.retrieve_subsidy.return_value = {
-            'enterprise_customer_uuid': str(self.enterprise_uuid),
-            'expiration_datetime': subsidy_expiry.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            'is_active': True,
-        }
-        mock_catalog_client.return_value.catalog_content_metadata.return_value = {
-            'count': 1,
-            'results': [{
-                'key': TEST_COURSE_KEY,
-                'normalized_metadata': {
-                    'start_date': '2020-01-01 12:00:00Z',
-                    'end_date': '2030-01-01 12:00:00Z',
-                    'enroll_by_date': enrollment_end.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                    'content_price': 100,
-                },
-            }],
-        }
-
-        result = clear_pii_for_expired_assignments(dry_run=False)
-
-        self.expired_assignment.refresh_from_db()
-        pattern = RETIRED_EMAIL_ADDRESS_FORMAT.format('[a-f0-9]{16}')
-        assert re.match(pattern, self.expired_assignment.learner_email) is not None
-        assert result['cleared_count'] == 1
-
-    @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient')
-    @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_client')
-    def test_clear_pii_skipped_without_expiration_email(
-        self,
-        mock_subsidy_client,
-        mock_catalog_client,
-    ):
-        """
-        Test that PII is NOT cleared if expiration email wasn't successfully sent.
-        """
-        from enterprise_access.apps.content_assignments.tasks import clear_pii_for_expired_assignments
-
-        # Note: NOT adding successful expiration action
-        original_email = self.expired_assignment.learner_email
-
-        subsidy_expiry = now() + timedelta(days=365)
-        enrollment_end = now() + timedelta(days=365)
-
-        mock_subsidy_client.retrieve_subsidy.return_value = {
-            'enterprise_customer_uuid': str(self.enterprise_uuid),
-            'expiration_datetime': subsidy_expiry.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            'is_active': True,
-        }
-        mock_catalog_client.return_value.catalog_content_metadata.return_value = {
-            'count': 1,
-            'results': [{
-                'key': TEST_COURSE_KEY,
-                'normalized_metadata': {
-                    'start_date': '2020-01-01 12:00:00Z',
-                    'end_date': '2030-01-01 12:00:00Z',
-                    'enroll_by_date': enrollment_end.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                    'content_price': 100,
-                },
-            }],
-        }
-
-        result = clear_pii_for_expired_assignments(dry_run=False)
-
-        self.expired_assignment.refresh_from_db()
-        assert self.expired_assignment.learner_email == original_email
-        assert result['cleared_count'] == 0

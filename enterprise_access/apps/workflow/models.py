@@ -71,9 +71,7 @@ class AbstractUnitOfWork(TimeStampedModel, SoftDeletableModel):
 
     @property
     def output_object(self):
-        if self.output_data:
-            return self.output_class.from_dict(self.output_data)
-        return None
+        return self.output_class.from_dict(self.output_data)
 
     def process_input(self, accumulated_output=None, **kwargs):  # pylint: disable=unused-argument
         """
@@ -95,7 +93,7 @@ class AbstractUnitOfWork(TimeStampedModel, SoftDeletableModel):
         then stores the output (as a dictionary for json serialization)
         and time of successful execution.
         On any exception, the exception time and message are stored,
-        and a ``self.exception_class`` is raised from the responsible exception.
+        and an empty output object is ultimately returned.
 
         Params:
           accumulated_output (obj): An optional accumulator object, which will be
@@ -115,6 +113,7 @@ class AbstractUnitOfWork(TimeStampedModel, SoftDeletableModel):
         except Exception as exc:
             self.failed_at = timezone.now()
             self.exception_message = str(exc)
+            result = self.output_class()
             raise self.exception_class(str(exc)) from exc
         finally:
             self.save()

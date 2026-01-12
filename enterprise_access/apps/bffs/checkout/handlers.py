@@ -22,7 +22,6 @@ from enterprise_access.apps.bffs.checkout.context import (
 from enterprise_access.apps.bffs.checkout.serializers import CheckoutIntentModelSerializer
 from enterprise_access.apps.bffs.handlers import BaseHandler
 from enterprise_access.apps.customer_billing.api import validate_free_trial_checkout_session
-from enterprise_access.apps.customer_billing.embargo import get_embargoed_countries
 from enterprise_access.apps.customer_billing.models import CheckoutIntent
 from enterprise_access.apps.customer_billing.pricing_api import get_ssp_product_pricing
 from enterprise_access.apps.customer_billing.stripe_api import (
@@ -207,31 +206,13 @@ class CheckoutContextHandler(CheckoutIntentAwareHandlerMixin, BaseHandler):
                 min_val, max_val = product_config['quantity_range']
                 quantity_constraints = {'min': min_val, 'max': max_val}
                 break
+
         return {
             'quantity': quantity_constraints,
             'enterprise_slug': {
-                'min_length': 1,
-                'max_length': 255,
+                'min_length': 3,
+                'max_length': 30,
                 'pattern': '^[a-z0-9-]+$'
-            },
-            'embargoed_countries': get_embargoed_countries(),
-            'full_name': {
-                'min_length': 1,
-                'max_length': 150,
-            },
-            'admin_email': {
-                'min_length': 6,
-                'max_length': 253,
-                'pattern': '^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$',  # enforce the format of X@Y.Z without spaces
-            },
-            'country': {
-                'min_length': 2,
-                'max_length': 2,
-                'pattern': '^[A-Z]{2}$'
-            },
-            'company_name': {
-                'min_length': 1,
-                'max_length': 255,
             }
         }
 
@@ -346,7 +327,7 @@ class CheckoutSuccessHandler(CheckoutContextHandler):
 
         try:
             session = get_stripe_checkout_session(session_id)
-        except stripe.StripeError:
+        except stripe.error.StripeError:
             logger.exception("Error retrieving Stripe checkout session: %s", session_id)
             return
 
@@ -354,7 +335,6 @@ class CheckoutSuccessHandler(CheckoutContextHandler):
             'start_time': None,
             'end_time': None,
             'last4': None,
-            'card_brand': None,
             'quantity': None,
             'unit_amount_decimal': None,
             'customer_phone': None,
@@ -390,33 +370,26 @@ class CheckoutSuccessHandler(CheckoutContextHandler):
     @staticmethod
     def _get_payment_method(session):
         """ Helper to fetch payment method record from Stripe. """
-        payment_method_id = None
-
-        # Try payment intent first (for paid subscriptions)
-        if payment_intent_id := session.get('payment_intent'):
-            try:
-                payment_intent = get_stripe_payment_intent(payment_intent_id)
-                payment_method_id = payment_intent.get('payment_method')
-            except stripe.StripeError:
-                logger.exception("Error retrieving Stripe payment intent: %s", payment_intent_id)
-
-        # If no payment method yet, try subscription (for trial subscriptions)
-        if not payment_method_id and (subscription_id := session.get('subscription')):
-            try:
-                subscription = get_stripe_subscription(subscription_id)
-                payment_method_id = subscription.get('default_payment_method')
-            except stripe.StripeError:
-                logger.exception("Error retrieving Stripe subscription: %s", subscription_id)
-
-        if not payment_method_id:
-            logger.warning('No payment method found on stripe session %s', session.get('id'))
+        if not (payment_intent_id := session.get('payment_intent')):
+            logger.warning('No payment intent on stripe session %s', session.get('id'))
             return None
 
         try:
-            return get_stripe_payment_method(payment_method_id)
-        except stripe.StripeError:
-            logger.exception("Error retrieving Stripe payment method: %s", payment_method_id)
+            payment_intent = get_stripe_payment_intent(payment_intent_id)
+        except stripe.error.StripeError:
+            logger.exception("Error retrieving Stripe payment intent: %s", payment_intent_id)
             return None
+
+        if not (payment_method_id := payment_intent.get('payment_method')):
+            logger.warning('No payment method on stripe payment intent %s', payment_intent_id)
+            return None
+
+        payment_method = None
+        try:
+            payment_method = get_stripe_payment_method(payment_method_id)
+        except stripe.error.StripeError:
+            logger.exception("Error retrieving Stripe payment method: %s", payment_method_id)
+        return payment_method
 
     @staticmethod
     def _get_card_billing_details(payment_method):
@@ -424,7 +397,6 @@ class CheckoutSuccessHandler(CheckoutContextHandler):
         result = {}
         if (card_metadata := payment_method.get('card', {})):
             result['last4'] = card_metadata.get('last4')
-            result['card_brand'] = card_metadata.get('brand')
         if (billing_details := payment_method.get('billing_details', {})):
             result['billing_address'] = billing_details.get('address')
         return result
@@ -437,7 +409,7 @@ class CheckoutSuccessHandler(CheckoutContextHandler):
             try:
                 subscription = get_stripe_subscription(subscription_id)
                 invoice_id = subscription.get('latest_invoice')
-            except stripe.StripeError:
+            except stripe.error.StripeError:
                 logger.exception("Error retrieving Stripe subscription: %s", subscription_id)
                 return None
 
@@ -449,7 +421,7 @@ class CheckoutSuccessHandler(CheckoutContextHandler):
 
         try:
             return get_stripe_invoice(invoice_id)
-        except stripe.StripeError:
+        except stripe.error.StripeError:
             logger.exception("Error retrieving Stripe invoice: %s", invoice_id)
             return None
 
@@ -489,14 +461,6 @@ class CheckoutSuccessHandler(CheckoutContextHandler):
             customer = get_stripe_customer(customer_id)
             result['customer_name'] = customer.get('name')
             result['customer_phone'] = customer.get('phone')
-        except stripe.StripeError:
+        except stripe.error.StripeError:
             logger.exception("Error retrieving Stripe customer: %s", customer_id)
-
-        if customer_address := invoice.get('customer_address'):
-            logger.info(
-                "Retrieved billing address from invoice customer_address: %s",
-                customer_address
-            )
-            result['billing_address'] = customer_address
-
         return result

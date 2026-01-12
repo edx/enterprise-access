@@ -11,11 +11,7 @@ from rest_framework import status
 
 from enterprise_access.apps.api_client.base_oauth import BaseOAuthClient
 from enterprise_access.apps.api_client.base_user import BaseUserApiClient
-from enterprise_access.apps.api_client.exceptions import (
-    APIClientException,
-    FetchGroupMembersConflictingParamsException,
-    safe_error_response_content
-)
+from enterprise_access.apps.api_client.exceptions import FetchGroupMembersConflictingParamsException
 from enterprise_access.apps.enterprise_groups.constants import GROUP_MEMBERSHIP_EMAIL_ERROR_STATUS
 from enterprise_access.cache_utils import versioned_cache_key
 from enterprise_access.utils import localized_utcnow, should_send_email_to_pecu
@@ -58,7 +54,6 @@ class LmsApiClient(BaseOAuthClient):
     pending_enterprise_learner_endpoint = enterprise_api_v1_base_url + 'pending-enterprise-learner/'
     enterprise_group_membership_endpoint = enterprise_api_v1_base_url + 'enterprise-group/'
     pending_enterprise_admin_endpoint = enterprise_api_v1_base_url + 'pending-enterprise-admin/'
-    create_enterprise_admin_endpoint = enterprise_api_v1_base_url + 'enterprise-customer-admin/create_admin_by_email/'
     enterprise_flex_membership_endpoint = enterprise_api_v1_base_url + 'enterprise-group-membership/'
     enterprise_course_enrollment_admin_endpoint = enterprise_api_v1_base_url + 'enterprise-course-enrollment-admin/'
     user_accounts_endpoint = settings.LMS_URL + '/api/user/v1/accounts'
@@ -129,7 +124,7 @@ class LmsApiClient(BaseOAuthClient):
         except requests.exceptions.HTTPError as exc:
             logger.exception(
                 f"Failed to fetch enterprise flex group memberships for learner {lms_user_id}: {exc} "
-                f"Response content: {safe_error_response_content(exc)}"
+                f"Response content: {current_response.content if current_response else None}"
             )
             raise
 
@@ -190,8 +185,8 @@ class LmsApiClient(BaseOAuthClient):
                 return {}
             return payload
         except requests.exceptions.HTTPError as exc:
-            logger.exception(safe_error_response_content(exc))
-            raise APIClientException('Could not fetch enterprise customer data', exc) from exc
+            logger.exception(exc)
+            raise
 
     def create_enterprise_customer(self, *, name, slug, country, **kwargs):
         """
@@ -209,8 +204,6 @@ class LmsApiClient(BaseOAuthClient):
             'name': name,
             'slug': slug,
             'country': country,
-            'enable_analytics_screen': False,
-            'enable_portal_subscription_management_screen': True,
             'site': {
                 'domain': settings.PROVISIONING_DEFAULTS['customer']['site_domain'],
             },
@@ -229,12 +222,12 @@ class LmsApiClient(BaseOAuthClient):
                 name, payload,
             )
             return payload
-        except requests.exceptions.HTTPError as exc:
+        except requests.exceptions.HTTPError:
             logger.exception(
                 'Failed to create enterprise customer with name %s, response content %s',
-                name, safe_error_response_content(exc),
+                name, response.content.decode(),
             )
-            raise APIClientException(f'Could not create customer with name {name}', exc) from exc
+            raise
 
     def get_enterprise_admin_users(self, enterprise_customer_uuid):
         """
@@ -278,12 +271,9 @@ class LmsApiClient(BaseOAuthClient):
             logger.error(
                 'Failed to fetch enterprise admin users for %r because %r',
                 enterprise_customer_uuid,
-                safe_error_response_content(exc),
+                response.text,
             )
-            raise APIClientException(
-                f'Failed to fetch enterprise admin users for {enterprise_customer_uuid}',
-                exc,
-            ) from exc
+            raise exc
 
         return results
 
@@ -311,18 +301,18 @@ class LmsApiClient(BaseOAuthClient):
                 url = resp_json['next']
                 results.extend(resp_json['results'])
         except requests.exceptions.HTTPError as exc:
+            content = getattr(exc.response, 'content', None)
+            if content:
+                content = content.decode()
             logger.exception(
                 'Failed to fetch pending admin record for customer %s: %s',
-                enterprise_customer_uuid, safe_error_response_content(exc),
+                enterprise_customer_uuid, content,
             )
-            raise APIClientException(
-                f'Failed to fetch pending enterprise admin users for {enterprise_customer_uuid}',
-                exc,
-            ) from exc
+            raise
 
         return results
 
-    def create_enterprise_pending_admin_user(self, enterprise_customer_uuid, user_email):
+    def create_enterprise_admin_user(self, enterprise_customer_uuid, user_email):
         """
         Creates a new enterprise pending admin record.
 
@@ -349,52 +339,12 @@ class LmsApiClient(BaseOAuthClient):
             )
             payload = response.json()
             return payload
-        except requests.exceptions.HTTPError as exc:
+        except requests.exceptions.HTTPError:
             logger.exception(
                 'Failed to create pending admin record for customer %s, email %s: %s',
-                enterprise_customer_uuid, user_email, safe_error_response_content(exc),
+                enterprise_customer_uuid, user_email, response.content.decode()
             )
-            raise APIClientException(
-                f'Failed to create pending enterprise admin users for {enterprise_customer_uuid}',
-                exc,
-            ) from exc
-
-    def create_enterprise_admin_user(self, enterprise_customer_uuid, user_email):
-        """
-        Creates a new enterprise admin record (not a pending one).
-
-        Arguments:
-            enterprise_customer_uuid (UUID): UUID of the enterprise customer.
-            user_email (string): The email address of the admin.
-        Returns:
-            dictionary describing the created admin record.
-        """
-        payload = {
-            'enterprise_customer_uuid': enterprise_customer_uuid,
-            'email': user_email,
-        }
-        response = self.client.post(
-            self.create_enterprise_admin_endpoint,
-            json=payload,
-            timeout=settings.LMS_CLIENT_TIMEOUT,
-        )
-        try:
-            response.raise_for_status()
-            logger.info(
-                'Successfully created admin record for customer %s, email %s',
-                enterprise_customer_uuid, user_email,
-            )
-            payload = response.json()
-            return payload
-        except requests.exceptions.HTTPError as exc:
-            logger.exception(
-                'Failed to create admin record for customer %s, email %s: %s',
-                enterprise_customer_uuid, user_email, safe_error_response_content(exc),
-            )
-            raise APIClientException(
-                f'Failed to create enterprise admin users for {enterprise_customer_uuid}',
-                exc,
-            ) from exc
+            raise
 
     def get_enterprise_catalogs(self, enterprise_customer_uuid, catalog_query_id=None):
         """
@@ -421,13 +371,10 @@ class LmsApiClient(BaseOAuthClient):
                 'Fetched %s catalog record(s) for customer %s', len(results), enterprise_customer_uuid,
             )
             return results
-        except requests.exceptions.HTTPError as exc:
+        except requests.exceptions.HTTPError:
             msg = 'Failed to fetch catalogs for customer %s and catalog query %s. Response content: %s'
-            logger.exception(msg, enterprise_customer_uuid, catalog_query_id, safe_error_response_content(exc))
-            raise APIClientException(
-                f'Failed to fetch catalog for customer {enterprise_customer_uuid}',
-                exc,
-            ) from exc
+            logger.exception(msg, enterprise_customer_uuid, catalog_query_id, response.content.decode())
+            raise
 
     def create_enterprise_catalog(self, enterprise_customer_uuid, catalog_title, catalog_query_id):
         """
@@ -457,15 +404,12 @@ class LmsApiClient(BaseOAuthClient):
             payload = response.json()
             logger.info('Created catalog record %s', payload)
             return payload
-        except requests.exceptions.HTTPError as exc:
+        except requests.exceptions.HTTPError:
             msg = 'Failed to create catalog for customer %s with title %s and catalog query %s. Response content: %s'
             logger.exception(
-                msg, enterprise_customer_uuid, catalog_title, catalog_query_id, safe_error_response_content(exc),
+                msg, enterprise_customer_uuid, catalog_title, catalog_query_id, response.content.decode(),
             )
-            raise APIClientException(
-                f'Failed to create catalog for customer {enterprise_customer_uuid}',
-                exc,
-            ) from exc
+            raise
 
     def unlink_users_from_enterprise(self, enterprise_customer_uuid, user_emails, is_relinkable=True):
         """
