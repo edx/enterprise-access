@@ -11,7 +11,6 @@ from dateutil.relativedelta import relativedelta
 from django.conf import settings
 from django_countries import countries
 
-from enterprise_access.apps.customer_billing.constants import CheckoutIntentState
 from enterprise_access.apps.customer_billing.models import (
     CheckoutIntent,
     SelfServiceSubscriptionRenewal,
@@ -22,6 +21,7 @@ from enterprise_access.apps.workflow.exceptions import UnitOfWorkException
 from enterprise_access.apps.workflow.models import AbstractWorkflow, AbstractWorkflowStep
 from enterprise_access.apps.workflow.serialization import BaseInputOutput
 
+from ..api_client import LmsApiClient
 from .api import (
     get_or_create_customer_agreement,
     get_or_create_enterprise_admin_users,
@@ -846,6 +846,28 @@ class NotificationStep(CheckoutIntentStepMixin, AbstractWorkflowStep):
 
         workflow = self.get_workflow_record()
         desired_num_licenses = workflow.input_object.create_trial_subscription_plan_input.desired_num_licenses
+        activation_link = None
+        checkout_intent = self.get_linked_checkout_intent()
+
+        username = (
+            checkout_intent.user.username
+            if checkout_intent and checkout_intent.user
+            else None
+        )
+
+        user_email = (
+            getattr(
+                getattr(workflow.input_object, "create_enterprise_admin_users_input", None),
+                "user_emails",
+                [],
+            ) or [None]
+        )[0]
+
+        if username or user_email:
+            activation_link = LmsApiClient().get_lms_user_activation_link(
+                username=username,
+                user_email=user_email,
+            )
 
         # Notify the customer admin via email.
         send_enterprise_provision_signup_confirmation_email.delay(
@@ -853,6 +875,7 @@ class NotificationStep(CheckoutIntentStepMixin, AbstractWorkflowStep):
             accumulated_output.create_trial_subscription_plan_output.start_date,
             accumulated_output.create_trial_subscription_plan_output.expiration_date,
             desired_num_licenses,
+            activation_link,
             # Remaining campaign params.
             accumulated_output.create_customer_output.name,
             accumulated_output.create_customer_output.slug

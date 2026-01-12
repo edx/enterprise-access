@@ -788,8 +788,9 @@ class LmsApiClient(BaseOAuthClient):
         email: str | None = None,
     ) -> dict | None:
         """
-        Fetch LMS learner data for a given username or email.
+        Fetch LMS learner data using exactly one of: username, or email.
         """
+        # Ensure exactly one of username, or email is provided.
         if bool(username) == bool(email):
             raise ValueError('Expected exactly one of `username` or `email`.')
         if username:
@@ -805,6 +806,69 @@ class LmsApiClient(BaseOAuthClient):
             return None
         response.raise_for_status()
         return response.json()
+
+    def get_lms_user_activation_link(
+        self,
+        username: str | None = None,
+        user_email: str | None = None,
+    ) -> str | None:
+        """
+        Returns the LMS user activation link, or None if no activation key
+        is available for the user.
+
+        Resolution strategy:
+        - Prefer username when provided
+        - Fall back to email if username is missing
+        - Return None safely if neither identifier is usable
+        """
+        if not username and not user_email:
+            logger.error(
+                "Unable to create customer activation link, "
+                "neither username nor user_email was provided."
+            )
+            return None
+
+        lookup_username = username if username else None
+        lookup_email = None if username else user_email
+
+        try:
+            customer_data = self.get_lms_user_account(
+                username=lookup_username,
+                email=lookup_email,
+            )
+        except Exception:  # pylint: disable=broad-except
+            logger.exception(
+                "Unable to fetch LMS user account data (username=%s, user_email=%s).",
+                username, user_email,
+            )
+            return None
+
+        if not customer_data:
+            logger.error(
+                "Unable to create customer activation link, "
+                f"no LMS user account data for username={username}, user_email={user_email}"
+            )
+            return None
+
+        customer_record = (
+            customer_data[0] if isinstance(customer_data, list) else customer_data
+        )
+
+        if not isinstance(customer_record, dict):
+            logger.error(
+                "Unable to create customer activation link, "
+                f"unexpected LMS user account format for username={username}, user_email={user_email}"
+            )
+            return None
+
+        activation_key = customer_record.get('activation_key', None)
+        if not activation_key:
+            logger.error(
+                "Unable to create customer activation link, "
+                f"missing or invalid activation key for username={username}, user_email={user_email}"
+            )
+            return None
+        return f'{settings.LMS_URL}/activate/{activation_key}'
 
 
 class LmsUserApiClient(BaseUserApiClient):
