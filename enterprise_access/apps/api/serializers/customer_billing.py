@@ -283,16 +283,19 @@ class StripeSubscriptionPlanInfoResponseSerializer(serializers.Serializer):
     Response serializer for response body from GET /api/v1/stripe-event-summary/get-stripe-subscription-plan-info
     """
     upcoming_invoice_amount_due = serializers.CharField(
+        allow_null=True,
         required=False,
         help_text='Upcoming invoice amount due related to this event/subscription',
     )
 
     currency = serializers.CharField(
+        allow_null=True,
         required=False,
         help_text='Three-letter ISO currency code associated with the subscription.',
     )
 
     canceled_date = serializers.DateTimeField(
+        allow_null=True,
         required=False,
         help_text='Timestamp when the subscription is scheduled to be canceled',
     )
