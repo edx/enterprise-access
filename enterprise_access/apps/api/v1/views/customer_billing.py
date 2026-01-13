@@ -624,7 +624,6 @@ class StripeEventSummaryViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
         subscription_plan_uuid = self.request.query_params.get('subscription_plan_uuid')
         if not subscription_plan_uuid:
             raise exceptions.ValidationError(detail='subscription_plan_uuid query param is required')
-        subscription_plan_uuid = self.request.query_params.get('subscription_plan_uuid')
         created_event_summary = StripeEventSummary.objects.filter(
             event_type='customer.subscription.created',
             subscription_plan_uuid=subscription_plan_uuid,
@@ -650,8 +649,9 @@ class StripeEventSummaryViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
                 'canceled_date': canceled_date,
             },
         )
-        if not (subscription_plan_uuid and (updated_event_summary or created_event_summary)):
-            return Response({})
-        if not response_serializer.is_valid():
-            return HttpResponseServerError()
+        if not subscription_plan_uuid:
+            raise exceptions.NotFound("No associated subscription plan uuid was found")
+        if not (updated_event_summary or created_event_summary):
+            raise exceptions.NotFound("No Stripe subscription data found for this plan")
+        response_serializer.is_valid(raise_exception=True)
         return Response(response_serializer.data, status=status.HTTP_200_OK)
