@@ -649,10 +649,8 @@ class StripeEventSummaryViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
                 'canceled_date': canceled_date,
             },
         )
-        if not (subscription_plan_uuid and (updated_event_summary or created_event_summary)):
-            return Response({})
         if not subscription_plan_uuid:
-            raise exceptions.NotFound("No associated subscription plan uuid was found ")
+            raise exceptions.NotFound("No associated subscription plan uuid was found")
         if not (updated_event_summary or created_event_summary):
             raise exceptions.NotFound("No Stripe subscription data found for this plan")
         response_serializer.is_valid(raise_exception=True)
