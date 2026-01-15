@@ -456,7 +456,7 @@ class TestStripeEventHandler(TestCase):
 
         mock_email_task.delay.assert_called_once_with(
             checkout_intent_id=self.checkout_intent.id,
-            trial_end_timestamp=trial_end_timestamp,
+            cancel_at_timestamp=cancel_at_timestamp,
         )
 
     @mock.patch(

@@ -206,7 +206,7 @@ def send_finalized_cancelation_email_task(checkout_intent_id, ended_at_timestamp
 
 
 @shared_task(base=LoggedTaskWithRetry)
-def send_trial_cancellation_email_task(checkout_intent_id, trial_end_timestamp):
+def send_trial_cancellation_email_task(checkout_intent_id, cancel_at_timestamp):
     """
     Send Braze email notification when a trial subscription cancelation is scheduled.
 
@@ -216,7 +216,7 @@ def send_trial_cancellation_email_task(checkout_intent_id, trial_end_timestamp):
 
     Args:
         checkout_intent_id (int): ID of the CheckoutIntent record
-        trial_end_timestamp (int): Unix timestamp of when the trial period ends
+        cancel_at_timestamp (int): Unix timestamp of when the trial will become cancelled.
 
     Raises:
         BrazeClientError: If there's an error communicating with Braze
@@ -224,7 +224,7 @@ def send_trial_cancellation_email_task(checkout_intent_id, trial_end_timestamp):
     """
     _send_cancelation_campaign(
         checkout_intent_id,
-        trial_end_timestamp,
+        cancel_at_timestamp,
         settings.BRAZE_TRIAL_CANCELLATION_CAMPAIGN,
     )
 
