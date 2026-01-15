@@ -451,17 +451,11 @@ class StripeEventHandler:
                 f"Subscription {subscription.id} was scheduled for cancellation at {current_cancel_at_datetime}. "
                 f"Processing cancellation notification for checkout_intent_id={checkout_intent_id}"
             )
-            trial_end = subscription.get("trial_end")
-            if trial_end:
+            if current_status == StripeSubscriptionStatus.TRIALING:
                 logger.info(f"Queuing trial cancellation email for checkout_intent_id={checkout_intent_id}")
                 send_trial_cancellation_email_task.delay(
                     checkout_intent_id=checkout_intent.id,
-                    trial_end_timestamp=trial_end,
-                )
-            else:
-                logger.info(
-                    f"Subscription {subscription.id} scheduled for cancellation but has no trial_end, "
-                    f"skipping cancellation email"
+                    cancel_at_timestamp=current_cancel_at,
                 )
 
         # Everything belows handles a subscription state change. If the status

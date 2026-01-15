@@ -41,6 +41,9 @@ class TestSendTrialCancellationEmailTask(TestCase):
         self.trial_end_datetime = datetime(2021, 1, 1)
         self.trial_end_timestamp = int(self.trial_end_datetime.timestamp())
 
+        self.cancel_at_datetime = datetime(2021, 4, 1)
+        self.cancel_at_timestamp = int(self.cancel_at_datetime.timestamp())
+
     @mock.patch(
         "enterprise_access.apps.customer_billing.tasks.BrazeApiClient"
     )
@@ -68,7 +71,7 @@ class TestSendTrialCancellationEmailTask(TestCase):
         # Run the task
         send_trial_cancellation_email_task(
             checkout_intent_id=str(self.checkout_intent.id),
-            trial_end_timestamp=self.trial_end_timestamp,
+            cancel_at_timestamp=self.cancel_at_timestamp,
         )
 
         # Verify Braze campaign was sent
@@ -118,7 +121,7 @@ class TestSendTrialCancellationEmailTask(TestCase):
         with self.assertRaises(Exception) as context:
             send_trial_cancellation_email_task(
                 checkout_intent_id=self.checkout_intent.id,
-                trial_end_timestamp=self.trial_end_timestamp,
+                cancel_at_timestamp=self.cancel_at_timestamp,
             )
 
         # Verify the exception message
