@@ -556,6 +556,23 @@ class LearnerCreditRequest(SubsidyRequest):
             batch_size=SUBSIDY_REQUEST_BULK_OPERATION_BATCH_SIZE,
         )
 
+    @classmethod
+    def bulk_approve_requests(cls, approved_requests, reviewer):
+        """
+        Bulk approve learner credit requests.
+
+        Args:
+            approved_requests: List of LearnerCreditRequest objects to approve
+            reviewer: The user who is approving the requests
+        """
+        reviewed_at = localized_utcnow()
+        for request in approved_requests:
+            request.state = SubsidyRequestStates.APPROVED
+            request.reviewer = reviewer
+            request.reviewed_at = reviewed_at
+
+        cls.bulk_update(approved_requests, ['state', 'reviewer', 'reviewed_at', 'assignment'])
+
 
 class LearnerCreditRequestActions(TimeStampedModel):
     """
