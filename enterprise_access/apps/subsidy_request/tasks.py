@@ -432,6 +432,7 @@ def send_learner_credit_bnr_decline_notification_task(learner_credit_request_uui
     Args:
         learner_credit_request_uuid (str): The UUID of the LearnerCreditRequest being declined.
     """
+    logger.info(f'Sending braze campaign decline message for learner credit request uuid={learner_credit_request_uuid}')
     try:
         subsidy_model = apps.get_model('subsidy_request.LearnerCreditRequest')
         learner_credit_request = subsidy_model.objects.get(uuid=learner_credit_request_uuid)
@@ -461,6 +462,7 @@ def send_learner_credit_bnr_decline_notification_task(learner_credit_request_uui
         'organization': organization,
         'course_title': learner_credit_request.course_title,
         'enterprise_dashboard_url': f'{settings.ENTERPRISE_LEARNER_PORTAL_URL}/{enterprise_slug}',
+        'decline_reason': learner_credit_request.decline_reason,
     }
 
     campaign_uuid = settings.BRAZE_LEARNER_CREDIT_BNR_DECLINE_NOTIFICATION_CAMPAIGN
