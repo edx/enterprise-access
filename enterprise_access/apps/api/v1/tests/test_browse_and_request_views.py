@@ -3380,3 +3380,230 @@ class TestLearnerCreditRequestViewSet(BaseEnterpriseAccessTestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    @mock.patch('enterprise_access.apps.subsidy_request.api.send_reminder_email_for_pending_learner_credit_request')
+    def test_remind_success(self, mock_send_reminder_task):
+        """
+        Test successful bulk remind of learner credit requests.
+        """
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': str(self.enterprise_customer_uuid_1)
+        }])
+
+        # Set up approved requests with assignments
+        assignment_1 = LearnerContentAssignmentFactory(
+            assignment_configuration=self.assignment_config,
+            content_quantity=-1000,
+            state='allocated'
+        )
+        assignment_2 = LearnerContentAssignmentFactory(
+            assignment_configuration=self.assignment_config,
+            content_quantity=-1000,
+            state='allocated'
+        )
+        approved_request_1 = LearnerCreditRequestFactory(
+            enterprise_customer_uuid=self.enterprise_customer_uuid_1,
+            user=self.user,
+            learner_credit_request_config=self.learner_credit_config,
+            course_price=1000,
+            state=SubsidyRequestStates.APPROVED,
+            assignment=assignment_1
+        )
+        approved_request_2 = LearnerCreditRequestFactory(
+            enterprise_customer_uuid=self.enterprise_customer_uuid_1,
+            user=self.user,
+            learner_credit_request_config=self.learner_credit_config,
+            course_price=1000,
+            state=SubsidyRequestStates.APPROVED,
+            assignment=assignment_2
+        )
+
+        url = reverse('api:v1:learner-credit-requests-remind')
+        data = {
+            'enterprise_customer_uuid': str(self.enterprise_customer_uuid_1),
+            'learner_credit_request_uuids': [
+                str(approved_request_1.uuid),
+                str(approved_request_2.uuid)
+            ]
+        }
+        response = self.client.post(url, data, content_type='application/json')
+
+        assert response.status_code == status.HTTP_200_OK
+
+        # Verify reminder tasks were called
+        assert mock_send_reminder_task.delay.call_count == 2
+
+        # Verify action records were created
+        for request in [approved_request_1, approved_request_2]:
+            action = LearnerCreditRequestActions.objects.filter(
+                learner_credit_request=request,
+                recent_action='reminded'
+            ).first()
+            assert action is not None
+
+    def test_remind_non_remindable_requests(self):
+        """
+        Test remind returns 422 when some requests are not remindable.
+        """
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': str(self.enterprise_customer_uuid_1)
+        }])
+
+        # Set up approved request with assignment
+        assignment = LearnerContentAssignmentFactory(
+            assignment_configuration=self.assignment_config,
+            content_quantity=-1000,
+            state='allocated'
+        )
+        approved_request = LearnerCreditRequestFactory(
+            enterprise_customer_uuid=self.enterprise_customer_uuid_1,
+            user=self.user,
+            learner_credit_request_config=self.learner_credit_config,
+            course_price=1000,
+            state=SubsidyRequestStates.APPROVED,
+            assignment=assignment
+        )
+
+        # Set up request without assignment (non-remindable)
+        request_without_assignment = LearnerCreditRequestFactory(
+            enterprise_customer_uuid=self.enterprise_customer_uuid_1,
+            user=self.user,
+            learner_credit_request_config=self.learner_credit_config,
+            course_price=1000,
+            state=SubsidyRequestStates.APPROVED,
+            assignment=None
+        )
+
+        url = reverse('api:v1:learner-credit-requests-remind')
+        data = {
+            'enterprise_customer_uuid': str(self.enterprise_customer_uuid_1),
+            'learner_credit_request_uuids': [
+                str(approved_request.uuid),
+                str(request_without_assignment.uuid)
+            ]
+        }
+        response = self.client.post(url, data, content_type='application/json')
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert 'non_remindable' in response.data
+        assert str(request_without_assignment.uuid) in response.data['non_remindable']
+
+    @mock.patch('enterprise_access.apps.subsidy_request.api.send_reminder_email_for_pending_learner_credit_request')
+    def test_remind_all_success(self, mock_send_reminder_task):
+        """
+        Test successful remind-all for a given policy.
+        """
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': str(self.enterprise_customer_uuid_1)
+        }])
+
+        # Set up approved requests with assignments
+        assignment_1 = LearnerContentAssignmentFactory(
+            assignment_configuration=self.assignment_config,
+            content_quantity=-1000,
+            state='allocated'
+        )
+        assignment_2 = LearnerContentAssignmentFactory(
+            assignment_configuration=self.assignment_config,
+            content_quantity=-1000,
+            state='allocated'
+        )
+        LearnerCreditRequestFactory(
+            enterprise_customer_uuid=self.enterprise_customer_uuid_1,
+            user=self.user,
+            learner_credit_request_config=self.learner_credit_config,
+            course_price=1000,
+            state=SubsidyRequestStates.APPROVED,
+            assignment=assignment_1
+        )
+        LearnerCreditRequestFactory(
+            enterprise_customer_uuid=self.enterprise_customer_uuid_1,
+            user=self.user,
+            learner_credit_request_config=self.learner_credit_config,
+            course_price=1000,
+            state=SubsidyRequestStates.APPROVED,
+            assignment=assignment_2
+        )
+
+        url = reverse('api:v1:learner-credit-requests-remind-all')
+        data = {
+            'enterprise_customer_uuid': str(self.enterprise_customer_uuid_1),
+            'policy_uuid': str(self.policy.uuid)
+        }
+        response = self.client.post(url, data, content_type='application/json')
+
+        assert response.status_code == status.HTTP_202_ACCEPTED
+        assert mock_send_reminder_task.delay.call_count == 2
+
+    def test_remind_all_non_remindable_requests(self):
+        """
+        Test remind-all returns 422 when non-remindable requests are discovered.
+        """
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': str(self.enterprise_customer_uuid_1)
+        }])
+
+        # Set up approved request without assignment (non-remindable)
+        LearnerCreditRequestFactory(
+            enterprise_customer_uuid=self.enterprise_customer_uuid_1,
+            user=self.user,
+            learner_credit_request_config=self.learner_credit_config,
+            course_price=1000,
+            state=SubsidyRequestStates.APPROVED,
+            assignment=None
+        )
+
+        url = reverse('api:v1:learner-credit-requests-remind-all')
+        data = {
+            'enterprise_customer_uuid': str(self.enterprise_customer_uuid_1),
+            'policy_uuid': str(self.policy.uuid)
+        }
+        response = self.client.post(url, data, content_type='application/json')
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert 'non_remindable' in response.data
+
+    def test_remind_all_no_requests_found(self):
+        """
+        Test remind-all returns 404 when no remindable requests are found.
+        """
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': str(self.enterprise_customer_uuid_1)
+        }])
+
+        # Clear all approved requests
+        LearnerCreditRequest.objects.filter(
+            state=SubsidyRequestStates.APPROVED
+        ).update(state=SubsidyRequestStates.REQUESTED)
+
+        url = reverse('api:v1:learner-credit-requests-remind-all')
+        data = {
+            'enterprise_customer_uuid': str(self.enterprise_customer_uuid_1),
+            'policy_uuid': str(self.policy.uuid)
+        }
+        response = self.client.post(url, data, content_type='application/json')
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_remind_all_403_for_learner(self):
+        """
+        Test that learners receive a 403 if they attempt to access the remind-all endpoint.
+        """
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE,
+            'context': str(self.enterprise_customer_uuid_1)
+        }])
+
+        url = reverse('api:v1:learner-credit-requests-remind-all')
+        data = {
+            'enterprise_customer_uuid': str(self.enterprise_customer_uuid_1),
+            'policy_uuid': str(self.policy.uuid)
+        }
+        response = self.client.post(url, data, content_type='application/json')
+
+        assert response.status_code == status.HTTP_403_FORBIDDEN
