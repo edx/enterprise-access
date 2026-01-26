@@ -37,12 +37,12 @@ billiard==4.2.4
     #   celery
 cattrs==25.3.0
     # via -r requirements/base.txt
-celery==5.6.0
+celery==5.6.2
     # via
     #   -r requirements/base.txt
     #   django-celery-results
     #   edx-celeryutils
-certifi==2025.11.12
+certifi==2026.1.4
     # via
     #   -r requirements/base.txt
     #   requests
@@ -102,7 +102,7 @@ defusedxml==0.7.1
     #   -r requirements/base.txt
     #   python3-openid
     #   social-auth-core
-django==5.2.9
+django==5.2.10
     # via
     #   -r requirements/base.txt
     #   crispy-bootstrap5
@@ -172,7 +172,7 @@ django-waffle==5.0.0
     #   edx-django-utils
     #   edx-drf-extensions
     #   edx-toggles
-djangoql==0.18.1
+djangoql==0.18.2
     # via -r requirements/base.txt
 djangorestframework==3.16.1
     # via
@@ -196,7 +196,7 @@ drf-jwt==1.19.2
     #   edx-drf-extensions
 drf-spectacular==0.29.0
     # via -r requirements/base.txt
-drf-yasg==1.21.11
+drf-yasg==1.21.14
     # via
     #   -r requirements/base.txt
     #   edx-api-doc-tools
@@ -248,10 +248,6 @@ edx-toggles==5.4.1
     #   -r requirements/base.txt
     #   edx-auth-backends
     #   edx-event-bus-kafka
-exceptiongroup==1.3.1
-    # via
-    #   -r requirements/base.txt
-    #   celery
 fastavro==1.12.1
     # via
     #   -r requirements/base.txt
@@ -259,9 +255,9 @@ fastavro==1.12.1
     #   openedx-events
 gevent==25.9.1
     # via -r requirements/production.in
-greenlet==3.3.0
+greenlet==3.3.1
     # via gevent
-gunicorn==23.0.0
+gunicorn==24.1.1
     # via -r requirements/production.in
 idna==3.11
     # via
@@ -287,7 +283,7 @@ jsonfield==3.2.0
     #   edx-celeryutils
 jsonfield2==4.0.0.post0
     # via -r requirements/base.txt
-jsonschema==4.25.1
+jsonschema==4.26.0
     # via
     #   -r requirements/base.txt
     #   drf-spectacular
@@ -295,7 +291,7 @@ jsonschema-specifications==2025.9.1
     # via
     #   -r requirements/base.txt
     #   jsonschema
-kombu==5.6.1
+kombu==5.6.2
     # via
     #   -r requirements/base.txt
     #   celery
@@ -324,7 +320,7 @@ openedx-events==10.5.0
     # via
     #   -r requirements/base.txt
     #   edx-event-bus-kafka
-packaging==25.0
+packaging==26.0
     # via
     #   -r requirements/base.txt
     #   drf-yasg
@@ -338,11 +334,11 @@ prompt-toolkit==3.0.52
     # via
     #   -r requirements/base.txt
     #   click-repl
-psutil==7.1.3
+psutil==7.2.1
     # via
     #   -r requirements/base.txt
     #   edx-django-utils
-pycparser==2.23
+pycparser==3.0
     # via
     #   -r requirements/base.txt
     #   cffi
@@ -358,11 +354,11 @@ pyjwt[crypto]==2.10.1
     #   social-auth-core
 pymemcache==4.0.0
     # via -r requirements/base.txt
-pymongo==4.15.5
+pymongo==4.16.0
     # via
     #   -r requirements/base.txt
     #   edx-opaque-keys
-pynacl==1.6.1
+pynacl==1.6.2
     # via
     #   -r requirements/base.txt
     #   edx-django-utils
@@ -439,16 +435,16 @@ six==1.17.0
     #   edx-django-release-util
     #   edx-rbac
     #   python-dateutil
-social-auth-app-django==5.6.0
+social-auth-app-django==5.7.0
     # via
     #   -r requirements/base.txt
     #   edx-auth-backends
-social-auth-core==4.8.1
+social-auth-core==4.8.3
     # via
     #   -r requirements/base.txt
     #   edx-auth-backends
     #   social-auth-app-django
-sqlparse==0.5.4
+sqlparse==0.5.5
     # via
     #   -r requirements/base.txt
     #   django
@@ -458,7 +454,7 @@ stevedore==5.6.0
     #   code-annotations
     #   edx-django-utils
     #   edx-opaque-keys
-stripe==14.0.1
+stripe==14.2.0
     # via -r requirements/base.txt
 text-unidecode==1.3
     # via
@@ -470,7 +466,6 @@ typing-extensions==4.15.0
     #   cattrs
     #   django-countries
     #   edx-opaque-keys
-    #   exceptiongroup
     #   referencing
     #   stripe
 tzdata==2025.3
@@ -487,7 +482,7 @@ uritemplate==4.2.0
     #   coreapi
     #   drf-spectacular
     #   drf-yasg
-urllib3==2.6.2
+urllib3==2.6.3
     # via
     #   -r requirements/base.txt
     #   requests
@@ -497,13 +492,13 @@ vine==5.1.0
     #   amqp
     #   celery
     #   kombu
-wcwidth==0.2.14
+wcwidth==0.4.0
     # via
     #   -r requirements/base.txt
     #   prompt-toolkit
 zope-event==6.1
     # via gevent
-zope-interface==8.1.1
+zope-interface==8.2
     # via gevent
 
 # The following packages are considered to be unsafe in a requirements file:
