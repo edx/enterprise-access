@@ -1142,28 +1142,82 @@ class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
     @action(detail=False, url_path="remind", methods=["post"])
     def remind(self, request, *args, **kwargs):
         """
-        Remind a Learner that their LearnerCreditRequest is Approved and waiting for their action.
+        Remind Learners that their LearnerCreditRequests are Approved and waiting for their action.
+
+        Accepts a list of learner_credit_request_uuids to remind.
+        Returns 422 if any of the requests are not remindable.
         """
         serializer = serializers.LearnerCreditRequestRemindSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        learner_credit_request = serializer.get_learner_credit_request()
-        assignment = learner_credit_request.assignment
 
-        action_instance = LearnerCreditRequestActions.create_action(
-            learner_credit_request=learner_credit_request,
-            recent_action=get_action_choice(LearnerCreditAdditionalActionStates.REMINDED),
-            status=get_user_message_choice(LearnerCreditAdditionalActionStates.REMINDED),
+        learner_credit_request_uuids = serializer.get_learner_credit_request_uuids()
+
+        # Validate all UUIDs exist
+        learner_credit_requests = self.get_queryset().select_related('assignment').filter(
+            uuid__in=learner_credit_request_uuids
         )
 
-        try:
-            send_reminder_email_for_pending_learner_credit_request.delay(assignment.uuid)
-            return Response(status=status.HTTP_200_OK)
-        except Exception as exc:  # pylint: disable=broad-except
-            # Optionally log an errored action here if the task couldn't be queued
-            action_instance.status = get_user_message_choice(LearnerCreditRequestActionErrorReasons.EMAIL_ERROR)
-            action_instance.error_reason = str(exc)
-            action_instance.save()
-            return Response(status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+        if len(learner_credit_requests) != len(set(learner_credit_request_uuids)):
+            return Response(
+                {"detail": "One or more learner credit request UUIDs not found."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        result = subsidy_request_api.remind_learner_credit_requests(learner_credit_requests)
+
+        if result.get('non_remindable'):
+            return Response(
+                {
+                    "detail": "Some requests could not be reminded.",
+                    "non_remindable": [str(r.uuid) for r in result['non_remindable']]
+                },
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+
+        return Response(status=status.HTTP_200_OK)
+
+    @permission_required(
+        constants.REQUESTS_ADMIN_ACCESS_PERMISSION,
+        fn=get_enterprise_uuid_from_request_data,
+    )
+    @action(detail=False, url_path="remind-all", methods=["post"])
+    def remind_all(self, request, *args, **kwargs):
+        """
+        Remind all Learners with APPROVED LearnerCreditRequests for a given policy.
+
+        Accepts a policy_uuid to filter requests by.
+        Returns 404 if no remindable requests are found.
+        Returns 422 if any requests are discovered to be non-remindable.
+        """
+        serializer = serializers.LearnerCreditRequestRemindAllSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        policy_uuid = serializer.validated_data['policy_uuid']
+
+        # Filter to APPROVED requests for this policy
+        learner_credit_requests = self.get_queryset().select_related('assignment').filter(
+            state=SubsidyRequestStates.APPROVED,
+            learner_credit_request_config__learner_credit_config__uuid=policy_uuid
+        )
+
+        if not learner_credit_requests.exists():
+            return Response(
+                {"detail": "No remindable requests found for the given policy."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        result = subsidy_request_api.remind_learner_credit_requests(learner_credit_requests)
+
+        if result.get('non_remindable'):
+            return Response(
+                {
+                    "detail": "Some requests could not be reminded.",
+                    "non_remindable": [str(r.uuid) for r in result['non_remindable']]
+                },
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+
+        return Response(status=status.HTTP_202_ACCEPTED)
 
     @permission_required(
         constants.REQUESTS_ADMIN_ACCESS_PERMISSION,
