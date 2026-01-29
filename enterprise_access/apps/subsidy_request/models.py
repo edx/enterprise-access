@@ -573,6 +573,25 @@ class LearnerCreditRequest(SubsidyRequest):
 
         cls.bulk_update(approved_requests, ['state', 'reviewer', 'reviewed_at', 'assignment'])
 
+    @classmethod
+    def bulk_decline_requests(cls, declined_requests, reviewer, reason=None):
+        """
+        Bulk decline learner credit requests.
+
+        Args:
+            declined_requests: List of LearnerCreditRequest objects to decline
+            reviewer: The user who is declining the requests
+            reason: Optional reason for declining
+        """
+        reviewed_at = localized_utcnow()
+        for request in declined_requests:
+            request.state = SubsidyRequestStates.DECLINED
+            request.reviewer = reviewer
+            request.reviewed_at = reviewed_at
+            request.decline_reason = reason
+
+        cls.bulk_update(declined_requests, ['state', 'reviewer', 'reviewed_at', 'decline_reason'])
+
 
 class LearnerCreditRequestActions(TimeStampedModel):
     """
