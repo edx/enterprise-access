@@ -133,20 +133,3 @@ def add_bulk_approve_operation_result(results_dict, category, uuid, state, error
     if error:
         result['error'] = error
     results_dict[category].append(result)
-
-
-def add_bulk_operation_result(results_dict, category, uuid, state, error=None):
-    """
-    Add an operation result to the results dictionary for bulk operations.
-
-    Args:
-        results_dict: Dictionary containing success and failed lists (e.g., 'declined' and 'failed')
-        category: The category key (e.g., 'declined', 'approved', 'failed')
-        uuid: The UUID of the request
-        state: The state of the request
-        error: Optional error message for failed operations
-    """
-    result = {'uuid': str(uuid), 'state': state}
-    if error:
-        result['error'] = error
-    results_dict[category].append(result)
