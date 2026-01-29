@@ -370,48 +370,65 @@ class LearnerCreditRequestCancelSerializer(serializers.Serializer):
 
 class LearnerCreditRequestRemindSerializer(serializers.Serializer):
     """
-    Request serializer to validate remind endpoint for a LearnerCreditRequest.
+    Request serializer to validate remind endpoint for LearnerCreditRequests.
 
     For view: LearnerCreditRequestViewSet.remind
+
+    Supports both:
+    - learner_credit_request_uuid: Single UUID (backwards-compatible)
+    - learner_credit_request_uuids: List of UUIDs
+    At least one must be provided.
     """
     learner_credit_request_uuid = serializers.UUIDField(
-        required=True,
-        help_text="The UUID of the LearnerCreditRequest to be reminded."
+        required=False,
+        allow_null=True,
+        help_text="A single LearnerCreditRequest UUID to be reminded (backwards-compatible)."
+    )
+    learner_credit_request_uuids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        allow_empty=True,
+        help_text="A list of LearnerCreditRequest UUIDs to be reminded."
     )
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._learner_credit_request = None
-
-    def validate_learner_credit_request_uuid(self, value):
+    def validate(self, attrs):
         """
-        Validate that the learner credit request exists, has an associated assignment,
-        and is in a state where a reminder is appropriate.
+        Validate that at least one of learner_credit_request_uuid or learner_credit_request_uuids is provided.
         """
-        try:
-            learner_credit_request = LearnerCreditRequest.objects.select_related('assignment').get(uuid=value)
-        except LearnerCreditRequest.DoesNotExist as exc:
-            raise serializers.ValidationError(f"Learner credit request with uuid {value} not found.") from exc
+        single_uuid = attrs.get('learner_credit_request_uuid')
+        uuid_list = attrs.get('learner_credit_request_uuids', [])
 
-        if learner_credit_request.state != SubsidyRequestStates.APPROVED:
+        if not single_uuid and not uuid_list:
             raise serializers.ValidationError(
-                f"Cannot send a reminder for a request in the '{learner_credit_request.state}' state. "
-                "Reminders can only be sent for 'APPROVED' requests."
+                "Either 'learner_credit_request_uuid' or 'learner_credit_request_uuids' must be provided."
             )
 
-        if not learner_credit_request.assignment:
-            raise serializers.ValidationError(
-                f"The learner credit request with uuid {value} does not have an associated assignment."
-            )
+        return attrs
 
-        self._learner_credit_request = learner_credit_request
-        return value
+    def get_learner_credit_request_uuids(self):
+        """
+        Returns a list of UUIDs to remind, handling both single and list inputs.
+        """
+        single_uuid = self.validated_data.get('learner_credit_request_uuid')
+        uuid_list = self.validated_data.get('learner_credit_request_uuids', [])
 
-    def get_learner_credit_request(self):
-        """
-        Return the already-fetched learner credit request object.
-        """
-        return getattr(self, '_learner_credit_request', None)
+        if uuid_list:
+            return uuid_list
+        elif single_uuid:
+            return [single_uuid]
+        return []
+
+
+class LearnerCreditRequestRemindAllSerializer(serializers.Serializer):
+    """
+    Request serializer to validate remind-all endpoint for LearnerCreditRequests.
+
+    For view: LearnerCreditRequestViewSet.remind_all
+    """
+    policy_uuid = serializers.UUIDField(
+        required=True,
+        help_text="The UUID of the SubsidyAccessPolicy to filter requests."
+    )
 
 
 class LearnerCreditRequestBulkApproveRequestSerializer(serializers.Serializer):

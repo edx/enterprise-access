@@ -60,6 +60,7 @@ from .subsidy_requests import (
     LearnerCreditRequestBulkApproveRequestSerializer,
     LearnerCreditRequestCancelSerializer,
     LearnerCreditRequestDeclineSerializer,
+    LearnerCreditRequestRemindAllSerializer,
     LearnerCreditRequestRemindSerializer,
     LearnerCreditRequestSerializer,
     LicenseRequestSerializer,
