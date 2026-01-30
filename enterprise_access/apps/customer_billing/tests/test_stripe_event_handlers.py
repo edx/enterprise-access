@@ -497,6 +497,53 @@ class TestStripeEventHandler(TestCase):
         mock_email_task.delay.assert_not_called()
 
     @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.track_subscription_cancellation"
+    )
+    def test_subscription_updated_sends_tracking_event_when_cancel_at_set(
+        self, mock_track_cancellation,
+    ):
+        """Test that subscription_updated tracks cancellation event when cancellation_details are present."""
+        subscription_id = "sub_test_cancel_tracking_123"
+        trial_end_timestamp = int((timezone.now() + timedelta(days=14)).timestamp())
+        cancel_at_timestamp = int((timezone.now() + timedelta(hours=1)).timestamp())
+        cancellation_details = {
+            "reason": "cancellation_requested",
+            "comment": "Changed my mind about the service",
+            "feedback": "customer_service"
+        }
+
+        # Create prior event WITHOUT cancel_at (subscription is active/trialing)
+        _, prior_summary = self._create_existing_event_data_records(
+            subscription_id,
+            subscription_status=StripeSubscriptionStatus.TRIALING,
+        )
+        # Explicitly set cancel_at to None on prior summary
+        prior_summary.subscription_cancel_at = None
+        prior_summary.save()
+
+        # Create new event WITH cancel_at and cancellation_details
+        subscription_data = {
+            "id": subscription_id,
+            "status": "trialing",  # Status hasn't changed yet
+            "trial_end": trial_end_timestamp,
+            "cancel_at": cancel_at_timestamp,
+            "cancellation_details": cancellation_details,
+            "metadata": self._create_mock_stripe_subscription(self.checkout_intent.id),
+        }
+
+        mock_event = self._create_mock_stripe_event(
+            "customer.subscription.updated", subscription_data
+        )
+
+        StripeEventHandler.dispatch(mock_event)
+
+        # Verify track_subscription_cancellation was called with correct arguments
+        mock_track_cancellation.assert_called_once_with(
+            self.checkout_intent,
+            cancellation_details,
+        )
+
+    @mock.patch(
         "enterprise_access.apps.customer_billing.stripe_event_handlers.cancel_all_future_plans"
     )
     @mock.patch(
