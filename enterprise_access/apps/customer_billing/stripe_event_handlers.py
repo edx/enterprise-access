@@ -559,11 +559,6 @@ class StripeEventHandler:
             "Subscription %s status was deleted via event %s", subscription.id, event.id,
         )
 
-        # Track cancellation event if cancellation details are present
-        cancellation_details = subscription.get('cancellation_details')
-        if cancellation_details:
-            track_subscription_cancellation(checkout_intent, cancellation_details)
-
         enterprise_uuid = checkout_intent.enterprise_uuid
         if enterprise_uuid:
             cancel_all_future_plans(checkout_intent)
