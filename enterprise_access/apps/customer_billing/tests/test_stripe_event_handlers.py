@@ -497,6 +497,53 @@ class TestStripeEventHandler(TestCase):
         mock_email_task.delay.assert_not_called()
 
     @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.track_subscription_cancellation"
+    )
+    def test_subscription_updated_sends_signal_event_when_cancel_at_set(
+        self, mock_track_cancellation,
+    ):
+        """Test that subscription_updated tracks cancellation event when cancellation_details are present."""
+        subscription_id = "sub_test_cancel_tracking_123"
+        trial_end_timestamp = int((timezone.now() + timedelta(days=14)).timestamp())
+        cancel_at_timestamp = int((timezone.now() + timedelta(hours=1)).timestamp())
+        cancellation_details = {
+            "reason": "cancellation_requested",
+            "comment": "Changed my mind about the service",
+            "feedback": "customer_service"
+        }
+
+        # Create prior event WITHOUT cancel_at (subscription is active/trialing)
+        _, prior_summary = self._create_existing_event_data_records(
+            subscription_id,
+            subscription_status=StripeSubscriptionStatus.TRIALING,
+        )
+        # Explicitly set cancel_at to None on prior summary
+        prior_summary.subscription_cancel_at = None
+        prior_summary.save()
+
+        # Create new event WITH cancel_at and cancellation_details
+        subscription_data = {
+            "id": subscription_id,
+            "status": "trialing",  # Status hasn't changed yet
+            "trial_end": trial_end_timestamp,
+            "cancel_at": cancel_at_timestamp,
+            "cancellation_details": cancellation_details,
+            "metadata": self._create_mock_stripe_subscription(self.checkout_intent.id),
+        }
+
+        mock_event = self._create_mock_stripe_event(
+            "customer.subscription.updated", subscription_data
+        )
+
+        StripeEventHandler.dispatch(mock_event)
+
+        # Verify track_subscription_cancellation was called with correct arguments
+        mock_track_cancellation.assert_called_once_with(
+            self.checkout_intent,
+            cancellation_details,
+        )
+
+    @mock.patch(
         "enterprise_access.apps.customer_billing.stripe_event_handlers.cancel_all_future_plans"
     )
     @mock.patch(
@@ -693,6 +740,63 @@ class TestStripeEventHandler(TestCase):
 
         StripeEventHandler.dispatch(mock_event)
 
+        mock_cancel.assert_called_once_with(self.checkout_intent)
+        mock_send_cancelation_email.delay.assert_called_once_with(
+            checkout_intent_id=self.checkout_intent.id,
+            ended_at_timestamp=1234567890,
+        )
+
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.track_subscription_cancellation"
+    )
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.cancel_all_future_plans"
+    )
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_finalized_cancelation_email_task"
+    )
+    def test_subscription_deleted_sends_signal_event_for_active_subscription(
+        self, mock_send_cancelation_email, mock_cancel, mock_track_cancellation,
+    ):
+        """Subscription deleted event tracks cancellation event when cancellation_details are present."""
+        subscription_id = "sub_test_track_cancellation_123"
+        cancellation_details = {
+            "reason": "cancellation_requested",
+            "comment": "No longer need the service",
+            "feedback": "too_expensive"
+        }
+        subscription_data = {
+            "id": subscription_id,
+            "status": "canceled",
+            "trial_end": 987654321,
+            "ended_at": 1234567890,
+            "cancellation_details": cancellation_details,
+            "metadata": self._create_mock_stripe_subscription(self.checkout_intent.id),
+        }
+
+        # Create prior event with ACTIVE status
+        self._create_existing_event_data_records(
+            subscription_id,
+            subscription_status=StripeSubscriptionStatus.ACTIVE,
+        )
+
+        # Ensure enterprise_uuid is present so handler proceeds with cancellation
+        self.checkout_intent.enterprise_uuid = uuid.uuid4()
+        self.checkout_intent.save(update_fields=["enterprise_uuid"])
+
+        mock_event = self._create_mock_stripe_event(
+            "customer.subscription.deleted", subscription_data
+        )
+
+        StripeEventHandler.dispatch(mock_event)
+
+        # Verify track_subscription_cancellation was called with correct arguments
+        mock_track_cancellation.assert_called_once_with(
+            self.checkout_intent,
+            cancellation_details,
+        )
+
+        # Verify other cancellation actions still occurred
         mock_cancel.assert_called_once_with(self.checkout_intent)
         mock_send_cancelation_email.delay.assert_called_once_with(
             checkout_intent_id=self.checkout_intent.id,

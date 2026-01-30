@@ -13,6 +13,7 @@ from django.utils import timezone
 from enterprise_access.apps.api_client.license_manager_client import LicenseManagerApiClient
 from enterprise_access.apps.customer_billing.constants import (
     INVOICE_PAID_PARENT_TYPE_IDENTIFIER,
+    StripeSegmentEvents,
     StripeSubscriptionStatus
 )
 from enterprise_access.apps.customer_billing.models import (
@@ -31,6 +32,7 @@ from enterprise_access.apps.customer_billing.tasks import (
     send_trial_ending_reminder_email_task
 )
 from enterprise_access.apps.customer_billing.utils import datetime_from_timestamp
+from enterprise_access.apps.track.segment import track_event
 
 logger = logging.getLogger(__name__)
 
@@ -190,6 +192,47 @@ def _try_enable_pending_updates(stripe_subscription_id):
         logger.info('Successfully enabled pending updates for subscription %s', stripe_subscription_id)
     except stripe.StripeError as e:
         logger.error('Failed to enable pending updates for subscription %s: %s', stripe_subscription_id, e)
+
+
+def track_subscription_cancellation(checkout_intent: CheckoutIntent, cancellation_details: dict):
+    """
+    Track subscription cancellation event to Segment with cancellation details.
+
+    This function extracts relevant cancellation information (reason, comment, feedback)
+    from Stripe's cancellation_details and sends it to Segment for analytics.
+
+    Args:
+        checkout_intent: The CheckoutIntent associated with the subscription
+        cancellation_details: The cancellation_details dict from Stripe subscription object,
+                            containing 'reason', 'comment', and 'feedback' fields
+    """
+    if not cancellation_details:
+        logger.info(
+            'No cancellation_details provided for CheckoutIntent %s, skipping cancellation tracking',
+            checkout_intent.id
+        )
+        return
+
+    properties = {
+        'checkout_intent_id': checkout_intent.id,
+        'reason': cancellation_details.get('reason'),
+        'comment': cancellation_details.get('comment'),
+        'feedback': cancellation_details.get('feedback'),
+    }
+
+    logger.info(
+        'Tracking subscription cancellation event for CheckoutIntent %s: reason=%s, comment=%s, feedback=%s',
+        checkout_intent.id,
+        properties['reason'],
+        properties['comment'],
+        properties['feedback']
+    )
+
+    track_event(
+        lms_user_id=str(checkout_intent.user.id),
+        event_name=StripeSegmentEvents.SUBSCRIPTION_CANCELED,
+        properties=properties,
+    )
 
 
 def _valid_invoice_paid_type(event: stripe.Event):
@@ -445,6 +488,11 @@ class StripeEventHandler:
         if current_cancel_at:
             current_cancel_at_datetime = datetime_from_timestamp(current_cancel_at)
 
+        cancellation_details = subscription.get('cancellation_details')
+        # Track cancellation event if cancellation details are present
+        if cancellation_details:
+            track_subscription_cancellation(checkout_intent, cancellation_details)
+
         # Detect when cancellation is newly scheduled (was None, now has value)
         if prior_cancel_at is None and current_cancel_at_datetime is not None:
             logger.info(
@@ -510,6 +558,11 @@ class StripeEventHandler:
         logger.info(
             "Subscription %s status was deleted via event %s", subscription.id, event.id,
         )
+
+        # Track cancellation event if cancellation details are present
+        cancellation_details = subscription.get('cancellation_details')
+        if cancellation_details:
+            track_subscription_cancellation(checkout_intent, cancellation_details)
 
         enterprise_uuid = checkout_intent.enterprise_uuid
         if enterprise_uuid:
