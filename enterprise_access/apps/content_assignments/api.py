@@ -267,7 +267,7 @@ def get_allocated_quantity_for_configuration(assignment_configuration):
 
 def allocate_assignments(
     assignment_configuration, learner_emails, content_key,
-    content_price_cents, admin_lms_user_id=None, known_lms_user_ids=None,
+    content_price_cents, admin_lms_user_id=None, known_lms_user_ids=None,suppress_email=False,
 ):
     """
     Creates or updates an allocated assignment record
@@ -434,6 +434,7 @@ def allocate_assignments(
         _do_async_tasks_after_assignment_writes,
         updated_assignments=updated_assignments,
         created_assignments=created_assignments,
+        suppress_email=suppress_email,
     ))
 
     # Make a list of all pre-existing assignments that were not updated.
@@ -447,14 +448,19 @@ def allocate_assignments(
     }
 
 
-def _do_async_tasks_after_assignment_writes(updated_assignments, created_assignments):
+def _do_async_tasks_after_assignment_writes(updated_assignments, created_assignments,suppress_email=False,):
     """
     Helper function to initialize async celery tasks
     on updated and created assignments.
     """
     for assignment in updated_assignments + created_assignments:
         create_pending_enterprise_learner_for_assignment_task.delay(assignment.uuid)
-        send_email_for_new_assignment.delay(assignment.uuid)
+
+        if not suppress_email:
+            logger.info(f'Email Sent {(assignment.uuid)} Success.')
+            send_email_for_new_assignment.delay(assignment.uuid)
+        else:
+             logger.info(f'Automated Email {(assignment.uuid)} Failed.')
 
 
 def allocate_assignment_for_requests(
