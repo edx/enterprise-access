@@ -488,11 +488,6 @@ class StripeEventHandler:
         if current_cancel_at:
             current_cancel_at_datetime = datetime_from_timestamp(current_cancel_at)
 
-        cancellation_details = subscription.get('cancellation_details')
-        # Track cancellation event if cancellation details are present
-        if cancellation_details:
-            track_subscription_cancellation(checkout_intent, cancellation_details)
-
         # Detect when cancellation is newly scheduled (was None, now has value)
         if prior_cancel_at is None and current_cancel_at_datetime is not None:
             logger.info(
@@ -558,6 +553,11 @@ class StripeEventHandler:
         logger.info(
             "Subscription %s status was deleted via event %s", subscription.id, event.id,
         )
+
+        cancellation_details = subscription.get('cancellation_details')
+        # Track cancellation event if cancellation details are present
+        if cancellation_details:
+            track_subscription_cancellation(checkout_intent, cancellation_details)
 
         enterprise_uuid = checkout_intent.enterprise_uuid
         if enterprise_uuid:
