@@ -82,6 +82,13 @@ class CheckoutIntentSegmentEvents:
     LIFECYCLE_EVENT = 'edx.server.enterprise-access.checkout-intent.lifecycle.event'
 
 
+class StripeSegmentEvents:
+    """
+    Segment events for events received from Stripe
+    """
+    SUBSCRIPTION_CANCELED = 'edx.server.enterprise-access.stripe.subscription.canceled'
+
+
 ALLOWED_CHECKOUT_INTENT_STATE_TRANSITIONS = {
     CheckoutIntentState.CREATED: [
         CheckoutIntentState.PAID,
