@@ -11,11 +11,15 @@ from django.db import transaction
 from enterprise_access.apps.subsidy_access_policy.api import approve_learner_credit_requests_via_policy
 from enterprise_access.apps.subsidy_access_policy.exceptions import SubisidyAccessPolicyRequestApprovalError
 from enterprise_access.apps.subsidy_request.constants import (
+    LearnerCreditAdditionalActionStates,
     LearnerCreditRequestActionErrorReasons,
     SubsidyRequestStates
 )
 from enterprise_access.apps.subsidy_request.models import LearnerCreditRequest, LearnerCreditRequestActions
-from enterprise_access.apps.subsidy_request.tasks import send_learner_credit_bnr_request_approve_task
+from enterprise_access.apps.subsidy_request.tasks import (
+    send_learner_credit_bnr_request_approve_task,
+    send_reminder_email_for_pending_learner_credit_request
+)
 from enterprise_access.apps.subsidy_request.utils import get_action_choice, get_user_message_choice
 from enterprise_access.utils import format_traceback, localized_utcnow
 
@@ -162,3 +166,44 @@ def _prepare_failed_requests_and_actions(failed_requests_by_reason):
             )
         all_failed_requests.extend(requests)
     return all_failed_requests, actions_to_create
+
+
+def remind_learner_credit_requests(
+    learner_credit_requests: Iterable[LearnerCreditRequest],
+) -> dict:
+    """
+    Send reminder emails for learner credit requests.
+
+    Filters requests to only those that are:
+    - In APPROVED state
+    - Have an associated assignment
+
+    For each remindable request, queues a Celery task to send the reminder email
+    and creates a REMINDED action record.
+
+    Args:
+        learner_credit_requests: Iterable of LearnerCreditRequest objects to potentially remind.
+
+    Returns:
+        dict: Contains:
+            - 'remindable': List of LearnerCreditRequest objects that were reminded
+            - 'non_remindable': List of LearnerCreditRequest objects that could not be reminded
+    """
+    remindable = []
+    non_remindable = []
+
+    for request in learner_credit_requests:
+        if request.state == SubsidyRequestStates.APPROVED and request.assignment:
+            remindable.append(request)
+        else:
+            non_remindable.append(request)
+
+    # Create action records and queue tasks for remindable requests
+    for request in remindable:
+        request.add_successful_reminded_action()
+        send_reminder_email_for_pending_learner_credit_request.delay(request.assignment.uuid)
+
+    return {
+        'remindable': remindable,
+        'non_remindable': non_remindable,
+    }

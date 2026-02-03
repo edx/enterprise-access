@@ -21,6 +21,7 @@ from simple_history.utils import bulk_create_with_history, bulk_update_with_hist
 
 from enterprise_access.apps.subsidy_request.constants import (
     SUBSIDY_REQUEST_BULK_OPERATION_BATCH_SIZE,
+    LearnerCreditAdditionalActionStates,
     LearnerCreditRequestActionChoices,
     LearnerCreditRequestActionErrorReasons,
     LearnerCreditRequestUserMessages,
@@ -28,6 +29,11 @@ from enterprise_access.apps.subsidy_request.constants import (
     SubsidyTypeChoices
 )
 from enterprise_access.apps.subsidy_request.tasks import update_course_info_for_subsidy_request_task
+from enterprise_access.apps.subsidy_request.utils import (
+    get_action_choice,
+    get_error_reason_choice,
+    get_user_message_choice
+)
 from enterprise_access.utils import localized_utcnow
 
 
@@ -532,6 +538,28 @@ class LearnerCreditRequest(SubsidyRequest):
         self.reviewer = reviewer
         self.reviewed_at = localized_utcnow()
         self.save()
+
+    def add_successful_reminded_action(self):
+        """
+        Creates an action record for a successful reminder.
+        """
+        return LearnerCreditRequestActions.create_action(
+            learner_credit_request=self,
+            recent_action=get_action_choice(LearnerCreditAdditionalActionStates.REMINDED),
+            status=get_user_message_choice(LearnerCreditAdditionalActionStates.REMINDED),
+        )
+
+    def add_errored_reminded_action(self, error_traceback):
+        """
+        Creates an action record for a failed reminder with error details.
+        """
+        return LearnerCreditRequestActions.create_action(
+            learner_credit_request=self,
+            recent_action=get_action_choice(LearnerCreditAdditionalActionStates.REMINDED),
+            status=get_user_message_choice(LearnerCreditRequestActionErrorReasons.EMAIL_ERROR),
+            error_reason=get_error_reason_choice(LearnerCreditRequestActionErrorReasons.EMAIL_ERROR),
+            traceback=error_traceback,
+        )
 
     @classmethod
     def bulk_update(cls, lcr_records, updated_field_names):

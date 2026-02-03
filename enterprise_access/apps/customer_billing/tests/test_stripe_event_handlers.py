@@ -611,7 +611,9 @@ class TestStripeEventHandler(TestCase):
         StripeEventHandler.dispatch(mock_event)
 
         mock_subs_modify.assert_called_once_with(
-            subscription_id, payment_behavior='pending_if_incomplete',
+            subscription_id,
+            payment_behavior='pending_if_incomplete',
+            proration_behavior='always_invoice',
         )
 
     @mock.patch(
@@ -1046,6 +1048,7 @@ class TestStripeEventHandler(TestCase):
         mock_stripe_modify.assert_called_once_with(
             subscription_id,
             payment_behavior='pending_if_incomplete',
+            proration_behavior='always_invoice',
         )
 
         # Verify event data was created and linked to checkout intent
@@ -1102,6 +1105,7 @@ class TestStripeEventHandler(TestCase):
         mock_stripe_modify.assert_called_once_with(
             subscription_id,
             payment_behavior='pending_if_incomplete',
+            proration_behavior='always_invoice',
         )
 
         # Verify event data was still created and linked to checkout intent

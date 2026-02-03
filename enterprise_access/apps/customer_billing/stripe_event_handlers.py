@@ -178,15 +178,18 @@ def _try_enable_pending_updates(stripe_subscription_id):
     We rely on Stripe’s Pending Updates feature to help prevent subscriptions from becoming active
     before a payment is *successfully* processed
     See: https://docs.stripe.com/billing/subscriptions/pending-updates
+    and https://docs.stripe.com/api/subscriptions/update
     """
     try:
-        # Update the subscription to enable pending updates for future modifications
+        # Update the subscription to enable pending updates for future modifications,
+        # notably, with the proration_behavior set to "always_invoice".
         # This ensures that quantity changes through the billing portal will only
         # be applied if payment succeeds, preventing license count drift
         logger.info(f'Enabling pending updates for created subscription {stripe_subscription_id}')
         stripe.Subscription.modify(
             stripe_subscription_id,
             payment_behavior='pending_if_incomplete',
+            proration_behavior='always_invoice',
         )
 
         logger.info('Successfully enabled pending updates for subscription %s', stripe_subscription_id)
