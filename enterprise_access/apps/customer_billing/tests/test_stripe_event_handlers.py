@@ -701,6 +701,30 @@ class TestStripeEventHandler(TestCase):
             ended_at_timestamp=1234567890,
         )
 
+    @ddt.data(
+        # Happy path
+        {
+            'cancellation_details': {
+                'reason': 'cancellation_requested',
+                'comment': 'No longer need the service',
+                'feedback': 'too_expensive'
+            }
+        },
+        {
+            'cancellation_details': {
+                'reason': None,
+                'comment': None,
+                'feedback': None
+            }
+        },
+        {
+            'cancellation_details': {}
+        },
+        {
+            'cancellation_details': None,
+        },
+    )
+    @ddt.unpack
     @mock.patch(
         "enterprise_access.apps.customer_billing.stripe_event_handlers.track_subscription_cancellation"
     )
@@ -710,16 +734,11 @@ class TestStripeEventHandler(TestCase):
     @mock.patch(
         "enterprise_access.apps.customer_billing.stripe_event_handlers.send_finalized_cancelation_email_task"
     )
-    def test_subscription_deleted_sends_signal_event_for_active_subscription(
-        self, mock_send_cancelation_email, mock_cancel, mock_track_cancellation,
+    def test_subscription_updated_tracks_cancellation_event_when_cancel_at_set(
+        self, mock_send_cancelation_email, mock_cancel, mock_track_cancellation, cancellation_details,
     ):
         """Subscription deleted event tracks cancellation event when cancellation_details are present."""
         subscription_id = "sub_test_track_cancellation_123"
-        cancellation_details = {
-            "reason": "cancellation_requested",
-            "comment": "No longer need the service",
-            "feedback": "too_expensive"
-        }
         subscription_data = {
             "id": subscription_id,
             "status": "canceled",
@@ -746,10 +765,11 @@ class TestStripeEventHandler(TestCase):
         StripeEventHandler.dispatch(mock_event)
 
         # Verify track_subscription_cancellation was called with correct arguments
-        mock_track_cancellation.assert_called_once_with(
-            self.checkout_intent,
-            cancellation_details,
-        )
+        if cancellation_details:
+            mock_track_cancellation.assert_called_once_with(
+                self.checkout_intent,
+                cancellation_details,
+            )
 
         # Verify other cancellation actions still occurred
         mock_cancel.assert_called_once_with(self.checkout_intent)
