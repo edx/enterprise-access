@@ -57,6 +57,7 @@ from enterprise_access.apps.subsidy_request.constants import (
     SubsidyRequestStates,
     SubsidyTypeChoices
 )
+from enterprise_access.apps.subsidy_request.exceptions import SubsidyRequestBulkUpdateException
 from enterprise_access.apps.subsidy_request.models import (
     CouponCodeRequest,
     LearnerCreditRequest,
@@ -1471,7 +1472,7 @@ class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
             else:
                 valid_requests.append(learner_credit_request)
 
-        if not valid_requests:
+        if not valid_requests and results['failed']:
             return Response(results, status=status.HTTP_200_OK)
 
         # Bulk decline the valid requests
@@ -1499,7 +1500,7 @@ class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
                     str(learner_credit_request.uuid)
                 )
 
-        except Exception as exc:  # pylint: disable=broad-except
+        except SubsidyRequestBulkUpdateException as exc:
             logger.exception("Error during bulk decline: %s", exc)
             for learner_credit_request in valid_requests:
                 add_bulk_approve_operation_result(

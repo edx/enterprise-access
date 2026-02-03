@@ -133,6 +133,3 @@ def add_bulk_approve_operation_result(results_dict, category, uuid, state, error
     if error:
         result['error'] = error
     results_dict[category].append(result)
-
-
-
