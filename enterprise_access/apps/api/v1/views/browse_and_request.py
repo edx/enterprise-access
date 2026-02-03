@@ -1417,7 +1417,7 @@ class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
         Request Payload:
         {
             "enterprise_customer_uuid": "<uuid>",
-            "request_uuids": ["<uuid>", ...],  # Optional if decline_all is True
+            "subsidy_request_uuids": ["<uuid>", ...],  # Optional if decline_all is True
             "decline_all": false,  # Optional, defaults to False
             "policy_uuid": "<uuid>"
         }
@@ -1431,7 +1431,16 @@ class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
         enterprise_customer_uuid = serializer.validated_data['enterprise_customer_uuid']
         policy_uuid = serializer.validated_data['policy_uuid']
         decline_all = serializer.validated_data.get('decline_all', False)
-        request_uuids = serializer.validated_data.get('request_uuids', [])
+        subsidy_request_uuids = serializer.validated_data.get('subsidy_request_uuids', [])
+
+        # Validate policy exists
+        try:
+            SubsidyAccessPolicy.objects.get(uuid=policy_uuid)
+        except SubsidyAccessPolicy.DoesNotExist:
+            return Response(
+                {'error': f'Policy with uuid {policy_uuid} not found.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
 
         results = {'declined': [], 'failed': []}
 
@@ -1444,7 +1453,7 @@ class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
             )
         else:
             pending_requests = LearnerCreditRequest.objects.filter(
-                uuid__in=request_uuids,
+                uuid__in=subsidy_request_uuids,
                 enterprise_customer_uuid=enterprise_customer_uuid,
             )
 
@@ -1452,11 +1461,13 @@ class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
         valid_requests = []
         for learner_credit_request in pending_requests:
             if learner_credit_request.state != SubsidyRequestStates.REQUESTED:
-                results['failed'].append({
-                    'uuid': str(learner_credit_request.uuid),
-                    'state': learner_credit_request.state,
-                    'error': f'Request is not in a declinable state: {learner_credit_request.state}'
-                })
+                add_bulk_approve_operation_result(
+                    results,
+                    'failed',
+                    learner_credit_request.uuid,
+                    learner_credit_request.state,
+                    error=f'Request is not in a declinable state: {learner_credit_request.state}'
+                )
             else:
                 valid_requests.append(learner_credit_request)
 
@@ -1476,10 +1487,12 @@ class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
                     status=get_user_message_choice(SubsidyRequestStates.DECLINED),
                 )
 
-                results['declined'].append({
-                    'uuid': str(learner_credit_request.uuid),
-                    'state': SubsidyRequestStates.DECLINED
-                })
+                add_bulk_approve_operation_result(
+                    results,
+                    'declined',
+                    learner_credit_request.uuid,
+                    SubsidyRequestStates.DECLINED
+                )
 
                 # Trigger decline email for all declined requests (per ticket requirement)
                 send_learner_credit_bnr_decline_notification_task.delay(
@@ -1487,13 +1500,15 @@ class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
                 )
 
         except Exception as exc:  # pylint: disable=broad-except
-            logger.exception(f"Error during bulk decline: {exc}")
+            logger.exception("Error during bulk decline: %s", exc)
             for learner_credit_request in valid_requests:
-                results['failed'].append({
-                    'uuid': str(learner_credit_request.uuid),
-                    'state': learner_credit_request.state,
-                    'error': str(exc)
-                })
+                add_bulk_approve_operation_result(
+                    results,
+                    'failed',
+                    learner_credit_request.uuid,
+                    learner_credit_request.state,
+                    error=str(exc)
+                )
 
         return Response(results, status=status.HTTP_200_OK)
 

@@ -478,10 +478,10 @@ class LearnerCreditRequestBulkDeclineSerializer(serializers.Serializer):
     """
     Serializer for bulk declining learner credit requests.
 
-    Request Payload (per ticket spec):
+    Request Payload:
     {
         "enterprise_customer_uuid": "<uuid>",  # Required for permission checking
-        "request_uuids": [],
+        "subsidy_request_uuids": [],
         "decline_all": false,
         "policy_uuid": "<uuid>"
     }
@@ -499,7 +499,7 @@ class LearnerCreditRequestBulkDeclineSerializer(serializers.Serializer):
         default=False,
         help_text='If true, decline all open requests associated with a budget.',
     )
-    request_uuids = serializers.ListField(
+    subsidy_request_uuids = serializers.ListField(
         child=serializers.UUIDField(),
         required=False,
         help_text='List of learner credit request UUIDs to decline.',
@@ -507,19 +507,19 @@ class LearnerCreditRequestBulkDeclineSerializer(serializers.Serializer):
 
     def validate(self, attrs):
         """
-        Validate that either decline_all is True or request_uuids is provided, but not both.
+        Validate that either decline_all is True or subsidy_request_uuids is provided, but not both.
         """
         decline_all = attrs.get('decline_all', False)
-        request_uuids = attrs.get('request_uuids', [])
+        subsidy_request_uuids = attrs.get('subsidy_request_uuids', [])
 
-        if decline_all and request_uuids:
+        if decline_all and subsidy_request_uuids:
             raise serializers.ValidationError(
-                'Cannot specify both decline_all and request_uuids. Please choose one.'
+                'Cannot specify both decline_all and subsidy_request_uuids. Please choose one.'
             )
 
-        if not decline_all and not request_uuids:
+        if not decline_all and not subsidy_request_uuids:
             raise serializers.ValidationError(
-                'Must specify either decline_all=True or provide request_uuids.'
+                'Must specify either decline_all=True or provide subsidy_request_uuids.'
             )
 
         return attrs
