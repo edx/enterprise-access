@@ -734,7 +734,7 @@ class TestStripeEventHandler(TestCase):
     @mock.patch(
         "enterprise_access.apps.customer_billing.stripe_event_handlers.send_finalized_cancelation_email_task"
     )
-    def test_subscription_updated_tracks_cancellation_event_when_cancel_at_set(
+    def test_subscription_deleted_tracks_cancellation_event_when_cancel_at_set(
         self, mock_send_cancelation_email, mock_cancel, mock_track_cancellation, cancellation_details,
     ):
         """Subscription deleted event tracks cancellation event when cancellation_details are present."""
@@ -770,6 +770,8 @@ class TestStripeEventHandler(TestCase):
                 self.checkout_intent,
                 cancellation_details,
             )
+        else:
+            mock_track_cancellation.assert_not_called()
 
         # Verify other cancellation actions still occurred
         mock_cancel.assert_called_once_with(self.checkout_intent)
