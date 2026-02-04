@@ -3607,3 +3607,151 @@ class TestLearnerCreditRequestViewSet(BaseEnterpriseAccessTestCase):
         response = self.client.post(url, data, content_type='application/json')
 
         assert response.status_code == status.HTTP_403_FORBIDDEN
+
+    @mock.patch(BNR_VIEW_PATH + '.send_learner_credit_bnr_decline_notification_task.delay')
+    def test_bulk_decline_specific_requests_success(self, mock_decline_notification_task):
+        """Test successful bulk decline of specific learner credit requests."""
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': str(self.enterprise_customer_uuid_1)
+        }])
+        request_2 = LearnerCreditRequestFactory(
+            enterprise_customer_uuid=self.enterprise_customer_uuid_1,
+            learner_credit_request_config=self.learner_credit_config,
+            state=SubsidyRequestStates.REQUESTED,
+        )
+
+        response = self.client.post(
+            reverse('api:v1:learner-credit-requests-bulk-decline'),
+            data={
+                'policy_uuid': str(self.policy.uuid),
+                'enterprise_customer_uuid': str(self.enterprise_customer_uuid_1),
+                'subsidy_request_uuids': [str(self.user_request_1.uuid), str(request_2.uuid)],
+            },
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.json()['declined']), 2)
+        self.assertEqual(mock_decline_notification_task.call_count, 2)
+        for req in [self.user_request_1, request_2]:
+            req.refresh_from_db()
+            self.assertEqual(req.state, SubsidyRequestStates.DECLINED)
+            self.assertTrue(req.actions.filter(recent_action=get_action_choice(SubsidyRequestStates.DECLINED)).exists())
+
+    @mock.patch(BNR_VIEW_PATH + '.send_learner_credit_bnr_decline_notification_task.delay')
+    def test_bulk_decline_all_requests_success(self, mock_decline_notification_task):
+        """Test bulk decline all open requests for a policy (decline_all flag)."""
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': str(self.enterprise_customer_uuid_1)
+        }])
+        # Create 2 additional requests (setUp already has user_request_1 and enterprise_request)
+        for _ in range(2):
+            LearnerCreditRequestFactory(
+                enterprise_customer_uuid=self.enterprise_customer_uuid_1,
+                learner_credit_request_config=self.learner_credit_config,
+                state=SubsidyRequestStates.REQUESTED,
+            )
+
+        response = self.client.post(
+            reverse('api:v1:learner-credit-requests-bulk-decline'),
+            data={
+                'policy_uuid': str(self.policy.uuid),
+                'enterprise_customer_uuid': str(self.enterprise_customer_uuid_1),
+                'decline_all': True,
+            },
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.json()['declined']), 4)
+        self.assertEqual(mock_decline_notification_task.call_count, 4)
+
+    @mock.patch(BNR_VIEW_PATH + '.send_learner_credit_bnr_decline_notification_task.delay')
+    def test_bulk_decline_mixed_states(self, mock_decline_notification_task):
+        """Test bulk decline skips non-REQUESTED state requests."""
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': str(self.enterprise_customer_uuid_1)
+        }])
+        approved_request = LearnerCreditRequestFactory(
+            enterprise_customer_uuid=self.enterprise_customer_uuid_1,
+            learner_credit_request_config=self.learner_credit_config,
+            state=SubsidyRequestStates.APPROVED,
+        )
+
+        response = self.client.post(
+            reverse('api:v1:learner-credit-requests-bulk-decline'),
+            data={
+                'policy_uuid': str(self.policy.uuid),
+                'enterprise_customer_uuid': str(self.enterprise_customer_uuid_1),
+                'subsidy_request_uuids': [str(self.user_request_1.uuid), str(approved_request.uuid)],
+            },
+            content_type='application/json',
+        )
+
+        results = response.json()
+        self.assertEqual(len(results['declined']), 1)
+        self.assertEqual(len(results['failed']), 1)
+        self.assertIn('not in a declinable state', results['failed'][0]['error'])
+
+    def test_bulk_decline_validation_errors(self):
+        """Test validation errors for bulk decline endpoint."""
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': str(self.enterprise_customer_uuid_1)
+        }])
+        base_data = {
+            'policy_uuid': str(self.policy.uuid),
+            'enterprise_customer_uuid': str(self.enterprise_customer_uuid_1),
+        }
+        # Both flags provided
+        response = self.client.post(
+            reverse('api:v1:learner-credit-requests-bulk-decline'),
+            data={**base_data, 'decline_all': True, 'subsidy_request_uuids': [str(self.user_request_1.uuid)]},
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+        # Neither flag provided
+        response = self.client.post(
+            reverse('api:v1:learner-credit-requests-bulk-decline'),
+            data=base_data,
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_bulk_decline_permission_denied(self):
+        """Test learner role is denied access to bulk_decline endpoint."""
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE,
+            'context': str(self.enterprise_customer_uuid_1)
+        }])
+        response = self.client.post(
+            reverse('api:v1:learner-credit-requests-bulk-decline'),
+            data={
+                'policy_uuid': str(self.policy.uuid),
+                'enterprise_customer_uuid': str(self.enterprise_customer_uuid_1),
+                'subsidy_request_uuids': [str(self.user_request_1.uuid)],
+            },
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_bulk_decline_invalid_policy_uuid(self):
+        """Test bulk decline returns 404 for invalid policy_uuid."""
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': str(self.enterprise_customer_uuid_1)
+        }])
+        response = self.client.post(
+            reverse('api:v1:learner-credit-requests-bulk-decline'),
+            data={
+                'policy_uuid': str(uuid4()),
+                'enterprise_customer_uuid': str(self.enterprise_customer_uuid_1),
+                'subsidy_request_uuids': [str(self.user_request_1.uuid)],
+            },
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
