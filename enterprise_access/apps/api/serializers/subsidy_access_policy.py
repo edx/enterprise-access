@@ -810,6 +810,13 @@ class SubsidyAccessPolicyAllocateRequestSerializer(serializers.Serializer):
         allow_null=True  # Ensure that null values are accepted, since the field may not be populated initially.
     )
 
+    # For Having a control on the automated email generated while assigning a course
+    suppress_email = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text="When true, suppress the automated learner assignment email."
+    )
+
 
 class SubsidyAccessPolicyAllocationResponseSerializer(serializers.Serializer):
     """

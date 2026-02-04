@@ -196,6 +196,173 @@ class TestSubsidyAccessPolicyAllocationView(APITestWithMocks):
             serializer = SubsidyAccessPolicyAllocateRequestSerializer(data=request_payload)
             self.assertTrue(serializer.is_valid())
 
+    @mock.patch('enterprise_access.apps.content_assignments.api.send_email_for_new_assignment')
+    @mock.patch(
+        'enterprise_access.apps.content_assignments.api.create_pending_enterprise_learner_for_assignment_task'
+    )
+    @mock.patch(
+        'enterprise_access.apps.content_assignments.api.get_and_cache_content_metadata',
+        return_value={'content_title': 'Test Course', 'content_key': 'course+test', 'course_run_key': 'course-v1:test'},
+    )
+    @mock.patch.object(SubsidyAccessPolicy, 'subsidy_record', autospec=True)
+    @mock.patch.object(
+        AssignedLearnerCreditAccessPolicy, 'get_content_price', autospec=True, return_value=10000
+    )
+    @mock.patch.object(
+        AssignedLearnerCreditAccessPolicy, 'aggregates_for_policy', autospec=True,
+        return_value={'total_quantity': 0}
+    )
+    @mock.patch.object(
+        AssignedLearnerCreditAccessPolicy, 'subsidy_balance', autospec=True, return_value=100000
+    )
+    @mock.patch.object(
+        AssignedLearnerCreditAccessPolicy, 'is_subsidy_active',
+        new_callable=mock.PropertyMock, return_value=True
+    )
+    @mock.patch.object(
+        AssignedLearnerCreditAccessPolicy, 'catalog_contains_content_key',
+        autospec=True, return_value=True
+    )
+    @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient', autospec=True)
+    @ddt.data(
+        # (suppress_email value, should_send_email expectation)
+        (True, False),   # When suppress_email=True, email should NOT be sent
+        (False, True),   # When suppress_email=False, email should be sent
+        (None, True),    # When suppress_email is not provided, email should be sent (default behavior)
+    )
+    @ddt.unpack
+    def test_allocate_suppress_email(
+        self,
+        suppress_email_value,
+        should_send_email,
+        mock_catalog_client,
+        mock_catalog_inclusion,  # pylint: disable=unused-argument
+        mock_is_subsidy_active,  # pylint: disable=unused-argument
+        mock_subsidy_balance,  # pylint: disable=unused-argument
+        mock_aggregates_for_policy,  # pylint: disable=unused-argument
+        mock_get_content_price,  # pylint: disable=unused-argument
+        mock_subsidy_record,
+        mock_get_and_cache_content_metadata,  # pylint: disable=unused-argument
+        mock_pending_learner_task,
+        mock_send_email,
+    ):
+        """
+        Test that suppress_email parameter correctly controls whether assignment
+        notification emails are sent.
+
+        When suppress_email=True: No email should be sent
+        When suppress_email=False or not provided: Email should be sent
+        """
+        mock_catalog_client.return_value.catalog_content_metadata.return_value = self.mock_catalog_result
+
+        mock_subsidy_record.return_value = {
+            'uuid': str(uuid4()),
+            'title': 'Test Subsidy',
+            'enterprise_customer_uuid': str(self.enterprise_uuid),
+            'expiration_datetime': '2030-01-01 12:00:00Z',
+            'active_datetime': '2020-01-01 12:00:00Z',
+            'current_balance': '100000',
+            'is_active': True,
+        }
+
+        allocate_url = _allocation_url(self.assigned_learner_credit_policy.uuid)
+        allocate_payload = {
+            'learner_emails': ['test@foo.com'],
+            'content_key': self.content_key,
+            'content_price_cents': 10000,
+            'admin_lms_user_id': 3,
+        }
+        if suppress_email_value is not None:
+            allocate_payload['suppress_email'] = suppress_email_value
+
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(allocate_url, data=allocate_payload)
+
+        self.assertEqual(status.HTTP_202_ACCEPTED, response.status_code)
+
+        self.assertTrue(mock_pending_learner_task.delay.called)
+
+        if should_send_email:
+            mock_send_email.delay.assert_called_once()
+            self.assertEqual(mock_send_email.delay.call_count, 1)
+        else:
+            mock_send_email.delay.assert_not_called()
+
+    @mock.patch('enterprise_access.apps.content_assignments.api.send_email_for_new_assignment')
+    @mock.patch(
+        'enterprise_access.apps.content_assignments.api.create_pending_enterprise_learner_for_assignment_task'
+    )
+    @mock.patch(
+        'enterprise_access.apps.content_assignments.api.get_and_cache_content_metadata',
+        return_value={'content_title': 'Test Course', 'content_key': 'course+test', 'course_run_key': 'course-v1:test'},
+    )
+    @mock.patch.object(SubsidyAccessPolicy, 'subsidy_record', autospec=True)
+    @mock.patch.object(
+        AssignedLearnerCreditAccessPolicy, 'get_content_price', autospec=True, return_value=10000
+    )
+    @mock.patch.object(
+        AssignedLearnerCreditAccessPolicy, 'aggregates_for_policy', autospec=True,
+        return_value={'total_quantity': 0}
+    )
+    @mock.patch.object(
+        AssignedLearnerCreditAccessPolicy, 'subsidy_balance', autospec=True, return_value=100000
+    )
+    @mock.patch.object(
+        AssignedLearnerCreditAccessPolicy, 'is_subsidy_active',
+        new_callable=mock.PropertyMock, return_value=True
+    )
+    @mock.patch.object(
+        AssignedLearnerCreditAccessPolicy, 'catalog_contains_content_key',
+        autospec=True, return_value=True
+    )
+    @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient', autospec=True)
+    def test_allocate_suppress_email_multiple_learners(
+        self,
+        mock_catalog_client,
+        mock_catalog_inclusion,  # pylint: disable=unused-argument
+        mock_is_subsidy_active,  # pylint: disable=unused-argument
+        mock_subsidy_balance,  # pylint: disable=unused-argument
+        mock_aggregates_for_policy,  # pylint: disable=unused-argument
+        mock_get_content_price,  # pylint: disable=unused-argument
+        mock_subsidy_record,
+        mock_get_and_cache_content_metadata,  # pylint: disable=unused-argument
+        mock_pending_learner_task,
+        mock_send_email,
+    ):
+        """
+        Test that suppress_email works correctly when allocating to multiple learners.
+        When suppress_email=True, no emails should be sent to any learners.
+        """
+        mock_catalog_client.return_value.catalog_content_metadata.return_value = self.mock_catalog_result
+
+        mock_subsidy_record.return_value = {
+            'uuid': str(uuid4()),
+            'title': 'Test Subsidy',
+            'enterprise_customer_uuid': str(self.enterprise_uuid),
+            'expiration_datetime': '2030-01-01 12:00:00Z',
+            'active_datetime': '2020-01-01 12:00:00Z',
+            'current_balance': '100000',
+            'is_active': True,
+        }
+
+        allocate_url = _allocation_url(self.assigned_learner_credit_policy.uuid)
+        allocate_payload = {
+            'learner_emails': ['learner1@foo.com', 'learner2@foo.com', 'learner3@foo.com'],
+            'content_key': self.content_key,
+            'content_price_cents': 10000,
+            'admin_lms_user_id': 3,
+            'suppress_email': True,
+        }
+
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(allocate_url, data=allocate_payload)
+
+        self.assertEqual(status.HTTP_202_ACCEPTED, response.status_code)
+
+        self.assertEqual(mock_pending_learner_task.delay.call_count, 3)
+
+        mock_send_email.delay.assert_not_called()
+
     @mock.patch.object(AssignedLearnerCreditAccessPolicy, 'can_allocate', autospec=True)
     @mock.patch.object(SubsidyAccessPolicy, 'subsidy_record', autospec=True)
     @mock.patch(
@@ -235,6 +402,7 @@ class TestSubsidyAccessPolicyAllocationView(APITestWithMocks):
             'content_key': self.content_key,
             'content_price_cents': 12345,
             'admin_lms_user_id': 3,
+            'suppress_email': False,
         }
 
         response = self.client.post(allocate_url, data=allocate_payload)
@@ -320,6 +488,7 @@ class TestSubsidyAccessPolicyAllocationView(APITestWithMocks):
             allocate_payload['content_key'],
             allocate_payload['content_price_cents'],
             allocate_payload['admin_lms_user_id'],
+            suppress_email=allocate_payload['suppress_email'],
         )
 
     @mock.patch.object(AssignedLearnerCreditAccessPolicy, 'can_allocate', autospec=True)
