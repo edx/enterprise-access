@@ -113,6 +113,7 @@ class TestStripeEventHandler(TestCase):
         event.created = int(_rand_created_at().timestamp())
         event.type = event_type
         event.data = stripe.StripeObject()
+
         if event_type == 'invoice.paid' and 'total' not in event_data:
             event_data['total'] = 0
         event.data.object = AttrDict.wrap(event_data)
@@ -894,6 +895,51 @@ class TestStripeEventHandler(TestCase):
         # Verify renewal record was NOT marked as processed due to error
         renewal_record.refresh_from_db()
         self.assertIsNone(renewal_record.processed_at)
+
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.LicenseManagerApiClient",
+        autospec=True,
+    )
+    def test_subscription_updated_past_due_to_active(self, mock_license_manager_client):
+        """Test subscription change from past_due subscription status to active flow."""
+
+        mock_client = mock_license_manager_client.return_value
+        subscription_id = "sub_test_past_due_123"
+        subscription_plan_uuid = uuid.uuid4()
+
+        # Create prior past_due event
+        self._create_existing_event_data_records(
+            subscription_id,
+            subscription_status=StripeSubscriptionStatus.PAST_DUE,
+            event_type='customer.subscription.updated',
+        )
+
+        # Create status change to active
+        subscription_data = get_stripe_object_for_event_type(
+            'customer.subscription.updated',
+            id=subscription_id,
+            status=StripeSubscriptionStatus.ACTIVE,
+            metadata=self._create_mock_stripe_subscription(self.checkout_intent.id),
+        )
+        mock_event = self._create_mock_stripe_event(
+            "customer.subscription.updated",
+            subscription_data,
+        )
+
+        StripeEventHandler.dispatch(mock_event)
+
+        active_summary = StripeEventSummary.objects.filter(
+            stripe_subscription_id=subscription_id,
+            subscription_status=StripeSubscriptionStatus.ACTIVE,
+        ).first()
+
+        active_summary.subscription_plan_uuid = subscription_plan_uuid
+        active_summary.save()
+
+        self.assertEqual(1, mock_client.update_subscription_plan.call_count)
+        mock_client.update_subscription_plan.assert_called_once_with(
+            subscription_id,
+        )
 
     @mock.patch('enterprise_access.apps.customer_billing.stripe_event_handlers.LicenseManagerApiClient')
     def test_full_subscription_renewal_flow(self, mock_license_manager_client):

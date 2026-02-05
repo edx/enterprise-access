@@ -228,6 +228,84 @@ def _valid_invoice_paid_type(event: stripe.Event):
         return False
 
 
+def _handle_subscription_status_updates(event: stripe.Event) -> None:
+    """
+    Handling of a status change coming from a customer.subscription.updated Stripe event
+
+    Stripe has many different statuses that need to be handled differently, including trialing,
+    active, past_due, canceled, unpaid, and paused. When a subscription transitions from one to the other,
+    we need to update our system and sources of truth to reflect this status change.
+
+    Args:
+        event (stripe.Event): A Stripe ``customer.subscription.updated`` webhook event.
+    """
+    subscription = event.data.object
+    checkout_intent_id = get_checkout_intent_id_from_subscription(subscription)
+    checkout_intent = get_checkout_intent_or_raise(checkout_intent_id, event.id)
+    link_event_data_to_checkout_intent(event, checkout_intent)
+    current_status = subscription.get("status")
+    previous_summary = checkout_intent.previous_summary(event, stripe_object_type='subscription')
+    prior_status = previous_summary.subscription_status
+
+    # Detect past_due -> active transition (failed invoice recovered)
+    if prior_status == StripeSubscriptionStatus.PAST_DUE and current_status == StripeSubscriptionStatus.ACTIVE:
+        client = LicenseManagerApiClient()
+        try:
+            summary = StripeEventSummary.objects.get(event_id=event.id)
+        except StripeEventSummary.DoesNotExist:
+            logger.error(
+                "StripeEventSummary not found for event %s while handling "
+                "past_due -> active transition for subscription %s",
+                event.id,
+                subscription.id,
+            )
+        else:
+            logger.info(
+                "Stripe subscription %s transitioned from past_due to active. "
+                "Updating subscription plan %s",
+                subscription.id,
+                summary.subscription_plan_uuid,
+            )
+            # update the subscription plan in license manager
+            client.update_subscription_plan(summary.subscription_plan_uuid)
+            _process_trial_to_paid_renewal(checkout_intent, subscription.id, event)
+            send_trial_end_and_subscription_started_email_task.delay(
+                subscription_id=subscription.id,
+                checkout_intent_id=checkout_intent.id,
+            )
+    # Handle trial-to-paid transition for renewal processing
+    if prior_status == StripeSubscriptionStatus.TRIALING and current_status == StripeSubscriptionStatus.ACTIVE:
+        logger.info(
+            f"Subscription {subscription.id} transitioned from trial to active. "
+            f"Processing renewal for checkout_intent_id={checkout_intent_id}"
+        )
+        _process_trial_to_paid_renewal(checkout_intent, subscription.id, event)
+        send_trial_end_and_subscription_started_email_task.delay(
+            subscription_id=subscription.id,
+            checkout_intent_id=checkout_intent.id,
+        )
+    # Past due transition
+    if current_status != prior_status and current_status == StripeSubscriptionStatus.PAST_DUE:
+        logger.warning(
+            'Stripe subscription %s was %s but is now past_due. '
+            'Checkout intent: %s',
+            subscription.id, prior_status, checkout_intent.id,
+        )
+        enterprise_uuid = checkout_intent.enterprise_uuid
+        if enterprise_uuid:
+            cancel_all_future_plans(checkout_intent)
+        else:
+            logger.error(
+                (
+                    "Cannot deactivate future plans for subscription %s: "
+                    "missing enterprise_uuid on CheckoutIntent %s"
+                ),
+                subscription.id,
+                checkout_intent.id,
+            )
+        send_billing_error_email_task.delay(checkout_intent_id=checkout_intent.id)
+
+
 class StripeEventHandler:
     """
     Container for Stripe event handler logic.
@@ -465,39 +543,8 @@ class StripeEventHandler:
         # hasn't changed, we're all done.
         if prior_status == current_status:
             return
-
-        # Handle trial-to-paid transition for renewal processing
-        if prior_status == StripeSubscriptionStatus.TRIALING and current_status == StripeSubscriptionStatus.ACTIVE:
-            logger.info(
-                f"Subscription {subscription.id} transitioned from trial to active. "
-                f"Processing renewal for checkout_intent_id={checkout_intent_id}"
-            )
-            _process_trial_to_paid_renewal(checkout_intent, subscription.id, event)
-            send_trial_end_and_subscription_started_email_task.delay(
-                subscription_id=subscription.id,
-                checkout_intent_id=checkout_intent.id,
-            )
-
-        # Past due transition
-        if current_status != prior_status and current_status == StripeSubscriptionStatus.PAST_DUE:
-            logger.warning(
-                'Stripe subscription %s was %s but is now past_due. '
-                'Checkout intent: %s',
-                subscription.id, prior_status, checkout_intent.id,
-            )
-            enterprise_uuid = checkout_intent.enterprise_uuid
-            if enterprise_uuid:
-                cancel_all_future_plans(checkout_intent)
-            else:
-                logger.error(
-                    (
-                        "Cannot deactivate future plans for subscription %s: "
-                        "missing enterprise_uuid on CheckoutIntent %s"
-                    ),
-                    subscription.id,
-                    checkout_intent.id,
-                )
-            send_billing_error_email_task.delay(checkout_intent_id=checkout_intent.id)
+        else:
+            _handle_subscription_status_updates(event)
 
     @on_stripe_event("customer.subscription.deleted")
     @staticmethod
