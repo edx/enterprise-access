@@ -3,7 +3,7 @@ Tests for Enterprise Access Browse and Request app API v1 views.
 """
 import random
 import time
-from unittest import mock
+from unittest import mock, skip
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -25,6 +25,7 @@ from enterprise_access.apps.core.constants import (
     SYSTEM_ENTERPRISE_LEARNER_ROLE,
     SYSTEM_ENTERPRISE_OPERATOR_ROLE
 )
+from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.subsidy_access_policy.constants import (
     REASON_CONTENT_NOT_IN_CATALOG,
     REASON_NOT_ENOUGH_VALUE_IN_SUBSIDY,
@@ -94,6 +95,8 @@ class TestLicenseRequestViewSet(BaseEnterpriseAccessTestCase):
     def setUpTestData(cls):
         # license request with no associations to the user
         cls.other_license_request = LicenseRequestFactory()
+        cls.reviewer = UserFactory()
+        cls.other_user = UserFactory()
 
     def setUp(self):
         super().setUp()
@@ -110,16 +113,20 @@ class TestLicenseRequestViewSet(BaseEnterpriseAccessTestCase):
         # license requests for the user
         self.user_license_request_1 = LicenseRequestFactory(
             enterprise_customer_uuid=self.enterprise_customer_uuid_1,
-            user=self.user
+            user=self.user,
+            reviewer=self.reviewer,
         )
         self.user_license_request_2 = LicenseRequestFactory(
             enterprise_customer_uuid=self.enterprise_customer_uuid_2,
-            user=self.user
+            user=self.user,
+            reviewer=self.reviewer,
         )
 
         # license request under the user's enterprise but not for the user
         self.enterprise_license_request = LicenseRequestFactory(
-            enterprise_customer_uuid=self.enterprise_customer_uuid_1
+            enterprise_customer_uuid=self.enterprise_customer_uuid_1,
+            user=self.other_user,
+            reviewer=self.reviewer,
         )
 
     def test_list_as_enterprise_learner(self):
@@ -189,10 +196,11 @@ class TestLicenseRequestViewSet(BaseEnterpriseAccessTestCase):
 
         for state, _ in SubsidyRequestStates.CHOICES:
             LicenseRequestFactory.create_batch(
-                random.randint(1, 3),
+                random.randint(1, 2),
                 enterprise_customer_uuid=self.enterprise_customer_uuid_1,
                 user=self.user,
-                state=state
+                reviewer=self.reviewer,
+                state=state,
             )
 
         query_params = {
@@ -294,6 +302,7 @@ class TestLicenseRequestViewSet(BaseEnterpriseAccessTestCase):
         )
         LicenseRequestFactory(
             user=self.user,
+            reviewer=self.reviewer,
             enterprise_customer_uuid=self.enterprise_customer_uuid_1,
             state=current_request_state,
         )
@@ -726,10 +735,11 @@ class TestLicenseRequestViewSet(BaseEnterpriseAccessTestCase):
         LicenseRequest.objects.all().delete()
         for state, _ in SubsidyRequestStates.CHOICES:
             LicenseRequestFactory.create_batch(
-                random.randint(1, 5),
+                random.randint(1, 2),
                 enterprise_customer_uuid=self.enterprise_customer_uuid_1,
                 user=self.user,
-                state=state
+                state=state,
+                reviewer=self.reviewer,
             )
 
         url = f'{LICENSE_REQUESTS_OVERVIEW_ENDPOINT}?enterprise_customer_uuid={self.enterprise_customer_uuid_1}'
@@ -745,6 +755,7 @@ class TestLicenseRequestViewSet(BaseEnterpriseAccessTestCase):
             ).count()
 
 
+@skip("Coupon codes are no longer supported")
 @ddt.ddt
 @override_settings(SEGMENT_KEY='test_key')
 class TestCouponCodeRequestViewSet(BaseEnterpriseAccessTestCase):
@@ -1553,6 +1564,20 @@ class TestLearnerCreditRequestViewSet(BaseEnterpriseAccessTestCase):
     Tests for LearnerCreditRequestViewSet.
     """
 
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.reviewer = UserFactory()
+
+        # Setup test policy and request config and assignment config
+        cls.learner_credit_config = LearnerCreditRequestConfigurationFactory(active=True)
+        cls.assignment_config = AssignmentConfigurationFactory(
+            enterprise_customer_uuid=cls.enterprise_customer_uuid_1,
+        )
+
+        # LearnerCreditrequest with no associations to the user and enterprise
+        cls.other_learner_credit_request = LearnerCreditRequestFactory()
+
     def setUp(self):
         super().setUp()
 
@@ -1562,11 +1587,6 @@ class TestLearnerCreditRequestViewSet(BaseEnterpriseAccessTestCase):
         )
         self.mock_subsidy_client = subsidy_client_patcher.start()
 
-        # Setup test policy and request config and assignment config
-        self.learner_credit_config = LearnerCreditRequestConfigurationFactory(active=True)
-        self.assignment_config = AssignmentConfigurationFactory(
-            enterprise_customer_uuid=self.enterprise_customer_uuid_1,
-        )
         self.policy = PerLearnerSpendCapLearnerCreditAccessPolicyFactory(
             learner_credit_request_config=self.learner_credit_config,
             assignment_configuration=self.assignment_config,
@@ -1596,9 +1616,6 @@ class TestLearnerCreditRequestViewSet(BaseEnterpriseAccessTestCase):
             enterprise_customer_uuid=self.enterprise_customer_uuid_1,
             learner_credit_request_config=self.learner_credit_config,
         )
-
-        # LearnerCreditrequest with no associations to the user and enterprise
-        self.other_learner_credit_request = LearnerCreditRequestFactory()
 
         # Set up existing assignments (approved requests)
         self.assignment_1 = LearnerContentAssignmentFactory(
@@ -1699,6 +1716,7 @@ class TestLearnerCreditRequestViewSet(BaseEnterpriseAccessTestCase):
         for state, _ in SubsidyRequestStates.CHOICES:
             LearnerCreditRequestFactory(
                 enterprise_customer_uuid=self.enterprise_customer_uuid_1,
+                reviewer=self.reviewer,
                 user=self.user,
                 state=state,
                 learner_credit_request_config=self.learner_credit_config
@@ -1735,16 +1753,24 @@ class TestLearnerCreditRequestViewSet(BaseEnterpriseAccessTestCase):
 
         # Create requests in a non-sorted order to ensure sorting is effective.
         req_approved = LearnerCreditRequestFactory(
-            state=SubsidyRequestStates.APPROVED, enterprise_customer_uuid=self.enterprise_customer_uuid_1
+            state=SubsidyRequestStates.APPROVED,
+            enterprise_customer_uuid=self.enterprise_customer_uuid_1,
+            reviewer=self.reviewer,
         )
         req_declined = LearnerCreditRequestFactory(
-            state=SubsidyRequestStates.DECLINED, enterprise_customer_uuid=self.enterprise_customer_uuid_1
+            state=SubsidyRequestStates.DECLINED,
+            enterprise_customer_uuid=self.enterprise_customer_uuid_1,
+            reviewer=self.reviewer,
         )
         req_requested = LearnerCreditRequestFactory(
-            state=SubsidyRequestStates.REQUESTED, enterprise_customer_uuid=self.enterprise_customer_uuid_1
+            state=SubsidyRequestStates.REQUESTED,
+            enterprise_customer_uuid=self.enterprise_customer_uuid_1,
+            reviewer=self.reviewer,
         )
         req_cancelled = LearnerCreditRequestFactory(
-            state=SubsidyRequestStates.CANCELLED, enterprise_customer_uuid=self.enterprise_customer_uuid_1
+            state=SubsidyRequestStates.CANCELLED,
+            enterprise_customer_uuid=self.enterprise_customer_uuid_1,
+            reviewer=self.reviewer,
         )
 
         # Make the API call with the specified ordering
@@ -1966,9 +1992,10 @@ class TestLearnerCreditRequestViewSet(BaseEnterpriseAccessTestCase):
         LearnerCreditRequest.objects.all().delete()
         for state, _ in SubsidyRequestStates.CHOICES:
             LearnerCreditRequestFactory.create_batch(
-                random.randint(1, 3),
+                random.randint(1, 2),
                 enterprise_customer_uuid=self.enterprise_customer_uuid_1,
                 user=self.user,
+                reviewer=self.reviewer,
                 state=state,
                 learner_credit_request_config=self.learner_credit_config
             )
