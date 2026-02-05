@@ -1,3 +1,4 @@
+"""Base Django settings for the enterprise_access service."""
 import os
 from os.path import abspath, dirname, join
 
@@ -89,6 +90,7 @@ PROJECT_APPS = (
     'enterprise_access.apps.bffs',
     'enterprise_access.apps.provisioning',
     'enterprise_access.apps.customer_billing',
+    'enterprise_access.apps.testimonials',
 )
 
 INSTALLED_APPS += THIRD_PARTY_APPS
