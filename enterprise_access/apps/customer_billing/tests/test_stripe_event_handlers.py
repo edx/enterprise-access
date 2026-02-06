@@ -103,7 +103,7 @@ class TestStripeEventHandler(TestCase):
         StripeEventData.objects.all().delete()
         StripeEventSummary.objects.all().delete()
 
-    def _create_mock_stripe_event(self, event_type, event_data, **event_attrs):
+    def _create_mock_stripe_event(self, event_type, event_data, previous_attributes=None, **event_attrs):
         """
         Creates an honest-to-goodness ``stripe.Event`` object with the given
         type and data.
@@ -113,12 +113,16 @@ class TestStripeEventHandler(TestCase):
         event.created = int(_rand_created_at().timestamp())
         event.type = event_type
         event.data = stripe.StripeObject()
+
         if event_type == 'invoice.paid' and 'total' not in event_data:
             event_data['total'] = 0
         event.data.object = AttrDict.wrap(event_data)
 
         for k, v in event_attrs.items():
             setattr(event, k, v)
+
+        if event_type == 'customer.subscription.updated' and previous_attributes:
+            event.data.previous_attributes = AttrDict.wrap(previous_attributes)
 
         return event
 
@@ -973,6 +977,55 @@ class TestStripeEventHandler(TestCase):
         # Verify renewal record was NOT marked as processed due to error
         renewal_record.refresh_from_db()
         self.assertIsNone(renewal_record.processed_at)
+
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers."
+        "send_trial_end_and_subscription_started_email_task"
+    )
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.LicenseManagerApiClient",
+        autospec=True,
+    )
+    def test_subscription_updated_past_due_to_active(self, mock_license_manager_client, mock_send_email_task):
+        """Test subscription change from past_due subscription status to active flow."""
+
+        workflow = ProvisionNewCustomerWorkflowFactory() 
+        self.checkout_intent.workflow = workflow 
+        self.checkout_intent.save() 
+
+        mock_client = mock_license_manager_client.return_value
+        subscription_id = "sub_test_past_due_123"
+
+        # Create prior past_due event
+        self._create_existing_event_data_records(
+            subscription_id,
+            subscription_status=StripeSubscriptionStatus.PAST_DUE,
+            event_type='customer.subscription.updated',
+        )
+
+        # Create status change to active
+        subscription_data = get_stripe_object_for_event_type(
+            'customer.subscription.updated',
+            id=subscription_id,
+            status=StripeSubscriptionStatus.ACTIVE,
+            metadata=self._create_mock_stripe_subscription(self.checkout_intent.id),
+        )
+        previous_attributes = {
+            'status': 'past_due',
+        }
+        mock_event = self._create_mock_stripe_event(
+            "customer.subscription.updated",
+            subscription_data,
+            previous_attributes,
+        )
+
+        StripeEventHandler.dispatch(mock_event)
+
+        self.assertEqual(1, mock_client.update_subscription_plan.call_count)
+        mock_send_email_task.delay.assert_called_once_with(
+            subscription_id=subscription_id,
+            checkout_intent_id=self.checkout_intent.id,
+        )
 
     @mock.patch('enterprise_access.apps.customer_billing.stripe_event_handlers.LicenseManagerApiClient')
     def test_full_subscription_renewal_flow(self, mock_license_manager_client):

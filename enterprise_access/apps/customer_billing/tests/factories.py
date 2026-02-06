@@ -55,13 +55,15 @@ def get_stripe_object_for_event_type(event_type, **overrides):
         return {
             'object': 'subscription',
             'id': f'sub_{FAKER.bothify("?" * 24)}',
-            'status': FAKER.random_element(elements=['active', 'trialing', 'past_due']),
             'currency': 'usd',
+            'current_period_start': int((timezone.now() - timedelta(days=30)).timestamp()),
+            'current_period_end': int((timezone.now() + timedelta(days=30)).timestamp()),
             'items': {
                 'data': [
                     {
-                        'current_period_start': int((timezone.now() - timedelta(days=30)).timestamp()),
-                        'current_period_end': int((timezone.now() + timedelta(days=30)).timestamp())
+                        "id": "si_test_123",
+                        "object": "subscription_item",
+                        "quantity": 1,
                     }
                 ]
             },
