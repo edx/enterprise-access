@@ -309,7 +309,7 @@ def _handle_subscription_status_updates(
                 summary.subscription_plan_uuid,
             )
             # update the subscription plan in license manager
-            client.update_subscription_plan(summary.subscription_plan_uuid)
+            client.update_subscription_plan(summary.subscription_plan_uuid, is_active=True)
             _process_trial_to_paid_renewal(checkout_intent, subscription.id, event)
             send_trial_end_and_subscription_started_email_task.delay(
                 subscription_id=subscription.id,

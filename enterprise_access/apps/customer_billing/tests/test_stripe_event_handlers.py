@@ -979,15 +979,22 @@ class TestStripeEventHandler(TestCase):
         self.assertIsNone(renewal_record.processed_at)
 
     @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers."
+        "send_trial_end_and_subscription_started_email_task"
+    )
+    @mock.patch(
         "enterprise_access.apps.customer_billing.stripe_event_handlers.LicenseManagerApiClient",
         autospec=True,
     )
-    def test_subscription_updated_past_due_to_active(self, mock_license_manager_client):
+    def test_subscription_updated_past_due_to_active(self, mock_license_manager_client, mock_send_email_task):
         """Test subscription change from past_due subscription status to active flow."""
+
+        workflow = ProvisionNewCustomerWorkflowFactory() 
+        self.checkout_intent.workflow = workflow 
+        self.checkout_intent.save() 
 
         mock_client = mock_license_manager_client.return_value
         subscription_id = "sub_test_past_due_123"
-        subscription_plan_uuid = uuid.uuid4()
 
         # Create prior past_due event
         self._create_existing_event_data_records(
@@ -1014,17 +1021,10 @@ class TestStripeEventHandler(TestCase):
 
         StripeEventHandler.dispatch(mock_event)
 
-        active_summary = StripeEventSummary.objects.filter(
-            stripe_subscription_id=subscription_id,
-            subscription_status=StripeSubscriptionStatus.ACTIVE,
-        ).first()
-
-        active_summary.subscription_plan_uuid = subscription_plan_uuid
-        active_summary.save()
-
         self.assertEqual(1, mock_client.update_subscription_plan.call_count)
-        mock_client.update_subscription_plan.assert_called_once_with(
-            subscription_id,
+        mock_send_email_task.delay.assert_called_once_with(
+            subscription_id=subscription_id,
+            checkout_intent_id=self.checkout_intent.id,
         )
 
     @mock.patch('enterprise_access.apps.customer_billing.stripe_event_handlers.LicenseManagerApiClient')
