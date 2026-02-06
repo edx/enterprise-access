@@ -228,7 +228,9 @@ def _valid_invoice_paid_type(event: stripe.Event):
         return False
 
 
-def _handle_subscription_status_updates(event: stripe.Event) -> None:
+def _handle_subscription_status_updates(
+        event: stripe.Event, prior_status: StripeSubscriptionStatus, current_status: StripeSubscriptionStatus,
+) -> None:
     """
     Handling of a status change coming from a customer.subscription.updated Stripe event
 
@@ -243,9 +245,6 @@ def _handle_subscription_status_updates(event: stripe.Event) -> None:
     checkout_intent_id = get_checkout_intent_id_from_subscription(subscription)
     checkout_intent = get_checkout_intent_or_raise(checkout_intent_id, event.id)
     link_event_data_to_checkout_intent(event, checkout_intent)
-    current_status = subscription.get("status")
-    previous_summary = checkout_intent.previous_summary(event, stripe_object_type='subscription')
-    prior_status = previous_summary.subscription_status
 
     # Detect past_due -> active transition (failed invoice recovered)
     if prior_status == StripeSubscriptionStatus.PAST_DUE and current_status == StripeSubscriptionStatus.ACTIVE:
@@ -544,7 +543,7 @@ class StripeEventHandler:
         if prior_status == current_status:
             return
         else:
-            _handle_subscription_status_updates(event)
+            _handle_subscription_status_updates(event, prior_status, current_status)
 
     @on_stripe_event("customer.subscription.deleted")
     @staticmethod

@@ -103,7 +103,7 @@ class TestStripeEventHandler(TestCase):
         StripeEventData.objects.all().delete()
         StripeEventSummary.objects.all().delete()
 
-    def _create_mock_stripe_event(self, event_type, event_data, **event_attrs):
+    def _create_mock_stripe_event(self, event_type, event_data, previous_attributes=None, **event_attrs):
         """
         Creates an honest-to-goodness ``stripe.Event`` object with the given
         type and data.
@@ -120,6 +120,9 @@ class TestStripeEventHandler(TestCase):
 
         for k, v in event_attrs.items():
             setattr(event, k, v)
+
+        if event_type == 'customer.subscription.updated' and previous_attributes:
+            event.data.previous_attributes = AttrDict.wrap(previous_attributes)
 
         return event
 
@@ -921,9 +924,13 @@ class TestStripeEventHandler(TestCase):
             status=StripeSubscriptionStatus.ACTIVE,
             metadata=self._create_mock_stripe_subscription(self.checkout_intent.id),
         )
+        previous_attributes = {
+            'status': 'past_due',
+        }
         mock_event = self._create_mock_stripe_event(
             "customer.subscription.updated",
             subscription_data,
+            previous_attributes,
         )
 
         StripeEventHandler.dispatch(mock_event)
