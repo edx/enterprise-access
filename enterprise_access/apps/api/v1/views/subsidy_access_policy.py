@@ -1064,6 +1064,8 @@ class SubsidyAccessPolicyAllocateViewset(UserDetailsFromJwtMixin, PermissionRequ
         # Extracts the LMS admin user ID from the validated serializer data to track and verify
         # who created each Learner Credit (LC) assignment.
         admin_lms_user_id = serializer.data['admin_lms_user_id']
+        # For Having a control on the automated email generated while assigning a course
+        suppress_email = serializer.data.get('suppress_email', False)
 
         try:
             with policy.lock():
@@ -1078,6 +1080,7 @@ class SubsidyAccessPolicyAllocateViewset(UserDetailsFromJwtMixin, PermissionRequ
                         content_key,
                         content_price_cents,
                         admin_lms_user_id,
+                        suppress_email=suppress_email,
                     )
                     response_serializer = serializers.SubsidyAccessPolicyAllocationResponseSerializer(
                         allocation_result,

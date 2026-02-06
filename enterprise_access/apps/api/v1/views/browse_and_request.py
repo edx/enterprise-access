@@ -57,6 +57,7 @@ from enterprise_access.apps.subsidy_request.constants import (
     SubsidyRequestStates,
     SubsidyTypeChoices
 )
+from enterprise_access.apps.subsidy_request.exceptions import SubsidyRequestBulkUpdateException
 from enterprise_access.apps.subsidy_request.models import (
     CouponCodeRequest,
     LearnerCreditRequest,
@@ -751,6 +752,11 @@ class CouponCodeRequestViewSet(SubsidyRequestViewSet):
         tags=['Learner Credit Requests'],
         summary='Bulk approve learner credit requests.',
         request=serializers.LearnerCreditRequestBulkApproveRequestSerializer,
+    ),
+    bulk_decline=extend_schema(
+        tags=['Learner Credit Requests'],
+        summary='Bulk decline learner credit requests.',
+        request=serializers.LearnerCreditRequestBulkDeclineSerializer,
     )
 )
 class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
@@ -1396,6 +1402,113 @@ class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
                 )
                 send_learner_credit_bnr_request_approve_task.delay(
                     learner_credit_request.uuid
+                )
+
+        return Response(results, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['post'], url_path='bulk-decline')
+    @permission_required(
+        constants.REQUESTS_ADMIN_ACCESS_PERMISSION,
+        fn=lambda request: get_enterprise_uuid_from_request_data(request),
+    )
+    def bulk_decline(self, request, *args, **kwargs):
+        """
+        Bulk decline learner credit requests.
+
+        Request Payload:
+        {
+            "enterprise_customer_uuid": "<uuid>",
+            "subsidy_request_uuids": ["<uuid>", ...],  # Optional if decline_all is True
+            "decline_all": false,  # Optional, defaults to False
+            "policy_uuid": "<uuid>"
+        }
+
+        Returns:
+            Response with declined and failed request UUIDs.
+        """
+        serializer = serializers.LearnerCreditRequestBulkDeclineSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        enterprise_customer_uuid = serializer.validated_data['enterprise_customer_uuid']
+        policy_uuid = serializer.validated_data['policy_uuid']
+        decline_all = serializer.validated_data.get('decline_all', False)
+        subsidy_request_uuids = serializer.validated_data.get('subsidy_request_uuids', [])
+
+        # Validate policy exists
+        try:
+            SubsidyAccessPolicy.objects.get(uuid=policy_uuid)
+        except SubsidyAccessPolicy.DoesNotExist:
+            return Response(
+                {'error': f'Policy with uuid {policy_uuid} not found.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        results = {'declined': [], 'failed': []}
+
+        # Get the requests to decline based on decline_all flag or specific UUIDs
+        if decline_all:
+            pending_requests = LearnerCreditRequest.objects.filter(
+                enterprise_customer_uuid=enterprise_customer_uuid,
+                learner_credit_request_config__learner_credit_config__uuid=policy_uuid,
+                state=SubsidyRequestStates.REQUESTED
+            )
+        else:
+            pending_requests = LearnerCreditRequest.objects.filter(
+                uuid__in=subsidy_request_uuids,
+                enterprise_customer_uuid=enterprise_customer_uuid,
+            )
+
+        # Filter to only REQUESTED state and collect valid requests
+        valid_requests = []
+        for learner_credit_request in pending_requests:
+            if learner_credit_request.state != SubsidyRequestStates.REQUESTED:
+                add_bulk_approve_operation_result(
+                    results,
+                    'failed',
+                    learner_credit_request.uuid,
+                    learner_credit_request.state,
+                    error=f'Request is not in a declinable state: {learner_credit_request.state}'
+                )
+            else:
+                valid_requests.append(learner_credit_request)
+
+        if not valid_requests and results['failed']:
+            return Response(results, status=status.HTTP_200_OK)
+
+        # Bulk decline the valid requests
+        try:
+            LearnerCreditRequest.bulk_decline_requests(valid_requests, request.user)
+
+            # Create action records and enqueue notification tasks
+            for learner_credit_request in valid_requests:
+                # Create action record for audit trail
+                LearnerCreditRequestActions.create_action(
+                    learner_credit_request=learner_credit_request,
+                    recent_action=get_action_choice(SubsidyRequestStates.DECLINED),
+                    status=get_user_message_choice(SubsidyRequestStates.DECLINED),
+                )
+
+                add_bulk_approve_operation_result(
+                    results,
+                    'declined',
+                    learner_credit_request.uuid,
+                    SubsidyRequestStates.DECLINED
+                )
+
+                # Trigger decline email for all declined requests (per ticket requirement)
+                send_learner_credit_bnr_decline_notification_task.delay(
+                    str(learner_credit_request.uuid)
+                )
+
+        except SubsidyRequestBulkUpdateException as exc:
+            logger.exception("Error during bulk decline: %s", exc)
+            for learner_credit_request in valid_requests:
+                add_bulk_approve_operation_result(
+                    results,
+                    'failed',
+                    learner_credit_request.uuid,
+                    learner_credit_request.state,
+                    error=str(exc)
                 )
 
         return Response(results, status=status.HTTP_200_OK)

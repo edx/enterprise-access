@@ -2055,7 +2055,7 @@ class AssignedLearnerCreditAccessPolicy(AssignedCreditPolicyMixin, SubsidyAccess
 
         return {"valid_requests": valid_requests, "failed_requests_by_reason": failed_requests_by_reason}
 
-    def allocate(self, learner_emails, content_key, content_price_cents, admin_lms_user_id=None):
+    def allocate(self, learner_emails, content_key, content_price_cents, admin_lms_user_id=None, suppress_email=False,):
         """
         Creates allocated ``LearnerContentAssignment`` records.
 
@@ -2071,6 +2071,7 @@ class AssignedLearnerCreditAccessPolicy(AssignedCreditPolicyMixin, SubsidyAccess
             content_key,
             content_price_cents,
             admin_lms_user_id,
+            suppress_email=suppress_email,
         )
 
 
