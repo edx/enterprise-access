@@ -266,11 +266,17 @@ class TestStripeEventHandler(TestCase):
             'checkout_intent_state': CheckoutIntentState.CREATED,  # Simulate a typical scenario.
             'expected_final_state': CheckoutIntentState.PAID,  # Changed!
         },
-        # Happy Test case: successful invoice.paid handling, non-zero total
+        # Happy Test case: successful invoice.paid handling, zero total
         {
             'checkout_intent_state': CheckoutIntentState.CREATED,  # Simulate a typical scenario.
             'expected_final_state': CheckoutIntentState.PAID,  # Changed!
-            'invoice_total': 599,  # Non-zero total means email is sent
+            'invoice_total': 0,  # Non-zero total means email is sent
+        },
+        # Happy Test case: successful invoice.paid handling after fulfillment
+        {
+            'checkout_intent_state': CheckoutIntentState.FULFILLED,  # Simulate a typical scenario.
+            'expected_final_state': CheckoutIntentState.FULFILLED,  # Not changed
+            'invoice_total': 67,  # Non-zero total means email is sent
         },
         # Happy Test case: CheckoutIntent already paid - result should be idempotent w/ no errors.
         {
@@ -313,6 +319,10 @@ class TestStripeEventHandler(TestCase):
                 stripe_session_id=self.stripe_checkout_session_id,
                 stripe_customer_id=stripe_customer_id,
             )
+        elif checkout_intent_state == CheckoutIntentState.FULFILLED:
+            self.checkout_intent.state = CheckoutIntentState.FULFILLED
+            self.checkout_intent.stripe_customer_id = stripe_customer_id
+            self.checkout_intent.save()
 
         subscription_id = 'sub_test_123456'
         mock_subscription = self._create_mock_stripe_subscription(intent_id_override or self.checkout_intent.id)
