@@ -17,7 +17,12 @@ from enterprise_access.apps.customer_billing.constants import (
     BRAZE_TIMESTAMP_FORMAT
 )
 from enterprise_access.apps.customer_billing.models import CheckoutIntent, StripeEventSummary
-from enterprise_access.apps.customer_billing.stripe_api import get_stripe_subscription, get_stripe_trialing_subscription
+from enterprise_access.apps.customer_billing.stripe_api import (
+    get_stripe_payment_intent,
+    get_stripe_payment_method,
+    get_stripe_subscription,
+    get_stripe_trialing_subscription
+)
 from enterprise_access.apps.customer_billing.utils import datetime_from_timestamp
 from enterprise_access.apps.provisioning.utils import validate_trial_subscription
 from enterprise_access.tasks import LoggedTaskWithRetry
@@ -577,25 +582,50 @@ def send_payment_receipt_email(
         datetime_from_timestamp(invoice_data.get('created', 0)), BRAZE_DATE_FORMAT_1
     )
 
-    # Get payment method details
-    payment_method = invoice_data.get('payment_intent', {}).get('payment_method', {})
-    card_details = payment_method.get('card', {})
-    payment_method_display = f"{card_details.get('brand', 'Card')} - {card_details.get('last4', '****')}"
+    # Get payment method details by fetching from Stripe API
+    # The payment_intent in invoice_data is a string ID, not an object
+    payment_method_display = "Card - ****"
+    billing_address = ""
+    customer_name = ""
+
+    payment_intent_id = invoice_data.get('payment_intent')
+    if payment_intent_id:
+        try:
+            # Fetch the PaymentIntent object from Stripe
+            payment_intent = get_stripe_payment_intent(payment_intent_id)
+            payment_method_id = payment_intent.get('payment_method')
+
+            if payment_method_id:
+                # Fetch the PaymentMethod object from Stripe
+                payment_method = get_stripe_payment_method(payment_method_id)
+
+                # Extract card details
+                card_details = payment_method.get('card', {})
+                brand = card_details.get('brand', 'Card')
+                last4 = card_details.get('last4', '****')
+                payment_method_display = f"{brand} - {last4}"
+
+                # Extract billing details
+                billing_details = payment_method.get('billing_details', {})
+                customer_name = billing_details.get('name', '')
+                address = billing_details.get('address', {})
+                billing_address = '\n'.join(filter(None, [
+                    address.get('line1', ''),
+                    address.get('line2', ''),
+                    f"{address.get('city', '')}, {address.get('state', '')} {address.get('postal_code', '')}",
+                    address.get('country', '')
+                ]))
+        except stripe.StripeError as exc:
+            logger.warning(
+                'Failed to fetch payment method details for invoice %s: %s',
+                invoice_id,
+                str(exc)
+            )
 
     # Get subscription details from invoice summary
     quantity = invoice_summary.invoice_quantity or 0
     price_per_license = invoice_summary.invoice_unit_amount or 0
     total_amount = invoice_summary.invoice_amount_paid or 0
-
-    # Get billing address
-    billing_details = payment_method.get('billing_details', {})
-    address = billing_details.get('address', {})
-    billing_address = '\n'.join(filter(None, [
-        address.get('line1', ''),
-        address.get('line2', ''),
-        f"{address.get('city', '')}, {address.get('state', '')} {address.get('postal_code', '')}",
-        address.get('country', '')
-    ]))
 
     braze_trigger_properties = {
         'total_paid_amount': cents_to_dollars(total_amount),
@@ -603,7 +633,7 @@ def send_payment_receipt_email(
         'payment_method': payment_method_display,
         'license_count': quantity,
         'price_per_license': cents_to_dollars(price_per_license),
-        'customer_name': billing_details.get('name', ''),
+        'customer_name': customer_name,
         'organization': enterprise_customer_name,
         'billing_address': billing_address,
         'enterprise_admin_portal_url': f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/{enterprise_slug}',
