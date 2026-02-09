@@ -450,6 +450,18 @@ class StripeEventHandler:
             )
             return
 
+        link_event_data_to_checkout_intent(event, checkout_intent)
+        if invoice.total > 0:
+            send_payment_receipt_email.delay(
+                invoice_id=invoice.id,
+                invoice_data=invoice,
+                enterprise_customer_name=checkout_intent.enterprise_name,
+                enterprise_slug=checkout_intent.enterprise_slug,
+            )
+            # TODO: move CI to some appropriate state now that the stripe
+            # subscription is `active` and a non-zero payment has been processed
+            return
+
         try:
             checkout_intent.mark_as_paid(stripe_customer_id=stripe_customer_id)
             logger.info(
@@ -460,19 +472,6 @@ class StripeEventHandler:
             logger.warning(
                 'Could not mark checkout intent % as paid via invoice %s, because %s',
                 checkout_intent_id, invoice.id, exc,
-            )
-            if settings.STRIPE_GRACEFUL_EXCEPTION_MODE:
-                return
-            raise
-
-        link_event_data_to_checkout_intent(event, checkout_intent)
-
-        if invoice.total > 0:
-            send_payment_receipt_email.delay(
-                invoice_id=invoice.id,
-                invoice_data=invoice,
-                enterprise_customer_name=checkout_intent.enterprise_name,
-                enterprise_slug=checkout_intent.enterprise_slug,
             )
 
     @on_stripe_event('customer.subscription.trial_will_end')
