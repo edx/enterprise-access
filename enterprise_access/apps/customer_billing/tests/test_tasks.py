@@ -1,6 +1,7 @@
 """
 Tests for customer_billing tasks.
 """
+import json
 from datetime import datetime
 from unittest import mock
 
@@ -522,6 +523,9 @@ class TestSendPaymentReceiptEmail(TestCase):
             recipients=braze_recipients,
             trigger_properties=expected_properties,
         )
+        # ensure the actual properties are JSON-serializable
+        actual_trigger_properties = mock_braze.send_campaign_message.call_args_list[0][1]['trigger_properties']
+        json.dumps(actual_trigger_properties)
 
     @mock.patch('enterprise_access.apps.customer_billing.tasks.get_stripe_payment_method')
     @mock.patch('enterprise_access.apps.customer_billing.tasks.get_stripe_payment_intent')
