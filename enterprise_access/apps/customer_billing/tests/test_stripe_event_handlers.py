@@ -989,9 +989,9 @@ class TestStripeEventHandler(TestCase):
     def test_subscription_updated_past_due_to_active(self, mock_license_manager_client, mock_send_email_task):
         """Test subscription change from past_due subscription status to active flow."""
 
-        workflow = ProvisionNewCustomerWorkflowFactory() 
-        self.checkout_intent.workflow = workflow 
-        self.checkout_intent.save() 
+        workflow = ProvisionNewCustomerWorkflowFactory()
+        self.checkout_intent.workflow = workflow
+        self.checkout_intent.save()
 
         mock_client = mock_license_manager_client.return_value
         subscription_id = "sub_test_past_due_123"

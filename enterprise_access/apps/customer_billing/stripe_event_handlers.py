@@ -283,6 +283,11 @@ def _handle_subscription_status_updates(
 
     Args:
         event (stripe.Event): A Stripe ``customer.subscription.updated`` webhook event.
+         prior_status (StripeSubscriptionStatus): The subscription's status we have stored before this event
+            Must be a ``StripeSubscriptionStatus`` enum value (not a raw string or ``None``).
+        current_status (StripeSubscriptionStatus): The subscription's status of this event.
+            Must be a ``StripeSubscriptionStatus`` enum value (not a raw string or ``None``).
+        checkout_intent (CheckoutIntent): The CheckoutIntent associated with the subscription.
     """
     subscription = event.data.object
     checkout_intent_id = get_checkout_intent_id_from_subscription(subscription)
@@ -308,8 +313,34 @@ def _handle_subscription_status_updates(
                 subscription.id,
                 summary.subscription_plan_uuid,
             )
-            # update the subscription plan in license manager
-            client.update_subscription_plan(summary.subscription_plan_uuid, is_active=True)
+            if summary.subscription_plan_uuid:
+                logger.info(
+                    "Stripe subscription %s transitioned from past_due to active. "
+                    "Updating subscription plan %s",
+                    subscription.id,
+                    summary.subscription_plan_uuid,
+                )
+                # Reactivate the primary subscription plan in license manager
+                client.update_subscription_plan(summary.subscription_plan_uuid, is_active=True)
+            else:
+                logger.warning(
+                    "StripeEventSummary for event %s has no subscription_plan_uuid while handling "
+                    "past_due -> active transition for subscription %s",
+                    event.id,
+                    subscription.id,
+                )
+            # Reactivate any renewed subscription plans that were previously cancelled
+            for renewal in checkout_intent.renewals.all():
+                renewed_plan_uuid = getattr(renewal, "renewed_subscription_plan_uuid", None)
+                if renewed_plan_uuid:
+                    logger.info(
+                        "Reactivating renewed subscription plan %s for checkout_intent_id=%s "
+                        "on past_due -> active transition for subscription %s",
+                        renewed_plan_uuid,
+                        checkout_intent.id,
+                        subscription.id,
+                    )
+                    client.update_subscription_plan(renewed_plan_uuid, is_active=True)
             _process_trial_to_paid_renewal(checkout_intent, subscription.id, event)
             send_trial_end_and_subscription_started_email_task.delay(
                 subscription_id=subscription.id,
