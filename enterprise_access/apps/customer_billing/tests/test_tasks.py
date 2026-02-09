@@ -385,26 +385,32 @@ class TestSendPaymentReceiptEmail(TestCase):
         self.checkout_intent.save()
 
         self.invoice_id = 'in_1SNvVOQ60jNALKNUMk8TZucs'
+        self.payment_intent_id = 'pi_test_payment_intent_123'
+        self.payment_method_id = 'pm_test_payment_method_456'
         self.mock_invoice_data = {
             'id': self.invoice_id,
             'created': 1761829387,
-            'payment_intent': {
-                'payment_method': {
-                    'card': {
-                        'brand': 'visa',
-                        'last4': '4242'
-                    },
-                    'billing_details': {
-                        'name': 'Test User',
-                        'address': {
-                            'line1': '123 Test St',
-                            'line2': 'Suite 100',
-                            'city': 'Test City',
-                            'state': 'TS',
-                            'postal_code': '12345',
-                            'country': 'US'
-                        }
-                    }
+            'payment_intent': self.payment_intent_id,  # This is a string ID, not an object
+        }
+        self.mock_payment_intent = {
+            'id': self.payment_intent_id,
+            'payment_method': self.payment_method_id,
+        }
+        self.mock_payment_method = {
+            'id': self.payment_method_id,
+            'card': {
+                'brand': 'visa',
+                'last4': '4242'
+            },
+            'billing_details': {
+                'name': 'Test User',
+                'address': {
+                    'line1': '123 Test St',
+                    'line2': 'Suite 100',
+                    'city': 'Test City',
+                    'state': 'TS',
+                    'postal_code': '12345',
+                    'country': 'US'
                 }
             }
         }
@@ -437,15 +443,24 @@ class TestSendPaymentReceiptEmail(TestCase):
             invoice_currency='usd',
         )
 
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.get_stripe_payment_method')
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.get_stripe_payment_intent')
     @mock.patch('enterprise_access.apps.customer_billing.tasks.format_datetime_obj')
     @mock.patch('enterprise_access.apps.customer_billing.tasks.BrazeApiClient')
     @mock.patch('enterprise_access.apps.customer_billing.tasks.LmsApiClient')
-    def test_successful_payment_receipt_email(self, mock_lms_client, mock_braze_client, mock_format_datetime):
+    def test_successful_payment_receipt_email(
+        self, mock_lms_client, mock_braze_client, mock_format_datetime,
+        mock_get_payment_intent, mock_get_payment_method
+    ):
         """
         Test successful payment receipt email sending.
         """
         # Mock the date formatting function
         mock_format_datetime.return_value = '03 November 2025'
+
+        # Mock Stripe API calls
+        mock_get_payment_intent.return_value = self.mock_payment_intent
+        mock_get_payment_method.return_value = self.mock_payment_method
 
         mock_lms_client.return_value.get_enterprise_customer_data.return_value = {
             'admin_users': self.mock_admin_users
@@ -469,6 +484,10 @@ class TestSendPaymentReceiptEmail(TestCase):
             enterprise_customer_name=self.enterprise_customer_name,
             enterprise_slug=self.enterprise_slug,
         )
+
+        # Verify Stripe API calls
+        mock_get_payment_intent.assert_called_once_with(self.payment_intent_id)
+        mock_get_payment_method.assert_called_once_with(self.payment_method_id)
 
         # Verify LMS API was called to get admin users
         mock_lms_client.return_value.get_enterprise_customer_data.assert_called_once_with(
@@ -504,13 +523,21 @@ class TestSendPaymentReceiptEmail(TestCase):
             trigger_properties=expected_properties,
         )
 
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.get_stripe_payment_method')
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.get_stripe_payment_intent')
     @mock.patch('enterprise_access.apps.customer_billing.tasks.BrazeApiClient')
     @mock.patch('enterprise_access.apps.customer_billing.tasks.LmsApiClient')
-    def test_payment_receipt_no_admin_users(self, mock_lms_client, mock_braze_client):
+    def test_payment_receipt_no_admin_users(
+        self, mock_lms_client, mock_braze_client, mock_get_payment_intent, mock_get_payment_method
+    ):
         """
         Test that exception is not raised when no admin users are found, and instead the email is
         sent to the email address of the CheckoutIntent user.
         """
+        # Mock Stripe API calls
+        mock_get_payment_intent.return_value = self.mock_payment_intent
+        mock_get_payment_method.return_value = self.mock_payment_method
+
         mock_lms_client.return_value.get_enterprise_customer_data.return_value = {
             'admin_users': []
         }
@@ -534,12 +561,20 @@ class TestSendPaymentReceiptEmail(TestCase):
             trigger_properties=mock.ANY,
         )
 
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.get_stripe_payment_method')
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.get_stripe_payment_intent')
     @mock.patch('enterprise_access.apps.customer_billing.tasks.BrazeApiClient')
     @mock.patch('enterprise_access.apps.customer_billing.tasks.LmsApiClient')
-    def test_payment_receipt_braze_recipient_error(self, mock_lms_client, mock_braze_client):
+    def test_payment_receipt_braze_recipient_error(
+        self, mock_lms_client, mock_braze_client, mock_get_payment_intent, mock_get_payment_method
+    ):
         """
         Test handling of Braze recipient creation errors.
         """
+        # Mock Stripe API calls
+        mock_get_payment_intent.return_value = self.mock_payment_intent
+        mock_get_payment_method.return_value = self.mock_payment_method
+
         mock_lms_client.return_value.get_enterprise_customer_data.return_value = {
             'admin_users': self.mock_admin_users
         }
@@ -564,9 +599,13 @@ class TestSendPaymentReceiptEmail(TestCase):
         self.assertEqual(len(actual_recipients), 1)
         self.assertEqual(actual_recipients[0]['external_id'], 'braze_2')
 
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.get_stripe_payment_method')
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.get_stripe_payment_intent')
     @mock.patch('enterprise_access.apps.customer_billing.tasks.BrazeApiClient')
     @mock.patch('enterprise_access.apps.customer_billing.tasks.LmsApiClient')
-    def test_payment_receipt_no_invoice_summary(self, mock_lms_client, mock_braze_client):
+    def test_payment_receipt_no_invoice_summary(
+        self, mock_lms_client, mock_braze_client, mock_get_payment_intent, mock_get_payment_method
+    ):
         """
         Test that email is not sent when no invoice summary is found.
         """
@@ -584,6 +623,53 @@ class TestSendPaymentReceiptEmail(TestCase):
 
         # Verify Braze campaign was not sent
         mock_braze_client.return_value.send_campaign_message.assert_not_called()
+        # Verify Stripe API was not called since we exit early
+        mock_get_payment_intent.assert_not_called()
+        mock_get_payment_method.assert_not_called()
+
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.get_stripe_payment_method')
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.get_stripe_payment_intent')
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.BrazeApiClient')
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.LmsApiClient')
+    def test_payment_receipt_stripe_api_error(
+        self, mock_lms_client, mock_braze_client, mock_get_payment_intent, mock_get_payment_method
+    ):
+        """
+        Test that Stripe API errors are handled gracefully and email is sent with default values.
+        """
+        # Mock Stripe API to raise an error
+        mock_get_payment_intent.side_effect = stripe.StripeError("Stripe API error")
+
+        mock_lms_client.return_value.get_enterprise_customer_data.return_value = {
+            'admin_users': self.mock_admin_users
+        }
+
+        mock_braze = mock_braze_client.return_value
+        mock_braze.create_braze_recipient.side_effect = [
+            {'external_id': 'braze_1'},
+            {'external_id': 'braze_2'}
+        ]
+
+        send_payment_receipt_email(
+            invoice_id=self.invoice_id,
+            invoice_data=self.mock_invoice_data,
+            enterprise_customer_name=self.enterprise_customer_name,
+            enterprise_slug=self.enterprise_slug,
+        )
+
+        # Verify the campaign was still sent with default payment method values
+        mock_braze.send_campaign_message.assert_called_once()
+        call_args = mock_braze.send_campaign_message.call_args
+        trigger_props = call_args[1]['trigger_properties']
+
+        # Payment method should fall back to default values
+        self.assertEqual(trigger_props['payment_method'], 'Card - ****')
+        self.assertEqual(trigger_props['customer_name'], '')
+        self.assertEqual(trigger_props['billing_address'], '')
+
+        # Other properties should still be populated from invoice summary
+        self.assertEqual(trigger_props['total_paid_amount'], 1980.0)
+        self.assertEqual(trigger_props['license_count'], 5)
 
 
 class TestSendTrialEndingReminderEmailTask(TestCase):
