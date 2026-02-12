@@ -281,7 +281,9 @@ class StripeSubscriptionPlanInfoTests(APITest):
             data=self.subscription_created_event_data,
         )
 
-        test_summary_no_checkout = StripeEventSummary.objects.filter(event_id='evt_test_subscription_no_checkout').first()
+        test_summary_no_checkout = StripeEventSummary.objects.filter(
+            event_id='evt_test_subscription_no_checkout'
+        ).first()
         test_summary_no_checkout.upcoming_invoice_amount_due = 200
         test_summary_no_checkout.subscription_plan_uuid = self.subscription_plan_uuid_no_checkout
         test_summary_no_checkout.save(update_fields=['upcoming_invoice_amount_due', 'subscription_plan_uuid'])
