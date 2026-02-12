@@ -989,53 +989,136 @@ class TestStripeEventHandler(TestCase):
         self.assertIsNone(renewal_record.processed_at)
 
     @mock.patch(
-        "enterprise_access.apps.customer_billing.stripe_event_handlers."
-        "send_trial_end_and_subscription_started_email_task"
-    )
-    @mock.patch(
         "enterprise_access.apps.customer_billing.stripe_event_handlers.LicenseManagerApiClient",
         autospec=True,
     )
-    def test_subscription_updated_past_due_to_active(self, mock_license_manager_client, mock_send_email_task):
-        """Test subscription change from past_due subscription status to active flow."""
+    @mock.patch("enterprise_access.apps.customer_billing.stripe_event_handlers.reactivate_all_future_plans")
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers."
+        "send_trial_end_and_subscription_started_email_task"
+    )
+    def test_subscription_updated_past_due_to_active(
+        self,
+        mock_send_email_task,
+        mock_reactivate_plans,
+        mock_license_manager_client,
+    ):
+        """
+        Test that past_due -> active transition reactivates subscription plans and future plans.
+        """
+        stripe_subscription_id = 'sub_test_past_due_recovery'
+        subscription_plan_uuid = uuid.uuid4()
 
+        # Create a workflow and link it to checkout intent
         workflow = ProvisionNewCustomerWorkflowFactory()
         self.checkout_intent.workflow = workflow
         self.checkout_intent.save()
 
-        mock_client = mock_license_manager_client.return_value
-        subscription_id = "sub_test_past_due_123"
-
-        # Create prior past_due event
-        self._create_existing_event_data_records(
-            subscription_id,
-            subscription_status=StripeSubscriptionStatus.PAST_DUE,
+        # Create the past_due StripeEventData and StripeEventSummary (previous state)
+        StripeEventData.objects.create(
+            event_id='evt_past_due_123',
             event_type='customer.subscription.updated',
+            checkout_intent=self.checkout_intent,
+            data={
+                'id': 'evt_past_due_123',
+                'type': 'customer.subscription.updated',
+                'created': int((timezone.now() - timedelta(hours=2)).timestamp()),
+                'data': {
+                    'object': {
+                        'object': 'subscription',
+                        'id': stripe_subscription_id,
+                        'status': StripeSubscriptionStatus.PAST_DUE,
+                        'customer': self.checkout_intent.stripe_customer_id,
+                        'metadata': {
+                            'checkout_intent_id': str(self.checkout_intent.id),
+                        },
+                    }
+                }
+            }
         )
 
-        # Create status change to active
-        subscription_data = get_stripe_object_for_event_type(
-            'customer.subscription.updated',
-            id=subscription_id,
-            status=StripeSubscriptionStatus.ACTIVE,
-            metadata=self._create_mock_stripe_subscription(self.checkout_intent.id),
+        # The signal will auto-create the summary, but we need to manually populate subscription_plan_uuid
+        # so we don't have to go through the provisioning steps
+        past_due_summary = StripeEventSummary.objects.get(event_id='evt_past_due_123')
+        past_due_summary.subscription_plan_uuid = subscription_plan_uuid
+        past_due_summary.save()
+
+        # Define the event ID for the active event (current state)
+        active_event_id = 'evt_active_456'
+
+        # Pre-create the active event data and summary so we can set subscription_plan_uuid
+        StripeEventData.objects.create(
+            event_id=active_event_id,
+            event_type='customer.subscription.updated',
+            checkout_intent=self.checkout_intent,
+            data={
+                'id': active_event_id,
+                'type': 'customer.subscription.updated',
+                'created': int((timezone.now() - timedelta(hours=1)).timestamp()),
+                'data': {
+                    'object': {
+                        'object': 'subscription',
+                        'id': stripe_subscription_id,
+                        'status': StripeSubscriptionStatus.ACTIVE,
+                        'customer': self.checkout_intent.stripe_customer_id,
+                        'metadata': {
+                            'checkout_intent_id': str(self.checkout_intent.id),
+                        },
+                    }
+                }
+            }
         )
-        previous_attributes = {
-            'status': 'past_due',
+
+        # The signal will auto-create the summary, set subscription_plan_uuid
+        active_summary = StripeEventSummary.objects.get(event_id=active_event_id)
+        active_summary.subscription_plan_uuid = subscription_plan_uuid
+        active_summary.save()
+
+        # Now create the mock event for dispatch
+        subscription_data = {
+            'id': stripe_subscription_id,
+            'status': StripeSubscriptionStatus.ACTIVE,
+            'customer': self.checkout_intent.stripe_customer_id,
+            'metadata': {
+                'checkout_intent_id': str(self.checkout_intent.id),
+            },
         }
         mock_event = self._create_mock_stripe_event(
-            "customer.subscription.updated",
+            'customer.subscription.updated',
             subscription_data,
-            previous_attributes,
         )
+
+        # Override the event ID to match the pre-created data
+        mock_event.id = active_event_id
+
+        mock_event.created = int((timezone.now() - timedelta(hours=1)).timestamp())
+
+        # Mock the license manager API client
+        mock_client_instance = mock_license_manager_client.return_value
+        mock_client_instance.update_subscription_plan.return_value = {'success': True}
+        mock_client_instance.process_subscription_plan_renewal.return_value = {'success': True}
 
         StripeEventHandler.dispatch(mock_event)
 
-        self.assertEqual(1, mock_client.update_subscription_plan.call_count)
+        # Verify that the subscription plan was reactivated
+        mock_client_instance.update_subscription_plan.assert_called_once_with(
+            subscription_plan_uuid,
+            is_active=True
+        )
+        mock_reactivate_plans.assert_called_once_with(self.checkout_intent)
         mock_send_email_task.delay.assert_called_once_with(
-            subscription_id=subscription_id,
+            subscription_id=stripe_subscription_id,
             checkout_intent_id=self.checkout_intent.id,
         )
+
+        # Verify the StripeEventSummary has correct status
+        active_summary.refresh_from_db()
+        self.assertEqual(active_summary.subscription_status, StripeSubscriptionStatus.ACTIVE)
+
+        # Verify that CheckoutIntent's previous_summary() correctly points to the past_due summary
+        previous = self.checkout_intent.previous_summary(mock_event, stripe_object_type='subscription')
+        self.assertEqual(previous.id, past_due_summary.id)
+        self.assertEqual(previous.subscription_status, StripeSubscriptionStatus.PAST_DUE)
 
     @mock.patch('enterprise_access.apps.customer_billing.stripe_event_handlers.LicenseManagerApiClient')
     def test_full_subscription_renewal_flow(self, mock_license_manager_client):
