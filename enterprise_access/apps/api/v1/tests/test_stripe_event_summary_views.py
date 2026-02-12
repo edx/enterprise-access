@@ -291,6 +291,7 @@ class StripeSubscriptionPlanInfoTests(APITest):
             'canceled_date': '2021-09-15T00:00:00Z',
             'currency': 'usd',
             'upcoming_invoice_amount_due': '200',
+            'checkout_intent_id': str(self.checkout_intent.id),
         }
 
     def test_get_stripe_subscription_plan_info_missing_subscription_plan_uuid(self):
@@ -322,4 +323,5 @@ class StripeSubscriptionPlanInfoTests(APITest):
             'canceled_date': '2021-09-15T00:00:00Z',
             'currency': 'usd',
             'upcoming_invoice_amount_due': '200',
+            'checkout_intent_id': str(self.checkout_intent.id),
         }
