@@ -637,7 +637,8 @@ class StripeEventSummaryViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
 
         if updated_event_summary:
             canceled_date = updated_event_summary.subscription_cancel_at
-            checkout_intent_id = updated_event_summary.checkout_intent.id
+            checkout_intent_id = updated_event_summary.checkout_intent.id \
+                if updated_event_summary.checkout_intent else checkout_intent_id
 
         if created_event_summary:
             currency = created_event_summary.currency
