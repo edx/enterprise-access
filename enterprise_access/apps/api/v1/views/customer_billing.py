@@ -633,20 +633,23 @@ class StripeEventSummaryViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
             subscription_plan_uuid=subscription_plan_uuid,
         ).order_by('-stripe_event_created_at').first()
 
-        canceled_date, currency, upcoming_invoice_amount_due = None, None, None
+        checkout_intent_id, canceled_date, currency, upcoming_invoice_amount_due = None, None, None, None
 
         if updated_event_summary:
             canceled_date = updated_event_summary.subscription_cancel_at
+            checkout_intent_id = updated_event_summary.checkout_intent.id
 
         if created_event_summary:
             currency = created_event_summary.currency
             upcoming_invoice_amount_due = created_event_summary.upcoming_invoice_amount_due
+            checkout_intent_id = created_event_summary.checkout_intent.id or checkout_intent_id
 
         response_serializer = serializers.StripeSubscriptionPlanInfoResponseSerializer(
             data={
                 'upcoming_invoice_amount_due': upcoming_invoice_amount_due,
                 'currency': currency,
                 'canceled_date': canceled_date,
+                'checkout_intent_id': checkout_intent_id
             },
         )
         if not subscription_plan_uuid:
