@@ -192,6 +192,7 @@ class StripeSubscriptionPlanInfoTests(APITest):
         self.enterprise_uuid = str(uuid.uuid4())
         self.stripe_customer_id = 'cus_test_123'
         self.subscription_plan_uuid = str(uuid.uuid4())
+        self.subscription_plan_uuid_no_checkout = str(uuid.uuid4())
 
         self.checkout_intent = CheckoutIntent.objects.create(
             user=self.user,
@@ -274,6 +275,17 @@ class StripeSubscriptionPlanInfoTests(APITest):
         test_summary.subscription_plan_uuid = self.subscription_plan_uuid
         test_summary.save(update_fields=['subscription_cancel_at', 'subscription_plan_uuid'])
 
+        self.stripe_event_data_no_checkout = StripeEventData.objects.create(
+            event_id='evt_test_subscription_no_checkout',
+            event_type='customer.subscription.created',
+            data=self.subscription_created_event_data,
+        )
+
+        test_summary_no_checkout = StripeEventSummary.objects.filter(event_id='evt_test_subscription_no_checkout').first()
+        test_summary_no_checkout.upcoming_invoice_amount_due = 200
+        test_summary_no_checkout.subscription_plan_uuid = self.subscription_plan_uuid_no_checkout
+        test_summary_no_checkout.save(update_fields=['upcoming_invoice_amount_due', 'subscription_plan_uuid'])
+
     def test_get_stripe_subscription_plan_info(self):
         self.set_jwt_cookie([{
             'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
@@ -292,6 +304,26 @@ class StripeSubscriptionPlanInfoTests(APITest):
             'currency': 'usd',
             'upcoming_invoice_amount_due': '200',
             'checkout_intent_id': str(self.checkout_intent.id),
+        }
+
+    def test_get_stripe_subscription_plan_info_no_checkout(self):
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': self.enterprise_uuid,  # implicit access to this enterprise
+        }])
+        query_params = {
+            'subscription_plan_uuid': self.subscription_plan_uuid_no_checkout,
+        }
+
+        url = reverse('api:v1:stripe-event-summary-get-stripe-subscription-plan-info')
+        url += f"?{urlencode(query_params)}"
+        response = self.client.get(url)
+        assert response.status_code == 200
+        assert response.data == {
+            'canceled_date': None,
+            'currency': 'usd',
+            'upcoming_invoice_amount_due': '200',
+            'checkout_intent_id': None,
         }
 
     def test_get_stripe_subscription_plan_info_missing_subscription_plan_uuid(self):

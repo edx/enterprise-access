@@ -301,6 +301,7 @@ class StripeSubscriptionPlanInfoResponseSerializer(serializers.Serializer):
     )
 
     checkout_intent_id = serializers.CharField(
+        allow_null=True,
         required=False,
         help_text='Id of Checkout Intent associated with the stripe event.',
     )
