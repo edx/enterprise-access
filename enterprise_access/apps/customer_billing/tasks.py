@@ -628,11 +628,11 @@ def send_payment_receipt_email(
     total_amount = invoice_summary.invoice_amount_paid or 0
 
     braze_trigger_properties = {
-        'total_paid_amount': cents_to_dollars(total_amount),
+        'total_paid_amount': float(cents_to_dollars(total_amount)),
         'date_paid': formatted_payment_date,
         'payment_method': payment_method_display,
-        'license_count': quantity,
-        'price_per_license': cents_to_dollars(price_per_license),
+        'license_count': int(quantity),
+        'price_per_license': float(cents_to_dollars(price_per_license)),
         'customer_name': customer_name,
         'organization': enterprise_customer_name,
         'billing_address': billing_address,
