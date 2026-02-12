@@ -163,7 +163,7 @@ def cancel_all_future_plans(checkout_intent):
     for renewal in unprocessed_renewals:
         client.update_subscription_plan(
             str(renewal.renewed_subscription_plan_uuid),
-            is_active=False,
+            is_active=True,
         )
         deactivated_plan_uuid = renewal.renewed_subscription_plan_uuid
         deactivated.append(deactivated_plan_uuid)
