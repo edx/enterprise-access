@@ -299,3 +299,8 @@ class StripeSubscriptionPlanInfoResponseSerializer(serializers.Serializer):
         required=False,
         help_text='Timestamp when the subscription is scheduled to be canceled',
     )
+
+    checkout_intent_id = serializers.CharField(
+        required=False,
+        help_text='Id of Checkout Intent associated with the stripe event.',
+    )
