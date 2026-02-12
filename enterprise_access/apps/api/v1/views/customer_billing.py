@@ -642,7 +642,8 @@ class StripeEventSummaryViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
         if created_event_summary:
             currency = created_event_summary.currency
             upcoming_invoice_amount_due = created_event_summary.upcoming_invoice_amount_due
-            checkout_intent_id = created_event_summary.checkout_intent.id if created_event_summary.checkout_intent else checkout_intent_id
+            checkout_intent_id = created_event_summary.checkout_intent.id \
+                if created_event_summary.checkout_intent else checkout_intent_id
 
         response_serializer = serializers.StripeSubscriptionPlanInfoResponseSerializer(
             data={
