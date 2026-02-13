@@ -16,7 +16,7 @@ asgiref==3.11.1
     #   django
     #   django-cors-headers
     #   django-countries
-astroid==4.0.3
+astroid==4.0.4
     # via
     #   -r requirements/validation.txt
     #   pylint
@@ -316,7 +316,7 @@ edx-toggles==5.4.1
     #   edx-event-bus-kafka
 factory-boy==3.3.3
     # via -r requirements/validation.txt
-faker==40.1.2
+faker==40.4.0
     # via
     #   -r requirements/validation.txt
     #   factory-boy
@@ -739,7 +739,7 @@ virtualenv==20.36.1
     # via
     #   -r requirements/validation.txt
     #   tox
-wcwidth==0.5.3
+wcwidth==0.6.0
     # via
     #   -r requirements/validation.txt
     #   prompt-toolkit
