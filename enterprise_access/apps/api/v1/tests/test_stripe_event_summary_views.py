@@ -199,6 +199,7 @@ class StripeSubscriptionPlanInfoTests(APITest):
             enterprise_uuid=self.enterprise_uuid,
             enterprise_name='Test Enterprise',
             enterprise_slug='test-enterprise',
+            uuid=uuid.uuid4(),
             stripe_customer_id=self.stripe_customer_id,
             state=CheckoutIntentState.PAID,
             quantity=10,
@@ -318,7 +319,7 @@ class StripeSubscriptionPlanInfoTests(APITest):
             'canceled_date': '2021-09-15T00:00:00Z',
             'currency': 'usd',
             'upcoming_invoice_amount_due': 200,
-            'checkout_intent_id': self.checkout_intent.id,
+            'checkout_intent_uuid': str(self.checkout_intent.uuid),
         }
 
     def test_get_stripe_subscription_plan_info_no_checkout(self):
@@ -338,7 +339,7 @@ class StripeSubscriptionPlanInfoTests(APITest):
             'canceled_date': None,
             'currency': 'usd',
             'upcoming_invoice_amount_due': 200,
-            'checkout_intent_id': None,
+            'checkout_intent_uuid': None,
         }
 
     def test_get_stripe_subscription_plan_info_missing_subscription_plan_uuid(self):
@@ -370,5 +371,5 @@ class StripeSubscriptionPlanInfoTests(APITest):
             'canceled_date': '2021-09-15T00:00:00Z',
             'currency': 'usd',
             'upcoming_invoice_amount_due': 200,
-            'checkout_intent_id': self.checkout_intent.id,
+            'checkout_intent_uuid': str(self.checkout_intent.uuid),
         }
