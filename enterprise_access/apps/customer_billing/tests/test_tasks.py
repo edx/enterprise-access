@@ -631,12 +631,11 @@ class TestSendPaymentReceiptEmail(TestCase):
         mock_get_payment_intent.assert_not_called()
         mock_get_payment_method.assert_not_called()
 
-    @mock.patch('enterprise_access.apps.customer_billing.tasks.get_stripe_payment_method')
     @mock.patch('enterprise_access.apps.customer_billing.tasks.get_stripe_payment_intent')
     @mock.patch('enterprise_access.apps.customer_billing.tasks.BrazeApiClient')
     @mock.patch('enterprise_access.apps.customer_billing.tasks.LmsApiClient')
     def test_payment_receipt_stripe_api_error(
-        self, mock_lms_client, mock_braze_client, mock_get_payment_intent, mock_get_payment_method
+        self, mock_lms_client, mock_braze_client, mock_get_payment_intent
     ):
         """
         Test that Stripe API errors are handled gracefully and email is sent with default values.

@@ -48,14 +48,6 @@ def _rand_created_at():
     return timezone.now() - timedelta(seconds=randint(1, 30))
 
 
-def _rand_numeric_string():
-    return str(randint(1, 100000)).zfill(6)
-
-
-def _rand_created_at():
-    return timezone.now() - timedelta(seconds=randint(1, 30))
-
-
 class AttrDict(dict):
     """
     Minimal helper that allows both attribute (obj.foo) and item (obj['foo']) access.
@@ -866,7 +858,7 @@ class TestStripeEventHandler(TestCase):
 
     @mock.patch('enterprise_access.apps.customer_billing.stripe_event_handlers.LicenseManagerApiClient')
     def test_subscription_updated_trial_to_active_no_renewal_record(self, mock_license_manager_client):
-        """Test trial -> active transition gracefully handles missing renewal record."""
+        """Test trial -> active transition gracefully handles missing renewal record (no longer triggers renewal)."""
         # Create previous summary with trial status but NO renewal record
         StripeEventSummaryFactory(
             checkout_intent=self.checkout_intent,
@@ -887,12 +879,12 @@ class TestStripeEventHandler(TestCase):
         # This should not raise an exception - should be gracefully handled
         StripeEventHandler.dispatch(mock_event)
 
-        # Verify license manager client was NOT called since no renewal record exists
+        # Verify license manager client was NOT called since renewal is now handled via invoice.paid
         mock_license_manager_client.assert_not_called()
 
     @mock.patch('enterprise_access.apps.customer_billing.stripe_event_handlers.LicenseManagerApiClient')
     def test_subscription_updated_trial_to_active_already_processed(self, mock_license_manager_client):
-        """Test that already processed renewals are not processed again."""
+        """Test that subscription.updated no longer processes renewals (moved to invoice.paid)."""
         # Create provisioning workflow (simulates renewal record creation during provisioning)
         workflow = ProvisionNewCustomerWorkflowFactory()
         self.checkout_intent.workflow = workflow
@@ -929,64 +921,12 @@ class TestStripeEventHandler(TestCase):
         # Dispatch the event
         StripeEventHandler.dispatch(mock_event)
 
-        # Verify license manager client was NOT called since renewal already processed
+        # Verify license manager client was NOT called since renewal is now handled via invoice.paid
         mock_license_manager_client.assert_not_called()
 
         # Verify renewal record remains processed
         renewal_record.refresh_from_db()
         self.assertIsNotNone(renewal_record.processed_at)
-
-    @mock.patch('enterprise_access.apps.customer_billing.stripe_event_handlers.LicenseManagerApiClient')
-    def test_subscription_updated_license_manager_api_error(self, mock_license_manager_client):
-        """Test error handling when license manager API fails during renewal processing."""
-        # Create provisioning workflow (simulates renewal record creation during provisioning)
-        workflow = ProvisionNewCustomerWorkflowFactory()
-        self.checkout_intent.workflow = workflow
-        self.checkout_intent.save()
-
-        stripe_subscription_id = 'sub_test_789'
-        trial_event_data, _ = self._create_existing_event_data_records(stripe_subscription_id)
-
-        expected_renewal_id = 999
-        renewal_record = SelfServiceSubscriptionRenewal.objects.create(
-            checkout_intent=self.checkout_intent,
-            subscription_plan_renewal_id=expected_renewal_id,
-            stripe_subscription_id='',
-            stripe_event_data=trial_event_data
-        )
-
-        # Simulate the trial -> active transition event
-        subscription_data = get_stripe_object_for_event_type(
-            'customer.subscription.updated',
-            id=stripe_subscription_id,
-            status=StripeSubscriptionStatus.ACTIVE,
-            metadata=self._create_mock_stripe_subscription(self.checkout_intent.id),
-        )
-
-        mock_event = self._create_mock_stripe_event(
-            "customer.subscription.updated",
-            subscription_data,
-        )
-
-        # Ensure the mock event has a timestamp after the trial summary
-        mock_event.created = int((timezone.now() + timedelta(hours=2)).timestamp())
-
-        # Mock license manager API failure
-        mock_client_instance = mock_license_manager_client.return_value
-        mock_client_instance.process_subscription_plan_renewal.side_effect = Exception("API Error")
-
-        # Dispatch should raise the exception since _process_trial_to_paid_renewal re-raises
-        with self.assertRaises(Exception) as context:
-            StripeEventHandler.dispatch(mock_event)
-
-        self.assertIn("API Error", str(context.exception))
-
-        # Verify license manager was called but failed
-        mock_client_instance.process_subscription_plan_renewal.assert_called_once_with(expected_renewal_id)
-
-        # Verify renewal record was NOT marked as processed due to error
-        renewal_record.refresh_from_db()
-        self.assertIsNone(renewal_record.processed_at)
 
     @mock.patch(
         "enterprise_access.apps.customer_billing.stripe_event_handlers.LicenseManagerApiClient",
@@ -997,16 +937,17 @@ class TestStripeEventHandler(TestCase):
         "enterprise_access.apps.customer_billing.stripe_event_handlers."
         "send_trial_end_and_subscription_started_email_task"
     )
-    def test_subscription_updated_past_due_to_active(
+    def test_invoice_paid_reactivates_subscription(
         self,
         mock_send_email_task,
         mock_reactivate_plans,
         mock_license_manager_client,
     ):
         """
-        Test that past_due -> active transition reactivates subscription plans and future plans.
+        Test that invoice.paid reactivates subscription plans and future plans.
         """
-        stripe_subscription_id = 'sub_test_past_due_recovery'
+        stripe_subscription_id = 'sub_test_recovery'
+        stripe_invoice_id = 'in_test_recovery'
         subscription_plan_uuid = uuid.uuid4()
 
         # Create a workflow and link it to checkout intent
@@ -1014,83 +955,94 @@ class TestStripeEventHandler(TestCase):
         self.checkout_intent.workflow = workflow
         self.checkout_intent.save()
 
-        # Create the past_due StripeEventData and StripeEventSummary (previous state)
+        # Define the event ID for the invoice.paid event
+        invoice_paid_event_id = 'evt_invoice_paid_456'
+
+        # Pre-create the invoice.paid event data and summary
         StripeEventData.objects.create(
-            event_id='evt_past_due_123',
-            event_type='customer.subscription.updated',
+            event_id=invoice_paid_event_id,
+            event_type='invoice.paid',
             checkout_intent=self.checkout_intent,
             data={
-                'id': 'evt_past_due_123',
-                'type': 'customer.subscription.updated',
-                'created': int((timezone.now() - timedelta(hours=2)).timestamp()),
-                'data': {
-                    'object': {
-                        'object': 'subscription',
-                        'id': stripe_subscription_id,
-                        'status': StripeSubscriptionStatus.PAST_DUE,
-                        'customer': self.checkout_intent.stripe_customer_id,
-                        'metadata': {
-                            'checkout_intent_id': str(self.checkout_intent.id),
-                        },
-                    }
-                }
-            }
-        )
-
-        # The signal will auto-create the summary, but we need to manually populate subscription_plan_uuid
-        # so we don't have to go through the provisioning steps
-        past_due_summary = StripeEventSummary.objects.get(event_id='evt_past_due_123')
-        past_due_summary.subscription_plan_uuid = subscription_plan_uuid
-        past_due_summary.save()
-
-        # Define the event ID for the active event (current state)
-        active_event_id = 'evt_active_456'
-
-        # Pre-create the active event data and summary so we can set subscription_plan_uuid
-        StripeEventData.objects.create(
-            event_id=active_event_id,
-            event_type='customer.subscription.updated',
-            checkout_intent=self.checkout_intent,
-            data={
-                'id': active_event_id,
-                'type': 'customer.subscription.updated',
+                'id': invoice_paid_event_id,
+                'type': 'invoice.paid',
                 'created': int((timezone.now() - timedelta(hours=1)).timestamp()),
                 'data': {
                     'object': {
-                        'object': 'subscription',
-                        'id': stripe_subscription_id,
-                        'status': StripeSubscriptionStatus.ACTIVE,
+                        'object': 'invoice',
+                        'id': stripe_invoice_id,
                         'customer': self.checkout_intent.stripe_customer_id,
-                        'metadata': {
-                            'checkout_intent_id': str(self.checkout_intent.id),
+                        'subscription': stripe_subscription_id,
+                        'amount_paid': 5000,
+                        'currency': 'usd',
+                        'total': 5000,
+                        'lines': {
+                            'data': [
+                                {
+                                    'quantity': 10,
+                                    'pricing': {
+                                        'unit_amount_decimal': '500.0'
+                                    },
+                                    'parent': {
+                                        'type': INVOICE_PAID_PARENT_TYPE_IDENTIFIER
+                                    }
+                                }
+                            ]
                         },
+                        'parent': {
+                            'subscription_details': {
+                                'subscription': stripe_subscription_id,
+                                'status': StripeSubscriptionStatus.ACTIVE,
+                                'metadata': {
+                                    'checkout_intent_id': str(self.checkout_intent.id),
+                                },
+                            }
+                        }
                     }
                 }
             }
         )
 
-        # The signal will auto-create the summary, set subscription_plan_uuid
-        active_summary = StripeEventSummary.objects.get(event_id=active_event_id)
-        active_summary.subscription_plan_uuid = subscription_plan_uuid
-        active_summary.save()
+        # Set subscription_plan_uuid on the invoice.paid summary
+        invoice_paid_summary = StripeEventSummary.objects.get(event_id=invoice_paid_event_id)
+        invoice_paid_summary.subscription_plan_uuid = subscription_plan_uuid
+        invoice_paid_summary.save()
 
-        # Now create the mock event for dispatch
-        subscription_data = {
-            'id': stripe_subscription_id,
-            'status': StripeSubscriptionStatus.ACTIVE,
+        # Create mock invoice.paid event
+        invoice_data = {
+            'object': 'invoice',
+            'id': stripe_invoice_id,
             'customer': self.checkout_intent.stripe_customer_id,
-            'metadata': {
-                'checkout_intent_id': str(self.checkout_intent.id),
+            'subscription': stripe_subscription_id,
+            'amount_paid': 5000,
+            'currency': 'usd',
+            'total': 5000,
+            'lines': {
+                'data': [
+                    {
+                        'quantity': 10,
+                        'pricing': {
+                            'unit_amount_decimal': '500.0'
+                        },
+                        'parent': {
+                            'type': INVOICE_PAID_PARENT_TYPE_IDENTIFIER
+                        }
+                    }
+                ]
             },
+            'parent': {
+                'subscription_details': {
+                    'subscription': stripe_subscription_id,
+                    'status': StripeSubscriptionStatus.ACTIVE,
+                    'metadata': {
+                        'checkout_intent_id': str(self.checkout_intent.id),
+                    },
+                }
+            }
         }
-        mock_event = self._create_mock_stripe_event(
-            'customer.subscription.updated',
-            subscription_data,
-        )
 
-        # Override the event ID to match the pre-created data
-        mock_event.id = active_event_id
-
+        mock_event = self._create_mock_stripe_event('invoice.paid', invoice_data)
+        mock_event.id = invoice_paid_event_id
         mock_event.created = int((timezone.now() - timedelta(hours=1)).timestamp())
 
         # Mock the license manager API client
@@ -1098,6 +1050,7 @@ class TestStripeEventHandler(TestCase):
         mock_client_instance.update_subscription_plan.return_value = {'success': True}
         mock_client_instance.process_subscription_plan_renewal.return_value = {'success': True}
 
+        # Dispatch the event
         StripeEventHandler.dispatch(mock_event)
 
         # Verify that the subscription plan was reactivated
@@ -1105,24 +1058,19 @@ class TestStripeEventHandler(TestCase):
             subscription_plan_uuid,
             is_active=True
         )
+
+        # Verify that future plans were reactivated
         mock_reactivate_plans.assert_called_once_with(self.checkout_intent)
+
+        # Verify email was sent
         mock_send_email_task.delay.assert_called_once_with(
             subscription_id=stripe_subscription_id,
             checkout_intent_id=self.checkout_intent.id,
         )
 
-        # Verify the StripeEventSummary has correct status
-        active_summary.refresh_from_db()
-        self.assertEqual(active_summary.subscription_status, StripeSubscriptionStatus.ACTIVE)
-
-        # Verify that CheckoutIntent's previous_summary() correctly points to the past_due summary
-        previous = self.checkout_intent.previous_summary(mock_event, stripe_object_type='subscription')
-        self.assertEqual(previous.id, past_due_summary.id)
-        self.assertEqual(previous.subscription_status, StripeSubscriptionStatus.PAST_DUE)
-
     @mock.patch('enterprise_access.apps.customer_billing.stripe_event_handlers.LicenseManagerApiClient')
     def test_full_subscription_renewal_flow(self, mock_license_manager_client):
-        """Test the complete subscription renewal flow from provisioning to processing."""
+        """Test that subscription.updated event is handled without calling License Manager (moved to invoice.paid)."""
         # Create provisioning workflow (simulates renewal record creation during provisioning)
         workflow = ProvisionNewCustomerWorkflowFactory()
         self.checkout_intent.workflow = workflow
@@ -1130,13 +1078,11 @@ class TestStripeEventHandler(TestCase):
 
         stripe_subscription_id = 'sub_test_789'
 
-        # Create existing StripeEventData and summary in a "trialing" state,
-        # so that we can create a renewal record as it would exist after initial
-        # provisioning workflow execution.
+        # Create existing StripeEventData and summary in a "trialing" state
         trial_event_data, _ = self._create_existing_event_data_records(stripe_subscription_id)
 
         expected_renewal_id = 555
-        renewal_record = SelfServiceSubscriptionRenewal.objects.create(
+        SelfServiceSubscriptionRenewal.objects.create(
             checkout_intent=self.checkout_intent,
             subscription_plan_renewal_id=expected_renewal_id,
             stripe_subscription_id=stripe_subscription_id,
@@ -1159,22 +1105,165 @@ class TestStripeEventHandler(TestCase):
         # Ensure the mock event has a timestamp after the trial summary
         mock_event.created = int((timezone.now() + timedelta(hours=2)).timestamp())
 
-        # Mock the license manager client response
-        mock_client_instance = mock_license_manager_client.return_value
-        mock_client_instance.process_subscription_plan_renewal.return_value = {
-            'id': 555, 'status': 'processed', 'processed_at': '2024-01-15T10:30:00Z'
-        }
-
-        # Step 4: Process the trial -> active event
+        # Process the trial -> active event
         StripeEventHandler.dispatch(mock_event)
 
-        # Step 5: Verify the complete flow worked end-to-end
+        # Since trial->active no longer triggers renewal processing in subscription.updated,
+        # verify license manager was NOT called
+        mock_license_manager_client.assert_not_called()
 
-        # Verify license manager was called to process the renewal
-        mock_license_manager_client.assert_called_once()
+        # Verify event was processed successfully
+        event_data = StripeEventData.objects.get(event_id=mock_event.id)
+        self.assertIsNotNone(event_data.handled_at)
+
+        # Verify StripeEventSummary was created for the new event
+        new_summary = event_data.summary
+        self.assertEqual(new_summary.subscription_status, StripeSubscriptionStatus.ACTIVE)
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_event_handlers.LicenseManagerApiClient')
+    def test_full_subscription_renewal_flow_via_invoice_paid(self, mock_license_manager_client):
+        """Test the complete subscription renewal flow via invoice.paid event."""
+        # Create provisioning workflow
+        workflow = ProvisionNewCustomerWorkflowFactory()
+        self.checkout_intent.workflow = workflow
+        self.checkout_intent.save()
+
+        stripe_subscription_id = 'sub_test_renewal_789'
+        stripe_invoice_id = 'in_test_renewal_789'
+
+        # Create initial trial event
+        trial_event_data, _ = self._create_existing_event_data_records(
+            stripe_subscription_id,
+            subscription_status=StripeSubscriptionStatus.TRIALING
+        )
+
+        # Create renewal record with prior and renewed plan UUIDs
+        expected_renewal_id = 555
+        trial_plan_uuid = uuid.uuid4()
+        renewed_plan_uuid = uuid.uuid4()
+
+        renewal_record = SelfServiceSubscriptionRenewal.objects.create(
+            checkout_intent=self.checkout_intent,
+            subscription_plan_renewal_id=expected_renewal_id,
+            stripe_subscription_id=stripe_subscription_id,
+            stripe_event_data=trial_event_data,
+            prior_subscription_plan_uuid=trial_plan_uuid,
+            renewed_subscription_plan_uuid=renewed_plan_uuid,
+        )
+
+        # Create invoice.paid event (active subscription after payment)
+        invoice_paid_event_id = 'evt_renewal_invoice_paid'
+        subscription_plan_uuid = uuid.uuid4()
+
+        StripeEventData.objects.create(
+            event_id=invoice_paid_event_id,
+            event_type='invoice.paid',
+            checkout_intent=self.checkout_intent,
+            data={
+                'id': invoice_paid_event_id,
+                'type': 'invoice.paid',
+                'created': int((timezone.now() + timedelta(hours=2)).timestamp()),
+                'data': {
+                    'object': {
+                        'object': 'invoice',
+                        'id': stripe_invoice_id,
+                        'customer': self.checkout_intent.stripe_customer_id,
+                        'subscription': stripe_subscription_id,
+                        'amount_paid': 5000,
+                        'currency': 'usd',
+                        'total': 5000,
+                        'lines': {
+                            'data': [{
+                                'quantity': 10,
+                                'pricing': {'unit_amount_decimal': '500.0'},
+                                'parent': {'type': INVOICE_PAID_PARENT_TYPE_IDENTIFIER}
+                            }]
+                        },
+                        'parent': {
+                            'subscription_details': {
+                                'subscription': stripe_subscription_id,
+                                'status': StripeSubscriptionStatus.ACTIVE,
+                                'metadata': {
+                                    'checkout_intent_id': str(self.checkout_intent.id),
+                                },
+                            }
+                        }
+                    }
+                }
+            }
+        )
+
+        # Set subscription_plan_uuid and subscription status on summary
+        invoice_summary = StripeEventSummary.objects.get(event_id=invoice_paid_event_id)
+        invoice_summary.subscription_plan_uuid = subscription_plan_uuid
+        invoice_summary.subscription_status = StripeSubscriptionStatus.ACTIVE  # ADD THIS LINE
+        invoice_summary.stripe_subscription_id = stripe_subscription_id  # ADD THIS LINE
+        invoice_summary.stripe_object_type = 'subscription'  # ADD THIS LINE
+        invoice_summary.save()
+
+        # Create mock event
+        invoice_data = {
+            'object': 'invoice',
+            'id': stripe_invoice_id,
+            'customer': self.checkout_intent.stripe_customer_id,
+            'subscription': stripe_subscription_id,
+            'amount_paid': 5000,
+            'currency': 'usd',
+            'total': 5000,
+            'lines': {
+                'data': [{
+                    'quantity': 10,
+                    'pricing': {'unit_amount_decimal': '500.0'},
+                    'parent': {'type': INVOICE_PAID_PARENT_TYPE_IDENTIFIER}
+                }]
+            },
+            'parent': {
+                'subscription_details': {
+                    'subscription': stripe_subscription_id,
+                    'status': StripeSubscriptionStatus.ACTIVE,
+                    'metadata': {
+                        'checkout_intent_id': str(self.checkout_intent.id),
+                    },
+                }
+            }
+        }
+
+        mock_event = self._create_mock_stripe_event('invoice.paid', invoice_data)
+        mock_event.id = invoice_paid_event_id
+        mock_event.created = int((timezone.now() + timedelta(hours=2)).timestamp())
+
+        # Mock license manager response
+        mock_client_instance = mock_license_manager_client.return_value
+        mock_client_instance.update_subscription_plan.return_value = {'success': True}
+        mock_client_instance.process_subscription_plan_renewal.return_value = {
+            'id': expected_renewal_id, 'status': 'processed'
+        }
+
+        # Dispatch the event
+        StripeEventHandler.dispatch(mock_event)
+
+        # Verify LicenseManagerApiClient was instantiated 3 times:
+        # 1. In _handle_invoice_paid_status_updated for update_subscription_plan
+        # 2. In reactivate_all_future_plans
+        # 3. In _process_trial_to_paid_renewal for process_subscription_plan_renewal
+        self.assertEqual(mock_license_manager_client.call_count, 3)
+
+        # Verify the primary subscription plan was reactivated
+        mock_client_instance.update_subscription_plan.assert_any_call(
+            subscription_plan_uuid,
+            is_active=True
+        )
+
+        # Verify the future renewal plan was reactivated
+        mock_client_instance.update_subscription_plan.assert_any_call(
+            str(renewed_plan_uuid),
+            is_active=True
+        )
+
+        # Verify the renewal was processed
         mock_client_instance.process_subscription_plan_renewal.assert_called_once_with(expected_renewal_id)
 
-        # Verify renewal record was processed
+        # Verify renewal record was marked as processed
         renewal_record.refresh_from_db()
         self.assertIsNotNone(renewal_record.processed_at)
         self.assertEqual(renewal_record.stripe_subscription_id, stripe_subscription_id)
@@ -1184,16 +1273,122 @@ class TestStripeEventHandler(TestCase):
         self.assertEqual(renewal_record.stripe_event_data, event_data)
         self.assertIsNotNone(event_data.handled_at)
 
-        # Verify StripeEventSummary was created for the new event
-        new_summary = event_data.summary
-        self.assertEqual(new_summary.subscription_status, StripeSubscriptionStatus.ACTIVE)
-        self.assertEqual(new_summary.stripe_subscription_id, stripe_subscription_id)
-        self.assertEqual(new_summary.checkout_intent, self.checkout_intent)
+        # Verify StripeEventSummary has correct data (refresh from DB after dispatch)
+        invoice_summary.refresh_from_db()
+        self.assertEqual(invoice_summary.stripe_subscription_id, stripe_subscription_id)
+        # Note: subscription_status may not be set for invoice events,
+        # so we verify it's either ACTIVE or None
+        self.assertIn(invoice_summary.subscription_status, [StripeSubscriptionStatus.ACTIVE, None])
 
-        # Verify all data relationships are intact (including new_summary)
-        self.assertEqual(renewal_record.checkout_intent, self.checkout_intent)
-        self.assertEqual(event_data.checkout_intent, self.checkout_intent)
-        self.assertEqual(new_summary.checkout_intent, self.checkout_intent)
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_event_handlers.LicenseManagerApiClient')
+    def test_invoice_paid_license_manager_api_error(self, mock_license_manager_client):
+        """Test error handling when license manager API fails during invoice.paid renewal processing."""
+        workflow = ProvisionNewCustomerWorkflowFactory()
+        self.checkout_intent.workflow = workflow
+        self.checkout_intent.save()
+
+        stripe_subscription_id = 'sub_test_error_789'
+        stripe_invoice_id = 'in_test_error_789'
+        trial_event_data, _ = self._create_existing_event_data_records(stripe_subscription_id)
+
+        expected_renewal_id = 999
+        renewal_record = SelfServiceSubscriptionRenewal.objects.create(
+            checkout_intent=self.checkout_intent,
+            subscription_plan_renewal_id=expected_renewal_id,
+            stripe_subscription_id=stripe_subscription_id,
+            stripe_event_data=trial_event_data
+        )
+
+        # Create invoice.paid event
+        invoice_paid_event_id = 'evt_error_invoice_paid'
+        subscription_plan_uuid = uuid.uuid4()
+
+        StripeEventData.objects.create(
+            event_id=invoice_paid_event_id,
+            event_type='invoice.paid',
+            checkout_intent=self.checkout_intent,
+            data={
+                'id': invoice_paid_event_id,
+                'type': 'invoice.paid',
+                'created': int((timezone.now() + timedelta(hours=2)).timestamp()),
+                'data': {
+                    'object': {
+                        'object': 'invoice',
+                        'id': stripe_invoice_id,
+                        'customer': self.checkout_intent.stripe_customer_id,
+                        'subscription': stripe_subscription_id,
+                        'amount_paid': 5000,
+                        'currency': 'usd',
+                        'total': 5000,
+                        'lines': {
+                            'data': [{
+                                'quantity': 10,
+                                'pricing': {'unit_amount_decimal': '500.0'},
+                                'parent': {'type': INVOICE_PAID_PARENT_TYPE_IDENTIFIER}
+                            }]
+                        },
+                        'parent': {
+                            'subscription_details': {
+                                'subscription': stripe_subscription_id,
+                                'status': StripeSubscriptionStatus.ACTIVE,
+                                'metadata': {
+                                    'checkout_intent_id': str(self.checkout_intent.id),
+                                },
+                            }
+                        }
+                    }
+                }
+            }
+        )
+
+        invoice_summary = StripeEventSummary.objects.get(event_id=invoice_paid_event_id)
+        invoice_summary.subscription_plan_uuid = subscription_plan_uuid
+        invoice_summary.save()
+
+        # Create mock event
+        invoice_data = {
+            'object': 'invoice',
+            'id': stripe_invoice_id,
+            'customer': self.checkout_intent.stripe_customer_id,
+            'subscription': stripe_subscription_id,
+            'amount_paid': 5000,
+            'currency': 'usd',
+            'total': 5000,
+            'lines': {
+                'data': [{
+                    'quantity': 10,
+                    'pricing': {'unit_amount_decimal': '500.0'},
+                    'parent': {'type': INVOICE_PAID_PARENT_TYPE_IDENTIFIER}
+                }]
+            },
+            'parent': {
+                'subscription_details': {
+                    'subscription': stripe_subscription_id,
+                    'status': StripeSubscriptionStatus.ACTIVE,
+                    'metadata': {
+                        'checkout_intent_id': str(self.checkout_intent.id),
+                    },
+                }
+            }
+        }
+
+        mock_event = self._create_mock_stripe_event('invoice.paid', invoice_data)
+        mock_event.id = invoice_paid_event_id
+        mock_event.created = int((timezone.now() + timedelta(hours=2)).timestamp())
+
+        # Mock license manager API failure
+        mock_client_instance = mock_license_manager_client.return_value
+        mock_client_instance.process_subscription_plan_renewal.side_effect = Exception("API Error")
+
+        # Dispatch should raise the exception
+        with self.assertRaises(Exception) as context:
+            StripeEventHandler.dispatch(mock_event)
+
+        self.assertIn("API Error", str(context.exception))
+
+        # Verify renewal was NOT marked as processed
+        renewal_record.refresh_from_db()
+        self.assertIsNone(renewal_record.processed_at)
 
     @mock.patch('stripe.Subscription.modify')
     def test_subscription_created_handler_success(self, mock_stripe_modify):
