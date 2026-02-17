@@ -287,19 +287,19 @@ class StripeSubscriptionPlanInfoTests(APITest):
             data=self.subscription_created_event_data,
         )
 
-        test_summary_no_checkout = StripeEventSummary.objects.filter(
+        test_summary_no_checkout_created = StripeEventSummary.objects.filter(
             event_id='evt_test_subscription_no_checkout_created'
         ).first()
-        test_summary_no_checkout.upcoming_invoice_amount_due = 200
-        test_summary_no_checkout.subscription_plan_uuid = self.subscription_plan_uuid_no_checkout
-        test_summary_no_checkout.save(update_fields=['upcoming_invoice_amount_due', 'subscription_plan_uuid'])
+        test_summary_no_checkout_created.upcoming_invoice_amount_due = 200
+        test_summary_no_checkout_created.subscription_plan_uuid = self.subscription_plan_uuid_no_checkout
+        test_summary_no_checkout_created.save(update_fields=['upcoming_invoice_amount_due', 'subscription_plan_uuid'])
 
-        test_summary_no_checkout = StripeEventSummary.objects.filter(
+        test_summary_no_checkout_updated = StripeEventSummary.objects.filter(
             event_id='evt_test_subscription_no_checkout_updated'
         ).first()
-        test_summary_no_checkout.upcoming_invoice_amount_due = 200
-        test_summary_no_checkout.subscription_plan_uuid = self.subscription_plan_uuid_no_checkout
-        test_summary_no_checkout.save(update_fields=['upcoming_invoice_amount_due', 'subscription_plan_uuid'])
+        test_summary_no_checkout_updated.upcoming_invoice_amount_due = 200
+        test_summary_no_checkout_updated.subscription_plan_uuid = self.subscription_plan_uuid_no_checkout
+        test_summary_no_checkout_updated.save(update_fields=['upcoming_invoice_amount_due', 'subscription_plan_uuid'])
 
     def test_get_stripe_subscription_plan_info(self):
         self.set_jwt_cookie([{
