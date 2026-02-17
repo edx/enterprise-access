@@ -282,7 +282,7 @@ class StripeSubscriptionPlanInfoResponseSerializer(serializers.Serializer):
     """
     Response serializer for response body from GET /api/v1/stripe-event-summary/get-stripe-subscription-plan-info
     """
-    upcoming_invoice_amount_due = serializers.CharField(
+    upcoming_invoice_amount_due = serializers.IntegerField(
         allow_null=True,
         required=False,
         help_text='Upcoming invoice amount due related to this event/subscription',
@@ -300,7 +300,7 @@ class StripeSubscriptionPlanInfoResponseSerializer(serializers.Serializer):
         help_text='Timestamp when the subscription is scheduled to be canceled',
     )
 
-    checkout_intent_id = serializers.CharField(
+    checkout_intent_id = serializers.IntegerField(
         allow_null=True,
         required=False,
         help_text='Id of Checkout Intent associated with the stripe event.',

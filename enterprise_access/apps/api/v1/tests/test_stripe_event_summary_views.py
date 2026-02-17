@@ -317,8 +317,8 @@ class StripeSubscriptionPlanInfoTests(APITest):
         assert response.data == {
             'canceled_date': '2021-09-15T00:00:00Z',
             'currency': 'usd',
-            'upcoming_invoice_amount_due': '200',
-            'checkout_intent_id': str(self.checkout_intent.id),
+            'upcoming_invoice_amount_due': 200,
+            'checkout_intent_id': self.checkout_intent.id,
         }
 
     def test_get_stripe_subscription_plan_info_no_checkout(self):
@@ -337,7 +337,7 @@ class StripeSubscriptionPlanInfoTests(APITest):
         assert response.data == {
             'canceled_date': None,
             'currency': 'usd',
-            'upcoming_invoice_amount_due': '200',
+            'upcoming_invoice_amount_due': 200,
             'checkout_intent_id': None,
         }
 
@@ -369,6 +369,6 @@ class StripeSubscriptionPlanInfoTests(APITest):
         assert response.data == {
             'canceled_date': '2021-09-15T00:00:00Z',
             'currency': 'usd',
-            'upcoming_invoice_amount_due': '200',
-            'checkout_intent_id': str(self.checkout_intent.id),
+            'upcoming_invoice_amount_due': 200,
+            'checkout_intent_id': self.checkout_intent.id,
         }
