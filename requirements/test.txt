@@ -16,7 +16,7 @@ asgiref==3.11.1
     #   django
     #   django-cors-headers
     #   django-countries
-astroid==4.0.3
+astroid==4.0.4
     # via
     #   pylint
     #   pylint-celery
@@ -286,7 +286,7 @@ edx-toggles==5.4.1
     #   edx-event-bus-kafka
 factory-boy==3.3.3
     # via -r requirements/test.in
-faker==40.1.2
+faker==40.4.0
     # via factory-boy
 fastavro==1.12.1
     # via
@@ -581,7 +581,7 @@ vine==5.1.0
     #   kombu
 virtualenv==20.36.1
     # via tox
-wcwidth==0.5.3
+wcwidth==0.6.0
     # via
     #   -r requirements/base.txt
     #   prompt-toolkit
