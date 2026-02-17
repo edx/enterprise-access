@@ -37,6 +37,10 @@ from enterprise_access.apps.customer_billing.tests.factories import (
     StripeEventSummaryFactory,
     get_stripe_object_for_event_type
 )
+from enterprise_access.apps.provisioning.models import (
+    GetCreateFirstPaidSubscriptionPlanStep,
+    GetCreateTrialSubscriptionPlanStep
+)
 from enterprise_access.apps.provisioning.tests.factories import ProvisionNewCustomerWorkflowFactory
 
 
@@ -935,88 +939,151 @@ class TestStripeEventHandler(TestCase):
     @mock.patch("enterprise_access.apps.customer_billing.stripe_event_handlers.reactivate_all_future_plans")
     @mock.patch(
         "enterprise_access.apps.customer_billing.stripe_event_handlers."
-        "send_trial_end_and_subscription_started_email_task"
+        "_process_trial_to_paid_renewal"
     )
     def test_invoice_paid_reactivates_subscription(
         self,
-        mock_send_email_task,
+        mock_process_renewal,
         mock_reactivate_plans,
         mock_license_manager_client,
     ):
         """
         Test that invoice.paid reactivates subscription plans and future plans.
+
+        This test simulates a recovery scenario where:
+        1. A subscription has already transitioned from trial to paid
+        2. The subscription went past_due (plans were deactivated)
+        3. Customer updates payment method
+        4. Invoice is paid successfully
+        5. System should reactivate the PAID plan (not the trial plan)
         """
         stripe_subscription_id = 'sub_test_recovery'
         stripe_invoice_id = 'in_test_recovery'
-        subscription_plan_uuid = uuid.uuid4()
+        trial_subscription_plan_uuid = uuid.uuid4()
+        first_paid_subscription_plan_uuid = uuid.uuid4()
 
         # Create a workflow and link it to checkout intent
         workflow = ProvisionNewCustomerWorkflowFactory()
         self.checkout_intent.workflow = workflow
         self.checkout_intent.save()
 
-        # Define the event ID for the invoice.paid event
-        invoice_paid_event_id = 'evt_invoice_paid_456'
-
-        # Pre-create the invoice.paid event data and summary
-        StripeEventData.objects.create(
-            event_id=invoice_paid_event_id,
-            event_type='invoice.paid',
-            checkout_intent=self.checkout_intent,
-            data={
-                'id': invoice_paid_event_id,
-                'type': 'invoice.paid',
-                'created': int((timezone.now() - timedelta(hours=1)).timestamp()),
-                'data': {
-                    'object': {
-                        'object': 'invoice',
-                        'id': stripe_invoice_id,
-                        'customer': self.checkout_intent.stripe_customer_id,
-                        'subscription': stripe_subscription_id,
-                        'amount_paid': 5000,
-                        'currency': 'usd',
-                        'total': 5000,
-                        'lines': {
-                            'data': [
-                                {
-                                    'quantity': 10,
-                                    'pricing': {
-                                        'unit_amount_decimal': '500.0'
-                                    },
-                                    'parent': {
-                                        'type': INVOICE_PAID_PARENT_TYPE_IDENTIFIER
-                                    }
-                                }
-                            ]
-                        },
-                        'parent': {
-                            'subscription_details': {
-                                'subscription': stripe_subscription_id,
-                                'status': StripeSubscriptionStatus.ACTIVE,
-                                'metadata': {
-                                    'checkout_intent_id': str(self.checkout_intent.id),
-                                },
-                            }
-                        }
-                    }
-                }
+        # Create trial subscription plan step with output containing subscription_plan_uuid
+        _ = GetCreateTrialSubscriptionPlanStep.objects.create(
+            workflow_record_uuid=workflow.uuid,
+            input_data={
+                'title': 'Test Trial Plan',
+                'salesforce_opportunity_line_item': 'test-oli-123',
+                'start_date': '2024-01-01T00:00:00Z',
+                'expiration_date': '2025-01-01T00:00:00Z',
+                'desired_num_licenses': 5,
+                'product_id': 123,
+            },
+            output_data={
+                'uuid': str(trial_subscription_plan_uuid),
+                'title': 'Test Trial Plan',
+                'salesforce_opportunity_line_item': 'test-oli-123',
+                'created': '2024-01-01T00:00:00Z',
+                'start_date': '2024-01-01T00:00:00Z',
+                'expiration_date': '2025-01-01T00:00:00Z',
+                'is_active': True,
+                'is_current': True,
+                'plan_type': 'Subscription',
+                'enterprise_catalog_uuid': str(uuid.uuid4()),
+                'product': 123,
+                'desired_num_licenses': 5,
             }
         )
 
-        # Set subscription_plan_uuid on the invoice.paid summary
-        invoice_paid_summary = StripeEventSummary.objects.get(event_id=invoice_paid_event_id)
-        invoice_paid_summary.subscription_plan_uuid = subscription_plan_uuid
-        invoice_paid_summary.save()
+        # Create first paid subscription plan step
+        _ = GetCreateFirstPaidSubscriptionPlanStep.objects.create(
+            workflow_record_uuid=workflow.uuid,
+            input_data={
+                'title': 'First Paid Plan',
+                'salesforce_opportunity_line_item': None,
+                'start_date': '2025-01-01T00:00:00Z',
+                'expiration_date': '2026-01-01T00:00:00Z',
+                'desired_num_licenses': 5,
+                'product_id': 456,
+            },
+            output_data={
+                'uuid': str(first_paid_subscription_plan_uuid),
+                'title': 'First Paid Plan',
+                'salesforce_opportunity_line_item': None,
+                'created': '2024-01-01T00:00:00Z',
+                'start_date': '2025-01-01T00:00:00Z',
+                'expiration_date': '2026-01-01T00:00:00Z',
+                'is_active': False,  # Currently deactivated (past_due scenario)
+                'is_current': True,
+                'plan_type': 'Subscription',
+                'enterprise_catalog_uuid': str(uuid.uuid4()),
+                'product': 456,
+                'desired_num_licenses': 5,
+            }
+        )
 
-        # Create mock invoice.paid event
+        # Create mock customer.subscription.created event data (from 31 days ago when trial started)
+        subscription_created_event_data = {
+            'id': 'evt_subscription_created',
+            'type': 'customer.subscription.created',
+            'created': int((timezone.now() - timedelta(days=31)).timestamp()),
+            'data': {
+                'object': {
+                    'object': 'subscription',
+                    'id': stripe_subscription_id,
+                    'customer': self.checkout_intent.stripe_customer_id,
+                    'currency': 'usd',
+                    'status': 'trialing',
+                    'metadata': {
+                        'checkout_intent_id': str(self.checkout_intent.id),
+                    },
+                    'items': {
+                        'data': [
+                            {
+                                'current_period_start': int((timezone.now() - timedelta(days=31)).timestamp()),
+                                'current_period_end': int((timezone.now() + timedelta(days=335)).timestamp()),
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+
+        # Create StripeEventData for subscription.created (linked to the checkout intent)
+        stripe_event_data_created = StripeEventData.objects.create(
+            event_id='evt_subscription_created',
+            event_type='customer.subscription.created',
+            checkout_intent=self.checkout_intent,
+            data=subscription_created_event_data
+        )
+
+        # Create a renewal record to simulate that trial->paid has already been processed
+        SelfServiceSubscriptionRenewal.objects.create(
+            checkout_intent=self.checkout_intent,
+            subscription_plan_renewal_id=12345,
+            prior_subscription_plan_uuid=trial_subscription_plan_uuid,
+            renewed_subscription_plan_uuid=first_paid_subscription_plan_uuid,
+            processed_at=timezone.now() - timedelta(days=30),  # Processed 30 days ago
+            stripe_subscription_id=stripe_subscription_id,
+            stripe_event_data=stripe_event_data_created,
+        )
+
+        # Populate the summary to get subscription_plan_uuid set
+        summary_created = StripeEventSummary.objects.get(stripe_event_data=stripe_event_data_created)
+        summary_created.populate_with_summary_data()
+        summary_created.save()
+
+        # Verify that trial subscription_plan_uuid was extracted from the workflow
+        self.assertEqual(summary_created.subscription_plan_uuid, trial_subscription_plan_uuid)
+
+        # Now create the invoice.paid event (recovery scenario - paying after past_due)
         invoice_data = {
             'object': 'invoice',
             'id': stripe_invoice_id,
             'customer': self.checkout_intent.stripe_customer_id,
             'subscription': stripe_subscription_id,
-            'amount_paid': 5000,
+            'amount_paid': 5000,  # $50.00 - NON-ZERO means this is a paid invoice
             'currency': 'usd',
-            'total': 5000,
+            'total': 5000,  # This is > 0, so it's NOT a trial invoice
             'lines': {
                 'data': [
                     {
@@ -1025,7 +1092,7 @@ class TestStripeEventHandler(TestCase):
                             'unit_amount_decimal': '500.0'
                         },
                         'parent': {
-                            'type': INVOICE_PAID_PARENT_TYPE_IDENTIFIER
+                            'type': INVOICE_PAID_PARENT_TYPE_IDENTIFIER  # "subscription_item_details"
                         }
                     }
                 ]
@@ -1033,7 +1100,7 @@ class TestStripeEventHandler(TestCase):
             'parent': {
                 'subscription_details': {
                     'subscription': stripe_subscription_id,
-                    'status': StripeSubscriptionStatus.ACTIVE,
+                    'status': StripeSubscriptionStatus.ACTIVE,  # Back to active after payment
                     'metadata': {
                         'checkout_intent_id': str(self.checkout_intent.id),
                     },
@@ -1041,32 +1108,270 @@ class TestStripeEventHandler(TestCase):
             }
         }
 
+        # Create the mock Stripe event
         mock_event = self._create_mock_stripe_event('invoice.paid', invoice_data)
-        mock_event.id = invoice_paid_event_id
-        mock_event.created = int((timezone.now() - timedelta(hours=1)).timestamp())
+        mock_event.id = 'evt_invoice_paid_recovery'
+        mock_event.created = int(timezone.now().timestamp())
 
         # Mock the license manager API client
         mock_client_instance = mock_license_manager_client.return_value
         mock_client_instance.update_subscription_plan.return_value = {'success': True}
-        mock_client_instance.process_subscription_plan_renewal.return_value = {'success': True}
 
-        # Dispatch the event
+        # Dispatch the event - this should trigger reactivation
         StripeEventHandler.dispatch(mock_event)
 
-        # Verify that the subscription plan was reactivated
+        # Verify that the PAID subscription plan was reactivated (not the trial plan)
         mock_client_instance.update_subscription_plan.assert_called_once_with(
-            subscription_plan_uuid,
+            str(first_paid_subscription_plan_uuid),  # The PAID plan UUID
             is_active=True
         )
 
         # Verify that future plans were reactivated
         mock_reactivate_plans.assert_called_once_with(self.checkout_intent)
 
-        # Verify email was sent
+        # Verify that _process_trial_to_paid_renewal was NOT called
+        # (renewal already processed, we're in recovery path)
+        mock_process_renewal.assert_not_called()
+
+        # Verify the invoice.paid event was persisted and linked correctly
+        invoice_event_data = StripeEventData.objects.get(event_id='evt_invoice_paid_recovery')
+        self.assertEqual(invoice_event_data.checkout_intent, self.checkout_intent)
+        self.assertEqual(invoice_event_data.event_type, 'invoice.paid')
+
+        # Verify the summary was created and has the trial plan UUID
+        invoice_summary = StripeEventSummary.objects.get(event_id='evt_invoice_paid_recovery')
+        self.assertEqual(invoice_summary.subscription_plan_uuid, trial_subscription_plan_uuid)
+        self.assertEqual(invoice_summary.stripe_subscription_id, stripe_subscription_id)
+        self.assertEqual(invoice_summary.invoice_amount_paid, 5000)
+
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.LicenseManagerApiClient",
+        autospec=True,
+    )
+    @mock.patch("enterprise_access.apps.customer_billing.stripe_event_handlers.reactivate_all_future_plans")
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers."
+        "send_trial_end_and_subscription_started_email_task"
+    )
+    def test_invoice_paid_first_trial_to_paid_sends_email(
+        self,
+        mock_send_email_task,
+        mock_reactivate_plans,
+        mock_license_manager_client,
+    ):
+        """
+        Test that invoice.paid processes first trial→paid transition and sends email.
+
+        This test simulates the scenario where a subscription finishes trial, an invoice
+        is paid, and the system should process the renewal, reactivate paid plan, and send
+        trial-end email.
+        """
+        stripe_subscription_id = 'sub_test_first_paid'
+        stripe_invoice_id = 'in_test_first_paid'
+        trial_subscription_plan_uuid = uuid.uuid4()
+        first_paid_subscription_plan_uuid = uuid.uuid4()
+
+        # Create a workflow and link it to checkout intent
+        workflow = ProvisionNewCustomerWorkflowFactory()
+        self.checkout_intent.workflow = workflow
+        self.checkout_intent.save()
+
+        # Create trial subscription plan step with output containing subscription_plan_uuid
+        _ = GetCreateTrialSubscriptionPlanStep.objects.create(
+            workflow_record_uuid=workflow.uuid,
+            input_data={
+                'title': 'Test Trial Plan',
+                'salesforce_opportunity_line_item': 'test-oli-123',
+                'start_date': '2024-01-01T00:00:00Z',
+                'expiration_date': '2025-01-01T00:00:00Z',
+                'desired_num_licenses': 5,
+                'product_id': 123,
+            },
+            output_data={
+                'uuid': str(trial_subscription_plan_uuid),
+                'title': 'Test Trial Plan',
+                'salesforce_opportunity_line_item': 'test-oli-123',
+                'created': '2024-01-01T00:00:00Z',
+                'start_date': '2024-01-01T00:00:00Z',
+                'expiration_date': '2025-01-01T00:00:00Z',
+                'is_active': True,
+                'is_current': True,
+                'plan_type': 'Subscription',
+                'enterprise_catalog_uuid': str(uuid.uuid4()),
+                'product': 123,
+                'desired_num_licenses': 5,
+            }
+        )
+
+        # Create first paid subscription plan step
+        _ = GetCreateFirstPaidSubscriptionPlanStep.objects.create(
+            workflow_record_uuid=workflow.uuid,
+            input_data={
+                'title': 'First Paid Plan',
+                'salesforce_opportunity_line_item': None,
+                'start_date': '2025-01-01T00:00:00Z',
+                'expiration_date': '2026-01-01T00:00:00Z',
+                'desired_num_licenses': 5,
+                'product_id': 456,
+            },
+            output_data={
+                'uuid': str(first_paid_subscription_plan_uuid),
+                'title': 'First Paid Plan',
+                'salesforce_opportunity_line_item': None,
+                'created': '2024-01-01T00:00:00Z',
+                'start_date': '2025-01-01T00:00:00Z',
+                'expiration_date': '2026-01-01T00:00:00Z',
+                'is_active': False,  # Not yet active (trial still running)
+                'is_current': True,
+                'plan_type': 'Subscription',
+                'enterprise_catalog_uuid': str(uuid.uuid4()),
+                'product': 456,
+                'desired_num_licenses': 5,
+            }
+        )
+
+        # Create mock customer.subscription.created event data
+        subscription_created_event_data = {
+            'id': 'evt_subscription_created_first_paid',
+            'type': 'customer.subscription.created',
+            'created': int((timezone.now() - timedelta(days=14)).timestamp()),
+            'data': {
+                'object': {
+                    'object': 'subscription',
+                    'id': stripe_subscription_id,
+                    'customer': self.checkout_intent.stripe_customer_id,
+                    'currency': 'usd',
+                    'status': 'trialing',
+                    'metadata': {
+                        'checkout_intent_id': str(self.checkout_intent.id),
+                    },
+                    'items': {
+                        'data': [
+                            {
+                                'current_period_start': int((timezone.now() - timedelta(days=30)).timestamp()),
+                                'current_period_end': int((timezone.now() + timedelta(days=335)).timestamp()),
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+
+        # Create StripeEventData for subscription.created (linked to the checkout intent)
+        stripe_event_data_created = StripeEventData.objects.create(
+            event_id='evt_subscription_created_first_paid',
+            event_type='customer.subscription.created',
+            checkout_intent=self.checkout_intent,
+            data=subscription_created_event_data
+        )
+
+        # Create an UNPROCESSED renewal record
+        renewal = SelfServiceSubscriptionRenewal.objects.create(
+            checkout_intent=self.checkout_intent,
+            subscription_plan_renewal_id=12345,
+            prior_subscription_plan_uuid=trial_subscription_plan_uuid,
+            renewed_subscription_plan_uuid=first_paid_subscription_plan_uuid,
+            processed_at=None,  # NOT YET PROCESSED - this is the key difference
+            stripe_subscription_id=stripe_subscription_id,
+            stripe_event_data=stripe_event_data_created,
+        )
+
+        # Populate the summary to set subscription_plan_uuid
+        summary_created = StripeEventSummary.objects.get(stripe_event_data=stripe_event_data_created)
+        summary_created.populate_with_summary_data()
+        summary_created.save()
+
+        # Verify that trial subscription_plan_uuid was extracted from the workflow
+        self.assertEqual(summary_created.subscription_plan_uuid, trial_subscription_plan_uuid)
+
+        # Now create the invoice.paid event (first paid invoice after trial)
+        invoice_data = {
+            'object': 'invoice',
+            'id': stripe_invoice_id,
+            'customer': self.checkout_intent.stripe_customer_id,
+            'subscription': stripe_subscription_id,
+            'amount_paid': 5000,  # $50.00 - NON-ZERO means this is a paid invoice
+            'currency': 'usd',
+            'total': 5000,  # This is > 0, so it's NOT a trial invoice
+            'lines': {
+                'data': [
+                    {
+                        'quantity': 10,
+                        'pricing': {
+                            'unit_amount_decimal': '500.0'
+                        },
+                        'parent': {
+                            'type': INVOICE_PAID_PARENT_TYPE_IDENTIFIER  # "subscription_item_details"
+                        }
+                    }
+                ]
+            },
+            'parent': {
+                'subscription_details': {
+                    'subscription': stripe_subscription_id,
+                    'status': StripeSubscriptionStatus.ACTIVE,  # Now active after first payment
+                    'metadata': {
+                        'checkout_intent_id': str(self.checkout_intent.id),
+                    },
+                }
+            }
+        }
+
+        # Create the mock Stripe event
+        mock_event = self._create_mock_stripe_event('invoice.paid', invoice_data)
+        mock_event.id = 'evt_invoice_paid_first_paid'
+        mock_event.created = int(timezone.now().timestamp())
+
+        # Mock the license manager API client
+        mock_client_instance = mock_license_manager_client.return_value
+
+        # Mock the process_subscription_plan_renewal call that happens inside _process_trial_to_paid_renewal
+        mock_client_instance.process_subscription_plan_renewal.return_value = {
+            'uuid': str(first_paid_subscription_plan_uuid),
+            'prior_subscription_plan': str(trial_subscription_plan_uuid),
+            'title': 'First Paid Plan',
+            'start_date': '2025-01-01T00:00:00Z',
+            'expiration_date': '2026-01-01T00:00:00Z',
+        }
+
+        # Dispatch the event - this should trigger first trial→paid processing
+        StripeEventHandler.dispatch(mock_event)
+
+        # Verify that the license manager was called to process the renewal
+        mock_client_instance.process_subscription_plan_renewal.assert_called_once_with(
+            renewal.subscription_plan_renewal_id
+        )
+
+        # Verify the renewal was marked as processed
+        renewal.refresh_from_db()
+        self.assertIsNotNone(renewal.processed_at)
+        self.assertEqual(renewal.stripe_subscription_id, stripe_subscription_id)
+
+        # Verify that the paid subscription plan was reactivated after processing
+        mock_client_instance.update_subscription_plan.assert_called_once_with(
+            str(first_paid_subscription_plan_uuid),
+            is_active=True
+        )
+
+        # Verify that future plans were reactivated
+        mock_reactivate_plans.assert_called_once_with(self.checkout_intent)
+
+        # Verify trial-end email task WAS queued (first trial→paid transition)
         mock_send_email_task.delay.assert_called_once_with(
             subscription_id=stripe_subscription_id,
             checkout_intent_id=self.checkout_intent.id,
         )
+
+        # Verify the invoice.paid event was persisted and linked correctly
+        invoice_event_data = StripeEventData.objects.get(event_id='evt_invoice_paid_first_paid')
+        self.assertEqual(invoice_event_data.checkout_intent, self.checkout_intent)
+        self.assertEqual(invoice_event_data.event_type, 'invoice.paid')
+
+        # Verify the summary was created and has the trial plan UUID
+        invoice_summary = StripeEventSummary.objects.get(event_id='evt_invoice_paid_first_paid')
+        self.assertEqual(invoice_summary.subscription_plan_uuid, trial_subscription_plan_uuid)
+        self.assertEqual(invoice_summary.stripe_subscription_id, stripe_subscription_id)
+        self.assertEqual(invoice_summary.invoice_amount_paid, 5000)
 
     @mock.patch('enterprise_access.apps.customer_billing.stripe_event_handlers.LicenseManagerApiClient')
     def test_full_subscription_renewal_flow(self, mock_license_manager_client):
@@ -1121,7 +1426,17 @@ class TestStripeEventHandler(TestCase):
         self.assertEqual(new_summary.subscription_status, StripeSubscriptionStatus.ACTIVE)
 
     @mock.patch('enterprise_access.apps.customer_billing.stripe_event_handlers.LicenseManagerApiClient')
-    def test_full_subscription_renewal_flow_via_invoice_paid(self, mock_license_manager_client):
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_event_handlers.reactivate_all_future_plans')
+    @mock.patch(
+        'enterprise_access.apps.customer_billing.stripe_event_handlers.'
+        'send_trial_end_and_subscription_started_email_task'
+    )
+    def test_full_subscription_renewal_flow_via_invoice_paid(
+        self,
+        mock_send_email,
+        mock_reactivate_plans,
+        mock_license_manager_client
+    ):
         """Test the complete subscription renewal flow via invoice.paid event."""
         # Create provisioning workflow
         workflow = ProvisionNewCustomerWorkflowFactory()
@@ -1130,18 +1445,73 @@ class TestStripeEventHandler(TestCase):
 
         stripe_subscription_id = 'sub_test_renewal_789'
         stripe_invoice_id = 'in_test_renewal_789'
+        trial_plan_uuid = uuid.uuid4()
+        renewed_plan_uuid = uuid.uuid4()
 
-        # Create initial trial event
-        trial_event_data, _ = self._create_existing_event_data_records(
+        _ = GetCreateTrialSubscriptionPlanStep.objects.create(
+            workflow_record_uuid=workflow.uuid,
+            input_data={
+                'title': 'Test Trial Plan',
+                'salesforce_opportunity_line_item': 'test-oli-123',
+                'start_date': '2024-01-01T00:00:00Z',
+                'expiration_date': '2025-01-01T00:00:00Z',
+                'desired_num_licenses': 5,
+                'product_id': 123,
+            },
+            output_data={
+                'uuid': str(trial_plan_uuid),
+                'title': 'Test Trial Plan',
+                'salesforce_opportunity_line_item': 'test-oli-123',
+                'created': '2024-01-01T00:00:00Z',
+                'start_date': '2024-01-01T00:00:00Z',
+                'expiration_date': '2025-01-01T00:00:00Z',
+                'is_active': True,
+                'is_current': True,
+                'plan_type': 'Subscription',
+                'enterprise_catalog_uuid': str(uuid.uuid4()),
+                'product': 123,
+                'desired_num_licenses': 5,
+            }
+        )
+
+        _ = GetCreateFirstPaidSubscriptionPlanStep.objects.create(
+            workflow_record_uuid=workflow.uuid,
+            input_data={
+                'title': 'First Paid Plan',
+                'salesforce_opportunity_line_item': None,
+                'start_date': '2025-01-01T00:00:00Z',
+                'expiration_date': '2026-01-01T00:00:00Z',
+                'desired_num_licenses': 5,
+                'product_id': 456,
+            },
+            output_data={
+                'uuid': str(renewed_plan_uuid),
+                'title': 'First Paid Plan',
+                'salesforce_opportunity_line_item': None,
+                'created': '2024-01-01T00:00:00Z',
+                'start_date': '2025-01-01T00:00:00Z',
+                'expiration_date': '2026-01-01T00:00:00Z',
+                'is_active': False,
+                'is_current': True,
+                'plan_type': 'Subscription',
+                'enterprise_catalog_uuid': str(uuid.uuid4()),
+                'product': 456,
+                'desired_num_licenses': 5,
+            }
+        )
+
+        # Create initial trial event (subscription.created)
+        trial_event_data, trial_summary = self._create_existing_event_data_records(
             stripe_subscription_id,
             subscription_status=StripeSubscriptionStatus.TRIALING
         )
 
+        # Populate trial summary with subscription_plan_uuid from workflow
+        trial_summary.populate_with_summary_data()
+        trial_summary.save()
+
         # Create renewal record with prior and renewed plan UUIDs
         expected_renewal_id = 555
-        trial_plan_uuid = uuid.uuid4()
-        renewed_plan_uuid = uuid.uuid4()
-
         renewal_record = SelfServiceSubscriptionRenewal.objects.create(
             checkout_intent=self.checkout_intent,
             subscription_plan_renewal_id=expected_renewal_id,
@@ -1149,59 +1519,10 @@ class TestStripeEventHandler(TestCase):
             stripe_event_data=trial_event_data,
             prior_subscription_plan_uuid=trial_plan_uuid,
             renewed_subscription_plan_uuid=renewed_plan_uuid,
+            processed_at=None,  # Not yet processed
         )
 
-        # Create invoice.paid event (active subscription after payment)
-        invoice_paid_event_id = 'evt_renewal_invoice_paid'
-        subscription_plan_uuid = uuid.uuid4()
-
-        StripeEventData.objects.create(
-            event_id=invoice_paid_event_id,
-            event_type='invoice.paid',
-            checkout_intent=self.checkout_intent,
-            data={
-                'id': invoice_paid_event_id,
-                'type': 'invoice.paid',
-                'created': int((timezone.now() + timedelta(hours=2)).timestamp()),
-                'data': {
-                    'object': {
-                        'object': 'invoice',
-                        'id': stripe_invoice_id,
-                        'customer': self.checkout_intent.stripe_customer_id,
-                        'subscription': stripe_subscription_id,
-                        'amount_paid': 5000,
-                        'currency': 'usd',
-                        'total': 5000,
-                        'lines': {
-                            'data': [{
-                                'quantity': 10,
-                                'pricing': {'unit_amount_decimal': '500.0'},
-                                'parent': {'type': INVOICE_PAID_PARENT_TYPE_IDENTIFIER}
-                            }]
-                        },
-                        'parent': {
-                            'subscription_details': {
-                                'subscription': stripe_subscription_id,
-                                'status': StripeSubscriptionStatus.ACTIVE,
-                                'metadata': {
-                                    'checkout_intent_id': str(self.checkout_intent.id),
-                                },
-                            }
-                        }
-                    }
-                }
-            }
-        )
-
-        # Set subscription_plan_uuid and subscription status on summary
-        invoice_summary = StripeEventSummary.objects.get(event_id=invoice_paid_event_id)
-        invoice_summary.subscription_plan_uuid = subscription_plan_uuid
-        invoice_summary.subscription_status = StripeSubscriptionStatus.ACTIVE  # ADD THIS LINE
-        invoice_summary.stripe_subscription_id = stripe_subscription_id  # ADD THIS LINE
-        invoice_summary.stripe_object_type = 'subscription'  # ADD THIS LINE
-        invoice_summary.save()
-
-        # Create mock event
+        # Create invoice.paid event (first paid invoice after trial)
         invoice_data = {
             'object': 'invoice',
             'id': stripe_invoice_id,
@@ -1229,56 +1550,52 @@ class TestStripeEventHandler(TestCase):
         }
 
         mock_event = self._create_mock_stripe_event('invoice.paid', invoice_data)
-        mock_event.id = invoice_paid_event_id
+        mock_event.id = 'evt_renewal_invoice_paid_123'
         mock_event.created = int((timezone.now() + timedelta(hours=2)).timestamp())
 
-        # Mock license manager response
+        # Mock license manager responses
         mock_client_instance = mock_license_manager_client.return_value
-        mock_client_instance.update_subscription_plan.return_value = {'success': True}
         mock_client_instance.process_subscription_plan_renewal.return_value = {
-            'id': expected_renewal_id, 'status': 'processed'
+            'uuid': str(renewed_plan_uuid),
+            'prior_subscription_plan': str(trial_plan_uuid),
+            'title': 'First Paid Plan',
+            'start_date': '2025-01-01T00:00:00Z',
+            'expiration_date': '2026-01-01T00:00:00Z',
         }
+        mock_client_instance.update_subscription_plan.return_value = {'success': True}
 
-        # Dispatch the event
         StripeEventHandler.dispatch(mock_event)
 
-        # Verify LicenseManagerApiClient was instantiated 3 times:
-        # 1. In _handle_invoice_paid_status_updated for update_subscription_plan
-        # 2. In reactivate_all_future_plans
-        # 3. In _process_trial_to_paid_renewal for process_subscription_plan_renewal
-        self.assertEqual(mock_license_manager_client.call_count, 3)
-
-        # Verify the primary subscription plan was reactivated
-        mock_client_instance.update_subscription_plan.assert_any_call(
-            subscription_plan_uuid,
-            is_active=True
-        )
-
-        # Verify the future renewal plan was reactivated
-        mock_client_instance.update_subscription_plan.assert_any_call(
-            str(renewed_plan_uuid),
-            is_active=True
-        )
-
-        # Verify the renewal was processed
+        # Verify the renewal was processed and marked as so
         mock_client_instance.process_subscription_plan_renewal.assert_called_once_with(expected_renewal_id)
-
-        # Verify renewal record was marked as processed
         renewal_record.refresh_from_db()
         self.assertIsNotNone(renewal_record.processed_at)
         self.assertEqual(renewal_record.stripe_subscription_id, stripe_subscription_id)
 
-        # Verify event was linked to renewal record
+        # Verify the paid subscription plan was reactivated
+        mock_client_instance.update_subscription_plan.assert_called_once_with(
+            str(renewed_plan_uuid),
+            is_active=True
+        )
+
+        # Verify that future plans were reactivated
+        mock_reactivate_plans.assert_called_once_with(self.checkout_intent)
+
+        # Verify trial-end email was sent
+        mock_send_email.delay.assert_called_once_with(
+            subscription_id=stripe_subscription_id,
+            checkout_intent_id=self.checkout_intent.id,
+        )
+
+        # Verify event was linked properly
         event_data = StripeEventData.objects.get(event_id=mock_event.id)
-        self.assertEqual(renewal_record.stripe_event_data, event_data)
+        self.assertEqual(event_data.checkout_intent, self.checkout_intent)
         self.assertIsNotNone(event_data.handled_at)
 
-        # Verify StripeEventSummary has correct data (refresh from DB after dispatch)
-        invoice_summary.refresh_from_db()
+        # Verify StripeEventSummary has correct data
+        invoice_summary = StripeEventSummary.objects.get(event_id=mock_event.id)
         self.assertEqual(invoice_summary.stripe_subscription_id, stripe_subscription_id)
-        # Note: subscription_status may not be set for invoice events,
-        # so we verify it's either ACTIVE or None
-        self.assertIn(invoice_summary.subscription_status, [StripeSubscriptionStatus.ACTIVE, None])
+        self.assertEqual(invoice_summary.subscription_plan_uuid, trial_plan_uuid)  # Should have trial plan UUID
 
     @mock.patch('enterprise_access.apps.customer_billing.stripe_event_handlers.LicenseManagerApiClient')
     def test_invoice_paid_license_manager_api_error(self, mock_license_manager_client):

@@ -177,15 +177,15 @@ def reactivate_all_future_plans(checkout_intent):
     Re-activate all future renewal plans descending from the
     anchor plan for this enterprise.
     """
-    deactivated_renewals = checkout_intent.renewals.all()
-    if not deactivated_renewals.exists():
+    renewals_to_reactivate = checkout_intent.renewals.all()
+    if not renewals_to_reactivate.exists():
         logger.warning('No renewals to re-activate for Checkout Intent %s', checkout_intent.uuid)
         return []
 
     client = LicenseManagerApiClient()
     reactivated: list[UUID] = []
 
-    for renewal in deactivated_renewals:
+    for renewal in renewals_to_reactivate:
         client.update_subscription_plan(
             str(renewal.renewed_subscription_plan_uuid),
             is_active=True,
@@ -301,6 +301,7 @@ def _handle_invoice_paid_status_updated(
 ) -> None:
     """
     Handling of subscription status changes coming from an invoice.paid Stripe event.
+    This is ONLY called for invoice.total > 0, meaning we're in the paid phase.
 
     Relying just on customer.subscription.updated events leaves us open to bugs due to Stripe's
     implementation of transitioning from active to past_due and past_due back to active.
@@ -308,9 +309,9 @@ def _handle_invoice_paid_status_updated(
     subscription status changes.
 
     When an invoice is paid:
-    - Reactivate subscription plans in license manager (no-op if already active)
+    - If this is the first paid invoice (trial→paid), process the renewal
+    - Reactivate the current paid subscription plan (no-op if already active)
     - Reactivate future renewal plans (no-op if already active)
-    - Process any trial-to-paid renewals
     - Send appropriate email notifications
 
     Args:
@@ -342,22 +343,47 @@ def _handle_invoice_paid_status_updated(
 
     client = LicenseManagerApiClient()
 
-    logger.info(
-        "Processing invoice.paid for subscription %s. "
-        "Activating subscription plan %s",
-        subscription_id,
-        summary.subscription_plan_uuid,
-    )
+    # Check if we've already processed the trial→paid renewal
+    # If so, we need to reactivate the PAID plan, not the trial plan
+    processed_renewal = SelfServiceSubscriptionRenewal.objects.filter(
+        checkout_intent=checkout_intent,
+        processed_at__isnull=False
+    ).first()
 
-    # Reactivate the primary subscription plan and any future plans (no-ops if already active)
-    client.update_subscription_plan(summary.subscription_plan_uuid, is_active=True)
-    reactivate_all_future_plans(checkout_intent)
+    if processed_renewal:
+        # We're post-trial, reactivate the paid plan
+        plan_to_reactivate = processed_renewal.renewed_subscription_plan_uuid
+        logger.info(
+            "Reactivating PAID subscription plan %s for subscription %s (post-trial)",
+            plan_to_reactivate,
+            subscription_id,
+        )
+        client.update_subscription_plan(str(plan_to_reactivate), is_active=True)
+        reactivate_all_future_plans(checkout_intent)
+    else:
+        # This is the FIRST paid invoice (trial→paid transition)
+        logger.info(
+            "Processing trial→paid transition for subscription %s",
+            subscription_id,
+        )
+        # Process the renewal first (this creates the paid plan and renewal relationship)
+        _process_trial_to_paid_renewal(checkout_intent, subscription_id, event)
 
-    _process_trial_to_paid_renewal(checkout_intent, subscription_id, event)
-    send_trial_end_and_subscription_started_email_task.delay(
-        subscription_id=subscription_id,
-        checkout_intent_id=checkout_intent.id,
-    )
+        # After processing, get the newly created paid plan and reactivate it
+        processed_renewal = SelfServiceSubscriptionRenewal.objects.filter(
+            checkout_intent=checkout_intent,
+            processed_at__isnull=False
+        ).first()
+
+        if processed_renewal:
+            client.update_subscription_plan(str(processed_renewal.renewed_subscription_plan_uuid), is_active=True)
+            reactivate_all_future_plans(checkout_intent)
+
+        # Send the trial-end email
+        send_trial_end_and_subscription_started_email_task.delay(
+            subscription_id=subscription_id,
+            checkout_intent_id=checkout_intent.id,
+        )
 
 
 def _handle_subscription_updated_status_updates(
