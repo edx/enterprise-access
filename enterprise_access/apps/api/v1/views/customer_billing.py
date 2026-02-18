@@ -597,10 +597,6 @@ class StripeEventSummaryViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
         """
         return super().list(request, *args, **kwargs)
 
-    @permission_required(
-        STRIPE_EVENT_SUMMARY_READ_PERMISSION,
-        fn=stripe_event_summary_permission_detail_fn,
-    )
     @action(
         detail=False,
         methods=['get'],
@@ -614,6 +610,10 @@ class StripeEventSummaryViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
         """
         return self.get_stripe_subscription_plan_info(request, *args, **kwargs)
 
+    @permission_required(
+        STRIPE_EVENT_SUMMARY_READ_PERMISSION,
+        fn=stripe_event_summary_permission_detail_fn,
+    )
     @action(
         detail=False,
         methods=['get'],
@@ -654,7 +654,7 @@ class StripeEventSummaryViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
                 'upcoming_invoice_amount_due': upcoming_invoice_amount_due,
                 'currency': currency,
                 'canceled_date': canceled_date,
-                'checkout_intent_uuid': str(checkout_intent_uuid) if checkout_intent_uuid else None
+                'checkout_intent_uuid': checkout_intent_uuid or None
             },
         )
         if not subscription_plan_uuid:

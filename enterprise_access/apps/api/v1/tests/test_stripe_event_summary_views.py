@@ -8,6 +8,7 @@ from urllib.parse import urlencode
 
 from django.urls import reverse
 from django.utils import timezone
+from rest_framework.exceptions import ErrorDetail
 
 from enterprise_access.apps.core.constants import SYSTEM_ENTERPRISE_ADMIN_ROLE
 from enterprise_access.apps.core.tests.factories import UserFactory
@@ -334,12 +335,9 @@ class StripeSubscriptionPlanInfoTests(APITest):
         url = reverse('api:v1:stripe-event-summary-get-stripe-subscription-plan-info')
         url += f"?{urlencode(query_params)}"
         response = self.client.get(url)
-        assert response.status_code == 200
+        assert response.status_code == 403
         assert response.data == {
-            'canceled_date': None,
-            'currency': 'usd',
-            'upcoming_invoice_amount_due': 200,
-            'checkout_intent_uuid': None,
+            'detail': ErrorDetail(string='Missing: stripe_event_summary.has_read_access', code='permission_denied'),
         }
 
     def test_get_stripe_subscription_plan_info_missing_subscription_plan_uuid(self):
