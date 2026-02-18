@@ -320,54 +320,48 @@ def _handle_invoice_paid_status_updated(
     """
 
     _, subscription_details = get_invoice_and_subscription(event)
-    subscription_id = subscription_details.get('subscription')
+    stripe_subscription_id = subscription_details.get('subscription')
 
-    try:
-        summary = StripeEventSummary.objects.get(event_id=event.id)
-    except StripeEventSummary.DoesNotExist:
+    num_renewals = SelfServiceSubscriptionRenewal.objects.filter(
+        checkout_intent=checkout_intent,
+    ).count()
+    if num_renewals > 1:
         logger.error(
-            "StripeEventSummary not found for event %s for subscription %s",
-            event.id,
-            subscription_id,
+            "Status unable to be updated for Stripe subscription %s, as paid to paid renewals are not yet supported.",
+            stripe_subscription_id,
         )
-        return
-
-    # Only proceed if we have a subscription plan UUID
-    if not summary.subscription_plan_uuid:
-        logger.error(
-            "subscription_plan_uuid not associated for subscription %s, event %s",
-            subscription_id,
-            event.id,
-        )
-        return
+        raise NotImplementedError("Handling paid->paid renewals not yet supported.")
 
     client = LicenseManagerApiClient()
 
     # Check if we've already processed the trial→paid renewal
-    # If so, we need to reactivate the PAID plan, not the trial plan
+    # If so, we need to reactivate the paid plan, not the trial plan
     processed_renewal = SelfServiceSubscriptionRenewal.objects.filter(
         checkout_intent=checkout_intent,
         processed_at__isnull=False
     ).first()
 
     if processed_renewal:
-        # We're post-trial, reactivate the paid plan
+        # We already have a processed trial->paid renewal, so reactivate the first paid plan
+        # just in case it isn't already active. This should never be needed going forward, but:
+        #   1. Old bugs tainted pre-existing renewals which may need this fix.
+        #   2. It can't hurt, as long as we re-activate the right plan.
         plan_to_reactivate = processed_renewal.renewed_subscription_plan_uuid
         logger.info(
-            "Reactivating PAID subscription plan %s for subscription %s (post-trial)",
+            "Activating PAID subscription plan %s for Stripe subscription %s (post-trial)",
             plan_to_reactivate,
-            subscription_id,
+            stripe_subscription_id,
         )
         client.update_subscription_plan(str(plan_to_reactivate), is_active=True)
         reactivate_all_future_plans(checkout_intent)
     else:
-        # This is the FIRST paid invoice (trial→paid transition)
+        # Normal case where the first paid invoice was received before processing the renewal.
         logger.info(
-            "Processing trial→paid transition for subscription %s",
-            subscription_id,
+            "Processing trial→paid transition for Stripe subscription %s",
+            stripe_subscription_id,
         )
         # Process the renewal first (this creates the paid plan and renewal relationship)
-        _process_trial_to_paid_renewal(checkout_intent, subscription_id, event)
+        _process_trial_to_paid_renewal(checkout_intent, stripe_subscription_id, event)
 
         # After processing, get the newly created paid plan and reactivate it
         processed_renewal = SelfServiceSubscriptionRenewal.objects.filter(
@@ -381,7 +375,7 @@ def _handle_invoice_paid_status_updated(
 
         # Send the trial-end email
         send_trial_end_and_subscription_started_email_task.delay(
-            subscription_id=subscription_id,
+            subscription_id=stripe_subscription_id,
             checkout_intent_id=checkout_intent.id,
         )
 
