@@ -627,12 +627,11 @@ class StripeEventSummaryViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
         created_event_summary = StripeEventSummary.objects.filter(
             event_type='customer.subscription.created',
             subscription_plan_uuid=subscription_plan_uuid,
-        ).order_by('-stripe_event_created_at').first()
+        ).select_related('checkout_intent').order_by('-stripe_event_created_at').first()
         updated_event_summary = StripeEventSummary.objects.filter(
             event_type='customer.subscription.updated',
             subscription_plan_uuid=subscription_plan_uuid,
-        ).order_by('-stripe_event_created_at').first()
-
+        ).select_related('checkout_intent').order_by('-stripe_event_created_at').first()
         checkout_intent_uuid, canceled_date, currency, upcoming_invoice_amount_due = None, None, None, None
 
         if updated_event_summary:
