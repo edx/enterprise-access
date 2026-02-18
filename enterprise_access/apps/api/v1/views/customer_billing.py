@@ -597,6 +597,10 @@ class StripeEventSummaryViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
         """
         return super().list(request, *args, **kwargs)
 
+    @permission_required(
+        STRIPE_EVENT_SUMMARY_READ_PERMISSION,
+        fn=stripe_event_summary_permission_detail_fn,
+    )
     @action(
         detail=False,
         methods=['get'],
