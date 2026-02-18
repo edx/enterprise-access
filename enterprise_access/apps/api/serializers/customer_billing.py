@@ -303,5 +303,5 @@ class StripeSubscriptionPlanInfoResponseSerializer(serializers.Serializer):
     checkout_intent_uuid = serializers.UUIDField(
         allow_null=True,
         required=False,
-        help_text='uuid of Checkout Intent associated with the stripe event.',
+        help_text='UUID of Checkout Intent associated with the stripe event.',
     )
