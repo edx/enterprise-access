@@ -285,7 +285,7 @@ class StripeSubscriptionPlanInfoResponseSerializer(serializers.Serializer):
     upcoming_invoice_amount_due = serializers.IntegerField(
         allow_null=True,
         required=False,
-        help_text='Upcoming invoice amount due related to this event/subscription',
+        help_text='Upcoming invoice amount due (in cents) related to this event/subscription',
     )
 
     currency = serializers.CharField(
