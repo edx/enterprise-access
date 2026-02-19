@@ -131,6 +131,7 @@ class TestLicenseManagerApiClient(TestCase):
         mock_patch.assert_called_once_with(
             expected_url,
             json=payload,
+            params={'include_inactive': True},
             timeout=settings.LICENSE_MANAGER_CLIENT_TIMEOUT,
         )
 
@@ -201,6 +202,7 @@ class TestLicenseManagerApiClient(TestCase):
         mock_patch.assert_called_once_with(
             expected_url,
             json=expected_payload,
+            params={'include_inactive': True},
             timeout=settings.LICENSE_MANAGER_CLIENT_TIMEOUT,
         )
 
