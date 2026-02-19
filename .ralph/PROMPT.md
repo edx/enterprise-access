@@ -19,6 +19,8 @@ learner access to educational content through various subsidy mechanisms.
 - ONE task per loop - focus on the most important thing
 - Search the codebase before assuming something isn't implemented
 - Write comprehensive tests with clear documentation
+- run the linters with `make quality` inside the docker container, fix any lint errors, note that `isort`
+  will fix import order/styling automatically.
 - Provide concise documentation for new functionality in the `docs/references` folder, 
   use the project name from the PRD `.json` file if you need to create a new document.
   (CRITICAL) capture your learnings in this file as well. These docs will be the source
