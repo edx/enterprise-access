@@ -4,7 +4,7 @@ Tests for customer billing API endpoints.
 import json
 import time
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone as dt_timezone
 from unittest import mock
 
 import stripe
@@ -1436,7 +1436,7 @@ class BillingManagementTransactionsTests(APITest):
         mock_invoices = [
             {
                 'id': 'in_test123',
-                'created': 1640000000,
+                'created': datetime.fromtimestamp(1640000000, tz=dt_timezone.utc),
                 'amount_paid': 9900,
                 'currency': 'USD',
                 'status': 'paid',
@@ -1446,7 +1446,7 @@ class BillingManagementTransactionsTests(APITest):
             },
             {
                 'id': 'in_test456',
-                'created': 1639900000,
+                'created': datetime.fromtimestamp(1639900000, tz=dt_timezone.utc),
                 'amount_paid': 5000,
                 'currency': 'USD',
                 'status': 'open',
@@ -1494,7 +1494,7 @@ class BillingManagementTransactionsTests(APITest):
         mock_invoices = [
             {
                 'id': 'in_test123',
-                'created': 1640000000,
+                'created': datetime.fromtimestamp(1640000000, tz=dt_timezone.utc),
                 'amount_paid': 9900,
                 'currency': 'USD',
                 'status': 'paid',
@@ -1558,30 +1558,26 @@ class BillingManagementTransactionsTests(APITest):
     @mock.patch('stripe.Invoice.list')
     def test_list_transactions_missing_uuid(self, mock_invoice_list):
         """
-        Test that endpoint requires enterprise_customer_uuid query parameter.
+        Test that missing enterprise_customer_uuid returns 403.
+        RBAC permission check requires the UUID.
         """
         url = reverse('api:v1:billing-management-list-transactions')
         response = self.client.get(url, {})
 
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        response_data = response.json()
-        self.assertIn('error', response_data)
-        self.assertIn('enterprise_customer_uuid', response_data['error'])
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     @mock.patch('stripe.Invoice.list')
     def test_list_transactions_non_existent_enterprise(self, mock_invoice_list):
         """
-        Test that endpoint returns 404 when enterprise is not found.
+        Test that non-existent enterprise returns 403.
+        RBAC permission check happens first - user doesn't have access to non-existent enterprise.
         """
         non_existent_uuid = str(uuid.uuid4())
 
         url = reverse('api:v1:billing-management-list-transactions')
         response = self.client.get(url, {'enterprise_customer_uuid': non_existent_uuid})
 
-        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
-        response_data = response.json()
-        self.assertIn('error', response_data)
-        self.assertIn('Stripe customer not found', response_data['error'])
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     @mock.patch('stripe.Invoice.list')
     def test_list_transactions_stripe_api_error(self, mock_invoice_list):
@@ -1642,7 +1638,7 @@ class BillingManagementTransactionsTests(APITest):
         mock_invoices = [
             {
                 'id': 'in_paid',
-                'created': 1640000000,
+                'created': datetime.fromtimestamp(1640000000, tz=dt_timezone.utc),
                 'amount_paid': 1000,
                 'currency': 'USD',
                 'status': 'paid',
@@ -1652,7 +1648,7 @@ class BillingManagementTransactionsTests(APITest):
             },
             {
                 'id': 'in_draft',
-                'created': 1640000000,
+                'created': datetime.fromtimestamp(1640000000, tz=dt_timezone.utc),
                 'amount_paid': 0,
                 'currency': 'USD',
                 'status': 'draft',
@@ -1662,7 +1658,7 @@ class BillingManagementTransactionsTests(APITest):
             },
             {
                 'id': 'in_void',
-                'created': 1640000000,
+                'created': datetime.fromtimestamp(1640000000, tz=dt_timezone.utc),
                 'amount_paid': 0,
                 'currency': 'USD',
                 'status': 'void',
