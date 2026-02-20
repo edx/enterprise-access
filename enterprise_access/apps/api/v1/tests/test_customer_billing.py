@@ -2042,7 +2042,7 @@ class BillingManagementCancelSubscriptionTests(APITest):
         mock_sub_modify.return_value = mock_modified_subscription
 
         url = reverse('api:v1:billing-management-cancel-subscription')
-        response = self.client.post(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+        response = self.client.post(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}', format='json')
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         response_data = response.json()
@@ -2090,7 +2090,7 @@ class BillingManagementCancelSubscriptionTests(APITest):
         mock_sub_modify.return_value = mock_modified_subscription
 
         url = reverse('api:v1:billing-management-cancel-subscription')
-        response = self.client.post(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+        response = self.client.post(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}', format='json')
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         response_data = response.json()
@@ -2128,7 +2128,7 @@ class BillingManagementCancelSubscriptionTests(APITest):
         mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
 
         url = reverse('api:v1:billing-management-cancel-subscription')
-        response = self.client.post(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+        response = self.client.post(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}', format='json')
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
         response_data = response.json()
@@ -2191,7 +2191,7 @@ class BillingManagementCancelSubscriptionTests(APITest):
         mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
 
         url = reverse('api:v1:billing-management-cancel-subscription')
-        response = self.client.post(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+        response = self.client.post(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}', format='json')
 
         self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
         response_data = response.json()
@@ -2206,7 +2206,7 @@ class BillingManagementCancelSubscriptionTests(APITest):
         mock_sub_list.return_value = mock.Mock(data=[])
 
         url = reverse('api:v1:billing-management-cancel-subscription')
-        response = self.client.post(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+        response = self.client.post(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}', format='json')
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
         response_data = response.json()
@@ -2216,30 +2216,26 @@ class BillingManagementCancelSubscriptionTests(APITest):
     @mock.patch('stripe.Subscription.list')
     def test_cancel_subscription_missing_uuid(self, mock_sub_list):
         """
-        Test that endpoint requires enterprise_customer_uuid query parameter.
+        Test that missing enterprise_customer_uuid returns 403.
+        RBAC permission check requires the UUID.
         """
         url = reverse('api:v1:billing-management-cancel-subscription')
-        response = self.client.post(url, {})
+        response = self.client.post(url)
 
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        response_data = response.json()
-        self.assertIn('error', response_data)
-        self.assertIn('enterprise_customer_uuid', response_data['error'])
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     @mock.patch('stripe.Subscription.list')
     def test_cancel_subscription_non_existent_enterprise(self, mock_sub_list):
         """
-        Test that endpoint returns 404 when enterprise is not found.
+        Test that non-existent enterprise returns 403.
+        RBAC permission check happens first - user doesn't have access to non-existent enterprise.
         """
         non_existent_uuid = str(uuid.uuid4())
 
         url = reverse('api:v1:billing-management-cancel-subscription')
-        response = self.client.post(url, {'enterprise_customer_uuid': non_existent_uuid})
+        response = self.client.post(f'{url}?enterprise_customer_uuid={non_existent_uuid}', format='json')
 
-        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
-        response_data = response.json()
-        self.assertIn('error', response_data)
-        self.assertIn('Stripe customer not found', response_data['error'])
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     @mock.patch('stripe.Price.retrieve')
     @mock.patch('stripe.Subscription.list')
@@ -2292,7 +2288,7 @@ class BillingManagementCancelSubscriptionTests(APITest):
         }])
 
         url = reverse('api:v1:billing-management-cancel-subscription')
-        response = self.client.post(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+        response = self.client.post(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}', format='json')
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
@@ -2371,7 +2367,7 @@ class BillingManagementReinstateSubscriptionTests(APITest):
         mock_sub_modify.return_value = mock_modified_subscription
 
         url = reverse('api:v1:billing-management-reinstate-subscription')
-        response = self.client.post(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+        response = self.client.post(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}', format='json')
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         response_data = response.json()
@@ -2420,7 +2416,7 @@ class BillingManagementReinstateSubscriptionTests(APITest):
         mock_sub_modify.return_value = mock_modified_subscription
 
         url = reverse('api:v1:billing-management-reinstate-subscription')
-        response = self.client.post(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+        response = self.client.post(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}', format='json')
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         response_data = response.json()
@@ -2459,7 +2455,7 @@ class BillingManagementReinstateSubscriptionTests(APITest):
         mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
 
         url = reverse('api:v1:billing-management-reinstate-subscription')
-        response = self.client.post(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+        response = self.client.post(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}', format='json')
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
         response_data = response.json()
@@ -2483,7 +2479,7 @@ class BillingManagementReinstateSubscriptionTests(APITest):
         mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
 
         url = reverse('api:v1:billing-management-reinstate-subscription')
-        response = self.client.post(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+        response = self.client.post(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}', format='json')
 
         self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
         response_data = response.json()
@@ -2508,7 +2504,7 @@ class BillingManagementReinstateSubscriptionTests(APITest):
         mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
 
         url = reverse('api:v1:billing-management-reinstate-subscription')
-        response = self.client.post(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+        response = self.client.post(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}', format='json')
 
         self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
         response_data = response.json()
@@ -2523,7 +2519,7 @@ class BillingManagementReinstateSubscriptionTests(APITest):
         mock_sub_list.return_value = mock.Mock(data=[])
 
         url = reverse('api:v1:billing-management-reinstate-subscription')
-        response = self.client.post(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+        response = self.client.post(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}', format='json')
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
         response_data = response.json()
@@ -2533,30 +2529,26 @@ class BillingManagementReinstateSubscriptionTests(APITest):
     @mock.patch('stripe.Subscription.list')
     def test_reinstate_subscription_missing_uuid(self, mock_sub_list):
         """
-        Test that endpoint requires enterprise_customer_uuid query parameter.
+        Test that missing enterprise_customer_uuid returns 403.
+        RBAC permission check requires the UUID.
         """
         url = reverse('api:v1:billing-management-reinstate-subscription')
-        response = self.client.post(url, {})
+        response = self.client.post(url)
 
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        response_data = response.json()
-        self.assertIn('error', response_data)
-        self.assertIn('enterprise_customer_uuid', response_data['error'])
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     @mock.patch('stripe.Subscription.list')
     def test_reinstate_subscription_non_existent_enterprise(self, mock_sub_list):
         """
-        Test that endpoint returns 404 when enterprise is not found.
+        Test that non-existent enterprise returns 403.
+        RBAC permission check happens first - user doesn't have access to non-existent enterprise.
         """
         non_existent_uuid = str(uuid.uuid4())
 
         url = reverse('api:v1:billing-management-reinstate-subscription')
-        response = self.client.post(url, {'enterprise_customer_uuid': non_existent_uuid})
+        response = self.client.post(f'{url}?enterprise_customer_uuid={non_existent_uuid}', format='json')
 
-        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
-        response_data = response.json()
-        self.assertIn('error', response_data)
-        self.assertIn('Stripe customer not found', response_data['error'])
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     @mock.patch('stripe.Price.retrieve')
     @mock.patch('stripe.Subscription.list')
@@ -2610,6 +2602,6 @@ class BillingManagementReinstateSubscriptionTests(APITest):
         }])
 
         url = reverse('api:v1:billing-management-reinstate-subscription')
-        response = self.client.post(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+        response = self.client.post(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}', format='json')
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
