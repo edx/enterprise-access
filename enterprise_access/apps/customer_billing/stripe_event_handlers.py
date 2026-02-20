@@ -7,7 +7,6 @@ from functools import wraps
 from uuid import UUID
 
 import stripe
-from django.conf import settings
 from django.utils import timezone
 
 from enterprise_access.apps.api_client.license_manager_client import LicenseManagerApiClient
@@ -271,6 +270,133 @@ def _valid_invoice_paid_type(event: stripe.Event):
         return False
 
 
+def _handle_invoice_paid_status_updated(
+    event: stripe.Event,
+    checkout_intent: CheckoutIntent,
+) -> None:
+    """
+    Handling of subscription status changes coming from an invoice.paid Stripe event.
+    This is ONLY called for invoice.total > 0, meaning we're in the paid phase.
+
+    Relying just on customer.subscription.updated events leaves us open to bugs due to Stripe's
+    implementation of transitioning from active to past_due and past_due back to active.
+    Therefore, it's better to rely on the validated payment of an invoice.paid event for
+    subscription status changes.
+
+    When an invoice is paid:
+    - If this is the first paid invoice (trial→paid), process the renewal
+    - Reactivate the current paid subscription plan (no-op if already active)
+    - Reactivate future renewal plans (no-op if already active)
+    - Send appropriate email notifications
+
+    Args:
+        event (stripe.Event): A Stripe ``invoice.paid`` webhook event.
+        checkout_intent (CheckoutIntent): The CheckoutIntent associated with the subscription.
+    """
+
+    _, subscription_details = get_invoice_and_subscription(event)
+    stripe_subscription_id = subscription_details.get('subscription')
+
+    num_renewals = SelfServiceSubscriptionRenewal.objects.filter(
+        checkout_intent=checkout_intent,
+    ).count()
+    if num_renewals > 1:
+        logger.error(
+            "Status unable to be updated for Stripe subscription %s, as paid to paid renewals are not yet supported.",
+            stripe_subscription_id,
+        )
+        raise NotImplementedError("Handling paid->paid renewals not yet supported.")
+
+    client = LicenseManagerApiClient()
+
+    # Check if we've already processed the trial→paid renewal
+    # If so, we need to reactivate the paid plan, not the trial plan
+    processed_renewal = SelfServiceSubscriptionRenewal.objects.filter(
+        checkout_intent=checkout_intent,
+        processed_at__isnull=False
+    ).first()
+
+    if processed_renewal:
+        # We already have a processed trial->paid renewal, so reactivate the first paid plan
+        # just in case it isn't already active. This should never be needed going forward, but:
+        #   1. Old bugs tainted pre-existing renewals which may need this fix.
+        #   2. It can't hurt, as long as we re-activate the right plan.
+        plan_to_reactivate = processed_renewal.renewed_subscription_plan_uuid
+        logger.info(
+            "Activating PAID subscription plan %s for Stripe subscription %s (post-trial)",
+            plan_to_reactivate,
+            stripe_subscription_id,
+        )
+        client.update_subscription_plan(str(plan_to_reactivate), is_active=True)
+    else:
+        # Normal case where the first paid invoice was received before processing the renewal.
+        logger.info(
+            "Processing trial→paid transition for Stripe subscription %s",
+            stripe_subscription_id,
+        )
+        # Process the renewal first (this creates the paid plan and renewal relationship)
+        _process_trial_to_paid_renewal(checkout_intent, stripe_subscription_id, event)
+
+        # After processing, get the newly created paid plan and reactivate it
+        processed_renewal = SelfServiceSubscriptionRenewal.objects.filter(
+            checkout_intent=checkout_intent,
+            processed_at__isnull=False
+        ).first()
+
+        if processed_renewal:
+            client.update_subscription_plan(str(processed_renewal.renewed_subscription_plan_uuid), is_active=True)
+
+        # Send the trial-end email
+        send_trial_end_and_subscription_started_email_task.delay(
+            subscription_id=stripe_subscription_id,
+            checkout_intent_id=checkout_intent.id,
+        )
+
+
+def _handle_subscription_updated_status_updates(
+        event: stripe.Event,
+        prior_status: StripeSubscriptionStatus,
+        current_status: StripeSubscriptionStatus,
+        checkout_intent: CheckoutIntent,
+) -> None:
+    """
+    Handling of a status change coming from a customer.subscription.updated Stripe event.
+
+    Stripe has many different statuses that need to be handled differently, including trialing,
+    active, past_due, canceled, unpaid, and paused. When a subscription transitions from one to the other,
+    we need to update our system and sources of truth to reflect this status change.
+
+    Args:
+        event (stripe.Event): A Stripe ``customer.subscription.updated`` webhook event.
+         prior_status (StripeSubscriptionStatus): The subscription's status we have stored before this event
+            Must be a ``StripeSubscriptionStatus`` or string matching the enum values.
+        current_status (StripeSubscriptionStatus): The subscription's status of this event.
+            Must be a ``StripeSubscriptionStatus`` or string matching the enum values.
+        checkout_intent (CheckoutIntent): The CheckoutIntent associated with the subscription.
+    """
+    subscription = event.data.object
+    # Past due transition
+    if current_status != prior_status and current_status == StripeSubscriptionStatus.PAST_DUE:
+        logger.warning(
+            'Stripe subscription %s was %s but is now past_due. '
+            'Checkout intent: %s',
+            subscription.id, prior_status, checkout_intent.id,
+        )
+        enterprise_uuid = checkout_intent.enterprise_uuid
+        if enterprise_uuid:
+            cancel_all_future_plans(checkout_intent)
+        else:
+            logger.error(
+                (
+                    "Cannot deactivate future plans for subscription %s: "
+                    "missing enterprise_uuid on CheckoutIntent %s"
+                ),
+                subscription.id,
+                checkout_intent.id,
+            )
+        send_billing_error_email_task.delay(checkout_intent_id=checkout_intent.id)
+
+
 class StripeEventHandler:
     """
     Container for Stripe event handler logic.
@@ -350,8 +476,8 @@ class StripeEventHandler:
                 enterprise_customer_name=checkout_intent.enterprise_name,
                 enterprise_slug=checkout_intent.enterprise_slug,
             )
-            # TODO: move CI to some appropriate state now that the stripe
-            # subscription is `active` and a non-zero payment has been processed
+            # only update status for non-trial invoice.paid events
+            _handle_invoice_paid_status_updated(event, checkout_intent)
             return
 
         try:
@@ -507,39 +633,8 @@ class StripeEventHandler:
         # hasn't changed, we're all done.
         if prior_status == current_status:
             return
-
-        # Handle trial-to-paid transition for renewal processing
-        if prior_status == StripeSubscriptionStatus.TRIALING and current_status == StripeSubscriptionStatus.ACTIVE:
-            logger.info(
-                f"Subscription {subscription.id} transitioned from trial to active. "
-                f"Processing renewal for checkout_intent_id={checkout_intent_id}"
-            )
-            _process_trial_to_paid_renewal(checkout_intent, subscription.id, event)
-            send_trial_end_and_subscription_started_email_task.delay(
-                subscription_id=subscription.id,
-                checkout_intent_id=checkout_intent.id,
-            )
-
-        # Past due transition
-        if current_status != prior_status and current_status == StripeSubscriptionStatus.PAST_DUE:
-            logger.warning(
-                'Stripe subscription %s was %s but is now past_due. '
-                'Checkout intent: %s',
-                subscription.id, prior_status, checkout_intent.id,
-            )
-            enterprise_uuid = checkout_intent.enterprise_uuid
-            if enterprise_uuid:
-                cancel_all_future_plans(checkout_intent)
-            else:
-                logger.error(
-                    (
-                        "Cannot deactivate future plans for subscription %s: "
-                        "missing enterprise_uuid on CheckoutIntent %s"
-                    ),
-                    subscription.id,
-                    checkout_intent.id,
-                )
-            send_billing_error_email_task.delay(checkout_intent_id=checkout_intent.id)
+        else:
+            _handle_subscription_updated_status_updates(event, prior_status, current_status, checkout_intent)
 
     @on_stripe_event("customer.subscription.deleted")
     @staticmethod
