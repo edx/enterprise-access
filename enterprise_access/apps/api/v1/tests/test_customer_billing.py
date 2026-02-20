@@ -551,7 +551,7 @@ class BillingManagementAddressEndpointTests(APITest):
         }
         mock_get_stripe_customer.return_value = mock_stripe_customer
 
-        url = reverse('api:v1:billing-management-address')
+        url = reverse('api:v1:billing-management-get-address')
         response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -568,20 +568,20 @@ class BillingManagementAddressEndpointTests(APITest):
 
     def test_get_address_missing_enterprise_uuid(self):
         """
-        Test that missing enterprise_customer_uuid returns 400.
+        Test that missing enterprise_customer_uuid returns 403.
+        The permission decorator evaluates first and returns 403 when context UUID is None.
         """
-        url = reverse('api:v1:billing-management-address')
+        url = reverse('api:v1:billing-management-get-address')
         response = self.client.get(url)
 
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn('error', response.json())
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_get_address_nonexistent_enterprise(self):
         """
         Test that non-existent enterprise returns 404.
         """
         nonexistent_uuid = str(uuid.uuid4())
-        url = reverse('api:v1:billing-management-address')
+        url = reverse('api:v1:billing-management-get-address')
         response = self.client.get(url, {'enterprise_customer_uuid': nonexistent_uuid})
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
@@ -594,7 +594,7 @@ class BillingManagementAddressEndpointTests(APITest):
         """
         mock_get_stripe_customer.side_effect = stripe.error.StripeError('Stripe API Error')
 
-        url = reverse('api:v1:billing-management-address')
+        url = reverse('api:v1:billing-management-get-address')
         response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
 
         self.assertEqual(response.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
@@ -612,7 +612,7 @@ class BillingManagementAddressEndpointTests(APITest):
             'context': self.enterprise_uuid,
         }], user=unprivileged_user)
 
-        url = reverse('api:v1:billing-management-address')
+        url = reverse('api:v1:billing-management-get-address')
         response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
@@ -631,7 +631,7 @@ class BillingManagementAddressEndpointTests(APITest):
         }
         mock_get_stripe_customer.return_value = mock_stripe_customer
 
-        url = reverse('api:v1:billing-management-address')
+        url = reverse('api:v1:billing-management-get-address')
         response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -696,7 +696,7 @@ class BillingManagementAddressUpdateTests(APITest):
         }
         mock_customer_modify.return_value = updated_customer
 
-        url = reverse('api:v1:billing-management-address')
+        url = reverse('api:v1:billing-management-update-address')
         request_data = {
             'name': 'Jane Smith',
             'email': 'jane.smith@example.com',
@@ -746,7 +746,7 @@ class BillingManagementAddressUpdateTests(APITest):
         """
         Test that missing enterprise_customer_uuid returns 400.
         """
-        url = reverse('api:v1:billing-management-address')
+        url = reverse('api:v1:billing-management-update-address')
         request_data = {
             'name': 'Jane Smith',
             'email': 'jane@example.com',
@@ -758,14 +758,13 @@ class BillingManagementAddressUpdateTests(APITest):
         }
         response = self.client.post(url, request_data)
 
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn('error', response.json())
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_update_address_missing_required_fields(self):
         """
         Test that missing required fields returns 400 with validation errors.
         """
-        url = reverse('api:v1:billing-management-address')
+        url = reverse('api:v1:billing-management-update-address')
         request_data = {
             'name': 'Jane Smith',
             # Missing required fields: email, country, address_line_1, city, state, postal_code
@@ -785,7 +784,7 @@ class BillingManagementAddressUpdateTests(APITest):
         """
         Test that invalid country code is rejected.
         """
-        url = reverse('api:v1:billing-management-address')
+        url = reverse('api:v1:billing-management-update-address')
         request_data = {
             'name': 'Jane Smith',
             'email': 'jane@example.com',
@@ -810,7 +809,7 @@ class BillingManagementAddressUpdateTests(APITest):
         Test that non-existent enterprise returns 404.
         """
         nonexistent_uuid = str(uuid.uuid4())
-        url = reverse('api:v1:billing-management-address')
+        url = reverse('api:v1:billing-management-update-address')
         request_data = {
             'name': 'Jane Smith',
             'email': 'jane@example.com',
@@ -836,7 +835,7 @@ class BillingManagementAddressUpdateTests(APITest):
         """
         mock_customer_modify.side_effect = stripe.error.StripeError('Stripe API Error')
 
-        url = reverse('api:v1:billing-management-address')
+        url = reverse('api:v1:billing-management-update-address')
         request_data = {
             'name': 'Jane Smith',
             'email': 'jane@example.com',
@@ -867,7 +866,7 @@ class BillingManagementAddressUpdateTests(APITest):
             'context': self.enterprise_uuid,
         }], user=unprivileged_user)
 
-        url = reverse('api:v1:billing-management-address')
+        url = reverse('api:v1:billing-management-update-address')
         request_data = {
             'name': 'Jane Smith',
             'email': 'jane@example.com',
@@ -906,7 +905,7 @@ class BillingManagementAddressUpdateTests(APITest):
         }
         mock_customer_modify.return_value = updated_customer
 
-        url = reverse('api:v1:billing-management-address')
+        url = reverse('api:v1:billing-management-update-address')
         request_data = {
             'name': 'John Doe',
             'email': 'john@example.com',
@@ -994,7 +993,7 @@ class BillingManagementPaymentMethodsTests(APITest):
         ]
         mock_payment_method_list.return_value = mock.Mock(data=mock_payment_methods)
 
-        url = reverse('api:v1:billing-management-payment-methods')
+        url = reverse('api:v1:billing-management-list-payment-methods')
         response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -1029,7 +1028,7 @@ class BillingManagementPaymentMethodsTests(APITest):
         mock_customer_retrieve.return_value = mock_customer
         mock_payment_method_list.return_value = mock.Mock(data=[])
 
-        url = reverse('api:v1:billing-management-payment-methods')
+        url = reverse('api:v1:billing-management-list-payment-methods')
         response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -1040,18 +1039,17 @@ class BillingManagementPaymentMethodsTests(APITest):
         """
         Test that missing enterprise_customer_uuid returns 400.
         """
-        url = reverse('api:v1:billing-management-payment-methods')
+        url = reverse('api:v1:billing-management-list-payment-methods')
         response = self.client.get(url)
 
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn('error', response.json())
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_list_payment_methods_nonexistent_enterprise(self):
         """
         Test that non-existent enterprise returns 404.
         """
         nonexistent_uuid = str(uuid.uuid4())
-        url = reverse('api:v1:billing-management-payment-methods')
+        url = reverse('api:v1:billing-management-list-payment-methods')
         response = self.client.get(url, {'enterprise_customer_uuid': nonexistent_uuid})
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
@@ -1064,7 +1062,7 @@ class BillingManagementPaymentMethodsTests(APITest):
         """
         mock_customer_retrieve.side_effect = stripe.error.StripeError('Stripe API Error')
 
-        url = reverse('api:v1:billing-management-payment-methods')
+        url = reverse('api:v1:billing-management-list-payment-methods')
         response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
 
         self.assertEqual(response.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
@@ -1082,7 +1080,7 @@ class BillingManagementPaymentMethodsTests(APITest):
             'context': self.enterprise_uuid,
         }], user=unprivileged_user)
 
-        url = reverse('api:v1:billing-management-payment-methods')
+        url = reverse('api:v1:billing-management-list-payment-methods')
         response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
@@ -1107,7 +1105,7 @@ class BillingManagementPaymentMethodsTests(APITest):
         ]
         mock_payment_method_list.return_value = mock.Mock(data=mock_payment_methods)
 
-        url = reverse('api:v1:billing-management-payment-methods')
+        url = reverse('api:v1:billing-management-list-payment-methods')
         response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -1453,7 +1451,7 @@ class BillingManagementTransactionsTests(APITest):
         }
         mock_charge_retrieve.return_value = mock_charge
 
-        url = reverse('api:v1:billing-management-transactions')
+        url = reverse('api:v1:billing-management-list-transactions')
         response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -1494,7 +1492,7 @@ class BillingManagementTransactionsTests(APITest):
             has_more=True,
         )
 
-        url = reverse('api:v1:billing-management-transactions')
+        url = reverse('api:v1:billing-management-list-transactions')
         response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -1512,7 +1510,7 @@ class BillingManagementTransactionsTests(APITest):
         mock_invoices = []
         mock_invoice_list.return_value = mock.Mock(data=mock_invoices, has_more=False)
 
-        url = reverse('api:v1:billing-management-transactions')
+        url = reverse('api:v1:billing-management-list-transactions')
         response = self.client.get(url, {
             'enterprise_customer_uuid': str(self.enterprise_uuid),
             'limit': '15'
@@ -1531,7 +1529,7 @@ class BillingManagementTransactionsTests(APITest):
         mock_invoices = []
         mock_invoice_list.return_value = mock.Mock(data=mock_invoices, has_more=False)
 
-        url = reverse('api:v1:billing-management-transactions')
+        url = reverse('api:v1:billing-management-list-transactions')
         response = self.client.get(url, {
             'enterprise_customer_uuid': str(self.enterprise_uuid),
             'limit': '100'
@@ -1546,7 +1544,7 @@ class BillingManagementTransactionsTests(APITest):
         """
         Test that endpoint requires enterprise_customer_uuid query parameter.
         """
-        url = reverse('api:v1:billing-management-transactions')
+        url = reverse('api:v1:billing-management-list-transactions')
         response = self.client.get(url, {})
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
@@ -1561,7 +1559,7 @@ class BillingManagementTransactionsTests(APITest):
         """
         non_existent_uuid = str(uuid.uuid4())
 
-        url = reverse('api:v1:billing-management-transactions')
+        url = reverse('api:v1:billing-management-list-transactions')
         response = self.client.get(url, {'enterprise_customer_uuid': non_existent_uuid})
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
@@ -1576,7 +1574,7 @@ class BillingManagementTransactionsTests(APITest):
         """
         mock_invoice_list.side_effect = stripe.error.StripeError('Connection error')
 
-        url = reverse('api:v1:billing-management-transactions')
+        url = reverse('api:v1:billing-management-list-transactions')
         response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
 
         self.assertEqual(response.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
@@ -1595,7 +1593,7 @@ class BillingManagementTransactionsTests(APITest):
             'context': self.enterprise_uuid,
         }])
 
-        url = reverse('api:v1:billing-management-transactions')
+        url = reverse('api:v1:billing-management-list-transactions')
         response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
@@ -1608,7 +1606,7 @@ class BillingManagementTransactionsTests(APITest):
         """
         mock_invoice_list.return_value = mock.Mock(data=[], has_more=False)
 
-        url = reverse('api:v1:billing-management-transactions')
+        url = reverse('api:v1:billing-management-list-transactions')
         response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -1659,7 +1657,7 @@ class BillingManagementTransactionsTests(APITest):
         ]
         mock_invoice_list.return_value = mock.Mock(data=mock_invoices, has_more=False)
 
-        url = reverse('api:v1:billing-management-transactions')
+        url = reverse('api:v1:billing-management-list-transactions')
         response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -1736,7 +1734,7 @@ class BillingManagementSubscriptionTests(APITest):
         }
         mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
 
-        url = reverse('api:v1:billing-management-subscription')
+        url = reverse('api:v1:billing-management-get-subscription')
         response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -1758,7 +1756,7 @@ class BillingManagementSubscriptionTests(APITest):
         """
         mock_sub_list.return_value = mock.Mock(data=[])
 
-        url = reverse('api:v1:billing-management-subscription')
+        url = reverse('api:v1:billing-management-get-subscription')
         response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -1807,7 +1805,7 @@ class BillingManagementSubscriptionTests(APITest):
         }
         mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
 
-        url = reverse('api:v1:billing-management-subscription')
+        url = reverse('api:v1:billing-management-get-subscription')
         response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -1849,7 +1847,7 @@ class BillingManagementSubscriptionTests(APITest):
         mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
 
         with mock.patch('stripe.Product.retrieve', side_effect=stripe.error.StripeError('Not found')):
-            url = reverse('api:v1:billing-management-subscription')
+            url = reverse('api:v1:billing-management-get-subscription')
             response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -1863,7 +1861,7 @@ class BillingManagementSubscriptionTests(APITest):
         """
         Test that endpoint requires enterprise_customer_uuid query parameter.
         """
-        url = reverse('api:v1:billing-management-subscription')
+        url = reverse('api:v1:billing-management-get-subscription')
         response = self.client.get(url, {})
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
@@ -1878,7 +1876,7 @@ class BillingManagementSubscriptionTests(APITest):
         """
         non_existent_uuid = str(uuid.uuid4())
 
-        url = reverse('api:v1:billing-management-subscription')
+        url = reverse('api:v1:billing-management-get-subscription')
         response = self.client.get(url, {'enterprise_customer_uuid': non_existent_uuid})
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
@@ -1893,7 +1891,7 @@ class BillingManagementSubscriptionTests(APITest):
         """
         mock_sub_list.side_effect = stripe.error.StripeError('Connection error')
 
-        url = reverse('api:v1:billing-management-subscription')
+        url = reverse('api:v1:billing-management-get-subscription')
         response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
 
         self.assertEqual(response.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
@@ -1912,7 +1910,7 @@ class BillingManagementSubscriptionTests(APITest):
             'context': self.enterprise_uuid,
         }])
 
-        url = reverse('api:v1:billing-management-subscription')
+        url = reverse('api:v1:billing-management-get-subscription')
         response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
@@ -1949,7 +1947,7 @@ class BillingManagementSubscriptionTests(APITest):
         }
         mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
 
-        url = reverse('api:v1:billing-management-subscription')
+        url = reverse('api:v1:billing-management-get-subscription')
         response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
