@@ -4,7 +4,8 @@ Tests for customer billing API endpoints.
 import json
 import time
 import uuid
-from datetime import datetime, timedelta, timezone as dt_timezone
+from datetime import datetime, timedelta
+from datetime import timezone as dt_timezone
 from unittest import mock
 
 import stripe
@@ -1761,7 +1762,8 @@ class BillingManagementSubscriptionTests(APITest):
         self.assertEqual(sub['status'], 'active')
         self.assertEqual(sub['plan_type'], 'Teams')
         self.assertFalse(sub['cancel_at_period_end'])
-        self.assertEqual(sub['yearly_amount'], 50000)
+        # Yearly amount: 50000 (unit_amount) * 5 (quantity) = 250000
+        self.assertEqual(sub['yearly_amount'], 250000)
         self.assertEqual(sub['license_count'], 5)
 
     @mock.patch('stripe.Subscription.list')

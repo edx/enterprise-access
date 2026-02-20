@@ -1529,8 +1529,7 @@ class BillingManagementViewSet(viewsets.ViewSet):
 
             # If no active subscription, return null
             if not subscriptions_response.data:
-                serializer = serializers.SubscriptionResponseSerializer(None)
-                return Response(serializer.data, status=status.HTTP_200_OK)
+                return Response({'subscription': None}, status=status.HTTP_200_OK)
 
             subscription = subscriptions_response.data[0]
 
@@ -1589,7 +1588,7 @@ class BillingManagementViewSet(viewsets.ViewSet):
 
             # Retrieve the price to access metadata
             price = stripe.Price.retrieve(price_id)
-            
+
             # Check price metadata first
             price_metadata = price.get('metadata', {})
             if 'plan_type' in price_metadata:
@@ -1626,14 +1625,24 @@ class BillingManagementViewSet(viewsets.ViewSet):
 
             total_amount = 0
             for item in items:
-                price = item.get('price', {})
+                price_obj = item.get('price', {})
                 quantity = item.get('quantity', 1)
-                
+
+                # If price object doesn't have unit_amount, retrieve full price details
+                if 'unit_amount' not in price_obj:
+                    price_id = price_obj.get('id')
+                    if price_id:
+                        try:
+                            price_obj = stripe.Price.retrieve(price_id)
+                        except stripe.error.StripeError:
+                            logger.warning(f'Could not retrieve price {price_id}')
+                            continue
+
                 # Get the unit amount
-                unit_amount = price.get('unit_amount', 0)
-                
+                unit_amount = price_obj.get('unit_amount', 0)
+
                 # Calculate yearly amount based on billing period
-                billing_period = price.get('recurring', {}).get('interval')
+                billing_period = price_obj.get('recurring', {}).get('interval')
                 if billing_period == 'year':
                     total_amount += unit_amount * quantity
                 elif billing_period == 'month':
