@@ -2,6 +2,7 @@
 Tests for customer billing API endpoints.
 """
 import json
+import time
 import uuid
 from datetime import timedelta
 from unittest import mock
@@ -2279,6 +2280,321 @@ class BillingManagementCancelSubscriptionTests(APITest):
         }])
 
         url = reverse('api:v1:billing-management-cancel-subscription')
+        response = self.client.post(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+class BillingManagementReinstateSubscriptionTests(APITest):
+    """
+    Tests for the reinstate subscription endpoint.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.enterprise_uuid = str(uuid.uuid4())
+        self.stripe_customer_id = 'cus_test_reinstate_123'
+
+        # Create a checkout intent for testing
+        self.checkout_intent = CheckoutIntent.objects.create(
+            user=self.user,
+            enterprise_uuid=self.enterprise_uuid,
+            enterprise_name='Test Enterprise',
+            enterprise_slug='test-enterprise',
+            stripe_customer_id=self.stripe_customer_id,
+            state=CheckoutIntentState.PAID,
+            quantity=10,
+            expires_at=timezone.now() + timedelta(hours=1),
+        )
+
+        # Set JWT cookie with appropriate permissions
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': self.enterprise_uuid,
+        }])
+
+    def tearDown(self):
+        CheckoutIntent.objects.all().delete()
+        super().tearDown()
+
+    @mock.patch('stripe.Product.retrieve')
+    @mock.patch('stripe.Price.retrieve')
+    @mock.patch('stripe.Subscription.modify')
+    @mock.patch('stripe.Subscription.list')
+    def test_reinstate_subscription_teams_plan_success(self, mock_sub_list, mock_sub_modify, mock_price_retrieve, mock_product_retrieve):
+        """
+        Test successfully reinstating a Teams plan subscription.
+        """
+        # Mock price with Teams plan_type
+        mock_price = {
+            'id': 'price_test123',
+            'product': 'prod_test123',
+            'metadata': {'plan_type': 'Teams'},
+        }
+        mock_price_retrieve.return_value = mock_price
+
+        # Mock subscription pending cancellation
+        future_period_end = int(time.time()) + 86400  # 1 day from now
+        mock_subscription = {
+            'id': 'sub_test123',
+            'status': 'active',
+            'cancel_at_period_end': True,
+            'current_period_end': future_period_end,
+            'items': {
+                'data': [
+                    {
+                        'price': {'id': 'price_test123'},
+                        'quantity': 5,
+                    }
+                ]
+            },
+        }
+        mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
+
+        # Mock modified subscription
+        mock_modified_subscription = mock_subscription.copy()
+        mock_modified_subscription['cancel_at_period_end'] = False
+        mock_sub_modify.return_value = mock_modified_subscription
+
+        url = reverse('api:v1:billing-management-reinstate-subscription')
+        response = self.client.post(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response_data = response.json()
+        
+        self.assertIn('subscription', response_data)
+        sub = response_data['subscription']
+        self.assertEqual(sub['id'], 'sub_test123')
+        self.assertFalse(sub['cancel_at_period_end'])
+        mock_sub_modify.assert_called_once_with('sub_test123', cancel_at_period_end=False)
+
+    @mock.patch('stripe.Product.retrieve')
+    @mock.patch('stripe.Price.retrieve')
+    @mock.patch('stripe.Subscription.modify')
+    @mock.patch('stripe.Subscription.list')
+    def test_reinstate_subscription_essentials_plan_success(self, mock_sub_list, mock_sub_modify, mock_price_retrieve, mock_product_retrieve):
+        """
+        Test successfully reinstating an Essentials plan subscription.
+        """
+        # Mock price with Essentials plan_type
+        mock_price = {
+            'id': 'price_test123',
+            'product': 'prod_test123',
+            'metadata': {'plan_type': 'Essentials'},
+        }
+        mock_price_retrieve.return_value = mock_price
+
+        future_period_end = int(time.time()) + 86400
+        mock_subscription = {
+            'id': 'sub_test123',
+            'status': 'active',
+            'cancel_at_period_end': True,
+            'current_period_end': future_period_end,
+            'items': {
+                'data': [
+                    {
+                        'price': {'id': 'price_test123'},
+                        'quantity': 1,
+                    }
+                ]
+            },
+        }
+        mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
+
+        mock_modified_subscription = mock_subscription.copy()
+        mock_modified_subscription['cancel_at_period_end'] = False
+        mock_sub_modify.return_value = mock_modified_subscription
+
+        url = reverse('api:v1:billing-management-reinstate-subscription')
+        response = self.client.post(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response_data = response.json()
+        sub = response_data['subscription']
+        self.assertFalse(sub['cancel_at_period_end'])
+
+    @mock.patch('stripe.Price.retrieve')
+    @mock.patch('stripe.Subscription.list')
+    def test_reinstate_subscription_learner_credit_plan_fails(self, mock_sub_list, mock_price_retrieve):
+        """
+        Test that reinstating LearnerCredit plan returns 403.
+        """
+        # Mock price with LearnerCredit plan_type
+        mock_price = {
+            'id': 'price_test123',
+            'product': 'prod_test123',
+            'metadata': {'plan_type': 'LearnerCredit'},
+        }
+        mock_price_retrieve.return_value = mock_price
+
+        future_period_end = int(time.time()) + 86400
+        mock_subscription = {
+            'id': 'sub_test123',
+            'status': 'active',
+            'cancel_at_period_end': True,
+            'current_period_end': future_period_end,
+            'items': {
+                'data': [
+                    {
+                        'price': {'id': 'price_test123'},
+                        'quantity': 1,
+                    }
+                ]
+            },
+        }
+        mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
+
+        url = reverse('api:v1:billing-management-reinstate-subscription')
+        response = self.client.post(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        response_data = response.json()
+        self.assertIn('error', response_data)
+        self.assertIn('plan type', response_data['error'])
+
+    @mock.patch('stripe.Subscription.list')
+    def test_reinstate_subscription_not_pending_cancellation(self, mock_sub_list):
+        """
+        Test that reinstating a subscription not pending cancellation returns 409.
+        """
+        mock_subscription = {
+            'id': 'sub_test123',
+            'status': 'active',
+            'cancel_at_period_end': False,  # Not scheduled for cancellation
+            'current_period_end': int(time.time()) + 86400,
+            'items': {
+                'data': []
+            },
+        }
+        mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
+
+        url = reverse('api:v1:billing-management-reinstate-subscription')
+        response = self.client.post(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        response_data = response.json()
+        self.assertIn('error', response_data)
+        self.assertIn('not currently scheduled', response_data['error'])
+
+    @mock.patch('stripe.Subscription.list')
+    def test_reinstate_subscription_period_ended(self, mock_sub_list):
+        """
+        Test that reinstating when period has ended returns 409.
+        """
+        past_period_end = int(time.time()) - 86400  # 1 day ago
+        mock_subscription = {
+            'id': 'sub_test123',
+            'status': 'active',
+            'cancel_at_period_end': True,
+            'current_period_end': past_period_end,
+            'items': {
+                'data': []
+            },
+        }
+        mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
+
+        url = reverse('api:v1:billing-management-reinstate-subscription')
+        response = self.client.post(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        response_data = response.json()
+        self.assertIn('error', response_data)
+        self.assertIn('period has already ended', response_data['error'])
+
+    @mock.patch('stripe.Subscription.list')
+    def test_reinstate_subscription_no_active_subscription(self, mock_sub_list):
+        """
+        Test that reinstating with no active subscription returns 404.
+        """
+        mock_sub_list.return_value = mock.Mock(data=[])
+
+        url = reverse('api:v1:billing-management-reinstate-subscription')
+        response = self.client.post(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        response_data = response.json()
+        self.assertIn('error', response_data)
+        self.assertIn('No active subscription', response_data['error'])
+
+    @mock.patch('stripe.Subscription.list')
+    def test_reinstate_subscription_missing_uuid(self, mock_sub_list):
+        """
+        Test that endpoint requires enterprise_customer_uuid query parameter.
+        """
+        url = reverse('api:v1:billing-management-reinstate-subscription')
+        response = self.client.post(url, {})
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        response_data = response.json()
+        self.assertIn('error', response_data)
+        self.assertIn('enterprise_customer_uuid', response_data['error'])
+
+    @mock.patch('stripe.Subscription.list')
+    def test_reinstate_subscription_non_existent_enterprise(self, mock_sub_list):
+        """
+        Test that endpoint returns 404 when enterprise is not found.
+        """
+        non_existent_uuid = str(uuid.uuid4())
+
+        url = reverse('api:v1:billing-management-reinstate-subscription')
+        response = self.client.post(url, {'enterprise_customer_uuid': non_existent_uuid})
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        response_data = response.json()
+        self.assertIn('error', response_data)
+        self.assertIn('Stripe customer not found', response_data['error'])
+
+    @mock.patch('stripe.Price.retrieve')
+    @mock.patch('stripe.Subscription.list')
+    def test_reinstate_subscription_stripe_api_error(self, mock_sub_list, mock_price_retrieve):
+        """
+        Test that endpoint handles Stripe API errors gracefully.
+        """
+        mock_price = {
+            'id': 'price_test123',
+            'product': 'prod_test123',
+            'metadata': {'plan_type': 'Teams'},
+        }
+        mock_price_retrieve.return_value = mock_price
+
+        future_period_end = int(time.time()) + 86400
+        mock_subscription = {
+            'id': 'sub_test123',
+            'status': 'active',
+            'cancel_at_period_end': True,
+            'current_period_end': future_period_end,
+            'items': {
+                'data': [
+                    {
+                        'price': {'id': 'price_test123'},
+                        'quantity': 1,
+                    }
+                ]
+            },
+        }
+        mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
+
+        # Mock modify to fail
+        with mock.patch('stripe.Subscription.modify', side_effect=stripe.error.StripeError('Connection error')):
+            url = reverse('api:v1:billing-management-reinstate-subscription')
+            response = self.client.post(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
+        response_data = response.json()
+        self.assertIn('error', response_data)
+        self.assertIn('Stripe API error', response_data['error'])
+
+    @mock.patch('stripe.Subscription.list')
+    def test_reinstate_subscription_requires_permission(self, mock_sub_list):
+        """
+        Test that endpoint requires BILLING_MANAGEMENT_ACCESS_PERMISSION.
+        """
+        # Set JWT cookie without required permission
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE,
+            'context': self.enterprise_uuid,
+        }])
+
+        url = reverse('api:v1:billing-management-reinstate-subscription')
         response = self.client.post(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)

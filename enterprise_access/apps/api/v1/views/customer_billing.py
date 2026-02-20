@@ -1791,3 +1791,134 @@ class BillingManagementViewSet(viewsets.ViewSet):
                 {'error': 'An unexpected error occurred'},
                 status=status.HTTP_422_UNPROCESSABLE_ENTITY
             )
+
+    @extend_schema(
+        tags=[BILLING_MANAGEMENT_API_TAG],
+        summary='Reinstate subscription',
+        description='Remove a scheduled cancellation from a subscription. Only available for Teams and Essentials plans.',
+        parameters=[
+            OpenApiParameter(
+                name='enterprise_customer_uuid',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                required=True,
+                description='UUID of the enterprise customer',
+            ),
+        ],
+        responses={
+            status.HTTP_200_OK: serializers.ReinstateSubscriptionResponseSerializer,
+            status.HTTP_400_BAD_REQUEST: OpenApiResponse(description='Missing or invalid enterprise_customer_uuid'),
+            status.HTTP_403_FORBIDDEN: OpenApiResponse(description='Permission denied or plan type does not support reinstatement'),
+            status.HTTP_404_NOT_FOUND: OpenApiResponse(description='Enterprise customer, Stripe customer, or active subscription not found'),
+            status.HTTP_409_CONFLICT: OpenApiResponse(description='Subscription is not pending cancellation or period has ended'),
+            status.HTTP_422_UNPROCESSABLE_ENTITY: OpenApiResponse(description='Stripe API call failed'),
+        },
+    )
+    @action(detail=False, methods=['post'], url_path='subscription/reinstate')
+    @permission_required(
+        BILLING_MANAGEMENT_ACCESS_PERMISSION,
+        fn=lambda request, **kwargs: request.GET.get('enterprise_customer_uuid')
+    )
+    def reinstate_subscription(self, request, **kwargs):
+        """
+        Reinstate a subscription that is scheduled for cancellation.
+
+        Only Teams and Essentials plans can be reinstated. Returns 403 for other plan types.
+        Returns 409 if the subscription is not currently scheduled for cancellation or if the period has ended.
+        """
+        enterprise_uuid = request.query_params.get('enterprise_customer_uuid')
+        if not enterprise_uuid:
+            return Response(
+                {'error': 'enterprise_customer_uuid query parameter is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            # Find the CheckoutIntent for this enterprise
+            checkout_intent = CheckoutIntent.objects.filter(enterprise_uuid=enterprise_uuid).first()
+            if not checkout_intent or not checkout_intent.stripe_customer_id:
+                logger.warning(
+                    f'No checkout intent with stripe customer ID found for enterprise_uuid: {enterprise_uuid}'
+                )
+                return Response(
+                    {'error': 'Stripe customer not found for this enterprise'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            stripe_customer_id = checkout_intent.stripe_customer_id
+
+            # Retrieve the active subscription
+            subscriptions_response = stripe.Subscription.list(
+                customer=stripe_customer_id,
+                limit=1,
+                status='active',
+            )
+
+            if not subscriptions_response.data:
+                return Response(
+                    {'error': 'No active subscription found for this enterprise'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            subscription = subscriptions_response.data[0]
+
+            # Check if not scheduled for cancellation
+            if not subscription.get('cancel_at_period_end', False):
+                return Response(
+                    {'error': 'Subscription is not currently scheduled for cancellation'},
+                    status=status.HTTP_409_CONFLICT
+                )
+
+            # Check if the period has already ended
+            current_period_end = subscription.get('current_period_end')
+            import time
+            if current_period_end and current_period_end <= time.time():
+                return Response(
+                    {'error': 'The subscription period has already ended'},
+                    status=status.HTTP_409_CONFLICT
+                )
+
+            # Get plan_type to verify reinstatement eligibility
+            plan_type = self._get_plan_type_from_subscription(subscription)
+            if plan_type not in ['Teams', 'Essentials']:
+                return Response(
+                    {'error': 'Subscription reinstatement is not available for your plan type'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            # Reinstate the subscription
+            updated_subscription = stripe.Subscription.modify(
+                subscription.get('id'),
+                cancel_at_period_end=False,
+            )
+
+            # Build response with updated subscription data
+            sub_data = {
+                'id': updated_subscription.get('id'),
+                'status': updated_subscription.get('status'),
+                'plan_type': self._get_plan_type_from_subscription(updated_subscription),
+                'cancel_at_period_end': updated_subscription.get('cancel_at_period_end', False),
+                'current_period_end': updated_subscription.get('current_period_end'),
+            }
+
+            serializer = serializers.ReinstateSubscriptionResponseSerializer(sub_data)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
+        except stripe.error.InvalidRequestError as e:
+            logger.warning(f'Invalid Stripe request for customer {stripe_customer_id}: {str(e)}')
+            return Response(
+                {'error': 'Invalid request to Stripe API'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except stripe.error.StripeError as e:
+            logger.exception(f'Stripe API error reinstating subscription for {enterprise_uuid}: {str(e)}')
+            return Response(
+                {'error': f'Stripe API error: {str(e)}'},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+        except Exception as e:  # pylint: disable=broad-except
+            logger.exception(f'Unexpected error reinstating subscription for {enterprise_uuid}: {str(e)}')
+            return Response(
+                {'error': 'An unexpected error occurred'},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )

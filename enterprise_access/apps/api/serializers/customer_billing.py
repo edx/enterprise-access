@@ -592,3 +592,25 @@ class CancelSubscriptionResponseSerializer(serializers.Serializer):
             'cancel_at_period_end': obj.get('cancel_at_period_end'),
             'current_period_end': obj.get('current_period_end'),
         }
+
+
+# pylint: disable=abstract-method
+class ReinstateSubscriptionResponseSerializer(serializers.Serializer):
+    """
+    Response serializer for reinstate subscription operation from POST /api/v1/billing-management/subscription/reinstate
+    """
+    subscription = serializers.SerializerMethodField(
+        help_text='Updated subscription details after reinstatement request',
+    )
+
+    def get_subscription(self, obj):
+        """Get subscription data after reinstatement."""
+        if obj is None:
+            return None
+        return {
+            'id': obj.get('id'),
+            'status': obj.get('status'),
+            'plan_type': obj.get('plan_type'),
+            'cancel_at_period_end': obj.get('cancel_at_period_end'),
+            'current_period_end': obj.get('current_period_end'),
+        }

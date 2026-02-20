@@ -28,6 +28,7 @@ from .customer_billing import (
     CustomerBillingCreateCheckoutSessionValidationFailedResponseSerializer,
     PaymentMethodResponseSerializer,
     PaymentMethodsListResponseSerializer,
+    ReinstateSubscriptionResponseSerializer,
     SetDefaultPaymentMethodRequestSerializer,
     StripeEventSummaryReadOnlySerializer,
     StripeSubscriptionPlanInfoResponseSerializer,
