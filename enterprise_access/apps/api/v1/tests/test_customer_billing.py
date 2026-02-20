@@ -2167,7 +2167,7 @@ class BillingManagementCancelSubscriptionTests(APITest):
 
         with mock.patch('stripe.Product.retrieve', side_effect=stripe.error.StripeError('Not found')):
             url = reverse('api:v1:billing-management-cancel-subscription')
-            response = self.client.post(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+            response = self.client.post(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}', format='json')
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
         response_data = response.json()
@@ -2269,7 +2269,7 @@ class BillingManagementCancelSubscriptionTests(APITest):
         # Mock modify to fail
         with mock.patch('stripe.Subscription.modify', side_effect=stripe.error.StripeError('Connection error')):
             url = reverse('api:v1:billing-management-cancel-subscription')
-            response = self.client.post(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+            response = self.client.post(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}', format='json')
 
         self.assertEqual(response.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
         response_data = response.json()
@@ -2583,7 +2583,7 @@ class BillingManagementReinstateSubscriptionTests(APITest):
         # Mock modify to fail
         with mock.patch('stripe.Subscription.modify', side_effect=stripe.error.StripeError('Connection error')):
             url = reverse('api:v1:billing-management-reinstate-subscription')
-            response = self.client.post(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+            response = self.client.post(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}', format='json')
 
         self.assertEqual(response.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
         response_data = response.json()
