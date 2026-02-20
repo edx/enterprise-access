@@ -44,6 +44,9 @@ class CustomerBillingPortalSessionTests(APITest):
 
     def tearDown(self):
         CheckoutIntent.objects.all().delete()
+        # Clear Django cache to prevent Stripe API cache pollution between tests
+        from django.core.cache import cache
+        cache.clear()
         super().tearDown()
 
     def test_create_enterprise_admin_portal_session_success(self):
@@ -530,6 +533,9 @@ class BillingManagementAddressEndpointTests(APITest):
 
     def tearDown(self):
         CheckoutIntent.objects.all().delete()
+        # Clear Django cache to prevent Stripe API cache pollution between tests
+        from django.core.cache import cache
+        cache.clear()
         super().tearDown()
 
     @mock.patch('enterprise_access.apps.customer_billing.stripe_api.get_stripe_customer')
@@ -675,6 +681,9 @@ class BillingManagementAddressUpdateTests(APITest):
 
     def tearDown(self):
         CheckoutIntent.objects.all().delete()
+        # Clear Django cache to prevent Stripe API cache pollution between tests
+        from django.core.cache import cache
+        cache.clear()
         super().tearDown()
 
     @mock.patch('stripe.Customer.modify')
@@ -960,6 +969,9 @@ class BillingManagementPaymentMethodsTests(APITest):
 
     def tearDown(self):
         CheckoutIntent.objects.all().delete()
+        # Clear Django cache to prevent Stripe API cache pollution between tests
+        from django.core.cache import cache
+        cache.clear()
         super().tearDown()
 
     @mock.patch('stripe.Customer.retrieve')
@@ -1152,6 +1164,9 @@ class BillingManagementDeletePaymentMethodTests(APITest):
 
     def tearDown(self):
         CheckoutIntent.objects.all().delete()
+        # Clear Django cache to prevent Stripe API cache pollution between tests
+        from django.core.cache import cache
+        cache.clear()
         super().tearDown()
 
     @mock.patch('stripe.PaymentMethod.detach')
@@ -1410,6 +1425,9 @@ class BillingManagementTransactionsTests(APITest):
 
     def tearDown(self):
         CheckoutIntent.objects.all().delete()
+        # Clear Django cache to prevent Stripe API cache pollution between tests
+        from django.core.cache import cache
+        cache.clear()
         super().tearDown()
 
     @mock.patch('stripe.Charge.retrieve')
@@ -1700,6 +1718,9 @@ class BillingManagementSubscriptionTests(APITest):
 
     def tearDown(self):
         CheckoutIntent.objects.all().delete()
+        # Clear Django cache to prevent Stripe API cache pollution between tests
+        from django.core.cache import cache
+        cache.clear()
         super().tearDown()
 
     @mock.patch('stripe.Product.retrieve')
@@ -1989,6 +2010,9 @@ class BillingManagementCancelSubscriptionTests(APITest):
 
     def tearDown(self):
         CheckoutIntent.objects.all().delete()
+        # Clear Django cache to prevent Stripe API cache pollution between tests
+        from django.core.cache import cache
+        cache.clear()
         super().tearDown()
 
     @mock.patch('stripe.Product.retrieve')
@@ -2314,6 +2338,9 @@ class BillingManagementReinstateSubscriptionTests(APITest):
 
     def tearDown(self):
         CheckoutIntent.objects.all().delete()
+        # Clear Django cache to prevent Stripe API cache pollution between tests
+        from django.core.cache import cache
+        cache.clear()
         super().tearDown()
 
     @mock.patch('stripe.Product.retrieve')
