@@ -797,3 +797,128 @@ class BillingManagementViewSet(viewsets.ViewSet):
                 {'error': 'An unexpected error occurred'},
                 status=status.HTTP_422_UNPROCESSABLE_ENTITY
             )
+
+    @extend_schema(
+        tags=[BILLING_MANAGEMENT_API_TAG],
+        summary='Update customer billing address',
+        description='Update the billing address for a Stripe customer associated with an enterprise.',
+        parameters=[
+            OpenApiParameter(
+                name='enterprise_customer_uuid',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                required=True,
+                description='UUID of the enterprise customer',
+            ),
+        ],
+        request=serializers.BillingAddressUpdateRequestSerializer,
+        responses={
+            status.HTTP_200_OK: serializers.BillingAddressResponseSerializer,
+            status.HTTP_400_BAD_REQUEST: OpenApiResponse(description='Missing UUID or invalid request data'),
+            status.HTTP_403_FORBIDDEN: OpenApiResponse(description='Permission denied'),
+            status.HTTP_404_NOT_FOUND: OpenApiResponse(description='Enterprise customer or Stripe customer not found'),
+            status.HTTP_422_UNPROCESSABLE_ENTITY: OpenApiResponse(description='Stripe API call failed'),
+        },
+    )
+    @action(
+        detail=False,
+        methods=['post'],
+        url_path='address',
+    )
+    @permission_required(
+        BILLING_MANAGEMENT_ACCESS_PERMISSION,
+        fn=lambda request, **kwargs: request.GET.get('enterprise_customer_uuid')
+    )
+    def update_address(self, request, **kwargs):
+        """
+        Update the billing address for a Stripe customer.
+
+        The enterprise_customer_uuid query parameter is used to:
+        1. Find the CheckoutIntent for the enterprise
+        2. Extract the Stripe customer ID from the CheckoutIntent
+        3. Update the customer's billing address in Stripe
+        """
+        enterprise_uuid = request.query_params.get('enterprise_customer_uuid')
+        if not enterprise_uuid:
+            return Response(
+                {'error': 'enterprise_customer_uuid query parameter is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Validate request data
+        request_serializer = serializers.BillingAddressUpdateRequestSerializer(data=request.data)
+        if not request_serializer.is_valid():
+            return Response(request_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        validated_data = request_serializer.validated_data
+
+        try:
+            # Find the CheckoutIntent for this enterprise
+            checkout_intent = CheckoutIntent.objects.filter(enterprise_uuid=enterprise_uuid).first()
+            if not checkout_intent or not checkout_intent.stripe_customer_id:
+                logger.warning(
+                    f'No checkout intent with stripe customer ID found for enterprise_uuid: {enterprise_uuid}'
+                )
+                return Response(
+                    {'error': 'Stripe customer not found for this enterprise'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            # Update the Stripe customer with the new address information
+            stripe_customer = stripe.Customer.modify(
+                checkout_intent.stripe_customer_id,
+                name=validated_data.get('name'),
+                email=validated_data.get('email'),
+                phone=validated_data.get('phone'),
+                address={
+                    'line1': validated_data.get('address_line_1'),
+                    'line2': validated_data.get('address_line_2', ''),
+                    'city': validated_data.get('city'),
+                    'state': validated_data.get('state'),
+                    'postal_code': validated_data.get('postal_code'),
+                    'country': validated_data.get('country'),
+                },
+            )
+
+            # Extract address fields from updated Stripe customer object
+            address_data = {
+                'name': stripe_customer.get('name'),
+                'email': stripe_customer.get('email'),
+                'phone': stripe_customer.get('phone'),
+            }
+
+            # Extract address from Stripe's address object if it exists
+            if stripe_customer.get('address'):
+                address = stripe_customer['address']
+                address_data.update({
+                    'country': address.get('country'),
+                    'address_line_1': address.get('line1'),
+                    'address_line_2': address.get('line2'),
+                    'city': address.get('city'),
+                    'state': address.get('state'),
+                    'postal_code': address.get('postal_code'),
+                })
+
+            # Serialize and return the response
+            response_serializer = serializers.BillingAddressResponseSerializer(data=address_data)
+            if not response_serializer.is_valid():
+                logger.error(f'Failed to serialize updated billing address: {response_serializer.errors}')
+                return Response(
+                    {'error': 'Failed to process updated billing address'},
+                    status=status.HTTP_422_UNPROCESSABLE_ENTITY
+                )
+
+            return Response(response_serializer.data, status=status.HTTP_200_OK)
+
+        except stripe.error.StripeError as e:
+            logger.exception(f'Stripe API error updating customer {enterprise_uuid}: {str(e)}')
+            return Response(
+                {'error': f'Stripe API error: {str(e)}'},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+        except Exception as e:  # pylint: disable=broad-except
+            logger.exception(f'Unexpected error updating billing address for {enterprise_uuid}: {str(e)}')
+            return Response(
+                {'error': 'An unexpected error occurred'},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
