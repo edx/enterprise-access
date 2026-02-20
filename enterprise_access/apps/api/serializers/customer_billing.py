@@ -423,3 +423,54 @@ class BillingAddressUpdateRequestSerializer(serializers.Serializer):
         if not value or not value.strip():
             raise serializers.ValidationError('Postal code is required and cannot be empty')
         return value
+
+
+# pylint: disable=abstract-method
+class PaymentMethodResponseSerializer(serializers.Serializer):
+    """
+    Response serializer for a single payment method from GET /api/v1/billing-management/payment-methods
+    """
+    id = serializers.CharField(
+        required=True,
+        help_text='Unique identifier for the payment method in Stripe',
+    )
+    type = serializers.CharField(
+        required=True,
+        help_text='Type of payment method (e.g., card, us_bank_account)',
+    )
+    last4 = serializers.CharField(
+        required=False,
+        allow_null=True,
+        help_text='Last 4 digits of the card or account number',
+    )
+    brand = serializers.CharField(
+        required=False,
+        allow_null=True,
+        help_text='Card brand (e.g., visa, mastercard) - only for card type',
+    )
+    exp_month = serializers.IntegerField(
+        required=False,
+        allow_null=True,
+        help_text='Card expiration month - only for card type',
+    )
+    exp_year = serializers.IntegerField(
+        required=False,
+        allow_null=True,
+        help_text='Card expiration year - only for card type',
+    )
+    is_default = serializers.BooleanField(
+        required=True,
+        help_text='Whether this is the default payment method for the customer',
+    )
+
+
+# pylint: disable=abstract-method
+class PaymentMethodsListResponseSerializer(serializers.Serializer):
+    """
+    Response serializer for list of payment methods from GET /api/v1/billing-management/payment-methods
+    """
+    payment_methods = PaymentMethodResponseSerializer(
+        many=True,
+        required=True,
+        help_text='List of payment methods for the customer',
+    )

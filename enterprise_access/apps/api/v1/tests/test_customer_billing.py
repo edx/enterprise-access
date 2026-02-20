@@ -926,3 +926,195 @@ class BillingManagementAddressUpdateTests(APITest):
         response_data = response.json()
         self.assertEqual(response_data['name'], 'John Doe')
         self.assertEqual(response_data['email'], 'john@example.com')
+
+
+class BillingManagementPaymentMethodsTests(APITest):
+    """
+    Tests for the billing management payment methods endpoint.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.enterprise_uuid = str(uuid.uuid4())
+        self.stripe_customer_id = 'cus_test_payment_123'
+
+        # Create a checkout intent for testing
+        self.checkout_intent = CheckoutIntent.objects.create(
+            user=self.user,
+            enterprise_uuid=self.enterprise_uuid,
+            enterprise_name='Test Enterprise',
+            enterprise_slug='test-enterprise',
+            stripe_customer_id=self.stripe_customer_id,
+            state=CheckoutIntentState.PAID,
+            quantity=10,
+            expires_at=timezone.now() + timedelta(hours=1),
+        )
+
+        # Set JWT cookie with appropriate permissions
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': self.enterprise_uuid,
+        }])
+
+    def tearDown(self):
+        CheckoutIntent.objects.all().delete()
+        super().tearDown()
+
+    @mock.patch('stripe.Customer.retrieve')
+    @mock.patch('stripe.PaymentMethod.list')
+    def test_list_payment_methods_success(self, mock_payment_method_list, mock_customer_retrieve):
+        """
+        Test successful retrieval of payment methods.
+        """
+        mock_customer = {'invoice_settings': {'default_payment_method': 'pm_card_visa'}}
+        mock_customer_retrieve.return_value = mock_customer
+
+        mock_payment_methods = [
+            {
+                'id': 'pm_card_visa',
+                'type': 'card',
+                'card': {
+                    'last4': '4242',
+                    'brand': 'visa',
+                    'exp_month': 12,
+                    'exp_year': 2025,
+                }
+            },
+            {
+                'id': 'pm_card_mastercard',
+                'type': 'card',
+                'card': {
+                    'last4': '5555',
+                    'brand': 'mastercard',
+                    'exp_month': 6,
+                    'exp_year': 2026,
+                }
+            }
+        ]
+        mock_payment_method_list.return_value = mock.Mock(data=mock_payment_methods)
+
+        url = reverse('api:v1:billing-management-payment-methods')
+        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response_data = response.json()
+        self.assertEqual(len(response_data['payment_methods']), 2)
+
+        # Check first payment method (the default)
+        first_method = response_data['payment_methods'][0]
+        self.assertEqual(first_method['id'], 'pm_card_visa')
+        self.assertEqual(first_method['type'], 'card')
+        self.assertEqual(first_method['last4'], '4242')
+        self.assertEqual(first_method['brand'], 'visa')
+        self.assertEqual(first_method['exp_month'], 12)
+        self.assertEqual(first_method['exp_year'], 2025)
+        self.assertTrue(first_method['is_default'])
+
+        # Check second payment method (not default)
+        second_method = response_data['payment_methods'][1]
+        self.assertEqual(second_method['id'], 'pm_card_mastercard')
+        self.assertEqual(second_method['type'], 'card')
+        self.assertEqual(second_method['last4'], '5555')
+        self.assertEqual(second_method['brand'], 'mastercard')
+        self.assertFalse(second_method['is_default'])
+
+    @mock.patch('stripe.Customer.retrieve')
+    @mock.patch('stripe.PaymentMethod.list')
+    def test_list_payment_methods_empty(self, mock_payment_method_list, mock_customer_retrieve):
+        """
+        Test that empty payment methods list returns successfully.
+        """
+        mock_customer = {'invoice_settings': {}}
+        mock_customer_retrieve.return_value = mock_customer
+        mock_payment_method_list.return_value = mock.Mock(data=[])
+
+        url = reverse('api:v1:billing-management-payment-methods')
+        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response_data = response.json()
+        self.assertEqual(len(response_data['payment_methods']), 0)
+
+    def test_list_payment_methods_missing_enterprise_uuid(self):
+        """
+        Test that missing enterprise_customer_uuid returns 400.
+        """
+        url = reverse('api:v1:billing-management-payment-methods')
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('error', response.json())
+
+    def test_list_payment_methods_nonexistent_enterprise(self):
+        """
+        Test that non-existent enterprise returns 404.
+        """
+        nonexistent_uuid = str(uuid.uuid4())
+        url = reverse('api:v1:billing-management-payment-methods')
+        response = self.client.get(url, {'enterprise_customer_uuid': nonexistent_uuid})
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertIn('error', response.json())
+
+    @mock.patch('stripe.Customer.retrieve')
+    def test_list_payment_methods_stripe_error(self, mock_customer_retrieve):
+        """
+        Test that Stripe API errors are handled gracefully.
+        """
+        mock_customer_retrieve.side_effect = stripe.error.StripeError('Stripe API Error')
+
+        url = reverse('api:v1:billing-management-payment-methods')
+        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
+        self.assertIn('error', response.json())
+
+    def test_list_payment_methods_requires_permission(self):
+        """
+        Test that the endpoint requires BILLING_MANAGEMENT_ACCESS_PERMISSION.
+        """
+        # Create a user without billing management permission
+        from enterprise_access.apps.core.tests.factories import UserFactory
+        unprivileged_user = UserFactory()
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE,
+            'context': self.enterprise_uuid,
+        }], user=unprivileged_user)
+
+        url = reverse('api:v1:billing-management-payment-methods')
+        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    @mock.patch('stripe.Customer.retrieve')
+    @mock.patch('stripe.PaymentMethod.list')
+    def test_list_payment_methods_with_bank_account(self, mock_payment_method_list, mock_customer_retrieve):
+        """
+        Test that payment methods include bank account details when present.
+        """
+        mock_customer = {'invoice_settings': {'default_payment_method': 'pm_bank_account'}}
+        mock_customer_retrieve.return_value = mock_customer
+
+        mock_payment_methods = [
+            {
+                'id': 'pm_bank_account',
+                'type': 'us_bank_account',
+                'us_bank_account': {
+                    'last4': '6789',
+                }
+            }
+        ]
+        mock_payment_method_list.return_value = mock.Mock(data=mock_payment_methods)
+
+        url = reverse('api:v1:billing-management-payment-methods')
+        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response_data = response.json()
+        self.assertEqual(len(response_data['payment_methods']), 1)
+
+        method = response_data['payment_methods'][0]
+        self.assertEqual(method['id'], 'pm_bank_account')
+        self.assertEqual(method['type'], 'us_bank_account')
+        self.assertEqual(method['last4'], '6789')
+        self.assertTrue(method['is_default'])

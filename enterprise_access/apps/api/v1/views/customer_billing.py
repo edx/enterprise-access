@@ -922,3 +922,122 @@ class BillingManagementViewSet(viewsets.ViewSet):
                 {'error': 'An unexpected error occurred'},
                 status=status.HTTP_422_UNPROCESSABLE_ENTITY
             )
+
+    @extend_schema(
+        tags=[BILLING_MANAGEMENT_API_TAG],
+        summary='List payment methods',
+        description='Retrieve all saved payment methods for a Stripe customer associated with an enterprise.',
+        parameters=[
+            OpenApiParameter(
+                name='enterprise_customer_uuid',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                required=True,
+                description='UUID of the enterprise customer',
+            ),
+        ],
+        responses={
+            status.HTTP_200_OK: serializers.PaymentMethodsListResponseSerializer,
+            status.HTTP_400_BAD_REQUEST: OpenApiResponse(description='Missing or invalid enterprise_customer_uuid'),
+            status.HTTP_403_FORBIDDEN: OpenApiResponse(description='Permission denied'),
+            status.HTTP_404_NOT_FOUND: OpenApiResponse(description='Enterprise customer or Stripe customer not found'),
+            status.HTTP_422_UNPROCESSABLE_ENTITY: OpenApiResponse(description='Stripe API call failed'),
+        },
+    )
+    @action(
+        detail=False,
+        methods=['get'],
+        url_path='payment-methods',
+    )
+    @permission_required(
+        BILLING_MANAGEMENT_ACCESS_PERMISSION,
+        fn=lambda request, **kwargs: request.GET.get('enterprise_customer_uuid')
+    )
+    def list_payment_methods(self, request, **kwargs):
+        """
+        List all payment methods for a Stripe customer.
+
+        The enterprise_customer_uuid query parameter is used to:
+        1. Find the CheckoutIntent for the enterprise
+        2. Extract the Stripe customer ID from the CheckoutIntent
+        3. Retrieve the customer's payment methods from Stripe
+        """
+        enterprise_uuid = request.query_params.get('enterprise_customer_uuid')
+        if not enterprise_uuid:
+            return Response(
+                {'error': 'enterprise_customer_uuid query parameter is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            # Find the CheckoutIntent for this enterprise
+            checkout_intent = CheckoutIntent.objects.filter(enterprise_uuid=enterprise_uuid).first()
+            if not checkout_intent or not checkout_intent.stripe_customer_id:
+                logger.warning(
+                    f'No checkout intent with stripe customer ID found for enterprise_uuid: {enterprise_uuid}'
+                )
+                return Response(
+                    {'error': 'Stripe customer not found for this enterprise'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            # Get the Stripe customer to find the default payment method
+            stripe_customer = stripe.Customer.retrieve(checkout_intent.stripe_customer_id)
+            default_payment_method_id = stripe_customer.get('invoice_settings', {}).get('default_payment_method')
+
+            # List all payment methods for the customer
+            payment_methods_response = stripe.PaymentMethod.list(
+                customer=checkout_intent.stripe_customer_id,
+                type='card',  # Start with cards, could expand to support other types
+                limit=100,  # Reasonable limit for pagination
+            )
+
+            # Transform payment methods into response format
+            payment_methods = []
+            for pm in payment_methods_response.data:
+                payment_method_data = {
+                    'id': pm.get('id'),
+                    'type': pm.get('type'),
+                    'is_default': pm.get('id') == default_payment_method_id,
+                }
+
+                # Add card-specific fields if available
+                if pm.get('card'):
+                    card = pm['card']
+                    payment_method_data.update({
+                        'last4': card.get('last4'),
+                        'brand': card.get('brand'),
+                        'exp_month': card.get('exp_month'),
+                        'exp_year': card.get('exp_year'),
+                    })
+                # Add bank account specific fields if applicable
+                elif pm.get('us_bank_account'):
+                    bank_account = pm['us_bank_account']
+                    payment_method_data['last4'] = bank_account.get('last4')
+
+                payment_methods.append(payment_method_data)
+
+            # Serialize and return the response
+            response_data = {'payment_methods': payment_methods}
+            response_serializer = serializers.PaymentMethodsListResponseSerializer(data=response_data)
+            if not response_serializer.is_valid():
+                logger.error(f'Failed to serialize payment methods: {response_serializer.errors}')
+                return Response(
+                    {'error': 'Failed to process payment methods'},
+                    status=status.HTTP_422_UNPROCESSABLE_ENTITY
+                )
+
+            return Response(response_serializer.data, status=status.HTTP_200_OK)
+
+        except stripe.error.StripeError as e:
+            logger.exception(f'Stripe API error retrieving payment methods for {enterprise_uuid}: {str(e)}')
+            return Response(
+                {'error': f'Stripe API error: {str(e)}'},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+        except Exception as e:  # pylint: disable=broad-except
+            logger.exception(f'Unexpected error retrieving payment methods for {enterprise_uuid}: {str(e)}')
+            return Response(
+                {'error': 'An unexpected error occurred'},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
