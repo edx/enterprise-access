@@ -19,6 +19,7 @@ from enterprise_access.apps.api import serializers
 from enterprise_access.apps.api.authentication import StripeWebhookAuthentication
 from enterprise_access.apps.core.constants import (
     ALL_ACCESS_CONTEXT,
+    BILLING_MANAGEMENT_ACCESS_PERMISSION,
     CHECKOUT_INTENT_READ_WRITE_ALL_PERMISSION,
     CUSTOMER_BILLING_CREATE_PORTAL_SESSION_PERMISSION,
     STRIPE_EVENT_SUMMARY_READ_PERMISSION
@@ -30,6 +31,7 @@ from enterprise_access.apps.customer_billing.api import (
     create_free_trial_checkout_session
 )
 from enterprise_access.apps.customer_billing.models import CheckoutIntent, StripeEventSummary
+from enterprise_access.apps.customer_billing.stripe_api import get_stripe_customer
 from enterprise_access.apps.customer_billing.stripe_event_handlers import StripeEventHandler
 
 from .constants import CHECKOUT_INTENT_EXAMPLES, ERROR_RESPONSES, PATCH_REQUEST_EXAMPLES
@@ -655,3 +657,1269 @@ class StripeEventSummaryViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
             raise exceptions.NotFound("No Stripe subscription data found for this plan")
         response_serializer.is_valid(raise_exception=True)
         return Response(response_serializer.data, status=status.HTTP_200_OK)
+
+
+BILLING_MANAGEMENT_API_TAG = 'Billing Management'
+
+
+class BillingManagementViewSet(viewsets.ViewSet):
+    """
+    Viewset supporting operations for the Billing Management API.
+    This is a new API for managing billing and subscription information.
+    """
+    authentication_classes = (JwtAuthentication,)
+    permission_classes = (permissions.IsAuthenticated,)
+
+    @extend_schema(
+        tags=[BILLING_MANAGEMENT_API_TAG],
+        summary='Placeholder endpoint for billing management API.',
+        description='This endpoint serves as a placeholder for the billing management API.',
+    )
+    @action(
+        detail=False,
+        methods=['get'],
+        url_path='health-check',
+    )
+    def health_check(self, request):
+        """
+        Health check endpoint for the billing management API.
+        """
+        return Response(
+            {'status': 'healthy'},
+            status=status.HTTP_200_OK,
+        )
+
+    @extend_schema(
+        tags=[BILLING_MANAGEMENT_API_TAG],
+        summary='Get customer billing address',
+        description='Retrieve the billing address for a Stripe customer associated with an enterprise.',
+        parameters=[
+            OpenApiParameter(
+                name='enterprise_customer_uuid',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                required=True,
+                description='UUID of the enterprise customer',
+            ),
+        ],
+        responses={
+            status.HTTP_200_OK: serializers.BillingAddressResponseSerializer,
+            status.HTTP_400_BAD_REQUEST: OpenApiResponse(description='Missing or invalid enterprise_customer_uuid'),
+            status.HTTP_403_FORBIDDEN: OpenApiResponse(description='Permission denied'),
+            status.HTTP_404_NOT_FOUND: OpenApiResponse(description='Enterprise customer or Stripe customer not found'),
+            status.HTTP_422_UNPROCESSABLE_ENTITY: OpenApiResponse(description='Stripe API call failed'),
+        },
+    )
+    @action(
+        detail=False,
+        methods=['get'],
+        url_path='address',
+    )
+    @permission_required(
+        BILLING_MANAGEMENT_ACCESS_PERMISSION,
+        fn=lambda request, **kwargs: request.GET.get('enterprise_customer_uuid')
+    )
+    def get_address(self, request, **kwargs):
+        """
+        Retrieve the billing address for a Stripe customer.
+
+        The enterprise_customer_uuid query parameter is used to:
+        1. Find the CheckoutIntent for the enterprise
+        2. Extract the Stripe customer ID from the CheckoutIntent
+        3. Retrieve the customer's billing address from Stripe
+        """
+        enterprise_uuid = request.query_params.get('enterprise_customer_uuid')
+        if not enterprise_uuid:
+            return Response(
+                {'error': 'enterprise_customer_uuid query parameter is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Find the CheckoutIntent for this enterprise
+        try:
+            checkout_intent = CheckoutIntent.objects.filter(enterprise_uuid=enterprise_uuid).first()
+            if not checkout_intent or not checkout_intent.stripe_customer_id:
+                logger.warning(
+                    f'No checkout intent with stripe customer ID found for enterprise_uuid: {enterprise_uuid}'
+                )
+                return Response(
+                    {'error': 'Stripe customer not found for this enterprise'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            # Get the Stripe customer
+            stripe_customer = get_stripe_customer(checkout_intent.stripe_customer_id)
+            if not stripe_customer:
+                return Response(
+                    {'error': 'Stripe customer not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            # Extract address fields from Stripe customer object
+            address_data = {
+                'name': stripe_customer.get('name'),
+                'email': stripe_customer.get('email'),
+                'phone': stripe_customer.get('phone'),
+            }
+
+            # Extract address from Stripe's address object if it exists
+            if stripe_customer.get('address'):
+                address = stripe_customer['address']
+                address_data.update({
+                    'country': address.get('country'),
+                    'address_line_1': address.get('line1'),
+                    'address_line_2': address.get('line2'),
+                    'city': address.get('city'),
+                    'state': address.get('state'),
+                    'postal_code': address.get('postal_code'),
+                })
+
+            # Serialize and return the response
+            response_serializer = serializers.BillingAddressResponseSerializer(data=address_data)
+            if not response_serializer.is_valid():
+                logger.error(f'Failed to serialize billing address: {response_serializer.errors}')
+                return Response(
+                    {'error': 'Failed to process billing address'},
+                    status=status.HTTP_422_UNPROCESSABLE_ENTITY
+                )
+
+            return Response(response_serializer.data, status=status.HTTP_200_OK)
+
+        except stripe.error.StripeError as e:
+            logger.exception(f'Stripe API error retrieving customer {enterprise_uuid}: {str(e)}')
+            return Response(
+                {'error': f'Stripe API error: {str(e)}'},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+        except Exception as e:  # pylint: disable=broad-except
+            logger.exception(f'Unexpected error retrieving billing address for {enterprise_uuid}: {str(e)}')
+            return Response(
+                {'error': 'An unexpected error occurred'},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+
+    @extend_schema(
+        tags=[BILLING_MANAGEMENT_API_TAG],
+        summary='Update customer billing address',
+        description='Update the billing address for a Stripe customer associated with an enterprise.',
+        parameters=[
+            OpenApiParameter(
+                name='enterprise_customer_uuid',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                required=True,
+                description='UUID of the enterprise customer',
+            ),
+        ],
+        request=serializers.BillingAddressUpdateRequestSerializer,
+        responses={
+            status.HTTP_200_OK: serializers.BillingAddressResponseSerializer,
+            status.HTTP_400_BAD_REQUEST: OpenApiResponse(description='Missing UUID or invalid request data'),
+            status.HTTP_403_FORBIDDEN: OpenApiResponse(description='Permission denied'),
+            status.HTTP_404_NOT_FOUND: OpenApiResponse(description='Enterprise customer or Stripe customer not found'),
+            status.HTTP_422_UNPROCESSABLE_ENTITY: OpenApiResponse(description='Stripe API call failed'),
+        },
+    )
+    @action(
+        detail=False,
+        methods=['post'],
+        url_path='address/update',
+        url_name='update-address',
+    )
+    @permission_required(
+        BILLING_MANAGEMENT_ACCESS_PERMISSION,
+        fn=lambda request, **kwargs: request.GET.get('enterprise_customer_uuid')
+    )
+    def update_address(self, request, **kwargs):
+        """
+        Update the billing address for a Stripe customer.
+
+        The enterprise_customer_uuid query parameter is used to:
+        1. Find the CheckoutIntent for the enterprise
+        2. Extract the Stripe customer ID from the CheckoutIntent
+        3. Update the customer's billing address in Stripe
+        """
+        enterprise_uuid = request.query_params.get('enterprise_customer_uuid')
+        if not enterprise_uuid:
+            return Response(
+                {'error': 'enterprise_customer_uuid query parameter is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Validate request data
+        request_serializer = serializers.BillingAddressUpdateRequestSerializer(data=request.data)
+        if not request_serializer.is_valid():
+            return Response(request_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        validated_data = request_serializer.validated_data
+
+        try:
+            # Find the CheckoutIntent for this enterprise
+            checkout_intent = CheckoutIntent.objects.filter(enterprise_uuid=enterprise_uuid).first()
+            if not checkout_intent or not checkout_intent.stripe_customer_id:
+                logger.warning(
+                    f'No checkout intent with stripe customer ID found for enterprise_uuid: {enterprise_uuid}'
+                )
+                return Response(
+                    {'error': 'Stripe customer not found for this enterprise'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            # Update the Stripe customer with the new address information
+            stripe_customer = stripe.Customer.modify(
+                checkout_intent.stripe_customer_id,
+                name=validated_data.get('name'),
+                email=validated_data.get('email'),
+                phone=validated_data.get('phone'),
+                address={
+                    'line1': validated_data.get('address_line_1'),
+                    'line2': validated_data.get('address_line_2', ''),
+                    'city': validated_data.get('city'),
+                    'state': validated_data.get('state'),
+                    'postal_code': validated_data.get('postal_code'),
+                    'country': validated_data.get('country'),
+                },
+            )
+
+            # Extract address fields from updated Stripe customer object
+            address_data = {
+                'name': stripe_customer.get('name'),
+                'email': stripe_customer.get('email'),
+                'phone': stripe_customer.get('phone'),
+            }
+
+            # Extract address from Stripe's address object if it exists
+            if stripe_customer.get('address'):
+                address = stripe_customer['address']
+                address_data.update({
+                    'country': address.get('country'),
+                    'address_line_1': address.get('line1'),
+                    'address_line_2': address.get('line2'),
+                    'city': address.get('city'),
+                    'state': address.get('state'),
+                    'postal_code': address.get('postal_code'),
+                })
+
+            # Serialize and return the response
+            response_serializer = serializers.BillingAddressResponseSerializer(data=address_data)
+            if not response_serializer.is_valid():
+                logger.error(f'Failed to serialize updated billing address: {response_serializer.errors}')
+                return Response(
+                    {'error': 'Failed to process updated billing address'},
+                    status=status.HTTP_422_UNPROCESSABLE_ENTITY
+                )
+
+            return Response(response_serializer.data, status=status.HTTP_200_OK)
+
+        except stripe.error.StripeError as e:
+            logger.exception(f'Stripe API error updating customer {enterprise_uuid}: {str(e)}')
+            return Response(
+                {'error': f'Stripe API error: {str(e)}'},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+        except Exception as e:  # pylint: disable=broad-except
+            logger.exception(f'Unexpected error updating billing address for {enterprise_uuid}: {str(e)}')
+            return Response(
+                {'error': 'An unexpected error occurred'},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+
+    @extend_schema(
+        tags=[BILLING_MANAGEMENT_API_TAG],
+        summary='List payment methods',
+        description='Retrieve all saved payment methods for a Stripe customer associated with an enterprise.',
+        parameters=[
+            OpenApiParameter(
+                name='enterprise_customer_uuid',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                required=True,
+                description='UUID of the enterprise customer',
+            ),
+        ],
+        responses={
+            status.HTTP_200_OK: serializers.PaymentMethodsListResponseSerializer,
+            status.HTTP_400_BAD_REQUEST: OpenApiResponse(description='Missing or invalid enterprise_customer_uuid'),
+            status.HTTP_403_FORBIDDEN: OpenApiResponse(description='Permission denied'),
+            status.HTTP_404_NOT_FOUND: OpenApiResponse(description='Enterprise customer or Stripe customer not found'),
+            status.HTTP_422_UNPROCESSABLE_ENTITY: OpenApiResponse(description='Stripe API call failed'),
+        },
+    )
+    @action(
+        detail=False,
+        methods=['get'],
+        url_path='payment-methods',
+    )
+    @permission_required(
+        BILLING_MANAGEMENT_ACCESS_PERMISSION,
+        fn=lambda request, **kwargs: request.GET.get('enterprise_customer_uuid')
+    )
+    def list_payment_methods(self, request, **kwargs):
+        """
+        List all payment methods for a Stripe customer.
+
+        The enterprise_customer_uuid query parameter is used to:
+        1. Find the CheckoutIntent for the enterprise
+        2. Extract the Stripe customer ID from the CheckoutIntent
+        3. Retrieve the customer's payment methods from Stripe
+        """
+        enterprise_uuid = request.query_params.get('enterprise_customer_uuid')
+        if not enterprise_uuid:
+            return Response(
+                {'error': 'enterprise_customer_uuid query parameter is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            # Find the CheckoutIntent for this enterprise
+            checkout_intent = CheckoutIntent.objects.filter(enterprise_uuid=enterprise_uuid).first()
+            if not checkout_intent or not checkout_intent.stripe_customer_id:
+                logger.warning(
+                    f'No checkout intent with stripe customer ID found for enterprise_uuid: {enterprise_uuid}'
+                )
+                return Response(
+                    {'error': 'Stripe customer not found for this enterprise'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            # Get the Stripe customer to find the default payment method
+            stripe_customer = stripe.Customer.retrieve(checkout_intent.stripe_customer_id)
+            default_payment_method_id = stripe_customer.get('invoice_settings', {}).get('default_payment_method')
+
+            # List all payment methods for the customer
+            payment_methods_response = stripe.PaymentMethod.list(
+                customer=checkout_intent.stripe_customer_id,
+                type='card',  # Start with cards, could expand to support other types
+                limit=100,  # Reasonable limit for pagination
+            )
+
+            # Transform payment methods into response format
+            payment_methods = []
+            for pm in payment_methods_response.data:
+                payment_method_data = {
+                    'id': pm.get('id'),
+                    'type': pm.get('type'),
+                    'is_default': pm.get('id') == default_payment_method_id,
+                }
+
+                # Add card-specific fields if available
+                if pm.get('card'):
+                    card = pm['card']
+                    payment_method_data.update({
+                        'last4': card.get('last4'),
+                        'brand': card.get('brand'),
+                        'exp_month': card.get('exp_month'),
+                        'exp_year': card.get('exp_year'),
+                    })
+                # Add bank account specific fields if applicable
+                elif pm.get('us_bank_account'):
+                    bank_account = pm['us_bank_account']
+                    payment_method_data['last4'] = bank_account.get('last4')
+
+                payment_methods.append(payment_method_data)
+
+            # Serialize and return the response
+            response_data = {'payment_methods': payment_methods}
+            response_serializer = serializers.PaymentMethodsListResponseSerializer(data=response_data)
+            if not response_serializer.is_valid():
+                logger.error(f'Failed to serialize payment methods: {response_serializer.errors}')
+                return Response(
+                    {'error': 'Failed to process payment methods'},
+                    status=status.HTTP_422_UNPROCESSABLE_ENTITY
+                )
+
+            return Response(response_serializer.data, status=status.HTTP_200_OK)
+
+        except stripe.error.StripeError as e:
+            logger.exception(f'Stripe API error retrieving payment methods for {enterprise_uuid}: {str(e)}')
+            return Response(
+                {'error': f'Stripe API error: {str(e)}'},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+        except Exception as e:  # pylint: disable=broad-except
+            logger.exception(f'Unexpected error retrieving payment methods for {enterprise_uuid}: {str(e)}')
+            return Response(
+                {'error': 'An unexpected error occurred'},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+
+    @extend_schema(
+        tags=[BILLING_MANAGEMENT_API_TAG],
+        summary='Set default payment method',
+        description='Set a payment method as the default for a Stripe customer associated with an enterprise.',
+        parameters=[
+            OpenApiParameter(
+                name='enterprise_customer_uuid',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                required=True,
+                description='UUID of the enterprise customer',
+            ),
+            OpenApiParameter(
+                name='id',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.PATH,
+                required=True,
+                description='ID of the payment method to set as default',
+            ),
+        ],
+        request=serializers.SetDefaultPaymentMethodRequestSerializer,
+        responses={
+            status.HTTP_200_OK: OpenApiResponse(description='Payment method set as default successfully'),
+            status.HTTP_400_BAD_REQUEST: OpenApiResponse(description='Missing or invalid enterprise_customer_uuid'),
+            status.HTTP_403_FORBIDDEN: OpenApiResponse(description='Permission denied'),
+            status.HTTP_404_NOT_FOUND: OpenApiResponse(description='Enterprise customer, Stripe customer, or payment method not found'),
+            status.HTTP_422_UNPROCESSABLE_ENTITY: OpenApiResponse(description='Stripe API call failed'),
+        },
+    )
+    @action(
+        detail=False,
+        methods=['post'],
+        url_path='payment-methods/(?P<payment_method_id>[^/]+)/set-default',
+    )
+    @permission_required(
+        BILLING_MANAGEMENT_ACCESS_PERMISSION,
+        fn=lambda request, **kwargs: request.GET.get('enterprise_customer_uuid')
+    )
+    def set_default_payment_method(self, request, payment_method_id=None, **kwargs):
+        """
+        Set a payment method as the default for a Stripe customer.
+
+        The enterprise_customer_uuid query parameter is used to:
+        1. Find the CheckoutIntent for the enterprise
+        2. Extract the Stripe customer ID from the CheckoutIntent
+        3. Verify the payment method belongs to this customer
+        4. Set it as the default payment method
+        """
+        enterprise_uuid = request.query_params.get('enterprise_customer_uuid')
+        if not enterprise_uuid:
+            return Response(
+                {'error': 'enterprise_customer_uuid query parameter is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not payment_method_id:
+            return Response(
+                {'error': 'payment_method_id is required in the URL path'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            # Find the CheckoutIntent for this enterprise
+            checkout_intent = CheckoutIntent.objects.filter(enterprise_uuid=enterprise_uuid).first()
+            if not checkout_intent or not checkout_intent.stripe_customer_id:
+                logger.warning(
+                    f'No checkout intent with stripe customer ID found for enterprise_uuid: {enterprise_uuid}'
+                )
+                return Response(
+                    {'error': 'Stripe customer not found for this enterprise'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            stripe_customer_id = checkout_intent.stripe_customer_id
+
+            # Verify the payment method exists and belongs to this customer
+            payment_method = stripe.PaymentMethod.retrieve(payment_method_id)
+            if not payment_method or payment_method.get('customer') != stripe_customer_id:
+                logger.warning(
+                    f'Payment method {payment_method_id} does not belong to customer {stripe_customer_id}'
+                )
+                return Response(
+                    {'error': 'Payment method not found or does not belong to this customer'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            # Set the payment method as the default
+            stripe.Customer.modify(
+                stripe_customer_id,
+                invoice_settings={'default_payment_method': payment_method_id},
+            )
+
+            return Response(
+                {'message': 'Payment method set as default successfully'},
+                status=status.HTTP_200_OK
+            )
+
+        except stripe.error.InvalidRequestError as e:
+            logger.warning(f'Invalid Stripe request for payment method {payment_method_id}: {str(e)}')
+            return Response(
+                {'error': 'Payment method not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except stripe.error.StripeError as e:
+            logger.exception(f'Stripe API error setting default payment method for {enterprise_uuid}: {str(e)}')
+            return Response(
+                {'error': f'Stripe API error: {str(e)}'},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+        except Exception as e:  # pylint: disable=broad-except
+            logger.exception(f'Unexpected error setting default payment method for {enterprise_uuid}: {str(e)}')
+            return Response(
+                {'error': 'An unexpected error occurred'},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+
+    @extend_schema(
+        tags=[BILLING_MANAGEMENT_API_TAG],
+        summary='Delete payment method',
+        description='Remove a payment method from a Stripe customer associated with an enterprise.',
+        parameters=[
+            OpenApiParameter(
+                name='enterprise_customer_uuid',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                required=True,
+                description='UUID of the enterprise customer',
+            ),
+            OpenApiParameter(
+                name='id',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.PATH,
+                required=True,
+                description='ID of the payment method to delete',
+            ),
+        ],
+        responses={
+            status.HTTP_200_OK: OpenApiResponse(description='Payment method deleted successfully'),
+            status.HTTP_400_BAD_REQUEST: OpenApiResponse(description='Missing or invalid enterprise_customer_uuid'),
+            status.HTTP_403_FORBIDDEN: OpenApiResponse(description='Permission denied'),
+            status.HTTP_404_NOT_FOUND: OpenApiResponse(description='Enterprise customer, Stripe customer, or payment method not found'),
+            status.HTTP_409_CONFLICT: OpenApiResponse(description='Cannot delete only payment method or must change default first'),
+            status.HTTP_422_UNPROCESSABLE_ENTITY: OpenApiResponse(description='Stripe API call failed'),
+        },
+    )
+    @action(
+        detail=False,
+        methods=['delete'],
+        url_path='payment-methods/(?P<payment_method_id>[^/]+)',
+    )
+    @permission_required(
+        BILLING_MANAGEMENT_ACCESS_PERMISSION,
+        fn=lambda request, **kwargs: request.GET.get('enterprise_customer_uuid')
+    )
+    def delete_payment_method(self, request, payment_method_id=None, **kwargs):
+        """
+        Delete a payment method from a Stripe customer.
+
+        The enterprise_customer_uuid query parameter is used to:
+        1. Find the CheckoutIntent for the enterprise
+        2. Extract the Stripe customer ID from the CheckoutIntent
+        3. Verify the payment method belongs to this customer
+        4. Check constraints (only payment method, or is default with others)
+        5. Detach the payment method from the customer
+        """
+        enterprise_uuid = request.query_params.get('enterprise_customer_uuid')
+        if not enterprise_uuid:
+            return Response(
+                {'error': 'enterprise_customer_uuid query parameter is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not payment_method_id:
+            return Response(
+                {'error': 'payment_method_id is required in the URL path'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            # Find the CheckoutIntent for this enterprise
+            checkout_intent = CheckoutIntent.objects.filter(enterprise_uuid=enterprise_uuid).first()
+            if not checkout_intent or not checkout_intent.stripe_customer_id:
+                logger.warning(
+                    f'No checkout intent with stripe customer ID found for enterprise_uuid: {enterprise_uuid}'
+                )
+                return Response(
+                    {'error': 'Stripe customer not found for this enterprise'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            stripe_customer_id = checkout_intent.stripe_customer_id
+
+            # Verify the payment method exists and belongs to this customer
+            payment_method = stripe.PaymentMethod.retrieve(payment_method_id)
+            if not payment_method or payment_method.get('customer') != stripe_customer_id:
+                logger.warning(
+                    f'Payment method {payment_method_id} does not belong to customer {stripe_customer_id}'
+                )
+                return Response(
+                    {'error': 'Payment method not found or does not belong to this customer'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            # Get the customer to check payment method count and default
+            stripe_customer = stripe.Customer.retrieve(stripe_customer_id)
+            default_payment_method_id = stripe_customer.get('invoice_settings', {}).get('default_payment_method')
+
+            # List all payment methods for the customer
+            payment_methods_response = stripe.PaymentMethod.list(
+                customer=stripe_customer_id,
+                type='card',
+                limit=100,
+            )
+
+            # Count total payment methods (including other types if they exist)
+            # For now, we check only card type, but in future might need to include other types
+            total_payment_methods = len(payment_methods_response.data)
+
+            # Check if this is the only payment method
+            if total_payment_methods <= 1:
+                return Response(
+                    {'error': 'Cannot delete the only payment method on the account'},
+                    status=status.HTTP_409_CONFLICT
+                )
+
+            # Check if this is the default and others exist
+            if payment_method_id == default_payment_method_id:
+                return Response(
+                    {'error': 'Set another method as default before deleting this one'},
+                    status=status.HTTP_409_CONFLICT
+                )
+
+            # Detach the payment method from the customer
+            stripe.PaymentMethod.detach(payment_method_id)
+
+            return Response(
+                {'message': 'Payment method deleted successfully'},
+                status=status.HTTP_200_OK
+            )
+
+        except stripe.error.InvalidRequestError as e:
+            logger.warning(f'Invalid Stripe request for payment method {payment_method_id}: {str(e)}')
+            return Response(
+                {'error': 'Payment method not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except stripe.error.StripeError as e:
+            logger.exception(f'Stripe API error deleting payment method {payment_method_id} for {enterprise_uuid}: {str(e)}')
+            return Response(
+                {'error': f'Stripe API error: {str(e)}'},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+        except Exception as e:  # pylint: disable=broad-except
+            logger.exception(f'Unexpected error deleting payment method for {enterprise_uuid}: {str(e)}')
+            return Response(
+                {'error': 'An unexpected error occurred'},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+
+    @extend_schema(
+        tags=[BILLING_MANAGEMENT_API_TAG],
+        summary='List transactions',
+        description='Retrieve paginated invoice/transaction history for a Stripe customer associated with an enterprise.',
+        parameters=[
+            OpenApiParameter(
+                name='enterprise_customer_uuid',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                required=True,
+                description='UUID of the enterprise customer',
+            ),
+            OpenApiParameter(
+                name='page_token',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description='Stripe pagination cursor for continuing a paginated list',
+            ),
+            OpenApiParameter(
+                name='limit',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description='Number of transactions to return per page (default 10, max 25)',
+            ),
+        ],
+        responses={
+            status.HTTP_200_OK: serializers.TransactionsListResponseSerializer,
+            status.HTTP_400_BAD_REQUEST: OpenApiResponse(description='Missing or invalid enterprise_customer_uuid or parameters'),
+            status.HTTP_403_FORBIDDEN: OpenApiResponse(description='Permission denied'),
+            status.HTTP_404_NOT_FOUND: OpenApiResponse(description='Enterprise customer or Stripe customer not found'),
+            status.HTTP_422_UNPROCESSABLE_ENTITY: OpenApiResponse(description='Stripe API call failed'),
+        },
+    )
+    @action(detail=False, methods=['get'], url_path='transactions')
+    @permission_required(
+        BILLING_MANAGEMENT_ACCESS_PERMISSION,
+        fn=lambda request, **kwargs: request.GET.get('enterprise_customer_uuid')
+    )
+    def list_transactions(self, request, **kwargs):
+        """
+        List transactions/invoices for a Stripe customer.
+
+        The enterprise_customer_uuid query parameter is used to:
+        1. Find the CheckoutIntent for the enterprise
+        2. Extract the Stripe customer ID from the CheckoutIntent
+        3. Retrieve paginated invoices from Stripe
+        4. Fetch charge information for receipt URLs
+        """
+        enterprise_uuid = request.query_params.get('enterprise_customer_uuid')
+        if not enterprise_uuid:
+            return Response(
+                {'error': 'enterprise_customer_uuid query parameter is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Get and validate pagination parameters
+        page_token = request.query_params.get('starting_after')
+        try:
+            limit = int(request.query_params.get('limit', 10))
+            if limit < 1 or limit > 25:
+                limit = 10
+        except (ValueError, TypeError):
+            limit = 10
+
+        try:
+            # Find the CheckoutIntent for this enterprise
+            checkout_intent = CheckoutIntent.objects.filter(enterprise_uuid=enterprise_uuid).first()
+            if not checkout_intent or not checkout_intent.stripe_customer_id:
+                logger.warning(
+                    f'No checkout intent with stripe customer ID found for enterprise_uuid: {enterprise_uuid}'
+                )
+                return Response(
+                    {'error': 'Stripe customer not found for this enterprise'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            stripe_customer_id = checkout_intent.stripe_customer_id
+
+            # Retrieve invoices from Stripe with pagination
+            invoices_response = stripe.Invoice.list(
+                customer=stripe_customer_id,
+                limit=limit,
+                starting_after=page_token,
+            )
+
+            # Transform invoices to transaction format
+            transactions = []
+            for invoice in invoices_response.data:
+                transaction = {
+                    'id': invoice.get('id'),
+                    'date': invoice.get('created'),  # Unix timestamp, will be converted by serializer
+                    'amount': invoice.get('amount_paid'),  # Amount in cents
+                    'currency': invoice.get('currency', 'usd').lower(),
+                    'status': self._normalize_invoice_status(invoice.get('status')),
+                    'description': invoice.get('description'),
+                    'invoice_pdf_url': invoice.get('hosted_invoice_url'),
+                }
+
+                # Attempt to get receipt_url from associated charge
+                try:
+                    if invoice.get('charge'):
+                        charge = stripe.Charge.retrieve(invoice.get('charge'))
+                        transaction['receipt_url'] = charge.get('receipt_url')
+                except stripe.error.StripeError as e:
+                    logger.warning(f'Could not retrieve charge {invoice.get("charge")} for receipt URL: {str(e)}')
+                    transaction['receipt_url'] = None
+
+                transactions.append(transaction)
+
+            # Determine if there are more results
+            next_page_token = None
+            if invoices_response.has_more:
+                # Get the last invoice's ID for pagination
+                if transactions:
+                    next_page_token = transactions[-1]['id']
+
+            # Serialize and return response
+            response_data = {
+                'transactions': transactions,
+                'next_page_token': next_page_token,
+            }
+
+            serializer = serializers.TransactionsListResponseSerializer(response_data)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
+        except stripe.error.InvalidRequestError as e:
+            logger.warning(f'Invalid Stripe request for customer {stripe_customer_id}: {str(e)}')
+            return Response(
+                {'error': 'Invalid request to Stripe API'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except stripe.error.StripeError as e:
+            logger.exception(f'Stripe API error retrieving transactions for {enterprise_uuid}: {str(e)}')
+            return Response(
+                {'error': f'Stripe API error: {str(e)}'},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+        except Exception as e:  # pylint: disable=broad-except
+            logger.exception(f'Unexpected error retrieving transactions for {enterprise_uuid}: {str(e)}')
+            return Response(
+                {'error': 'An unexpected error occurred'},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+
+    @staticmethod
+    def _normalize_invoice_status(stripe_status):
+        """
+        Normalize Stripe invoice status to canonical form.
+
+        Stripe returns statuses like 'draft', 'open', 'paid', 'uncollectible', 'void'.
+        We normalize to: 'paid', 'open', 'void', 'uncollectible'
+        """
+        if stripe_status in ['paid']:
+            return 'paid'
+        elif stripe_status in ['draft', 'open']:
+            return 'open'
+        elif stripe_status in ['void']:
+            return 'void'
+        elif stripe_status in ['uncollectible']:
+            return 'uncollectible'
+        return 'open'  # Default to open
+
+    @extend_schema(
+        tags=[BILLING_MANAGEMENT_API_TAG],
+        summary='Get subscription status',
+        description='Retrieve the current subscription status and plan type for a Stripe customer associated with an enterprise.',
+        parameters=[
+            OpenApiParameter(
+                name='enterprise_customer_uuid',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                required=True,
+                description='UUID of the enterprise customer',
+            ),
+        ],
+        responses={
+            status.HTTP_200_OK: serializers.SubscriptionResponseSerializer,
+            status.HTTP_400_BAD_REQUEST: OpenApiResponse(description='Missing or invalid enterprise_customer_uuid'),
+            status.HTTP_403_FORBIDDEN: OpenApiResponse(description='Permission denied'),
+            status.HTTP_404_NOT_FOUND: OpenApiResponse(description='Enterprise customer or Stripe customer not found'),
+            status.HTTP_422_UNPROCESSABLE_ENTITY: OpenApiResponse(description='Stripe API call failed'),
+        },
+    )
+    @action(detail=False, methods=['get'], url_path='subscription')
+    @permission_required(
+        BILLING_MANAGEMENT_ACCESS_PERMISSION,
+        fn=lambda request, **kwargs: request.GET.get('enterprise_customer_uuid')
+    )
+    def get_subscription(self, request, **kwargs):
+        """
+        Get subscription status and plan type for a Stripe customer.
+
+        Returns null subscription if no active subscription exists.
+        The plan_type is derived from Stripe product/price metadata using the 'plan_type' key.
+        """
+        enterprise_uuid = request.query_params.get('enterprise_customer_uuid')
+        if not enterprise_uuid:
+            return Response(
+                {'error': 'enterprise_customer_uuid query parameter is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            # Find the CheckoutIntent for this enterprise
+            checkout_intent = CheckoutIntent.objects.filter(enterprise_uuid=enterprise_uuid).first()
+            if not checkout_intent or not checkout_intent.stripe_customer_id:
+                logger.warning(
+                    f'No checkout intent with stripe customer ID found for enterprise_uuid: {enterprise_uuid}'
+                )
+                return Response(
+                    {'error': 'Stripe customer not found for this enterprise'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            stripe_customer_id = checkout_intent.stripe_customer_id
+
+            # Retrieve subscriptions for the customer
+            subscriptions_response = stripe.Subscription.list(
+                customer=stripe_customer_id,
+                limit=1,  # Only get the most recent subscription
+                status='active',
+            )
+
+            # If no active subscription, return null
+            if not subscriptions_response.data:
+                serializer = serializers.SubscriptionResponseSerializer(None)
+                return Response(serializer.data, status=status.HTTP_200_OK)
+
+            subscription = subscriptions_response.data[0]
+
+            # Extract subscription details
+            sub_data = {
+                'id': subscription.get('id'),
+                'status': subscription.get('status'),
+                'plan_type': self._get_plan_type_from_subscription(subscription),
+                'cancel_at_period_end': subscription.get('cancel_at_period_end', False),
+                'current_period_end': subscription.get('current_period_end'),
+                'yearly_amount': self._get_yearly_amount(subscription),
+                'license_count': self._get_license_count(subscription),
+            }
+
+            serializer = serializers.SubscriptionResponseSerializer(sub_data)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
+        except stripe.error.InvalidRequestError as e:
+            logger.warning(f'Invalid Stripe request for customer {stripe_customer_id}: {str(e)}')
+            return Response(
+                {'error': 'Invalid request to Stripe API'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except stripe.error.StripeError as e:
+            logger.exception(f'Stripe API error retrieving subscription for {enterprise_uuid}: {str(e)}')
+            return Response(
+                {'error': f'Stripe API error: {str(e)}'},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+        except Exception as e:  # pylint: disable=broad-except
+            logger.exception(f'Unexpected error retrieving subscription for {enterprise_uuid}: {str(e)}')
+            return Response(
+                {'error': 'An unexpected error occurred'},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+
+    @staticmethod
+    def _get_plan_type_from_subscription(subscription):
+        """
+        Derive plan_type from Stripe subscription's price/product metadata.
+
+        Looks for 'plan_type' key in price metadata first, then product metadata.
+        Returns 'Other' if no matching metadata is found.
+
+        Expected plan_type values: 'Teams', 'Essentials', 'LearnerCredit', 'Other'
+        """
+        try:
+            # Get the price object from the subscription
+            items = subscription.get('items', {}).get('data', [])
+            if not items:
+                return 'Other'
+
+            price_id = items[0].get('price', {}).get('id')
+            if not price_id:
+                return 'Other'
+
+            # Retrieve the price to access metadata
+            price = stripe.Price.retrieve(price_id)
+            
+            # Check price metadata first
+            price_metadata = price.get('metadata', {})
+            if 'plan_type' in price_metadata:
+                return price_metadata.get('plan_type', 'Other')
+
+            # Check product metadata
+            product_id = price.get('product')
+            if product_id:
+                product = stripe.Product.retrieve(product_id)
+                product_metadata = product.get('metadata', {})
+                if 'plan_type' in product_metadata:
+                    return product_metadata.get('plan_type', 'Other')
+
+            return 'Other'
+
+        except stripe.error.StripeError as e:
+            logger.warning(f'Could not retrieve plan type from Stripe metadata: {str(e)}')
+            return 'Other'
+        except Exception as e:  # pylint: disable=broad-except
+            logger.warning(f'Unexpected error deriving plan_type: {str(e)}')
+            return 'Other'
+
+    @staticmethod
+    def _get_yearly_amount(subscription):
+        """
+        Calculate yearly amount from subscription items.
+
+        Returns the total yearly recurring revenue for the subscription.
+        """
+        try:
+            items = subscription.get('items', {}).get('data', [])
+            if not items:
+                return 0
+
+            total_amount = 0
+            for item in items:
+                price = item.get('price', {})
+                quantity = item.get('quantity', 1)
+                
+                # Get the unit amount
+                unit_amount = price.get('unit_amount', 0)
+                
+                # Calculate yearly amount based on billing period
+                billing_period = price.get('recurring', {}).get('interval')
+                if billing_period == 'year':
+                    total_amount += unit_amount * quantity
+                elif billing_period == 'month':
+                    total_amount += (unit_amount * 12) * quantity
+                elif billing_period == 'week':
+                    total_amount += (unit_amount * 52) * quantity
+
+            return total_amount
+
+        except Exception as e:  # pylint: disable=broad-except
+            logger.warning(f'Could not calculate yearly amount: {str(e)}')
+            return 0
+
+    @staticmethod
+    def _get_license_count(subscription):
+        """
+        Get license count from subscription items.
+
+        Uses the quantity from subscription items as license count.
+        Returns the sum of quantities across all items.
+        """
+        try:
+            items = subscription.get('items', {}).get('data', [])
+            if not items:
+                return 0
+
+            total_licenses = 0
+            for item in items:
+                quantity = item.get('quantity', 0)
+                total_licenses += quantity
+
+            return total_licenses
+
+        except Exception as e:  # pylint: disable=broad-except
+            logger.warning(f'Could not get license count: {str(e)}')
+            return 0
+
+    @extend_schema(
+        tags=[BILLING_MANAGEMENT_API_TAG],
+        summary='Cancel subscription',
+        description='Request cancellation of a subscription at the end of the current billing period. Only available for Teams and Essentials plans.',
+        parameters=[
+            OpenApiParameter(
+                name='enterprise_customer_uuid',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                required=True,
+                description='UUID of the enterprise customer',
+            ),
+        ],
+        responses={
+            status.HTTP_200_OK: serializers.CancelSubscriptionResponseSerializer,
+            status.HTTP_400_BAD_REQUEST: OpenApiResponse(description='Missing or invalid enterprise_customer_uuid'),
+            status.HTTP_403_FORBIDDEN: OpenApiResponse(description='Permission denied or plan type does not support cancellation'),
+            status.HTTP_404_NOT_FOUND: OpenApiResponse(description='Enterprise customer, Stripe customer, or active subscription not found'),
+            status.HTTP_409_CONFLICT: OpenApiResponse(description='Subscription is already scheduled for cancellation'),
+            status.HTTP_422_UNPROCESSABLE_ENTITY: OpenApiResponse(description='Stripe API call failed'),
+        },
+    )
+    @action(detail=False, methods=['post'], url_path='subscription/cancel')
+    @permission_required(
+        BILLING_MANAGEMENT_ACCESS_PERMISSION,
+        fn=lambda request, **kwargs: request.GET.get('enterprise_customer_uuid')
+    )
+    def cancel_subscription(self, request, **kwargs):
+        """
+        Cancel a subscription at the end of the current billing period.
+
+        Only Teams and Essentials plans can be cancelled. Returns 403 for other plan types.
+        Returns 409 if the subscription is already scheduled for cancellation.
+        """
+        enterprise_uuid = request.query_params.get('enterprise_customer_uuid')
+        if not enterprise_uuid:
+            return Response(
+                {'error': 'enterprise_customer_uuid query parameter is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            # Find the CheckoutIntent for this enterprise
+            checkout_intent = CheckoutIntent.objects.filter(enterprise_uuid=enterprise_uuid).first()
+            if not checkout_intent or not checkout_intent.stripe_customer_id:
+                logger.warning(
+                    f'No checkout intent with stripe customer ID found for enterprise_uuid: {enterprise_uuid}'
+                )
+                return Response(
+                    {'error': 'Stripe customer not found for this enterprise'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            stripe_customer_id = checkout_intent.stripe_customer_id
+
+            # Retrieve the active subscription
+            subscriptions_response = stripe.Subscription.list(
+                customer=stripe_customer_id,
+                limit=1,
+                status='active',
+            )
+
+            if not subscriptions_response.data:
+                return Response(
+                    {'error': 'No active subscription found for this enterprise'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            subscription = subscriptions_response.data[0]
+
+            # Check if already cancelled
+            if subscription.get('cancel_at_period_end', False):
+                return Response(
+                    {'error': 'Subscription is already scheduled for cancellation'},
+                    status=status.HTTP_409_CONFLICT
+                )
+
+            # Get plan_type to verify cancellation eligibility
+            plan_type = self._get_plan_type_from_subscription(subscription)
+            if plan_type not in ['Teams', 'Essentials']:
+                return Response(
+                    {'error': 'Subscription cancellation is not available for your plan type'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            # Cancel the subscription at period end
+            updated_subscription = stripe.Subscription.modify(
+                subscription.get('id'),
+                cancel_at_period_end=True,
+            )
+
+            # Build response with updated subscription data
+            sub_data = {
+                'id': updated_subscription.get('id'),
+                'status': updated_subscription.get('status'),
+                'plan_type': self._get_plan_type_from_subscription(updated_subscription),
+                'cancel_at_period_end': updated_subscription.get('cancel_at_period_end', False),
+                'current_period_end': updated_subscription.get('current_period_end'),
+            }
+
+            serializer = serializers.CancelSubscriptionResponseSerializer(sub_data)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
+        except stripe.error.InvalidRequestError as e:
+            logger.warning(f'Invalid Stripe request for customer {stripe_customer_id}: {str(e)}')
+            return Response(
+                {'error': 'Invalid request to Stripe API'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except stripe.error.StripeError as e:
+            logger.exception(f'Stripe API error cancelling subscription for {enterprise_uuid}: {str(e)}')
+            return Response(
+                {'error': f'Stripe API error: {str(e)}'},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+        except Exception as e:  # pylint: disable=broad-except
+            logger.exception(f'Unexpected error cancelling subscription for {enterprise_uuid}: {str(e)}')
+            return Response(
+                {'error': 'An unexpected error occurred'},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+
+    @extend_schema(
+        tags=[BILLING_MANAGEMENT_API_TAG],
+        summary='Reinstate subscription',
+        description='Remove a scheduled cancellation from a subscription. Only available for Teams and Essentials plans.',
+        parameters=[
+            OpenApiParameter(
+                name='enterprise_customer_uuid',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                required=True,
+                description='UUID of the enterprise customer',
+            ),
+        ],
+        responses={
+            status.HTTP_200_OK: serializers.ReinstateSubscriptionResponseSerializer,
+            status.HTTP_400_BAD_REQUEST: OpenApiResponse(description='Missing or invalid enterprise_customer_uuid'),
+            status.HTTP_403_FORBIDDEN: OpenApiResponse(description='Permission denied or plan type does not support reinstatement'),
+            status.HTTP_404_NOT_FOUND: OpenApiResponse(description='Enterprise customer, Stripe customer, or active subscription not found'),
+            status.HTTP_409_CONFLICT: OpenApiResponse(description='Subscription is not pending cancellation or period has ended'),
+            status.HTTP_422_UNPROCESSABLE_ENTITY: OpenApiResponse(description='Stripe API call failed'),
+        },
+    )
+    @action(detail=False, methods=['post'], url_path='subscription/reinstate')
+    @permission_required(
+        BILLING_MANAGEMENT_ACCESS_PERMISSION,
+        fn=lambda request, **kwargs: request.GET.get('enterprise_customer_uuid')
+    )
+    def reinstate_subscription(self, request, **kwargs):
+        """
+        Reinstate a subscription that is scheduled for cancellation.
+
+        Only Teams and Essentials plans can be reinstated. Returns 403 for other plan types.
+        Returns 409 if the subscription is not currently scheduled for cancellation or if the period has ended.
+        """
+        enterprise_uuid = request.query_params.get('enterprise_customer_uuid')
+        if not enterprise_uuid:
+            return Response(
+                {'error': 'enterprise_customer_uuid query parameter is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            # Find the CheckoutIntent for this enterprise
+            checkout_intent = CheckoutIntent.objects.filter(enterprise_uuid=enterprise_uuid).first()
+            if not checkout_intent or not checkout_intent.stripe_customer_id:
+                logger.warning(
+                    f'No checkout intent with stripe customer ID found for enterprise_uuid: {enterprise_uuid}'
+                )
+                return Response(
+                    {'error': 'Stripe customer not found for this enterprise'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            stripe_customer_id = checkout_intent.stripe_customer_id
+
+            # Retrieve the active subscription
+            subscriptions_response = stripe.Subscription.list(
+                customer=stripe_customer_id,
+                limit=1,
+                status='active',
+            )
+
+            if not subscriptions_response.data:
+                return Response(
+                    {'error': 'No active subscription found for this enterprise'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            subscription = subscriptions_response.data[0]
+
+            # Check if not scheduled for cancellation
+            if not subscription.get('cancel_at_period_end', False):
+                return Response(
+                    {'error': 'Subscription is not currently scheduled for cancellation'},
+                    status=status.HTTP_409_CONFLICT
+                )
+
+            # Check if the period has already ended
+            current_period_end = subscription.get('current_period_end')
+            import time
+            if current_period_end and current_period_end <= time.time():
+                return Response(
+                    {'error': 'The subscription period has already ended'},
+                    status=status.HTTP_409_CONFLICT
+                )
+
+            # Get plan_type to verify reinstatement eligibility
+            plan_type = self._get_plan_type_from_subscription(subscription)
+            if plan_type not in ['Teams', 'Essentials']:
+                return Response(
+                    {'error': 'Subscription reinstatement is not available for your plan type'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            # Reinstate the subscription
+            updated_subscription = stripe.Subscription.modify(
+                subscription.get('id'),
+                cancel_at_period_end=False,
+            )
+
+            # Build response with updated subscription data
+            sub_data = {
+                'id': updated_subscription.get('id'),
+                'status': updated_subscription.get('status'),
+                'plan_type': self._get_plan_type_from_subscription(updated_subscription),
+                'cancel_at_period_end': updated_subscription.get('cancel_at_period_end', False),
+                'current_period_end': updated_subscription.get('current_period_end'),
+            }
+
+            serializer = serializers.ReinstateSubscriptionResponseSerializer(sub_data)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
+        except stripe.error.InvalidRequestError as e:
+            logger.warning(f'Invalid Stripe request for customer {stripe_customer_id}: {str(e)}')
+            return Response(
+                {'error': 'Invalid request to Stripe API'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except stripe.error.StripeError as e:
+            logger.exception(f'Stripe API error reinstating subscription for {enterprise_uuid}: {str(e)}')
+            return Response(
+                {'error': f'Stripe API error: {str(e)}'},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+        except Exception as e:  # pylint: disable=broad-except
+            logger.exception(f'Unexpected error reinstating subscription for {enterprise_uuid}: {str(e)}')
+            return Response(
+                {'error': 'An unexpected error occurred'},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )

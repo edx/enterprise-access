@@ -299,3 +299,318 @@ class StripeSubscriptionPlanInfoResponseSerializer(serializers.Serializer):
         required=False,
         help_text='Timestamp when the subscription is scheduled to be canceled',
     )
+
+
+# pylint: disable=abstract-method
+class BillingAddressResponseSerializer(serializers.Serializer):
+    """
+    Response serializer for billing address from GET /api/v1/billing-management/address
+    """
+    name = serializers.CharField(
+        required=False,
+        allow_null=True,
+        help_text='Full name of the billing contact',
+    )
+    email = serializers.EmailField(
+        required=False,
+        allow_null=True,
+        help_text='Email address associated with the billing account',
+    )
+    country = serializers.CharField(
+        required=False,
+        allow_null=True,
+        help_text='Two-letter ISO country code',
+    )
+    address_line_1 = serializers.CharField(
+        required=False,
+        allow_null=True,
+        help_text='First line of the street address',
+    )
+    address_line_2 = serializers.CharField(
+        required=False,
+        allow_null=True,
+        help_text='Second line of the street address (optional)',
+    )
+    city = serializers.CharField(
+        required=False,
+        allow_null=True,
+        help_text='City of the billing address',
+    )
+    state = serializers.CharField(
+        required=False,
+        allow_null=True,
+        help_text='State or province of the billing address',
+    )
+    postal_code = serializers.CharField(
+        required=False,
+        allow_null=True,
+        help_text='Postal code or zip code of the billing address',
+    )
+    phone = serializers.CharField(
+        required=False,
+        allow_null=True,
+        help_text='Phone number associated with the billing account',
+    )
+
+
+# pylint: disable=abstract-method
+class BillingAddressUpdateRequestSerializer(serializers.Serializer):
+    """
+    Request serializer for updating billing address via POST /api/v1/billing-management/address
+    """
+    name = serializers.CharField(
+        required=True,
+        max_length=255,
+        help_text='Full name of the billing contact',
+    )
+    email = serializers.EmailField(
+        required=True,
+        help_text='Email address associated with the billing account',
+    )
+    country = serializers.CharField(
+        required=True,
+        max_length=2,
+        min_length=2,
+        help_text='Two-letter ISO country code',
+    )
+    address_line_1 = serializers.CharField(
+        required=True,
+        max_length=255,
+        help_text='First line of the street address',
+    )
+    address_line_2 = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=255,
+        help_text='Second line of the street address (optional)',
+    )
+    city = serializers.CharField(
+        required=True,
+        max_length=255,
+        help_text='City of the billing address',
+    )
+    state = serializers.CharField(
+        required=True,
+        max_length=255,
+        help_text='State or province of the billing address',
+    )
+    postal_code = serializers.CharField(
+        required=True,
+        max_length=20,
+        help_text='Postal code or zip code of the billing address',
+    )
+    phone = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=20,
+        help_text='Phone number associated with the billing account',
+    )
+
+    def validate_country(self, value):
+        """
+        Validate that country is a valid two-letter ISO code.
+        """
+        if len(value) != 2 or not value.isalpha():
+            raise serializers.ValidationError(
+                'Country must be a valid two-letter ISO code (e.g., US, CA, GB)'
+            )
+        return value.upper()
+
+    def validate_postal_code(self, value):
+        """
+        Validate postal code is not empty if required.
+        """
+        if not value or not value.strip():
+            raise serializers.ValidationError('Postal code is required and cannot be empty')
+        return value
+
+
+# pylint: disable=abstract-method
+class PaymentMethodResponseSerializer(serializers.Serializer):
+    """
+    Response serializer for a single payment method from GET /api/v1/billing-management/payment-methods
+    """
+    id = serializers.CharField(
+        required=True,
+        help_text='Unique identifier for the payment method in Stripe',
+    )
+    type = serializers.CharField(
+        required=True,
+        help_text='Type of payment method (e.g., card, us_bank_account)',
+    )
+    last4 = serializers.CharField(
+        required=False,
+        allow_null=True,
+        help_text='Last 4 digits of the card or account number',
+    )
+    brand = serializers.CharField(
+        required=False,
+        allow_null=True,
+        help_text='Card brand (e.g., visa, mastercard) - only for card type',
+    )
+    exp_month = serializers.IntegerField(
+        required=False,
+        allow_null=True,
+        help_text='Card expiration month - only for card type',
+    )
+    exp_year = serializers.IntegerField(
+        required=False,
+        allow_null=True,
+        help_text='Card expiration year - only for card type',
+    )
+    is_default = serializers.BooleanField(
+        required=True,
+        help_text='Whether this is the default payment method for the customer',
+    )
+
+
+# pylint: disable=abstract-method
+class PaymentMethodsListResponseSerializer(serializers.Serializer):
+    """
+    Response serializer for list of payment methods from GET /api/v1/billing-management/payment-methods
+    """
+    payment_methods = PaymentMethodResponseSerializer(
+        many=True,
+        required=True,
+        help_text='List of payment methods for the customer',
+    )
+
+
+# pylint: disable=abstract-method
+class SetDefaultPaymentMethodRequestSerializer(serializers.Serializer):
+    """
+    Request serializer for setting a payment method as default via POST /api/v1/billing-management/payment-methods/{id}/set-default
+    """
+    payment_method_id = serializers.CharField(
+        required=True,
+        help_text='Unique identifier of the payment method to set as default',
+    )
+
+
+# pylint: disable=abstract-method
+class TransactionResponseSerializer(serializers.Serializer):
+    """
+    Response serializer for a single transaction/invoice from GET /api/v1/billing-management/transactions
+    """
+    id = serializers.CharField(
+        required=True,
+        help_text='Unique identifier for the invoice/transaction in Stripe',
+    )
+    date = serializers.DateTimeField(
+        required=True,
+        help_text='Invoice date (ISO string)',
+    )
+    amount = serializers.IntegerField(
+        required=True,
+        help_text='Amount in cents',
+    )
+    currency = serializers.CharField(
+        required=True,
+        max_length=3,
+        help_text='Three-letter ISO currency code',
+    )
+    status = serializers.ChoiceField(
+        choices=['paid', 'open', 'void', 'uncollectible'],
+        required=True,
+        help_text='Invoice status',
+    )
+    description = serializers.CharField(
+        required=False,
+        allow_null=True,
+        help_text='Description or notes for the invoice',
+    )
+    invoice_pdf_url = serializers.URLField(
+        required=False,
+        allow_null=True,
+        help_text='URL to download the invoice PDF',
+    )
+    receipt_url = serializers.URLField(
+        required=False,
+        allow_null=True,
+        help_text='URL to view the receipt',
+    )
+
+
+# pylint: disable=abstract-method
+class TransactionsListResponseSerializer(serializers.Serializer):
+    """
+    Response serializer for list of transactions from GET /api/v1/billing-management/transactions
+    """
+    transactions = TransactionResponseSerializer(
+        many=True,
+        required=True,
+        help_text='List of transactions/invoices for the customer',
+    )
+    next_page_token = serializers.CharField(
+        required=False,
+        allow_null=True,
+        help_text='Pagination token for next page of results, if more exist',
+    )
+
+
+# pylint: disable=abstract-method
+class SubscriptionResponseSerializer(serializers.Serializer):
+    """
+    Response serializer for subscription status from GET /api/v1/billing-management/subscription
+    """
+    subscription = serializers.SerializerMethodField(
+        help_text='Subscription details or null if no active subscription',
+    )
+
+    def get_subscription(self, obj):
+        """Get subscription data, returns None if no subscription."""
+        if obj is None:
+            return None
+        return {
+            'id': obj.get('id'),
+            'status': obj.get('status'),
+            'plan_type': obj.get('plan_type'),
+            'cancel_at_period_end': obj.get('cancel_at_period_end'),
+            'current_period_end': obj.get('current_period_end'),
+            'yearly_amount': obj.get('yearly_amount'),
+            'license_count': obj.get('license_count'),
+        }
+
+
+# pylint: disable=abstract-method
+class CancelSubscriptionResponseSerializer(serializers.Serializer):
+    """
+    Response serializer for cancel subscription operation from POST /api/v1/billing-management/subscription/cancel
+    """
+    subscription = serializers.SerializerMethodField(
+        help_text='Updated subscription details after cancellation request',
+    )
+
+    def get_subscription(self, obj):
+        """Get subscription data after cancellation."""
+        if obj is None:
+            return None
+        return {
+            'id': obj.get('id'),
+            'status': obj.get('status'),
+            'plan_type': obj.get('plan_type'),
+            'cancel_at_period_end': obj.get('cancel_at_period_end'),
+            'current_period_end': obj.get('current_period_end'),
+        }
+
+
+# pylint: disable=abstract-method
+class ReinstateSubscriptionResponseSerializer(serializers.Serializer):
+    """
+    Response serializer for reinstate subscription operation from POST /api/v1/billing-management/subscription/reinstate
+    """
+    subscription = serializers.SerializerMethodField(
+        help_text='Updated subscription details after reinstatement request',
+    )
+
+    def get_subscription(self, obj):
+        """Get subscription data after reinstatement."""
+        if obj is None:
+            return None
+        return {
+            'id': obj.get('id'),
+            'status': obj.get('status'),
+            'plan_type': obj.get('plan_type'),
+            'cancel_at_period_end': obj.get('cancel_at_period_end'),
+            'current_period_end': obj.get('current_period_end'),
+        }

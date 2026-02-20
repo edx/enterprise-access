@@ -20,8 +20,13 @@ def _has_implicit_access_to_role(_, enterprise_customer_uuid, feature_role):
     if not enterprise_customer_uuid:
         return False
 
+    # Get the current request - return False if no request context
+    current_request = crum.get_current_request()
+    if not current_request:
+        return False
+
     return request_user_has_implicit_access_via_jwt(
-        get_decoded_jwt(crum.get_current_request()),
+        get_decoded_jwt(current_request),
         feature_role,
         str(enterprise_customer_uuid),
     )
@@ -578,6 +583,11 @@ rules.add_perm(
 rules.add_perm(
     constants.CHECKOUT_INTENT_READ_WRITE_ALL_PERMISSION,
     has_customer_billing_operator_access,
+)
+# Grants billing management access to operators+admins.
+rules.add_perm(
+    constants.BILLING_MANAGEMENT_ACCESS_PERMISSION,
+    has_customer_billing_operator_access | has_customer_billing_admin_access,
 )
 
 # Grants admin learner profile read permission to admin learner profile admins.
