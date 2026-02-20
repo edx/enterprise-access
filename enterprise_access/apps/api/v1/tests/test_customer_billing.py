@@ -1060,14 +1060,14 @@ class BillingManagementPaymentMethodsTests(APITest):
 
     def test_list_payment_methods_nonexistent_enterprise(self):
         """
-        Test that non-existent enterprise returns 404.
+        Test that non-existent enterprise returns 403.
+        RBAC permission check happens first - user doesn't have access to non-existent enterprise.
         """
         nonexistent_uuid = str(uuid.uuid4())
         url = reverse('api:v1:billing-management-list-payment-methods')
         response = self.client.get(url, {'enterprise_customer_uuid': nonexistent_uuid})
 
-        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
-        self.assertIn('error', response.json())
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     @mock.patch('stripe.Customer.retrieve')
     def test_list_payment_methods_stripe_error(self, mock_customer_retrieve):
@@ -1200,7 +1200,7 @@ class BillingManagementDeletePaymentMethodTests(APITest):
         mock_list_pm.return_value = mock.Mock(data=mock_payment_methods)
 
         url = reverse('api:v1:billing-management-delete-payment-method', kwargs={'payment_method_id': 'pm_test123'})
-        response = self.client.delete(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+        response = self.client.delete(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}')
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         response_data = response.json()
@@ -1237,7 +1237,7 @@ class BillingManagementDeletePaymentMethodTests(APITest):
         mock_list_pm.return_value = mock.Mock(data=mock_payment_methods)
 
         url = reverse('api:v1:billing-management-delete-payment-method', kwargs={'payment_method_id': 'pm_only'})
-        response = self.client.delete(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+        response = self.client.delete(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}')
 
         self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
         response_data = response.json()
@@ -1274,7 +1274,7 @@ class BillingManagementDeletePaymentMethodTests(APITest):
         mock_list_pm.return_value = mock.Mock(data=mock_payment_methods)
 
         url = reverse('api:v1:billing-management-delete-payment-method', kwargs={'payment_method_id': 'pm_default'})
-        response = self.client.delete(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+        response = self.client.delete(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}')
 
         self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
         response_data = response.json()
@@ -1283,25 +1283,23 @@ class BillingManagementDeletePaymentMethodTests(APITest):
 
     def test_delete_payment_method_missing_uuid(self):
         """
-        Test that endpoint requires enterprise_customer_uuid query parameter.
+        Test that missing enterprise_customer_uuid returns 403.
+        RBAC permission check requires the UUID.
         """
         url = reverse('api:v1:billing-management-delete-payment-method', kwargs={'payment_method_id': 'pm_test123'})
-        response = self.client.delete(url, {})
+        response = self.client.delete(url)
 
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        response_data = response.json()
-        self.assertIn('error', response_data)
-        self.assertIn('enterprise_customer_uuid', response_data['error'])
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     @mock.patch('stripe.PaymentMethod.retrieve')
     def test_delete_payment_method_payment_method_not_found(self, mock_retrieve_pm):
         """
         Test that endpoint returns 404 when payment method doesn't exist.
         """
-        mock_retrieve_pm.side_effect = stripe.error.InvalidRequestError('No such payment method')
+        mock_retrieve_pm.side_effect = stripe.error.InvalidRequestError('No such payment method', param='payment_method')
 
         url = reverse('api:v1:billing-management-delete-payment-method', kwargs={'payment_method_id': 'pm_invalid'})
-        response = self.client.delete(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+        response = self.client.delete(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}')
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
         response_data = response.json()
@@ -1320,7 +1318,7 @@ class BillingManagementDeletePaymentMethodTests(APITest):
         mock_retrieve_pm.return_value = mock_payment_method
 
         url = reverse('api:v1:billing-management-delete-payment-method', kwargs={'payment_method_id': 'pm_test123'})
-        response = self.client.delete(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+        response = self.client.delete(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}')
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
         response_data = response.json()
@@ -1329,17 +1327,15 @@ class BillingManagementDeletePaymentMethodTests(APITest):
 
     def test_delete_payment_method_non_existent_enterprise(self):
         """
-        Test that endpoint returns 404 when enterprise is not found.
+        Test that non-existent enterprise returns 403.
+        RBAC permission check happens first - user doesn't have access to non-existent enterprise.
         """
         non_existent_uuid = str(uuid.uuid4())
 
         url = reverse('api:v1:billing-management-delete-payment-method', kwargs={'payment_method_id': 'pm_test123'})
-        response = self.client.delete(url, {'enterprise_customer_uuid': non_existent_uuid})
+        response = self.client.delete(f'{url}?enterprise_customer_uuid={non_existent_uuid}')
 
-        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
-        response_data = response.json()
-        self.assertIn('error', response_data)
-        self.assertIn('Stripe customer not found', response_data['error'])
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     @mock.patch('stripe.PaymentMethod.list')
     @mock.patch('stripe.Customer.retrieve')
@@ -1373,7 +1369,7 @@ class BillingManagementDeletePaymentMethodTests(APITest):
         # Mock detach to fail
         with mock.patch('stripe.PaymentMethod.detach', side_effect=stripe.error.StripeError('Connection error')):
             url = reverse('api:v1:billing-management-delete-payment-method', kwargs={'payment_method_id': 'pm_test123'})
-            response = self.client.delete(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+            response = self.client.delete(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}')
 
         self.assertEqual(response.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
         response_data = response.json()
@@ -1391,7 +1387,7 @@ class BillingManagementDeletePaymentMethodTests(APITest):
         }])
 
         url = reverse('api:v1:billing-management-delete-payment-method', kwargs={'payment_method_id': 'pm_test123'})
-        response = self.client.delete(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+        response = self.client.delete(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}')
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
