@@ -1041,3 +1041,119 @@ class BillingManagementViewSet(viewsets.ViewSet):
                 {'error': 'An unexpected error occurred'},
                 status=status.HTTP_422_UNPROCESSABLE_ENTITY
             )
+
+    @extend_schema(
+        tags=[BILLING_MANAGEMENT_API_TAG],
+        summary='Set default payment method',
+        description='Set a payment method as the default for a Stripe customer associated with an enterprise.',
+        parameters=[
+            OpenApiParameter(
+                name='enterprise_customer_uuid',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                required=True,
+                description='UUID of the enterprise customer',
+            ),
+            OpenApiParameter(
+                name='id',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.PATH,
+                required=True,
+                description='ID of the payment method to set as default',
+            ),
+        ],
+        request=serializers.SetDefaultPaymentMethodRequestSerializer,
+        responses={
+            status.HTTP_200_OK: OpenApiResponse(description='Payment method set as default successfully'),
+            status.HTTP_400_BAD_REQUEST: OpenApiResponse(description='Missing or invalid enterprise_customer_uuid'),
+            status.HTTP_403_FORBIDDEN: OpenApiResponse(description='Permission denied'),
+            status.HTTP_404_NOT_FOUND: OpenApiResponse(description='Enterprise customer, Stripe customer, or payment method not found'),
+            status.HTTP_422_UNPROCESSABLE_ENTITY: OpenApiResponse(description='Stripe API call failed'),
+        },
+    )
+    @action(
+        detail=False,
+        methods=['post'],
+        url_path='payment-methods/(?P<payment_method_id>[^/]+)/set-default',
+    )
+    @permission_required(
+        BILLING_MANAGEMENT_ACCESS_PERMISSION,
+        fn=lambda request, **kwargs: request.GET.get('enterprise_customer_uuid')
+    )
+    def set_default_payment_method(self, request, payment_method_id=None, **kwargs):
+        """
+        Set a payment method as the default for a Stripe customer.
+
+        The enterprise_customer_uuid query parameter is used to:
+        1. Find the CheckoutIntent for the enterprise
+        2. Extract the Stripe customer ID from the CheckoutIntent
+        3. Verify the payment method belongs to this customer
+        4. Set it as the default payment method
+        """
+        enterprise_uuid = request.query_params.get('enterprise_customer_uuid')
+        if not enterprise_uuid:
+            return Response(
+                {'error': 'enterprise_customer_uuid query parameter is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not payment_method_id:
+            return Response(
+                {'error': 'payment_method_id is required in the URL path'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            # Find the CheckoutIntent for this enterprise
+            checkout_intent = CheckoutIntent.objects.filter(enterprise_uuid=enterprise_uuid).first()
+            if not checkout_intent or not checkout_intent.stripe_customer_id:
+                logger.warning(
+                    f'No checkout intent with stripe customer ID found for enterprise_uuid: {enterprise_uuid}'
+                )
+                return Response(
+                    {'error': 'Stripe customer not found for this enterprise'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            stripe_customer_id = checkout_intent.stripe_customer_id
+
+            # Verify the payment method exists and belongs to this customer
+            payment_method = stripe.PaymentMethod.retrieve(payment_method_id)
+            if not payment_method or payment_method.get('customer') != stripe_customer_id:
+                logger.warning(
+                    f'Payment method {payment_method_id} does not belong to customer {stripe_customer_id}'
+                )
+                return Response(
+                    {'error': 'Payment method not found or does not belong to this customer'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            # Set the payment method as the default
+            stripe.Customer.modify(
+                stripe_customer_id,
+                invoice_settings={'default_payment_method': payment_method_id},
+            )
+
+            return Response(
+                {'message': 'Payment method set as default successfully'},
+                status=status.HTTP_200_OK
+            )
+
+        except stripe.error.InvalidRequestError as e:
+            logger.warning(f'Invalid Stripe request for payment method {payment_method_id}: {str(e)}')
+            return Response(
+                {'error': 'Payment method not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except stripe.error.StripeError as e:
+            logger.exception(f'Stripe API error setting default payment method for {enterprise_uuid}: {str(e)}')
+            return Response(
+                {'error': f'Stripe API error: {str(e)}'},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+        except Exception as e:  # pylint: disable=broad-except
+            logger.exception(f'Unexpected error setting default payment method for {enterprise_uuid}: {str(e)}')
+            return Response(
+                {'error': 'An unexpected error occurred'},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
