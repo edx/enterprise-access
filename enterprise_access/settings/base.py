@@ -659,6 +659,9 @@ SSP_PRODUCTS = {
 # Enable the customer billing API endpoints under /api/v1/customer-billing/*
 ENABLE_CUSTOMER_BILLING_API = True
 
+# Enable the billing management API endpoints under /api/v1/billing-management/*
+ENABLE_BILLING_MANAGEMENT_API = True
+
 DEFAULT_SSP_PRICE_LOOKUP_KEY = 'teams_subscription_license_yearly'
 
 DEFAULT_STRIPE_CACHE_TIMEOUT = 60

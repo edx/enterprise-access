@@ -16,7 +16,12 @@ from .browse_and_request import (
 from .content_assignments.assignment_configuration import AssignmentConfigurationViewSet
 from .content_assignments.assignments import LearnerContentAssignmentViewSet
 from .content_assignments.assignments_admin import LearnerContentAssignmentAdminViewSet
-from .customer_billing import CheckoutIntentViewSet, CustomerBillingViewSet, StripeEventSummaryViewSet
+from .customer_billing import (
+    BillingManagementViewSet,
+    CheckoutIntentViewSet,
+    CustomerBillingViewSet,
+    StripeEventSummaryViewSet,
+)
 from .provisioning import ProvisioningCreateView, SubscriptionPlanOLIUpdateView
 from .subsidy_access_policy import (
     SubsidyAccessPolicyAllocateViewset,

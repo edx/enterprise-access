@@ -463,3 +463,35 @@ class StripeWebhookTests(APITest):
             )
 
         self.assertIn('Handler failed', str(context.exception))
+
+
+class BillingManagementAPITests(APITest):
+    """
+    Tests for the billing management API endpoints.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.enterprise_uuid = str(uuid.uuid4())
+
+    def test_billing_management_api_endpoint_available(self):
+        """
+        Test that the billing management API health-check endpoint is available and requires authentication.
+        """
+        # The endpoint should be available when flag is enabled in settings
+        url = reverse('api:v1:billing-management-health-check')
+        response = self.client.get(url)
+        # Should return 200 OK because we have authentication set up by APITest
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.json(), {'status': 'healthy'})
+
+    def test_billing_management_requires_authentication(self):
+        """
+        Test that the billing management API endpoint requires authentication.
+        """
+        # Remove authentication
+        self.client.cookies.clear()
+
+        url = reverse('api:v1:billing-management-health-check')
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
