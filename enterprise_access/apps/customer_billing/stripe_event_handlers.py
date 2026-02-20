@@ -172,31 +172,6 @@ def cancel_all_future_plans(checkout_intent):
     return deactivated
 
 
-def reactivate_all_future_plans(checkout_intent):
-    """
-    Re-activate all future renewal plans descending from the
-    anchor plan for this enterprise.
-    """
-    renewals_to_reactivate = checkout_intent.renewals.all()
-    if not renewals_to_reactivate.exists():
-        logger.warning('No renewals to re-activate for Checkout Intent %s', checkout_intent.uuid)
-        return []
-
-    client = LicenseManagerApiClient()
-    reactivated: list[UUID] = []
-
-    for renewal in renewals_to_reactivate:
-        client.update_subscription_plan(
-            str(renewal.renewed_subscription_plan_uuid),
-            is_active=True,
-        )
-        reactivated_plan_uuid = renewal.renewed_subscription_plan_uuid
-        reactivated.append(reactivated_plan_uuid)
-        logger.info('Future plan %s re-activated for Checkout Intent %s', reactivated_plan_uuid, checkout_intent.uuid)
-
-    return reactivated
-
-
 def _try_enable_pending_updates(stripe_subscription_id):
     """
     We rely on Stripe’s Pending Updates feature to help prevent subscriptions from becoming active
@@ -353,7 +328,6 @@ def _handle_invoice_paid_status_updated(
             stripe_subscription_id,
         )
         client.update_subscription_plan(str(plan_to_reactivate), is_active=True)
-        reactivate_all_future_plans(checkout_intent)
     else:
         # Normal case where the first paid invoice was received before processing the renewal.
         logger.info(
@@ -371,7 +345,6 @@ def _handle_invoice_paid_status_updated(
 
         if processed_renewal:
             client.update_subscription_plan(str(processed_renewal.renewed_subscription_plan_uuid), is_active=True)
-            reactivate_all_future_plans(checkout_intent)
 
         # Send the trial-end email
         send_trial_end_and_subscription_started_email_task.delay(

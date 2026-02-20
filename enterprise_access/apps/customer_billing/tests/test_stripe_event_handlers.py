@@ -277,6 +277,16 @@ class TestStripeEventHandler(TestCase):
             'checkout_intent_state': CheckoutIntentState.FULFILLED,  # Simulate a typical scenario.
             'expected_final_state': CheckoutIntentState.FULFILLED,  # Not changed
             'invoice_total': 67,  # Non-zero total means email is sent
+            'create_renewal': True,
+            'renewal_processed': False,  # Simulates first paid invoice
+        },
+        # Happy Test case: successful invoice.paid handling after fulfillment (processed renewal)
+        {
+            'checkout_intent_state': CheckoutIntentState.FULFILLED,
+            'expected_final_state': CheckoutIntentState.FULFILLED,
+            'invoice_total': 67,
+            'create_renewal': True,
+            'renewal_processed': True,  # Simulates subsequent paid invoice
         },
         # Happy Test case: CheckoutIntent already paid - result should be idempotent w/ no errors.
         {
@@ -299,20 +309,35 @@ class TestStripeEventHandler(TestCase):
     )
     @ddt.unpack
     @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.LicenseManagerApiClient"
+    )
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers."
+        "send_trial_end_and_subscription_started_email_task"
+    )
+    @mock.patch(
         "enterprise_access.apps.customer_billing.stripe_event_handlers.send_payment_receipt_email"
     )
     def test_invoice_paid_handler(
         self,
         mock_send_payment_receipt_email,
+        mock_send_trial_end_email,
+        mock_license_manager_client,
         checkout_intent_state=CheckoutIntentState.CREATED,
         intent_id_override=None,
         expected_exception=None,
         expect_matching_intent=True,
         expected_final_state=CheckoutIntentState.PAID,
         invoice_total=0,
+        create_renewal=False,
+        renewal_processed=False,
     ):
         """Test various scenarios for the invoice.paid event handler."""
         stripe_customer_id = 'cus_test_customer_456'
+
+        # Set up the mock License Manager client
+        mock_client_instance = mock_license_manager_client.return_value
+        mock_client_instance.update_subscription_plan.return_value = None
 
         if checkout_intent_state == CheckoutIntentState.PAID:
             self.checkout_intent.mark_as_paid(
@@ -323,6 +348,24 @@ class TestStripeEventHandler(TestCase):
             self.checkout_intent.state = CheckoutIntentState.FULFILLED
             self.checkout_intent.stripe_customer_id = stripe_customer_id
             self.checkout_intent.save()
+
+        # Create SelfServiceSubscriptionRenewal if needed
+        renewal = None
+        if create_renewal:
+            renewed_plan_uuid = uuid.uuid4()
+            stripe_event_data = StripeEventData.objects.create(
+                event_id='evt_test_renewal_setup',
+                event_type='customer.subscription.created',
+                checkout_intent=self.checkout_intent,
+            )
+            renewal = SelfServiceSubscriptionRenewal.objects.create(
+                checkout_intent=self.checkout_intent,
+                prior_subscription_plan_uuid=uuid.uuid4(),
+                subscription_plan_renewal_id=1234,
+                renewed_subscription_plan_uuid=renewed_plan_uuid,
+                processed_at=timezone.now() if renewal_processed else None,
+                stripe_event_data=stripe_event_data,
+            )
 
         subscription_id = 'sub_test_123456'
         mock_subscription = self._create_mock_stripe_subscription(intent_id_override or self.checkout_intent.id)
@@ -377,6 +420,21 @@ class TestStripeEventHandler(TestCase):
                 enterprise_customer_name=self.checkout_intent.enterprise_name,
                 enterprise_slug=self.checkout_intent.enterprise_slug,
             )
+            # Verify License Manager API calls for non-zero invoices
+            if create_renewal:
+                if renewal_processed:
+                    # Already processed renewal - should reactivate the paid plan
+                    mock_client_instance.update_subscription_plan.assert_called_once_with(
+                        str(renewal.renewed_subscription_plan_uuid),
+                        is_active=True
+                    )
+                    # No trial end email for already-processed renewals
+                    mock_send_trial_end_email.delay.assert_not_called()
+                else:
+                    # First paid invoice - should process renewal and send email
+                    # Note: _process_trial_to_paid_renewal would need to be mocked
+                    # or the renewal.processed_at would need to be checked after the call
+                    mock_send_trial_end_email.delay.assert_called_once()
         else:
             self.assertFalse(mock_send_payment_receipt_email.delay.called)
 
@@ -936,7 +994,6 @@ class TestStripeEventHandler(TestCase):
         "enterprise_access.apps.customer_billing.stripe_event_handlers.LicenseManagerApiClient",
         autospec=True,
     )
-    @mock.patch("enterprise_access.apps.customer_billing.stripe_event_handlers.reactivate_all_future_plans")
     @mock.patch(
         "enterprise_access.apps.customer_billing.stripe_event_handlers."
         "_process_trial_to_paid_renewal"
@@ -944,7 +1001,6 @@ class TestStripeEventHandler(TestCase):
     def test_invoice_paid_reactivates_subscription(
         self,
         mock_process_renewal,
-        mock_reactivate_plans,
         mock_license_manager_client,
     ):
         """
@@ -1126,9 +1182,6 @@ class TestStripeEventHandler(TestCase):
             is_active=True
         )
 
-        # Verify that future plans were reactivated
-        mock_reactivate_plans.assert_called_once_with(self.checkout_intent)
-
         # Verify that _process_trial_to_paid_renewal was NOT called
         # (renewal already processed, we're in recovery path)
         mock_process_renewal.assert_not_called()
@@ -1148,7 +1201,6 @@ class TestStripeEventHandler(TestCase):
         "enterprise_access.apps.customer_billing.stripe_event_handlers.LicenseManagerApiClient",
         autospec=True,
     )
-    @mock.patch("enterprise_access.apps.customer_billing.stripe_event_handlers.reactivate_all_future_plans")
     @mock.patch(
         "enterprise_access.apps.customer_billing.stripe_event_handlers."
         "send_trial_end_and_subscription_started_email_task"
@@ -1156,7 +1208,6 @@ class TestStripeEventHandler(TestCase):
     def test_invoice_paid_first_trial_to_paid_sends_email(
         self,
         mock_send_email_task,
-        mock_reactivate_plans,
         mock_license_manager_client,
     ):
         """
@@ -1353,9 +1404,6 @@ class TestStripeEventHandler(TestCase):
             is_active=True
         )
 
-        # Verify that future plans were reactivated
-        mock_reactivate_plans.assert_called_once_with(self.checkout_intent)
-
         # Verify trial-end email task WAS queued (first trial→paid transition)
         mock_send_email_task.delay.assert_called_once_with(
             subscription_id=stripe_subscription_id,
@@ -1426,7 +1474,6 @@ class TestStripeEventHandler(TestCase):
         self.assertEqual(new_summary.subscription_status, StripeSubscriptionStatus.ACTIVE)
 
     @mock.patch('enterprise_access.apps.customer_billing.stripe_event_handlers.LicenseManagerApiClient')
-    @mock.patch('enterprise_access.apps.customer_billing.stripe_event_handlers.reactivate_all_future_plans')
     @mock.patch(
         'enterprise_access.apps.customer_billing.stripe_event_handlers.'
         'send_trial_end_and_subscription_started_email_task'
@@ -1434,7 +1481,6 @@ class TestStripeEventHandler(TestCase):
     def test_full_subscription_renewal_flow_via_invoice_paid(
         self,
         mock_send_email,
-        mock_reactivate_plans,
         mock_license_manager_client
     ):
         """Test the complete subscription renewal flow via invoice.paid event."""
@@ -1577,9 +1623,6 @@ class TestStripeEventHandler(TestCase):
             str(renewed_plan_uuid),
             is_active=True
         )
-
-        # Verify that future plans were reactivated
-        mock_reactivate_plans.assert_called_once_with(self.checkout_intent)
 
         # Verify trial-end email was sent
         mock_send_email.delay.assert_called_once_with(
