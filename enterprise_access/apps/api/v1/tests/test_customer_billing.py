@@ -1737,7 +1737,7 @@ class BillingManagementSubscriptionTests(APITest):
             'id': 'sub_test123',
             'status': 'active',
             'cancel_at_period_end': False,
-            'current_period_end': 1640000000,
+            'current_period_end': datetime.fromtimestamp(1640000000, tz=dt_timezone.utc),
             'items': {
                 'data': [
                     {
@@ -1808,7 +1808,7 @@ class BillingManagementSubscriptionTests(APITest):
             'id': 'sub_test123',
             'status': 'active',
             'cancel_at_period_end': False,
-            'current_period_end': 1640000000,
+            'current_period_end': datetime.fromtimestamp(1640000000, tz=dt_timezone.utc),
             'items': {
                 'data': [
                     {
@@ -1849,7 +1849,7 @@ class BillingManagementSubscriptionTests(APITest):
             'id': 'sub_test123',
             'status': 'active',
             'cancel_at_period_end': False,
-            'current_period_end': 1640000000,
+            'current_period_end': datetime.fromtimestamp(1640000000, tz=dt_timezone.utc),
             'items': {
                 'data': [
                     {
@@ -1874,30 +1874,26 @@ class BillingManagementSubscriptionTests(APITest):
     @mock.patch('stripe.Subscription.list')
     def test_get_subscription_missing_uuid(self, mock_sub_list):
         """
-        Test that endpoint requires enterprise_customer_uuid query parameter.
+        Test that missing enterprise_customer_uuid returns 403.
+        RBAC permission check requires the UUID.
         """
         url = reverse('api:v1:billing-management-get-subscription')
         response = self.client.get(url, {})
 
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        response_data = response.json()
-        self.assertIn('error', response_data)
-        self.assertIn('enterprise_customer_uuid', response_data['error'])
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     @mock.patch('stripe.Subscription.list')
     def test_get_subscription_non_existent_enterprise(self, mock_sub_list):
         """
-        Test that endpoint returns 404 when enterprise is not found.
+        Test that non-existent enterprise returns 403.
+        RBAC permission check happens first - user doesn't have access to non-existent enterprise.
         """
         non_existent_uuid = str(uuid.uuid4())
 
         url = reverse('api:v1:billing-management-get-subscription')
         response = self.client.get(url, {'enterprise_customer_uuid': non_existent_uuid})
 
-        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
-        response_data = response.json()
-        self.assertIn('error', response_data)
-        self.assertIn('Stripe customer not found', response_data['error'])
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     @mock.patch('stripe.Subscription.list')
     def test_get_subscription_stripe_api_error(self, mock_sub_list):
@@ -1950,7 +1946,7 @@ class BillingManagementSubscriptionTests(APITest):
             'id': 'sub_test123',
             'status': 'active',
             'cancel_at_period_end': False,
-            'current_period_end': 1640000000,
+            'current_period_end': datetime.fromtimestamp(1640000000, tz=dt_timezone.utc),
             'items': {
                 'data': [
                     {
@@ -2028,7 +2024,7 @@ class BillingManagementCancelSubscriptionTests(APITest):
             'id': 'sub_test123',
             'status': 'active',
             'cancel_at_period_end': False,
-            'current_period_end': 1640000000,
+            'current_period_end': datetime.fromtimestamp(1640000000, tz=dt_timezone.utc),
             'items': {
                 'data': [
                     {
@@ -2077,7 +2073,7 @@ class BillingManagementCancelSubscriptionTests(APITest):
             'id': 'sub_test123',
             'status': 'active',
             'cancel_at_period_end': False,
-            'current_period_end': 1640000000,
+            'current_period_end': datetime.fromtimestamp(1640000000, tz=dt_timezone.utc),
             'items': {
                 'data': [
                     {
@@ -2119,7 +2115,7 @@ class BillingManagementCancelSubscriptionTests(APITest):
             'id': 'sub_test123',
             'status': 'active',
             'cancel_at_period_end': False,
-            'current_period_end': 1640000000,
+            'current_period_end': datetime.fromtimestamp(1640000000, tz=dt_timezone.utc),
             'items': {
                 'data': [
                     {
@@ -2157,7 +2153,7 @@ class BillingManagementCancelSubscriptionTests(APITest):
             'id': 'sub_test123',
             'status': 'active',
             'cancel_at_period_end': False,
-            'current_period_end': 1640000000,
+            'current_period_end': datetime.fromtimestamp(1640000000, tz=dt_timezone.utc),
             'items': {
                 'data': [
                     {
@@ -2187,7 +2183,7 @@ class BillingManagementCancelSubscriptionTests(APITest):
             'id': 'sub_test123',
             'status': 'active',
             'cancel_at_period_end': True,  # Already cancelling
-            'current_period_end': 1640000000,
+            'current_period_end': datetime.fromtimestamp(1640000000, tz=dt_timezone.utc),
             'items': {
                 'data': []
             },
@@ -2262,7 +2258,7 @@ class BillingManagementCancelSubscriptionTests(APITest):
             'id': 'sub_test123',
             'status': 'active',
             'cancel_at_period_end': False,
-            'current_period_end': 1640000000,
+            'current_period_end': datetime.fromtimestamp(1640000000, tz=dt_timezone.utc),
             'items': {
                 'data': [
                     {
