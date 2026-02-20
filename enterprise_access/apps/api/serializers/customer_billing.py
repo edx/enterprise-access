@@ -485,3 +485,64 @@ class SetDefaultPaymentMethodRequestSerializer(serializers.Serializer):
         required=True,
         help_text='Unique identifier of the payment method to set as default',
     )
+
+
+# pylint: disable=abstract-method
+class TransactionResponseSerializer(serializers.Serializer):
+    """
+    Response serializer for a single transaction/invoice from GET /api/v1/billing-management/transactions
+    """
+    id = serializers.CharField(
+        required=True,
+        help_text='Unique identifier for the invoice/transaction in Stripe',
+    )
+    date = serializers.DateTimeField(
+        required=True,
+        help_text='Invoice date (ISO string)',
+    )
+    amount = serializers.IntegerField(
+        required=True,
+        help_text='Amount in cents',
+    )
+    currency = serializers.CharField(
+        required=True,
+        max_length=3,
+        help_text='Three-letter ISO currency code',
+    )
+    status = serializers.ChoiceField(
+        choices=['paid', 'open', 'void', 'uncollectible'],
+        required=True,
+        help_text='Invoice status',
+    )
+    description = serializers.CharField(
+        required=False,
+        allow_null=True,
+        help_text='Description or notes for the invoice',
+    )
+    invoice_pdf_url = serializers.URLField(
+        required=False,
+        allow_null=True,
+        help_text='URL to download the invoice PDF',
+    )
+    receipt_url = serializers.URLField(
+        required=False,
+        allow_null=True,
+        help_text='URL to view the receipt',
+    )
+
+
+# pylint: disable=abstract-method
+class TransactionsListResponseSerializer(serializers.Serializer):
+    """
+    Response serializer for list of transactions from GET /api/v1/billing-management/transactions
+    """
+    transactions = TransactionResponseSerializer(
+        many=True,
+        required=True,
+        help_text='List of transactions/invoices for the customer',
+    )
+    next_page_token = serializers.CharField(
+        required=False,
+        allow_null=True,
+        help_text='Pagination token for next page of results, if more exist',
+    )
