@@ -823,7 +823,8 @@ class BillingManagementViewSet(viewsets.ViewSet):
     @action(
         detail=False,
         methods=['post'],
-        url_path='address',
+        url_path='address/update',
+        url_name='update-address',
     )
     @permission_required(
         BILLING_MANAGEMENT_ACCESS_PERMISSION,

@@ -720,9 +720,9 @@ class BillingManagementAddressUpdateTests(APITest):
             'country': 'US',
         }
         response = self.client.post(
-            url,
+            f'{url}?enterprise_customer_uuid={self.enterprise_uuid}',
             request_data,
-            {'enterprise_customer_uuid': str(self.enterprise_uuid)},
+            format='json',
         )
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -781,9 +781,9 @@ class BillingManagementAddressUpdateTests(APITest):
             # Missing required fields: email, country, address_line_1, city, state, postal_code
         }
         response = self.client.post(
-            url,
+            f'{url}?enterprise_customer_uuid={self.enterprise_uuid}',
             request_data,
-            {'enterprise_customer_uuid': str(self.enterprise_uuid)},
+            format='json',
         )
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
@@ -806,9 +806,9 @@ class BillingManagementAddressUpdateTests(APITest):
             'postal_code': '94105',
         }
         response = self.client.post(
-            url,
+            f'{url}?enterprise_customer_uuid={self.enterprise_uuid}',
             request_data,
-            {'enterprise_customer_uuid': str(self.enterprise_uuid)},
+            format='json',
         )
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
@@ -817,7 +817,8 @@ class BillingManagementAddressUpdateTests(APITest):
 
     def test_update_address_nonexistent_enterprise(self):
         """
-        Test that non-existent enterprise returns 404.
+        Test that non-existent enterprise returns 403.
+        RBAC permission check happens first - user doesn't have access to non-existent enterprise.
         """
         nonexistent_uuid = str(uuid.uuid4())
         url = reverse('api:v1:billing-management-update-address')
@@ -831,13 +832,12 @@ class BillingManagementAddressUpdateTests(APITest):
             'postal_code': '94105',
         }
         response = self.client.post(
-            url,
+            f"{url}?enterprise_customer_uuid={nonexistent_uuid}",
             request_data,
-            {'enterprise_customer_uuid': nonexistent_uuid},
+            format='json',
         )
 
-        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
-        self.assertIn('error', response.json())
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     @mock.patch('stripe.Customer.modify')
     def test_update_address_stripe_error(self, mock_customer_modify):
@@ -857,9 +857,9 @@ class BillingManagementAddressUpdateTests(APITest):
             'postal_code': '94105',
         }
         response = self.client.post(
-            url,
+            f'{url}?enterprise_customer_uuid={self.enterprise_uuid}',
             request_data,
-            {'enterprise_customer_uuid': str(self.enterprise_uuid)},
+            format='json',
         )
 
         self.assertEqual(response.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
@@ -888,9 +888,9 @@ class BillingManagementAddressUpdateTests(APITest):
             'postal_code': '94105',
         }
         response = self.client.post(
-            url,
+            f'{url}?enterprise_customer_uuid={self.enterprise_uuid}',
             request_data,
-            {'enterprise_customer_uuid': str(self.enterprise_uuid)},
+            format='json',
         )
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
@@ -928,9 +928,9 @@ class BillingManagementAddressUpdateTests(APITest):
             'postal_code': '90001',
         }
         response = self.client.post(
-            url,
+            f'{url}?enterprise_customer_uuid={self.enterprise_uuid}',
             request_data,
-            {'enterprise_customer_uuid': str(self.enterprise_uuid)},
+            format='json',
         )
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
