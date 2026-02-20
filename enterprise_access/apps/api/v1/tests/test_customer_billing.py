@@ -474,6 +474,8 @@ class BillingManagementAPITests(APITest):
     def setUp(self):
         super().setUp()
         self.enterprise_uuid = str(uuid.uuid4())
+        # Set JWT cookie for authentication
+        self.set_jwt_cookie()
 
     def test_billing_management_api_endpoint_available(self):
         """
