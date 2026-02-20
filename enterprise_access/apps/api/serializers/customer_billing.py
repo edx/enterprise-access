@@ -351,3 +351,75 @@ class BillingAddressResponseSerializer(serializers.Serializer):
         allow_null=True,
         help_text='Phone number associated with the billing account',
     )
+
+
+# pylint: disable=abstract-method
+class BillingAddressUpdateRequestSerializer(serializers.Serializer):
+    """
+    Request serializer for updating billing address via POST /api/v1/billing-management/address
+    """
+    name = serializers.CharField(
+        required=True,
+        max_length=255,
+        help_text='Full name of the billing contact',
+    )
+    email = serializers.EmailField(
+        required=True,
+        help_text='Email address associated with the billing account',
+    )
+    country = serializers.CharField(
+        required=True,
+        max_length=2,
+        min_length=2,
+        help_text='Two-letter ISO country code',
+    )
+    address_line_1 = serializers.CharField(
+        required=True,
+        max_length=255,
+        help_text='First line of the street address',
+    )
+    address_line_2 = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=255,
+        help_text='Second line of the street address (optional)',
+    )
+    city = serializers.CharField(
+        required=True,
+        max_length=255,
+        help_text='City of the billing address',
+    )
+    state = serializers.CharField(
+        required=True,
+        max_length=255,
+        help_text='State or province of the billing address',
+    )
+    postal_code = serializers.CharField(
+        required=True,
+        max_length=20,
+        help_text='Postal code or zip code of the billing address',
+    )
+    phone = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=20,
+        help_text='Phone number associated with the billing account',
+    )
+
+    def validate_country(self, value):
+        """
+        Validate that country is a valid two-letter ISO code.
+        """
+        if len(value) != 2 or not value.isalpha():
+            raise serializers.ValidationError(
+                'Country must be a valid two-letter ISO code (e.g., US, CA, GB)'
+            )
+        return value.upper()
+
+    def validate_postal_code(self, value):
+        """
+        Validate postal code is not empty if required.
+        """
+        if not value or not value.strip():
+            raise serializers.ValidationError('Postal code is required and cannot be empty')
+        return value
