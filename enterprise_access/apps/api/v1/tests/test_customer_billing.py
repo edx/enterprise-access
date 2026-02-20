@@ -1668,3 +1668,292 @@ class BillingManagementTransactionsTests(APITest):
         self.assertEqual(transactions[0]['status'], 'paid')
         self.assertEqual(transactions[1]['status'], 'open')  # Draft normalized to open
         self.assertEqual(transactions[2]['status'], 'void')
+
+class BillingManagementSubscriptionTests(APITest):
+    """
+    Tests for the get subscription status endpoint.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.enterprise_uuid = str(uuid.uuid4())
+        self.stripe_customer_id = 'cus_test_subscription_123'
+
+        # Create a checkout intent for testing
+        self.checkout_intent = CheckoutIntent.objects.create(
+            user=self.user,
+            enterprise_uuid=self.enterprise_uuid,
+            enterprise_name='Test Enterprise',
+            enterprise_slug='test-enterprise',
+            stripe_customer_id=self.stripe_customer_id,
+            state=CheckoutIntentState.PAID,
+            quantity=10,
+            expires_at=timezone.now() + timedelta(hours=1),
+        )
+
+        # Set JWT cookie with appropriate permissions
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': self.enterprise_uuid,
+        }])
+
+    def tearDown(self):
+        CheckoutIntent.objects.all().delete()
+        super().tearDown()
+
+    @mock.patch('stripe.Product.retrieve')
+    @mock.patch('stripe.Price.retrieve')
+    @mock.patch('stripe.Subscription.list')
+    def test_get_subscription_success(self, mock_sub_list, mock_price_retrieve, mock_product_retrieve):
+        """
+        Test successfully retrieving subscription with plan_type from metadata.
+        """
+        # Mock price
+        mock_price = {
+            'id': 'price_test123',
+            'unit_amount': 50000,  # $500/year
+            'recurring': {'interval': 'year'},
+            'product': 'prod_test123',
+            'metadata': {'plan_type': 'Teams'},
+        }
+        mock_price_retrieve.return_value = mock_price
+
+        # Mock subscription
+        mock_subscription = {
+            'id': 'sub_test123',
+            'status': 'active',
+            'cancel_at_period_end': False,
+            'current_period_end': 1640000000,
+            'items': {
+                'data': [
+                    {
+                        'price': {'id': 'price_test123'},
+                        'quantity': 5,
+                    }
+                ]
+            },
+        }
+        mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
+
+        url = reverse('api:v1:billing-management-subscription')
+        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response_data = response.json()
+        
+        self.assertIn('subscription', response_data)
+        sub = response_data['subscription']
+        self.assertEqual(sub['id'], 'sub_test123')
+        self.assertEqual(sub['status'], 'active')
+        self.assertEqual(sub['plan_type'], 'Teams')
+        self.assertFalse(sub['cancel_at_period_end'])
+        self.assertEqual(sub['yearly_amount'], 50000)
+        self.assertEqual(sub['license_count'], 5)
+
+    @mock.patch('stripe.Subscription.list')
+    def test_get_subscription_no_active_subscription(self, mock_sub_list):
+        """
+        Test returning null subscription when no active subscription exists.
+        """
+        mock_sub_list.return_value = mock.Mock(data=[])
+
+        url = reverse('api:v1:billing-management-subscription')
+        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response_data = response.json()
+        
+        self.assertIn('subscription', response_data)
+        self.assertIsNone(response_data['subscription'])
+
+    @mock.patch('stripe.Product.retrieve')
+    @mock.patch('stripe.Price.retrieve')
+    @mock.patch('stripe.Subscription.list')
+    def test_get_subscription_plan_type_from_product_metadata(self, mock_sub_list, mock_price_retrieve, mock_product_retrieve):
+        """
+        Test deriving plan_type from product metadata when not in price metadata.
+        """
+        # Mock price without plan_type
+        mock_price = {
+            'id': 'price_test123',
+            'unit_amount': 50000,
+            'recurring': {'interval': 'year'},
+            'product': 'prod_test123',
+            'metadata': {},
+        }
+        mock_price_retrieve.return_value = mock_price
+
+        # Mock product with plan_type
+        mock_product = {
+            'id': 'prod_test123',
+            'metadata': {'plan_type': 'Essentials'},
+        }
+        mock_product_retrieve.return_value = mock_product
+
+        mock_subscription = {
+            'id': 'sub_test123',
+            'status': 'active',
+            'cancel_at_period_end': False,
+            'current_period_end': 1640000000,
+            'items': {
+                'data': [
+                    {
+                        'price': {'id': 'price_test123'},
+                        'quantity': 1,
+                    }
+                ]
+            },
+        }
+        mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
+
+        url = reverse('api:v1:billing-management-subscription')
+        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response_data = response.json()
+        
+        sub = response_data['subscription']
+        self.assertEqual(sub['plan_type'], 'Essentials')
+
+    @mock.patch('stripe.Price.retrieve')
+    @mock.patch('stripe.Subscription.list')
+    def test_get_subscription_plan_type_defaults_to_other(self, mock_sub_list, mock_price_retrieve):
+        """
+        Test that plan_type defaults to 'Other' when no metadata is found.
+        """
+        # Mock price without plan_type
+        mock_price = {
+            'id': 'price_test123',
+            'unit_amount': 50000,
+            'recurring': {'interval': 'year'},
+            'product': 'prod_test123',
+            'metadata': {},
+        }
+        mock_price_retrieve.return_value = mock_price
+
+        mock_subscription = {
+            'id': 'sub_test123',
+            'status': 'active',
+            'cancel_at_period_end': False,
+            'current_period_end': 1640000000,
+            'items': {
+                'data': [
+                    {
+                        'price': {'id': 'price_test123'},
+                        'quantity': 1,
+                    }
+                ]
+            },
+        }
+        mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
+
+        with mock.patch('stripe.Product.retrieve', side_effect=stripe.error.StripeError('Not found')):
+            url = reverse('api:v1:billing-management-subscription')
+            response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response_data = response.json()
+        
+        sub = response_data['subscription']
+        self.assertEqual(sub['plan_type'], 'Other')
+
+    @mock.patch('stripe.Subscription.list')
+    def test_get_subscription_missing_uuid(self, mock_sub_list):
+        """
+        Test that endpoint requires enterprise_customer_uuid query parameter.
+        """
+        url = reverse('api:v1:billing-management-subscription')
+        response = self.client.get(url, {})
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        response_data = response.json()
+        self.assertIn('error', response_data)
+        self.assertIn('enterprise_customer_uuid', response_data['error'])
+
+    @mock.patch('stripe.Subscription.list')
+    def test_get_subscription_non_existent_enterprise(self, mock_sub_list):
+        """
+        Test that endpoint returns 404 when enterprise is not found.
+        """
+        non_existent_uuid = str(uuid.uuid4())
+
+        url = reverse('api:v1:billing-management-subscription')
+        response = self.client.get(url, {'enterprise_customer_uuid': non_existent_uuid})
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        response_data = response.json()
+        self.assertIn('error', response_data)
+        self.assertIn('Stripe customer not found', response_data['error'])
+
+    @mock.patch('stripe.Subscription.list')
+    def test_get_subscription_stripe_api_error(self, mock_sub_list):
+        """
+        Test that endpoint handles Stripe API errors gracefully.
+        """
+        mock_sub_list.side_effect = stripe.error.StripeError('Connection error')
+
+        url = reverse('api:v1:billing-management-subscription')
+        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
+        response_data = response.json()
+        self.assertIn('error', response_data)
+        self.assertIn('Stripe API error', response_data['error'])
+
+    @mock.patch('stripe.Subscription.list')
+    def test_get_subscription_requires_permission(self, mock_sub_list):
+        """
+        Test that endpoint requires BILLING_MANAGEMENT_ACCESS_PERMISSION.
+        """
+        # Set JWT cookie without required permission
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE,
+            'context': self.enterprise_uuid,
+        }])
+
+        url = reverse('api:v1:billing-management-subscription')
+        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    @mock.patch('stripe.Price.retrieve')
+    @mock.patch('stripe.Subscription.list')
+    def test_get_subscription_yearly_amount_calculation(self, mock_sub_list, mock_price_retrieve):
+        """
+        Test yearly amount calculation for different billing periods.
+        """
+        # Mock monthly billing
+        mock_price = {
+            'id': 'price_test123',
+            'unit_amount': 5000,  # $50/month
+            'recurring': {'interval': 'month'},
+            'product': 'prod_test123',
+            'metadata': {'plan_type': 'Teams'},
+        }
+        mock_price_retrieve.return_value = mock_price
+
+        mock_subscription = {
+            'id': 'sub_test123',
+            'status': 'active',
+            'cancel_at_period_end': False,
+            'current_period_end': 1640000000,
+            'items': {
+                'data': [
+                    {
+                        'price': {'id': 'price_test123'},
+                        'quantity': 1,
+                    }
+                ]
+            },
+        }
+        mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
+
+        url = reverse('api:v1:billing-management-subscription')
+        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response_data = response.json()
+        
+        sub = response_data['subscription']
+        # Monthly: 5000 * 12 = 60000
+        self.assertEqual(sub['yearly_amount'], 60000)
