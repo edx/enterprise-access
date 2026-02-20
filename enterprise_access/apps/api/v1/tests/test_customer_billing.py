@@ -1119,16 +1119,47 @@ class BillingManagementPaymentMethodsTests(APITest):
         self.assertEqual(method['last4'], '6789')
         self.assertTrue(method['is_default'])
 
-class BillingManagementSetDefaultPaymentMethodTests(BillingManagementAPITestCase):
+
+
+class BillingManagementDeletePaymentMethodTests(APITest):
     """
-    Tests for the set default payment method endpoint.
+    Tests for the delete payment method endpoint.
     """
 
-    @mock.patch('stripe.Customer.modify')
+    def setUp(self):
+        super().setUp()
+        self.enterprise_uuid = str(uuid.uuid4())
+        self.stripe_customer_id = 'cus_test_delete_123'
+
+        # Create a checkout intent for testing
+        self.checkout_intent = CheckoutIntent.objects.create(
+            user=self.user,
+            enterprise_uuid=self.enterprise_uuid,
+            enterprise_name='Test Enterprise',
+            enterprise_slug='test-enterprise',
+            stripe_customer_id=self.stripe_customer_id,
+            state=CheckoutIntentState.PAID,
+            quantity=10,
+            expires_at=timezone.now() + timedelta(hours=1),
+        )
+
+        # Set JWT cookie with appropriate permissions
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': self.enterprise_uuid,
+        }])
+
+    def tearDown(self):
+        CheckoutIntent.objects.all().delete()
+        super().tearDown()
+
+    @mock.patch('stripe.PaymentMethod.detach')
+    @mock.patch('stripe.PaymentMethod.list')
+    @mock.patch('stripe.Customer.retrieve')
     @mock.patch('stripe.PaymentMethod.retrieve')
-    def test_set_default_payment_method_success(self, mock_retrieve_pm, mock_modify):
+    def test_delete_payment_method_success(self, mock_retrieve_pm, mock_retrieve_cust, mock_list_pm, mock_detach):
         """
-        Test successfully setting a payment method as default.
+        Test successfully deleting a non-default payment method when others exist.
         """
         mock_payment_method = mock.Mock()
         mock_payment_method.get.side_effect = lambda key, default=None: {
@@ -1137,50 +1168,131 @@ class BillingManagementSetDefaultPaymentMethodTests(BillingManagementAPITestCase
         }.get(key, default)
         mock_retrieve_pm.return_value = mock_payment_method
 
-        url = reverse('api:v1:billing-management-set-default-payment-method', kwargs={'payment_method_id': 'pm_test123'})
-        response = self.client.post(url, {}, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+        # Mock customer with different default
+        mock_customer = mock.Mock()
+        mock_customer.get.side_effect = lambda key, default=None: {
+            'id': self.stripe_customer_id,
+            'invoice_settings': {'default_payment_method': 'pm_default'},
+        }.get(key, default)
+        mock_retrieve_cust.return_value = mock_customer
+
+        # Mock multiple payment methods
+        mock_payment_methods = [
+            mock.Mock(get=lambda key, default=None: {'id': 'pm_default'}.get(key, default)),
+            mock.Mock(get=lambda key, default=None: {'id': 'pm_test123'}.get(key, default)),
+        ]
+        mock_list_pm.return_value = mock.Mock(data=mock_payment_methods)
+
+        url = reverse('api:v1:billing-management-delete-payment-method', kwargs={'payment_method_id': 'pm_test123'})
+        response = self.client.delete(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         response_data = response.json()
         self.assertIn('message', response_data)
-        self.assertIn('Payment method set as default', response_data['message'])
+        self.assertIn('deleted successfully', response_data['message'])
+        mock_detach.assert_called_once_with('pm_test123')
 
-        # Verify Stripe API was called correctly
-        mock_retrieve_pm.assert_called_once_with('pm_test123')
-        mock_modify.assert_called_once()
-
-    @mock.patch('stripe.Customer.modify')
+    @mock.patch('stripe.PaymentMethod.list')
+    @mock.patch('stripe.Customer.retrieve')
     @mock.patch('stripe.PaymentMethod.retrieve')
-    def test_set_default_payment_method_missing_uuid(self, mock_retrieve_pm, mock_modify):
+    def test_delete_only_payment_method_fails(self, mock_retrieve_pm, mock_retrieve_cust, mock_list_pm):
+        """
+        Test that deleting the only payment method returns 409 conflict.
+        """
+        mock_payment_method = mock.Mock()
+        mock_payment_method.get.side_effect = lambda key, default=None: {
+            'id': 'pm_only',
+            'customer': self.stripe_customer_id,
+        }.get(key, default)
+        mock_retrieve_pm.return_value = mock_payment_method
+
+        # Mock customer
+        mock_customer = mock.Mock()
+        mock_customer.get.side_effect = lambda key, default=None: {
+            'id': self.stripe_customer_id,
+            'invoice_settings': {'default_payment_method': 'pm_only'},
+        }.get(key, default)
+        mock_retrieve_cust.return_value = mock_customer
+
+        # Mock only one payment method
+        mock_payment_methods = [
+            mock.Mock(get=lambda key, default=None: {'id': 'pm_only'}.get(key, default)),
+        ]
+        mock_list_pm.return_value = mock.Mock(data=mock_payment_methods)
+
+        url = reverse('api:v1:billing-management-delete-payment-method', kwargs={'payment_method_id': 'pm_only'})
+        response = self.client.delete(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        response_data = response.json()
+        self.assertIn('error', response_data)
+        self.assertIn('only payment method', response_data['error'])
+
+    @mock.patch('stripe.PaymentMethod.list')
+    @mock.patch('stripe.Customer.retrieve')
+    @mock.patch('stripe.PaymentMethod.retrieve')
+    def test_delete_default_payment_method_with_others_fails(self, mock_retrieve_pm, mock_retrieve_cust, mock_list_pm):
+        """
+        Test that deleting the default payment method when others exist returns 409 conflict.
+        """
+        mock_payment_method = mock.Mock()
+        mock_payment_method.get.side_effect = lambda key, default=None: {
+            'id': 'pm_default',
+            'customer': self.stripe_customer_id,
+        }.get(key, default)
+        mock_retrieve_pm.return_value = mock_payment_method
+
+        # Mock customer with this method as default
+        mock_customer = mock.Mock()
+        mock_customer.get.side_effect = lambda key, default=None: {
+            'id': self.stripe_customer_id,
+            'invoice_settings': {'default_payment_method': 'pm_default'},
+        }.get(key, default)
+        mock_retrieve_cust.return_value = mock_customer
+
+        # Mock multiple payment methods
+        mock_payment_methods = [
+            mock.Mock(get=lambda key, default=None: {'id': 'pm_default'}.get(key, default)),
+            mock.Mock(get=lambda key, default=None: {'id': 'pm_other'}.get(key, default)),
+        ]
+        mock_list_pm.return_value = mock.Mock(data=mock_payment_methods)
+
+        url = reverse('api:v1:billing-management-delete-payment-method', kwargs={'payment_method_id': 'pm_default'})
+        response = self.client.delete(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        response_data = response.json()
+        self.assertIn('error', response_data)
+        self.assertIn('Set another method as default', response_data['error'])
+
+    def test_delete_payment_method_missing_uuid(self):
         """
         Test that endpoint requires enterprise_customer_uuid query parameter.
         """
-        url = reverse('api:v1:billing-management-set-default-payment-method', kwargs={'payment_method_id': 'pm_test123'})
-        response = self.client.post(url, {})
+        url = reverse('api:v1:billing-management-delete-payment-method', kwargs={'payment_method_id': 'pm_test123'})
+        response = self.client.delete(url, {})
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         response_data = response.json()
         self.assertIn('error', response_data)
         self.assertIn('enterprise_customer_uuid', response_data['error'])
 
-    @mock.patch('stripe.Customer.modify')
     @mock.patch('stripe.PaymentMethod.retrieve')
-    def test_set_default_payment_method_payment_method_not_found(self, mock_retrieve_pm, mock_modify):
+    def test_delete_payment_method_payment_method_not_found(self, mock_retrieve_pm):
         """
         Test that endpoint returns 404 when payment method doesn't exist.
         """
         mock_retrieve_pm.side_effect = stripe.error.InvalidRequestError('No such payment method')
 
-        url = reverse('api:v1:billing-management-set-default-payment-method', kwargs={'payment_method_id': 'pm_invalid'})
-        response = self.client.post(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+        url = reverse('api:v1:billing-management-delete-payment-method', kwargs={'payment_method_id': 'pm_invalid'})
+        response = self.client.delete(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
         response_data = response.json()
         self.assertIn('error', response_data)
 
-    @mock.patch('stripe.Customer.modify')
     @mock.patch('stripe.PaymentMethod.retrieve')
-    def test_set_default_payment_method_belongs_to_different_customer(self, mock_retrieve_pm, mock_modify):
+    def test_delete_payment_method_belongs_to_different_customer(self, mock_retrieve_pm):
         """
         Test that endpoint returns 404 when payment method belongs to different customer.
         """
@@ -1191,33 +1303,32 @@ class BillingManagementSetDefaultPaymentMethodTests(BillingManagementAPITestCase
         }.get(key, default)
         mock_retrieve_pm.return_value = mock_payment_method
 
-        url = reverse('api:v1:billing-management-set-default-payment-method', kwargs={'payment_method_id': 'pm_test123'})
-        response = self.client.post(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+        url = reverse('api:v1:billing-management-delete-payment-method', kwargs={'payment_method_id': 'pm_test123'})
+        response = self.client.delete(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
         response_data = response.json()
         self.assertIn('error', response_data)
         self.assertIn('does not belong to this customer', response_data['error'])
 
-    @mock.patch('stripe.Customer.modify')
-    @mock.patch('stripe.PaymentMethod.retrieve')
-    def test_set_default_payment_method_non_existent_enterprise(self, mock_retrieve_pm, mock_modify):
+    def test_delete_payment_method_non_existent_enterprise(self):
         """
         Test that endpoint returns 404 when enterprise is not found.
         """
-        non_existent_uuid = uuid.uuid4()
+        non_existent_uuid = str(uuid.uuid4())
 
-        url = reverse('api:v1:billing-management-set-default-payment-method', kwargs={'payment_method_id': 'pm_test123'})
-        response = self.client.post(url, {'enterprise_customer_uuid': str(non_existent_uuid)})
+        url = reverse('api:v1:billing-management-delete-payment-method', kwargs={'payment_method_id': 'pm_test123'})
+        response = self.client.delete(url, {'enterprise_customer_uuid': non_existent_uuid})
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
         response_data = response.json()
         self.assertIn('error', response_data)
         self.assertIn('Stripe customer not found', response_data['error'])
 
-    @mock.patch('stripe.Customer.modify')
+    @mock.patch('stripe.PaymentMethod.list')
+    @mock.patch('stripe.Customer.retrieve')
     @mock.patch('stripe.PaymentMethod.retrieve')
-    def test_set_default_payment_method_stripe_api_error(self, mock_retrieve_pm, mock_modify):
+    def test_delete_payment_method_stripe_api_error(self, mock_retrieve_pm, mock_retrieve_cust, mock_list_pm):
         """
         Test that endpoint handles Stripe API errors gracefully.
         """
@@ -1227,83 +1338,43 @@ class BillingManagementSetDefaultPaymentMethodTests(BillingManagementAPITestCase
             'customer': self.stripe_customer_id,
         }.get(key, default)
         mock_retrieve_pm.return_value = mock_payment_method
-        mock_modify.side_effect = stripe.error.StripeError('Connection error')
 
-        url = reverse('api:v1:billing-management-set-default-payment-method', kwargs={'payment_method_id': 'pm_test123'})
-        response = self.client.post(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+        # Mock customer
+        mock_customer = mock.Mock()
+        mock_customer.get.side_effect = lambda key, default=None: {
+            'id': self.stripe_customer_id,
+            'invoice_settings': {'default_payment_method': 'pm_default'},
+        }.get(key, default)
+        mock_retrieve_cust.return_value = mock_customer
+
+        # Mock multiple payment methods but detach fails
+        mock_payment_methods = [
+            mock.Mock(get=lambda key, default=None: {'id': 'pm_default'}.get(key, default)),
+            mock.Mock(get=lambda key, default=None: {'id': 'pm_test123'}.get(key, default)),
+        ]
+        mock_list_pm.return_value = mock.Mock(data=mock_payment_methods)
+
+        # Mock detach to fail
+        with mock.patch('stripe.PaymentMethod.detach', side_effect=stripe.error.StripeError('Connection error')):
+            url = reverse('api:v1:billing-management-delete-payment-method', kwargs={'payment_method_id': 'pm_test123'})
+            response = self.client.delete(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
 
         self.assertEqual(response.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
         response_data = response.json()
         self.assertIn('error', response_data)
         self.assertIn('Stripe API error', response_data['error'])
 
-    @mock.patch('stripe.Customer.modify')
-    @mock.patch('stripe.PaymentMethod.retrieve')
-    def test_set_default_payment_method_requires_permission(self, mock_retrieve_pm, mock_modify):
+    def test_delete_payment_method_requires_permission(self):
         """
         Test that endpoint requires BILLING_MANAGEMENT_ACCESS_PERMISSION.
         """
-        # Create a user without the required permission
-        self.client.force_authenticate(user=self.learner_user)
+        # Set JWT cookie without required permission
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE,
+            'context': self.enterprise_uuid,
+        }])
 
-        url = reverse('api:v1:billing-management-set-default-payment-method', kwargs={'payment_method_id': 'pm_test123'})
-        response = self.client.post(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+        url = reverse('api:v1:billing-management-delete-payment-method', kwargs={'payment_method_id': 'pm_test123'})
+        response = self.client.delete(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
-
-    @mock.patch('stripe.Customer.modify')
-    @mock.patch('stripe.PaymentMethod.retrieve')
-    def test_set_default_payment_method_admin_access(self, mock_retrieve_pm, mock_modify):
-        """
-        Test that enterprise admin can set default payment method for their own enterprise.
-        """
-        # Create admin user with permission
-        admin_user = self._create_user(username='admin_user')
-        self._create_role_assignment(
-            user=admin_user,
-            role=self.customer_billing_admin_role,
-            enterprise_uuid=self.enterprise_uuid,
-        )
-        self.client.force_authenticate(user=admin_user)
-
-        mock_payment_method = mock.Mock()
-        mock_payment_method.get.side_effect = lambda key, default=None: {
-            'id': 'pm_test123',
-            'customer': self.stripe_customer_id,
-        }.get(key, default)
-        mock_retrieve_pm.return_value = mock_payment_method
-
-        url = reverse('api:v1:billing-management-set-default-payment-method', kwargs={'payment_method_id': 'pm_test123'})
-        response = self.client.post(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        response_data = response.json()
-        self.assertIn('message', response_data)
-
-    @mock.patch('stripe.Customer.modify')
-    @mock.patch('stripe.PaymentMethod.retrieve')
-    def test_set_default_payment_method_operator_access(self, mock_retrieve_pm, mock_modify):
-        """
-        Test that operator can set default payment method for any enterprise.
-        """
-        # Create operator user with permission
-        operator_user = self._create_user(username='operator_user', is_staff=True)
-        self._create_role_assignment(
-            user=operator_user,
-            role=self.customer_billing_operator_role,
-        )
-        self.client.force_authenticate(user=operator_user)
-
-        mock_payment_method = mock.Mock()
-        mock_payment_method.get.side_effect = lambda key, default=None: {
-            'id': 'pm_test123',
-            'customer': self.stripe_customer_id,
-        }.get(key, default)
-        mock_retrieve_pm.return_value = mock_payment_method
-
-        url = reverse('api:v1:billing-management-set-default-payment-method', kwargs={'payment_method_id': 'pm_test123'})
-        response = self.client.post(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        response_data = response.json()
-        self.assertIn('message', response_data)
