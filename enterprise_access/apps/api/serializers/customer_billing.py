@@ -570,3 +570,25 @@ class SubscriptionResponseSerializer(serializers.Serializer):
             'yearly_amount': obj.get('yearly_amount'),
             'license_count': obj.get('license_count'),
         }
+
+
+# pylint: disable=abstract-method
+class CancelSubscriptionResponseSerializer(serializers.Serializer):
+    """
+    Response serializer for cancel subscription operation from POST /api/v1/billing-management/subscription/cancel
+    """
+    subscription = serializers.SerializerMethodField(
+        help_text='Updated subscription details after cancellation request',
+    )
+
+    def get_subscription(self, obj):
+        """Get subscription data after cancellation."""
+        if obj is None:
+            return None
+        return {
+            'id': obj.get('id'),
+            'status': obj.get('status'),
+            'plan_type': obj.get('plan_type'),
+            'cancel_at_period_end': obj.get('cancel_at_period_end'),
+            'current_period_end': obj.get('current_period_end'),
+        }

@@ -19,6 +19,7 @@ from .content_assignments.assignment_configuration import (
 from .customer_billing import (
     BillingAddressResponseSerializer,
     BillingAddressUpdateRequestSerializer,
+    CancelSubscriptionResponseSerializer,
     CheckoutIntentCreateRequestSerializer,
     CheckoutIntentReadOnlySerializer,
     CheckoutIntentUpdateRequestSerializer,
