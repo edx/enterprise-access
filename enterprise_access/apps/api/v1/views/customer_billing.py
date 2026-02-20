@@ -655,3 +655,34 @@ class StripeEventSummaryViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
             raise exceptions.NotFound("No Stripe subscription data found for this plan")
         response_serializer.is_valid(raise_exception=True)
         return Response(response_serializer.data, status=status.HTTP_200_OK)
+
+
+BILLING_MANAGEMENT_API_TAG = 'Billing Management'
+
+
+class BillingManagementViewSet(viewsets.ViewSet):
+    """
+    Viewset supporting operations for the Billing Management API.
+    This is a new API for managing billing and subscription information.
+    """
+    authentication_classes = (JwtAuthentication,)
+    permission_classes = (permissions.IsAuthenticated,)
+
+    @extend_schema(
+        tags=[BILLING_MANAGEMENT_API_TAG],
+        summary='Placeholder endpoint for billing management API.',
+        description='This endpoint serves as a placeholder for the billing management API.',
+    )
+    @action(
+        detail=False,
+        methods=['get'],
+        url_path='health-check',
+    )
+    def health_check(self, request):
+        """
+        Health check endpoint for the billing management API.
+        """
+        return Response(
+            {'status': 'healthy'},
+            status=status.HTTP_200_OK,
+        )
