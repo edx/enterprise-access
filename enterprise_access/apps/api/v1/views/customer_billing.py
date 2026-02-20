@@ -1415,7 +1415,7 @@ class BillingManagementViewSet(viewsets.ViewSet):
 
             # Determine if there are more results
             next_page_token = None
-            if invoices_response.get('has_more'):
+            if invoices_response.has_more:
                 # Get the last invoice's ID for pagination
                 if transactions:
                     next_page_token = transactions[-1]['id']
