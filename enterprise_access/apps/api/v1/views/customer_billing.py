@@ -1464,3 +1464,208 @@ class BillingManagementViewSet(viewsets.ViewSet):
         elif stripe_status in ['uncollectible']:
             return 'uncollectible'
         return 'open'  # Default to open
+
+    @extend_schema(
+        tags=[BILLING_MANAGEMENT_API_TAG],
+        summary='Get subscription status',
+        description='Retrieve the current subscription status and plan type for a Stripe customer associated with an enterprise.',
+        parameters=[
+            OpenApiParameter(
+                name='enterprise_customer_uuid',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                required=True,
+                description='UUID of the enterprise customer',
+            ),
+        ],
+        responses={
+            status.HTTP_200_OK: serializers.SubscriptionResponseSerializer,
+            status.HTTP_400_BAD_REQUEST: OpenApiResponse(description='Missing or invalid enterprise_customer_uuid'),
+            status.HTTP_403_FORBIDDEN: OpenApiResponse(description='Permission denied'),
+            status.HTTP_404_NOT_FOUND: OpenApiResponse(description='Enterprise customer or Stripe customer not found'),
+            status.HTTP_422_UNPROCESSABLE_ENTITY: OpenApiResponse(description='Stripe API call failed'),
+        },
+    )
+    @action(detail=False, methods=['get'], url_path='subscription')
+    @permission_required(
+        BILLING_MANAGEMENT_ACCESS_PERMISSION,
+        fn=lambda request, **kwargs: request.GET.get('enterprise_customer_uuid')
+    )
+    def get_subscription(self, request, **kwargs):
+        """
+        Get subscription status and plan type for a Stripe customer.
+
+        Returns null subscription if no active subscription exists.
+        The plan_type is derived from Stripe product/price metadata using the 'plan_type' key.
+        """
+        enterprise_uuid = request.query_params.get('enterprise_customer_uuid')
+        if not enterprise_uuid:
+            return Response(
+                {'error': 'enterprise_customer_uuid query parameter is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            # Find the CheckoutIntent for this enterprise
+            checkout_intent = CheckoutIntent.objects.filter(enterprise_uuid=enterprise_uuid).first()
+            if not checkout_intent or not checkout_intent.stripe_customer_id:
+                logger.warning(
+                    f'No checkout intent with stripe customer ID found for enterprise_uuid: {enterprise_uuid}'
+                )
+                return Response(
+                    {'error': 'Stripe customer not found for this enterprise'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            stripe_customer_id = checkout_intent.stripe_customer_id
+
+            # Retrieve subscriptions for the customer
+            subscriptions_response = stripe.Subscription.list(
+                customer=stripe_customer_id,
+                limit=1,  # Only get the most recent subscription
+                status='active',
+            )
+
+            # If no active subscription, return null
+            if not subscriptions_response.data:
+                serializer = serializers.SubscriptionResponseSerializer(None)
+                return Response(serializer.data, status=status.HTTP_200_OK)
+
+            subscription = subscriptions_response.data[0]
+
+            # Extract subscription details
+            sub_data = {
+                'id': subscription.get('id'),
+                'status': subscription.get('status'),
+                'plan_type': self._get_plan_type_from_subscription(subscription),
+                'cancel_at_period_end': subscription.get('cancel_at_period_end', False),
+                'current_period_end': subscription.get('current_period_end'),
+                'yearly_amount': self._get_yearly_amount(subscription),
+                'license_count': self._get_license_count(subscription),
+            }
+
+            serializer = serializers.SubscriptionResponseSerializer(sub_data)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
+        except stripe.error.InvalidRequestError as e:
+            logger.warning(f'Invalid Stripe request for customer {stripe_customer_id}: {str(e)}')
+            return Response(
+                {'error': 'Invalid request to Stripe API'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except stripe.error.StripeError as e:
+            logger.exception(f'Stripe API error retrieving subscription for {enterprise_uuid}: {str(e)}')
+            return Response(
+                {'error': f'Stripe API error: {str(e)}'},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+        except Exception as e:  # pylint: disable=broad-except
+            logger.exception(f'Unexpected error retrieving subscription for {enterprise_uuid}: {str(e)}')
+            return Response(
+                {'error': 'An unexpected error occurred'},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+
+    @staticmethod
+    def _get_plan_type_from_subscription(subscription):
+        """
+        Derive plan_type from Stripe subscription's price/product metadata.
+
+        Looks for 'plan_type' key in price metadata first, then product metadata.
+        Returns 'Other' if no matching metadata is found.
+
+        Expected plan_type values: 'Teams', 'Essentials', 'LearnerCredit', 'Other'
+        """
+        try:
+            # Get the price object from the subscription
+            items = subscription.get('items', {}).get('data', [])
+            if not items:
+                return 'Other'
+
+            price_id = items[0].get('price', {}).get('id')
+            if not price_id:
+                return 'Other'
+
+            # Retrieve the price to access metadata
+            price = stripe.Price.retrieve(price_id)
+            
+            # Check price metadata first
+            price_metadata = price.get('metadata', {})
+            if 'plan_type' in price_metadata:
+                return price_metadata.get('plan_type', 'Other')
+
+            # Check product metadata
+            product_id = price.get('product')
+            if product_id:
+                product = stripe.Product.retrieve(product_id)
+                product_metadata = product.get('metadata', {})
+                if 'plan_type' in product_metadata:
+                    return product_metadata.get('plan_type', 'Other')
+
+            return 'Other'
+
+        except stripe.error.StripeError as e:
+            logger.warning(f'Could not retrieve plan type from Stripe metadata: {str(e)}')
+            return 'Other'
+        except Exception as e:  # pylint: disable=broad-except
+            logger.warning(f'Unexpected error deriving plan_type: {str(e)}')
+            return 'Other'
+
+    @staticmethod
+    def _get_yearly_amount(subscription):
+        """
+        Calculate yearly amount from subscription items.
+
+        Returns the total yearly recurring revenue for the subscription.
+        """
+        try:
+            items = subscription.get('items', {}).get('data', [])
+            if not items:
+                return 0
+
+            total_amount = 0
+            for item in items:
+                price = item.get('price', {})
+                quantity = item.get('quantity', 1)
+                
+                # Get the unit amount
+                unit_amount = price.get('unit_amount', 0)
+                
+                # Calculate yearly amount based on billing period
+                billing_period = price.get('recurring', {}).get('interval')
+                if billing_period == 'year':
+                    total_amount += unit_amount * quantity
+                elif billing_period == 'month':
+                    total_amount += (unit_amount * 12) * quantity
+                elif billing_period == 'week':
+                    total_amount += (unit_amount * 52) * quantity
+
+            return total_amount
+
+        except Exception as e:  # pylint: disable=broad-except
+            logger.warning(f'Could not calculate yearly amount: {str(e)}')
+            return 0
+
+    @staticmethod
+    def _get_license_count(subscription):
+        """
+        Get license count from subscription items.
+
+        Uses the quantity from subscription items as license count.
+        Returns the sum of quantities across all items.
+        """
+        try:
+            items = subscription.get('items', {}).get('data', [])
+            if not items:
+                return 0
+
+            total_licenses = 0
+            for item in items:
+                quantity = item.get('quantity', 0)
+                total_licenses += quantity
+
+            return total_licenses
+
+        except Exception as e:  # pylint: disable=broad-except
+            logger.warning(f'Could not get license count: {str(e)}')
+            return 0

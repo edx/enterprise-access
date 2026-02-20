@@ -546,3 +546,27 @@ class TransactionsListResponseSerializer(serializers.Serializer):
         allow_null=True,
         help_text='Pagination token for next page of results, if more exist',
     )
+
+
+# pylint: disable=abstract-method
+class SubscriptionResponseSerializer(serializers.Serializer):
+    """
+    Response serializer for subscription status from GET /api/v1/billing-management/subscription
+    """
+    subscription = serializers.SerializerMethodField(
+        help_text='Subscription details or null if no active subscription',
+    )
+
+    def get_subscription(self, obj):
+        """Get subscription data, returns None if no subscription."""
+        if obj is None:
+            return None
+        return {
+            'id': obj.get('id'),
+            'status': obj.get('status'),
+            'plan_type': obj.get('plan_type'),
+            'cancel_at_period_end': obj.get('cancel_at_period_end'),
+            'current_period_end': obj.get('current_period_end'),
+            'yearly_amount': obj.get('yearly_amount'),
+            'license_count': obj.get('license_count'),
+        }
