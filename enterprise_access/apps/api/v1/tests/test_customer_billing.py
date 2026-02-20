@@ -495,3 +495,148 @@ class BillingManagementAPITests(APITest):
         url = reverse('api:v1:billing-management-health-check')
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+
+class BillingManagementAddressEndpointTests(APITest):
+    """
+    Tests for the billing management address endpoint.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.enterprise_uuid = str(uuid.uuid4())
+        self.stripe_customer_id = 'cus_test_address_123'
+
+        # Create a checkout intent for testing
+        self.checkout_intent = CheckoutIntent.objects.create(
+            user=self.user,
+            enterprise_uuid=self.enterprise_uuid,
+            enterprise_name='Test Enterprise',
+            enterprise_slug='test-enterprise',
+            stripe_customer_id=self.stripe_customer_id,
+            state=CheckoutIntentState.PAID,
+            quantity=10,
+            expires_at=timezone.now() + timedelta(hours=1),
+        )
+
+        # Set JWT cookie with appropriate permissions
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': self.enterprise_uuid,
+        }])
+
+    def tearDown(self):
+        CheckoutIntent.objects.all().delete()
+        super().tearDown()
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.get_stripe_customer')
+    def test_get_address_success(self, mock_get_stripe_customer):
+        """
+        Test successful retrieval of billing address.
+        """
+        mock_stripe_customer = {
+            'id': self.stripe_customer_id,
+            'name': 'John Doe',
+            'email': 'john@example.com',
+            'phone': '+1234567890',
+            'address': {
+                'line1': '123 Main St',
+                'line2': 'Suite 100',
+                'city': 'San Francisco',
+                'state': 'CA',
+                'postal_code': '94105',
+                'country': 'US',
+            },
+        }
+        mock_get_stripe_customer.return_value = mock_stripe_customer
+
+        url = reverse('api:v1:billing-management-address')
+        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response_data = response.json()
+        self.assertEqual(response_data['name'], 'John Doe')
+        self.assertEqual(response_data['email'], 'john@example.com')
+        self.assertEqual(response_data['phone'], '+1234567890')
+        self.assertEqual(response_data['address_line_1'], '123 Main St')
+        self.assertEqual(response_data['address_line_2'], 'Suite 100')
+        self.assertEqual(response_data['city'], 'San Francisco')
+        self.assertEqual(response_data['state'], 'CA')
+        self.assertEqual(response_data['postal_code'], '94105')
+        self.assertEqual(response_data['country'], 'US')
+
+    def test_get_address_missing_enterprise_uuid(self):
+        """
+        Test that missing enterprise_customer_uuid returns 400.
+        """
+        url = reverse('api:v1:billing-management-address')
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('error', response.json())
+
+    def test_get_address_nonexistent_enterprise(self):
+        """
+        Test that non-existent enterprise returns 404.
+        """
+        nonexistent_uuid = str(uuid.uuid4())
+        url = reverse('api:v1:billing-management-address')
+        response = self.client.get(url, {'enterprise_customer_uuid': nonexistent_uuid})
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertIn('error', response.json())
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.get_stripe_customer')
+    def test_get_address_stripe_error(self, mock_get_stripe_customer):
+        """
+        Test that Stripe API errors are handled gracefully.
+        """
+        mock_get_stripe_customer.side_effect = stripe.error.StripeError('Stripe API Error')
+
+        url = reverse('api:v1:billing-management-address')
+        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
+        self.assertIn('error', response.json())
+
+    def test_get_address_requires_permission(self):
+        """
+        Test that the endpoint requires BILLING_MANAGEMENT_ACCESS_PERMISSION.
+        """
+        # Create a user without billing management permission
+        from enterprise_access.apps.core.tests.factories import UserFactory
+        unprivileged_user = UserFactory()
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE,
+            'context': self.enterprise_uuid,
+        }], user=unprivileged_user)
+
+        url = reverse('api:v1:billing-management-address')
+        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.get_stripe_customer')
+    def test_get_address_with_partial_address_data(self, mock_get_stripe_customer):
+        """
+        Test that endpoint handles Stripe customers with partial address data.
+        """
+        mock_stripe_customer = {
+            'id': self.stripe_customer_id,
+            'name': 'Jane Doe',
+            'email': 'jane@example.com',
+            'phone': None,
+            'address': None,
+        }
+        mock_get_stripe_customer.return_value = mock_stripe_customer
+
+        url = reverse('api:v1:billing-management-address')
+        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response_data = response.json()
+        self.assertEqual(response_data['name'], 'Jane Doe')
+        self.assertEqual(response_data['email'], 'jane@example.com')
+        self.assertIsNone(response_data['phone'])
+        self.assertIsNone(response_data.get('address_line_1'))
+        self.assertIsNone(response_data.get('city'))

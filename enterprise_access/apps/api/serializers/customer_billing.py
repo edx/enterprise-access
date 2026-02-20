@@ -299,3 +299,55 @@ class StripeSubscriptionPlanInfoResponseSerializer(serializers.Serializer):
         required=False,
         help_text='Timestamp when the subscription is scheduled to be canceled',
     )
+
+
+# pylint: disable=abstract-method
+class BillingAddressResponseSerializer(serializers.Serializer):
+    """
+    Response serializer for billing address from GET /api/v1/billing-management/address
+    """
+    name = serializers.CharField(
+        required=False,
+        allow_null=True,
+        help_text='Full name of the billing contact',
+    )
+    email = serializers.EmailField(
+        required=False,
+        allow_null=True,
+        help_text='Email address associated with the billing account',
+    )
+    country = serializers.CharField(
+        required=False,
+        allow_null=True,
+        help_text='Two-letter ISO country code',
+    )
+    address_line_1 = serializers.CharField(
+        required=False,
+        allow_null=True,
+        help_text='First line of the street address',
+    )
+    address_line_2 = serializers.CharField(
+        required=False,
+        allow_null=True,
+        help_text='Second line of the street address (optional)',
+    )
+    city = serializers.CharField(
+        required=False,
+        allow_null=True,
+        help_text='City of the billing address',
+    )
+    state = serializers.CharField(
+        required=False,
+        allow_null=True,
+        help_text='State or province of the billing address',
+    )
+    postal_code = serializers.CharField(
+        required=False,
+        allow_null=True,
+        help_text='Postal code or zip code of the billing address',
+    )
+    phone = serializers.CharField(
+        required=False,
+        allow_null=True,
+        help_text='Phone number associated with the billing account',
+    )
