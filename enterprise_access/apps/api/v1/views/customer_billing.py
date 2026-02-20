@@ -1300,3 +1300,167 @@ class BillingManagementViewSet(viewsets.ViewSet):
                 {'error': 'An unexpected error occurred'},
                 status=status.HTTP_422_UNPROCESSABLE_ENTITY
             )
+
+    @extend_schema(
+        tags=[BILLING_MANAGEMENT_API_TAG],
+        summary='List transactions',
+        description='Retrieve paginated invoice/transaction history for a Stripe customer associated with an enterprise.',
+        parameters=[
+            OpenApiParameter(
+                name='enterprise_customer_uuid',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                required=True,
+                description='UUID of the enterprise customer',
+            ),
+            OpenApiParameter(
+                name='page_token',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description='Stripe pagination cursor for continuing a paginated list',
+            ),
+            OpenApiParameter(
+                name='limit',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description='Number of transactions to return per page (default 10, max 25)',
+            ),
+        ],
+        responses={
+            status.HTTP_200_OK: serializers.TransactionsListResponseSerializer,
+            status.HTTP_400_BAD_REQUEST: OpenApiResponse(description='Missing or invalid enterprise_customer_uuid or parameters'),
+            status.HTTP_403_FORBIDDEN: OpenApiResponse(description='Permission denied'),
+            status.HTTP_404_NOT_FOUND: OpenApiResponse(description='Enterprise customer or Stripe customer not found'),
+            status.HTTP_422_UNPROCESSABLE_ENTITY: OpenApiResponse(description='Stripe API call failed'),
+        },
+    )
+    @action(detail=False, methods=['get'], url_path='transactions')
+    @permission_required(
+        BILLING_MANAGEMENT_ACCESS_PERMISSION,
+        fn=lambda request, **kwargs: request.GET.get('enterprise_customer_uuid')
+    )
+    def list_transactions(self, request, **kwargs):
+        """
+        List transactions/invoices for a Stripe customer.
+
+        The enterprise_customer_uuid query parameter is used to:
+        1. Find the CheckoutIntent for the enterprise
+        2. Extract the Stripe customer ID from the CheckoutIntent
+        3. Retrieve paginated invoices from Stripe
+        4. Fetch charge information for receipt URLs
+        """
+        enterprise_uuid = request.query_params.get('enterprise_customer_uuid')
+        if not enterprise_uuid:
+            return Response(
+                {'error': 'enterprise_customer_uuid query parameter is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Get and validate pagination parameters
+        page_token = request.query_params.get('starting_after')
+        try:
+            limit = int(request.query_params.get('limit', 10))
+            if limit < 1 or limit > 25:
+                limit = 10
+        except (ValueError, TypeError):
+            limit = 10
+
+        try:
+            # Find the CheckoutIntent for this enterprise
+            checkout_intent = CheckoutIntent.objects.filter(enterprise_uuid=enterprise_uuid).first()
+            if not checkout_intent or not checkout_intent.stripe_customer_id:
+                logger.warning(
+                    f'No checkout intent with stripe customer ID found for enterprise_uuid: {enterprise_uuid}'
+                )
+                return Response(
+                    {'error': 'Stripe customer not found for this enterprise'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            stripe_customer_id = checkout_intent.stripe_customer_id
+
+            # Retrieve invoices from Stripe with pagination
+            invoices_response = stripe.Invoice.list(
+                customer=stripe_customer_id,
+                limit=limit,
+                starting_after=page_token,
+            )
+
+            # Transform invoices to transaction format
+            transactions = []
+            for invoice in invoices_response.data:
+                transaction = {
+                    'id': invoice.get('id'),
+                    'date': invoice.get('created'),  # Unix timestamp, will be converted by serializer
+                    'amount': invoice.get('amount_paid'),  # Amount in cents
+                    'currency': invoice.get('currency', 'usd').lower(),
+                    'status': self._normalize_invoice_status(invoice.get('status')),
+                    'description': invoice.get('description'),
+                    'invoice_pdf_url': invoice.get('hosted_invoice_url'),
+                }
+
+                # Attempt to get receipt_url from associated charge
+                try:
+                    if invoice.get('charge'):
+                        charge = stripe.Charge.retrieve(invoice.get('charge'))
+                        transaction['receipt_url'] = charge.get('receipt_url')
+                except stripe.error.StripeError as e:
+                    logger.warning(f'Could not retrieve charge {invoice.get("charge")} for receipt URL: {str(e)}')
+                    transaction['receipt_url'] = None
+
+                transactions.append(transaction)
+
+            # Determine if there are more results
+            next_page_token = None
+            if invoices_response.get('has_more'):
+                # Get the last invoice's ID for pagination
+                if transactions:
+                    next_page_token = transactions[-1]['id']
+
+            # Serialize and return response
+            response_data = {
+                'transactions': transactions,
+                'next_page_token': next_page_token,
+            }
+
+            serializer = serializers.TransactionsListResponseSerializer(response_data)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
+        except stripe.error.InvalidRequestError as e:
+            logger.warning(f'Invalid Stripe request for customer {stripe_customer_id}: {str(e)}')
+            return Response(
+                {'error': 'Invalid request to Stripe API'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except stripe.error.StripeError as e:
+            logger.exception(f'Stripe API error retrieving transactions for {enterprise_uuid}: {str(e)}')
+            return Response(
+                {'error': f'Stripe API error: {str(e)}'},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+        except Exception as e:  # pylint: disable=broad-except
+            logger.exception(f'Unexpected error retrieving transactions for {enterprise_uuid}: {str(e)}')
+            return Response(
+                {'error': 'An unexpected error occurred'},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+
+    @staticmethod
+    def _normalize_invoice_status(stripe_status):
+        """
+        Normalize Stripe invoice status to canonical form.
+
+        Stripe returns statuses like 'draft', 'open', 'paid', 'uncollectible', 'void'.
+        We normalize to: 'paid', 'open', 'void', 'uncollectible'
+        """
+        if stripe_status in ['paid']:
+            return 'paid'
+        elif stripe_status in ['draft', 'open']:
+            return 'open'
+        elif stripe_status in ['void']:
+            return 'void'
+        elif stripe_status in ['uncollectible']:
+            return 'uncollectible'
+        return 'open'  # Default to open

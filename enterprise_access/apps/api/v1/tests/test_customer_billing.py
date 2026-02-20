@@ -1378,3 +1378,293 @@ class BillingManagementDeletePaymentMethodTests(APITest):
         response = self.client.delete(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+class BillingManagementTransactionsTests(APITest):
+    """
+    Tests for the list transactions endpoint.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.enterprise_uuid = str(uuid.uuid4())
+        self.stripe_customer_id = 'cus_test_transactions_123'
+
+        # Create a checkout intent for testing
+        self.checkout_intent = CheckoutIntent.objects.create(
+            user=self.user,
+            enterprise_uuid=self.enterprise_uuid,
+            enterprise_name='Test Enterprise',
+            enterprise_slug='test-enterprise',
+            stripe_customer_id=self.stripe_customer_id,
+            state=CheckoutIntentState.PAID,
+            quantity=10,
+            expires_at=timezone.now() + timedelta(hours=1),
+        )
+
+        # Set JWT cookie with appropriate permissions
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': self.enterprise_uuid,
+        }])
+
+    def tearDown(self):
+        CheckoutIntent.objects.all().delete()
+        super().tearDown()
+
+    @mock.patch('stripe.Charge.retrieve')
+    @mock.patch('stripe.Invoice.list')
+    def test_list_transactions_success(self, mock_invoice_list, mock_charge_retrieve):
+        """
+        Test successfully retrieving transaction list.
+        """
+        # Mock invoice response
+        mock_invoices = [
+            {
+                'id': 'in_test123',
+                'created': 1640000000,
+                'amount_paid': 9900,
+                'currency': 'USD',
+                'status': 'paid',
+                'description': 'Test Invoice 1',
+                'hosted_invoice_url': 'https://stripe.com/invoice/1',
+                'charge': 'ch_test123',
+            },
+            {
+                'id': 'in_test456',
+                'created': 1639900000,
+                'amount_paid': 5000,
+                'currency': 'USD',
+                'status': 'open',
+                'description': 'Test Invoice 2',
+                'hosted_invoice_url': 'https://stripe.com/invoice/2',
+                'charge': None,
+            },
+        ]
+        mock_invoice_list.return_value = mock.Mock(
+            data=mock_invoices,
+            has_more=False,
+        )
+
+        # Mock charge response
+        mock_charge = {
+            'id': 'ch_test123',
+            'receipt_url': 'https://stripe.com/receipt/ch_test123',
+        }
+        mock_charge_retrieve.return_value = mock_charge
+
+        url = reverse('api:v1:billing-management-transactions')
+        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response_data = response.json()
+        
+        self.assertIn('transactions', response_data)
+        self.assertEqual(len(response_data['transactions']), 2)
+        
+        # Check first transaction
+        tx = response_data['transactions'][0]
+        self.assertEqual(tx['id'], 'in_test123')
+        self.assertEqual(tx['amount'], 9900)
+        self.assertEqual(tx['currency'], 'usd')
+        self.assertEqual(tx['status'], 'paid')
+        self.assertEqual(tx['description'], 'Test Invoice 1')
+        self.assertIsNone(response_data.get('next_page_token'))
+
+    @mock.patch('stripe.Invoice.list')
+    def test_list_transactions_with_pagination(self, mock_invoice_list):
+        """
+        Test pagination with next_page_token.
+        """
+        # Mock invoice response with has_more=True
+        mock_invoices = [
+            {
+                'id': 'in_test123',
+                'created': 1640000000,
+                'amount_paid': 9900,
+                'currency': 'USD',
+                'status': 'paid',
+                'description': 'Test Invoice 1',
+                'hosted_invoice_url': 'https://stripe.com/invoice/1',
+                'charge': None,
+            },
+        ]
+        mock_invoice_list.return_value = mock.Mock(
+            data=mock_invoices,
+            has_more=True,
+        )
+
+        url = reverse('api:v1:billing-management-transactions')
+        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response_data = response.json()
+        
+        self.assertIn('next_page_token', response_data)
+        self.assertIsNotNone(response_data['next_page_token'])
+        self.assertEqual(response_data['next_page_token'], 'in_test123')
+
+    @mock.patch('stripe.Invoice.list')
+    def test_list_transactions_with_limit_parameter(self, mock_invoice_list):
+        """
+        Test limit parameter is passed to Stripe API and capped at 25.
+        """
+        mock_invoices = []
+        mock_invoice_list.return_value = mock.Mock(data=mock_invoices, has_more=False)
+
+        url = reverse('api:v1:billing-management-transactions')
+        response = self.client.get(url, {
+            'enterprise_customer_uuid': str(self.enterprise_uuid),
+            'limit': '15'
+        })
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        mock_invoice_list.assert_called_once()
+        call_kwargs = mock_invoice_list.call_args[1]
+        self.assertEqual(call_kwargs['limit'], 15)
+
+    @mock.patch('stripe.Invoice.list')
+    def test_list_transactions_limit_capped_at_25(self, mock_invoice_list):
+        """
+        Test that limit is capped at max of 25.
+        """
+        mock_invoices = []
+        mock_invoice_list.return_value = mock.Mock(data=mock_invoices, has_more=False)
+
+        url = reverse('api:v1:billing-management-transactions')
+        response = self.client.get(url, {
+            'enterprise_customer_uuid': str(self.enterprise_uuid),
+            'limit': '100'
+        })
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        call_kwargs = mock_invoice_list.call_args[1]
+        self.assertEqual(call_kwargs['limit'], 10)  # Falls back to default when > 25
+
+    @mock.patch('stripe.Invoice.list')
+    def test_list_transactions_missing_uuid(self, mock_invoice_list):
+        """
+        Test that endpoint requires enterprise_customer_uuid query parameter.
+        """
+        url = reverse('api:v1:billing-management-transactions')
+        response = self.client.get(url, {})
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        response_data = response.json()
+        self.assertIn('error', response_data)
+        self.assertIn('enterprise_customer_uuid', response_data['error'])
+
+    @mock.patch('stripe.Invoice.list')
+    def test_list_transactions_non_existent_enterprise(self, mock_invoice_list):
+        """
+        Test that endpoint returns 404 when enterprise is not found.
+        """
+        non_existent_uuid = str(uuid.uuid4())
+
+        url = reverse('api:v1:billing-management-transactions')
+        response = self.client.get(url, {'enterprise_customer_uuid': non_existent_uuid})
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        response_data = response.json()
+        self.assertIn('error', response_data)
+        self.assertIn('Stripe customer not found', response_data['error'])
+
+    @mock.patch('stripe.Invoice.list')
+    def test_list_transactions_stripe_api_error(self, mock_invoice_list):
+        """
+        Test that endpoint handles Stripe API errors gracefully.
+        """
+        mock_invoice_list.side_effect = stripe.error.StripeError('Connection error')
+
+        url = reverse('api:v1:billing-management-transactions')
+        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
+        response_data = response.json()
+        self.assertIn('error', response_data)
+        self.assertIn('Stripe API error', response_data['error'])
+
+    @mock.patch('stripe.Invoice.list')
+    def test_list_transactions_requires_permission(self, mock_invoice_list):
+        """
+        Test that endpoint requires BILLING_MANAGEMENT_ACCESS_PERMISSION.
+        """
+        # Set JWT cookie without required permission
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE,
+            'context': self.enterprise_uuid,
+        }])
+
+        url = reverse('api:v1:billing-management-transactions')
+        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    @mock.patch('stripe.Charge.retrieve')
+    @mock.patch('stripe.Invoice.list')
+    def test_list_transactions_empty_list(self, mock_invoice_list, mock_charge_retrieve):
+        """
+        Test returning empty transaction list.
+        """
+        mock_invoice_list.return_value = mock.Mock(data=[], has_more=False)
+
+        url = reverse('api:v1:billing-management-transactions')
+        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response_data = response.json()
+        
+        self.assertIn('transactions', response_data)
+        self.assertEqual(len(response_data['transactions']), 0)
+        self.assertIsNone(response_data.get('next_page_token'))
+
+    @mock.patch('stripe.Charge.retrieve')
+    @mock.patch('stripe.Invoice.list')
+    def test_list_transactions_normalizes_status(self, mock_invoice_list, mock_charge_retrieve):
+        """
+        Test that invoice statuses are normalized correctly.
+        """
+        # Mock invoices with various Stripe statuses
+        mock_invoices = [
+            {
+                'id': 'in_paid',
+                'created': 1640000000,
+                'amount_paid': 1000,
+                'currency': 'USD',
+                'status': 'paid',
+                'description': 'Paid invoice',
+                'hosted_invoice_url': 'https://stripe.com/invoice/1',
+                'charge': None,
+            },
+            {
+                'id': 'in_draft',
+                'created': 1640000000,
+                'amount_paid': 0,
+                'currency': 'USD',
+                'status': 'draft',
+                'description': 'Draft invoice',
+                'hosted_invoice_url': 'https://stripe.com/invoice/2',
+                'charge': None,
+            },
+            {
+                'id': 'in_void',
+                'created': 1640000000,
+                'amount_paid': 0,
+                'currency': 'USD',
+                'status': 'void',
+                'description': 'Void invoice',
+                'hosted_invoice_url': 'https://stripe.com/invoice/3',
+                'charge': None,
+            },
+        ]
+        mock_invoice_list.return_value = mock.Mock(data=mock_invoices, has_more=False)
+
+        url = reverse('api:v1:billing-management-transactions')
+        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response_data = response.json()
+        
+        transactions = response_data['transactions']
+        self.assertEqual(transactions[0]['status'], 'paid')
+        self.assertEqual(transactions[1]['status'], 'open')  # Draft normalized to open
+        self.assertEqual(transactions[2]['status'], 'void')
