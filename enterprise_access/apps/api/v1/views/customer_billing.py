@@ -1157,3 +1157,146 @@ class BillingManagementViewSet(viewsets.ViewSet):
                 {'error': 'An unexpected error occurred'},
                 status=status.HTTP_422_UNPROCESSABLE_ENTITY
             )
+
+    @extend_schema(
+        tags=[BILLING_MANAGEMENT_API_TAG],
+        summary='Delete payment method',
+        description='Remove a payment method from a Stripe customer associated with an enterprise.',
+        parameters=[
+            OpenApiParameter(
+                name='enterprise_customer_uuid',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                required=True,
+                description='UUID of the enterprise customer',
+            ),
+            OpenApiParameter(
+                name='id',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.PATH,
+                required=True,
+                description='ID of the payment method to delete',
+            ),
+        ],
+        responses={
+            status.HTTP_200_OK: OpenApiResponse(description='Payment method deleted successfully'),
+            status.HTTP_400_BAD_REQUEST: OpenApiResponse(description='Missing or invalid enterprise_customer_uuid'),
+            status.HTTP_403_FORBIDDEN: OpenApiResponse(description='Permission denied'),
+            status.HTTP_404_NOT_FOUND: OpenApiResponse(description='Enterprise customer, Stripe customer, or payment method not found'),
+            status.HTTP_409_CONFLICT: OpenApiResponse(description='Cannot delete only payment method or must change default first'),
+            status.HTTP_422_UNPROCESSABLE_ENTITY: OpenApiResponse(description='Stripe API call failed'),
+        },
+    )
+    @action(
+        detail=False,
+        methods=['delete'],
+        url_path='payment-methods/(?P<payment_method_id>[^/]+)',
+    )
+    @permission_required(
+        BILLING_MANAGEMENT_ACCESS_PERMISSION,
+        fn=lambda request, **kwargs: request.GET.get('enterprise_customer_uuid')
+    )
+    def delete_payment_method(self, request, payment_method_id=None, **kwargs):
+        """
+        Delete a payment method from a Stripe customer.
+
+        The enterprise_customer_uuid query parameter is used to:
+        1. Find the CheckoutIntent for the enterprise
+        2. Extract the Stripe customer ID from the CheckoutIntent
+        3. Verify the payment method belongs to this customer
+        4. Check constraints (only payment method, or is default with others)
+        5. Detach the payment method from the customer
+        """
+        enterprise_uuid = request.query_params.get('enterprise_customer_uuid')
+        if not enterprise_uuid:
+            return Response(
+                {'error': 'enterprise_customer_uuid query parameter is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not payment_method_id:
+            return Response(
+                {'error': 'payment_method_id is required in the URL path'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            # Find the CheckoutIntent for this enterprise
+            checkout_intent = CheckoutIntent.objects.filter(enterprise_uuid=enterprise_uuid).first()
+            if not checkout_intent or not checkout_intent.stripe_customer_id:
+                logger.warning(
+                    f'No checkout intent with stripe customer ID found for enterprise_uuid: {enterprise_uuid}'
+                )
+                return Response(
+                    {'error': 'Stripe customer not found for this enterprise'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            stripe_customer_id = checkout_intent.stripe_customer_id
+
+            # Verify the payment method exists and belongs to this customer
+            payment_method = stripe.PaymentMethod.retrieve(payment_method_id)
+            if not payment_method or payment_method.get('customer') != stripe_customer_id:
+                logger.warning(
+                    f'Payment method {payment_method_id} does not belong to customer {stripe_customer_id}'
+                )
+                return Response(
+                    {'error': 'Payment method not found or does not belong to this customer'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            # Get the customer to check payment method count and default
+            stripe_customer = stripe.Customer.retrieve(stripe_customer_id)
+            default_payment_method_id = stripe_customer.get('invoice_settings', {}).get('default_payment_method')
+
+            # List all payment methods for the customer
+            payment_methods_response = stripe.PaymentMethod.list(
+                customer=stripe_customer_id,
+                type='card',
+                limit=100,
+            )
+
+            # Count total payment methods (including other types if they exist)
+            # For now, we check only card type, but in future might need to include other types
+            total_payment_methods = len(payment_methods_response.data)
+
+            # Check if this is the only payment method
+            if total_payment_methods <= 1:
+                return Response(
+                    {'error': 'Cannot delete the only payment method on the account'},
+                    status=status.HTTP_409_CONFLICT
+                )
+
+            # Check if this is the default and others exist
+            if payment_method_id == default_payment_method_id:
+                return Response(
+                    {'error': 'Set another method as default before deleting this one'},
+                    status=status.HTTP_409_CONFLICT
+                )
+
+            # Detach the payment method from the customer
+            stripe.PaymentMethod.detach(payment_method_id)
+
+            return Response(
+                {'message': 'Payment method deleted successfully'},
+                status=status.HTTP_200_OK
+            )
+
+        except stripe.error.InvalidRequestError as e:
+            logger.warning(f'Invalid Stripe request for payment method {payment_method_id}: {str(e)}')
+            return Response(
+                {'error': 'Payment method not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except stripe.error.StripeError as e:
+            logger.exception(f'Stripe API error deleting payment method {payment_method_id} for {enterprise_uuid}: {str(e)}')
+            return Response(
+                {'error': f'Stripe API error: {str(e)}'},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+        except Exception as e:  # pylint: disable=broad-except
+            logger.exception(f'Unexpected error deleting payment method for {enterprise_uuid}: {str(e)}')
+            return Response(
+                {'error': 'An unexpected error occurred'},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
