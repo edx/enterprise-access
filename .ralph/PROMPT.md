@@ -10,9 +10,10 @@ learner access to educational content through various subsidy mechanisms.
 
 ## Current Objectives
 - Review the codebase and understand the current state
-- Follow tasks in fix_plan.md and keep track of learnings there, too.
+- Follow tasks in `.ralph/fix_plan.md` and keep track of learnings there, too.
 - Implement one task per loop
 - Write tests for new functionality
+- always ensure that all related tests pass after you make changes to business logic (or add new business logic)
 - Update documentation as needed
 
 ## Key Principles
@@ -35,7 +36,8 @@ learner access to educational content through various subsidy mechanisms.
   cannot run the tests, ask me to run them manually, then confirm whether they succeeded or failed.
 - When coming back from a session that exited as in progress or blocked, check to see if
   unit tests need to be run for the last thing you were working on.
-- All commits must pass the quality checks (pytest, isort, style, lint)
+- All commits must pass the quality checks (pytest, isort, style, lint). All tests related to the domain
+  you're modifying must pass after you make code changes.  (CRITICAL)
 - Do NOT commit broken code.
 - Keep changes focused and minimal
 - Follow existing code patterns.
@@ -61,7 +63,7 @@ RECOMMENDATION: <one line summary of what to do next>
 ```
 
 ## Institutional memory (CRITICAL)
-You're using `fix_plan.md` as your source of tasks. Use the relevant `docs/references` file
+You're using `.ralph/fix_plan.md` as your source of tasks. Use the relevant `docs/references` file
 as the place where you build institutional memory.
 
 ## Consolidate Patterns
@@ -75,11 +77,13 @@ markdown file in the .ralph/specs/stdlib folder.
 
 ## Current Task
 
-1. Follow `fix_plan.md` and choose the most important item to implement next. Make sure
+1. Follow `.ralph/fix_plan.md` and choose the most important item to implement next. Make sure
    to read the whole file to load your institutional memory.
 2. If using a PRD, check that you're on the correct branch from PRD `branchName`.
-3. If checks pass, commit changes to the feature branch with message `feat: [Story ID] - [Story Title]`
-4. Update the PRD to set `passes: true` for the completed story. Add completed items to the Completed section of `fix_plan.md`
+3. If test and lint checks pass, commit changes to the feature branch with message `feat: [Story ID] - [Story Title]`
+4. Update the PRD to set `passes: true` for the completed story - this would be done by editing the corresponding
+   JSON file in the `.ralph/specs` directory. 
+5. Add completed items to the Completed section of `.ralph/fix_plan.md`
 
 ## Architecture Overview
 
