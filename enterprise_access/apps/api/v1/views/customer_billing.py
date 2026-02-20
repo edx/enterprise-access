@@ -19,6 +19,7 @@ from enterprise_access.apps.api import serializers
 from enterprise_access.apps.api.authentication import StripeWebhookAuthentication
 from enterprise_access.apps.core.constants import (
     ALL_ACCESS_CONTEXT,
+    BILLING_MANAGEMENT_ACCESS_PERMISSION,
     CHECKOUT_INTENT_READ_WRITE_ALL_PERMISSION,
     CUSTOMER_BILLING_CREATE_PORTAL_SESSION_PERMISSION,
     STRIPE_EVENT_SUMMARY_READ_PERMISSION
@@ -30,6 +31,7 @@ from enterprise_access.apps.customer_billing.api import (
     create_free_trial_checkout_session
 )
 from enterprise_access.apps.customer_billing.models import CheckoutIntent, StripeEventSummary
+from enterprise_access.apps.customer_billing.stripe_api import get_stripe_customer
 from enterprise_access.apps.customer_billing.stripe_event_handlers import StripeEventHandler
 
 from .constants import CHECKOUT_INTENT_EXAMPLES, ERROR_RESPONSES, PATCH_REQUEST_EXAMPLES
@@ -686,3 +688,112 @@ class BillingManagementViewSet(viewsets.ViewSet):
             {'status': 'healthy'},
             status=status.HTTP_200_OK,
         )
+
+    @extend_schema(
+        tags=[BILLING_MANAGEMENT_API_TAG],
+        summary='Get customer billing address',
+        description='Retrieve the billing address for a Stripe customer associated with an enterprise.',
+        parameters=[
+            OpenApiParameter(
+                name='enterprise_customer_uuid',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                required=True,
+                description='UUID of the enterprise customer',
+            ),
+        ],
+        responses={
+            status.HTTP_200_OK: serializers.BillingAddressResponseSerializer,
+            status.HTTP_400_BAD_REQUEST: OpenApiResponse(description='Missing or invalid enterprise_customer_uuid'),
+            status.HTTP_403_FORBIDDEN: OpenApiResponse(description='Permission denied'),
+            status.HTTP_404_NOT_FOUND: OpenApiResponse(description='Enterprise customer or Stripe customer not found'),
+            status.HTTP_422_UNPROCESSABLE_ENTITY: OpenApiResponse(description='Stripe API call failed'),
+        },
+    )
+    @action(
+        detail=False,
+        methods=['get'],
+        url_path='address',
+    )
+    @permission_required(
+        BILLING_MANAGEMENT_ACCESS_PERMISSION,
+        fn=lambda request, **kwargs: request.GET.get('enterprise_customer_uuid')
+    )
+    def get_address(self, request, **kwargs):
+        """
+        Retrieve the billing address for a Stripe customer.
+
+        The enterprise_customer_uuid query parameter is used to:
+        1. Find the CheckoutIntent for the enterprise
+        2. Extract the Stripe customer ID from the CheckoutIntent
+        3. Retrieve the customer's billing address from Stripe
+        """
+        enterprise_uuid = request.query_params.get('enterprise_customer_uuid')
+        if not enterprise_uuid:
+            return Response(
+                {'error': 'enterprise_customer_uuid query parameter is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Find the CheckoutIntent for this enterprise
+        try:
+            checkout_intent = CheckoutIntent.objects.filter(enterprise_uuid=enterprise_uuid).first()
+            if not checkout_intent or not checkout_intent.stripe_customer_id:
+                logger.warning(
+                    f'No checkout intent with stripe customer ID found for enterprise_uuid: {enterprise_uuid}'
+                )
+                return Response(
+                    {'error': 'Stripe customer not found for this enterprise'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            # Get the Stripe customer
+            stripe_customer = get_stripe_customer(checkout_intent.stripe_customer_id)
+            if not stripe_customer:
+                return Response(
+                    {'error': 'Stripe customer not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            # Extract address fields from Stripe customer object
+            address_data = {
+                'name': stripe_customer.get('name'),
+                'email': stripe_customer.get('email'),
+                'phone': stripe_customer.get('phone'),
+            }
+
+            # Extract address from Stripe's address object if it exists
+            if stripe_customer.get('address'):
+                address = stripe_customer['address']
+                address_data.update({
+                    'country': address.get('country'),
+                    'address_line_1': address.get('line1'),
+                    'address_line_2': address.get('line2'),
+                    'city': address.get('city'),
+                    'state': address.get('state'),
+                    'postal_code': address.get('postal_code'),
+                })
+
+            # Serialize and return the response
+            response_serializer = serializers.BillingAddressResponseSerializer(data=address_data)
+            if not response_serializer.is_valid():
+                logger.error(f'Failed to serialize billing address: {response_serializer.errors}')
+                return Response(
+                    {'error': 'Failed to process billing address'},
+                    status=status.HTTP_422_UNPROCESSABLE_ENTITY
+                )
+
+            return Response(response_serializer.data, status=status.HTTP_200_OK)
+
+        except stripe.error.StripeError as e:
+            logger.exception(f'Stripe API error retrieving customer {enterprise_uuid}: {str(e)}')
+            return Response(
+                {'error': f'Stripe API error: {str(e)}'},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+        except Exception as e:  # pylint: disable=broad-except
+            logger.exception(f'Unexpected error retrieving billing address for {enterprise_uuid}: {str(e)}')
+            return Response(
+                {'error': 'An unexpected error occurred'},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
