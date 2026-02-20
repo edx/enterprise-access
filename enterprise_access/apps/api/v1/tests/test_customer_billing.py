@@ -538,8 +538,8 @@ class BillingManagementAddressEndpointTests(APITest):
         cache.clear()
         super().tearDown()
 
-    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.get_stripe_customer')
-    def test_get_address_success(self, mock_get_stripe_customer):
+    @mock.patch('stripe.Customer.retrieve')
+    def test_get_address_success(self, mock_stripe_customer_retrieve):
         """
         Test successful retrieval of billing address.
         """
@@ -557,7 +557,7 @@ class BillingManagementAddressEndpointTests(APITest):
                 'country': 'US',
             },
         }
-        mock_get_stripe_customer.return_value = mock_stripe_customer
+        mock_stripe_customer_retrieve.return_value = mock_stripe_customer
 
         url = reverse('api:v1:billing-management-get-address')
         response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
@@ -586,21 +586,21 @@ class BillingManagementAddressEndpointTests(APITest):
 
     def test_get_address_nonexistent_enterprise(self):
         """
-        Test that non-existent enterprise returns 404.
+        Test that non-existent enterprise returns 403.
+        RBAC permission check happens first - user doesn't have access to non-existent enterprise.
         """
         nonexistent_uuid = str(uuid.uuid4())
         url = reverse('api:v1:billing-management-get-address')
         response = self.client.get(url, {'enterprise_customer_uuid': nonexistent_uuid})
 
-        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
-        self.assertIn('error', response.json())
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
-    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.get_stripe_customer')
-    def test_get_address_stripe_error(self, mock_get_stripe_customer):
+    @mock.patch('stripe.Customer.retrieve')
+    def test_get_address_stripe_error(self, mock_stripe_customer_retrieve):
         """
         Test that Stripe API errors are handled gracefully.
         """
-        mock_get_stripe_customer.side_effect = stripe.error.StripeError('Stripe API Error')
+        mock_stripe_customer_retrieve.side_effect = stripe.error.StripeError('Stripe API Error')
 
         url = reverse('api:v1:billing-management-get-address')
         response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
@@ -625,8 +625,8 @@ class BillingManagementAddressEndpointTests(APITest):
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
-    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.get_stripe_customer')
-    def test_get_address_with_partial_address_data(self, mock_get_stripe_customer):
+    @mock.patch('stripe.Customer.retrieve')
+    def test_get_address_with_partial_address_data(self, mock_stripe_customer_retrieve):
         """
         Test that endpoint handles Stripe customers with partial address data.
         """
@@ -637,7 +637,7 @@ class BillingManagementAddressEndpointTests(APITest):
             'phone': None,
             'address': None,
         }
-        mock_get_stripe_customer.return_value = mock_stripe_customer
+        mock_stripe_customer_retrieve.return_value = mock_stripe_customer
 
         url = reverse('api:v1:billing-management-get-address')
         response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
