@@ -158,3 +158,12 @@ CLAUDE.md
 .claude/
 package-lock.json
 package.json
+
+# Ralph
+.ralph/.*
+.ralph/status.json
+.ralph/progress.json
+.ralph/specs/
+.ralph/logs
+.ralph/live.log
+.ralph/fix_plan.md

@@ -76,10 +76,17 @@ class LicenseManagerApiClient(BaseOAuthClient):
         if salesforce_opportunity_line_item:
             payload['salesforce_opportunity_line_item'] = salesforce_opportunity_line_item
 
+        query_parameters = {
+            # For the use case of adding an Opportunity Line Item to a SubscriptionPlan, just
+            # because the plan is inactive doesn't mean we should block the attempt.
+            'include_inactive': True,
+        }
+
         try:
             response = self.client.patch(
                 endpoint,
                 json=payload,
+                params=query_parameters,
                 timeout=settings.LICENSE_MANAGER_CLIENT_TIMEOUT
             )
             response.raise_for_status()
