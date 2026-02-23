@@ -20,7 +20,7 @@ from .customer_billing import (
     BillingManagementViewSet,
     CheckoutIntentViewSet,
     CustomerBillingViewSet,
-    StripeEventSummaryViewSet,
+    StripeEventSummaryViewSet
 )
 from .provisioning import ProvisioningCreateView, SubscriptionPlanOLIUpdateView
 from .subsidy_access_policy import (

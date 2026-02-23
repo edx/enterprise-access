@@ -7,9 +7,10 @@ Assume the dev containers are already running.
 ## Test and Quality Instructions
 Assuming the app container is running, you can run tests and linters like this:
 ```bash
-docker compose exec app bash -c "DJANGO_SETTINGS_MODULE=enterprise_access.settings.test pytest -c pytest.local.ini enterprise_access/apps/api/v1/tests/test_customer_billing.py"
-docker compose exec app bash -c "make quality"
+docker exec enterprise-access.app bash -c "DJANGO_SETTINGS_MODULE=enterprise_access.settings.test pytest -c pytest.local.ini enterprise_access/apps/api/v1/tests/test_customer_billing.py"
+docker exec enterprise-access.app bash -c "make quality"
 ```
+You can always find the running app container name with `docker ps | grep access`.
 
 ## Notes
 - Update this file when build process changes

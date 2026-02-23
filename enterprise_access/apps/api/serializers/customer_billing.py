@@ -479,7 +479,8 @@ class PaymentMethodsListResponseSerializer(serializers.Serializer):
 # pylint: disable=abstract-method
 class SetDefaultPaymentMethodRequestSerializer(serializers.Serializer):
     """
-    Request serializer for setting a payment method as default via POST /api/v1/billing-management/payment-methods/{id}/set-default
+    Request serializer for setting a payment method as default via
+    POST /api/v1/billing-management/payment-methods/{id}/set-default
     """
     payment_method_id = serializers.CharField(
         required=True,

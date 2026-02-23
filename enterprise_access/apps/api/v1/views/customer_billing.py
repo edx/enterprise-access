@@ -1068,7 +1068,9 @@ class BillingManagementViewSet(viewsets.ViewSet):
             status.HTTP_200_OK: OpenApiResponse(description='Payment method set as default successfully'),
             status.HTTP_400_BAD_REQUEST: OpenApiResponse(description='Missing or invalid enterprise_customer_uuid'),
             status.HTTP_403_FORBIDDEN: OpenApiResponse(description='Permission denied'),
-            status.HTTP_404_NOT_FOUND: OpenApiResponse(description='Enterprise customer, Stripe customer, or payment method not found'),
+            status.HTTP_404_NOT_FOUND: OpenApiResponse(
+                description='Enterprise customer, Stripe customer, or payment method not found'
+            ),
             status.HTTP_422_UNPROCESSABLE_ENTITY: OpenApiResponse(description='Stripe API call failed'),
         },
     )
@@ -1183,8 +1185,12 @@ class BillingManagementViewSet(viewsets.ViewSet):
             status.HTTP_200_OK: OpenApiResponse(description='Payment method deleted successfully'),
             status.HTTP_400_BAD_REQUEST: OpenApiResponse(description='Missing or invalid enterprise_customer_uuid'),
             status.HTTP_403_FORBIDDEN: OpenApiResponse(description='Permission denied'),
-            status.HTTP_404_NOT_FOUND: OpenApiResponse(description='Enterprise customer, Stripe customer, or payment method not found'),
-            status.HTTP_409_CONFLICT: OpenApiResponse(description='Cannot delete only payment method or must change default first'),
+            status.HTTP_404_NOT_FOUND: OpenApiResponse(
+                description='Enterprise customer, Stripe customer, or payment method not found'
+            ),
+            status.HTTP_409_CONFLICT: OpenApiResponse(
+                description='Cannot delete only payment method or must change default first'
+            ),
             status.HTTP_422_UNPROCESSABLE_ENTITY: OpenApiResponse(description='Stripe API call failed'),
         },
     )
@@ -1290,7 +1296,9 @@ class BillingManagementViewSet(viewsets.ViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
         except stripe.error.StripeError as e:
-            logger.exception(f'Stripe API error deleting payment method {payment_method_id} for {enterprise_uuid}: {str(e)}')
+            logger.exception(
+                f'Stripe API error deleting payment method {payment_method_id} for {enterprise_uuid}: {str(e)}'
+            )
             return Response(
                 {'error': f'Stripe API error: {str(e)}'},
                 status=status.HTTP_422_UNPROCESSABLE_ENTITY
@@ -1305,7 +1313,9 @@ class BillingManagementViewSet(viewsets.ViewSet):
     @extend_schema(
         tags=[BILLING_MANAGEMENT_API_TAG],
         summary='List transactions',
-        description='Retrieve paginated invoice/transaction history for a Stripe customer associated with an enterprise.',
+        description=(
+            'Retrieve paginated invoice/transaction history for a Stripe customer associated with an enterprise.'
+        ),
         parameters=[
             OpenApiParameter(
                 name='enterprise_customer_uuid',
@@ -1331,7 +1341,9 @@ class BillingManagementViewSet(viewsets.ViewSet):
         ],
         responses={
             status.HTTP_200_OK: serializers.TransactionsListResponseSerializer,
-            status.HTTP_400_BAD_REQUEST: OpenApiResponse(description='Missing or invalid enterprise_customer_uuid or parameters'),
+            status.HTTP_400_BAD_REQUEST: OpenApiResponse(
+                description='Missing or invalid enterprise_customer_uuid or parameters'
+            ),
             status.HTTP_403_FORBIDDEN: OpenApiResponse(description='Permission denied'),
             status.HTTP_404_NOT_FOUND: OpenApiResponse(description='Enterprise customer or Stripe customer not found'),
             status.HTTP_422_UNPROCESSABLE_ENTITY: OpenApiResponse(description='Stripe API call failed'),
@@ -1469,7 +1481,10 @@ class BillingManagementViewSet(viewsets.ViewSet):
     @extend_schema(
         tags=[BILLING_MANAGEMENT_API_TAG],
         summary='Get subscription status',
-        description='Retrieve the current subscription status and plan type for a Stripe customer associated with an enterprise.',
+        description=(
+            'Retrieve the current subscription status and plan type for a Stripe customer '
+            'associated with an enterprise.'
+        ),
         parameters=[
             OpenApiParameter(
                 name='enterprise_customer_uuid',
@@ -1683,7 +1698,10 @@ class BillingManagementViewSet(viewsets.ViewSet):
     @extend_schema(
         tags=[BILLING_MANAGEMENT_API_TAG],
         summary='Cancel subscription',
-        description='Request cancellation of a subscription at the end of the current billing period. Only available for Teams and Essentials plans.',
+        description=(
+            'Request cancellation of a subscription at the end of the current billing period. '
+            'Only available for Teams and Essentials plans.'
+        ),
         parameters=[
             OpenApiParameter(
                 name='enterprise_customer_uuid',
@@ -1696,8 +1714,12 @@ class BillingManagementViewSet(viewsets.ViewSet):
         responses={
             status.HTTP_200_OK: serializers.CancelSubscriptionResponseSerializer,
             status.HTTP_400_BAD_REQUEST: OpenApiResponse(description='Missing or invalid enterprise_customer_uuid'),
-            status.HTTP_403_FORBIDDEN: OpenApiResponse(description='Permission denied or plan type does not support cancellation'),
-            status.HTTP_404_NOT_FOUND: OpenApiResponse(description='Enterprise customer, Stripe customer, or active subscription not found'),
+            status.HTTP_403_FORBIDDEN: OpenApiResponse(
+                description='Permission denied or plan type does not support cancellation'
+            ),
+            status.HTTP_404_NOT_FOUND: OpenApiResponse(
+                description='Enterprise customer, Stripe customer, or active subscription not found'
+            ),
             status.HTTP_409_CONFLICT: OpenApiResponse(description='Subscription is already scheduled for cancellation'),
             status.HTTP_422_UNPROCESSABLE_ENTITY: OpenApiResponse(description='Stripe API call failed'),
         },
@@ -1805,7 +1827,10 @@ class BillingManagementViewSet(viewsets.ViewSet):
     @extend_schema(
         tags=[BILLING_MANAGEMENT_API_TAG],
         summary='Reinstate subscription',
-        description='Remove a scheduled cancellation from a subscription. Only available for Teams and Essentials plans.',
+        description=(
+            'Remove a scheduled cancellation from a subscription. '
+            'Only available for Teams and Essentials plans.'
+        ),
         parameters=[
             OpenApiParameter(
                 name='enterprise_customer_uuid',
@@ -1818,9 +1843,15 @@ class BillingManagementViewSet(viewsets.ViewSet):
         responses={
             status.HTTP_200_OK: serializers.ReinstateSubscriptionResponseSerializer,
             status.HTTP_400_BAD_REQUEST: OpenApiResponse(description='Missing or invalid enterprise_customer_uuid'),
-            status.HTTP_403_FORBIDDEN: OpenApiResponse(description='Permission denied or plan type does not support reinstatement'),
-            status.HTTP_404_NOT_FOUND: OpenApiResponse(description='Enterprise customer, Stripe customer, or active subscription not found'),
-            status.HTTP_409_CONFLICT: OpenApiResponse(description='Subscription is not pending cancellation or period has ended'),
+            status.HTTP_403_FORBIDDEN: OpenApiResponse(
+                description='Permission denied or plan type does not support reinstatement'
+            ),
+            status.HTTP_404_NOT_FOUND: OpenApiResponse(
+                description='Enterprise customer, Stripe customer, or active subscription not found'
+            ),
+            status.HTTP_409_CONFLICT: OpenApiResponse(
+                description='Subscription is not pending cancellation or period has ended'
+            ),
             status.HTTP_422_UNPROCESSABLE_ENTITY: OpenApiResponse(description='Stripe API call failed'),
         },
     )

@@ -1134,7 +1134,6 @@ class BillingManagementPaymentMethodsTests(APITest):
         self.assertTrue(method['is_default'])
 
 
-
 class BillingManagementDeletePaymentMethodTests(APITest):
     """
     Tests for the delete payment method endpoint.
@@ -1297,7 +1296,9 @@ class BillingManagementDeletePaymentMethodTests(APITest):
         """
         Test that endpoint returns 404 when payment method doesn't exist.
         """
-        mock_retrieve_pm.side_effect = stripe.error.InvalidRequestError('No such payment method', param='payment_method')
+        mock_retrieve_pm.side_effect = stripe.error.InvalidRequestError(
+            'No such payment method', param='payment_method'
+        )
 
         url = reverse('api:v1:billing-management-delete-payment-method', kwargs={'payment_method_id': 'pm_invalid'})
         response = self.client.delete(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}')
@@ -1392,6 +1393,7 @@ class BillingManagementDeletePaymentMethodTests(APITest):
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
+
 class BillingManagementTransactionsTests(APITest):
     """
     Tests for the list transactions endpoint.
@@ -1473,10 +1475,10 @@ class BillingManagementTransactionsTests(APITest):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         response_data = response.json()
-        
+
         self.assertIn('transactions', response_data)
         self.assertEqual(len(response_data['transactions']), 2)
-        
+
         # Check first transaction
         tx = response_data['transactions'][0]
         self.assertEqual(tx['id'], 'in_test123')
@@ -1514,7 +1516,7 @@ class BillingManagementTransactionsTests(APITest):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         response_data = response.json()
-        
+
         self.assertIn('next_page_token', response_data)
         self.assertIsNotNone(response_data['next_page_token'])
         self.assertEqual(response_data['next_page_token'], 'in_test123')
@@ -1624,7 +1626,7 @@ class BillingManagementTransactionsTests(APITest):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         response_data = response.json()
-        
+
         self.assertIn('transactions', response_data)
         self.assertEqual(len(response_data['transactions']), 0)
         self.assertIsNone(response_data.get('next_page_token'))
@@ -1675,11 +1677,12 @@ class BillingManagementTransactionsTests(APITest):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         response_data = response.json()
-        
+
         transactions = response_data['transactions']
         self.assertEqual(transactions[0]['status'], 'paid')
         self.assertEqual(transactions[1]['status'], 'open')  # Draft normalized to open
         self.assertEqual(transactions[2]['status'], 'void')
+
 
 class BillingManagementSubscriptionTests(APITest):
     """
@@ -1755,7 +1758,7 @@ class BillingManagementSubscriptionTests(APITest):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         response_data = response.json()
-        
+
         self.assertIn('subscription', response_data)
         sub = response_data['subscription']
         self.assertEqual(sub['id'], 'sub_test123')
@@ -1778,14 +1781,16 @@ class BillingManagementSubscriptionTests(APITest):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         response_data = response.json()
-        
+
         self.assertIn('subscription', response_data)
         self.assertIsNone(response_data['subscription'])
 
     @mock.patch('stripe.Product.retrieve')
     @mock.patch('stripe.Price.retrieve')
     @mock.patch('stripe.Subscription.list')
-    def test_get_subscription_plan_type_from_product_metadata(self, mock_sub_list, mock_price_retrieve, mock_product_retrieve):
+    def test_get_subscription_plan_type_from_product_metadata(
+        self, mock_sub_list, mock_price_retrieve, mock_product_retrieve
+    ):
         """
         Test deriving plan_type from product metadata when not in price metadata.
         """
@@ -1827,7 +1832,7 @@ class BillingManagementSubscriptionTests(APITest):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         response_data = response.json()
-        
+
         sub = response_data['subscription']
         self.assertEqual(sub['plan_type'], 'Essentials')
 
@@ -1869,7 +1874,7 @@ class BillingManagementSubscriptionTests(APITest):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         response_data = response.json()
-        
+
         sub = response_data['subscription']
         self.assertEqual(sub['plan_type'], 'Other')
 
@@ -1965,10 +1970,11 @@ class BillingManagementSubscriptionTests(APITest):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         response_data = response.json()
-        
+
         sub = response_data['subscription']
         # Monthly: 5000 * 12 = 60000
         self.assertEqual(sub['yearly_amount'], 60000)
+
 
 class BillingManagementCancelSubscriptionTests(APITest):
     """
@@ -2009,7 +2015,9 @@ class BillingManagementCancelSubscriptionTests(APITest):
     @mock.patch('stripe.Price.retrieve')
     @mock.patch('stripe.Subscription.modify')
     @mock.patch('stripe.Subscription.list')
-    def test_cancel_subscription_teams_plan_success(self, mock_sub_list, mock_sub_modify, mock_price_retrieve, mock_product_retrieve):
+    def test_cancel_subscription_teams_plan_success(
+        self, mock_sub_list, mock_sub_modify, mock_price_retrieve, mock_product_retrieve
+    ):
         """
         Test successfully cancelling a Teams plan subscription.
         """
@@ -2048,7 +2056,7 @@ class BillingManagementCancelSubscriptionTests(APITest):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         response_data = response.json()
-        
+
         self.assertIn('subscription', response_data)
         sub = response_data['subscription']
         self.assertEqual(sub['id'], 'sub_test123')
@@ -2059,7 +2067,9 @@ class BillingManagementCancelSubscriptionTests(APITest):
     @mock.patch('stripe.Price.retrieve')
     @mock.patch('stripe.Subscription.modify')
     @mock.patch('stripe.Subscription.list')
-    def test_cancel_subscription_essentials_plan_success(self, mock_sub_list, mock_sub_modify, mock_price_retrieve, mock_product_retrieve):
+    def test_cancel_subscription_essentials_plan_success(
+        self, mock_sub_list, mock_sub_modify, mock_price_retrieve, mock_product_retrieve
+    ):
         """
         Test successfully cancelling an Essentials plan subscription.
         """
@@ -2294,6 +2304,7 @@ class BillingManagementCancelSubscriptionTests(APITest):
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
+
 class BillingManagementReinstateSubscriptionTests(APITest):
     """
     Tests for the reinstate subscription endpoint.
@@ -2333,7 +2344,9 @@ class BillingManagementReinstateSubscriptionTests(APITest):
     @mock.patch('stripe.Price.retrieve')
     @mock.patch('stripe.Subscription.modify')
     @mock.patch('stripe.Subscription.list')
-    def test_reinstate_subscription_teams_plan_success(self, mock_sub_list, mock_sub_modify, mock_price_retrieve, mock_product_retrieve):
+    def test_reinstate_subscription_teams_plan_success(
+        self, mock_sub_list, mock_sub_modify, mock_price_retrieve, mock_product_retrieve
+    ):
         """
         Test successfully reinstating a Teams plan subscription.
         """
@@ -2373,7 +2386,7 @@ class BillingManagementReinstateSubscriptionTests(APITest):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         response_data = response.json()
-        
+
         self.assertIn('subscription', response_data)
         sub = response_data['subscription']
         self.assertEqual(sub['id'], 'sub_test123')
@@ -2384,7 +2397,9 @@ class BillingManagementReinstateSubscriptionTests(APITest):
     @mock.patch('stripe.Price.retrieve')
     @mock.patch('stripe.Subscription.modify')
     @mock.patch('stripe.Subscription.list')
-    def test_reinstate_subscription_essentials_plan_success(self, mock_sub_list, mock_sub_modify, mock_price_retrieve, mock_product_retrieve):
+    def test_reinstate_subscription_essentials_plan_success(
+        self, mock_sub_list, mock_sub_modify, mock_price_retrieve, mock_product_retrieve
+    ):
         """
         Test successfully reinstating an Essentials plan subscription.
         """
