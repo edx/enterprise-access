@@ -208,7 +208,7 @@ class ForcedPolicyRedemptionAssignmentTests(BaseForcedRedemptionTestCase):
             'course_run_key': course_run_key or self.course_run_key,
         }
 
-    def _new_assignment_budget(self):
+    def _new_assignment_budget(self, **policy_kwargs):
         """
         Helper to setup a new assignment-based budget.
         """
@@ -219,6 +219,7 @@ class ForcedPolicyRedemptionAssignmentTests(BaseForcedRedemptionTestCase):
         return AssignedLearnerCreditAccessPolicyFactory(
             enterprise_customer_uuid=customer_uuid,
             assignment_configuration=assignment_config,
+            **policy_kwargs,
         )
 
     @mock.patch('enterprise_access.apps.content_assignments.api.send_email_for_new_assignment')
@@ -230,7 +231,7 @@ class ForcedPolicyRedemptionAssignmentTests(BaseForcedRedemptionTestCase):
         Starting from a clean, unspent state of some policy's subsidy,
         test that we can force redemption.
         """
-        policy = self._new_assignment_budget()
+        policy = self._new_assignment_budget(spend_limit=self.default_content_price * 5)
         self._setup_redemption_state(user_email='Alice@foo.com')
 
         forced_redemption_record = ForcedPolicyRedemptionFactory(
