@@ -48,7 +48,7 @@ cachetools==7.0.1
     # via
     #   -r requirements/validation.txt
     #   tox
-cattrs==25.3.0
+cattrs==26.1.0
     # via -r requirements/validation.txt
 celery==5.6.2
     # via
@@ -64,7 +64,7 @@ cffi==2.0.0
     #   -r requirements/validation.txt
     #   cryptography
     #   pynacl
-chardet==5.2.0
+chardet==6.0.0.post1
     # via
     #   -r requirements/validation.txt
     #   diff-cover
@@ -325,7 +325,7 @@ fastavro==1.12.1
     #   -r requirements/validation.txt
     #   confluent-kafka
     #   openedx-events
-filelock==3.24.2
+filelock==3.24.3
     # via
     #   -r requirements/validation.txt
     #   tox
@@ -349,7 +349,7 @@ iniconfig==2.3.0
     # via
     #   -r requirements/validation.txt
     #   pytest
-isort==7.0.0
+isort==8.0.0
     # via
     #   -r requirements/validation.txt
     #   pylint
@@ -468,7 +468,7 @@ path==16.16.0
     # via edx-i18n-tools
 pip-tools==7.5.3
     # via -r requirements/pip-tools.txt
-platformdirs==4.9.1
+platformdirs==4.9.2
     # via
     #   -r requirements/validation.txt
     #   pylint
@@ -518,7 +518,7 @@ pyjwt[crypto]==2.11.0
     #   edx-drf-extensions
     #   edx-rest-api-client
     #   social-auth-core
-pylint==4.0.4
+pylint==4.0.5
     # via
     #   -r requirements/validation.txt
     #   edx-lint
@@ -598,7 +598,7 @@ readme-renderer==44.0
     # via
     #   -r requirements/validation.txt
     #   twine
-redis==7.1.1
+redis==7.2.0
     # via -r requirements/validation.txt
 referencing==0.37.0
     # via
@@ -630,7 +630,7 @@ rfc3986==2.0.0
     # via
     #   -r requirements/validation.txt
     #   twine
-rich==14.3.2
+rich==14.3.3
     # via
     #   -r requirements/validation.txt
     #   twine
@@ -681,7 +681,7 @@ sqlparse==0.5.5
     #   -r requirements/validation.txt
     #   django
     #   django-debug-toolbar
-stevedore==5.6.0
+stevedore==5.7.0
     # via
     #   -r requirements/validation.txt
     #   code-annotations
@@ -697,7 +697,7 @@ tomlkit==0.14.0
     # via
     #   -r requirements/validation.txt
     #   pylint
-tox==4.36.0
+tox==4.44.0
     # via -r requirements/validation.txt
 twine==6.2.0
     # via -r requirements/validation.txt
@@ -735,7 +735,7 @@ vine==5.1.0
     #   amqp
     #   celery
     #   kombu
-virtualenv==20.36.1
+virtualenv==20.38.0
     # via
     #   -r requirements/validation.txt
     #   tox

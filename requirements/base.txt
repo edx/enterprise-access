@@ -25,7 +25,7 @@ backoff==1.10.0
     # via analytics-python
 billiard==4.2.4
     # via celery
-cattrs==25.3.0
+cattrs==26.1.0
     # via -r requirements/base.in
 celery==5.6.2
     # via
@@ -300,7 +300,7 @@ pyyaml==6.0.3
     #   drf-spectacular
     #   drf-yasg
     #   edx-django-release-util
-redis==7.1.1
+redis==7.2.0
     # via -r requirements/base.in
 referencing==0.37.0
     # via
@@ -344,7 +344,7 @@ social-auth-core==4.8.5
     #   social-auth-app-django
 sqlparse==0.5.5
     # via django
-stevedore==5.6.0
+stevedore==5.7.0
     # via
     #   code-annotations
     #   edx-django-utils

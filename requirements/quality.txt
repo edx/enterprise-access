@@ -44,7 +44,7 @@ cachetools==7.0.1
     # via
     #   -r requirements/test.txt
     #   tox
-cattrs==25.3.0
+cattrs==26.1.0
     # via -r requirements/test.txt
 celery==5.6.2
     # via
@@ -60,7 +60,7 @@ cffi==2.0.0
     #   -r requirements/test.txt
     #   cryptography
     #   pynacl
-chardet==5.2.0
+chardet==6.0.0.post1
     # via
     #   -r requirements/test.txt
     #   tox
@@ -315,7 +315,7 @@ fastavro==1.12.1
     #   -r requirements/test.txt
     #   confluent-kafka
     #   openedx-events
-filelock==3.24.2
+filelock==3.24.3
     # via
     #   -r requirements/test.txt
     #   tox
@@ -337,7 +337,7 @@ iniconfig==2.3.0
     # via
     #   -r requirements/test.txt
     #   pytest
-isort==7.0.0
+isort==8.0.0
     # via
     #   -r requirements/quality.in
     #   -r requirements/test.txt
@@ -427,7 +427,7 @@ packaging==26.0
     #   pytest
     #   tox
     #   twine
-platformdirs==4.9.1
+platformdirs==4.9.2
     # via
     #   -r requirements/test.txt
     #   pylint
@@ -473,7 +473,7 @@ pyjwt[crypto]==2.11.0
     #   edx-drf-extensions
     #   edx-rest-api-client
     #   social-auth-core
-pylint==4.0.4
+pylint==4.0.5
     # via
     #   -r requirements/test.txt
     #   edx-lint
@@ -545,7 +545,7 @@ pyyaml==6.0.3
     #   edx-django-release-util
 readme-renderer==44.0
     # via twine
-redis==7.1.1
+redis==7.2.0
     # via -r requirements/test.txt
 referencing==0.37.0
     # via
@@ -573,7 +573,7 @@ requests-toolbelt==1.0.0
     # via twine
 rfc3986==2.0.0
     # via twine
-rich==14.3.2
+rich==14.3.3
     # via twine
 rpds-py==0.30.0
     # via
@@ -617,7 +617,7 @@ sqlparse==0.5.5
     # via
     #   -r requirements/test.txt
     #   django
-stevedore==5.6.0
+stevedore==5.7.0
     # via
     #   -r requirements/test.txt
     #   code-annotations
@@ -633,7 +633,7 @@ tomlkit==0.14.0
     # via
     #   -r requirements/test.txt
     #   pylint
-tox==4.36.0
+tox==4.44.0
     # via -r requirements/test.txt
 twine==6.2.0
     # via -r requirements/quality.in
@@ -671,7 +671,7 @@ vine==5.1.0
     #   amqp
     #   celery
     #   kombu
-virtualenv==20.36.1
+virtualenv==20.38.0
     # via
     #   -r requirements/test.txt
     #   tox
