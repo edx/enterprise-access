@@ -13,7 +13,12 @@ from rest_framework.exceptions import ErrorDetail
 from enterprise_access.apps.core.constants import SYSTEM_ENTERPRISE_ADMIN_ROLE
 from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.customer_billing.constants import CheckoutIntentState
-from enterprise_access.apps.customer_billing.models import CheckoutIntent, StripeEventData, StripeEventSummary
+from enterprise_access.apps.customer_billing.models import (
+    CheckoutIntent,
+    SelfServiceSubscriptionRenewal,
+    StripeEventData,
+    StripeEventSummary
+)
 from test_utils import APITest
 
 
@@ -302,6 +307,14 @@ class StripeSubscriptionPlanInfoTests(APITest):
         test_summary_no_checkout_updated.upcoming_invoice_amount_due = 200
         test_summary_no_checkout_updated.subscription_plan_uuid = self.subscription_plan_uuid_no_checkout
         test_summary_no_checkout_updated.save(update_fields=['upcoming_invoice_amount_due', 'subscription_plan_uuid'])
+
+        self.self_service_renewal = SelfServiceSubscriptionRenewal.objects.create(
+            checkout_intent=self.checkout_intent,
+            subscription_plan_renewal_id=1,
+            stripe_event_data=self.stripe_event_data,
+            stripe_subscription_id='sub_test_789',
+            prior_subscription_plan_uuid=self.subscription_plan_uuid,
+        )
 
     def test_get_stripe_subscription_plan_info(self):
         self.set_jwt_cookie([{
