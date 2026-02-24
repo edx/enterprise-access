@@ -615,14 +615,14 @@ class StripeEventSummaryViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
         """
         return self.get_stripe_subscription_plan_info(request, *args, **kwargs)
 
-    @permission_required(
-        STRIPE_EVENT_SUMMARY_READ_PERMISSION,
-        fn=stripe_event_summary_permission_detail_fn,
-    )
     @action(
         detail=False,
         methods=['get'],
         url_path='get-stripe-subscription-plan-info',
+    )
+    @permission_required(
+        STRIPE_EVENT_SUMMARY_READ_PERMISSION,
+        fn=stripe_event_summary_permission_detail_fn,
     )
     def get_stripe_subscription_plan_info(self, request, *args, **kwargs):
         """
