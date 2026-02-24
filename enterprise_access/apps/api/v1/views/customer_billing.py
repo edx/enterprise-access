@@ -646,7 +646,7 @@ class StripeEventSummaryViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
         first_related_renewal = SelfServiceSubscriptionRenewal.objects.filter(
             Q(prior_subscription_plan_uuid=subscription_plan_uuid) |
             Q(renewed_subscription_plan_uuid=subscription_plan_uuid)
-        ).order_by('created').first()
+        ).select_related('checkout_intent').order_by('created').first()
         if first_related_renewal:
             checkout_intent_uuid = first_related_renewal.checkout_intent.uuid
 
