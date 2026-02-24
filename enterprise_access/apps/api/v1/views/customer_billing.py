@@ -657,7 +657,7 @@ class StripeEventSummaryViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
 
         if created_event_summary:
             currency = created_event_summary.currency
-            # upcoming_invoice_amount_due is ONLY populated when a trial SubscriptionPlan UUID is given as a query parameter
+            # upcoming invoice amount is ONLY populated when trial SubscriptionPlan UUID is given as a query parameter
             # TODO: enhance Self-Service Purchasing to support non-trial query params.
             upcoming_invoice_amount_due = created_event_summary.upcoming_invoice_amount_due
             checkout_intent_uuid = created_event_summary.checkout_intent.uuid \
