@@ -32,5 +32,11 @@ jobs:
       run: make validate_translations
     - name: Run tests
       run: make test
+    - name: Upload coverage
+      if: matrix.django-version == 'pinned'
+      uses: codecov/codecov-action@v5
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        fail_ci_if_error: false
     - name: Run style
       run: make style isort_check pii_check check_keywords
