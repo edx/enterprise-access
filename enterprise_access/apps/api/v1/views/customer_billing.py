@@ -6,6 +6,7 @@ import uuid
 
 import stripe
 from django.conf import settings
+from django.db.models import Q
 from django.http import HttpResponseServerError
 from django.views.decorators.csrf import csrf_exempt
 from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, OpenApiTypes, extend_schema, extend_schema_view
@@ -29,7 +30,11 @@ from enterprise_access.apps.customer_billing.api import (
     CreateCheckoutSessionValidationError,
     create_free_trial_checkout_session
 )
-from enterprise_access.apps.customer_billing.models import CheckoutIntent, StripeEventSummary
+from enterprise_access.apps.customer_billing.models import (
+    CheckoutIntent,
+    SelfServiceSubscriptionRenewal,
+    StripeEventSummary
+)
 from enterprise_access.apps.customer_billing.stripe_event_handlers import StripeEventHandler
 
 from .constants import CHECKOUT_INTENT_EXAMPLES, ERROR_RESPONSES, PATCH_REQUEST_EXAMPLES
@@ -615,6 +620,10 @@ class StripeEventSummaryViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
         methods=['get'],
         url_path='get-stripe-subscription-plan-info',
     )
+    @permission_required(
+        STRIPE_EVENT_SUMMARY_READ_PERMISSION,
+        fn=stripe_event_summary_permission_detail_fn,
+    )
     def get_stripe_subscription_plan_info(self, request, *args, **kwargs):
         """
         Given a license-manager SubscriptionPlan uuid, returns information needed for the
@@ -627,26 +636,39 @@ class StripeEventSummaryViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
         created_event_summary = StripeEventSummary.objects.filter(
             event_type='customer.subscription.created',
             subscription_plan_uuid=subscription_plan_uuid,
-        ).order_by('-stripe_event_created_at').first()
+        ).select_related('checkout_intent').order_by('-stripe_event_created_at').first()
         updated_event_summary = StripeEventSummary.objects.filter(
             event_type='customer.subscription.updated',
             subscription_plan_uuid=subscription_plan_uuid,
-        ).order_by('-stripe_event_created_at').first()
+        ).select_related('checkout_intent').order_by('-stripe_event_created_at').first()
+        checkout_intent_uuid, canceled_date, currency, upcoming_invoice_amount_due = None, None, None, None
 
-        canceled_date, currency, upcoming_invoice_amount_due = None, None, None
+        first_related_renewal = SelfServiceSubscriptionRenewal.objects.filter(
+            Q(prior_subscription_plan_uuid=subscription_plan_uuid) |
+            Q(renewed_subscription_plan_uuid=subscription_plan_uuid)
+        ).select_related('checkout_intent').order_by('created').first()
+        if first_related_renewal:
+            checkout_intent_uuid = first_related_renewal.checkout_intent.uuid
 
         if updated_event_summary:
             canceled_date = updated_event_summary.subscription_cancel_at
+            checkout_intent_uuid = updated_event_summary.checkout_intent.uuid \
+                if updated_event_summary.checkout_intent else checkout_intent_uuid
 
         if created_event_summary:
             currency = created_event_summary.currency
+            # upcoming invoice amount is ONLY populated when trial SubscriptionPlan UUID is given as a query parameter
+            # TODO: enhance Self-Service Purchasing to support non-trial query params.
             upcoming_invoice_amount_due = created_event_summary.upcoming_invoice_amount_due
+            checkout_intent_uuid = created_event_summary.checkout_intent.uuid \
+                if created_event_summary.checkout_intent else checkout_intent_uuid
 
         response_serializer = serializers.StripeSubscriptionPlanInfoResponseSerializer(
             data={
                 'upcoming_invoice_amount_due': upcoming_invoice_amount_due,
                 'currency': currency,
                 'canceled_date': canceled_date,
+                'checkout_intent_uuid': checkout_intent_uuid
             },
         )
         if not subscription_plan_uuid:
