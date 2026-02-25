@@ -2,6 +2,7 @@
 Top-level views module for convenience of maintaining
 existing imports of browse and request AND access policy views.
 """
+from .testimonials import TestimonialViewSet
 from .admin_portal_learner_profile import AdminLearnerProfileViewSet
 from .bffs.checkout import CheckoutBFFViewSet
 from .bffs.common import PingViewSet

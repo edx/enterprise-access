@@ -10,6 +10,7 @@ app_name = 'v1'
 
 router = DefaultRouter()
 
+router.register("testimonials", views.TestimonialViewSet, "testimonials")
 router.register("policy-redemption", views.SubsidyAccessPolicyRedeemViewset, 'policy-redemption')
 router.register("policy-allocation", views.SubsidyAccessPolicyAllocateViewset, 'policy-allocation')
 router.register("subsidy-access-policies", views.SubsidyAccessPolicyViewSet, 'subsidy-access-policies')
