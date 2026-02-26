@@ -3,7 +3,8 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 Enterprise Access is a Django-based microservice within the Open edX ecosystem that manages enterprise 
-learner access to educational content through various subsidy mechanisms. The service handles
+learner access to educational content through various subsidy mechanisms. The service handles policy
+evaluation, subsidy redemptions, provisioning workflows, and integrations with related edX Enterprise services.
 
 ## Test and Quality Instructions
 
@@ -18,7 +19,7 @@ You can always find the running app container name with `docker ps | grep access
 - Search the codebase before assuming something isn't implemented
 - Write comprehensive tests with clear documentation
 - Follow Test-Driven Development when refactoring or modifying existing functionality
-- Provide concise documentation for new functionality in the `docs/referneces` folder.
+- Provide concise documentation for new functionality in the `docs/references` folder.
 - Always write tests for new functionality you implement
 - Make a note of when tests for some functionality have been completed. If you
   cannot run the tests, ask me to run them manually, then confirm whether they succeeded or failed.
@@ -28,11 +29,13 @@ You can always find the running app container name with `docker ps | grep access
 ## Architecture Overview
 
 This is a Django service for managing enterprise access to educational content, part of the Open edX ecosystem.
-The `docs` folder contains documentation on a few specific features. `docs/architecture_overview.rst`
+The `docs` folder contains documentation on a few specific features. `docs/architecture-overview.rst`
 can be read when you need to understand the entire service beyond what's written below.
 
 Always read `docs/architecture-patterns.md` before starting.
-Check if a reusable code pattern exists in `.ralph/specs/stdlib` before executing code changes.
+
+Check if a reusable code pattern exists in `.ralph/specs/stdlib` before executing code changes (ignore if this
+directory does not exist).
 
 ### Core Applications
 
@@ -77,7 +80,7 @@ Check if a reusable code pattern exists in `.ralph/specs/stdlib` before executin
 ## Consolidate Patterns
 
 If you discover a **reusable pattern** that future iterations should know, add it as a new
-markdown file in the .ralph/specs/stdlib folder.
+pattern in the `docs/architecture-patterns.md` file.
 
 **Do NOT add:**
 - Story-specific implementation details
