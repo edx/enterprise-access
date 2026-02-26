@@ -9,7 +9,6 @@ Enterprise Access is a Django-based microservice within the Open edX ecosystem t
 learner access to educational content through various subsidy mechanisms.
 
 ## Current Objectives
-- Review the codebase and understand the current state
 - Follow tasks in `.ralph/fix_plan.md` and keep track of learnings there, too.
 - Implement one task per loop
 - Write tests for new functionality
@@ -90,6 +89,9 @@ markdown file in the .ralph/specs/stdlib folder.
 
 The `docs` folder contains documentation on a few specific features. `docs/architecture-overview.rst`
 can be read when you need to understand the entire service beyond what's written below.
+
+Always read `docs/architecture-patterns.md` before starting.
+Check if a reusable code pattern exists in `.ralph/specs/stdlib` before executing code changes.
 
 ### Core Applications
 
