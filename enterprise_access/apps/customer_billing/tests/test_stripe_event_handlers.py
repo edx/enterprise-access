@@ -432,9 +432,13 @@ class TestStripeEventHandler(TestCase):
                     mock_send_trial_end_email.delay.assert_not_called()
                 else:
                     # First paid invoice - should process renewal and send email
-                    # Note: _process_trial_to_paid_renewal would need to be mocked
-                    # or the renewal.processed_at would need to be checked after the call
                     mock_send_trial_end_email.delay.assert_called_once()
+                    mock_client_instance.update_subscription_plan.assert_called_once_with(
+                        str(renewal.renewed_subscription_plan_uuid),
+                        is_active=True,
+                    )
+                    renewal.refresh_from_db()
+                    self.assertIsNotNone(renewal.processed_at)
         else:
             self.assertFalse(mock_send_payment_receipt_email.delay.called)
 

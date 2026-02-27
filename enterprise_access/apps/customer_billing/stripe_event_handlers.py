@@ -305,7 +305,7 @@ def _handle_invoice_paid_status_updated(
             "Status unable to be updated for Stripe subscription %s, as paid to paid renewals are not yet supported.",
             stripe_subscription_id,
         )
-        raise NotImplementedError("Handling paid->paid renewals not yet supported.")
+        return
 
     client = LicenseManagerApiClient()
 
@@ -340,17 +340,20 @@ def _handle_invoice_paid_status_updated(
             "Processing trial→paid transition for Stripe subscription %s",
             stripe_subscription_id,
         )
+        # Find the unprocessed renewal before processing
+        processed_renewal = SelfServiceSubscriptionRenewal.objects.filter(
+            checkout_intent=checkout_intent,
+            processed_at__isnull=True
+        ).first()
+
         # Process the renewal first (this creates the paid plan and renewal relationship)
         _process_trial_to_paid_renewal(checkout_intent, stripe_subscription_id, event)
 
-        # After processing, get the newly created paid plan and activate it
-        processed_renewal = SelfServiceSubscriptionRenewal.objects.filter(
-            checkout_intent=checkout_intent,
-            processed_at__isnull=False
-        ).order_by("-created").first()
-
-        if processed_renewal and processed_renewal.renewed_subscription_plan_uuid:
-            client.update_subscription_plan(str(processed_renewal.renewed_subscription_plan_uuid), is_active=True)
+        if processed_renewal:
+            # After processing, get the newly created paid plan and idempotently make sure it is active.
+            processed_renewal.refresh_from_db()
+            if processed_renewal.renewed_subscription_plan_uuid:
+                client.update_subscription_plan(str(processed_renewal.renewed_subscription_plan_uuid), is_active=True)
 
         # Send the trial-end email
         send_trial_end_and_subscription_started_email_task.delay(
@@ -374,7 +377,7 @@ def _handle_subscription_updated_status_updates(
 
     Args:
         event (stripe.Event): A Stripe ``customer.subscription.updated`` webhook event.
-         prior_status (StripeSubscriptionStatus): The subscription's status we have stored before this event
+        prior_status (StripeSubscriptionStatus): The subscription's status we have stored before this event
             Must be a ``StripeSubscriptionStatus`` or string matching the enum values.
         current_status (StripeSubscriptionStatus): The subscription's status of this event.
             Must be a ``StripeSubscriptionStatus`` or string matching the enum values.
