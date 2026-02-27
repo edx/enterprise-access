@@ -314,7 +314,7 @@ def _handle_invoice_paid_status_updated(
     trial_renewal = SelfServiceSubscriptionRenewal.objects.filter(
         checkout_intent=checkout_intent,
         processed_at__isnull=False
-    ).order_by("-created").first()
+    ).order_by("created").first()
 
     if trial_renewal:
         # We already have a processed trial->paid renewal, so reactivate the first paid plan
@@ -341,7 +341,7 @@ def _handle_invoice_paid_status_updated(
             stripe_subscription_id,
         )
         # Find the unprocessed renewal before processing
-        processed_renewal = SelfServiceSubscriptionRenewal.objects.filter(
+        unprocessed_renewal = SelfServiceSubscriptionRenewal.objects.filter(
             checkout_intent=checkout_intent,
             processed_at__isnull=True
         ).first()
@@ -349,11 +349,11 @@ def _handle_invoice_paid_status_updated(
         # Process the renewal first (this creates the paid plan and renewal relationship)
         _process_trial_to_paid_renewal(checkout_intent, stripe_subscription_id, event)
 
-        if processed_renewal:
+        if unprocessed_renewal:
             # After processing, get the newly created paid plan and idempotently make sure it is active.
-            processed_renewal.refresh_from_db()
-            if processed_renewal.renewed_subscription_plan_uuid:
-                client.update_subscription_plan(str(processed_renewal.renewed_subscription_plan_uuid), is_active=True)
+            unprocessed_renewal.refresh_from_db()
+            if unprocessed_renewal.renewed_subscription_plan_uuid:
+                client.update_subscription_plan(str(unprocessed_renewal.renewed_subscription_plan_uuid), is_active=True)
 
         # Send the trial-end email
         send_trial_end_and_subscription_started_email_task.delay(
