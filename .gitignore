@@ -153,8 +153,7 @@ enterprise_access/settings/private.py
 .dev/
 enterprise_access/assets
 
-# claude code
-CLAUDE.md
+# claude code personalization
 .claude/
 package-lock.json
 package.json

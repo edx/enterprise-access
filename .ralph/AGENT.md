@@ -5,13 +5,12 @@
 Assume the dev containers are already running.
 
 ## Test and Quality Instructions
-
-You must use a docker container shell to run tests and linters.
+Assuming the app container is running, you can run tests and linters like this:
 ```bash
-# Run tests via docker container
-docker run --rm edxops/enterprise-access-dev:latest bash -c "DJANGO_SETTINGS_MODULE=enterprise_access.settings.test pytest -c pytest.local.ini enterprise_access/apps/.../test_models.py::TestClass::test_method"
-docker run --rm edxops/enterprise-access-dev:latest bash -c "DJANGO_SETTINGS_MODULE=enterprise_access.settings.test make quality"
+docker exec enterprise-access.app bash -c "DJANGO_SETTINGS_MODULE=enterprise_access.settings.test pytest -c pytest.local.ini enterprise_access/apps/api/v1/tests/test_customer_billing.py"
+docker exec enterprise-access.app bash -c "make quality"
 ```
+You can always find the running app container name with `docker ps | grep access`.
 
 ## Notes
 - Update this file when build process changes
