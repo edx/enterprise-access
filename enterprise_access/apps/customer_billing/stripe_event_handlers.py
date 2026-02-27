@@ -311,23 +311,29 @@ def _handle_invoice_paid_status_updated(
 
     # Check if we've already processed the trial→paid renewal
     # If so, we need to reactivate the paid plan, not the trial plan
-    processed_renewal = SelfServiceSubscriptionRenewal.objects.filter(
+    trial_renewal = SelfServiceSubscriptionRenewal.objects.filter(
         checkout_intent=checkout_intent,
         processed_at__isnull=False
-    ).first()
+    ).order_by("-created").first()
 
-    if processed_renewal:
+    if trial_renewal:
         # We already have a processed trial->paid renewal, so reactivate the first paid plan
         # just in case it isn't already active. This should never be needed going forward, but:
         #   1. Old bugs tainted pre-existing renewals which may need this fix.
         #   2. It can't hurt, as long as we re-activate the right plan.
-        plan_to_reactivate = processed_renewal.renewed_subscription_plan_uuid
-        logger.info(
-            "Activating PAID subscription plan %s for Stripe subscription %s (post-trial)",
-            plan_to_reactivate,
-            stripe_subscription_id,
-        )
-        client.update_subscription_plan(str(plan_to_reactivate), is_active=True)
+        plan_to_reactivate = trial_renewal.renewed_subscription_plan_uuid
+        if plan_to_reactivate:
+            logger.info(
+                "Activating PAID subscription plan %s for Stripe subscription %s (post-trial)",
+                plan_to_reactivate,
+                stripe_subscription_id,
+            )
+            client.update_subscription_plan(str(plan_to_reactivate), is_active=True)
+        else:
+            logger.error(
+                "SelfServiceSubscriptionRenewal %s record does not have renewed_subscription_plan_uuid",
+                trial_renewal,
+            )
     else:
         # Normal case where the first paid invoice was received before processing the renewal.
         logger.info(
@@ -337,13 +343,13 @@ def _handle_invoice_paid_status_updated(
         # Process the renewal first (this creates the paid plan and renewal relationship)
         _process_trial_to_paid_renewal(checkout_intent, stripe_subscription_id, event)
 
-        # After processing, get the newly created paid plan and reactivate it
+        # After processing, get the newly created paid plan and activate it
         processed_renewal = SelfServiceSubscriptionRenewal.objects.filter(
             checkout_intent=checkout_intent,
             processed_at__isnull=False
-        ).first()
+        ).order_by("-created").first()
 
-        if processed_renewal:
+        if processed_renewal and processed_renewal.renewed_subscription_plan_uuid:
             client.update_subscription_plan(str(processed_renewal.renewed_subscription_plan_uuid), is_active=True)
 
         # Send the trial-end email
