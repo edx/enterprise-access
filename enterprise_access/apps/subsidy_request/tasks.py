@@ -422,8 +422,6 @@ def send_learner_credit_bnr_cancel_notification_task(assignment_uuid):
         braze_trigger_properties,
         campaign_uuid,
     )
-    if hasattr(assignment, 'credit_request') and assignment.credit_request:
-        assignment.credit_request.add_successful_cancelled_action()
     logger.info(f'Sent braze campaign cancel uuid={campaign_uuid} message for assignment {assignment}')
 
 

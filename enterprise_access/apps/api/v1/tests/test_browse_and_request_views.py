@@ -3149,6 +3149,16 @@ class TestLearnerCreditRequestViewSet(BaseEnterpriseAccessTestCase):
         assert 'non_cancelable' in response.data
         assert str(approved_request.uuid) in response.data['non_cancelable']
 
+        # Verify an error action record was created for the non-cancelable request
+        error_action = LearnerCreditRequestActions.objects.filter(
+            learner_credit_request=approved_request,
+            recent_action=get_action_choice(SubsidyRequestStates.CANCELLED),
+            status=get_user_message_choice(SubsidyRequestStates.APPROVED),
+            error_reason=get_error_reason_choice(LearnerCreditRequestActionErrorReasons.FAILED_CANCELLATION)
+        ).first()
+        assert error_action is not None
+        assert f"Failed to cancel assignment {assignment.uuid}" in error_action.traceback
+
         # Verify request was NOT cancelled
         approved_request.refresh_from_db()
         assert approved_request.state == SubsidyRequestStates.APPROVED
