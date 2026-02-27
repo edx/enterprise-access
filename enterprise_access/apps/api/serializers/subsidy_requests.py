@@ -368,6 +368,18 @@ class LearnerCreditRequestCancelSerializer(serializers.Serializer):
         return getattr(self, '_learner_credit_request', None)
 
 
+class LearnerCreditRequestCancelAllSerializer(serializers.Serializer):
+    """
+    Request serializer to validate cancel-all endpoint for LearnerCreditRequests.
+
+    For view: LearnerCreditRequestViewSet.cancel_all
+    """
+    policy_uuid = serializers.UUIDField(
+        required=True,
+        help_text="The UUID of the SubsidyAccessPolicy to filter requests."
+    )
+
+
 class LearnerCreditRequestRemindSerializer(serializers.Serializer):
     """
     Request serializer to validate remind endpoint for LearnerCreditRequests.

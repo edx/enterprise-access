@@ -748,6 +748,21 @@ class CouponCodeRequestViewSet(SubsidyRequestViewSet):
         tags=['Learner Credit Requests'],
         summary='Learner credit request cancel endpoint.',
     ),
+    remind=extend_schema(
+        tags=['Learner Credit Requests'],
+        summary='Remind learners about approved requests.',
+        request=serializers.LearnerCreditRequestRemindSerializer,
+    ),
+    remind_all=extend_schema(
+        tags=['Learner Credit Requests'],
+        summary='Remind all learners with approved requests for a policy.',
+        request=serializers.LearnerCreditRequestRemindAllSerializer,
+    ),
+    cancel_all=extend_schema(
+        tags=['Learner Credit Requests'],
+        summary='Cancel all approved learner credit requests for a policy.',
+        request=serializers.LearnerCreditRequestCancelAllSerializer,
+    ),
     bulk_approve=extend_schema(
         tags=['Learner Credit Requests'],
         summary='Bulk approve learner credit requests.',
@@ -1219,6 +1234,52 @@ class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
                 {
                     "detail": "Some requests could not be reminded.",
                     "non_remindable": [str(r.uuid) for r in result['non_remindable']]
+                },
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+
+        return Response(status=status.HTTP_202_ACCEPTED)
+
+    @permission_required(
+        constants.REQUESTS_ADMIN_ACCESS_PERMISSION,
+        fn=get_enterprise_uuid_from_request_data,
+    )
+    @action(detail=False, url_path="cancel-all", methods=["post"])
+    def cancel_all(self, request, *args, **kwargs):
+        """
+        Cancel all APPROVED LearnerCreditRequests for a given policy.
+
+        Accepts a policy_uuid to filter requests by.
+        Returns 404 if no cancelable requests are found.
+        Returns 422 if any requests are discovered to be non-cancelable.
+        """
+        serializer = serializers.LearnerCreditRequestCancelAllSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        policy_uuid = serializer.validated_data['policy_uuid']
+
+        # Filter to APPROVED requests for this policy
+        learner_credit_requests = self.get_queryset().select_related('assignment').filter(
+            state=SubsidyRequestStates.APPROVED,
+            learner_credit_request_config__learner_credit_config__uuid=policy_uuid
+        )
+
+        if not learner_credit_requests.exists():
+            return Response(
+                {"detail": "No cancelable requests found for the given policy."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        result = subsidy_request_api.cancel_learner_credit_requests(
+            learner_credit_requests,
+            request.user
+        )
+
+        if result.get('non_cancelable'):
+            return Response(
+                {
+                    "detail": "Some requests could not be cancelled.",
+                    "non_cancelable": [str(r.uuid) for r in result['non_cancelable']]
                 },
                 status=status.HTTP_422_UNPROCESSABLE_ENTITY
             )

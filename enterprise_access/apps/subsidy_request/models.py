@@ -540,6 +540,28 @@ class LearnerCreditRequest(SubsidyRequest):
         self.reviewed_at = localized_utcnow()
         self.save()
 
+    def add_successful_cancelled_action(self):
+        """
+        Creates an action record for a successful cancellation.
+        """
+        return LearnerCreditRequestActions.create_action(
+            learner_credit_request=self,
+            recent_action=get_action_choice(SubsidyRequestStates.CANCELLED),
+            status=get_user_message_choice(SubsidyRequestStates.CANCELLED),
+        )
+
+    def add_errored_cancelled_action(self, error_traceback):
+        """
+        Creates an action record for a failed cancellation with error details.
+        """
+        return LearnerCreditRequestActions.create_action(
+            learner_credit_request=self,
+            recent_action=get_action_choice(SubsidyRequestStates.CANCELLED),
+            status=get_user_message_choice(SubsidyRequestStates.APPROVED),
+            error_reason=get_error_reason_choice(LearnerCreditRequestActionErrorReasons.FAILED_CANCELLATION),
+            traceback=error_traceback,
+        )
+
     def add_successful_reminded_action(self):
         """
         Creates an action record for a successful reminder.
