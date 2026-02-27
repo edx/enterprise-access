@@ -1,8 +1,8 @@
 from django.contrib.auth import get_user_model
-from rest_framework.test import APITestCase
 from rest_framework import status
-from enterprise_access.apps.testimonials.models import Testimonial
+from rest_framework.test import APITestCase
 
+from enterprise_access.apps.testimonials.models import Testimonial
 
 User = get_user_model()
 

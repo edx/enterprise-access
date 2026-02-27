@@ -1,7 +1,8 @@
 from django.db.models.functions import Random
 from rest_framework.viewsets import ReadOnlyModelViewSet
-from enterprise_access.apps.testimonials.models import Testimonial
+
 from enterprise_access.apps.api.serializers.testimonials import TestimonialSerializer
+from enterprise_access.apps.testimonials.models import Testimonial
 
 
 class TestimonialViewSet(ReadOnlyModelViewSet):
