@@ -92,7 +92,6 @@ class SendLearnerCreditCancelEmailTask(BaseLearnerCreditRequestRetryAndErrorActi
     Base class for the ``send_learner_credit_bnr_cancel_notification_task`` task.
     """
     def log_errored_action(self, learner_credit_request, exc):
-        learner_credit_request.add_errored_cancelled_action(exc)
         logger.error(
             f'Learner credit cancel email task failed. '
             f'Request ID: {learner_credit_request.uuid}, '

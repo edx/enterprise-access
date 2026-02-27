@@ -3261,6 +3261,121 @@ class TestLearnerCreditRequestViewSet(BaseEnterpriseAccessTestCase):
         # Verify cancel task was called only once
         assert mock_cancel_task.call_count == 1
 
+    @mock.patch('enterprise_access.apps.subsidy_request.tasks.send_learner_credit_bnr_cancel_notification_task.delay')
+    @mock.patch('enterprise_access.apps.content_assignments.api.cancel_assignments')
+    def test_cancel_all_all_assignments_fail(self, mock_cancel_assignments, mock_cancel_task):
+        """
+        Test cancel-all when ALL assignments fail to cancel.
+        """
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': str(self.enterprise_customer_uuid_1)
+        }])
+
+        # Set up two approved requests with assignments
+        assignment1 = LearnerContentAssignmentFactory(
+            assignment_configuration=self.assignment_config,
+            content_quantity=-1000,
+            state='allocated'
+        )
+        assignment2 = LearnerContentAssignmentFactory(
+            assignment_configuration=self.assignment_config,
+            content_quantity=-2000,
+            state='allocated'
+        )
+        request1 = LearnerCreditRequestFactory(
+            enterprise_customer_uuid=self.enterprise_customer_uuid_1,
+            user=self.user,
+            learner_credit_request_config=self.learner_credit_config,
+            course_price=1000,
+            state=SubsidyRequestStates.APPROVED,
+            assignment=assignment1
+        )
+        request2 = LearnerCreditRequestFactory(
+            enterprise_customer_uuid=self.enterprise_customer_uuid_1,
+            user=UserFactory(),
+            learner_credit_request_config=self.learner_credit_config,
+            course_price=2000,
+            state=SubsidyRequestStates.APPROVED,
+            assignment=assignment2
+        )
+
+        # Mock ALL assignments failing to cancel
+        mock_cancel_assignments.return_value = {'non_cancelable': [assignment1, assignment2]}
+
+        url = reverse('api:v1:learner-credit-requests-cancel-all')
+        data = {
+            'enterprise_customer_uuid': str(self.enterprise_customer_uuid_1),
+            'policy_uuid': str(self.policy.uuid)
+        }
+        response = self.client.post(url, data, content_type='application/json')
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert 'non_cancelable' in response.data
+        assert len(response.data['non_cancelable']) == 2
+        assert str(request1.uuid) in response.data['non_cancelable']
+        assert str(request2.uuid) in response.data['non_cancelable']
+
+        # Verify both requests are still APPROVED (not cancelled)
+        request1.refresh_from_db()
+        request2.refresh_from_db()
+        assert request1.state == SubsidyRequestStates.APPROVED
+        assert request2.state == SubsidyRequestStates.APPROVED
+
+        # Verify error actions were created for both
+        for request in [request1, request2]:
+            error_action = LearnerCreditRequestActions.objects.filter(
+                learner_credit_request=request,
+                recent_action=get_action_choice(SubsidyRequestStates.CANCELLED),
+                error_reason=get_error_reason_choice(LearnerCreditRequestActionErrorReasons.FAILED_CANCELLATION)
+            ).first()
+            assert error_action is not None
+
+        # Verify NO cancel tasks were queued since all failed
+        assert mock_cancel_task.call_count == 0
+
+    @mock.patch('enterprise_access.apps.subsidy_request.tasks.send_learner_credit_bnr_cancel_notification_task.delay')
+    @mock.patch('enterprise_access.apps.content_assignments.api.cancel_assignments')
+    def test_cancel_all_reviewer_set_correctly(self, mock_cancel_assignments, mock_cancel_task):
+        """
+        Test that cancel-all properly sets the reviewer on cancelled requests.
+        """
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': str(self.enterprise_customer_uuid_1)
+        }])
+
+        assignment = LearnerContentAssignmentFactory(
+            assignment_configuration=self.assignment_config,
+            content_quantity=-1000,
+            state='allocated'
+        )
+        approved_request = LearnerCreditRequestFactory(
+            enterprise_customer_uuid=self.enterprise_customer_uuid_1,
+            user=self.user,
+            learner_credit_request_config=self.learner_credit_config,
+            course_price=1000,
+            state=SubsidyRequestStates.APPROVED,
+            assignment=assignment,
+        )
+
+        # Mock successful assignment cancellation
+        mock_cancel_assignments.return_value = {'non_cancelable': []}
+
+        url = reverse('api:v1:learner-credit-requests-cancel-all')
+        data = {
+            'enterprise_customer_uuid': str(self.enterprise_customer_uuid_1),
+            'policy_uuid': str(self.policy.uuid)
+        }
+        response = self.client.post(url, data, content_type='application/json')
+
+        assert response.status_code == status.HTTP_202_ACCEPTED
+
+        # Verify request was cancelled and reviewer was set to the authenticated user
+        approved_request.refresh_from_db()
+        assert approved_request.state == SubsidyRequestStates.CANCELLED
+        assert approved_request.reviewer == self.user
+
     @ddt.data(
         'latest_action_status',
         '-latest_action_status',
