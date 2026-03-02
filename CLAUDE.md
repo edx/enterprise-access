@@ -8,7 +8,7 @@ evaluation, subsidy redemptions, provisioning workflows, and integrations with r
 
 ## Test and Quality Instructions
 
-Assuming the app container is running, you can run tests and linters like this:
+Assuming the app container is running, you can run unit tests and linters like this:
 ```bash
 docker exec enterprise-access.app bash -c "DJANGO_SETTINGS_MODULE=enterprise_access.settings.test pytest -c pytest.local.ini enterprise_access/apps/api/v1/tests/test_customer_billing.py"
 docker exec enterprise-access.app bash -c "make quality"

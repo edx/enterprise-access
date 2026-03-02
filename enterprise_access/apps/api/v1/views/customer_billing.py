@@ -11,6 +11,7 @@ from django.db.models import Q
 from django.http import HttpResponseServerError
 from django.views.decorators.csrf import csrf_exempt
 from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, OpenApiTypes, extend_schema, extend_schema_view
+from edx_django_utils.cache import TieredCache
 from edx_rbac.decorators import permission_required
 from edx_rest_framework_extensions.auth.jwt.authentication import JwtAuthentication
 from rest_framework import exceptions, mixins, permissions, status, viewsets
@@ -35,7 +36,6 @@ from enterprise_access.apps.customer_billing.models import (
     SelfServiceSubscriptionRenewal,
     StripeEventSummary
 )
-from enterprise_access.apps.customer_billing.models import CheckoutIntent, StripeEventSummary
 from enterprise_access.apps.customer_billing.stripe_api import get_stripe_customer
 from enterprise_access.apps.customer_billing.stripe_event_handlers import StripeEventHandler
 
@@ -924,6 +924,11 @@ class BillingManagementViewSet(viewsets.ViewSet):
                 },
             )
 
+            # Invalidate cached customer data after successful update
+            cache_key = f"stripe_get_stripe_customer_{stripe_customer_id}"
+            TieredCache.delete_all_tiers(cache_key)
+            logger.info(f'Invalidated cache for Stripe customer {stripe_customer_id} after address update')
+
             # Extract address fields from updated Stripe customer object
             address_data = {
                 'name': stripe_customer.get('name'),
@@ -1170,6 +1175,14 @@ class BillingManagementViewSet(viewsets.ViewSet):
             stripe.Customer.modify(
                 stripe_customer_id,
                 invoice_settings={'default_payment_method': payment_method_id},
+            )
+
+            # Invalidate cached customer data after successful update
+            cache_key = f"stripe_get_stripe_customer_{stripe_customer_id}"
+            TieredCache.delete_all_tiers(cache_key)
+            logger.info(
+                f'Invalidated cache for Stripe customer {stripe_customer_id} '
+                'after setting default payment method'
             )
 
             return Response(
