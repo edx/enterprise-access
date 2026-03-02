@@ -674,6 +674,7 @@ class TestSendPaymentReceiptEmail(TestCase):
         # Other properties should still be populated from invoice summary
         self.assertEqual(trigger_props['total_paid_amount'], 1980.0)
         self.assertEqual(trigger_props['license_count'], 5)
+        mock_get_payment_method.assert_not_called()
 
 
 class TestSendTrialEndingReminderEmailTask(TestCase):
