@@ -146,7 +146,7 @@ class BillingManagementClient:
         """
         response = self._request(
             'POST',
-            'billing-management/address/update/',
+            'billing-management/address/',
             params={'enterprise_customer_uuid': enterprise_uuid},
             json=address_data
         )
@@ -168,6 +168,33 @@ class BillingManagementClient:
             'GET',
             'billing-management/payment-methods/',
             params={'enterprise_customer_uuid': enterprise_uuid}
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def attach_payment_method(
+        self,
+        enterprise_uuid: str,
+        payment_method_id: str
+    ) -> Dict[str, Any]:
+        """
+        Attach a Stripe payment method to the enterprise customer.
+
+        The payment method must be created client-side via Stripe Elements before
+        calling this endpoint.
+
+        Args:
+            enterprise_uuid: UUID of the enterprise customer
+            payment_method_id: Stripe payment method ID (e.g., pm_xxx) created client-side
+
+        Returns:
+            Success response with message and payment_method_id
+        """
+        response = self._request(
+            'POST',
+            'billing-management/payment-methods/',
+            params={'enterprise_customer_uuid': enterprise_uuid},
+            json={'payment_method_id': payment_method_id}
         )
         response.raise_for_status()
         return response.json()

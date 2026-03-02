@@ -119,8 +119,8 @@ def test_update_address(client: BillingManagementClient, config: Config) -> Dict
 
 
 def test_list_payment_methods(client: BillingManagementClient, config: Config) -> Dict[str, Any]:
-    """Test listing payment methods."""
-    logger.info("Listing payment methods")
+    """Test listing payment methods and verify status field (GAP-002)."""
+    logger.info("Listing payment methods and verifying status field")
     result = client.list_payment_methods(config.enterprise_customer_uuid)
 
     assert 'payment_methods' in result, "Response missing 'payment_methods' field"
@@ -129,18 +129,77 @@ def test_list_payment_methods(client: BillingManagementClient, config: Config) -
 
     logger.info(f"Found {len(payment_methods)} payment method(s)")
 
-    # Log details if any methods exist
+    # GAP-002: Verify status field exists and has valid values
+    valid_statuses = {'verified', 'pending', 'failed'}
     for pm in payment_methods:
+        assert 'status' in pm, f"Payment method {pm.get('id')} missing 'status' field (GAP-002)"
+        status = pm.get('status')
+        assert status in valid_statuses, \
+            f"Payment method {pm.get('id')} has invalid status '{status}'. " \
+            f"Expected one of {valid_statuses} (GAP-002)"
+
         logger.debug(
-            f"  - {pm.get('id')}: {pm.get('card_brand', 'N/A')} "
-            f"****{pm.get('card_last4', 'N/A')} "
+            f"  - {pm.get('id')}: {pm.get('type', 'N/A')} "
+            f"****{pm.get('last4', 'N/A')} "
+            f"status={status} "
             f"({'default' if pm.get('is_default') else 'not default'})"
         )
+
+    logger.info("✓ GAP-002: All payment methods have valid status field")
 
     return {
         'status': 'PASS',
         'data': result,
-        'payment_method_count': len(payment_methods)
+        'payment_method_count': len(payment_methods),
+        'gap_002_verified': True
+    }
+
+
+def test_attach_payment_method_endpoint(
+    client: BillingManagementClient,
+    config: Config
+) -> Dict[str, Any]:
+    """Test attach payment method endpoint exists and handles errors properly (GAP-001)."""
+    logger.info("Testing attach payment method endpoint (GAP-001)")
+
+    # Test 1: Verify endpoint rejects missing payment_method_id
+    logger.info("Test 1: Verify endpoint requires payment_method_id")
+    response = client._request(
+        'POST',
+        'billing-management/payment-methods/',
+        params={'enterprise_customer_uuid': config.enterprise_customer_uuid},
+        json={},  # Missing payment_method_id
+        log_response=False
+    )
+    # Should get 400 for missing payment_method_id
+    assert response.status_code == 400, \
+        f"Expected 400 for missing payment_method_id, got {response.status_code}"
+    logger.info("✓ Endpoint correctly rejects missing payment_method_id with 400")
+
+    # Test 2: Verify endpoint returns 404 for invalid payment method
+    logger.info("Test 2: Verify endpoint returns 404 for non-existent payment method")
+    response = client._request(
+        'POST',
+        'billing-management/payment-methods/',
+        params={'enterprise_customer_uuid': config.enterprise_customer_uuid},
+        json={'payment_method_id': 'pm_invalid_does_not_exist_12345'},
+        log_response=False
+    )
+    # Should get 404 for invalid payment method
+    assert response.status_code == 404, \
+        f"Expected 404 for invalid payment method, got {response.status_code}"
+    logger.info("✓ Endpoint correctly returns 404 for invalid payment method")
+
+    logger.info("✓ GAP-001: Attach payment method endpoint exists and handles errors correctly")
+
+    return {
+        'status': 'PASS',
+        'data': {
+            'endpoint_exists': True,
+            'validates_input': True,
+            'handles_invalid_pm': True,
+        },
+        'gap_001_verified': True
     }
 
 
@@ -355,8 +414,14 @@ TEST_SCENARIOS = [
     ),
     TestScenario(
         name='list_payment_methods',
-        description='List payment methods',
+        description='List payment methods and verify status field (GAP-002)',
         run=test_list_payment_methods,
+    ),
+    TestScenario(
+        name='attach_payment_method_endpoint',
+        description='Test attach payment method endpoint exists and handles errors (GAP-001)',
+        run=test_attach_payment_method_endpoint,
+        depends_on=['health_check'],
     ),
     TestScenario(
         name='list_transactions',

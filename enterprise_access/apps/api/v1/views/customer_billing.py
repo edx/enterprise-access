@@ -738,7 +738,42 @@ class BillingManagementViewSet(viewsets.ViewSet):
 
         return subscriptions_response.data[0]
 
+    @staticmethod
+    def _get_payment_method_status(payment_method):
+        """
+        Helper method to map Stripe payment method status to API status values.
+
+        Args:
+            payment_method: Stripe PaymentMethod object
+
+        Returns:
+            str: One of 'verified', 'pending', or 'failed'
+        """
+        pm_type = payment_method.get('type')
+
+        # Cards don't require verification - always verified
+        if pm_type == 'card':
+            return 'verified'
+
+        # Bank accounts require verification
+        if pm_type == 'us_bank_account':
+            bank_account = payment_method.get('us_bank_account', {})
+            # Check status from nested status_details or top-level status
+            stripe_status = bank_account.get('status_details', {}).get('status') or payment_method.get('status')
+
+            # Map Stripe status to our API values
+            if stripe_status == 'verified':
+                return 'verified'
+            elif stripe_status in ('verification_required', 'new'):
+                return 'pending'
+            elif stripe_status in ('verification_failed', 'errored'):
+                return 'failed'
+
+        # Default to verified for unknown types
+        return 'verified'
+
     @extend_schema(
+        methods=['GET'],
         tags=[BILLING_MANAGEMENT_API_TAG],
         summary='Get customer billing address',
         description='Retrieve the billing address for a Stripe customer associated with an enterprise.',
@@ -759,23 +794,58 @@ class BillingManagementViewSet(viewsets.ViewSet):
             status.HTTP_422_UNPROCESSABLE_ENTITY: OpenApiResponse(description='Stripe API call failed'),
         },
     )
+    @extend_schema(
+        methods=['POST'],
+        tags=[BILLING_MANAGEMENT_API_TAG],
+        summary='Update customer billing address',
+        description='Update the billing address for a Stripe customer associated with an enterprise.',
+        parameters=[
+            OpenApiParameter(
+                name='enterprise_customer_uuid',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                required=True,
+                description='UUID of the enterprise customer',
+            ),
+        ],
+        request=serializers.BillingAddressUpdateRequestSerializer,
+        responses={
+            status.HTTP_200_OK: serializers.BillingAddressResponseSerializer,
+            status.HTTP_400_BAD_REQUEST: OpenApiResponse(description='Missing UUID or invalid request data'),
+            status.HTTP_403_FORBIDDEN: OpenApiResponse(description='Permission denied'),
+            status.HTTP_404_NOT_FOUND: OpenApiResponse(description='Enterprise customer or Stripe customer not found'),
+            status.HTTP_422_UNPROCESSABLE_ENTITY: OpenApiResponse(description='Stripe API call failed'),
+        },
+    )
     @action(
         detail=False,
-        methods=['get'],
+        methods=['get', 'post'],
         url_path='address',
     )
     @permission_required(
         BILLING_MANAGEMENT_ACCESS_PERMISSION,
         fn=lambda request, **kwargs: request.GET.get('enterprise_customer_uuid')
     )
-    def get_address(self, request, **kwargs):
+    def address(self, request, **kwargs):
         """
-        Retrieve the billing address for a Stripe customer.
+        Handle billing address endpoint.
+
+        GET: Retrieve the billing address for a Stripe customer.
+        POST: Update the billing address for a Stripe customer.
 
         The enterprise_customer_uuid query parameter is used to:
         1. Find the CheckoutIntent for the enterprise
         2. Extract the Stripe customer ID from the CheckoutIntent
-        3. Retrieve the customer's billing address from Stripe
+        3. Retrieve/update the customer's billing address from/to Stripe
+        """
+        if request.method == 'POST':
+            return self._update_address(request)
+        else:  # GET
+            return self._get_address(request)
+
+    def _get_address(self, request):
+        """
+        Retrieve the billing address for a Stripe customer.
         """
         enterprise_uuid = request.query_params.get('enterprise_customer_uuid')
         if not enterprise_uuid:
@@ -844,46 +914,9 @@ class BillingManagementViewSet(viewsets.ViewSet):
                 status=status.HTTP_422_UNPROCESSABLE_ENTITY
             )
 
-    @extend_schema(
-        tags=[BILLING_MANAGEMENT_API_TAG],
-        summary='Update customer billing address',
-        description='Update the billing address for a Stripe customer associated with an enterprise.',
-        parameters=[
-            OpenApiParameter(
-                name='enterprise_customer_uuid',
-                type=OpenApiTypes.UUID,
-                location=OpenApiParameter.QUERY,
-                required=True,
-                description='UUID of the enterprise customer',
-            ),
-        ],
-        request=serializers.BillingAddressUpdateRequestSerializer,
-        responses={
-            status.HTTP_200_OK: serializers.BillingAddressResponseSerializer,
-            status.HTTP_400_BAD_REQUEST: OpenApiResponse(description='Missing UUID or invalid request data'),
-            status.HTTP_403_FORBIDDEN: OpenApiResponse(description='Permission denied'),
-            status.HTTP_404_NOT_FOUND: OpenApiResponse(description='Enterprise customer or Stripe customer not found'),
-            status.HTTP_422_UNPROCESSABLE_ENTITY: OpenApiResponse(description='Stripe API call failed'),
-        },
-    )
-    @action(
-        detail=False,
-        methods=['post'],
-        url_path='address/update',
-        url_name='update-address',
-    )
-    @permission_required(
-        BILLING_MANAGEMENT_ACCESS_PERMISSION,
-        fn=lambda request, **kwargs: request.GET.get('enterprise_customer_uuid')
-    )
-    def update_address(self, request, **kwargs):
+    def _update_address(self, request):
         """
         Update the billing address for a Stripe customer.
-
-        The enterprise_customer_uuid query parameter is used to:
-        1. Find the CheckoutIntent for the enterprise
-        2. Extract the Stripe customer ID from the CheckoutIntent
-        3. Update the customer's billing address in Stripe
         """
         enterprise_uuid = request.query_params.get('enterprise_customer_uuid')
         if not enterprise_uuid:
@@ -973,6 +1006,7 @@ class BillingManagementViewSet(viewsets.ViewSet):
             )
 
     @extend_schema(
+        methods=['GET'],
         tags=[BILLING_MANAGEMENT_API_TAG],
         summary='List payment methods',
         description='Retrieve all saved payment methods for a Stripe customer associated with an enterprise.',
@@ -993,23 +1027,68 @@ class BillingManagementViewSet(viewsets.ViewSet):
             status.HTTP_422_UNPROCESSABLE_ENTITY: OpenApiResponse(description='Stripe API call failed'),
         },
     )
+    @extend_schema(
+        methods=['POST'],
+        tags=[BILLING_MANAGEMENT_API_TAG],
+        summary='Attach payment method',
+        description=(
+            'Attach a Stripe payment method (created client-side via Stripe Elements) '
+            'to the enterprise customer.'
+        ),
+        parameters=[
+            OpenApiParameter(
+                name='enterprise_customer_uuid',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                required=True,
+                description='UUID of the enterprise customer',
+            ),
+        ],
+        request=serializers.AttachPaymentMethodRequestSerializer,
+        responses={
+            status.HTTP_200_OK: serializers.AttachPaymentMethodResponseSerializer,
+            status.HTTP_400_BAD_REQUEST: OpenApiResponse(
+                description='Missing or invalid enterprise_customer_uuid or payment_method_id'
+            ),
+            status.HTTP_403_FORBIDDEN: OpenApiResponse(description='Permission denied'),
+            status.HTTP_404_NOT_FOUND: OpenApiResponse(
+                description='Enterprise customer, Stripe customer, or payment method not found'
+            ),
+            status.HTTP_409_CONFLICT: OpenApiResponse(
+                description='Payment method is already attached to another customer'
+            ),
+            status.HTTP_422_UNPROCESSABLE_ENTITY: OpenApiResponse(description='Stripe API call failed'),
+        },
+    )
     @action(
         detail=False,
-        methods=['get'],
+        methods=['get', 'post'],
         url_path='payment-methods',
     )
     @permission_required(
         BILLING_MANAGEMENT_ACCESS_PERMISSION,
         fn=lambda request, **kwargs: request.GET.get('enterprise_customer_uuid')
     )
-    def list_payment_methods(self, request, **kwargs):
+    def payment_methods(self, request, **kwargs):
         """
-        List all payment methods for a Stripe customer.
+        Handle payment methods endpoint.
+
+        GET: List all payment methods for a Stripe customer.
+        POST: Attach a payment method to the Stripe customer.
 
         The enterprise_customer_uuid query parameter is used to:
         1. Find the CheckoutIntent for the enterprise
         2. Extract the Stripe customer ID from the CheckoutIntent
-        3. Retrieve the customer's payment methods from Stripe
+        3. Retrieve/attach payment methods from/to Stripe
+        """
+        if request.method == 'POST':
+            return self._attach_payment_method(request)
+        else:  # GET
+            return self._list_payment_methods(request)
+
+    def _list_payment_methods(self, request):
+        """
+        List all payment methods for a Stripe customer.
         """
         enterprise_uuid = request.query_params.get('enterprise_customer_uuid')
         if not enterprise_uuid:
@@ -1032,9 +1111,9 @@ class BillingManagementViewSet(viewsets.ViewSet):
             default_payment_method_id = stripe_customer.get('invoice_settings', {}).get('default_payment_method')
 
             # List all payment methods for the customer
+            # Query all types by omitting the type filter (cards, bank accounts, etc.)
             payment_methods_response = stripe.PaymentMethod.list(
                 customer=stripe_customer_id,
-                type='card',  # Start with cards, could expand to support other types
                 limit=100,  # Reasonable limit for pagination
             )
 
@@ -1045,6 +1124,7 @@ class BillingManagementViewSet(viewsets.ViewSet):
                     'id': pm.get('id'),
                     'type': pm.get('type'),
                     'is_default': pm.get('id') == default_payment_method_id,
+                    'status': self._get_payment_method_status(pm),
                 }
 
                 # Add card-specific fields if available
@@ -1083,6 +1163,103 @@ class BillingManagementViewSet(viewsets.ViewSet):
             )
         except Exception as e:  # pylint: disable=broad-except
             logger.exception(f'Unexpected error retrieving payment methods for {enterprise_uuid}: {str(e)}')
+            return Response(
+                {'error': 'An unexpected error occurred'},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+
+    def _attach_payment_method(self, request):
+        """
+        Attach a Stripe payment method to the enterprise customer.
+
+        The payment_method_id is created client-side via Stripe Elements for PCI compliance,
+        then attached to the customer server-side to prevent unauthorized access.
+
+        The enterprise_customer_uuid query parameter is used to:
+        1. Find the CheckoutIntent for the enterprise
+        2. Extract the Stripe customer ID from the CheckoutIntent
+        3. Attach the payment method to the Stripe customer
+        """
+        enterprise_uuid = request.query_params.get('enterprise_customer_uuid')
+        if not enterprise_uuid:
+            return Response(
+                {'error': 'enterprise_customer_uuid query parameter is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Validate request body
+        request_serializer = serializers.AttachPaymentMethodRequestSerializer(data=request.data)
+        if not request_serializer.is_valid():
+            return Response(request_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        payment_method_id = request_serializer.validated_data.get('payment_method_id')
+
+        try:
+            # Get Stripe customer ID using helper method
+            stripe_customer_id, _ = self._get_stripe_customer_id_for_enterprise(enterprise_uuid)
+            if not stripe_customer_id:
+                return Response(
+                    {'error': 'Stripe customer not found for this enterprise'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            # Retrieve payment method to verify it exists and check ownership
+            try:
+                payment_method = stripe.PaymentMethod.retrieve(payment_method_id)
+            except stripe.error.InvalidRequestError as e:
+                logger.warning(f'Payment method {payment_method_id} not found: {str(e)}')
+                return Response(
+                    {'error': 'Payment method not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            # Check if payment method is already attached to a customer
+            existing_customer = payment_method.get('customer')
+            if existing_customer:
+                if existing_customer == stripe_customer_id:
+                    # Already attached to this customer - return success (true idempotency)
+                    logger.info(
+                        f'Payment method {payment_method_id} already attached to customer {stripe_customer_id}'
+                    )
+                else:
+                    # Attached to a different customer - cannot attach
+                    logger.warning(
+                        f'Payment method {payment_method_id} already attached to different customer {existing_customer}'
+                    )
+                    return Response(
+                        {'error': 'Payment method is already attached to another customer'},
+                        status=status.HTTP_409_CONFLICT
+                    )
+            else:
+                # Not attached to any customer - proceed with attach
+                stripe.PaymentMethod.attach(
+                    payment_method_id,
+                    customer=stripe_customer_id,
+                )
+
+            # Return success response
+            response_data = {
+                'message': 'Payment method added successfully',
+                'payment_method_id': payment_method_id,
+            }
+            response_serializer = serializers.AttachPaymentMethodResponseSerializer(data=response_data)
+            if not response_serializer.is_valid():
+                logger.error(f'Failed to serialize attach response: {response_serializer.errors}')
+                return Response(
+                    {'error': 'Failed to process response'},
+                    status=status.HTTP_422_UNPROCESSABLE_ENTITY
+                )
+
+            return Response(response_serializer.data, status=status.HTTP_200_OK)
+
+        except stripe.error.StripeError as e:
+            logger.exception(f'Stripe API error attaching payment method for {enterprise_uuid}: {str(e)}')
+            return Response(
+                {'error': f'Stripe API error: {str(e)}'},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+        except Exception as e:  # pylint: disable=broad-except
+            logger.exception(f'Unexpected error attaching payment method for {enterprise_uuid}: {str(e)}')
             return Response(
                 {'error': 'An unexpected error occurred'},
                 status=status.HTTP_422_UNPROCESSABLE_ENTITY
