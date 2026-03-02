@@ -7,7 +7,6 @@ from functools import wraps
 from uuid import UUID
 
 import stripe
-from django.conf import settings
 from django.utils import timezone
 
 from enterprise_access.apps.api_client.license_manager_client import LicenseManagerApiClient

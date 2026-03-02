@@ -144,3 +144,8 @@ KAFKA_TOPICS = [
 ]
 
 ################### End Kafka Related Settings ##############################
+
+### Feature toggles ###
+
+# Enable the billing management API endpoints under /api/v1/billing-management/*
+ENABLE_BILLING_MANAGEMENT_API = True
