@@ -17,7 +17,7 @@ ALLOWED_TOOLS="Write,Read,Edit,Bash"
 
 # Session management
 SESSION_CONTINUITY=true
-SESSION_EXPIRY_HOURS=24
+SESSION_EXPIRY_HOURS=1
 
 # Task sources (for ralph enable --sync)
 # Options: local, beads, github (comma-separated for multiple)
@@ -26,6 +26,6 @@ GITHUB_TASK_LABEL="ralph-task"
 BEADS_FILTER="status:open"
 
 # Circuit breaker thresholds
-CB_NO_PROGRESS_THRESHOLD=3
-CB_SAME_ERROR_THRESHOLD=5
+CB_NO_PROGRESS_THRESHOLD=2
+CB_SAME_ERROR_THRESHOLD=3
 CB_OUTPUT_DECLINE_THRESHOLD=70

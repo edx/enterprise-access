@@ -456,6 +456,14 @@ class PaymentMethodResponseSerializer(serializers.Serializer):
         required=True,
         help_text='Whether this is the default payment method for the customer',
     )
+    status = serializers.ChoiceField(
+        choices=['verified', 'pending', 'failed'],
+        required=True,
+        help_text=(
+            'Verification status: verified (ready to use), pending (awaiting verification), '
+            'failed (verification failed)'
+        ),
+    )
 
 
 # pylint: disable=abstract-method
@@ -483,6 +491,34 @@ class SetDefaultPaymentMethodRequestSerializer(serializers.Serializer):
     payment_method_id = serializers.CharField(
         required=True,
         help_text='Unique identifier of the payment method to set as default',
+    )
+
+
+# pylint: disable=abstract-method
+class AttachPaymentMethodRequestSerializer(serializers.Serializer):
+    """
+    Request serializer for attaching a payment method via POST /api/v1/billing-management/payment-methods/
+
+    The payment_method_id is a Stripe PaymentMethod ID created client-side via Stripe Elements.
+    """
+    payment_method_id = serializers.CharField(
+        required=True,
+        help_text='Stripe payment method ID (e.g., pm_xxxxx) created client-side via Stripe Elements',
+    )
+
+
+# pylint: disable=abstract-method
+class AttachPaymentMethodResponseSerializer(serializers.Serializer):
+    """
+    Response serializer for successful payment method attachment
+    """
+    message = serializers.CharField(
+        required=True,
+        help_text='Success message',
+    )
+    payment_method_id = serializers.CharField(
+        required=True,
+        help_text='ID of the attached payment method',
     )
 
 

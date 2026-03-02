@@ -17,6 +17,8 @@ from .content_assignments.assignment_configuration import (
     AssignmentConfigurationUpdateRequestSerializer
 )
 from .customer_billing import (
+    AttachPaymentMethodRequestSerializer,
+    AttachPaymentMethodResponseSerializer,
     BillingAddressResponseSerializer,
     BillingAddressUpdateRequestSerializer,
     CancelSubscriptionResponseSerializer,

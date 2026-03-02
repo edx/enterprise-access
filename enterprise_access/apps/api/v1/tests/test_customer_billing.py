@@ -15,7 +15,11 @@ from django.urls import reverse
 from django.utils import timezone
 from rest_framework import status
 
-from enterprise_access.apps.core.constants import SYSTEM_ENTERPRISE_ADMIN_ROLE, SYSTEM_ENTERPRISE_LEARNER_ROLE
+from enterprise_access.apps.core.constants import (
+    SYSTEM_ENTERPRISE_ADMIN_ROLE,
+    SYSTEM_ENTERPRISE_LEARNER_ROLE,
+    SYSTEM_ENTERPRISE_OPERATOR_ROLE
+)
 from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.customer_billing.constants import CheckoutIntentState
 from enterprise_access.apps.customer_billing.models import CheckoutIntent
@@ -447,6 +451,236 @@ class StripeWebhookTests(APITest):
 
         self.assertIn('Handler failed', str(context.exception))
 
+    def test_create_checkout_portal_session_with_uuid_lookup(self):
+        """
+        Test checkout portal session endpoint with UUID lookup instead of integer ID.
+        """
+        # Create a checkout intent for this test
+        enterprise_uuid = str(uuid.uuid4())
+        checkout_intent = CheckoutIntent.objects.create(
+            user=self.user,
+            enterprise_uuid=enterprise_uuid,
+            enterprise_name='Test Enterprise',
+            enterprise_slug='test-enterprise',
+            stripe_customer_id='cus_test_uuid',
+            state=CheckoutIntentState.PAID,
+            quantity=10,
+            expires_at=timezone.now() + timedelta(hours=1),
+        )
+
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE,
+            'context': str(uuid.uuid4()),
+        }])
+
+        url = reverse('api:v1:customer-billing-create-checkout-portal-session',
+                      kwargs={'pk': str(checkout_intent.uuid)})
+
+        mock_session = {
+            'id': 'bps_test_uuid',
+            'url': 'https://billing.stripe.com/session/test_uuid',
+            'customer': 'cus_test_uuid',
+        }
+
+        with mock.patch('stripe.billing_portal.Session.create') as mock_create:
+            mock_create.return_value = mock_session
+
+            response = self.client.get(
+                url,
+                HTTP_ORIGIN='https://checkout.example.com'
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data, mock_session)
+
+        checkout_intent.delete()
+
+    def test_create_checkout_portal_session_general_exception(self):
+        """
+        Test checkout portal session with general (non-Stripe) exception.
+        """
+        # Create a checkout intent for this test
+        enterprise_uuid = str(uuid.uuid4())
+        checkout_intent = CheckoutIntent.objects.create(
+            user=self.user,
+            enterprise_uuid=enterprise_uuid,
+            enterprise_name='Test Enterprise',
+            enterprise_slug='test-enterprise',
+            stripe_customer_id='cus_test_general',
+            state=CheckoutIntentState.PAID,
+            quantity=10,
+            expires_at=timezone.now() + timedelta(hours=1),
+        )
+
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE,
+            'context': str(uuid.uuid4()),
+        }])
+
+        url = reverse('api:v1:customer-billing-create-checkout-portal-session',
+                      kwargs={'pk': checkout_intent.id})
+
+        with mock.patch('stripe.billing_portal.Session.create') as mock_create:
+            mock_create.side_effect = Exception('Unexpected error')
+
+            response = self.client.get(
+                url,
+                HTTP_ORIGIN='https://checkout.example.com'
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
+        self.assertIn('General exception', response.data)
+
+        checkout_intent.delete()
+
+    def test_create_enterprise_admin_portal_no_stripe_customer_or_slug(self):
+        """
+        Test admin portal session when CheckoutIntent has no stripe_customer_id or enterprise_slug.
+        """
+        # Create intent without stripe_customer_id and slug
+        other_user = UserFactory()
+        enterprise_uuid = str(uuid.uuid4())
+        checkout_intent = CheckoutIntent.objects.create(
+            user=other_user,
+            enterprise_uuid=enterprise_uuid,
+            enterprise_name='Test Enterprise',
+            enterprise_slug=None,
+            stripe_customer_id=None,
+            state=CheckoutIntentState.CREATED,
+            quantity=5,
+            expires_at=timezone.now() + timedelta(hours=1),
+        )
+
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': enterprise_uuid,
+        }])
+
+        url = reverse('api:v1:customer-billing-create-enterprise-admin-portal-session')
+        response = self.client.get(
+            url,
+            {'enterprise_customer_uuid': enterprise_uuid}
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertIn('stripe customer id or enterprise slug', response.data)
+
+        checkout_intent.delete()
+
+    def test_create_enterprise_admin_portal_general_exception(self):
+        """
+        Test admin portal session with general (non-Stripe) exception.
+        """
+        # Create a checkout intent for this test
+        enterprise_uuid = str(uuid.uuid4())
+        checkout_intent = CheckoutIntent.objects.create(
+            user=self.user,
+            enterprise_uuid=enterprise_uuid,
+            enterprise_name='Test Enterprise',
+            enterprise_slug='test-enterprise',
+            stripe_customer_id='cus_test_admin_exc',
+            state=CheckoutIntentState.PAID,
+            quantity=10,
+            expires_at=timezone.now() + timedelta(hours=1),
+        )
+
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': enterprise_uuid,
+        }])
+
+        url = reverse('api:v1:customer-billing-create-enterprise-admin-portal-session')
+
+        with mock.patch('stripe.billing_portal.Session.create') as mock_create:
+            mock_create.side_effect = Exception('Unexpected error')
+
+            response = self.client.get(
+                url,
+                {'enterprise_customer_uuid': enterprise_uuid},
+                HTTP_ORIGIN='https://admin.example.com'
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
+        self.assertIn('General exception', response.data)
+
+        checkout_intent.delete()
+
+
+class CheckoutIntentPermissionTests(APITest):
+    """
+    Tests for CheckoutIntentPermission class edge cases.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.enterprise_uuid = str(uuid.uuid4())
+        self.checkout_intent = CheckoutIntent.objects.create(
+            user=self.user,
+            enterprise_uuid=self.enterprise_uuid,
+            enterprise_name='Test Enterprise',
+            enterprise_slug='test-enterprise',
+            stripe_customer_id='cus_test_123',
+            state=CheckoutIntentState.PAID,
+            quantity=10,
+            expires_at=timezone.now() + timedelta(hours=1),
+        )
+
+    def tearDown(self):
+        CheckoutIntent.objects.all().delete()
+        super().tearDown()
+
+    def test_permission_invalid_uuid_fallback_to_int_typeerror(self):
+        """
+        Test CheckoutIntentPermission when pk is invalid for both UUID and int (TypeError).
+        """
+        from django.test import RequestFactory
+
+        from enterprise_access.apps.api.v1.views.customer_billing import CheckoutIntentPermission
+
+        permission = CheckoutIntentPermission()
+        factory = RequestFactory()
+
+        # Create a mock request
+        request = factory.get('/')
+        request.user = self.user
+        request.parser_context = {'kwargs': {'pk': None}}  # None will cause TypeError
+
+        # Create a mock view
+        class MockView:
+            action = 'create_checkout_portal_session'
+
+        view = MockView()
+
+        # Should return False due to TypeError
+        result = permission.has_permission(request, view)
+        self.assertFalse(result)
+
+    def test_permission_invalid_int_valueerror(self):
+        """
+        Test CheckoutIntentPermission when pk fails int() conversion (ValueError).
+        """
+        from django.test import RequestFactory
+
+        from enterprise_access.apps.api.v1.views.customer_billing import CheckoutIntentPermission
+
+        permission = CheckoutIntentPermission()
+        factory = RequestFactory()
+
+        # Create a mock request with invalid pk
+        request = factory.get('/')
+        request.user = self.user
+        request.parser_context = {'kwargs': {'pk': 'not-a-uuid-or-int'}}
+
+        # Create a mock view
+        class MockView:
+            action = 'create_checkout_portal_session'
+
+        view = MockView()
+
+        # Should return False due to ValueError in both UUID and int parsing
+        result = permission.has_permission(request, view)
+        self.assertFalse(result)
+
 
 class BillingManagementBaseTest(APITest):
     """
@@ -556,7 +790,7 @@ class BillingManagementAddressEndpointTests(BillingManagementBaseTest):
         }
         mock_stripe_customer_retrieve.return_value = mock_stripe_customer
 
-        url = reverse('api:v1:billing-management-get-address')
+        url = reverse('api:v1:billing-management-address')
         response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -595,7 +829,7 @@ class BillingManagementAddressEndpointTests(BillingManagementBaseTest):
                 'context': self.enterprise_uuid,
             }])
 
-        url = reverse('api:v1:billing-management-get-address')
+        url = reverse('api:v1:billing-management-address')
 
         # Build query params based on scenario
         if uuid_type is None:
@@ -616,7 +850,7 @@ class BillingManagementAddressEndpointTests(BillingManagementBaseTest):
         """
         mock_stripe_customer_retrieve.side_effect = stripe.error.StripeError('Stripe API Error')
 
-        url = reverse('api:v1:billing-management-get-address')
+        url = reverse('api:v1:billing-management-address')
         response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
 
         self.assertEqual(response.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
@@ -636,7 +870,7 @@ class BillingManagementAddressEndpointTests(BillingManagementBaseTest):
         }
         mock_stripe_customer_retrieve.return_value = mock_stripe_customer
 
-        url = reverse('api:v1:billing-management-get-address')
+        url = reverse('api:v1:billing-management-address')
         response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -678,7 +912,7 @@ class BillingManagementAddressUpdateTests(BillingManagementBaseTest):
         }
         mock_customer_modify.return_value = updated_customer
 
-        url = reverse('api:v1:billing-management-update-address')
+        url = reverse('api:v1:billing-management-address')
         request_data = {
             'name': 'Jane Smith',
             'email': 'jane.smith@example.com',
@@ -748,7 +982,7 @@ class BillingManagementAddressUpdateTests(BillingManagementBaseTest):
                 'context': self.enterprise_uuid,
             }])
 
-        url = reverse('api:v1:billing-management-update-address')
+        url = reverse('api:v1:billing-management-address')
         request_data = {
             'name': 'Jane Smith',
             'email': 'jane@example.com',
@@ -803,7 +1037,7 @@ class BillingManagementAddressUpdateTests(BillingManagementBaseTest):
         Test validation errors for update address endpoint.
         Scenarios: missing_required_fields (400), invalid_country_code (400).
         """
-        url = reverse('api:v1:billing-management-update-address')
+        url = reverse('api:v1:billing-management-address')
         response = self.client.post(
             f'{url}?enterprise_customer_uuid={self.enterprise_uuid}',
             request_data,
@@ -822,7 +1056,7 @@ class BillingManagementAddressUpdateTests(BillingManagementBaseTest):
         """
         mock_customer_modify.side_effect = stripe.error.StripeError('Stripe API Error')
 
-        url = reverse('api:v1:billing-management-update-address')
+        url = reverse('api:v1:billing-management-address')
         request_data = {
             'name': 'Jane Smith',
             'email': 'jane@example.com',
@@ -862,7 +1096,7 @@ class BillingManagementAddressUpdateTests(BillingManagementBaseTest):
         }
         mock_customer_modify.return_value = updated_customer
 
-        url = reverse('api:v1:billing-management-update-address')
+        url = reverse('api:v1:billing-management-address')
         request_data = {
             'name': 'John Doe',
             'email': 'john@example.com',
@@ -927,7 +1161,7 @@ class BillingManagementPaymentMethodsTests(BillingManagementBaseTest):
         ]
         mock_payment_method_list.return_value = mock.Mock(data=mock_payment_methods)
 
-        url = reverse('api:v1:billing-management-list-payment-methods')
+        url = reverse('api:v1:billing-management-payment-methods')
         response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -943,6 +1177,7 @@ class BillingManagementPaymentMethodsTests(BillingManagementBaseTest):
         self.assertEqual(first_method['exp_month'], 12)
         self.assertEqual(first_method['exp_year'], 2025)
         self.assertTrue(first_method['is_default'])
+        self.assertEqual(first_method['status'], 'verified')  # Cards are always verified
 
         # Check second payment method (not default)
         second_method = response_data['payment_methods'][1]
@@ -951,6 +1186,7 @@ class BillingManagementPaymentMethodsTests(BillingManagementBaseTest):
         self.assertEqual(second_method['last4'], '5555')
         self.assertEqual(second_method['brand'], 'mastercard')
         self.assertFalse(second_method['is_default'])
+        self.assertEqual(second_method['status'], 'verified')  # Cards are always verified
 
     @mock.patch('stripe.Customer.retrieve')
     @mock.patch('stripe.PaymentMethod.list')
@@ -962,7 +1198,7 @@ class BillingManagementPaymentMethodsTests(BillingManagementBaseTest):
         mock_customer_retrieve.return_value = mock_customer
         mock_payment_method_list.return_value = mock.Mock(data=[])
 
-        url = reverse('api:v1:billing-management-list-payment-methods')
+        url = reverse('api:v1:billing-management-payment-methods')
         response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -993,7 +1229,7 @@ class BillingManagementPaymentMethodsTests(BillingManagementBaseTest):
                 'context': self.enterprise_uuid,
             }])
 
-        url = reverse('api:v1:billing-management-list-payment-methods')
+        url = reverse('api:v1:billing-management-payment-methods')
 
         # Build query params based on scenario
         if uuid_type is None:
@@ -1014,7 +1250,7 @@ class BillingManagementPaymentMethodsTests(BillingManagementBaseTest):
         """
         mock_customer_retrieve.side_effect = stripe.error.StripeError('Stripe API Error')
 
-        url = reverse('api:v1:billing-management-list-payment-methods')
+        url = reverse('api:v1:billing-management-payment-methods')
         response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
 
         self.assertEqual(response.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
@@ -1040,7 +1276,7 @@ class BillingManagementPaymentMethodsTests(BillingManagementBaseTest):
         ]
         mock_payment_method_list.return_value = mock.Mock(data=mock_payment_methods)
 
-        url = reverse('api:v1:billing-management-list-payment-methods')
+        url = reverse('api:v1:billing-management-payment-methods')
         response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -1052,6 +1288,277 @@ class BillingManagementPaymentMethodsTests(BillingManagementBaseTest):
         self.assertEqual(method['type'], 'us_bank_account')
         self.assertEqual(method['last4'], '6789')
         self.assertTrue(method['is_default'])
+        self.assertEqual(method['status'], 'verified')  # Default status when not specified
+
+    @ddt.data(
+        ('verified', 'verified', 'Verified bank account'),
+        ('verification_required', 'pending', 'Pending verification'),
+        ('new', 'pending', 'New bank account pending verification'),
+        ('verification_failed', 'failed', 'Failed verification'),
+        ('errored', 'failed', 'Errored during verification'),
+    )
+    @ddt.unpack
+    @mock.patch('stripe.Customer.retrieve')
+    @mock.patch('stripe.PaymentMethod.list')
+    def test_list_payment_methods_bank_account_status(
+        self, stripe_status, expected_status, description, mock_payment_method_list, mock_customer_retrieve
+    ):
+        """
+        Test that bank account payment methods return correct status based on Stripe verification status.
+        """
+        mock_customer = {'invoice_settings': {'default_payment_method': 'pm_bank_account'}}
+        mock_customer_retrieve.return_value = mock_customer
+
+        mock_payment_methods = [
+            {
+                'id': 'pm_bank_account',
+                'type': 'us_bank_account',
+                'status': stripe_status,
+                'us_bank_account': {
+                    'last4': '6789',
+                    'status_details': {
+                        'status': stripe_status,
+                    },
+                }
+            }
+        ]
+        mock_payment_method_list.return_value = mock.Mock(data=mock_payment_methods)
+
+        url = reverse('api:v1:billing-management-payment-methods')
+        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response_data = response.json()
+        method = response_data['payment_methods'][0]
+        self.assertEqual(method['status'], expected_status, f'Failed for {description}')
+
+
+@ddt.ddt
+class BillingManagementAttachPaymentMethodTests(BillingManagementBaseTest):
+    """
+    Tests for the attach payment method endpoint (POST /payment-methods/).
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.payment_method_id = 'pm_test_attach_123'
+
+    def _get_stripe_customer_id(self):
+        return 'cus_test_attach_456'
+
+    @mock.patch('stripe.PaymentMethod.attach')
+    @mock.patch('stripe.PaymentMethod.retrieve')
+    def test_attach_payment_method_card_success(self, mock_pm_retrieve, mock_pm_attach):
+        """
+        Test successfully attaching a card payment method.
+        """
+        # Mock payment method retrieve (verify it exists)
+        mock_pm = mock.Mock()
+        mock_pm.id = self.payment_method_id
+        mock_pm.type = 'card'
+        mock_pm.get.return_value = None  # Not attached to any customer yet
+        mock_pm_retrieve.return_value = mock_pm
+
+        # Mock payment method attach
+        mock_pm_attach.return_value = mock_pm
+
+        url = reverse('api:v1:billing-management-payment-methods')
+        response = self.client.post(
+            f'{url}?enterprise_customer_uuid={self.enterprise_uuid}',
+            data={'payment_method_id': self.payment_method_id},
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response_data = response.json()
+        self.assertEqual(response_data['message'], 'Payment method added successfully')
+        self.assertEqual(response_data['payment_method_id'], self.payment_method_id)
+
+        # Verify Stripe API calls
+        mock_pm_retrieve.assert_called_once_with(self.payment_method_id)
+        mock_pm_attach.assert_called_once_with(
+            self.payment_method_id,
+            customer=self.stripe_customer_id,
+        )
+
+    @mock.patch('stripe.PaymentMethod.attach')
+    @mock.patch('stripe.PaymentMethod.retrieve')
+    def test_attach_payment_method_bank_account_success(self, mock_pm_retrieve, mock_pm_attach):
+        """
+        Test successfully attaching a us_bank_account payment method.
+        """
+        # Mock payment method retrieve
+        mock_pm = mock.Mock()
+        mock_pm.id = self.payment_method_id
+        mock_pm.type = 'us_bank_account'
+        mock_pm.get.return_value = None  # Not attached to any customer yet
+        mock_pm_retrieve.return_value = mock_pm
+        mock_pm_attach.return_value = mock_pm
+
+        url = reverse('api:v1:billing-management-payment-methods')
+        response = self.client.post(
+            f'{url}?enterprise_customer_uuid={self.enterprise_uuid}',
+            data={'payment_method_id': self.payment_method_id},
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response_data = response.json()
+        self.assertEqual(response_data['message'], 'Payment method added successfully')
+        self.assertEqual(response_data['payment_method_id'], self.payment_method_id)
+
+    @mock.patch('stripe.PaymentMethod.attach')
+    @mock.patch('stripe.PaymentMethod.retrieve')
+    def test_attach_payment_method_already_attached_idempotent(self, mock_pm_retrieve, mock_pm_attach):
+        """
+        Test that attaching an already-attached payment method is idempotent (returns success).
+        Stripe.PaymentMethod.attach() is idempotent - returns success if already attached to same customer.
+        """
+        mock_pm = mock.Mock()
+        mock_pm.id = self.payment_method_id
+        mock_pm.type = 'card'
+        # Already attached to THIS customer - should return success without calling attach
+        mock_pm.get.return_value = self.stripe_customer_id
+        mock_pm_retrieve.return_value = mock_pm
+
+        url = reverse('api:v1:billing-management-payment-methods')
+        response = self.client.post(
+            f'{url}?enterprise_customer_uuid={self.enterprise_uuid}',
+            data={'payment_method_id': self.payment_method_id},
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # Verify attach was NOT called since it's already attached
+        mock_pm_attach.assert_not_called()
+
+    @mock.patch('stripe.PaymentMethod.retrieve')
+    def test_attach_payment_method_not_found(self, mock_pm_retrieve):
+        """
+        Test attaching a non-existent payment method returns 404.
+        """
+        mock_pm_retrieve.side_effect = stripe.error.InvalidRequestError(
+            'No such payment method: pm_invalid',
+            param='payment_method'
+        )
+
+        url = reverse('api:v1:billing-management-payment-methods')
+        response = self.client.post(
+            f'{url}?enterprise_customer_uuid={self.enterprise_uuid}',
+            data={'payment_method_id': 'pm_invalid'},
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertIn('Payment method not found', response.json()['error'])
+
+    def test_attach_payment_method_missing_uuid(self):
+        """
+        Test missing enterprise_customer_uuid returns 403 (RBAC blocks before view).
+        """
+        url = reverse('api:v1:billing-management-payment-methods')
+        response = self.client.post(
+            url,
+            data={'payment_method_id': self.payment_method_id},
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_attach_payment_method_missing_payment_method_id(self):
+        """
+        Test missing payment_method_id in request body returns 400.
+        """
+        url = reverse('api:v1:billing-management-payment-methods')
+        response = self.client.post(
+            f'{url}?enterprise_customer_uuid={self.enterprise_uuid}',
+            data={},
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_attach_payment_method_nonexistent_enterprise(self):
+        """
+        Test non-existent enterprise UUID returns 403 (RBAC check fails).
+        """
+        nonexistent_uuid = uuid.uuid4()
+        url = reverse('api:v1:billing-management-payment-methods')
+        response = self.client.post(
+            f'{url}?enterprise_customer_uuid={nonexistent_uuid}',
+            data={'payment_method_id': self.payment_method_id},
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    @mock.patch('stripe.PaymentMethod.attach')
+    @mock.patch('stripe.PaymentMethod.retrieve')
+    def test_attach_payment_method_stripe_error(self, mock_pm_retrieve, mock_pm_attach):
+        """
+        Test Stripe API error returns 422.
+        """
+        mock_pm = mock.Mock()
+        mock_pm.get.return_value = None  # Not attached to any customer yet
+        mock_pm_retrieve.return_value = mock_pm
+        mock_pm_attach.side_effect = stripe.error.StripeError('Stripe error occurred')
+
+        url = reverse('api:v1:billing-management-payment-methods')
+        response = self.client.post(
+            f'{url}?enterprise_customer_uuid={self.enterprise_uuid}',
+            data={'payment_method_id': self.payment_method_id},
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
+        self.assertIn('Stripe API error', response.json()['error'])
+
+    @ddt.data(SYSTEM_ENTERPRISE_OPERATOR_ROLE, SYSTEM_ENTERPRISE_ADMIN_ROLE)
+    @mock.patch('stripe.PaymentMethod.attach')
+    @mock.patch('stripe.PaymentMethod.retrieve')
+    def test_attach_payment_method_admin_and_operator_success(self, role, mock_pm_retrieve, mock_pm_attach):
+        """
+        Test that both admin and operator roles can attach payment methods.
+        """
+        # Setup authentication with specified role
+        self.set_jwt_cookie([{
+            'system_wide_role': role,
+            'context': self.enterprise_uuid,
+        }])
+
+        mock_pm = mock.Mock()
+        mock_pm.id = self.payment_method_id
+        mock_pm.get.return_value = None  # Not attached to any customer yet
+        mock_pm_retrieve.return_value = mock_pm
+        mock_pm_attach.return_value = mock_pm
+
+        url = reverse('api:v1:billing-management-payment-methods')
+        response = self.client.post(
+            f'{url}?enterprise_customer_uuid={self.enterprise_uuid}',
+            data={'payment_method_id': self.payment_method_id},
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_attach_payment_method_learner_denied(self):
+        """
+        Test that learner role cannot attach payment methods (403).
+        """
+        unprivileged_user = UserFactory()
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE,
+            'context': self.enterprise_uuid,
+        }], user=unprivileged_user)
+
+        url = reverse('api:v1:billing-management-payment-methods')
+        response = self.client.post(
+            f'{url}?enterprise_customer_uuid={self.enterprise_uuid}',
+            data={'payment_method_id': self.payment_method_id},
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
 
 @ddt.ddt
@@ -2569,3 +3076,595 @@ class BillingManagementReinstateSubscriptionTests(BillingManagementBaseTest):
         response_data = response.json()
         self.assertIn('error', response_data)
         self.assertIn('Stripe API error', response_data['error'])
+
+
+@ddt.ddt
+class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
+    """
+    Additional tests to cover edge cases and error paths in billing management endpoints.
+    """
+
+    def _get_stripe_customer_id(self):
+        return 'cus_test_additional_coverage'
+
+    # Address endpoint edge cases
+    @mock.patch('stripe.Customer.retrieve')
+    def test_get_address_no_stripe_customer_found(self, mock_customer_retrieve):
+        """
+        Test get address when Stripe customer is not found.
+        """
+        mock_customer_retrieve.return_value = None
+
+        url = reverse('api:v1:billing-management-address')
+        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertIn('Stripe customer not found', response.json()['error'])
+
+    @mock.patch('stripe.Customer.retrieve')
+    @mock.patch('enterprise_access.apps.api.serializers.customer_billing.BillingAddressResponseSerializer.is_valid')
+    def test_get_address_general_exception(self, mock_is_valid, mock_get_stripe_customer):
+        """
+        Test get address with general (non-Stripe) exception.
+        """
+        mock_get_stripe_customer.side_effect = Exception('Unexpected error')
+
+        url = reverse('api:v1:billing-management-address')
+        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
+        self.assertIn('unexpected error', response.json()['error'])
+
+    @mock.patch('stripe.Customer.modify')
+    @mock.patch('enterprise_access.apps.api.serializers.customer_billing.BillingAddressResponseSerializer.is_valid')
+    def test_update_address_general_exception(self, mock_is_valid, mock_customer_modify):
+        """
+        Test update address with general (non-Stripe) exception.
+        """
+        mock_customer_modify.side_effect = Exception('Unexpected error')
+
+        url = reverse('api:v1:billing-management-address')
+        request_data = {
+            'name': 'Test Name',
+            'email': 'test@example.com',
+            'address_line_1': '123 Test St',
+            'city': 'Test City',
+            'state': 'TS',
+            'postal_code': '12345',
+            'country': 'US',
+        }
+        response = self.client.post(
+            f'{url}?enterprise_customer_uuid={self.enterprise_uuid}',
+            request_data,
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
+        self.assertIn('unexpected error', response.json()['error'])
+
+    # Payment methods edge cases
+    @mock.patch('stripe.PaymentMethod.list')
+    @mock.patch('stripe.Customer.retrieve')
+    def test_list_payment_methods_with_bank_account(self, mock_customer_retrieve, mock_pm_list):
+        """
+        Test list payment methods with us_bank_account type.
+        """
+        mock_customer_retrieve.return_value = {
+            'id': self.stripe_customer_id,
+            'invoice_settings': {'default_payment_method': 'pm_bank_123'},
+        }
+
+        mock_pm_list.return_value = mock.Mock(data=[
+            {
+                'id': 'pm_bank_123',
+                'type': 'us_bank_account',
+                'us_bank_account': {
+                    'last4': '6789',
+                    'status_details': {'status': 'verified'},
+                },
+            }
+        ])
+
+        url = reverse('api:v1:billing-management-payment-methods')
+        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response_data = response.json()
+        self.assertEqual(len(response_data['payment_methods']), 1)
+        self.assertEqual(response_data['payment_methods'][0]['type'], 'us_bank_account')
+        self.assertEqual(response_data['payment_methods'][0]['last4'], '6789')
+        self.assertEqual(response_data['payment_methods'][0]['status'], 'verified')
+
+    @mock.patch('stripe.PaymentMethod.list')
+    @mock.patch('stripe.Customer.retrieve')
+    @mock.patch('enterprise_access.apps.api.serializers.customer_billing.PaymentMethodsListResponseSerializer.is_valid')
+    def test_list_payment_methods_general_exception(self, mock_is_valid, mock_customer_retrieve, mock_pm_list):
+        """
+        Test list payment methods with general exception.
+        """
+        mock_customer_retrieve.side_effect = Exception('Unexpected error')
+
+        url = reverse('api:v1:billing-management-payment-methods')
+        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
+        self.assertIn('unexpected error', response.json()['error'])
+
+    @mock.patch('stripe.PaymentMethod.attach')
+    @mock.patch('stripe.PaymentMethod.retrieve')
+    @mock.patch(
+        'enterprise_access.apps.api.serializers.customer_billing.AttachPaymentMethodResponseSerializer.is_valid'
+    )
+    def test_attach_payment_method_general_exception(self, mock_is_valid, mock_pm_retrieve, mock_pm_attach):
+        """
+        Test attach payment method with general exception.
+        """
+        mock_pm_retrieve.side_effect = Exception('Unexpected error')
+
+        url = reverse('api:v1:billing-management-payment-methods')
+        request_data = {'payment_method_id': 'pm_test_123'}
+        response = self.client.post(
+            f'{url}?enterprise_customer_uuid={self.enterprise_uuid}',
+            request_data,
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
+        self.assertIn('unexpected error', response.json()['error'])
+
+    # Set default payment method edge cases
+    @mock.patch('stripe.Customer.modify')
+    @mock.patch('stripe.PaymentMethod.retrieve')
+    def test_set_default_payment_method_general_exception(self, mock_pm_retrieve, mock_customer_modify):
+        """
+        Test set default payment method with general exception.
+        """
+        mock_pm_retrieve.return_value = {'id': 'pm_test_123', 'customer': self.stripe_customer_id}
+        mock_customer_modify.side_effect = Exception('Unexpected error')
+
+        url = reverse(
+            'api:v1:billing-management-set-default-payment-method',
+            kwargs={'payment_method_id': 'pm_test_123'},
+        )
+        response = self.client.post(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}', format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
+        self.assertIn('unexpected error', response.json()['error'])
+
+    # Delete payment method edge cases
+    @mock.patch('stripe.PaymentMethod.detach')
+    @mock.patch('stripe.PaymentMethod.list')
+    @mock.patch('stripe.Customer.retrieve')
+    @mock.patch('stripe.PaymentMethod.retrieve')
+    def test_delete_payment_method_general_exception(
+        self, mock_pm_retrieve, mock_customer_retrieve, mock_pm_list, mock_pm_detach
+    ):
+        """
+        Test delete payment method with general exception.
+        """
+        mock_pm_retrieve.return_value = {'id': 'pm_test_123', 'customer': self.stripe_customer_id}
+        mock_customer_retrieve.return_value = {
+            'id': self.stripe_customer_id,
+            'invoice_settings': {'default_payment_method': 'pm_default'},
+        }
+        mock_pm_list.return_value = mock.Mock(data=[
+            {'id': 'pm_test_123'},
+            {'id': 'pm_default'},
+        ])
+        mock_pm_detach.side_effect = Exception('Unexpected error')
+
+        url = reverse('api:v1:billing-management-delete-payment-method', kwargs={'payment_method_id': 'pm_test_123'})
+        response = self.client.delete(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}')
+
+        self.assertEqual(response.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
+        self.assertIn('unexpected error', response.json()['error'])
+
+    # Transactions endpoint edge cases
+    @mock.patch('stripe.Invoice.list')
+    def test_list_transactions_invalid_limit_parameter(self, mock_invoice_list):
+        """
+        Test list transactions with invalid limit parameter (should default to 10).
+        """
+        mock_invoice_list.return_value = mock.Mock(data=[], has_more=False)
+
+        url = reverse('api:v1:billing-management-list-transactions')
+        response = self.client.get(url, {
+            'enterprise_customer_uuid': str(self.enterprise_uuid),
+            'limit': 'invalid',  # Invalid limit
+        })
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # Verify default limit of 10 was used
+        mock_invoice_list.assert_called_once_with(
+            customer=self.stripe_customer_id,
+            limit=10,
+            starting_after=None,
+        )
+
+    @mock.patch('stripe.Invoice.list')
+    def test_list_transactions_limit_out_of_range(self, mock_invoice_list):
+        """
+        Test list transactions with limit out of valid range (should default to 10).
+        """
+        mock_invoice_list.return_value = mock.Mock(data=[], has_more=False)
+
+        url = reverse('api:v1:billing-management-list-transactions')
+        response = self.client.get(url, {
+            'enterprise_customer_uuid': str(self.enterprise_uuid),
+            'limit': '50',  # Above max of 25
+        })
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # Verify default limit of 10 was used
+        mock_invoice_list.assert_called_once_with(
+            customer=self.stripe_customer_id,
+            limit=10,
+            starting_after=None,
+        )
+
+    @mock.patch('stripe.Charge.retrieve')
+    @mock.patch('stripe.Invoice.list')
+    def test_list_transactions_charge_retrieval_error(self, mock_invoice_list, mock_charge_retrieve):
+        """
+        Test list transactions when charge retrieval fails (should set receipt_url to None).
+        """
+        mock_invoice_list.return_value = mock.Mock(
+            data=[{
+                'id': 'in_test_123',
+                'created': 1234567890,
+                'amount_paid': 10000,
+                'currency': 'usd',
+                'status': 'paid',
+                'description': 'Test invoice',
+                'hosted_invoice_url': 'https://invoice.stripe.com/test',
+                'charge': 'ch_test_123',
+            }],
+            has_more=False
+        )
+        mock_charge_retrieve.side_effect = stripe.error.StripeError('Charge not found')
+
+        url = reverse('api:v1:billing-management-list-transactions')
+        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response_data = response.json()
+        self.assertIsNone(response_data['transactions'][0]['receipt_url'])
+
+    @mock.patch('stripe.Invoice.list')
+    def test_list_transactions_invalid_request_error(self, mock_invoice_list):
+        """
+        Test list transactions with Stripe InvalidRequestError.
+        """
+        mock_invoice_list.side_effect = stripe.error.InvalidRequestError('Invalid customer', 'customer')
+
+        url = reverse('api:v1:billing-management-list-transactions')
+        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('Invalid request', response.json()['error'])
+
+    @mock.patch('stripe.Invoice.list')
+    def test_list_transactions_general_exception(self, mock_invoice_list):
+        """
+        Test list transactions with general exception.
+        """
+        mock_invoice_list.side_effect = Exception('Unexpected error')
+
+        url = reverse('api:v1:billing-management-list-transactions')
+        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
+        self.assertIn('unexpected error', response.json()['error'])
+
+    def test_normalize_invoice_status_uncollectible(self):
+        """
+        Test _normalize_invoice_status with uncollectible status.
+        """
+        from enterprise_access.apps.api.v1.views.customer_billing import BillingManagementViewSet
+
+        result = BillingManagementViewSet._normalize_invoice_status('uncollectible')
+        self.assertEqual(result, 'uncollectible')
+
+    # Subscription endpoint edge cases
+    @mock.patch('stripe.Subscription.list')
+    def test_get_subscription_invalid_request_error(self, mock_sub_list):
+        """
+        Test get subscription with Stripe InvalidRequestError.
+        """
+        mock_sub_list.side_effect = stripe.error.InvalidRequestError('Invalid customer', 'customer')
+
+        url = reverse('api:v1:billing-management-get-subscription')
+        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('Invalid request', response.json()['error'])
+
+    @mock.patch('stripe.Subscription.list')
+    def test_get_subscription_general_exception(self, mock_sub_list):
+        """
+        Test get subscription with general exception.
+        """
+        mock_sub_list.side_effect = Exception('Unexpected error')
+
+        url = reverse('api:v1:billing-management-get-subscription')
+        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
+        self.assertIn('unexpected error', response.json()['error'])
+
+    @mock.patch('stripe.Product.retrieve')
+    @mock.patch('stripe.Price.retrieve')
+    @mock.patch('stripe.Subscription.list')
+    def test_get_subscription_plan_type_from_product_metadata(
+        self, mock_sub_list, mock_price_retrieve, mock_product_retrieve
+    ):
+        """
+        Test _get_plan_type_from_subscription when plan_type is in product metadata.
+        """
+        mock_subscription = {
+            'id': 'sub_test_123',
+            'status': 'active',
+            'items': {
+                'data': [{
+                    'price': {'id': 'price_test_123'},
+                    'quantity': 10,
+                }]
+            },
+            'cancel_at_period_end': False,
+            'current_period_end': int(time.time()) + 86400,
+        }
+        mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
+        mock_price_retrieve.return_value = {
+            'id': 'price_test_123',
+            'metadata': {},  # No plan_type in price metadata
+            'product': 'prod_test_123',
+            'unit_amount': 10000,
+            'recurring': {'interval': 'year'},
+        }
+        mock_product_retrieve.return_value = {
+            'id': 'prod_test_123',
+            'metadata': {'plan_type': 'Teams'},  # plan_type in product metadata
+        }
+
+        url = reverse('api:v1:billing-management-get-subscription')
+        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response_data = response.json()
+        self.assertEqual(response_data['subscription']['plan_type'], 'Teams')
+
+    @mock.patch('stripe.Price.retrieve')
+    @mock.patch('stripe.Subscription.list')
+    def test_get_subscription_plan_type_stripe_error(self, mock_sub_list, mock_price_retrieve):
+        """
+        Test _get_plan_type_from_subscription when Stripe error occurs (should return 'Other').
+        """
+        mock_subscription = {
+            'id': 'sub_test_123',
+            'status': 'active',
+            'items': {
+                'data': [{
+                    'price': {'id': 'price_test_123'},
+                    'quantity': 10,
+                }]
+            },
+            'cancel_at_period_end': False,
+            'current_period_end': int(time.time()) + 86400,
+        }
+        mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
+        mock_price_retrieve.side_effect = stripe.error.StripeError('Error retrieving price')
+
+        url = reverse('api:v1:billing-management-get-subscription')
+        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response_data = response.json()
+        self.assertEqual(response_data['subscription']['plan_type'], 'Other')
+
+    @mock.patch('stripe.Price.retrieve')
+    @mock.patch('stripe.Subscription.list')
+    def test_get_subscription_plan_type_general_exception(self, mock_sub_list, mock_price_retrieve):
+        """
+        Test _get_plan_type_from_subscription when general exception occurs (should return 'Other').
+        """
+        mock_subscription = {
+            'id': 'sub_test_123',
+            'status': 'active',
+            'items': {
+                'data': [{
+                    'price': {'id': 'price_test_123'},
+                    'quantity': 10,
+                }]
+            },
+            'cancel_at_period_end': False,
+            'current_period_end': int(time.time()) + 86400,
+        }
+        mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
+        mock_price_retrieve.side_effect = Exception('Unexpected error')
+
+        url = reverse('api:v1:billing-management-get-subscription')
+        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response_data = response.json()
+        self.assertEqual(response_data['subscription']['plan_type'], 'Other')
+
+    @mock.patch('stripe.Price.retrieve')
+    @mock.patch('stripe.Subscription.list')
+    def test_get_yearly_amount_with_week_billing_period(self, mock_sub_list, mock_price_retrieve):
+        """
+        Test _get_yearly_amount with weekly billing period.
+        """
+        mock_subscription = {
+            'id': 'sub_test_123',
+            'status': 'active',
+            'items': {
+                'data': [{
+                    'price': {'id': 'price_test_123'},
+                    'quantity': 5,
+                }]
+            },
+            'cancel_at_period_end': False,
+            'current_period_end': int(time.time()) + 86400,
+        }
+        mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
+        mock_price_retrieve.return_value = {
+            'id': 'price_test_123',
+            'unit_amount': 1000,  # $10.00 per week
+            'recurring': {'interval': 'week'},
+            'metadata': {},
+        }
+
+        url = reverse('api:v1:billing-management-get-subscription')
+        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response_data = response.json()
+        # 1000 * 52 * 5 = 260000 cents = $2,600
+        self.assertEqual(response_data['subscription']['yearly_amount'], 260000)
+
+    @mock.patch('stripe.Price.retrieve')
+    @mock.patch('stripe.Subscription.list')
+    def test_get_yearly_amount_price_retrieval_error(self, mock_sub_list, mock_price_retrieve):
+        """
+        Test _get_yearly_amount when price retrieval fails (should skip that item).
+        """
+        mock_subscription = {
+            'id': 'sub_test_123',
+            'status': 'active',
+            'items': {
+                'data': [{
+                    'price': {'id': 'price_test_123'},
+                    'quantity': 5,
+                }]
+            },
+            'cancel_at_period_end': False,
+            'current_period_end': int(time.time()) + 86400,
+        }
+        mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
+        mock_price_retrieve.side_effect = stripe.error.StripeError('Price not found')
+
+        url = reverse('api:v1:billing-management-get-subscription')
+        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response_data = response.json()
+        # Should return 0 since price retrieval failed
+        self.assertEqual(response_data['subscription']['yearly_amount'], 0)
+
+    @mock.patch('stripe.Subscription.list')
+    def test_get_yearly_amount_general_exception(self, mock_sub_list):
+        """
+        Test _get_yearly_amount when general exception occurs (should return 0).
+        """
+        mock_subscription = {
+            'id': 'sub_test_123',
+            'status': 'active',
+            'items': {'data': None},  # Will cause exception
+            'cancel_at_period_end': False,
+            'current_period_end': int(time.time()) + 86400,
+        }
+        mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
+
+        url = reverse('api:v1:billing-management-get-subscription')
+        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response_data = response.json()
+        self.assertEqual(response_data['subscription']['yearly_amount'], 0)
+
+    @mock.patch('stripe.Subscription.list')
+    def test_get_license_count_general_exception(self, mock_sub_list):
+        """
+        Test _get_license_count when general exception occurs (should return 0).
+        """
+        mock_subscription = {
+            'id': 'sub_test_123',
+            'status': 'active',
+            'items': {'data': None},  # Will cause exception
+            'cancel_at_period_end': False,
+            'current_period_end': int(time.time()) + 86400,
+        }
+        mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
+
+        url = reverse('api:v1:billing-management-get-subscription')
+        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response_data = response.json()
+        self.assertEqual(response_data['subscription']['license_count'], 0)
+
+    # Cancel subscription edge cases
+    @mock.patch('stripe.Subscription.list')
+    def test_cancel_subscription_invalid_request_error(self, mock_sub_list):
+        """
+        Test cancel subscription with Stripe InvalidRequestError.
+        """
+        mock_sub_list.side_effect = stripe.error.InvalidRequestError('Invalid customer', 'customer')
+
+        url = reverse('api:v1:billing-management-cancel-subscription')
+        response = self.client.post(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}', format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('Invalid request', response.json()['error'])
+
+    @mock.patch('stripe.Subscription.list')
+    def test_cancel_subscription_general_exception(self, mock_sub_list):
+        """
+        Test cancel subscription with general exception.
+        """
+        mock_sub_list.side_effect = Exception('Unexpected error')
+
+        url = reverse('api:v1:billing-management-cancel-subscription')
+        response = self.client.post(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}', format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
+        self.assertIn('unexpected error', response.json()['error'])
+
+    # Reinstate subscription edge cases
+    @mock.patch('stripe.Subscription.list')
+    def test_reinstate_subscription_invalid_request_error(self, mock_sub_list):
+        """
+        Test reinstate subscription with Stripe InvalidRequestError.
+        """
+        mock_sub_list.side_effect = stripe.error.InvalidRequestError('Invalid customer', 'customer')
+
+        url = reverse('api:v1:billing-management-reinstate-subscription')
+        response = self.client.post(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}', format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('Invalid request', response.json()['error'])
+
+    @mock.patch('stripe.Subscription.list')
+    def test_reinstate_subscription_general_exception(self, mock_sub_list):
+        """
+        Test reinstate subscription with general exception.
+        """
+        mock_sub_list.side_effect = Exception('Unexpected error')
+
+        url = reverse('api:v1:billing-management-reinstate-subscription')
+        response = self.client.post(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}', format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
+        self.assertIn('unexpected error', response.json()['error'])
+
+    # Payment method status helpers
+    def test_get_payment_method_status_failed(self):
+        """
+        Test _get_payment_method_status with failed bank account verification.
+        """
+        from enterprise_access.apps.api.v1.views.customer_billing import BillingManagementViewSet
+
+        payment_method = {
+            'type': 'us_bank_account',
+            'us_bank_account': {
+                'status_details': {'status': 'verification_failed'}
+            }
+        }
+        result = BillingManagementViewSet._get_payment_method_status(payment_method)
+        self.assertEqual(result, 'failed')
+
+        # Test with 'errored' status
+        payment_method['us_bank_account']['status_details']['status'] = 'errored'
+        result = BillingManagementViewSet._get_payment_method_status(payment_method)
+        self.assertEqual(result, 'failed')
