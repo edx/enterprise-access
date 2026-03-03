@@ -92,6 +92,18 @@ class SendLearnerCreditCancelEmailTask(BaseLearnerCreditRequestRetryAndErrorActi
     Base class for the ``send_learner_credit_bnr_cancel_notification_task`` task.
     """
     def log_errored_action(self, learner_credit_request, exc):
+        from enterprise_access.apps.subsidy_request.constants import (
+            LearnerCreditRequestActionErrorReasons,
+            SubsidyRequestStates
+        )
+        from enterprise_access.apps.subsidy_request.utils import get_error_reason_choice, get_user_message_choice
+        from enterprise_access.utils import format_traceback
+
+        learner_credit_request.add_errored_cancelled_action(
+            error_traceback=format_traceback(exc),
+            status=get_user_message_choice(SubsidyRequestStates.CANCELLED),
+            error_reason=get_error_reason_choice(LearnerCreditRequestActionErrorReasons.EMAIL_ERROR)
+        )
         logger.error(
             f'Learner credit cancel email task failed. '
             f'Request ID: {learner_credit_request.uuid}, '

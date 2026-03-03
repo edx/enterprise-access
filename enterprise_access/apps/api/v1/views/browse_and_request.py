@@ -1250,29 +1250,43 @@ class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
         Cancel all APPROVED LearnerCreditRequests for a given policy.
 
         Accepts a policy_uuid to filter requests by.
-        Returns 404 if no cancelable requests are found.
-        Returns 422 if any requests are discovered to be non-cancelable.
+        Returns 404 if no APPROVED requests are found for the given policy.
+        Returns 422 if some requests cannot be cancelled (missing assignment or assignment cancellation failed).
+        Returns 202 if all requests were successfully cancelled.
         """
         serializer = serializers.LearnerCreditRequestCancelAllSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
         policy_uuid = serializer.validated_data['policy_uuid']
 
-        # Filter to APPROVED requests for this policy
+        # Get the policy and derive enterprise_customer_uuid from it for authorization
+        from enterprise_access.apps.subsidy_access_policy.models import SubsidyAccessPolicy
+        try:
+            policy = SubsidyAccessPolicy.objects.get(uuid=policy_uuid)
+            enterprise_customer_uuid = policy.enterprise_customer_uuid
+        except SubsidyAccessPolicy.DoesNotExist:
+            return Response(
+                {"detail": "Policy not found."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Filter to APPROVED requests for this policy AND enterprise customer
+        # This prevents authorization bypass where admin uses policy from different enterprise
         learner_credit_requests = self.get_queryset().select_related('assignment').filter(
             state=SubsidyRequestStates.APPROVED,
+            enterprise_customer_uuid=enterprise_customer_uuid,
             learner_credit_request_config__learner_credit_config__uuid=policy_uuid
         )
 
         if not learner_credit_requests.exists():
             return Response(
-                {"detail": "No cancelable requests found for the given policy."},
+                {"detail": "No APPROVED requests found for the given policy."},
                 status=status.HTTP_404_NOT_FOUND
             )
 
         result = subsidy_request_api.cancel_learner_credit_requests(
             learner_credit_requests,
-            request.user
+            self.user
         )
 
         if result.get('non_cancelable'):

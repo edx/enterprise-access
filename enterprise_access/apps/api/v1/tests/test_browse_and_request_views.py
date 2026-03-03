@@ -3084,7 +3084,8 @@ class TestLearnerCreditRequestViewSet(BaseEnterpriseAccessTestCase):
             'enterprise_customer_uuid': str(self.enterprise_customer_uuid_1),
             'policy_uuid': str(self.policy.uuid)
         }
-        response = self.client.post(url, data, content_type='application/json')
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(url, data, content_type='application/json')
 
         assert response.status_code == status.HTTP_202_ACCEPTED
 
@@ -3248,7 +3249,8 @@ class TestLearnerCreditRequestViewSet(BaseEnterpriseAccessTestCase):
             'enterprise_customer_uuid': str(self.enterprise_customer_uuid_1),
             'policy_uuid': str(self.policy.uuid)
         }
-        response = self.client.post(url, data, content_type='application/json')
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(url, data, content_type='application/json')
 
         assert response.status_code == status.HTTP_202_ACCEPTED
 
@@ -3367,7 +3369,8 @@ class TestLearnerCreditRequestViewSet(BaseEnterpriseAccessTestCase):
             'enterprise_customer_uuid': str(self.enterprise_customer_uuid_1),
             'policy_uuid': str(self.policy.uuid)
         }
-        response = self.client.post(url, data, content_type='application/json')
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(url, data, content_type='application/json')
 
         assert response.status_code == status.HTTP_202_ACCEPTED
 
