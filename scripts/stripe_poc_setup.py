@@ -1,10 +1,8 @@
 """
 """
-import pathlib
 import sys
-
 import stripe
-
+import pathlib
 sys.path.append(str(pathlib.Path(__file__).parent.parent.resolve()))
 from enterprise_access.settings.private import STRIPE_API_KEY
 

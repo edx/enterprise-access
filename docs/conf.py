@@ -18,6 +18,7 @@ from datetime import datetime
 from subprocess import check_call
 
 
+
 def get_version(*file_paths):
     """
     Extract the version string from the file.
