@@ -288,7 +288,7 @@ def cancel_learner_credit_requests(
         # Create error actions if any exist
         if actions_to_create:
             with transaction.atomic():
-                LearnerCreditRequestActions.objects.bulk_create(actions_to_create)
+                LearnerCreditRequestActions.bulk_create(actions_to_create)
         return {
             'cancelable': cancelable,
             'non_cancelable': non_cancelable,
@@ -326,7 +326,7 @@ def cancel_learner_credit_requests(
 
         # Bulk create all actions (errors + successes)
         if actions_to_create:
-            LearnerCreditRequestActions.objects.bulk_create(actions_to_create)
+            LearnerCreditRequestActions.bulk_create(actions_to_create)
 
     # Enqueue notification tasks after commit to avoid running against partially-committed state
     for request in cancelable:
