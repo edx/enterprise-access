@@ -68,3 +68,4 @@ from .subsidy_requests import (
     SubsidyRequestCustomerConfigurationSerializer,
     SubsidyRequestSerializer
 )
+from .testimonials import TestimonialSerializer
