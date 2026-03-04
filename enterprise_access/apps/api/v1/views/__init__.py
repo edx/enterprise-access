@@ -29,3 +29,4 @@ from .subsidy_access_policy import (
     SubsidyAccessPolicyRedeemViewset,
     SubsidyAccessPolicyViewSet
 )
+from .testimonials import TestimonialViewSet
