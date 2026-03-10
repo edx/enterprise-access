@@ -729,6 +729,24 @@ class SelfServiceSubscriptionRenewal(TimeStampedModel):
         db_index=True,
         help_text="The Stripe subscription ID for this renewal",
     )
+    stripe_invoice_id = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="The Stripe invoice ID that this renewal corresponds to.",
+    )
+    effective_date = models.DateTimeField(
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text=(
+            "The datetime at which this renewal is expected to take effect, "
+            "derived from the period end of the previous subscription cycle. "
+            "This is a local cache of the like-named column on the "
+            "license-manager SubscriptionPlanRenewal model."
+        ),
+    )
     processed_at = models.DateTimeField(
         null=True,
         blank=True,

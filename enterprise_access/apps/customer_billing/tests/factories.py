@@ -23,7 +23,7 @@ FAKER = Faker()
 
 def get_stripe_object_for_event_type(event_type, **overrides):
     """Generate realistic Stripe object data based on event type."""
-    if event_type == 'invoice.paid':
+    if event_type in ('invoice.paid', 'invoice.created'):
         return {
             'object': 'invoice',
             'id': f'in_{FAKER.bothify("?" * 24)}',
@@ -40,7 +40,11 @@ def get_stripe_object_for_event_type(event_type, **overrides):
                         },
                         'parent': {
                             'type': INVOICE_PAID_PARENT_TYPE_IDENTIFIER
-                        }
+                        },
+                        'period': {
+                            'start': int((timezone.now() + timedelta(days=30)).timestamp()),
+                            'end': int((timezone.now() + timedelta(days=395)).timestamp()),
+                        },
                     }
                 ]
             },
@@ -163,7 +167,7 @@ class StripeEventSummaryFactory(DjangoModelFactory):
 
 class SelfServiceSubscriptionRenewalFactory(DjangoModelFactory):
     """
-    Factory for creating StripeEventSummary instances for testing.
+    Factory for creating SelfServiceSubscriptionRenewal instances for testing.
     """
     class Meta:
         model = SelfServiceSubscriptionRenewal
@@ -172,3 +176,5 @@ class SelfServiceSubscriptionRenewalFactory(DjangoModelFactory):
     subscription_plan_renewal_id = factory.Faker('random_int', min=1, max=10000)
     stripe_event_data = factory.SubFactory(StripeEventDataFactory)
     stripe_subscription_id = factory.LazyFunction(lambda: f'sub_{FAKER.bothify("?" * 24)}')
+    stripe_invoice_id = None
+    effective_date = None

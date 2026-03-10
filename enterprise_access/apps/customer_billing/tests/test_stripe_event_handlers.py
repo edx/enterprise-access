@@ -365,6 +365,7 @@ class TestStripeEventHandler(TestCase):
                 renewed_subscription_plan_uuid=renewed_plan_uuid,
                 processed_at=timezone.now() if renewal_processed else None,
                 stripe_event_data=stripe_event_data,
+                stripe_invoice_id='in_test_123456',
             )
 
         subscription_id = 'sub_test_123456'
@@ -1125,6 +1126,7 @@ class TestStripeEventHandler(TestCase):
             processed_at=timezone.now() - timedelta(days=30),  # Processed 30 days ago
             stripe_subscription_id=stripe_subscription_id,
             stripe_event_data=stripe_event_data_created,
+            stripe_invoice_id=stripe_invoice_id,
         )
 
         # Populate the summary to get subscription_plan_uuid set
@@ -1329,6 +1331,7 @@ class TestStripeEventHandler(TestCase):
             processed_at=None,  # NOT YET PROCESSED - this is the key difference
             stripe_subscription_id=stripe_subscription_id,
             stripe_event_data=stripe_event_data_created,
+            stripe_invoice_id=stripe_invoice_id,
         )
 
         # Populate the summary to set subscription_plan_uuid
@@ -1570,6 +1573,7 @@ class TestStripeEventHandler(TestCase):
             prior_subscription_plan_uuid=trial_plan_uuid,
             renewed_subscription_plan_uuid=renewed_plan_uuid,
             processed_at=None,  # Not yet processed
+            stripe_invoice_id=stripe_invoice_id,
         )
 
         # Create invoice.paid event (first paid invoice after trial)
@@ -1660,7 +1664,8 @@ class TestStripeEventHandler(TestCase):
             checkout_intent=self.checkout_intent,
             subscription_plan_renewal_id=expected_renewal_id,
             stripe_subscription_id=stripe_subscription_id,
-            stripe_event_data=trial_event_data
+            stripe_event_data=trial_event_data,
+            stripe_invoice_id=stripe_invoice_id,
         )
 
         # Create invoice.paid event
@@ -1754,6 +1759,117 @@ class TestStripeEventHandler(TestCase):
         renewal_record.refresh_from_db()
         self.assertIsNone(renewal_record.processed_at)
 
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_payment_receipt_email"
+    )
+    def test_invoice_paid_raises_when_no_renewal_linked(self, mock_send_payment_receipt_email):
+        """
+        Test that invoice.paid raises DoesNotExist when no renewal has been linked
+        via stripe_invoice_id (e.g. out-of-order delivery where invoice.created
+        hasn't been processed yet), forcing Stripe to retry the webhook.
+        """
+        stripe_subscription_id = 'sub_test_no_renewal'
+        mock_subscription = self._create_mock_stripe_subscription(self.checkout_intent.id)
+
+        invoice_data = {
+            'id': 'in_test_no_renewal',
+            'customer': 'cus_test_customer_456',
+            'object': 'invoice',
+            'parent': {
+                'subscription_details': {
+                    'metadata': mock_subscription,
+                    'subscription': stripe_subscription_id,
+                },
+            },
+            'lines': {
+                'data': [{
+                    'parent': {'type': INVOICE_PAID_PARENT_TYPE_IDENTIFIER},
+                    'pricing': {'unit_amount': 42, 'unit_amount_decimal': 42.0},
+                    'quantity': 10,
+                }],
+            },
+            'total': 5000,  # Non-zero to trigger _handle_invoice_paid_status_updated
+        }
+
+        mock_event = self._create_mock_stripe_event('invoice.paid', invoice_data)
+
+        with self.assertLogs('enterprise_access.apps.customer_billing.stripe_event_handlers', level='ERROR') as cm:
+            with self.assertRaises(SelfServiceSubscriptionRenewal.DoesNotExist):
+                StripeEventHandler.dispatch(mock_event)
+
+        self.assertTrue(
+            any('No SelfServiceSubscriptionRenewal found' in msg for msg in cm.output),
+        )
+
+        # Receipt email is still sent before the renewal lookup
+        mock_send_payment_receipt_email.delay.assert_called_once()
+
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.LicenseManagerApiClient",
+        autospec=True,
+    )
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_payment_receipt_email"
+    )
+    def test_invoice_paid_processed_renewal_missing_renewed_plan_uuid(
+        self,
+        _mock_send_payment_receipt_email,
+        mock_license_manager_client,
+    ):
+        """
+        Test that invoice.paid logs an error when the processed renewal has no
+        renewed_subscription_plan_uuid (instead of crashing or calling the API
+        with None).
+        """
+        stripe_subscription_id = 'sub_test_no_plan_uuid'
+        stripe_invoice_id = 'in_test_no_plan_uuid'
+
+        stripe_event_data = StripeEventData.objects.create(
+            event_id='evt_test_setup_no_plan',
+            event_type='customer.subscription.created',
+            checkout_intent=self.checkout_intent,
+        )
+        # Create a processed renewal WITHOUT renewed_subscription_plan_uuid
+        SelfServiceSubscriptionRenewal.objects.create(
+            checkout_intent=self.checkout_intent,
+            subscription_plan_renewal_id=1234,
+            stripe_event_data=stripe_event_data,
+            stripe_subscription_id=stripe_subscription_id,
+            stripe_invoice_id=stripe_invoice_id,
+            renewed_subscription_plan_uuid=None,
+            processed_at=timezone.now(),
+        )
+
+        mock_subscription = self._create_mock_stripe_subscription(self.checkout_intent.id)
+        invoice_data = {
+            'id': stripe_invoice_id,
+            'customer': 'cus_test_customer_456',
+            'object': 'invoice',
+            'parent': {
+                'subscription_details': {
+                    'metadata': mock_subscription,
+                    'subscription': stripe_subscription_id,
+                },
+            },
+            'lines': {
+                'data': [{
+                    'parent': {'type': INVOICE_PAID_PARENT_TYPE_IDENTIFIER},
+                    'pricing': {'unit_amount': 42, 'unit_amount_decimal': 42.0},
+                    'quantity': 10,
+                }],
+            },
+            'total': 5000,
+        }
+
+        mock_event = self._create_mock_stripe_event('invoice.paid', invoice_data)
+
+        # Should not raise — logs error instead
+        StripeEventHandler.dispatch(mock_event)
+
+        # License Manager should NOT be called (no plan UUID to reactivate)
+        mock_client_instance = mock_license_manager_client.return_value
+        mock_client_instance.update_subscription_plan.assert_not_called()
+
     @mock.patch('stripe.Subscription.modify')
     def test_subscription_created_handler_success(self, mock_stripe_modify):
         """Test successful customer.subscription.created event handling."""
@@ -1839,3 +1955,240 @@ class TestStripeEventHandler(TestCase):
         event_data = StripeEventData.objects.get(event_id=mock_event.id)
         self.assertEqual(event_data.checkout_intent, self.checkout_intent)
         self.assertIsNotNone(event_data.handled_at)
+
+
+class TestInvoiceCreatedHandler(TestCase):
+    """
+    Tests for the invoice.created event handler that links Stripe invoices
+    to SelfServiceSubscriptionRenewal records.
+    """
+
+    def setUp(self):
+        self.user = UserFactory()
+        self.checkout_intent = CheckoutIntent.create_intent(
+            user=cast(Type[AbstractUser], self.user),
+            slug='test-enterprise',
+            name='Test Enterprise',
+            quantity=10,
+            country='US',
+            terms_metadata={'version': '1.0', 'test_mode': True}
+        )
+        self.stripe_customer_id = 'cus_test_invoice_created'
+        self.checkout_intent.stripe_customer_id = self.stripe_customer_id
+        self.checkout_intent.save()
+
+        self.subscription_id = 'sub_test_inv_created_123'
+        self.invoice_id = 'in_test_inv_created_456'
+        # Use a stable effective date for matching
+        self.effective_date = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=30)
+        self.period_start_ts = int(self.effective_date.timestamp())
+
+    def tearDown(self):
+        SelfServiceSubscriptionRenewal.objects.all().delete()
+        CheckoutIntent.objects.all().delete()
+        StripeEventData.objects.all().delete()
+        StripeEventSummary.objects.all().delete()
+
+    def _create_invoice_created_event(self, subscription_id=None, period_start=None, invoice_id=None):
+        """Create a stripe.Event for invoice.created."""
+        subscription_id = subscription_id or self.subscription_id
+        period_start = period_start or self.period_start_ts
+        invoice_id = invoice_id or self.invoice_id
+
+        mock_subscription = {
+            'id': subscription_id,
+            'checkout_intent_id': str(self.checkout_intent.id),
+            'enterprise_customer_name': 'Test Enterprise',
+            'enterprise_customer_slug': 'test-enterprise',
+            'lms_user_id': str(self.user.lms_user_id),
+        }
+        invoice_data = {
+            'id': invoice_id,
+            'customer': self.stripe_customer_id,
+            'object': 'invoice',
+            'parent': {
+                'subscription_details': {
+                    'metadata': mock_subscription,
+                    'subscription': subscription_id,
+                },
+            },
+            'lines': {
+                'data': [
+                    {
+                        'parent': {'type': INVOICE_PAID_PARENT_TYPE_IDENTIFIER},
+                        'period': {
+                            'start': period_start,
+                            'end': period_start + (365 * 86400),
+                        },
+                    },
+                ]
+            },
+        }
+        event = stripe.Event()
+        event.id = f'evt_test_invoice_created_{_rand_numeric_string()}'
+        event.created = int(timezone.now().timestamp())
+        event.type = 'invoice.created'
+        event.data = stripe.StripeObject()
+        event.data.object = AttrDict.wrap(invoice_data)
+        return event
+
+    def _create_renewal_with_effective_date(self, effective_date=None, stripe_invoice_id=None):
+        """Helper to create a SelfServiceSubscriptionRenewal with effective_date."""
+        event_data = StripeEventDataFactory.create(
+            checkout_intent=self.checkout_intent,
+            event_type='customer.subscription.created',
+        )
+        return SelfServiceSubscriptionRenewal.objects.create(
+            checkout_intent=self.checkout_intent,
+            subscription_plan_renewal_id=1234,
+            stripe_event_data=event_data,
+            stripe_subscription_id=self.subscription_id,
+            effective_date=effective_date or self.effective_date,
+            stripe_invoice_id=stripe_invoice_id,
+        )
+
+    def test_invoice_created_links_invoice_to_renewal(self):
+        """Test that invoice.created handler links invoice ID to matching renewal."""
+        renewal = self._create_renewal_with_effective_date()
+        event = self._create_invoice_created_event()
+
+        StripeEventHandler.dispatch(event)
+
+        renewal.refresh_from_db()
+        self.assertEqual(renewal.stripe_invoice_id, self.invoice_id)
+
+    def test_invoice_created_idempotent_does_not_overwrite(self):
+        """Test immutability guard: existing stripe_invoice_id is not overwritten."""
+        existing_invoice_id = 'in_existing_previous'
+        renewal = self._create_renewal_with_effective_date(stripe_invoice_id=existing_invoice_id)
+        event = self._create_invoice_created_event()
+
+        StripeEventHandler.dispatch(event)
+
+        renewal.refresh_from_db()
+        self.assertEqual(renewal.stripe_invoice_id, existing_invoice_id)
+
+    def test_invoice_created_no_matching_renewal(self):
+        """Test that handler gracefully handles no matching renewal."""
+        # Create renewal with a different effective date (won't match)
+        different_date = self.effective_date + timedelta(days=60)
+        self._create_renewal_with_effective_date(effective_date=different_date)
+        event = self._create_invoice_created_event()
+
+        # Should not raise
+        StripeEventHandler.dispatch(event)
+
+        # Renewal should be unchanged
+        renewal = SelfServiceSubscriptionRenewal.objects.first()
+        self.assertIsNone(renewal.stripe_invoice_id)
+
+    def test_invoice_created_missing_period_start(self):
+        """Test that handler handles missing period start gracefully."""
+        self._create_renewal_with_effective_date()
+
+        mock_subscription = {
+            'id': self.subscription_id,
+            'checkout_intent_id': str(self.checkout_intent.id),
+            'enterprise_customer_name': 'Test Enterprise',
+            'enterprise_customer_slug': 'test-enterprise',
+            'lms_user_id': str(self.user.lms_user_id),
+        }
+        invoice_data = {
+            'id': self.invoice_id,
+            'customer': self.stripe_customer_id,
+            'object': 'invoice',
+            'parent': {
+                'subscription_details': {
+                    'metadata': mock_subscription,
+                    'subscription': self.subscription_id,
+                },
+            },
+            'lines': {
+                'data': [
+                    {
+                        'parent': {'type': INVOICE_PAID_PARENT_TYPE_IDENTIFIER},
+                        # No 'period' key
+                    },
+                ]
+            },
+        }
+        event = stripe.Event()
+        event.id = f'evt_test_no_period_{_rand_numeric_string()}'
+        event.created = int(timezone.now().timestamp())
+        event.type = 'invoice.created'
+        event.data = stripe.StripeObject()
+        event.data.object = AttrDict.wrap(invoice_data)
+
+        StripeEventHandler.dispatch(event)
+
+        # Renewal should be unchanged
+        renewal = SelfServiceSubscriptionRenewal.objects.first()
+        self.assertIsNone(renewal.stripe_invoice_id)
+
+    def test_invoice_created_persists_event_data(self):
+        """Test that invoice.created event is persisted as StripeEventData."""
+        self._create_renewal_with_effective_date()
+        event = self._create_invoice_created_event()
+
+        StripeEventHandler.dispatch(event)
+
+        event_data = StripeEventData.objects.get(event_id=event.id)
+        self.assertEqual(event_data.event_type, 'invoice.created')
+        self.assertEqual(event_data.checkout_intent, self.checkout_intent)
+        self.assertIsNotNone(event_data.handled_at)
+
+    def test_invoice_created_non_subscription_invoice_ignored(self):
+        """Test that non-subscription invoices are filtered out by the wrapper."""
+        self._create_renewal_with_effective_date()
+
+        mock_subscription = {
+            'id': self.subscription_id,
+            'checkout_intent_id': str(self.checkout_intent.id),
+        }
+        invoice_data = {
+            'id': self.invoice_id,
+            'customer': self.stripe_customer_id,
+            'object': 'invoice',
+            'parent': {
+                'subscription_details': {
+                    'metadata': mock_subscription,
+                    'subscription': self.subscription_id,
+                },
+            },
+            'lines': {
+                'data': [
+                    {
+                        'parent': {'type': 'some_other_type'},
+                        'period': {'start': self.period_start_ts, 'end': self.period_start_ts + 86400},
+                    },
+                ]
+            },
+        }
+        event = stripe.Event()
+        event.id = f'evt_test_non_sub_{_rand_numeric_string()}'
+        event.created = int(timezone.now().timestamp())
+        event.type = 'invoice.created'
+        event.data = stripe.StripeObject()
+        event.data.object = AttrDict.wrap(invoice_data)
+
+        StripeEventHandler.dispatch(event)
+
+        # No event data should be persisted (wrapper short-circuits)
+        self.assertFalse(StripeEventData.objects.filter(event_id=event.id).exists())
+        # Renewal unchanged
+        renewal = SelfServiceSubscriptionRenewal.objects.first()
+        self.assertIsNone(renewal.stripe_invoice_id)
+
+    def test_invoice_created_checkout_intent_not_found(self):
+        """Test that invoice.created handler gracefully handles missing CheckoutIntent."""
+        self._create_renewal_with_effective_date()
+        event = self._create_invoice_created_event()
+        # Override the checkout_intent_id to a non-existent value
+        event.data.object['parent']['subscription_details']['metadata']['checkout_intent_id'] = '99999'
+
+        # Should not raise
+        StripeEventHandler.dispatch(event)
+
+        # Renewal should be unchanged
+        renewal = SelfServiceSubscriptionRenewal.objects.first()
+        self.assertIsNone(renewal.stripe_invoice_id)
