@@ -584,68 +584,53 @@ class TransactionsListResponseSerializer(serializers.Serializer):
 
 
 # pylint: disable=abstract-method
-class SubscriptionResponseSerializer(serializers.Serializer):
+class StripeSubscriptionResponseSerializer(serializers.Serializer):
     """
-    Response serializer for subscription status from GET /api/v1/billing-management/subscription
+    Response serializer for a Stripe subscription object.
+
+    Used for subscription-related endpoints including:
+    - GET /api/v1/billing-management/subscription
+    - POST /api/v1/billing-management/subscription/cancel
+    - POST /api/v1/billing-management/subscription/reinstate
     """
-    subscription = serializers.SerializerMethodField(
-        help_text='Subscription details or null if no active subscription',
+    id = serializers.CharField(
+        required=False,
+        allow_null=True,
+        help_text='Unique identifier for the subscription in Stripe',
     )
-
-    def get_subscription(self, obj):
-        """Get subscription data, returns None if no subscription."""
-        if obj is None:
-            return None
-        return {
-            'id': obj.get('id'),
-            'status': obj.get('status'),
-            'plan_type': obj.get('plan_type'),
-            'cancel_at_period_end': obj.get('cancel_at_period_end'),
-            'current_period_end': obj.get('current_period_end'),
-            'yearly_amount': obj.get('yearly_amount'),
-            'license_count': obj.get('license_count'),
-        }
-
-
-# pylint: disable=abstract-method
-class CancelSubscriptionResponseSerializer(serializers.Serializer):
-    """
-    Response serializer for cancel subscription operation from POST /api/v1/billing-management/subscription/cancel
-    """
-    subscription = serializers.SerializerMethodField(
-        help_text='Updated subscription details after cancellation request',
+    status = serializers.CharField(
+        required=False,
+        allow_null=True,
+        help_text='Status of the subscription (e.g., active, canceled)',
     )
-
-    def get_subscription(self, obj):
-        """Get subscription data after cancellation."""
-        if obj is None:
-            return None
-        return {
-            'id': obj.get('id'),
-            'status': obj.get('status'),
-            'plan_type': obj.get('plan_type'),
-            'cancel_at_period_end': obj.get('cancel_at_period_end'),
-            'current_period_end': obj.get('current_period_end'),
-        }
-
-
-# pylint: disable=abstract-method
-class ReinstateSubscriptionResponseSerializer(serializers.Serializer):
-    """
-    Response serializer for reinstate subscription operation from POST /api/v1/billing-management/subscription/reinstate
-    """
-    subscription = serializers.SerializerMethodField(
-        help_text='Updated subscription details after reinstatement request',
+    cancel_at_period_end = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text='Whether the subscription is scheduled to cancel at the end of the current period',
     )
-
-    def get_subscription(self, obj):
-        """Get subscription data after reinstatement."""
-        if obj is None:
-            return None
-        return {
-            'id': obj.get('id'),
-            'status': obj.get('status'),
-            'plan_type': obj.get('plan_type'),
-            'cancel_at_period_end': obj.get('cancel_at_period_end'),
-            'current_period_end': obj.get('current_period_end'),
-        }
+    cancel_at = serializers.IntegerField(
+        required=False,
+        allow_null=True,
+        help_text='Unix timestamp when the subscription is scheduled to be canceled',
+    )
+    current_period_end = serializers.IntegerField(
+        required=False,
+        allow_null=True,
+        help_text='Unix timestamp of the end of the current billing period',
+    )
+    currency = serializers.CharField(
+        required=False,
+        allow_null=True,
+        max_length=3,
+        help_text='Three-letter ISO currency code',
+    )
+    yearly_amount = serializers.IntegerField(
+        required=False,
+        allow_null=True,
+        help_text='Total yearly recurring revenue in cents',
+    )
+    license_count = serializers.IntegerField(
+        required=False,
+        allow_null=True,
+        help_text='Total number of licenses/seats in the subscription',
+    )
