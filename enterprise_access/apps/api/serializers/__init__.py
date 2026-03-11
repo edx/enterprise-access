@@ -21,7 +21,6 @@ from .customer_billing import (
     AttachPaymentMethodResponseSerializer,
     BillingAddressResponseSerializer,
     BillingAddressUpdateRequestSerializer,
-    CancelSubscriptionResponseSerializer,
     CheckoutIntentCreateRequestSerializer,
     CheckoutIntentReadOnlySerializer,
     CheckoutIntentUpdateRequestSerializer,
@@ -30,11 +29,10 @@ from .customer_billing import (
     CustomerBillingCreateCheckoutSessionValidationFailedResponseSerializer,
     PaymentMethodResponseSerializer,
     PaymentMethodsListResponseSerializer,
-    ReinstateSubscriptionResponseSerializer,
     SetDefaultPaymentMethodRequestSerializer,
     StripeEventSummaryReadOnlySerializer,
     StripeSubscriptionPlanInfoResponseSerializer,
-    SubscriptionResponseSerializer,
+    StripeSubscriptionResponseSerializer,
     TransactionResponseSerializer,
     TransactionsListResponseSerializer
 )

@@ -9,6 +9,7 @@ import stripe
 from django.conf import settings
 from django.db.models import Q
 from django.http import HttpResponseServerError
+from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, OpenApiTypes, extend_schema, extend_schema_view
 from edx_django_utils.cache import TieredCache
@@ -36,6 +37,7 @@ from enterprise_access.apps.customer_billing.models import (
     SelfServiceSubscriptionRenewal,
     StripeEventSummary
 )
+from enterprise_access.apps.customer_billing.pricing_api import get_ssp_product_pricing
 from enterprise_access.apps.customer_billing.stripe_api import get_stripe_customer
 from enterprise_access.apps.customer_billing.stripe_event_handlers import StripeEventHandler
 
@@ -1695,9 +1697,9 @@ class BillingManagementViewSet(viewsets.ViewSet):
 
     @extend_schema(
         tags=[BILLING_MANAGEMENT_API_TAG],
-        summary='Get subscription status',
+        summary='Retrieve subscription',
         description=(
-            'Retrieve the current subscription status and plan type for a Stripe customer '
+            'Retrieve an overview of the current Stripe subscription state '
             'associated with an enterprise.'
         ),
         parameters=[
@@ -1710,11 +1712,11 @@ class BillingManagementViewSet(viewsets.ViewSet):
             ),
         ],
         responses={
-            status.HTTP_200_OK: serializers.SubscriptionResponseSerializer,
+            status.HTTP_200_OK: serializers.StripeSubscriptionResponseSerializer,
             status.HTTP_400_BAD_REQUEST: OpenApiResponse(description='Missing or invalid enterprise_customer_uuid'),
             status.HTTP_403_FORBIDDEN: OpenApiResponse(description='Permission denied'),
             status.HTTP_404_NOT_FOUND: OpenApiResponse(description='Enterprise customer or Stripe customer not found'),
-            status.HTTP_422_UNPROCESSABLE_ENTITY: OpenApiResponse(description='Stripe API call failed'),
+            status.HTTP_422_UNPROCESSABLE_ENTITY: OpenApiResponse(description='Failed to retrieve subscription data'),
         },
     )
     @action(detail=False, methods=['get'], url_path='subscription')
@@ -1724,10 +1726,11 @@ class BillingManagementViewSet(viewsets.ViewSet):
     )
     def get_subscription(self, request, **kwargs):
         """
-        Get subscription status and plan type for a Stripe customer.
+        Get subscription status for a Stripe customer.
 
-        Returns null subscription if no active subscription exists.
-        The plan_type is derived from Stripe product/price metadata using the 'plan_type' key.
+        Returns subscription details if an active subscription exists, otherwise returns null.
+        Subscription data is retrieved from StripeEventSummary which stores the most recent
+        state from Stripe webhook events.
         """
         enterprise_uuid = request.query_params.get('enterprise_customer_uuid')
         if not enterprise_uuid:
@@ -1737,53 +1740,81 @@ class BillingManagementViewSet(viewsets.ViewSet):
             )
 
         try:
-            # Get Stripe customer ID using helper method
-            stripe_customer_id, _ = self._get_stripe_customer_id_for_enterprise(enterprise_uuid)
-            if not stripe_customer_id:
+            # Get CheckoutIntent for the enterprise
+            _, checkout_intent = self._get_stripe_customer_id_for_enterprise(enterprise_uuid)
+            if not checkout_intent:
                 return Response(
-                    {'error': 'Stripe customer not found for this enterprise'},
+                    {'error': 'Checkout Intent not found for this enterprise'},
                     status=status.HTTP_404_NOT_FOUND
                 )
 
-            # Retrieve subscriptions for the customer
-            subscriptions_response = stripe.Subscription.list(
-                customer=stripe_customer_id,
-                limit=1,  # Only get the most recent subscription
-                status='active',
+            # Get the most recent subscription event summary for subscription status
+            subscription_summary = StripeEventSummary.get_latest_for_checkout_intent(
+                checkout_intent=checkout_intent,
+                event_type__in=['customer.subscription.updated', 'customer.subscription.created'],
             )
 
-            # If no active subscription, return null
-            if not subscriptions_response.data:
-                return Response({'subscription': None}, status=status.HTTP_200_OK)
+            # If no subscription events, return empty response
+            if not subscription_summary:
+                return Response({}, status=status.HTTP_200_OK)
 
-            subscription = subscriptions_response.data[0]
+            # Check if subscription status indicates an active subscription
+            if subscription_summary.subscription_status not in ['active', 'trialing']:
+                return Response({}, status=status.HTTP_200_OK)
 
-            # Extract subscription details
+            # Get the latest invoice event for pricing data (invoice_unit_amount, invoice_quantity)
+            # Invoice events have the actual billing amounts, subscription events don't
+            invoice_summary = StripeEventSummary.get_latest_for_checkout_intent(
+                checkout_intent=checkout_intent,
+                event_type__in=['invoice.paid', 'invoice.created'],
+            )
+
+            # Calculate yearly amount and license count from invoice data
+            yearly_amount = None
+            license_count = None
+            if invoice_summary:
+                license_count = invoice_summary.invoice_quantity
+                if (
+                        invoice_summary.invoice_unit_amount is not None and
+                        invoice_summary.invoice_quantity is not None
+                ):
+                    yearly_amount = invoice_summary.invoice_unit_amount * invoice_summary.invoice_quantity
+
+            # During trial periods, the invoice may be $0. Fall back to upcoming_invoice_amount_due
+            # which is populated on customer.subscription.created events
+            if not yearly_amount:
+                created_summary = StripeEventSummary.get_latest_for_checkout_intent(
+                    checkout_intent=checkout_intent,
+                    event_type='customer.subscription.created',
+                )
+                if created_summary and created_summary.upcoming_invoice_amount_due:
+                    yearly_amount = created_summary.upcoming_invoice_amount_due
+
+            # Extract cancel_at timestamp
+            cancel_at = None
+            if subscription_summary.subscription_cancel_at:
+                cancel_at = int(subscription_summary.subscription_cancel_at.timestamp())
+
+            # Extract current_period_end timestamp
+            current_period_end = None
+            if subscription_summary.subscription_period_end:
+                current_period_end = int(subscription_summary.subscription_period_end.timestamp())
+
             sub_data = {
-                'id': subscription.get('id'),
-                'status': subscription.get('status'),
-                'plan_type': self._get_plan_type_from_subscription(subscription),
-                'cancel_at_period_end': subscription.get('cancel_at_period_end', False),
-                'current_period_end': subscription.get('current_period_end'),
-                'yearly_amount': self._get_yearly_amount(subscription),
-                'license_count': self._get_license_count(subscription),
+                'id': subscription_summary.stripe_subscription_id,
+                'status': subscription_summary.subscription_status,
+                'cancel_at_period_end': bool(subscription_summary.subscription_cancel_at),
+                'cancel_at': cancel_at,
+                'current_period_end': current_period_end,
+                'currency': subscription_summary.currency,
+                'yearly_amount': yearly_amount,
+                'license_count': license_count,
             }
 
-            serializer = serializers.SubscriptionResponseSerializer(sub_data)
+            serializer = serializers.StripeSubscriptionResponseSerializer(data=sub_data)
+            serializer.is_valid(raise_exception=True)
             return Response(serializer.data, status=status.HTTP_200_OK)
 
-        except stripe.error.InvalidRequestError as e:
-            logger.warning(f'Invalid Stripe request for customer {stripe_customer_id}: {str(e)}')
-            return Response(
-                {'error': 'Invalid request to Stripe API'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        except stripe.error.StripeError as e:
-            logger.exception(f'Stripe API error retrieving subscription for {enterprise_uuid}: {str(e)}')
-            return Response(
-                {'error': f'Stripe API error: {str(e)}'},
-                status=status.HTTP_422_UNPROCESSABLE_ENTITY
-            )
         except Exception as e:  # pylint: disable=broad-except
             logger.exception(f'Unexpected error retrieving subscription for {enterprise_uuid}: {str(e)}')
             return Response(
@@ -1835,6 +1866,46 @@ class BillingManagementViewSet(viewsets.ViewSet):
         except Exception as e:  # pylint: disable=broad-except
             logger.warning(f'Unexpected error deriving plan_type: {str(e)}')
             return 'Other'
+
+    @staticmethod
+    def _is_subscription_cancellable(subscription):
+        """
+        Check if a subscription is eligible for cancellation/reinstatement.
+
+        Validates by matching the subscription's price ID against SSP product pricing.
+        This is more reliable than checking metadata which may not be consistently set.
+
+        Returns:
+            bool: True if subscription price matches an SSP product, False otherwise
+        """
+        try:
+            # Get the price ID from the subscription
+            items = subscription.get('items', {}).get('data', [])
+            if not items:
+                logger.warning('Subscription has no items')
+                return False
+
+            # Get SSP product pricing data
+            ssp_pricing = get_ssp_product_pricing()
+
+            # Check if ANY item's price matches an SSP product
+            for item in items:
+                price_id = item.get('price', {}).get('id')
+                if not price_id:
+                    continue
+
+                # Check if this subscription's price_id is contained in the SSP product config
+                for product_key, price_data in ssp_pricing.items():
+                    if price_data.get('id') == price_id:
+                        logger.info(f'Subscription price {price_id} matches SSP product {product_key}')
+                        return True
+
+            logger.warning('No subscription items match any SSP product')
+            return False
+
+        except Exception as e:  # pylint: disable=broad-except
+            logger.exception(f'Error checking if subscription is cancellable: {str(e)}')
+            return False
 
     @staticmethod
     def _get_yearly_amount(subscription):
@@ -1922,7 +1993,7 @@ class BillingManagementViewSet(viewsets.ViewSet):
             ),
         ],
         responses={
-            status.HTTP_200_OK: serializers.CancelSubscriptionResponseSerializer,
+            status.HTTP_200_OK: serializers.StripeSubscriptionResponseSerializer,
             status.HTTP_400_BAD_REQUEST: OpenApiResponse(description='Missing or invalid enterprise_customer_uuid'),
             status.HTTP_403_FORBIDDEN: OpenApiResponse(
                 description='Permission denied or plan type does not support cancellation'
@@ -1954,32 +2025,44 @@ class BillingManagementViewSet(viewsets.ViewSet):
             )
 
         try:
-            # Get Stripe customer ID using helper method
-            stripe_customer_id, _ = self._get_stripe_customer_id_for_enterprise(enterprise_uuid)
-            if not stripe_customer_id:
+            # Get CheckoutIntent for the enterprise
+            _, checkout_intent = self._get_stripe_customer_id_for_enterprise(enterprise_uuid)
+            if not checkout_intent:
                 return Response(
                     {'error': 'Stripe customer not found for this enterprise'},
                     status=status.HTTP_404_NOT_FOUND
                 )
 
-            # Retrieve the active subscription using helper method
-            subscription = self._get_active_subscription_for_customer(stripe_customer_id)
-            if not subscription:
+            # Get the most recent subscription event summary to check current state
+            event_summary = StripeEventSummary.objects.filter(
+                checkout_intent=checkout_intent,
+                event_type__in=['customer.subscription.updated', 'customer.subscription.created'],
+            ).order_by('-stripe_event_created_at').first()
+
+            if not event_summary or not event_summary.stripe_subscription_id:
                 return Response(
                     {'error': 'No active subscription found for this enterprise'},
                     status=status.HTTP_404_NOT_FOUND
                 )
 
-            # Check if already cancelled
-            if subscription.get('cancel_at_period_end', False):
+            # Check if subscription is active
+            if event_summary.subscription_status not in ['active', 'trialing']:
+                return Response(
+                    {'error': 'No active subscription found for this enterprise'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            # Check if already scheduled for cancellation
+            if event_summary.subscription_cancel_at:
                 return Response(
                     {'error': 'Subscription is already scheduled for cancellation'},
                     status=status.HTTP_409_CONFLICT
                 )
 
-            # Get plan_type to verify cancellation eligibility
-            plan_type = self._get_plan_type_from_subscription(subscription)
-            if plan_type not in ['Teams', 'Essentials']:
+            # Verify cancellation eligibility by checking if subscription price matches SSP products
+            # Get subscription from Stripe to check eligibility
+            subscription = stripe.Subscription.retrieve(event_summary.stripe_subscription_id)
+            if not self._is_subscription_cancellable(subscription):
                 return Response(
                     {'error': 'Subscription cancellation is not available for your plan type'},
                     status=status.HTTP_403_FORBIDDEN
@@ -1987,7 +2070,7 @@ class BillingManagementViewSet(viewsets.ViewSet):
 
             # Cancel the subscription at period end
             updated_subscription = stripe.Subscription.modify(
-                subscription.get('id'),
+                event_summary.stripe_subscription_id,
                 cancel_at_period_end=True,
             )
 
@@ -1995,16 +2078,16 @@ class BillingManagementViewSet(viewsets.ViewSet):
             sub_data = {
                 'id': updated_subscription.get('id'),
                 'status': updated_subscription.get('status'),
-                'plan_type': self._get_plan_type_from_subscription(updated_subscription),
                 'cancel_at_period_end': updated_subscription.get('cancel_at_period_end', False),
                 'current_period_end': updated_subscription.get('current_period_end'),
             }
 
-            serializer = serializers.CancelSubscriptionResponseSerializer(sub_data)
+            serializer = serializers.StripeSubscriptionResponseSerializer(data=sub_data)
+            serializer.is_valid(raise_exception=True)
             return Response(serializer.data, status=status.HTTP_200_OK)
 
         except stripe.error.InvalidRequestError as e:
-            logger.warning(f'Invalid Stripe request for customer {stripe_customer_id}: {str(e)}')
+            logger.warning(f'Invalid Stripe request for enterprise {enterprise_uuid}: {str(e)}')
             return Response(
                 {'error': 'Invalid request to Stripe API'},
                 status=status.HTTP_400_BAD_REQUEST
@@ -2039,7 +2122,7 @@ class BillingManagementViewSet(viewsets.ViewSet):
             ),
         ],
         responses={
-            status.HTTP_200_OK: serializers.ReinstateSubscriptionResponseSerializer,
+            status.HTTP_200_OK: serializers.StripeSubscriptionResponseSerializer,
             status.HTTP_400_BAD_REQUEST: OpenApiResponse(description='Missing or invalid enterprise_customer_uuid'),
             status.HTTP_403_FORBIDDEN: OpenApiResponse(
                 description='Permission denied or plan type does not support reinstatement'
@@ -2073,40 +2156,54 @@ class BillingManagementViewSet(viewsets.ViewSet):
             )
 
         try:
-            # Get Stripe customer ID using helper method
-            stripe_customer_id, _ = self._get_stripe_customer_id_for_enterprise(enterprise_uuid)
-            if not stripe_customer_id:
+            # Get CheckoutIntent for the enterprise
+            _, checkout_intent = self._get_stripe_customer_id_for_enterprise(enterprise_uuid)
+            if not checkout_intent:
                 return Response(
                     {'error': 'Stripe customer not found for this enterprise'},
                     status=status.HTTP_404_NOT_FOUND
                 )
 
-            # Retrieve the active subscription using helper method
-            subscription = self._get_active_subscription_for_customer(stripe_customer_id)
-            if not subscription:
+            # Get the most recent subscription event summary to check current state
+            event_summary = StripeEventSummary.objects.filter(
+                checkout_intent=checkout_intent,
+                event_type__in=['customer.subscription.updated', 'customer.subscription.created'],
+            ).order_by('-stripe_event_created_at').first()
+
+            if not event_summary or not event_summary.stripe_subscription_id:
                 return Response(
                     {'error': 'No active subscription found for this enterprise'},
                     status=status.HTTP_404_NOT_FOUND
                 )
 
-            # Check if not scheduled for cancellation
-            if not subscription.get('cancel_at_period_end', False):
+            # Check if subscription is active
+            if event_summary.subscription_status not in ['active', 'trialing']:
+                return Response(
+                    {'error': 'No active subscription found for this enterprise'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            # Check if NOT scheduled for cancellation
+            if not event_summary.subscription_cancel_at:
                 return Response(
                     {'error': 'Subscription is not currently scheduled for cancellation'},
                     status=status.HTTP_409_CONFLICT
                 )
 
             # Check if the period has already ended
-            current_period_end = subscription.get('current_period_end')
-            if current_period_end and current_period_end <= time.time():
+            period_has_ended = False
+            if event_summary.subscription_period_end:
+                period_has_ended = event_summary.subscription_period_end.timestamp() <= timezone.now().timestamp()
+            if period_has_ended:
                 return Response(
                     {'error': 'The subscription period has already ended'},
                     status=status.HTTP_409_CONFLICT
                 )
 
-            # Get plan_type to verify reinstatement eligibility
-            plan_type = self._get_plan_type_from_subscription(subscription)
-            if plan_type not in ['Teams', 'Essentials']:
+            # Verify reinstatement eligibility by checking if subscription price matches SSP products
+            # Get subscription from Stripe to check eligibility
+            subscription = stripe.Subscription.retrieve(event_summary.stripe_subscription_id)
+            if not self._is_subscription_cancellable(subscription):
                 return Response(
                     {'error': 'Subscription reinstatement is not available for your plan type'},
                     status=status.HTTP_403_FORBIDDEN
@@ -2114,7 +2211,7 @@ class BillingManagementViewSet(viewsets.ViewSet):
 
             # Reinstate the subscription
             updated_subscription = stripe.Subscription.modify(
-                subscription.get('id'),
+                event_summary.stripe_subscription_id,
                 cancel_at_period_end=False,
             )
 
@@ -2122,16 +2219,16 @@ class BillingManagementViewSet(viewsets.ViewSet):
             sub_data = {
                 'id': updated_subscription.get('id'),
                 'status': updated_subscription.get('status'),
-                'plan_type': self._get_plan_type_from_subscription(updated_subscription),
                 'cancel_at_period_end': updated_subscription.get('cancel_at_period_end', False),
                 'current_period_end': updated_subscription.get('current_period_end'),
             }
 
-            serializer = serializers.ReinstateSubscriptionResponseSerializer(sub_data)
+            serializer = serializers.StripeSubscriptionResponseSerializer(data=sub_data)
+            serializer.is_valid(raise_exception=True)
             return Response(serializer.data, status=status.HTTP_200_OK)
 
         except stripe.error.InvalidRequestError as e:
-            logger.warning(f'Invalid Stripe request for customer {stripe_customer_id}: {str(e)}')
+            logger.warning(f'Invalid Stripe request for enterprise {enterprise_uuid}: {str(e)}')
             return Response(
                 {'error': 'Invalid request to Stripe API'},
                 status=status.HTTP_400_BAD_REQUEST
