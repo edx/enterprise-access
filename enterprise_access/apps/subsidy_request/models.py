@@ -540,16 +540,6 @@ class LearnerCreditRequest(SubsidyRequest):
         self.reviewed_at = localized_utcnow()
         self.save()
 
-    def add_successful_cancelled_action(self):
-        """
-        Creates an action record for a successful cancellation.
-        """
-        return LearnerCreditRequestActions.create_action(
-            learner_credit_request=self,
-            recent_action=get_action_choice(SubsidyRequestStates.CANCELLED),
-            status=get_user_message_choice(SubsidyRequestStates.CANCELLED),
-        )
-
     def add_errored_cancelled_action(self, error_traceback, status=None, error_reason=None):
         """
         Creates an action record for a failed cancellation with error details.

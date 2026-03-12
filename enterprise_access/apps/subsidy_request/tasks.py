@@ -13,9 +13,13 @@ from enterprise_access.apps.api_client.braze_client import BrazeApiClient
 from enterprise_access.apps.api_client.discovery_client import DiscoveryApiClient
 from enterprise_access.apps.api_client.lms_client import LmsApiClient
 from enterprise_access.apps.content_assignments.tasks import BrazeCampaignSender, _get_assignment_or_raise
-from enterprise_access.apps.subsidy_request.constants import SubsidyRequestStates
+from enterprise_access.apps.subsidy_request.constants import (
+    LearnerCreditRequestActionErrorReasons,
+    SubsidyRequestStates
+)
+from enterprise_access.apps.subsidy_request.utils import get_error_reason_choice, get_user_message_choice
 from enterprise_access.tasks import LoggedTaskWithRetry
-from enterprise_access.utils import get_subsidy_model
+from enterprise_access.utils import format_traceback, get_subsidy_model
 
 logger = logging.getLogger(__name__)
 
@@ -92,13 +96,6 @@ class SendLearnerCreditCancelEmailTask(BaseLearnerCreditRequestRetryAndErrorActi
     Base class for the ``send_learner_credit_bnr_cancel_notification_task`` task.
     """
     def log_errored_action(self, learner_credit_request, exc):
-        from enterprise_access.apps.subsidy_request.constants import (
-            LearnerCreditRequestActionErrorReasons,
-            SubsidyRequestStates
-        )
-        from enterprise_access.apps.subsidy_request.utils import get_error_reason_choice, get_user_message_choice
-        from enterprise_access.utils import format_traceback
-
         learner_credit_request.add_errored_cancelled_action(
             error_traceback=format_traceback(exc),
             status=get_user_message_choice(SubsidyRequestStates.CANCELLED),

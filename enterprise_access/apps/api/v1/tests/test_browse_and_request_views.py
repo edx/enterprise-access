@@ -3205,6 +3205,106 @@ class TestLearnerCreditRequestViewSet(BaseEnterpriseAccessTestCase):
 
         assert response.status_code == status.HTTP_403_FORBIDDEN
 
+    def test_cancel_all_cross_enterprise_attack_prevention(self):
+        """
+        Test that admin cannot cancel requests by supplying their enterprise UUID
+        with a policy UUID from a different enterprise (security vulnerability test).
+        """
+        # Create a second enterprise and policy
+        enterprise_customer_uuid_2 = uuid4()
+        learner_credit_config_2 = LearnerCreditRequestConfigurationFactory(active=True)
+        assignment_config_2 = AssignmentConfigurationFactory(
+            enterprise_customer_uuid=enterprise_customer_uuid_2,
+        )
+        policy_2 = PerLearnerSpendCapLearnerCreditAccessPolicyFactory(
+            learner_credit_request_config=learner_credit_config_2,
+            assignment_configuration=assignment_config_2,
+            enterprise_customer_uuid=enterprise_customer_uuid_2,
+            active=True,
+            retired=False,
+        )
+
+        # Create request for enterprise 2
+        assignment_2 = LearnerContentAssignmentFactory(
+            assignment_configuration=assignment_config_2,
+            content_quantity=-1000,
+            state='allocated'
+        )
+        request_2 = LearnerCreditRequestFactory(
+            enterprise_customer_uuid=enterprise_customer_uuid_2,
+            user=self.user,
+            learner_credit_request_config=learner_credit_config_2,
+            course_price=1000,
+            state=SubsidyRequestStates.APPROVED,
+            assignment=assignment_2
+        )
+
+        # Admin from enterprise 1 tries to cancel requests from enterprise 2
+        # by supplying their own enterprise UUID but enterprise 2's policy UUID
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': str(self.enterprise_customer_uuid_1)  # Admin of enterprise 1
+        }])
+
+        url = reverse('api:v1:learner-credit-requests-cancel-all')
+        data = {
+            'enterprise_customer_uuid': str(self.enterprise_customer_uuid_1),  # Enterprise 1
+            'policy_uuid': str(policy_2.uuid)  # Policy from Enterprise 2
+        }
+        response = self.client.post(url, data, content_type='application/json')
+
+        # Should return 404 (not 403) to prevent enumeration
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        assert response.json()['detail'] == "No APPROVED requests found for the given policy."
+
+        # Verify request was NOT cancelled
+        request_2.refresh_from_db()
+        assert request_2.state == SubsidyRequestStates.APPROVED
+
+    def test_cancel_all_wrong_enterprise_for_policy(self):
+        """
+        Test that providing correct policy but wrong enterprise UUID in the payload
+        returns 403 (permission denied by the decorator before serializer validation).
+        """
+        # Create a second enterprise UUID (that admin doesn't have access to)
+        enterprise_customer_uuid_2 = uuid4()
+
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': str(self.enterprise_customer_uuid_1)
+        }])
+
+        url = reverse('api:v1:learner-credit-requests-cancel-all')
+        data = {
+            'enterprise_customer_uuid': str(enterprise_customer_uuid_2),  # Wrong enterprise
+            'policy_uuid': str(self.policy.uuid)  # Policy from enterprise 1
+        }
+        response = self.client.post(url, data, content_type='application/json')
+
+        # Should return 403 because permission decorator checks enterprise_customer_uuid
+        # against JWT context before serializer validation
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+
+    def test_cancel_all_nonexistent_policy(self):
+        """
+        Test that using a non-existent policy UUID returns 404.
+        """
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': str(self.enterprise_customer_uuid_1)
+        }])
+
+        nonexistent_policy_uuid = uuid4()
+
+        url = reverse('api:v1:learner-credit-requests-cancel-all')
+        data = {
+            'enterprise_customer_uuid': str(self.enterprise_customer_uuid_1),
+            'policy_uuid': str(nonexistent_policy_uuid)
+        }
+        response = self.client.post(url, data, content_type='application/json')
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
     @mock.patch('enterprise_access.apps.subsidy_request.tasks.send_learner_credit_bnr_cancel_notification_task.delay')
     @mock.patch('enterprise_access.apps.content_assignments.api.cancel_assignments')
     def test_cancel_all_with_mixed_states(self, mock_cancel_assignments, mock_cancel_task):

@@ -1257,21 +1257,17 @@ class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
         serializer = serializers.LearnerCreditRequestCancelAllSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        policy_uuid = serializer.validated_data['policy_uuid']
-
-        # Get the policy and derive enterprise_customer_uuid from it for authorization
-        from enterprise_access.apps.subsidy_access_policy.models import SubsidyAccessPolicy
-        try:
-            policy = SubsidyAccessPolicy.objects.get(uuid=policy_uuid)
-            enterprise_customer_uuid = policy.enterprise_customer_uuid
-        except SubsidyAccessPolicy.DoesNotExist:
+        # Check if validation failed (enterprise/policy mismatch)
+        if serializer.validated_data.get('_validation_failed'):
             return Response(
-                {"detail": "Policy not found."},
+                {"detail": "No APPROVED requests found for the given policy."},
                 status=status.HTTP_404_NOT_FOUND
             )
 
+        policy_uuid = serializer.validated_data['policy_uuid']
+        enterprise_customer_uuid = serializer.validated_data['enterprise_customer_uuid']
+
         # Filter to APPROVED requests for this policy AND enterprise customer
-        # This prevents authorization bypass where admin uses policy from different enterprise
         learner_credit_requests = self.get_queryset().select_related('assignment').filter(
             state=SubsidyRequestStates.APPROVED,
             enterprise_customer_uuid=enterprise_customer_uuid,
