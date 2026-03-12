@@ -43,9 +43,22 @@ class TestBackfillSubscriptionRenewalCancellations(TestCase):
         return summary
 
     def _create_renewal(self, checkout_intent, is_canceled=False):
+        created_at = timezone.now() - timedelta(days=30)
         event_data = StripeEventDataFactory(
             checkout_intent=checkout_intent,
             event_type='customer.subscription.created',
+            data={
+                'id': f'evt_created_{uuid4()}',
+                'type': 'customer.subscription.created',
+                'created': int(created_at.timestamp()),
+                'data': {
+                    'object': {
+                        'object': 'subscription',
+                        'id': 'sub_backfill_123',
+                        'status': 'active',
+                    }
+                },
+            },
         )
         return SelfServiceSubscriptionRenewal.objects.create(
             checkout_intent=checkout_intent,
