@@ -8,10 +8,7 @@ from django.test import TestCase
 from django.utils import timezone
 
 from enterprise_access.apps.customer_billing.models import SelfServiceSubscriptionRenewal
-from enterprise_access.apps.customer_billing.tests.factories import (
-    CheckoutIntentFactory,
-    StripeEventDataFactory,
-)
+from enterprise_access.apps.customer_billing.tests.factories import CheckoutIntentFactory, StripeEventDataFactory
 
 
 class TestBackfillSubscriptionRenewalCancellations(TestCase):
@@ -124,8 +121,12 @@ class TestBackfillSubscriptionRenewalCancellations(TestCase):
 
         deleted_time = timezone.now() - timedelta(days=2)
         restored_time = timezone.now() - timedelta(days=1)
-        self._create_summary(checkout_intent, 'customer.subscription.deleted', deleted_time, subscription_status='canceled')
-        self._create_summary(checkout_intent, 'customer.subscription.updated', restored_time, subscription_status='active')
+        self._create_summary(
+            checkout_intent, 'customer.subscription.deleted', deleted_time, subscription_status='canceled'
+        )
+        self._create_summary(
+            checkout_intent, 'customer.subscription.updated', restored_time, subscription_status='active'
+        )
 
         call_command('backfill_subscription_renewal_cancellations', stdout=StringIO())
 
