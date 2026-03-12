@@ -1316,6 +1316,24 @@ class TestSelfServiceSubscriptionRenewal(TestCase):
         self.assertGreaterEqual(renewal.processed_at, before_processing)
         self.assertLessEqual(renewal.processed_at, after_processing)
 
+    def test_self_service_subscription_renewal_is_canceled_default_false(self):
+        """Test that new renewal records default is_canceled to False."""
+        event_data = StripeEventData.objects.create(
+            event_id='evt_test_is_canceled_default',
+            event_type='customer.subscription.updated',
+            checkout_intent=self.checkout_intent,
+            data={'test': 'data'}
+        )
+
+        renewal = SelfServiceSubscriptionRenewal.objects.create(
+            checkout_intent=self.checkout_intent,
+            subscription_plan_renewal_id=999,
+            stripe_subscription_id='sub_test_is_canceled_default',
+            stripe_event_data=event_data,
+        )
+
+        self.assertFalse(renewal.is_canceled)
+
     def test_self_service_subscription_renewal_mark_as_processed_multiple_times(self):
         """Test that calling mark_as_processed multiple times updates the timestamp each time."""
         # Create StripeEventData first

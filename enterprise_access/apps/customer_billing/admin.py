@@ -341,3 +341,5 @@ class SelfServiceSubscriptionRenewalAdmin(DjangoQLSearchMixin, admin.ModelAdmin)
     """
     Admin class for SelfServiceSubscriptionRenewal.
     """
+    list_display = ['checkout_intent', 'is_canceled', 'stripe_subscription_id', 'processed_at', 'created']
+    list_filter = ['is_canceled']

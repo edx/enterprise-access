@@ -294,6 +294,25 @@ class StripeSubscriptionPlanInfoResponseSerializer(serializers.Serializer):
         help_text='UUID of Checkout Intent associated with the stripe event.',
     )
 
+    is_canceled = serializers.BooleanField(
+        default=False,
+        required=False,
+        help_text=(
+            'True if the subscription is currently canceled (renewal record is_canceled=True). '
+            'False if it is currently active, including after an un-canceling event.'
+        ),
+    )
+
+    renewed_subscription_plan_uuid = serializers.UUIDField(
+        allow_null=True,
+        required=False,
+        help_text=(
+            "UUID of the renewed (paid) subscription plan linked to this subscription's "
+            'renewal record. When is_canceled is true, this is the plan UUID '
+            'the front-end should suppress.'
+        ),
+    )
+
 
 # pylint: disable=abstract-method
 class BillingAddressResponseSerializer(serializers.Serializer):

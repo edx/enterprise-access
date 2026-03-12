@@ -173,6 +173,11 @@ def cancel_all_future_plans(checkout_intent):
     return deactivated
 
 
+def _update_renewal_cancellation_state(checkout_intent: CheckoutIntent, is_canceled: bool) -> None:
+    """Set cancellation state on all renewals for a checkout intent."""
+    checkout_intent.renewals.update(is_canceled=is_canceled)
+
+
 def _try_enable_pending_updates(stripe_subscription_id):
     """
     We rely on Stripe’s Pending Updates feature to help prevent subscriptions from becoming active
@@ -628,6 +633,10 @@ class StripeEventHandler:
             checkout_intent_id, event.id
         )
         link_event_data_to_checkout_intent(event, checkout_intent)
+        # Check: Should we be setting is_canceled=False here for all new subscriptions, just in case? 
+        # It seems safer to explicitly mark them as not canceled rather than relying on a default value, 
+        # especially since cancellations can be triggered by both subscription updates and deletions.
+        _update_renewal_cancellation_state(checkout_intent, is_canceled=False)
 
         checkout_intent.stripe_customer_id = subscription.get('customer', None)
         checkout_intent.save()
@@ -662,6 +671,9 @@ class StripeEventHandler:
             handle_pending_update(subscription.id, checkout_intent_id, pending_update)
 
         current_status = subscription.get("status")
+        if current_status in [StripeSubscriptionStatus.ACTIVE, StripeSubscriptionStatus.TRIALING]:
+            _update_renewal_cancellation_state(checkout_intent, is_canceled=False)
+
         previous_summary = checkout_intent.previous_summary(event, stripe_object_type='subscription')
         if not previous_summary:
             logger.warning(
@@ -745,6 +757,8 @@ class StripeEventHandler:
                 subscription.id,
                 checkout_intent.id,
             )
+    # CHECK: Should this be here?
+            _update_renewal_cancellation_state(checkout_intent, is_canceled=True)
 
         previous_summary = checkout_intent.previous_summary(event, stripe_object_type='subscription')
         if previous_summary.subscription_status == StripeSubscriptionStatus.ACTIVE:
