@@ -604,6 +604,10 @@ class StripeEventHandler:
 
         current_status = subscription.get("status")
         if current_status in [StripeSubscriptionStatus.ACTIVE, StripeSubscriptionStatus.TRIALING]:
+            # Check: Should we be setting is_canceled=False here?  if so, should probably only do it if the subscription was previously canceled, 
+            # to avoid accidentally uncanceling something that was meant to be canceled.  But it also seems like it would be safer to proactively 
+            # mark it as not canceled whenever we get an update that it's active or trialing, just in case there are edge cases where we fail to mark 
+            # it as not canceled on creation or we have bugs in the cancellation logic that fail to mark it as canceled.
             _update_renewal_cancellation_state(checkout_intent, is_canceled=False)
 
         previous_summary = checkout_intent.previous_summary(event, stripe_object_type='subscription')
@@ -689,8 +693,7 @@ class StripeEventHandler:
                 subscription.id,
                 checkout_intent.id,
             )
-    # CHECK: Should this be here?
-            _update_renewal_cancellation_state(checkout_intent, is_canceled=True)
+        _update_renewal_cancellation_state(checkout_intent, is_canceled=True)
 
         previous_summary = checkout_intent.previous_summary(event, stripe_object_type='subscription')
         if previous_summary.subscription_status == StripeSubscriptionStatus.ACTIVE:
