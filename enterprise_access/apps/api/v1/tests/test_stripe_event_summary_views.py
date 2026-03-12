@@ -199,6 +199,7 @@ class StripeSubscriptionPlanInfoTests(APITest):
         self.enterprise_uuid = str(uuid.uuid4())
         self.stripe_customer_id = 'cus_test_123'
         self.subscription_plan_uuid = str(uuid.uuid4())
+        self.renewed_subscription_plan_uuid = str(uuid.uuid4())
         self.subscription_plan_uuid_no_checkout = str(uuid.uuid4())
 
         self.checkout_intent = CheckoutIntent.objects.create(
