@@ -161,7 +161,7 @@ enterprise_access/settings/private.py
 enterprise_access/assets
 
 # claude code personalization
-.claude/
+.claude/settings.local.json
 package-lock.json
 package.json
 
