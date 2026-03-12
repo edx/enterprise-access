@@ -634,6 +634,8 @@ class StripeEventSummaryViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
             subscription_plan_uuid=subscription_plan_uuid,
         ).select_related('checkout_intent').order_by('-stripe_event_created_at').first()
         checkout_intent_uuid, canceled_date, currency, upcoming_invoice_amount_due = None, None, None, None
+        is_canceled = False
+        renewed_subscription_plan_uuid = None
 
         first_related_renewal = SelfServiceSubscriptionRenewal.objects.filter(
             Q(prior_subscription_plan_uuid=subscription_plan_uuid) |
@@ -641,6 +643,8 @@ class StripeEventSummaryViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
         ).select_related('checkout_intent').order_by('created').first()
         if first_related_renewal:
             checkout_intent_uuid = first_related_renewal.checkout_intent.uuid
+            is_canceled = first_related_renewal.is_canceled
+            renewed_subscription_plan_uuid = first_related_renewal.renewed_subscription_plan_uuid
 
         if updated_event_summary:
             canceled_date = updated_event_summary.subscription_cancel_at
@@ -660,7 +664,9 @@ class StripeEventSummaryViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
                 'upcoming_invoice_amount_due': upcoming_invoice_amount_due,
                 'currency': currency,
                 'canceled_date': canceled_date,
-                'checkout_intent_uuid': checkout_intent_uuid
+                'checkout_intent_uuid': checkout_intent_uuid,
+                'is_canceled': is_canceled,
+                'renewed_subscription_plan_uuid': renewed_subscription_plan_uuid,
             },
         )
         if not subscription_plan_uuid:

@@ -718,6 +718,12 @@ class SelfServiceSubscriptionRenewal(TimeStampedModel):
         blank=True,
         help_text='The renewed (or future) subscription plan uuid on this renewal',
     )
+    is_canceled = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text='True if the subscription has been canceled. Can be set back to False if subscription is '
+                  'un-canceled.',
+    )
     stripe_event_data = models.OneToOneField(
         'StripeEventData',
         on_delete=models.CASCADE,
