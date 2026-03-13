@@ -6,6 +6,7 @@ import logging
 from rest_framework import serializers
 
 from enterprise_access.apps.content_assignments.models import LearnerContentAssignment
+from enterprise_access.apps.subsidy_access_policy.models import SubsidyAccessPolicy
 from enterprise_access.apps.subsidy_request.constants import SubsidyRequestStates
 from enterprise_access.apps.subsidy_request.models import (
     CouponCodeRequest,
@@ -366,6 +367,41 @@ class LearnerCreditRequestCancelSerializer(serializers.Serializer):
         Return the already-fetched learner credit request object.
         """
         return getattr(self, '_learner_credit_request', None)
+
+
+class LearnerCreditRequestCancelAllSerializer(serializers.Serializer):
+    """
+    Request serializer to validate cancel-all endpoint for LearnerCreditRequests.
+
+    For view: LearnerCreditRequestViewSet.cancel_all
+    """
+    enterprise_customer_uuid = serializers.UUIDField(
+        required=True,
+        help_text="The UUID of the enterprise customer."
+    )
+    policy_uuid = serializers.UUIDField(
+        required=True,
+        help_text="The UUID of the SubsidyAccessPolicy to filter requests."
+    )
+
+    def validate(self, attrs):
+        """
+        Validate that the enterprise customer UUID matches the policy's enterprise.
+        Returns attrs silently if validation fails - view will return generic 404 to prevent enumeration.
+        """
+        policy_uuid = attrs['policy_uuid']
+        enterprise_customer_uuid = attrs['enterprise_customer_uuid']
+
+        try:
+            policy = SubsidyAccessPolicy.objects.get(uuid=policy_uuid)
+            if str(policy.enterprise_customer_uuid) != str(enterprise_customer_uuid):
+                # Don't reveal mismatch - let view return generic 404
+                attrs['_validation_failed'] = True
+        except SubsidyAccessPolicy.DoesNotExist:
+            # Don't reveal policy doesn't exist - let view return generic 404
+            attrs['_validation_failed'] = True
+
+        return attrs
 
 
 class LearnerCreditRequestRemindSerializer(serializers.Serializer):

@@ -8,19 +8,24 @@ from typing import Iterable
 
 from django.db import transaction
 
+from enterprise_access.apps.content_assignments import api as assignments_api
 from enterprise_access.apps.subsidy_access_policy.api import approve_learner_credit_requests_via_policy
 from enterprise_access.apps.subsidy_access_policy.exceptions import SubisidyAccessPolicyRequestApprovalError
 from enterprise_access.apps.subsidy_request.constants import (
-    LearnerCreditAdditionalActionStates,
     LearnerCreditRequestActionErrorReasons,
     SubsidyRequestStates
 )
 from enterprise_access.apps.subsidy_request.models import LearnerCreditRequest, LearnerCreditRequestActions
 from enterprise_access.apps.subsidy_request.tasks import (
+    send_learner_credit_bnr_cancel_notification_task,
     send_learner_credit_bnr_request_approve_task,
     send_reminder_email_for_pending_learner_credit_request
 )
-from enterprise_access.apps.subsidy_request.utils import get_action_choice, get_user_message_choice
+from enterprise_access.apps.subsidy_request.utils import (
+    get_action_choice,
+    get_error_reason_choice,
+    get_user_message_choice
+)
 from enterprise_access.utils import format_traceback, localized_utcnow
 
 logger = logging.getLogger(__name__)
@@ -206,4 +211,136 @@ def remind_learner_credit_requests(
     return {
         'remindable': remindable,
         'non_remindable': non_remindable,
+    }
+
+
+def cancel_learner_credit_requests(
+    learner_credit_requests: Iterable[LearnerCreditRequest],
+    reviewer,
+) -> dict:
+    """
+    Cancel learner credit requests using bulk operations.
+
+    Filters requests to only those that are:
+    - In APPROVED state
+    - Have an associated assignment
+
+    For each cancelable request, cancels the assignment, updates the request state,
+    creates a CANCELLED action record, and queues a Celery task to send the cancellation email.
+    Uses bulk operations and transactions for better performance and data integrity.
+
+    Args:
+        learner_credit_requests: Iterable of LearnerCreditRequest objects to potentially cancel.
+        reviewer: The user performing the cancellation.
+
+    Returns:
+        dict: Contains:
+            - 'cancelable': List of LearnerCreditRequest objects that were cancelled
+            - 'non_cancelable': List of LearnerCreditRequest objects that could not be cancelled
+    """
+    cancelable = []
+    non_cancelable = []
+
+    for request in learner_credit_requests:
+        if request.state == SubsidyRequestStates.APPROVED and request.assignment:
+            cancelable.append(request)
+        else:
+            non_cancelable.append(request)
+
+    if not cancelable:
+        return {
+            'cancelable': cancelable,
+            'non_cancelable': non_cancelable,
+        }
+
+    # Collect assignments to cancel
+    assignments_to_cancel = [req.assignment for req in cancelable]
+
+    # Bulk update cancelable requests and prepare actions
+    reviewed_at = localized_utcnow()
+    for request in cancelable:
+        request.state = SubsidyRequestStates.CANCELLED
+        request.reviewer = reviewer
+        request.reviewed_at = reviewed_at
+
+    actions_to_create = []
+
+    # Use transaction to ensure atomic updates - cancel assignments, update requests, and create actions together
+    # This prevents partial failures where assignments are cancelled but request state isn't updated
+    with transaction.atomic():
+        # Cancel assignments within the transaction
+        cancel_response = assignments_api.cancel_assignments(assignments_to_cancel, False)
+
+        if cancel_response.get('non_cancelable'):
+            # If any assignments failed to cancel, mark those requests as non_cancelable
+            non_cancelable_assignment_ids = {a.uuid for a in cancel_response['non_cancelable']}
+            actually_cancelable = []
+            for request in cancelable:
+                if request.assignment.uuid in non_cancelable_assignment_ids:
+                    non_cancelable.append(request)
+                    # Reset state since cancellation failed
+                    request.state = SubsidyRequestStates.APPROVED
+                    request.reviewer = None
+                    request.reviewed_at = None
+                    # Add error action for non-cancelable (assignment cancellation failure)
+                    actions_to_create.append(
+                        LearnerCreditRequestActions(
+                            learner_credit_request=request,
+                            recent_action=get_action_choice(SubsidyRequestStates.CANCELLED),
+                            status=get_user_message_choice(SubsidyRequestStates.APPROVED),
+                            error_reason=get_error_reason_choice(
+                                LearnerCreditRequestActionErrorReasons.FAILED_CANCELLATION
+                            ),
+                            traceback=f"Failed to cancel assignment {request.assignment.uuid}",
+                        )
+                    )
+                else:
+                    actually_cancelable.append(request)
+            cancelable = actually_cancelable
+
+        if not cancelable:
+            # Create error actions if any exist
+            if actions_to_create:
+                LearnerCreditRequestActions.bulk_create(actions_to_create)
+            return {
+                'cancelable': cancelable,
+                'non_cancelable': non_cancelable,
+            }
+
+        # Use the model's bulk_update method to preserve audit/history consistency
+        LearnerCreditRequest.bulk_update(
+            cancelable,
+            ['state', 'reviewer', 'reviewed_at']
+        )
+
+        # Refresh from DB to get updated state
+        cancelable = list(LearnerCreditRequest.objects.filter(
+            uuid__in=[req.uuid for req in cancelable]
+        ).select_related('assignment'))
+
+        # Create success actions for cancelled requests
+        success_actions = [
+            LearnerCreditRequestActions(
+                learner_credit_request=request,
+                recent_action=get_action_choice(SubsidyRequestStates.CANCELLED),
+                status=get_user_message_choice(SubsidyRequestStates.CANCELLED),
+            ) for request in cancelable
+        ]
+        actions_to_create.extend(success_actions)
+
+        # Bulk create all actions (errors + successes)
+        if actions_to_create:
+            LearnerCreditRequestActions.bulk_create(actions_to_create)
+
+    # Enqueue notification tasks after commit to avoid running against partially-committed state
+    for request in cancelable:
+        transaction.on_commit(
+            lambda assignment_uuid=request.assignment.uuid: send_learner_credit_bnr_cancel_notification_task.delay(
+                str(assignment_uuid)
+            )
+        )
+
+    return {
+        'cancelable': cancelable,
+        'non_cancelable': non_cancelable,
     }
