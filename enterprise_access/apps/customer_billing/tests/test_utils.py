@@ -33,7 +33,7 @@ class TestCustomerBillingUtils(TestCase):
 
         dt = datetime_from_timestamp(ts)
 
-        self.assertEqual(dt.tzinfo, pytz.UTC)
+        self.assertEqual(str(dt.tzinfo), "UTC")
 
     def test_datetime_from_timestamp_has_expected_components(self):
         """

@@ -76,7 +76,7 @@ def persist_stripe_event(event: stripe.Event) -> StripeEventData:
     Creates and returns a new ``StripeEventData`` object.
     """
     stripe_subscription = None
-    if event.type == 'invoice.paid':
+    if event.type in ('invoice.paid', 'invoice.created'):
         _, stripe_subscription = get_invoice_and_subscription(event)
     elif event.type.startswith('customer.subscription'):
         stripe_subscription = event.data.object
@@ -278,50 +278,45 @@ def _handle_invoice_paid_status_updated(
     Handling of subscription status changes coming from an invoice.paid Stripe event.
     This is ONLY called for invoice.total > 0, meaning we're in the paid phase.
 
-    Relying just on customer.subscription.updated events leaves us open to bugs due to Stripe's
-    implementation of transitioning from active to past_due and past_due back to active.
-    Therefore, it's better to rely on the validated payment of an invoice.paid event for
-    subscription status changes.
+    Looks up the ``SelfServiceSubscriptionRenewal`` by ``stripe_invoice_id`` (linked
+    during ``invoice.created`` processing). If the renewal is not found — typically
+    because ``invoice.created`` was delivered after ``invoice.paid`` — an exception is
+    raised so that Stripe retries the webhook.
 
     When an invoice is paid:
-    - If this is the first paid invoice (trial→paid), process the renewal
-    - Reactivate the current paid subscription plan (no-op if already active)
-    - Reactivate future renewal plans (no-op if already active)
-    - Send appropriate email notifications
+    - If the renewal is already processed, idempotently reactivate the paid plan
+    - If the renewal is not yet processed, run the trial→paid transition
 
     Args:
         event (stripe.Event): A Stripe ``invoice.paid`` webhook event.
         checkout_intent (CheckoutIntent): The CheckoutIntent associated with the subscription.
     """
 
-    _, subscription_details = get_invoice_and_subscription(event)
+    invoice, subscription_details = get_invoice_and_subscription(event)
     stripe_subscription_id = subscription_details.get('subscription')
+    stripe_invoice_id = invoice['id']
 
-    num_renewals = SelfServiceSubscriptionRenewal.objects.filter(
-        checkout_intent=checkout_intent,
-    ).count()
-    if num_renewals > 1:
-        logger.error(
-            "Status unable to be updated for Stripe subscription %s, as paid to paid renewals are not yet supported.",
-            stripe_subscription_id,
+    # Look up the renewal by stripe_invoice_id (linked during invoice.created).
+    renewal = SelfServiceSubscriptionRenewal.objects.filter(
+        stripe_invoice_id=stripe_invoice_id,
+    ).first()
+
+    if not renewal:
+        # If invoice.created hasn't linked the renewal yet (out-of-order delivery),
+        # raise an error to force Stripe to retry the webhook.
+        error_msg = (
+            f"No SelfServiceSubscriptionRenewal found for checkout_intent {checkout_intent.id} "
+            f"with stripe_invoice_id {stripe_invoice_id}"
         )
-        return
+        logger.error(error_msg)
+        raise SelfServiceSubscriptionRenewal.DoesNotExist(error_msg)
 
     client = LicenseManagerApiClient()
 
-    # Check if we've already processed the trial→paid renewal
-    # If so, we need to reactivate the paid plan, not the trial plan
-    trial_renewal = SelfServiceSubscriptionRenewal.objects.filter(
-        checkout_intent=checkout_intent,
-        processed_at__isnull=False
-    ).order_by("created").first()
-
-    if trial_renewal:
-        # We already have a processed trial->paid renewal, so reactivate the first paid plan
-        # just in case it isn't already active. This should never be needed going forward, but:
-        #   1. Old bugs tainted pre-existing renewals which may need this fix.
-        #   2. It can't hurt, as long as we re-activate the right plan.
-        plan_to_reactivate = trial_renewal.renewed_subscription_plan_uuid
+    if renewal.processed_at:
+        # Already processed — idempotently reactivate the paid plan in case
+        # it was deactivated during a past_due episode.
+        plan_to_reactivate = renewal.renewed_subscription_plan_uuid
         if plan_to_reactivate:
             logger.info(
                 "Activating PAID subscription plan %s for Stripe subscription %s (post-trial)",
@@ -332,28 +327,20 @@ def _handle_invoice_paid_status_updated(
         else:
             logger.error(
                 "SelfServiceSubscriptionRenewal %s record does not have renewed_subscription_plan_uuid",
-                trial_renewal,
+                renewal,
             )
     else:
-        # Normal case where the first paid invoice was received before processing the renewal.
+        # First paid invoice — process the trial→paid transition.
         logger.info(
             "Processing trial→paid transition for Stripe subscription %s",
             stripe_subscription_id,
         )
-        # Find the unprocessed renewal before processing
-        unprocessed_renewal = SelfServiceSubscriptionRenewal.objects.filter(
-            checkout_intent=checkout_intent,
-            processed_at__isnull=True
-        ).first()
+        _process_trial_to_paid_renewal(renewal, stripe_subscription_id, event)
 
-        # Process the renewal first (this creates the paid plan and renewal relationship)
-        _process_trial_to_paid_renewal(checkout_intent, stripe_subscription_id, event)
-
-        if unprocessed_renewal:
-            # After processing, get the newly created paid plan and idempotently make sure it is active.
-            unprocessed_renewal.refresh_from_db()
-            if unprocessed_renewal.renewed_subscription_plan_uuid:
-                client.update_subscription_plan(str(unprocessed_renewal.renewed_subscription_plan_uuid), is_active=True)
+        # After processing, idempotently make sure the paid plan is active.
+        renewal.refresh_from_db()
+        if renewal.renewed_subscription_plan_uuid:
+            client.update_subscription_plan(str(renewal.renewed_subscription_plan_uuid), is_active=True)
 
         # Send the trial-end email
         send_trial_end_and_subscription_started_email_task.delay(
@@ -433,9 +420,9 @@ class StripeEventHandler:
                 # The default __repr__ is really long because it just barfs out the entire payload.
                 event_short_repr = f'<stripe.Event id={event.id} type={event.type}>'
                 logger.info(f'[StripeEventHandler] handling {event_short_repr}.')
-                if event.type == 'invoice.paid' and not _valid_invoice_paid_type(event):
+                if event.type in ('invoice.paid', 'invoice.created') and not _valid_invoice_paid_type(event):
                     logger.warning(
-                        f'[StripeEventHandler] event {event_short_repr} is not a valid invoice.paid event'
+                        f'[StripeEventHandler] event {event_short_repr} is not a valid invoice type'
                     )
                     return
                 event_record = persist_stripe_event(event)
@@ -479,6 +466,10 @@ class StripeEventHandler:
 
         link_event_data_to_checkout_intent(event, checkout_intent)
         if invoice.total > 0:
+            # Attempt to send the receipt FIRST before triggering renewal.
+            # Renewal might want to force a retry by raising, risking duplicate recept emails. We'll
+            # mitigate this by configuring the Braze campaign to avoid sending more than 1 in a 3
+            # day period.
             send_payment_receipt_email.delay(
                 invoice_id=invoice.id,
                 invoice_data=invoice,
@@ -500,6 +491,76 @@ class StripeEventHandler:
                 'Could not mark checkout intent % as paid via invoice %s, because %s',
                 checkout_intent_id, invoice.id, exc,
             )
+
+    @on_stripe_event('invoice.created')
+    @staticmethod
+    def invoice_created(event: stripe.Event) -> None:
+        """
+        Handle invoice.created events.
+
+        Links the Stripe invoice to the corresponding SelfServiceSubscriptionRenewal
+        by matching on stripe_subscription_id and effective_date. This linkage enables
+        the invoice.paid handler to perform a direct lookup by stripe_invoice_id.
+        """
+        invoice, subscription_details = get_invoice_and_subscription(event)
+        stripe_subscription_id = subscription_details.get('subscription')
+
+        checkout_intent_id = get_checkout_intent_id_from_subscription(subscription_details)
+        try:
+            checkout_intent = get_checkout_intent_or_raise(checkout_intent_id, event.id)
+        except CheckoutIntent.DoesNotExist:
+            logger.error(
+                '[StripeEventHandler] invoice.created event %s could not find Checkout Intent id=%s',
+                event.id, checkout_intent_id,
+            )
+            return
+
+        link_event_data_to_checkout_intent(event, checkout_intent)
+
+        # Extract the invoice period start from line items to match against renewal effective_date
+        try:
+            invoice_period_start = invoice['lines']['data'][0]['period']['start']
+        except (KeyError, IndexError, TypeError):
+            logger.error(
+                '[StripeEventHandler] invoice.created event %s missing period start in line items',
+                event.id,
+            )
+            return
+
+        invoice_period_start_dt = datetime_from_timestamp(invoice_period_start)
+
+        # Find the renewal that matches this invoice's subscription and effective date
+        renewal = SelfServiceSubscriptionRenewal.objects.filter(
+            stripe_subscription_id=stripe_subscription_id,
+            # Safe comparison because both sides use a UTC date conversion.
+            # - `effective_date__date` uses UTC because of the django settings USE_TZ=True & TIME_ZONE="UTC".
+            # - `invoice_period_start_dt.date()` uses UTC because datetime_from_timestamp returns UTC.
+            effective_date__date=invoice_period_start_dt.date(),
+        ).first()
+
+        if not renewal:
+            logger.warning(
+                '[StripeEventHandler] invoice.created event %s: no SelfServiceSubscriptionRenewal found '
+                'for subscription %s with effective_date matching %s',
+                event.id, stripe_subscription_id, invoice_period_start_dt.date(),
+            )
+            return
+
+        # Immutability guard: don't overwrite an existing stripe_invoice_id
+        if renewal.stripe_invoice_id:
+            logger.info(
+                '[StripeEventHandler] invoice.created event %s: renewal %s already has '
+                'stripe_invoice_id=%s, skipping',
+                event.id, renewal.id, renewal.stripe_invoice_id,
+            )
+            return
+
+        renewal.stripe_invoice_id = invoice['id']
+        renewal.save(update_fields=['stripe_invoice_id', 'modified'])
+        logger.info(
+            '[StripeEventHandler] invoice.created event %s: linked invoice %s to renewal %s',
+            event.id, invoice['id'], renewal.id,
+        )
 
     @on_stripe_event('customer.subscription.trial_will_end')
     @staticmethod
@@ -692,34 +753,26 @@ class StripeEventHandler:
             )
 
 
-def _process_trial_to_paid_renewal(checkout_intent: CheckoutIntent, stripe_subscription_id: str, event: stripe.Event):
+def _process_trial_to_paid_renewal(
+    renewal: SelfServiceSubscriptionRenewal,
+    stripe_subscription_id: str,
+    event: stripe.Event,
+):
     """
     Process the trial-to-paid renewal for a subscription.
 
     This function:
-    1. Finds the existing SelfServiceSubscriptionRenewal record
-    2. Updates it with the Stripe event data and subscription ID
-    3. Calls license manager to process the renewal
-    4. Marks the renewal as processed
+    1. Updates the renewal with the Stripe event data and subscription ID
+    2. Calls license manager to process the renewal
+    3. Marks the renewal as processed
 
     Args:
-        checkout_intent: The CheckoutIntent associated with the subscription
+        renewal: The SelfServiceSubscriptionRenewal to process (already looked up
+            by stripe_invoice_id in the caller).
         stripe_subscription_id: The Stripe subscription ID
         event: The Stripe event that triggered the renewal
     """
     try:
-        # Find the SelfServiceSubscriptionRenewal record for this checkout intent
-        renewal = SelfServiceSubscriptionRenewal.objects.filter(
-            checkout_intent=checkout_intent,
-            processed_at__isnull=True  # Only unprocessed renewals
-        ).first()
-
-        if not renewal:
-            logger.error(
-                f"No unprocessed SelfServiceSubscriptionRenewal found for checkout_intent {checkout_intent.id}"
-            )
-            return
-
         # Get the StripeEventData record for this event
         event_data = StripeEventData.objects.get(event_id=event.id)
 
@@ -752,7 +805,7 @@ def _process_trial_to_paid_renewal(checkout_intent: CheckoutIntent, stripe_subsc
 
     except Exception as exc:
         logger.exception(
-            f"Failed to process trial-to-paid renewal for checkout_intent {checkout_intent.id}, "
+            f"Failed to process trial-to-paid renewal {renewal.id} for "
             f"subscription {stripe_subscription_id}: {exc}"
         )
         raise
