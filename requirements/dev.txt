@@ -439,6 +439,8 @@ nh3==0.3.3
     # via
     #   -r requirements/validation.txt
     #   readme-renderer
+nodeenv==1.10.0
+    # via pyright
 oauthlib==3.3.1
     # via
     #   -r requirements/validation.txt
@@ -557,6 +559,8 @@ pyproject-hooks==1.2.0
     #   -r requirements/pip-tools.txt
     #   build
     #   pip-tools
+pyright==1.1.408
+    # via -r requirements/dev.in
 pytest==9.0.2
     # via
     #   -r requirements/validation.txt
@@ -707,6 +711,7 @@ typing-extensions==4.15.0
     #   cattrs
     #   django-countries
     #   edx-opaque-keys
+    #   pyright
     #   referencing
     #   stripe
 tzdata==2025.3
