@@ -4,5 +4,8 @@
       "Skill(quality-tests)",
       "Skill(unit-tests)"
     ]
+  },
+  "enabledPlugins": {
+    "pyright-lsp@claude-plugins-official": true
   }
 }
