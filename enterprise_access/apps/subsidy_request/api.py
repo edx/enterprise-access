@@ -12,12 +12,17 @@ from enterprise_access.apps.content_assignments import api as assignments_api
 from enterprise_access.apps.subsidy_access_policy.api import approve_learner_credit_requests_via_policy
 from enterprise_access.apps.subsidy_access_policy.exceptions import SubisidyAccessPolicyRequestApprovalError
 from enterprise_access.apps.subsidy_request.constants import (
+    APPROVABLE_STATES,
+    DECLINABLE_STATES,
+    REMINDABLE_STATES,
+    LearnerCreditAdditionalActionStates,
     LearnerCreditRequestActionErrorReasons,
     SubsidyRequestStates
 )
 from enterprise_access.apps.subsidy_request.models import LearnerCreditRequest, LearnerCreditRequestActions
 from enterprise_access.apps.subsidy_request.tasks import (
     send_learner_credit_bnr_cancel_notification_task,
+    send_learner_credit_bnr_decline_notification_task,
     send_learner_credit_bnr_request_approve_task,
     send_reminder_email_for_pending_learner_credit_request
 )
@@ -42,7 +47,7 @@ def approve_learner_credit_requests(
     """
     requests_to_process = [
         req for req in learner_credit_requests
-        if req.state in [SubsidyRequestStates.REQUESTED, SubsidyRequestStates.ERROR]
+        if req.state in APPROVABLE_STATES
     ]
     if not requests_to_process:
         return {"approved": [], "failed": list(learner_credit_requests)}
@@ -198,14 +203,27 @@ def remind_learner_credit_requests(
     non_remindable = []
 
     for request in learner_credit_requests:
-        if request.state == SubsidyRequestStates.APPROVED and request.assignment:
+        if request.state in REMINDABLE_STATES and request.assignment:
             remindable.append(request)
         else:
             non_remindable.append(request)
 
-    # Create action records and queue tasks for remindable requests
+    if not remindable:
+        return {'remindable': [], 'non_remindable': non_remindable}
+
+    # Bulk create audit action records
+    actions_to_create = [
+        LearnerCreditRequestActions(
+            learner_credit_request=request,
+            recent_action=get_action_choice(LearnerCreditAdditionalActionStates.REMINDED),
+            status=get_user_message_choice(LearnerCreditAdditionalActionStates.REMINDED),
+        ) for request in remindable
+    ]
+    with transaction.atomic():
+        LearnerCreditRequestActions.bulk_create(actions_to_create)
+
+    # Queue email tasks — remind doesn't change request state, so on_commit is not needed.
     for request in remindable:
-        request.add_successful_reminded_action()
         send_reminder_email_for_pending_learner_credit_request.delay(request.assignment.uuid)
 
     return {
@@ -344,3 +362,70 @@ def cancel_learner_credit_requests(
         'cancelable': cancelable,
         'non_cancelable': non_cancelable,
     }
+
+
+def decline_learner_credit_requests(
+    learner_credit_requests: Iterable[LearnerCreditRequest],
+    reviewer: object,
+    reason: str = None,
+) -> dict:
+    """
+    Bulk decline Learner Credit Requests.
+
+    Filters to only declinable requests, bulk updates their state, creates audit
+    action records, and queues decline notification emails.
+
+    Args:
+        learner_credit_requests: Iterable of LearnerCreditRequest objects to decline.
+        reviewer: The user performing the decline.
+        reason: Optional decline reason string.
+
+    Returns:
+        dict with 'declined' and 'non_declinable' lists of LearnerCreditRequest objects.
+    """
+    declinable_requests = []
+    non_declinable_requests = []
+
+    for request in learner_credit_requests:
+        if request.state in DECLINABLE_STATES:
+            declinable_requests.append(request)
+        else:
+            non_declinable_requests.append(request)
+
+    logger.info('Skipping %d non-declinable requests.', len(non_declinable_requests))
+    logger.info('Declining %d requests.', len(declinable_requests))
+
+    if not declinable_requests:
+        return {'declined': [], 'non_declinable': non_declinable_requests}
+
+    # Bulk update state
+    with transaction.atomic():
+        LearnerCreditRequest.bulk_decline_requests(declinable_requests, reviewer, reason=reason)
+
+    declined_requests = list(
+        LearnerCreditRequest.objects.prefetch_related('actions').filter(
+            uuid__in=[r.uuid for r in declinable_requests],
+        )
+    )
+
+    # Bulk create audit action records
+    actions_to_create = [
+        LearnerCreditRequestActions(
+            learner_credit_request=request,
+            recent_action=get_action_choice(SubsidyRequestStates.DECLINED),
+            status=get_user_message_choice(SubsidyRequestStates.DECLINED),
+        ) for request in declined_requests
+    ]
+    if actions_to_create:
+        with transaction.atomic():
+            LearnerCreditRequestActions.bulk_create(actions_to_create)
+
+    # Queue notification emails after commit
+    for request in declined_requests:
+        transaction.on_commit(
+            lambda request_uuid=request.uuid: send_learner_credit_bnr_decline_notification_task.delay(
+                str(request_uuid)
+            )
+        )
+
+    return {'declined': declined_requests, 'non_declinable': non_declinable_requests}
