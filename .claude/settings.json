@@ -5,7 +5,16 @@
       "Skill(unit-tests)"
     ]
   },
+  "extraKnownMarketplaces": {
+    "edx-enterprise-team-marketplace": {
+      "source": {
+        "source": "github",
+        "repo": "edx/ai-devtools-internal"
+      }
+    }
+  },
   "enabledPlugins": {
-    "pyright-lsp@claude-plugins-official": true
+    "pyright-lsp@claude-plugins-official": true,
+    "edx-enterprise-backend@edx-enterprise-team-marketplace": true
   }
 }
