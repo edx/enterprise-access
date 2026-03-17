@@ -540,6 +540,28 @@ class LearnerCreditRequest(SubsidyRequest):
         self.reviewed_at = localized_utcnow()
         self.save()
 
+    def add_errored_cancelled_action(self, error_traceback, status=None, error_reason=None):
+        """
+        Creates an action record for a failed cancellation with error details.
+
+        Args:
+            error_traceback: The error traceback string
+            status: The status to record (defaults to APPROVED for assignment cancellation failures)
+            error_reason: The error reason (defaults to FAILED_CANCELLATION)
+        """
+        if status is None:
+            status = get_user_message_choice(SubsidyRequestStates.APPROVED)
+        if error_reason is None:
+            error_reason = get_error_reason_choice(LearnerCreditRequestActionErrorReasons.FAILED_CANCELLATION)
+
+        return LearnerCreditRequestActions.create_action(
+            learner_credit_request=self,
+            recent_action=get_action_choice(SubsidyRequestStates.CANCELLED),
+            status=status,
+            error_reason=error_reason,
+            traceback=error_traceback,
+        )
+
     def add_successful_reminded_action(self):
         """
         Creates an action record for a successful reminder.
