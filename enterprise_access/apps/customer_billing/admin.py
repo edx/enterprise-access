@@ -343,3 +343,7 @@ class SelfServiceSubscriptionRenewalAdmin(DjangoQLSearchMixin, admin.ModelAdmin)
     """
     list_display = ['checkout_intent', 'is_canceled', 'stripe_subscription_id', 'processed_at', 'created']
     list_filter = ['is_canceled']
+
+    def get_queryset(self, request):
+        """Optimize queries by selecting related checkout_intent."""
+        return super().get_queryset(request).select_related('checkout_intent')
