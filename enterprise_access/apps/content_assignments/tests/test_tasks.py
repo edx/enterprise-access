@@ -481,6 +481,7 @@ class TestBrazeEmailTasks(APITestWithMocks):
             },
         )
 
+    @freezegun.freeze_time('2024-06-15 12:00:00')
     @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_client')
     @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient')
     @mock.patch('enterprise_access.apps.content_assignments.tasks.LmsApiClient')
@@ -537,7 +538,8 @@ class TestBrazeEmailTasks(APITestWithMocks):
                 'organization': self.enterprise_customer_name,
                 'course_title': assignment.content_title,
                 'enrollment_deadline': 'Jan 01, 2021',
-                'start_date': datetime.datetime.now().strftime(BRAZE_TIMESTAMP_FORMAT),
+                # Derived from the frozen time set in the decorator above.
+                'start_date': '2024-06-15T12:00:00Z',
                 'course_partner': 'Smart Folks and Good People',
                 'course_card_image': self.mock_content_metadata['card_image_url'],
                 'learner_portal_link': '{}/{}'.format(
