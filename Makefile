@@ -5,13 +5,12 @@
         test coverage isort_check isort style lint quality pii_check validate \
         migrate html_coverage upgrade extract_translation dummy_translations \
         compile_translations fake_translations  pull_translations \
-        push_translations start-devstack open-devstack  pkg-devstack \
-        detect_changed_source_translations validate_translations check_keywords
-
-COMMON_CONSTRAINTS_TXT=requirements/common_constraints.txt
-.PHONY: $(COMMON_CONSTRAINTS_TXT)
-$(COMMON_CONSTRAINTS_TXT):
-	wget -O "$(@)" https://raw.githubusercontent.com/edx/edx-lint/master/edx_lint/files/common_constraints.txt || touch "$(@)"
+        push_translations \
+        detect_changed_source_translations validate_translations check_keywords \
+        dev.pull dev.up dev.down dev.stop dev.makemigrations dev.shell dev.logs \
+        dev.restart-container dev.attach \
+        app-up app-down app-stop app-makemigrations app-shell app-logs \
+        app-restart-container app-attach
 
 define BROWSER_PYSCRIPT
 import os, webbrowser, sys
@@ -103,9 +102,6 @@ migrate: ## apply database migrations
 html_coverage: ## generate and view HTML coverage report
 	coverage html && open htmlcov/index.html
 
-subsidy_client_local:  # re-install edx-enterprise-subsidy-client from local code
-	pip uninstall -y edx-enterprise-subsidy-client && pip install -e /edx/src/edx-enterprise-subsidy-client/ && pip freeze | grep subsidy-client
-
 COMMON_CONSTRAINTS_TXT=requirements/common_constraints.txt
 .PHONY: $(COMMON_CONSTRAINTS_TXT)
 $(COMMON_CONSTRAINTS_TXT):
@@ -152,12 +148,6 @@ pull_translations: ## pull translations from Transifex
 push_translations: ## push source translation files (.po) from Transifex
 	tx push -s
 
-start-devstack: ## run a local development copy of the server
-	docker-compose --x-networking up
-
-open-devstack: ## open a shell on the server started by start-devstack
-	docker exec -it enterprise-access /edx/app/enterprise-access/devstack.sh open
-
 detect_changed_source_translations: ## check if translation files are up-to-date
 	cd enterprise_access && i18n_tool changed
 
@@ -176,90 +166,49 @@ travis_docker_push: travis_docker_tag travis_docker_auth ## push to docker hub
 	docker push 'openedx/enterprise-access:latest-newrelic'
 	docker push "openedx/enterprise-access:$$TRAVIS_COMMIT-newrelic"
 
-dev.pull:
-	docker image pull edxops/enterprise-access-dev
 
-dev.provision:
-	bash ./provision-enterprise-access.sh
+####################################################################
+# Docker shortcuts for managing a local test/quality container.    #
+# For full devstack (app, worker, DB, etc.), see the devstack      #
+# repository which now manages enterprise-access as a first-class  #
+# service.                                                         #
+####################################################################
 
-# devstack-themed shortcuts
-# Starts all containers
-dev.up: dev.pull dev.up.redis
-	docker-compose up -d
+dev.pull: ## Pulls the docker image used by the app container
+	docker compose pull
 
-dev.up.with-events: dev.up.kafka-control-center dev.up
+dev.up: dev.pull ## Starts the app container
+	docker compose up --remove-orphans -d
 
-# Start redis via the devstack docker-compose.yml
-dev.up.redis:
-	docker-compose -f $(DEVSTACK_WORKSPACE)/devstack/docker-compose.yml up -d redis
+dev.down: ## Kills the app container and all its data that isn't in volumes
+	docker compose down
 
-# Start kafka via the devstack docker-compose.yml
-# https://github.com/openedx-unsupported/devstack/blob/323b475b885a2704489566b262e2895a4dca62b6/docker-compose.yml#L140
-dev.up.kafka-control-center:
-	docker-compose -f $(DEVSTACK_WORKSPACE)/devstack/docker-compose.yml up -d kafka-control-center
+dev.stop: ## Stops the app container so it can be restarted
+	docker compose stop
 
-# Useful for just restarting everything related to the event broker
-dev.down.kafka-control-center:
-	docker-compose -f $(DEVSTACK_WORKSPACE)/devstack/docker-compose.yml down kafka zookeeper schema-registry kafka-control-center
+dev.makemigrations: ## Create migrations via the app container
+	docker compose exec app python manage.py makemigrations
 
-# Kills containers and all of their data that isn't in volumes
-dev.down:
-	docker-compose down
+dev.shell: ## Launch a shell in the app container
+	docker compose exec app bash
 
-# Stops containers so they can be restarted
-dev.stop:
-	docker-compose stop
+dev.logs: ## View the logs of the app container
+	docker compose logs -f --tail=500 app
 
-dev.backup:
-	docker-compose stop app worker
-	docker-compose up -d mysql80
-	sleep 10 # let mysql process get fully warmed up
-	docker compose exec mysql80 mysqldump --all-databases > .dev/enterprise_access_all.sql
+dev.restart-container: ## Restart the app container
+	docker compose restart
 
-dev.restore:
-	docker-compose stop app worker
-	docker-compose up -d mysql80
-	sleep 10 # let mysql process get fully warmed up
-	docker compose exec -T mysql80 mysql < .dev/enterprise_access_all.sql
+dev.attach: ## Attach to the app container
+	docker compose attach app
 
-app-shell: # Run the app shell as root
-	docker exec -u 0 -it enterprise-access.app bash
-
-db-shell-57: # Run the mysql 5.7 shell as root, enter the app's database
-	docker exec -u 0 -it enterprise_access.db mysql -u root enterprise_access
-
-db-shell-8: # Run the mysql 8 shell as root, enter the app's database
-	docker exec -u 0 -it enterprise_access.mysql80 mysql -u root enterprise_access
-
-dev.dbcopy8: ## Copy data from old mysql 5.7 container into a new 8 db
-	mkdir -p .dev/
-	docker-compose exec db bash -c "mysqldump --databases enterprise_access" > .dev/enterprise_access.sql
-	docker-compose exec -T mysql80 bash -c "mysql" < .dev/enterprise_access.sql
-	rm .dev/enterprise_access.sql
-
-%-logs: # View the logs of the specified service container
-	docker-compose logs -f --tail=500 $*
-
-%-restart: # Restart the specified service container
-	docker-compose restart $*
-
-app-restart-devserver:  # restart just the app Django dev server
-	docker-compose exec app bash -c 'kill $$(ps aux | egrep "manage.py ?\w* runserver" | egrep -v "while|grep" | awk "{print \$$2}")'
-
-app-attach:
-	docker attach enterprise-access.app
-
-worker-attach:
-	docker attach enterprise_access.worker
-
-%-shell: # Run a shell, as root, on the specified service container
-	docker exec -u 0 -it enterprise_access.$* bash
-
-dev.static:
-	docker-compose exec -u 0 app python3 manage.py collectstatic --noinput
-
-dev.migrate:
-	docker-compose exec -u 0 app python manage.py migrate
+app-up: dev.up
+app-down: dev.down
+app-stop: dev.stop
+app-makemigrations: dev.makemigrations
+app-shell: dev.shell
+app-logs: dev.logs
+app-restart-container: dev.restart-container
+app-attach: dev.attach
 
 github_docker_auth:
 	echo "$$DOCKERHUB_PASSWORD" | docker login -u "$$DOCKERHUB_USERNAME" --password-stdin

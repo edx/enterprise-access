@@ -122,9 +122,8 @@ Check if a reusable code pattern exists in `.ralph/specs/stdlib` before executin
 
 ### Docker Development
 
-- Server runs on `localhost:18270`
-- Uses MySQL 8.0, Memcache, Redis, and Celery worker
-- Event bus via Kafka (Confluent Control Center at localhost:9021)
+- Full devstack (app, worker, DB, Kafka, etc.) is managed in the devstack repository
+- The `docker-compose.yml` in this repo provides a lightweight container for running tests and quality checks only
 
 ## Testing Notes
 

@@ -252,7 +252,7 @@ TestScenario(
 **Problem**: `Connection refused` or `Connection timeout`
 
 **Solutions**:
-- Ensure the API server is running (`make dev.up`)
+- Ensure the API server is running via devstack
 - Verify `API_BASE_URL` matches your server address
 - Check that port 18270 is accessible
 
