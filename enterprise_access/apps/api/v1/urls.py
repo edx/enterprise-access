@@ -10,6 +10,7 @@ app_name = 'v1'
 
 router = DefaultRouter()
 
+router.register("testimonials", views.TestimonialViewSet, "testimonials")
 router.register("policy-redemption", views.SubsidyAccessPolicyRedeemViewset, 'policy-redemption')
 router.register("policy-allocation", views.SubsidyAccessPolicyAllocateViewset, 'policy-allocation')
 router.register("subsidy-access-policies", views.SubsidyAccessPolicyViewSet, 'subsidy-access-policies')
@@ -37,6 +38,9 @@ if settings.ENABLE_CUSTOMER_BILLING_API:
     router.register('customer-billing', views.CustomerBillingViewSet, 'customer-billing')
     router.register('checkout-intent', views.CheckoutIntentViewSet, basename='checkout-intent')
     router.register('stripe-event-summary', views.StripeEventSummaryViewSet, basename='stripe-event-summary')
+
+if settings.ENABLE_BILLING_MANAGEMENT_API:
+    router.register('billing-management', views.BillingManagementViewSet, basename='billing-management')
 
 
 # BFFs

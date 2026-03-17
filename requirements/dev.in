@@ -6,4 +6,5 @@
 diff-cover                # Changeset diff test coverage
 edx-i18n-tools            # For i18n_tool dummy
 django-debug-toolbar      # For debugging Django
+pyright                   # For Python type checking and symbol navigation, helpful to Claude Code.
 #transifex-client         # For managing translations

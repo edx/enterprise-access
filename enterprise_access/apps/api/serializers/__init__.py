@@ -17,14 +17,24 @@ from .content_assignments.assignment_configuration import (
     AssignmentConfigurationUpdateRequestSerializer
 )
 from .customer_billing import (
+    AttachPaymentMethodRequestSerializer,
+    AttachPaymentMethodResponseSerializer,
+    BillingAddressResponseSerializer,
+    BillingAddressUpdateRequestSerializer,
     CheckoutIntentCreateRequestSerializer,
     CheckoutIntentReadOnlySerializer,
     CheckoutIntentUpdateRequestSerializer,
     CustomerBillingCreateCheckoutSessionRequestSerializer,
     CustomerBillingCreateCheckoutSessionSuccessResponseSerializer,
     CustomerBillingCreateCheckoutSessionValidationFailedResponseSerializer,
+    PaymentMethodResponseSerializer,
+    PaymentMethodsListResponseSerializer,
+    SetDefaultPaymentMethodRequestSerializer,
     StripeEventSummaryReadOnlySerializer,
-    StripeSubscriptionPlanInfoResponseSerializer
+    StripeSubscriptionPlanInfoResponseSerializer,
+    StripeSubscriptionResponseSerializer,
+    TransactionResponseSerializer,
+    TransactionsListResponseSerializer
 )
 from .provisioning import (
     ProvisioningRequestSerializer,
@@ -69,3 +79,4 @@ from .subsidy_requests import (
     SubsidyRequestCustomerConfigurationSerializer,
     SubsidyRequestSerializer
 )
+from .testimonials import TestimonialSerializer

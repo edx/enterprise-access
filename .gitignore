@@ -108,12 +108,19 @@ celerybeat.pid
 
 # Environments
 .env
+.env.*
+!.env.example
 .venv
 env/
 venv/
 ENV/
 env.bak/
 venv.bak/
+
+# Integration test credentials
+scripts/.env
+scripts/.env.*
+!scripts/.env.example
 
 # Spyder project settings
 .spyderproject
@@ -154,9 +161,7 @@ enterprise_access/settings/private.py
 enterprise_access/assets
 
 # claude code personalization
-.claude/
-package-lock.json
-package.json
+.claude/settings.local.json
 
 # Ralph
 .ralph/.*
