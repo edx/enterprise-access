@@ -304,6 +304,107 @@ def test_get_subscription(client: BillingManagementClient, config: Config) -> Di
     }
 
 
+def test_cancel_subscription(client: BillingManagementClient, config: Config) -> Dict[str, Any]:
+    """Test canceling a subscription (sets cancel_at_period_end=True)."""
+    logger.info("Canceling subscription")
+
+    # Get current state
+    subscription_before = client.get_subscription(config.enterprise_customer_uuid)
+    assert subscription_before is not None, "No subscription found to cancel"
+    assert not subscription_before.get('cancel_at_period_end'), \
+        "Subscription is already scheduled for cancellation"
+
+    # Cancel subscription
+    result = client.cancel_subscription(config.enterprise_customer_uuid)
+
+    # Verify cancellation
+    assert result['cancel_at_period_end'] is True, \
+        "cancel_at_period_end should be True after cancellation"
+    assert result['id'] == subscription_before['id'], "Subscription ID should not change"
+
+    logger.info(f"Subscription cancelled: {result['plan_type']} - will end at period end")
+
+    return {
+        'status': 'PASS',
+        'data': {'before': subscription_before, 'after': result},
+        'cancellation_verified': True
+    }
+
+
+def test_reinstate_subscription(client: BillingManagementClient, config: Config) -> Dict[str, Any]:
+    """Test reinstating a cancelled subscription (sets cancel_at_period_end=False)."""
+    logger.info("Reinstating subscription")
+
+    # Get current state
+    subscription_before = client.get_subscription(config.enterprise_customer_uuid)
+    assert subscription_before is not None, "No subscription found"
+    assert subscription_before.get('cancel_at_period_end'), \
+        "Subscription must be scheduled for cancellation to reinstate"
+
+    # Reinstate subscription
+    result = client.reinstate_subscription(config.enterprise_customer_uuid)
+
+    # Verify reinstatement
+    assert result['cancel_at_period_end'] is False, \
+        "cancel_at_period_end should be False after reinstatement"
+    assert result['id'] == subscription_before['id'], "Subscription ID should not change"
+
+    logger.info(f"Subscription reinstated: {result['plan_type']} - active")
+
+    return {
+        'status': 'PASS',
+        'data': {'before': subscription_before, 'after': result},
+        'reinstatement_verified': True
+    }
+
+
+def test_cancel_and_reinstate_flow(client: BillingManagementClient, config: Config) -> Dict[str, Any]:
+    """Test full cancel and reinstate workflow with state verification."""
+    logger.info("Testing cancel and reinstate workflow")
+
+    # Step 1: Get original state
+    original = client.get_subscription(config.enterprise_customer_uuid)
+    assert original is not None, "No subscription found"
+    logger.info(f"Original: cancel_at_period_end={original.get('cancel_at_period_end')}")
+
+    # Step 2: Cancel subscription
+    logger.info("Step 1: Canceling subscription")
+    cancelled = client.cancel_subscription(config.enterprise_customer_uuid)
+    assert cancelled['cancel_at_period_end'] is True, "Cancellation failed"
+    logger.info("✓ Subscription cancelled")
+
+    # Step 3: Verify GET reflects cancellation
+    logger.info("Step 2: Verifying GET reflects cancellation")
+    after_cancel = client.get_subscription(config.enterprise_customer_uuid)
+    assert after_cancel['cancel_at_period_end'] is True, "GET should reflect cancelled state"
+    logger.info("✓ GET reflects cancelled state")
+
+    # Step 4: Reinstate subscription
+    logger.info("Step 3: Reinstating subscription")
+    reinstated = client.reinstate_subscription(config.enterprise_customer_uuid)
+    assert reinstated['cancel_at_period_end'] is False, "Reinstatement failed"
+    logger.info("✓ Subscription reinstated")
+
+    # Step 5: Verify GET reflects reinstatement
+    logger.info("Step 4: Verifying GET reflects reinstatement")
+    after_reinstate = client.get_subscription(config.enterprise_customer_uuid)
+    assert after_reinstate['cancel_at_period_end'] is False, \
+        "GET should reflect reinstated state"
+    logger.info("✓ GET reflects reinstated state")
+
+    return {
+        'status': 'PASS',
+        'data': {
+            'original': original,
+            'cancelled': cancelled,
+            'after_cancel': after_cancel,
+            'reinstated': reinstated,
+            'after_reinstate': after_reinstate,
+        },
+        'workflow_verified': True
+    }
+
+
 def test_get_all_transactions(
     client: BillingManagementClient,
     config: Config
@@ -439,6 +540,27 @@ TEST_SCENARIOS = [
         name='get_subscription',
         description='Get subscription details',
         run=test_get_subscription,
+    ),
+    TestScenario(
+        name='cancel_subscription',
+        description='Cancel subscription (sets cancel_at_period_end=True)',
+        run=test_cancel_subscription,
+        depends_on=['get_subscription'],
+        skip_on_error=True,
+    ),
+    TestScenario(
+        name='reinstate_subscription',
+        description='Reinstate cancelled subscription (sets cancel_at_period_end=False)',
+        run=test_reinstate_subscription,
+        depends_on=['cancel_subscription'],
+        skip_on_error=True,
+    ),
+    TestScenario(
+        name='cancel_and_reinstate_flow',
+        description='Test full cancel and reinstate workflow with state verification',
+        run=test_cancel_and_reinstate_flow,
+        depends_on=['get_subscription'],
+        skip_on_error=True,
     ),
     TestScenario(
         name='get_all_transactions',
