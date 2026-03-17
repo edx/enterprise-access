@@ -769,6 +769,7 @@ class TestStripeEventHandler(TestCase):
             {
                 'id': 'sub_test_deleted_marks_renewal',
                 'status': 'canceled',
+                'ended_at': 1700000000,
                 'metadata': self._create_mock_stripe_subscription(self.checkout_intent.id),
             },
         )
@@ -778,7 +779,10 @@ class TestStripeEventHandler(TestCase):
         renewal.refresh_from_db()
         self.assertTrue(renewal.is_canceled)
         mock_cancel.assert_called_once_with(self.checkout_intent)
-        mock_send_cancelation_email.delay.assert_called_once()
+        mock_send_cancelation_email.delay.assert_called_once_with(
+            checkout_intent_id=self.checkout_intent.id,
+            ended_at_timestamp=1700000000,
+        )
 
     def test_subscription_updated_active_marks_renewals_uncanceled(self):
         """Restored subscriptions should flip renewal records back to is_canceled=False."""
