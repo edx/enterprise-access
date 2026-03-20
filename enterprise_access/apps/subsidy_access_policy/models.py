@@ -651,10 +651,16 @@ class SubsidyAccessPolicy(TimeStampedModel):
         We likely have content metadata prefetched on this policy record instance at the time
         of invocation, so we do that prefetch here via ``self.get_content_metadata()``.
         """
+        try:
+            content_metadata = self.get_content_metadata(content_key)
+        except requests.exceptions.HTTPError as exc:
+            raise ContentPriceNullException(
+                f'Could not fetch content metadata to determine list price for {content_key}'
+            ) from exc
         return get_list_price_for_content(
             self.enterprise_customer_uuid,
             content_key,
-            self.get_content_metadata(content_key),
+            content_metadata,
         )
 
     def includes_learner(self, lms_user_id):
