@@ -29,7 +29,7 @@ edx-celeryutils
 edx-django-utils
 edx-django-release-util
 edx-drf-extensions
-2u-enterprise-subsidy-client
+edx-enterprise-subsidy-client
 edx-event-bus-kafka
 edx-rbac
 edx-rest-api-client
