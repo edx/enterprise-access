@@ -4,6 +4,8 @@
 #
 #    make upgrade
 #
+2u-enterprise-subsidy-client==2.2.1
+    # via -r requirements/test.txt
 amqp==5.3.1
     # via
     #   -r requirements/test.txt
@@ -277,8 +279,6 @@ edx-drf-extensions==10.6.0
     # via
     #   -r requirements/test.txt
     #   edx-rbac
-edx-enterprise-subsidy-client==2.1.1
-    # via -r requirements/test.txt
 edx-event-bus-kafka==6.1.0
     # via -r requirements/test.txt
 edx-lint==6.0.0
@@ -296,7 +296,7 @@ edx-rbac==3.0.0
 edx-rest-api-client==6.2.0
     # via
     #   -r requirements/test.txt
-    #   edx-enterprise-subsidy-client
+    #   2u-enterprise-subsidy-client
 edx-toggles==5.4.1
     # via
     #   -r requirements/test.txt

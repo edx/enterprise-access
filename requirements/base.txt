@@ -4,6 +4,8 @@
 #
 #    make upgrade
 #
+2u-enterprise-subsidy-client==2.2.1
+    # via -r requirements/base.in
 amqp==5.3.1
     # via kombu
 analytics-python==1.4.post1
@@ -193,8 +195,6 @@ edx-drf-extensions==10.6.0
     # via
     #   -r requirements/base.in
     #   edx-rbac
-edx-enterprise-subsidy-client==2.1.1
-    # via -r requirements/base.in
 edx-event-bus-kafka==6.1.0
     # via -r requirements/base.in
 edx-opaque-keys[django]==3.1.0
@@ -207,7 +207,7 @@ edx-rbac==3.0.0
 edx-rest-api-client==6.2.0
     # via
     #   -r requirements/base.in
-    #   edx-enterprise-subsidy-client
+    #   2u-enterprise-subsidy-client
 edx-toggles==5.4.1
     # via
     #   edx-auth-backends
