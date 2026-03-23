@@ -47,24 +47,22 @@ class Command(BaseCommand):
         for deleted_event in deleted_events.iterator(chunk_size=batch_size):
             has_restore_event = self._has_later_restore_event(deleted_event)
             target_is_canceled = not has_restore_event
-            renewals_qs = deleted_event.checkout_intent.renewals.all()
+            latest_renewal = deleted_event.checkout_intent.renewals.order_by('-created').first()
 
-            if not renewals_qs.exists():
+            if not latest_renewal:
                 unchanged_count += 1
+            elif latest_renewal.is_canceled == target_is_canceled:
+                unchanged_count += 1
+            elif dry_run:
+                self.stdout.write(
+                    f'Would update renewal {latest_renewal.id} for checkout_intent '
+                    f'{deleted_event.checkout_intent.id} to is_canceled={target_is_canceled}'
+                )
+                updated_count += 1
             else:
-                needs_update_qs = renewals_qs.exclude(is_canceled=target_is_canceled)
-                needs_update_count = needs_update_qs.count()
-
-                if needs_update_count == 0:
-                    unchanged_count += 1
-                elif dry_run:
-                    self.stdout.write(
-                        f'Would update {needs_update_count} renewal(s) for checkout_intent '
-                        f'{deleted_event.checkout_intent.id} to is_canceled={target_is_canceled}'
-                    )
-                    updated_count += needs_update_count
-                else:
-                    updated_count += needs_update_qs.update(is_canceled=target_is_canceled)
+                latest_renewal.is_canceled = target_is_canceled
+                latest_renewal.save()
+                updated_count += 1
 
             processed_count += 1
             if processed_count % batch_size == 0:
@@ -72,9 +70,10 @@ class Command(BaseCommand):
 
         self.stdout.write(f'Processed {processed_count}/{total} deletion events...')
 
+        prefix = '[DRY RUN] ' if dry_run else ''
         self.stdout.write(
             self.style.SUCCESS(
-                f'Backfill complete. Updated renewals: {updated_count}. Unchanged events: {unchanged_count}.'
+                f'{prefix}Backfill complete. Updated renewals: {updated_count}. Unchanged events: {unchanged_count}.'
             )
         )
 

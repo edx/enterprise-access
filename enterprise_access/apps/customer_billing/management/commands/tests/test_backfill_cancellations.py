@@ -137,20 +137,28 @@ class TestBackfillSubscriptionRenewalCancellations(TestCase):
         renewal.refresh_from_db()
         self.assertFalse(renewal.is_canceled)
 
-    def test_multiple_renewals_all_updated(self):
-        """All renewals tied to a checkout intent are updated in a single pass."""
+    def test_only_latest_renewal_is_updated(self):
+        """Only the most recently created renewal is updated; older renewals are left unchanged."""
         checkout_intent = CheckoutIntentFactory()
-        renewal_a = self._create_renewal(checkout_intent, is_canceled=False)
-        renewal_b = self._create_renewal(checkout_intent, is_canceled=False)
+        older_renewal = self._create_renewal(checkout_intent, is_canceled=False)
+        newer_renewal = self._create_renewal(checkout_intent, is_canceled=False)
+
+        # Force a deterministic created ordering so the test is not time-sensitive.
+        SelfServiceSubscriptionRenewal.objects.filter(pk=older_renewal.pk).update(
+            created=timezone.now() - timedelta(days=2)
+        )
+        SelfServiceSubscriptionRenewal.objects.filter(pk=newer_renewal.pk).update(
+            created=timezone.now() - timedelta(days=1)
+        )
 
         self._create_summary(checkout_intent, 'customer.subscription.deleted', timezone.now() - timedelta(hours=1))
 
         call_command('backfill_subscription_renewal_cancellations', stdout=StringIO())
 
-        renewal_a.refresh_from_db()
-        renewal_b.refresh_from_db()
-        self.assertTrue(renewal_a.is_canceled)
-        self.assertTrue(renewal_b.is_canceled)
+        older_renewal.refresh_from_db()
+        newer_renewal.refresh_from_db()
+        self.assertFalse(older_renewal.is_canceled)
+        self.assertTrue(newer_renewal.is_canceled)
 
     def test_already_correct_state_is_unchanged(self):
         """Renewals already in the target state are counted as unchanged, not written."""
@@ -279,3 +287,17 @@ class TestBackfillSubscriptionRenewalCancellations(TestCase):
         self.assertIn('DRY RUN MODE', output)
         self.assertIn('Would update', output)
         self.assertIn(str(checkout_intent.id), output)
+        self.assertIn('[DRY RUN] Backfill complete.', output)
+
+    def test_non_dry_run_summary_has_no_dry_run_prefix(self):
+        """Normal run summary does not include the [DRY RUN] prefix."""
+        checkout_intent = CheckoutIntentFactory()
+        self._create_renewal(checkout_intent, is_canceled=False)
+        self._create_summary(checkout_intent, 'customer.subscription.deleted', timezone.now() - timedelta(hours=1))
+
+        out = StringIO()
+        call_command('backfill_subscription_renewal_cancellations', stdout=out)
+
+        output = out.getvalue()
+        self.assertIn('Backfill complete.', output)
+        self.assertNotIn('[DRY RUN]', output)
