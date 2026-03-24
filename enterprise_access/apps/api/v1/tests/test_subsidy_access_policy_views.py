@@ -42,6 +42,7 @@ from enterprise_access.apps.subsidy_access_policy.constants import (
     PolicyTypes,
     TransactionStateChoices
 )
+from enterprise_access.apps.subsidy_access_policy.exceptions import ContentPriceNullException
 from enterprise_access.apps.subsidy_access_policy.models import (
     PerLearnerSpendCreditAccessPolicy,
     PolicyGroupAssociation,
@@ -2525,6 +2526,35 @@ class TestSubsidyAccessPolicyCanRedeemView(BaseCanRedeemTestMixin, APITestWithMo
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
         assert response.json() == {
             'detail': f'Could not determine price for content_key: {test_content_key}',
+        }
+
+    @mock.patch('enterprise_access.apps.subsidy_access_policy.subsidy_api.get_and_cache_transactions_for_learner')
+    def test_can_redeem_redeemable_policy_get_list_price_raises(self, mock_transactions_cache_for_learner):
+        """
+        Test that the can_redeem endpoint returns a 422 error when a redeemable policy's
+        get_list_price raises ContentPriceNullException (e.g. content metadata is not found).
+        """
+        test_content_key = "course-v1:demox+1234+2T2023"
+        mock_transactions_cache_for_learner.return_value = {
+            'transactions': [],
+            'aggregates': {'total_quantity': 0},
+        }
+        # Provide valid content metadata so policy.can_redeem() succeeds and the policy is redeemable.
+        self.mock_get_content_metadata.return_value = {'content_price': 5000}
+
+        with mock.patch(
+            'enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.get_list_price',
+            side_effect=ContentPriceNullException('price is null'),
+        ):
+            query_params = {'content_key': test_content_key}
+            response = self.client.get(self.subsidy_access_policy_can_redeem_endpoint, query_params)
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.json() == {
+            'detail': (
+                f'Could not determine list price for content_key {test_content_key}'
+                f' with enterprise customer {self.enterprise_uuid}'
+            )
         }
 
     @mock.patch('enterprise_access.apps.subsidy_access_policy.subsidy_api.get_and_cache_transactions_for_learner')

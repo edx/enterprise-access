@@ -650,6 +650,8 @@ class SubsidyAccessPolicy(TimeStampedModel):
         Determine the price for content for display purposes only.
         We likely have content metadata prefetched on this policy record instance at the time
         of invocation, so we do that prefetch here via ``self.get_content_metadata()``.
+
+        Raises: ContentPriceNullException if content metadata could not be fetched
         """
         try:
             content_metadata = self.get_content_metadata(content_key)
