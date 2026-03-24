@@ -303,6 +303,15 @@ class StripeSubscriptionPlanInfoResponseSerializer(serializers.Serializer):
         ),
     )
 
+    subscription_cancel_at = serializers.DateTimeField(
+        allow_null=True,
+        required=False,
+        help_text=(
+            'Timestamp when the subscription is scheduled to be canceled. '
+            'None if no cancellation is scheduled or if the subscription has already been deleted.'
+        ),
+    )
+
     renewed_subscription_plan_uuid = serializers.UUIDField(
         allow_null=True,
         required=False,

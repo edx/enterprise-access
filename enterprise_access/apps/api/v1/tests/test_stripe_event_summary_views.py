@@ -429,3 +429,26 @@ class StripeSubscriptionPlanInfoTests(APITest):
             'is_canceled': False,
             'renewed_subscription_plan_uuid': str(self.renewed_subscription_plan_uuid),
         }
+
+    def test_get_stripe_subscription_plan_info_renewal_cancel_at_takes_precedence(self):
+        """
+        When subscription_cancel_at is set on the renewal, it should be returned as canceled_date
+        instead of the value from StripeEventSummary.
+        """
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': self.enterprise_uuid,
+        }])
+        renewal_cancel_at = datetime(2022, 3, 1, 0, 0, 0, tzinfo=tz.utc)
+        self.self_service_renewal.subscription_cancel_at = renewal_cancel_at
+        self.self_service_renewal.save(update_fields=['subscription_cancel_at'])
+
+        query_params = {'subscription_plan_uuid': self.subscription_plan_uuid}
+        url = reverse('api:v1:stripe-event-summary-get-stripe-subscription-plan-info')
+        url += f"?{urlencode(query_params)}"
+        response = self.client.get(url)
+
+        assert response.status_code == 200
+        # Renewal's cancel_at (2022-03-01) should take precedence over the event summary's (2021-09-15)
+        assert response.data['canceled_date'] == '2022-03-01T00:00:00Z'
+        assert response.data['is_canceled'] is False

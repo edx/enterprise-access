@@ -645,9 +645,13 @@ class StripeEventSummaryViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
             checkout_intent_uuid = first_related_renewal.checkout_intent.uuid
             is_canceled = first_related_renewal.is_canceled
             renewed_subscription_plan_uuid = first_related_renewal.renewed_subscription_plan_uuid
+            canceled_date = first_related_renewal.subscription_cancel_at
 
         if updated_event_summary:
-            canceled_date = updated_event_summary.subscription_cancel_at
+            # Fall back to the event summary's cancel_at for records predating the
+            # subscription_cancel_at field on SelfServiceSubscriptionRenewal.
+            if canceled_date is None:
+                canceled_date = updated_event_summary.subscription_cancel_at
             checkout_intent_uuid = updated_event_summary.checkout_intent.uuid \
                 if updated_event_summary.checkout_intent else checkout_intent_uuid
 

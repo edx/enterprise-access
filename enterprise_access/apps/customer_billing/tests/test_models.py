@@ -1334,6 +1334,24 @@ class TestSelfServiceSubscriptionRenewal(TestCase):
 
         self.assertFalse(renewal.is_canceled)
 
+    def test_self_service_subscription_renewal_subscription_cancel_at_default_none(self):
+        """Test that new renewal records default subscription_cancel_at to None."""
+        event_data = StripeEventData.objects.create(
+            event_id='evt_test_cancel_at_default',
+            event_type='customer.subscription.updated',
+            checkout_intent=self.checkout_intent,
+            data={'test': 'data'}
+        )
+
+        renewal = SelfServiceSubscriptionRenewal.objects.create(
+            checkout_intent=self.checkout_intent,
+            subscription_plan_renewal_id=998,
+            stripe_subscription_id='sub_test_cancel_at_default',
+            stripe_event_data=event_data,
+        )
+
+        self.assertIsNone(renewal.subscription_cancel_at)
+
     def test_self_service_subscription_renewal_mark_as_processed_multiple_times(self):
         """Test that calling mark_as_processed multiple times updates the timestamp each time."""
         # Create StripeEventData first

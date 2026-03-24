@@ -724,6 +724,15 @@ class SelfServiceSubscriptionRenewal(TimeStampedModel):
         help_text='True if the subscription has been canceled. Can be set back to False if subscription is '
                   'un-canceled.',
     )
+    subscription_cancel_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text=(
+            'Timestamp when the subscription is scheduled to be canceled. '
+            'Set from Stripe cancel_at on subscription_updated events; '
+            'cleared on subscription deletion or when cancellation is reversed.'
+        ),
+    )
     stripe_event_data = models.OneToOneField(
         'StripeEventData',
         on_delete=models.CASCADE,

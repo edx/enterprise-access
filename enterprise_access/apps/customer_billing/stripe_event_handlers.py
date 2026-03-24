@@ -173,12 +173,19 @@ def cancel_all_future_plans(checkout_intent):
     return deactivated
 
 
-def _update_renewal_cancellation_state(checkout_intent: CheckoutIntent, is_canceled: bool) -> None:
+def _update_renewal_cancellation_state(
+    checkout_intent: CheckoutIntent,
+    is_canceled: bool,
+    subscription_cancel_at=None,
+) -> None:
     """Set cancellation state on all renewals for a checkout intent."""
-    updated = checkout_intent.renewals.update(is_canceled=is_canceled)
+    updated = checkout_intent.renewals.update(
+        is_canceled=is_canceled,
+        subscription_cancel_at=subscription_cancel_at,
+    )
     logger.info(
-        'Updated %d renewal(s) for CheckoutIntent %s: is_canceled=%s',
-        updated, checkout_intent.id, is_canceled,
+        'Updated %d renewal(s) for CheckoutIntent %s: is_canceled=%s, subscription_cancel_at=%s',
+        updated, checkout_intent.id, is_canceled, subscription_cancel_at,
     )
 
 
@@ -674,11 +681,20 @@ class StripeEventHandler:
             handle_pending_update(subscription.id, checkout_intent_id, pending_update)
 
         current_status = subscription.get("status")
+        current_cancel_at = subscription.get('cancel_at')
+        current_cancel_at_datetime = datetime_from_timestamp(current_cancel_at) if current_cancel_at else None
+
         if current_status in [StripeSubscriptionStatus.ACTIVE, StripeSubscriptionStatus.TRIALING]:
             # Proactively mark as not canceled whenever the subscription is active/trialing.
             # This guards against edge cases where cancellation state is not cleared on creation
             # and ensures correctness when a previously-canceled subscription is re-activated.
-            _update_renewal_cancellation_state(checkout_intent, is_canceled=False)
+            # Also keeps subscription_cancel_at in sync: set it when cancel_at is present,
+            # clear it when the subscription is active with no scheduled cancellation.
+            _update_renewal_cancellation_state(
+                checkout_intent,
+                is_canceled=False,
+                subscription_cancel_at=current_cancel_at_datetime,
+            )
 
         previous_summary = checkout_intent.previous_summary(event, stripe_object_type='subscription')
         if not previous_summary:
@@ -706,10 +722,6 @@ class StripeEventHandler:
         # Handle subscription cancellation scheduling (when user clicks cancel in Stripe)
         # This triggers before the subscription status actually changes
         prior_cancel_at = previous_summary.subscription_cancel_at
-        current_cancel_at = subscription.get('cancel_at')
-        current_cancel_at_datetime = None
-        if current_cancel_at:
-            current_cancel_at_datetime = datetime_from_timestamp(current_cancel_at)
 
         # Detect when cancellation is newly scheduled (was None, now has value)
         if prior_cancel_at is None and current_cancel_at_datetime is not None:
@@ -763,7 +775,7 @@ class StripeEventHandler:
                 subscription.id,
                 checkout_intent.id,
             )
-        _update_renewal_cancellation_state(checkout_intent, is_canceled=True)
+        _update_renewal_cancellation_state(checkout_intent, is_canceled=True, subscription_cancel_at=None)
 
         previous_summary = checkout_intent.previous_summary(event, stripe_object_type='subscription')
         if previous_summary.subscription_status == StripeSubscriptionStatus.ACTIVE:
