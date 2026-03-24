@@ -339,6 +339,7 @@ class StripeSubscriptionPlanInfoTests(APITest):
             'checkout_intent_uuid': str(self.checkout_intent.uuid),
             'is_canceled': False,
             'renewed_subscription_plan_uuid': str(self.renewed_subscription_plan_uuid),
+            'subscription_cancel_at': None,
         }
 
     def test_get_stripe_subscription_plan_info_with_cancellation(self):
@@ -428,6 +429,7 @@ class StripeSubscriptionPlanInfoTests(APITest):
             'checkout_intent_uuid': str(self.checkout_intent.uuid),
             'is_canceled': False,
             'renewed_subscription_plan_uuid': str(self.renewed_subscription_plan_uuid),
+            'subscription_cancel_at': None,
         }
 
     def test_get_stripe_subscription_plan_info_renewal_cancel_at_takes_precedence(self):
