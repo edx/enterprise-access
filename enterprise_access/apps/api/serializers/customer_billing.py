@@ -285,7 +285,10 @@ class StripeSubscriptionPlanInfoResponseSerializer(serializers.Serializer):
     canceled_date = serializers.DateTimeField(
         allow_null=True,
         required=False,
-        help_text='Timestamp when the subscription is scheduled to be canceled',
+        help_text=(
+            'Timestamp when the subscription is scheduled to be canceled. '
+            'None if no cancellation is scheduled or if the subscription has already been deleted.'
+        ),
     )
 
     checkout_intent_uuid = serializers.UUIDField(
@@ -303,22 +306,13 @@ class StripeSubscriptionPlanInfoResponseSerializer(serializers.Serializer):
         ),
     )
 
-    subscription_cancel_at = serializers.DateTimeField(
-        allow_null=True,
-        required=False,
-        help_text=(
-            'Timestamp when the subscription is scheduled to be canceled. '
-            'None if no cancellation is scheduled or if the subscription has already been deleted.'
-        ),
-    )
-
     renewed_subscription_plan_uuid = serializers.UUIDField(
         allow_null=True,
         required=False,
         help_text=(
             "UUID of the renewed (paid) subscription plan linked to this subscription's "
             'renewal record. The front-end should suppress this plan UUID '
-            'when is_canceled is true, or when subscription_cancel_at is a future date '
+            'when is_canceled is true, or when canceled_date is a future date '
             '(cancellation is scheduled but not yet in effect).'
         ),
     )
