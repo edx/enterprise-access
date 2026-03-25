@@ -5,6 +5,7 @@ Uses the ``Migrator`` class to properly roll back to the pre-migration state,
 create test data with historical (frozen) model classes, then apply the
 migration under test and verify results.
 """
+import ddt
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
@@ -267,6 +268,7 @@ class TestBackfillRenewalInvoiceAndEffectiveDate(TransactionTestCase):
         self.assertEqual(Renewal.objects.count(), 0)
 
 
+@ddt.ddt
 class TestBackfillSubscriptionRenewalCancellations(TransactionTestCase):
     """
     Tests for the backfill data migration 0031.
@@ -366,14 +368,123 @@ class TestBackfillSubscriptionRenewalCancellations(TransactionTestCase):
         Renewal = new_state.apps.get_model('customer_billing', 'SelfServiceSubscriptionRenewal')
         return Renewal.objects.get(id=renewal_id)
 
-    def test_idempotent_updates(self):
-        """Running the migration twice results in the same final state."""
+    # Each entry describes a simple scenario: create one renewal, create N summary
+    # events, apply the migration, and assert the final renewal state.
+    #
+    # Fields:
+    #   initial_is_canceled       - bool: the renewal's starting is_canceled value
+    #   initial_cancel_at_offset  - timedelta (future) or None: renewal's starting
+    #                               subscription_cancel_at, computed as now + offset
+    #   events                    - list of (event_type, offset_ago, subscription_status,
+    #                               subscription_cancel_at), where offset_ago is a timedelta
+    #                               and times are computed as now - offset_ago
+    #   expected_is_canceled      - bool: asserted on renewal after migration
+    #   expected_cancel_at        - datetime or None: asserted on renewal after migration
+    @ddt.data(
+        dict(
+            initial_is_canceled=False,
+            initial_cancel_at_offset=None,
+            events=[
+                ('customer.subscription.deleted', timedelta(days=1), None, None),
+            ],
+            expected_is_canceled=True,
+            expected_cancel_at=None,
+        ),
+        dict(
+            initial_is_canceled=True,
+            initial_cancel_at_offset=None,
+            events=[
+                ('customer.subscription.deleted', timedelta(days=2), 'canceled', None),
+                ('customer.subscription.updated', timedelta(days=1), 'active', None),
+            ],
+            expected_is_canceled=False,
+            expected_cancel_at=None,
+        ),
+        dict(
+            initial_is_canceled=True,
+            initial_cancel_at_offset=None,
+            events=[
+                ('customer.subscription.deleted', timedelta(hours=1), None, None),
+            ],
+            expected_is_canceled=True,
+            expected_cancel_at=None,
+        ),
+        dict(
+            initial_is_canceled=True,
+            initial_cancel_at_offset=None,
+            events=[
+                ('customer.subscription.deleted', timedelta(days=2), None, None),
+                ('customer.subscription.created', timedelta(days=1), None, None),
+            ],
+            expected_is_canceled=False,
+            expected_cancel_at=None,
+        ),
+        dict(
+            initial_is_canceled=False,
+            initial_cancel_at_offset=None,
+            events=[
+                ('customer.subscription.updated', timedelta(days=3), 'active', None),
+                ('customer.subscription.deleted', timedelta(days=1), None, None),
+            ],
+            expected_is_canceled=True,
+            expected_cancel_at=None,
+        ),
+        dict(
+            initial_is_canceled=False,
+            initial_cancel_at_offset=timedelta(days=30),
+            events=[
+                ('customer.subscription.deleted', timedelta(hours=1), None, None),
+            ],
+            expected_is_canceled=True,
+            expected_cancel_at=None,
+        ),
+        dict(
+            initial_is_canceled=True,
+            initial_cancel_at_offset=None,
+            events=[
+                ('customer.subscription.deleted', timedelta(days=2), None, None),
+                ('customer.subscription.updated', timedelta(days=1), 'active',
+                 datetime(2026, 6, 1, tzinfo=timezone.utc)),
+            ],
+            expected_is_canceled=False,
+            expected_cancel_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        ),
+        dict(
+            initial_is_canceled=True,
+            initial_cancel_at_offset=timedelta(days=10),
+            events=[
+                ('customer.subscription.deleted', timedelta(days=2), None, None),
+                ('customer.subscription.updated', timedelta(days=1), 'active', None),
+            ],
+            expected_is_canceled=False,
+            expected_cancel_at=None,
+        ),
+    )
+    @ddt.unpack
+    def test_cancellation_scenario(
+        self, initial_is_canceled, initial_cancel_at_offset, events,
+        expected_is_canceled, expected_cancel_at,
+    ):
+        """
+        Parameterized test covering the common cancellation backfill scenarios:
+        - deletion sets is_canceled=True and clears subscription_cancel_at
+        - a restore event after deletion sets is_canceled=False and updates subscription_cancel_at
+        - a restore event before deletion is ignored
+        - already-correct state is left unchanged
+        """
+        now = django_tz.now()
         checkout_intent = self._create_checkout_intent()
-        renewal = self._create_renewal(checkout_intent, is_canceled=False)
-        self._create_summary(checkout_intent, 'customer.subscription.deleted', django_tz.now() - timedelta(days=1))
-
+        initial_cancel_at = now + initial_cancel_at_offset if initial_cancel_at_offset else None
+        renewal = self._create_renewal(
+            checkout_intent,
+            is_canceled=initial_is_canceled,
+            subscription_cancel_at=initial_cancel_at,
+        )
+        for event_type, offset_ago, status, cancel_at in events:
+            self._create_summary(checkout_intent, event_type, now - offset_ago, status, cancel_at)
         renewal = self._apply_migration_and_get_renewal(renewal.id)
-        self.assertTrue(renewal.is_canceled)
+        self.assertEqual(renewal.is_canceled, expected_is_canceled)
+        self.assertEqual(renewal.subscription_cancel_at, expected_cancel_at)
 
     def test_handles_null_checkout_intent_event(self):
         """Deletion events without a checkout intent are ignored."""
@@ -398,22 +509,6 @@ class TestBackfillSubscriptionRenewalCancellations(TransactionTestCase):
         renewal = self._apply_migration_and_get_renewal(renewal.id)
         self.assertTrue(renewal.is_canceled)
 
-    def test_later_restore_event_sets_uncanceled(self):
-        """A restore event after deletion marks the renewal as not canceled."""
-        checkout_intent = self._create_checkout_intent()
-        renewal = self._create_renewal(checkout_intent, is_canceled=True)
-        self._create_summary(
-            checkout_intent, 'customer.subscription.deleted',
-            django_tz.now() - timedelta(days=2), subscription_status='canceled',
-        )
-        self._create_summary(
-            checkout_intent, 'customer.subscription.updated',
-            django_tz.now() - timedelta(days=1), subscription_status='active',
-        )
-
-        renewal = self._apply_migration_and_get_renewal(renewal.id)
-        self.assertFalse(renewal.is_canceled)
-
     def test_only_latest_renewal_is_updated(self):
         """Only the most recently created renewal is updated; older renewals are left unchanged."""
         checkout_intent = self._create_checkout_intent()
@@ -435,15 +530,6 @@ class TestBackfillSubscriptionRenewalCancellations(TransactionTestCase):
         self.assertFalse(Renewal.objects.get(pk=older_renewal.pk).is_canceled)
         self.assertTrue(Renewal.objects.get(pk=newer_renewal.pk).is_canceled)
 
-    def test_already_correct_state_is_unchanged(self):
-        """Renewals already in the target state are not written to."""
-        checkout_intent = self._create_checkout_intent()
-        renewal = self._create_renewal(checkout_intent, is_canceled=True)
-        self._create_summary(checkout_intent, 'customer.subscription.deleted', django_tz.now() - timedelta(hours=1))
-
-        renewal = self._apply_migration_and_get_renewal(renewal.id)
-        self.assertTrue(renewal.is_canceled)
-
     def test_no_renewals_for_checkout_intent_is_unchanged(self):
         """A deletion event whose checkout intent has no renewals is a no-op."""
         checkout_intent = self._create_checkout_intent()
@@ -452,29 +538,6 @@ class TestBackfillSubscriptionRenewalCancellations(TransactionTestCase):
         new_state = self.migrator.apply_tested_migration(self.migrate_to)
         Renewal = new_state.apps.get_model('customer_billing', 'SelfServiceSubscriptionRenewal')
         self.assertEqual(Renewal.objects.count(), 0)
-
-    def test_restore_via_created_event_sets_uncanceled(self):
-        """A customer.subscription.created event after deletion marks the renewal as not canceled."""
-        checkout_intent = self._create_checkout_intent()
-        renewal = self._create_renewal(checkout_intent, is_canceled=True)
-        self._create_summary(checkout_intent, 'customer.subscription.deleted', django_tz.now() - timedelta(days=2))
-        self._create_summary(checkout_intent, 'customer.subscription.created', django_tz.now() - timedelta(days=1))
-
-        renewal = self._apply_migration_and_get_renewal(renewal.id)
-        self.assertFalse(renewal.is_canceled)
-
-    def test_restore_before_deletion_does_not_prevent_cancellation(self):
-        """A restore event that predates the deletion is not treated as a valid restore."""
-        checkout_intent = self._create_checkout_intent()
-        renewal = self._create_renewal(checkout_intent, is_canceled=False)
-        self._create_summary(
-            checkout_intent, 'customer.subscription.updated',
-            django_tz.now() - timedelta(days=3), subscription_status='active',
-        )
-        self._create_summary(checkout_intent, 'customer.subscription.deleted', django_tz.now() - timedelta(days=1))
-
-        renewal = self._apply_migration_and_get_renewal(renewal.id)
-        self.assertTrue(renewal.is_canceled)
 
     def test_null_stripe_event_created_at_falls_back_to_created(self):
         """When stripe_event_created_at is None, the created timestamp is used for ordering."""
@@ -509,68 +572,6 @@ class TestBackfillSubscriptionRenewalCancellations(TransactionTestCase):
         Renewal = new_state.apps.get_model('customer_billing', 'SelfServiceSubscriptionRenewal')
         self.assertTrue(Renewal.objects.get(pk=renewal_canceled.pk).is_canceled)
         self.assertFalse(Renewal.objects.get(pk=renewal_restored.pk).is_canceled)
-
-    def test_canceled_clears_subscription_cancel_at(self):
-        """
-        When a deletion has no later restore, subscription_cancel_at is cleared to None
-        even if the renewal had a prior value.
-        """
-        cancel_at = django_tz.now() + timedelta(days=30)
-        checkout_intent = self._create_checkout_intent()
-        renewal = self._create_renewal(checkout_intent, is_canceled=False, subscription_cancel_at=cancel_at)
-        self._create_summary(checkout_intent, 'customer.subscription.deleted', django_tz.now() - timedelta(hours=1))
-
-        renewal = self._apply_migration_and_get_renewal(renewal.id)
-        self.assertTrue(renewal.is_canceled)
-        self.assertIsNone(renewal.subscription_cancel_at)
-
-    def test_restore_sets_subscription_cancel_at_from_restore_event(self):
-        """
-        When a deletion is followed by a restore event that has a subscription_cancel_at,
-        the renewal's subscription_cancel_at is updated from that restore event.
-        """
-        expected_cancel_at = datetime(2026, 6, 1, tzinfo=timezone.utc)
-        checkout_intent = self._create_checkout_intent()
-        renewal = self._create_renewal(checkout_intent, is_canceled=True)
-        self._create_summary(
-            checkout_intent, 'customer.subscription.deleted',
-            django_tz.now() - timedelta(days=2),
-        )
-        self._create_summary(
-            checkout_intent, 'customer.subscription.updated',
-            django_tz.now() - timedelta(days=1),
-            subscription_status='active',
-            subscription_cancel_at=expected_cancel_at,
-        )
-
-        renewal = self._apply_migration_and_get_renewal(renewal.id)
-        self.assertFalse(renewal.is_canceled)
-        self.assertEqual(renewal.subscription_cancel_at, expected_cancel_at)
-
-    def test_restore_with_no_cancel_at_sets_null(self):
-        """
-        When a deletion is followed by a restore event that has no subscription_cancel_at,
-        the renewal's subscription_cancel_at is set to None.
-        """
-        checkout_intent = self._create_checkout_intent()
-        renewal = self._create_renewal(
-            checkout_intent, is_canceled=True,
-            subscription_cancel_at=django_tz.now() + timedelta(days=10),
-        )
-        self._create_summary(
-            checkout_intent, 'customer.subscription.deleted',
-            django_tz.now() - timedelta(days=2),
-        )
-        self._create_summary(
-            checkout_intent, 'customer.subscription.updated',
-            django_tz.now() - timedelta(days=1),
-            subscription_status='active',
-            subscription_cancel_at=None,
-        )
-
-        renewal = self._apply_migration_and_get_renewal(renewal.id)
-        self.assertFalse(renewal.is_canceled)
-        self.assertIsNone(renewal.subscription_cancel_at)
 
     def test_null_stripe_ts_restore_event_is_found(self):
         """
