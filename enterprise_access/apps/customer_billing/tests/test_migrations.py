@@ -571,3 +571,99 @@ class TestBackfillSubscriptionRenewalCancellations(TransactionTestCase):
         renewal = self._apply_migration_and_get_renewal(renewal.id)
         self.assertFalse(renewal.is_canceled)
         self.assertIsNone(renewal.subscription_cancel_at)
+
+    def test_null_stripe_ts_restore_event_is_found(self):
+        """
+        A restore event with stripe_event_created_at=NULL is still found when its
+        Django ``created`` timestamp falls after the deletion's effective timestamp.
+
+        Before the fix, stripe_event_created_at__gt=X silently excluded NULL rows in SQL,
+        causing the renewal to be incorrectly marked as canceled.
+        """
+        now = django_tz.now()
+        checkout_intent = self._create_checkout_intent()
+        renewal = self._create_renewal(checkout_intent, is_canceled=False)
+
+        StripeEventSummary = self._get_model('customer_billing', 'StripeEventSummary')
+
+        self._create_summary(
+            checkout_intent, 'customer.subscription.deleted',
+            now - timedelta(days=2),
+        )
+        # Restore has no Stripe timestamp, but its Django created time is after the deletion.
+        restore = self._create_summary(
+            checkout_intent, 'customer.subscription.updated',
+            None,  # stripe_event_created_at=NULL
+            subscription_status='active',
+        )
+        StripeEventSummary.objects.filter(pk=restore.pk).update(created=now - timedelta(days=1))
+
+        renewal = self._apply_migration_and_get_renewal(renewal.id)
+        self.assertFalse(renewal.is_canceled)
+
+    def test_null_stripe_ts_restore_before_deletion_not_found(self):
+        """
+        A restore event with stripe_event_created_at=NULL is correctly excluded when
+        its Django ``created`` timestamp falls before the deletion's effective timestamp.
+        """
+        now = django_tz.now()
+        checkout_intent = self._create_checkout_intent()
+        renewal = self._create_renewal(checkout_intent, is_canceled=False)
+
+        StripeEventSummary = self._get_model('customer_billing', 'StripeEventSummary')
+
+        # Restore has no Stripe timestamp and a created time before the deletion.
+        restore = self._create_summary(
+            checkout_intent, 'customer.subscription.updated',
+            None,  # stripe_event_created_at=NULL
+            subscription_status='active',
+        )
+        StripeEventSummary.objects.filter(pk=restore.pk).update(created=now - timedelta(days=3))
+
+        self._create_summary(
+            checkout_intent, 'customer.subscription.deleted',
+            now - timedelta(days=2),
+        )
+
+        renewal = self._apply_migration_and_get_renewal(renewal.id)
+        self.assertTrue(renewal.is_canceled)
+
+    def test_latest_restore_selected_by_effective_ts_when_null_stripe_ts(self):
+        """
+        When multiple restore events exist and the most recent one has
+        stripe_event_created_at=NULL, it is still selected as the latest restore
+        based on its Django ``created`` timestamp.
+
+        Before the fix, PostgreSQL's DESC NULL-first ordering could return a NULL-ts row
+        over a genuinely newer row with a real timestamp.
+        """
+        expected_cancel_at = datetime(2027, 1, 1, tzinfo=timezone.utc)
+        now = django_tz.now()
+        checkout_intent = self._create_checkout_intent()
+        renewal = self._create_renewal(checkout_intent, is_canceled=True)
+
+        StripeEventSummary = self._get_model('customer_billing', 'StripeEventSummary')
+
+        self._create_summary(
+            checkout_intent, 'customer.subscription.deleted',
+            now - timedelta(days=3),
+        )
+        # Earlier restore with a real Stripe timestamp and a different cancel_at.
+        self._create_summary(
+            checkout_intent, 'customer.subscription.updated',
+            now - timedelta(days=2),
+            subscription_status='active',
+            subscription_cancel_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        )
+        # Later restore: no Stripe timestamp, but Django created is the most recent.
+        later_restore = self._create_summary(
+            checkout_intent, 'customer.subscription.updated',
+            None,  # stripe_event_created_at=NULL
+            subscription_status='active',
+            subscription_cancel_at=expected_cancel_at,
+        )
+        StripeEventSummary.objects.filter(pk=later_restore.pk).update(created=now - timedelta(days=1))
+
+        renewal = self._apply_migration_and_get_renewal(renewal.id)
+        self.assertFalse(renewal.is_canceled)
+        self.assertEqual(renewal.subscription_cancel_at, expected_cancel_at)
