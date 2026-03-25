@@ -8,6 +8,7 @@ from uuid import UUID
 
 import stripe
 from django.utils import timezone
+from simple_history.utils import bulk_update_with_history
 
 from enterprise_access.apps.api_client.license_manager_client import LicenseManagerApiClient
 from enterprise_access.apps.customer_billing.constants import (
@@ -179,9 +180,16 @@ def _update_renewal_cancellation_state(
     subscription_cancel_at=None,
 ) -> None:
     """Set cancellation state on all renewals for a checkout intent."""
-    updated = checkout_intent.renewals.update(
-        is_canceled=is_canceled,
-        subscription_cancel_at=subscription_cancel_at,
+    renewals = list(checkout_intent.renewals.all())
+    for renewal in renewals:
+        renewal.is_canceled = is_canceled
+        renewal.subscription_cancel_at = subscription_cancel_at
+
+    updated = bulk_update_with_history(
+        renewals,
+        SelfServiceSubscriptionRenewal,
+        ['is_canceled', 'subscription_cancel_at', 'modified'],
+        batch_size=100,
     )
     logger.info(
         'Updated %d renewal(s) for CheckoutIntent %s: is_canceled=%s, subscription_cancel_at=%s',

@@ -5,10 +5,10 @@ Uses the ``Migrator`` class to properly roll back to the pre-migration state,
 create test data with historical (frozen) model classes, then apply the
 migration under test and verify results.
 """
-import ddt
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
+import ddt
 from django.db import connections
 from django.test import TransactionTestCase
 from django.utils import timezone as django_tz
