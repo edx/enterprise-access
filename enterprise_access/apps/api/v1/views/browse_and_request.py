@@ -2,6 +2,7 @@
 Rest API views for the browse and request app.
 """
 import logging
+from collections import Counter
 
 from celery import chain
 from django.conf import settings
@@ -77,7 +78,7 @@ from enterprise_access.apps.subsidy_request.utils import (
 from enterprise_access.apps.track.segment import track_event
 from enterprise_access.utils import format_traceback, get_subsidy_model
 
-from .utils import PaginationWithPageCount
+from .utils import PaginationWithPageCount, PaginationWithPageCountAndLearnerRequestStateCounts
 
 logger = logging.getLogger(__name__)
 
@@ -774,6 +775,7 @@ class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
     queryset = LearnerCreditRequest.objects.order_by("-created")
     serializer_class = serializers.LearnerCreditRequestSerializer
     filterset_class = LearnerCreditRequestFilterSet
+    pagination_class = PaginationWithPageCountAndLearnerRequestStateCounts
 
     # Add ordering fields including simple action-based sorting
     ordering_fields = [
@@ -816,6 +818,28 @@ class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
             )
 
         return queryset
+
+    def list(self, request, *args, **kwargs):
+        """
+        Lists LearnerCreditRequest records with aggregate learner_request_state_counts
+        computed across the entire filtered queryset (not just the current page).
+        """
+        response = super().list(request, *args, **kwargs)
+
+        # Compute learner_request_state_counts across the full filtered queryset (all pages).
+        queryset = self.filter_queryset(self.get_queryset())
+        state_counter = Counter(
+            queryset.exclude(
+                learner_request_state__isnull=True
+            ).values_list('learner_request_state', flat=True)
+        )
+        learner_request_state_counts = [
+            {'learner_request_state': state, 'count': count}
+            for state, count in state_counter.most_common()
+        ]
+
+        response.data['learner_request_state_counts'] = learner_request_state_counts
+        return response
 
     def _reuse_existing_request(self, request, course_price):
         """

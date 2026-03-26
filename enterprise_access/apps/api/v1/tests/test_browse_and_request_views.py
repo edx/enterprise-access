@@ -4083,3 +4083,192 @@ class TestLearnerCreditRequestViewSet(BaseEnterpriseAccessTestCase):
 
         # Serializer validation catches non-declinable state before the API function is called
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_list_includes_learner_request_state_counts(self):
+        """
+        Test that the list endpoint includes learner_request_state_counts
+        computed across the entire filtered queryset, not just the current page.
+        """
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': str(self.enterprise_customer_uuid_1)
+        }])
+
+        # Create requests in different states that will produce different learner_request_states.
+        # REQUESTED state → learner_request_state = 'requested'
+        for _ in range(3):
+            LearnerCreditRequestFactory(
+                enterprise_customer_uuid=self.enterprise_customer_uuid_1,
+                state=SubsidyRequestStates.REQUESTED,
+                learner_credit_request_config=self.learner_credit_config,
+            )
+
+        # APPROVED state → learner_request_state = 'waiting'
+        for _ in range(2):
+            LearnerCreditRequestFactory(
+                enterprise_customer_uuid=self.enterprise_customer_uuid_1,
+                state=SubsidyRequestStates.APPROVED,
+                learner_credit_request_config=self.learner_credit_config,
+            )
+
+        # DECLINED state → learner_request_state = 'declined'
+        LearnerCreditRequestFactory(
+            enterprise_customer_uuid=self.enterprise_customer_uuid_1,
+            state=SubsidyRequestStates.DECLINED,
+            learner_credit_request_config=self.learner_credit_config,
+        )
+
+        response = self.client.get(
+            LEARNER_CREDIT_REQUESTS_LIST_ENDPOINT,
+            {'enterprise_customer_uuid': self.enterprise_customer_uuid_1},
+        )
+        response_json = self.load_json(response.content)
+
+        assert 'learner_request_state_counts' in response_json
+        counts = response_json['learner_request_state_counts']
+
+        # Convert to a dict for easier assertion
+        counts_by_state = {item['learner_request_state']: item['count'] for item in counts}
+
+        # setUp creates: user_request_1 (REQUESTED), enterprise_request (REQUESTED)
+        # We added: 3 REQUESTED, 2 APPROVED, 1 DECLINED
+        # Total REQUESTED = 2 (setUp) + 3 = 5 → learner_request_state = 'requested'
+        # Total APPROVED = 2 → learner_request_state = 'waiting'
+        # Total DECLINED = 1 → learner_request_state = 'declined'
+        assert counts_by_state.get('requested') == 5
+        assert counts_by_state.get('waiting') == 2
+        assert counts_by_state.get('declined') == 1
+
+    def test_list_learner_request_state_counts_across_all_pages(self):
+        """
+        Test that learner_request_state_counts reflects totals across ALL pages,
+        not just the items on the current page.
+        """
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': str(self.enterprise_customer_uuid_1)
+        }])
+
+        # Create enough requests to span multiple pages (default page_size is small in tests).
+        # All in REQUESTED state → learner_request_state = 'requested'
+        for _ in range(15):
+            LearnerCreditRequestFactory(
+                enterprise_customer_uuid=self.enterprise_customer_uuid_1,
+                state=SubsidyRequestStates.REQUESTED,
+                learner_credit_request_config=self.learner_credit_config,
+            )
+
+        # Fetch page 1 with small page size to ensure pagination
+        response = self.client.get(
+            LEARNER_CREDIT_REQUESTS_LIST_ENDPOINT,
+            {
+                'enterprise_customer_uuid': self.enterprise_customer_uuid_1,
+                'page_size': 5,
+            },
+        )
+        response_json = self.load_json(response.content)
+
+        # Page should only have 5 results
+        assert len(response_json['results']) == 5
+
+        # But learner_request_state_counts should reflect ALL records across all pages
+        counts = response_json['learner_request_state_counts']
+        counts_by_state = {item['learner_request_state']: item['count'] for item in counts}
+
+        # 15 new + 2 from setUp (user_request_1 and enterprise_request, both REQUESTED) = 17
+        assert counts_by_state.get('requested') == 17
+
+    def test_list_learner_request_state_counts_respects_filters(self):
+        """
+        Test that learner_request_state_counts respects query filters
+        (e.g., filtering by state should affect the counts).
+        """
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': str(self.enterprise_customer_uuid_1)
+        }])
+
+        # Create mixed-state requests
+        for _ in range(3):
+            LearnerCreditRequestFactory(
+                enterprise_customer_uuid=self.enterprise_customer_uuid_1,
+                state=SubsidyRequestStates.APPROVED,
+                learner_credit_request_config=self.learner_credit_config,
+            )
+
+        # Filter to only APPROVED state
+        response = self.client.get(
+            LEARNER_CREDIT_REQUESTS_LIST_ENDPOINT,
+            {
+                'enterprise_customer_uuid': self.enterprise_customer_uuid_1,
+                'state': SubsidyRequestStates.APPROVED,
+            },
+        )
+        response_json = self.load_json(response.content)
+
+        counts = response_json['learner_request_state_counts']
+        counts_by_state = {item['learner_request_state']: item['count'] for item in counts}
+
+        # Only APPROVED requests should appear, which map to 'waiting'
+        assert counts_by_state.get('waiting') == 3
+        # No 'requested' state should appear since we filtered to APPROVED only
+        assert 'requested' not in counts_by_state
+
+    def test_list_learner_request_state_counts_empty(self):
+        """
+        Test that learner_request_state_counts returns an empty list when
+        no requests match the filter.
+        """
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': str(self.enterprise_customer_uuid_1)
+        }])
+
+        # Use a non-existent enterprise UUID to get zero results
+        non_existent_uuid = uuid4()
+        response = self.client.get(
+            LEARNER_CREDIT_REQUESTS_LIST_ENDPOINT,
+            {'enterprise_customer_uuid': str(non_existent_uuid)},
+        )
+        response_json = self.load_json(response.content)
+
+        assert response_json['learner_request_state_counts'] == []
+        assert response_json['count'] == 0
+
+    def test_list_learner_request_state_counts_with_failed_actions(self):
+        """
+        Test that requests with error actions are counted as 'failed' in
+        learner_request_state_counts, verifying action-based state computation.
+        """
+        from enterprise_access.apps.subsidy_request.tests.factories import LearnerCreditRequestActionsFactory
+
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': str(self.enterprise_customer_uuid_1)
+        }])
+
+        # Create an APPROVED request with a failed action (error_reason set)
+        approved_request = LearnerCreditRequestFactory(
+            enterprise_customer_uuid=self.enterprise_customer_uuid_1,
+            state=SubsidyRequestStates.APPROVED,
+            learner_credit_request_config=self.learner_credit_config,
+        )
+        LearnerCreditRequestActionsFactory(
+            learner_credit_request=approved_request,
+            recent_action=get_action_choice(SubsidyRequestStates.APPROVED),
+            error_reason=get_error_reason_choice(
+                LearnerCreditRequestActionErrorReasons.FAILED_APPROVAL
+            ),
+        )
+
+        response = self.client.get(
+            LEARNER_CREDIT_REQUESTS_LIST_ENDPOINT,
+            {'enterprise_customer_uuid': self.enterprise_customer_uuid_1},
+        )
+        response_json = self.load_json(response.content)
+
+        counts = response_json['learner_request_state_counts']
+        counts_by_state = {item['learner_request_state']: item['count'] for item in counts}
+
+        # The request with error_reason should be counted as 'failed'
+        assert counts_by_state.get('failed') == 1
