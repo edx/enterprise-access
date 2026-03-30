@@ -637,6 +637,13 @@ class StripeEventSummaryViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
         is_canceled = False
         renewed_subscription_plan_uuid = None
 
+        # TODO: Once paid->paid renewals are generated, filter only on prior_subscription_plan_uuid
+        # and drop the renewed_subscription_plan_uuid condition. Today we need both sides of the OR
+        # so that both the trial plan and the first paid plan can locate the same renewal record.
+        # Once paid->paid renewals exist, a paid plan could match two renewals (the one where it is
+        # the renewed plan, and a future one where it is the prior plan), making it ambiguous which
+        # to use, and it would be odd to key off an already-completed renewal for information about
+        # a future cancellation.
         first_related_renewal = SelfServiceSubscriptionRenewal.objects.filter(
             Q(prior_subscription_plan_uuid=subscription_plan_uuid) |
             Q(renewed_subscription_plan_uuid=subscription_plan_uuid)
