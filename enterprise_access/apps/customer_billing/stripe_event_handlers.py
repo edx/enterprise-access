@@ -25,6 +25,7 @@ from enterprise_access.apps.customer_billing.stripe_event_types import StripeEve
 from enterprise_access.apps.customer_billing.tasks import (
     send_billing_error_email_task,
     send_finalized_cancelation_email_task,
+    send_paid_cancellation_email_task,
     send_payment_receipt_email,
     send_trial_cancellation_email_task,
     send_trial_end_and_subscription_started_email_task,
@@ -634,6 +635,12 @@ class StripeEventHandler:
             if current_status == StripeSubscriptionStatus.TRIALING:
                 logger.info(f"Queuing trial cancellation email for checkout_intent_id={checkout_intent_id}")
                 send_trial_cancellation_email_task.delay(
+                    checkout_intent_id=checkout_intent.id,
+                    cancel_at_timestamp=current_cancel_at,
+                )
+            elif current_status == StripeSubscriptionStatus.ACTIVE:
+                logger.info(f"Queuing paid cancellation email for checkout_intent_id={checkout_intent_id}")
+                send_paid_cancellation_email_task.delay(
                     checkout_intent_id=checkout_intent.id,
                     cancel_at_timestamp=current_cancel_at,
                 )

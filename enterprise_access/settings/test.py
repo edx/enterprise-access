@@ -53,6 +53,7 @@ BRAZE_GROUPS_EMAIL_AUTO_REMINDER_DAY_50_CAMPAIGN = 'test-day-50-reminder-campaig
 BRAZE_GROUPS_EMAIL_AUTO_REMINDER_DAY_65_CAMPAIGN = 'test-day-65-reminder-campaign'
 BRAZE_GROUPS_EMAIL_AUTO_REMINDER_DAY_85_CAMPAIGN = 'test-day-85-reminder-campaign'
 BRAZE_TRIAL_CANCELLATION_CAMPAIGN = 'test-trial-cancellation-campaign'
+BRAZE_PAID_CANCELLATION_CAMPAIGN = 'test-paid-cancellation-campaign'
 BRAZE_ENTERPRISE_PROVISION_TRIAL_ENDING_SOON_CAMPAIGN = 'test-trial-ending-reminder-campaign'
 BRAZE_BILLING_ERROR_CAMPAIGN = 'test-billing-error-campaign'
 

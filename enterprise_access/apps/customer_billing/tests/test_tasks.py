@@ -16,6 +16,7 @@ from enterprise_access.apps.customer_billing.models import CheckoutIntent, Strip
 from enterprise_access.apps.customer_billing.tasks import (
     send_enterprise_provision_signup_confirmation_email,
     send_finalized_cancelation_email_task,
+    send_paid_cancellation_email_task,
     send_payment_receipt_email,
     send_trial_cancellation_email_task,
     send_trial_end_and_subscription_started_email_task,
@@ -126,6 +127,84 @@ class TestSendTrialCancellationEmailTask(TestCase):
             )
 
         # Verify the exception message
+        self.assertIn("Braze API error", str(context.exception))
+
+
+class TestSendPaidCancellationEmailTask(TestCase):
+    """Tests for send_paid_cancellation_email_task."""
+
+    def setUp(self):
+        """Set up test data."""
+        self.user = UserFactory()
+        self.checkout_intent = CheckoutIntent.create_intent(
+            user=self.user,
+            slug="test-enterprise",
+            name="Test Enterprise",
+            quantity=10,
+        )
+        self.checkout_intent.stripe_customer_id = "cus_test_123"
+        self.checkout_intent.save()
+
+        self.cancel_at_datetime = datetime(2025, 6, 1)
+        self.cancel_at_timestamp = int(self.cancel_at_datetime.timestamp())
+
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
+    def test_send_paid_cancellation_email_success(self, mock_lms_client, mock_braze_client):
+        """Test successful paid cancellation email send."""
+        mock_lms_instance = mock_lms_client.return_value
+        mock_lms_instance.get_enterprise_customer_data.return_value = {
+            "admin_users": [
+                {"email": "admin1@example.com", "lms_user_id": 123},
+                {"email": "admin2@example.com", "lms_user_id": 456},
+            ]
+        }
+
+        mock_braze_instance = mock_braze_client.return_value
+        mock_braze_instance.create_braze_recipient.side_effect = [
+            {"external_user_id": "123"},
+            {"external_user_id": "456"},
+        ]
+
+        send_paid_cancellation_email_task(
+            checkout_intent_id=self.checkout_intent.id,
+            cancel_at_timestamp=self.cancel_at_timestamp,
+        )
+
+        mock_braze_instance.send_campaign_message.assert_called_once()
+        call_args = mock_braze_instance.send_campaign_message.call_args
+
+        # Correct campaign
+        self.assertEqual(call_args[0][0], settings.BRAZE_PAID_CANCELLATION_CAMPAIGN)
+
+        # Two recipients
+        self.assertEqual(len(call_args[1]["recipients"]), 2)
+
+        # Trigger properties use plan_end_date (not trial_end_date)
+        trigger_props = call_args[1]["trigger_properties"]
+        self.assertIn("plan_end_date", trigger_props)
+        self.assertNotIn("trial_end_date", trigger_props)
+        self.assertIn("restart_subscription_url", trigger_props)
+
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
+    def test_send_paid_cancellation_email_braze_exception(self, mock_lms_client, mock_braze_client):
+        """Test that a Braze API exception propagates."""
+        mock_lms_instance = mock_lms_client.return_value
+        mock_lms_instance.get_enterprise_customer_data.return_value = {
+            "admin_users": [{"email": "admin1@example.com", "lms_user_id": 123}]
+        }
+
+        mock_braze_instance = mock_braze_client.return_value
+        mock_braze_instance.create_braze_recipient.return_value = {"external_user_id": "123"}
+        mock_braze_instance.send_campaign_message.side_effect = Exception("Braze API error")
+
+        with self.assertRaises(Exception) as context:
+            send_paid_cancellation_email_task(
+                checkout_intent_id=self.checkout_intent.id,
+                cancel_at_timestamp=self.cancel_at_timestamp,
+            )
+
         self.assertIn("Braze API error", str(context.exception))
 
 
