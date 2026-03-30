@@ -184,6 +184,7 @@ def _update_renewal_cancellation_state(
     for renewal in renewals:
         renewal.is_canceled = is_canceled
         renewal.subscription_cancel_at = subscription_cancel_at
+        renewal.modified = timezone.now()
 
     updated = bulk_update_with_history(
         renewals,
