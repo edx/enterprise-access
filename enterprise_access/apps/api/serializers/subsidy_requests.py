@@ -393,6 +393,10 @@ class LearnerCreditRequestCancelAllSerializer(serializers.Serializer):
         required=True,
         help_text="The UUID of the SubsidyAccessPolicy to filter requests."
     )
+    learner_request_state = serializers.CharField(
+        required=False,
+        help_text="Optional learner request state to filter by."
+    )
 
     def validate(self, attrs):
         """
@@ -412,6 +416,24 @@ class LearnerCreditRequestCancelAllSerializer(serializers.Serializer):
             attrs['_validation_failed'] = True
 
         return attrs
+
+
+class LearnerCreditRequestBulkCancelSerializer(serializers.Serializer):
+    """
+    Request serializer to validate bulk cancel endpoint for LearnerCreditRequests.
+
+    For view: LearnerCreditRequestViewSet.bulk_cancel
+    """
+    learner_credit_request_uuids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=True,
+        allow_empty=False,
+        help_text="A list of LearnerCreditRequest UUIDs to be cancelled."
+    )
+    enterprise_customer_uuid = serializers.UUIDField(
+        required=True,
+        help_text="The enterprise customer UUID for permission validation."
+    )
 
 
 class LearnerCreditRequestRemindSerializer(serializers.Serializer):
@@ -437,4 +459,8 @@ class LearnerCreditRequestRemindAllSerializer(serializers.Serializer):
     policy_uuid = serializers.UUIDField(
         required=True,
         help_text="The UUID of the SubsidyAccessPolicy to filter requests."
+    )
+    learner_request_state = serializers.CharField(
+        required=False,
+        help_text="Optional learner request state to filter by."
     )

@@ -13,6 +13,7 @@ from enterprise_access.apps.subsidy_access_policy.api import approve_learner_cre
 from enterprise_access.apps.subsidy_access_policy.exceptions import SubisidyAccessPolicyRequestApprovalError
 from enterprise_access.apps.subsidy_request.constants import (
     APPROVABLE_STATES,
+    CANCELABLE_STATES,
     DECLINABLE_STATES,
     REMINDABLE_STATES,
     LearnerCreditAdditionalActionStates,
@@ -260,7 +261,7 @@ def cancel_learner_credit_requests(
     non_cancelable = []
 
     for request in learner_credit_requests:
-        if request.state == SubsidyRequestStates.APPROVED and request.assignment:
+        if request.state in CANCELABLE_STATES and request.assignment:
             cancelable.append(request)
         else:
             non_cancelable.append(request)
