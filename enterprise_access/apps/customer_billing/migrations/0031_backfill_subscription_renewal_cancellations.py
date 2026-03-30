@@ -3,8 +3,7 @@ Data migration to backfill SelfServiceSubscriptionRenewal.is_canceled and
 subscription_cancel_at from historical Stripe events.
 """
 from django.db import migrations
-from django.db.models import DateTimeField, Q
-from django.db.models.functions import Coalesce
+from django.db.models import Q
 
 
 def backfill_subscription_renewal_cancellations(apps, schema_editor):
@@ -23,20 +22,16 @@ def backfill_subscription_renewal_cancellations(apps, schema_editor):
             event_type='customer.subscription.updated',
             subscription_status__in=['active', 'trialing'],
         )
-        deleted_ts = deleted_event.stripe_event_created_at or deleted_event.created
+        deleted_ts = deleted_event.stripe_event_created_at
         qs = StripeEventSummary.objects.filter(
             checkout_intent=deleted_event.checkout_intent,
-        ).filter(restore_filter).annotate(
-            effective_ts=Coalesce('stripe_event_created_at', 'created', output_field=DateTimeField())
-        ).filter(effective_ts__gt=deleted_ts)
-        return qs.order_by('-effective_ts').first()
+        ).filter(restore_filter).filter(stripe_event_created_at__gt=deleted_ts)
+        return qs.order_by('-stripe_event_created_at').first()
 
     deleted_events = StripeEventSummary.objects.filter(
         event_type='customer.subscription.deleted',
         checkout_intent__isnull=False,
-    ).select_related('checkout_intent').annotate(
-        effective_ts=Coalesce('stripe_event_created_at', 'created', output_field=DateTimeField())
-    ).order_by('effective_ts')
+    ).select_related('checkout_intent').order_by('stripe_event_created_at')
 
     for deleted_event in deleted_events.iterator(chunk_size=100):
         latest_restore_event = get_latest_restore_event(deleted_event)

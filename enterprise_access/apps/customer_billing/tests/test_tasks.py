@@ -433,16 +433,16 @@ class TestSendPaymentReceiptEmail(TestCase):
             event_id="evt_test_payment_receipt",
             event_type="invoice.paid",
             checkout_intent=self.checkout_intent,
+            data={'created': 1700000000},
         )
-        self.invoice_summary = StripeEventSummary.objects.create(
-            stripe_event_data=self.stripe_event_data,
-            event_type="invoice.paid",
+        StripeEventSummary.objects.filter(stripe_event_data=self.stripe_event_data).update(
             stripe_invoice_id=self.invoice_id,
             invoice_amount_paid=198000,  # $1,980.00 (5 licenses * $396.00)
             invoice_unit_amount=39600,   # $396.00 per license
             invoice_quantity=5,
             invoice_currency='usd',
         )
+        self.invoice_summary = StripeEventSummary.objects.get(stripe_event_data=self.stripe_event_data)
 
     @mock.patch('enterprise_access.apps.customer_billing.tasks.get_stripe_payment_method')
     @mock.patch('enterprise_access.apps.customer_billing.tasks.get_stripe_payment_intent')
@@ -731,10 +731,9 @@ class TestSendTrialEndingReminderEmailTask(TestCase):
             event_id="evt_test_123",
             event_type="customer.subscription.created",
             checkout_intent=self.checkout_intent,
+            data={'created': 1700000000},
         )
-        StripeEventSummary.objects.create(
-            stripe_event_data=stripe_event_data,
-            event_type="customer.subscription.created",
+        StripeEventSummary.objects.filter(stripe_event_data=stripe_event_data).update(
             stripe_subscription_id="sub_test_123",
             upcoming_invoice_amount_due=633600,
         )
@@ -952,10 +951,9 @@ class TestSendTrialEndingReminderEmailTask(TestCase):
             event_id="evt_test_456",
             event_type="invoice.paid",
             checkout_intent=self.checkout_intent,
+            data={'created': 1700000000},
         )
-        StripeEventSummary.objects.create(
-            stripe_event_data=stripe_event_data,
-            event_type="invoice.paid",
+        StripeEventSummary.objects.filter(stripe_event_data=stripe_event_data).update(
             stripe_invoice_id="in_test_789",
             invoice_amount_paid=100000,
         )

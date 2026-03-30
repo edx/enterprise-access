@@ -856,8 +856,6 @@ class StripeEventSummary(TimeStampedModel):
         help_text='The Stripe event type'
     )
     stripe_event_created_at = models.DateTimeField(
-        null=True,
-        blank=True,
         db_index=True,
         help_text='Timestamp when the Stripe event was created'
     )

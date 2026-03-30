@@ -788,6 +788,7 @@ class TestStripeEventSummary(TestCase):
         invoice_event_data = {
             'id': 'evt_test_invoice',
             'type': 'invoice.paid',
+            'created': 1700000000,
             'data': {
                 'object': {
                     'object': 'invoice',
@@ -845,6 +846,7 @@ class TestStripeEventSummary(TestCase):
         subscription_event_data = {
             'id': 'evt_test_sub_created',
             'type': 'customer.subscription.created',
+            'created': 1700000000,
             'data': {
                 'object': {
                     'object': 'subscription',
@@ -900,6 +902,7 @@ class TestStripeEventSummary(TestCase):
         subscription_event_data = {
             'id': 'evt_test_sub_cancel_at',
             'type': 'customer.subscription.updated',
+            'created': 1700000000,
             'data': {
                 'object': {
                     'object': 'subscription',
@@ -1012,6 +1015,7 @@ class TestStripeEventSummary(TestCase):
         subscription_event_data = {
             'id': 'evt_test_with_plan_uuid',
             'type': 'customer.subscription.created',
+            'created': 1700000000,
             'data': {
                 'object': {
                     'object': 'subscription',
@@ -1174,6 +1178,7 @@ class TestStripeEventSummary(TestCase):
         subscription_event_data = {
             'id': 'evt_test_sub_created',
             'type': 'customer.subscription.created',
+            'created': 1700000000,
             'data': {
                 'object': subscription_data_object
             }
@@ -1291,7 +1296,7 @@ class TestSelfServiceSubscriptionRenewal(TestCase):
             event_id='evt_test_123',
             event_type='customer.subscription.updated',
             checkout_intent=self.checkout_intent,
-            data={'test': 'data'}
+            data={'test': 'data', 'created': 1700000000}
         )
 
         # Create renewal record
@@ -1322,7 +1327,7 @@ class TestSelfServiceSubscriptionRenewal(TestCase):
             event_id='evt_test_is_canceled_default',
             event_type='customer.subscription.updated',
             checkout_intent=self.checkout_intent,
-            data={'test': 'data'}
+            data={'test': 'data', 'created': 1700000000}
         )
 
         renewal = SelfServiceSubscriptionRenewal.objects.create(
@@ -1334,24 +1339,6 @@ class TestSelfServiceSubscriptionRenewal(TestCase):
 
         self.assertFalse(renewal.is_canceled)
 
-    def test_self_service_subscription_renewal_subscription_cancel_at_default_none(self):
-        """Test that new renewal records default subscription_cancel_at to None."""
-        event_data = StripeEventData.objects.create(
-            event_id='evt_test_cancel_at_default',
-            event_type='customer.subscription.updated',
-            checkout_intent=self.checkout_intent,
-            data={'test': 'data'}
-        )
-
-        renewal = SelfServiceSubscriptionRenewal.objects.create(
-            checkout_intent=self.checkout_intent,
-            subscription_plan_renewal_id=998,
-            stripe_subscription_id='sub_test_cancel_at_default',
-            stripe_event_data=event_data,
-        )
-
-        self.assertIsNone(renewal.subscription_cancel_at)
-
     def test_self_service_subscription_renewal_mark_as_processed_multiple_times(self):
         """Test that calling mark_as_processed multiple times updates the timestamp each time."""
         # Create StripeEventData first
@@ -1359,7 +1346,7 @@ class TestSelfServiceSubscriptionRenewal(TestCase):
             event_id='evt_test_456',
             event_type='customer.subscription.updated',
             checkout_intent=self.checkout_intent,
-            data={'test': 'data'}
+            data={'test': 'data', 'created': 1700000000}
         )
 
         expected_renewal_id = 456

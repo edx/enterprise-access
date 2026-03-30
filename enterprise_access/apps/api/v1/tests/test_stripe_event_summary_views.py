@@ -41,6 +41,7 @@ class StripeEventSummaryTests(APITest):
         invoice_event_data = {
             'id': 'evt_test_invoice',
             'type': 'invoice.paid',
+            'created': 1700000000,
             'data': {
                 'object': {
                     'object': 'invoice',
@@ -70,6 +71,7 @@ class StripeEventSummaryTests(APITest):
         invoice_event_data_2 = {
             'id': 'evt_test_invoice',
             'type': 'invoice.paid',
+            'created': 1700000000,
             'data': {
                 'object': {
                     'object': 'invoice',
@@ -217,6 +219,7 @@ class StripeSubscriptionPlanInfoTests(APITest):
         self.subscription_created_event_data = {
             'id': 'evt_test_sub_created',
             'type': 'customer.subscription.created',
+            'created': 1700000000,
             'data': {
                 'object': {
                     'object': 'subscription',
@@ -244,6 +247,7 @@ class StripeSubscriptionPlanInfoTests(APITest):
         self.subscription_updated_event_data = {
             'id': 'evt_test_sub_updated',
             'type': 'customer.subscription.updated',
+            'created': 1700000000,
             'data': {
                 'object': {
                     'object': 'subscription',
