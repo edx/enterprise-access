@@ -558,4 +558,3 @@ class TestBackfillSubscriptionRenewalCancellations(TransactionTestCase):
         Renewal = new_state.apps.get_model('customer_billing', 'SelfServiceSubscriptionRenewal')
         self.assertTrue(Renewal.objects.get(pk=renewal_canceled.pk).is_canceled)
         self.assertFalse(Renewal.objects.get(pk=renewal_restored.pk).is_canceled)
-

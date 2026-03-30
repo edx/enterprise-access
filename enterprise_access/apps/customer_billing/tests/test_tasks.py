@@ -3,6 +3,7 @@ Tests for customer_billing tasks.
 """
 import json
 from datetime import datetime
+from datetime import timezone as dt_timezone
 from unittest import mock
 
 import stripe
@@ -435,14 +436,22 @@ class TestSendPaymentReceiptEmail(TestCase):
             checkout_intent=self.checkout_intent,
             data={'created': 1700000000},
         )
-        StripeEventSummary.objects.filter(stripe_event_data=self.stripe_event_data).update(
-            stripe_invoice_id=self.invoice_id,
-            invoice_amount_paid=198000,  # $1,980.00 (5 licenses * $396.00)
-            invoice_unit_amount=39600,   # $396.00 per license
-            invoice_quantity=5,
-            invoice_currency='usd',
+        # The post_save signal tries to auto-create StripeEventSummary but fails silently
+        # when the event data lacks a Stripe object payload. Create it directly here.
+        self.invoice_summary, _ = StripeEventSummary.objects.get_or_create(
+            stripe_event_data=self.stripe_event_data,
+            defaults=dict(
+                event_id=self.stripe_event_data.event_id,
+                event_type=self.stripe_event_data.event_type,
+                stripe_event_created_at=datetime.fromtimestamp(1700000000, tz=dt_timezone.utc),
+                checkout_intent=self.checkout_intent,
+                stripe_invoice_id=self.invoice_id,
+                invoice_amount_paid=198000,  # $1,980.00 (5 licenses * $396.00)
+                invoice_unit_amount=39600,   # $396.00 per license
+                invoice_quantity=5,
+                invoice_currency='usd',
+            ),
         )
-        self.invoice_summary = StripeEventSummary.objects.get(stripe_event_data=self.stripe_event_data)
 
     @mock.patch('enterprise_access.apps.customer_billing.tasks.get_stripe_payment_method')
     @mock.patch('enterprise_access.apps.customer_billing.tasks.get_stripe_payment_intent')
@@ -733,9 +742,16 @@ class TestSendTrialEndingReminderEmailTask(TestCase):
             checkout_intent=self.checkout_intent,
             data={'created': 1700000000},
         )
-        StripeEventSummary.objects.filter(stripe_event_data=stripe_event_data).update(
-            stripe_subscription_id="sub_test_123",
-            upcoming_invoice_amount_due=633600,
+        StripeEventSummary.objects.get_or_create(
+            stripe_event_data=stripe_event_data,
+            defaults=dict(
+                event_id=stripe_event_data.event_id,
+                event_type=stripe_event_data.event_type,
+                stripe_event_created_at=datetime.fromtimestamp(1700000000, tz=dt_timezone.utc),
+                checkout_intent=self.checkout_intent,
+                stripe_subscription_id="sub_test_123",
+                upcoming_invoice_amount_due=633600,
+            ),
         )
 
         mock_braze_instance = mock_braze_client.return_value
@@ -953,9 +969,16 @@ class TestSendTrialEndingReminderEmailTask(TestCase):
             checkout_intent=self.checkout_intent,
             data={'created': 1700000000},
         )
-        StripeEventSummary.objects.filter(stripe_event_data=stripe_event_data).update(
-            stripe_invoice_id="in_test_789",
-            invoice_amount_paid=100000,
+        StripeEventSummary.objects.get_or_create(
+            stripe_event_data=stripe_event_data,
+            defaults=dict(
+                event_id=stripe_event_data.event_id,
+                event_type=stripe_event_data.event_type,
+                stripe_event_created_at=datetime.fromtimestamp(1700000000, tz=dt_timezone.utc),
+                checkout_intent=self.checkout_intent,
+                stripe_invoice_id="in_test_789",
+                invoice_amount_paid=100000,
+            ),
         )
 
         mock_braze_instance = mock_braze_client.return_value
