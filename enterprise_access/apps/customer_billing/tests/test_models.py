@@ -1136,6 +1136,47 @@ class TestStripeEventSummary(TestCase):
         previous = other_checkout_intent.previous_summary(current_event)
         self.assertIsNone(previous)
 
+    def test_populate_with_summary_data_falls_back_to_stripe_event_data_created(self):
+        """
+        When the raw event payload lacks a top-level 'created' key,
+        stripe_event_created_at should fall back to StripeEventData.created
+        so the non-nullable field is always populated.
+        """
+        event_data_without_created = {
+            'id': 'evt_test_no_created',
+            'type': 'customer.subscription.created',
+            # Note: no top-level 'created' key
+            'data': {
+                'object': {
+                    'object': 'subscription',
+                    'id': 'sub_test_no_created',
+                    'status': 'active',
+                    'currency': 'usd',
+                    'items': {
+                        'data': [
+                            {
+                                'current_period_start': 1609459200,
+                                'current_period_end': 1640995200,
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+
+        stripe_event_data = StripeEventData.objects.create(
+            event_id='evt_test_no_created',
+            event_type='customer.subscription.created',
+            checkout_intent=self.checkout_intent,
+            data=event_data_without_created,
+        )
+
+        summary = StripeEventSummary(stripe_event_data=stripe_event_data)
+        summary.populate_with_summary_data()
+
+        self.assertIsNotNone(summary.stripe_event_created_at)
+        self.assertEqual(summary.stripe_event_created_at, stripe_event_data.created)
+
     def _create_mock_stripe_event(self, event_type, event_data):
         """Helper to create a mock Stripe event."""
         mock_event = mock.MagicMock(spec=stripe.Event)

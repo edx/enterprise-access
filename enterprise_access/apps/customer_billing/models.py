@@ -1005,7 +1005,11 @@ class StripeEventSummary(TimeStampedModel):
         if 'created' in event_data:
             self.stripe_event_created_at = self._timestamp_to_datetime(event_data['created'])
         else:
-            logger.warning(f"No 'created' timestamp found in event {stripe_event_data.event_id}")
+            logger.warning(
+                "No 'created' timestamp found in event %s, falling back to StripeEventData.created",
+                stripe_event_data.event_id,
+            )
+            self.stripe_event_created_at = stripe_event_data.created
 
         # Get subscription plan UUID from related workflow
         if checkout_intent and checkout_intent.workflow:
