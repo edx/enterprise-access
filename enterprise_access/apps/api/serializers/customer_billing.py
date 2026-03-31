@@ -318,26 +318,31 @@ class BillingAddressResponseSerializer(serializers.Serializer):
     address_line_1 = serializers.CharField(
         required=False,
         allow_null=True,
+        allow_blank=True,
         help_text='First line of the street address',
     )
     address_line_2 = serializers.CharField(
         required=False,
         allow_null=True,
+        allow_blank=True,
         help_text='Second line of the street address (optional)',
     )
     city = serializers.CharField(
         required=False,
         allow_null=True,
+        allow_blank=True,
         help_text='City of the billing address',
     )
     state = serializers.CharField(
         required=False,
         allow_null=True,
+        allow_blank=True,
         help_text='State or province of the billing address',
     )
     postal_code = serializers.CharField(
         required=False,
         allow_null=True,
+        allow_blank=True,
         help_text='Postal code or zip code of the billing address',
     )
     phone = serializers.CharField(

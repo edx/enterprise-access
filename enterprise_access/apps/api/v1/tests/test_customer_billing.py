@@ -880,6 +880,45 @@ class BillingManagementAddressEndpointTests(BillingManagementBaseTest):
         self.assertIsNone(response_data.get('address_line_1'))
         self.assertIsNone(response_data.get('city'))
 
+    @mock.patch('stripe.Customer.retrieve')
+    def test_get_address_with_empty_string_values(self, mock_stripe_customer_retrieve):
+        """
+        Test that endpoint handles Stripe customers with empty string address values.
+
+        Stripe may return empty strings for address fields rather than null values.
+        The response serializer should accept these without validation errors.
+        """
+        mock_stripe_customer = {
+            'id': self.stripe_customer_id,
+            'name': 'Jane Doe',
+            'email': 'jane@example.com',
+            'phone': None,
+            'address': {
+                'line1': '',
+                'line2': '',
+                'city': '',
+                'state': '',
+                'postal_code': '',
+                'country': 'US',
+            },
+        }
+        mock_stripe_customer_retrieve.return_value = mock_stripe_customer
+
+        url = reverse('api:v1:billing-management-address')
+        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response_data = response.json()
+        self.assertEqual(response_data['name'], 'Jane Doe')
+        self.assertEqual(response_data['email'], 'jane@example.com')
+        self.assertIsNone(response_data['phone'])
+        self.assertEqual(response_data['address_line_1'], '')
+        self.assertEqual(response_data['address_line_2'], '')
+        self.assertEqual(response_data['city'], '')
+        self.assertEqual(response_data['state'], '')
+        self.assertEqual(response_data['postal_code'], '')
+        self.assertEqual(response_data['country'], 'US')
+
 
 @ddt.ddt
 class BillingManagementAddressUpdateTests(BillingManagementBaseTest):
