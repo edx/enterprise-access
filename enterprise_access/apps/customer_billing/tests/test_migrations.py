@@ -271,12 +271,12 @@ class TestBackfillRenewalInvoiceAndEffectiveDate(TransactionTestCase):
 @ddt.ddt
 class TestBackfillSubscriptionRenewalCancellations(TransactionTestCase):
     """
-    Tests for the backfill data migration 0031.
+    Tests for the backfill data migration 0030.
 
     Each test:
     1. Rolls the DB back to migration 0029 (is_canceled and subscription_cancel_at fields exist but no backfill yet)
     2. Creates test data using historical (frozen) model classes
-    3. Applies migration 0031 (the backfill)
+    3. Applies migration 0030 (the backfill)
     4. Verifies the backfilled cancellation state
     """
 
