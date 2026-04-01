@@ -274,14 +274,14 @@ class TestBackfillSubscriptionRenewalCancellations(TransactionTestCase):
     Tests for the backfill data migration 0031.
 
     Each test:
-    1. Rolls the DB back to migration 0030 (is_canceled and subscription_cancel_at fields exist but no backfill yet)
+    1. Rolls the DB back to migration 0029 (is_canceled and subscription_cancel_at fields exist but no backfill yet)
     2. Creates test data using historical (frozen) model classes
     3. Applies migration 0031 (the backfill)
     4. Verifies the backfilled cancellation state
     """
 
-    migrate_from = [('customer_billing', '0030_selfservicesubscriptionrenewal_subscription_cancel_at')]
-    migrate_to = [('customer_billing', '0031_backfill_subscription_renewal_cancellations')]
+    migrate_from = [('customer_billing', '0029_historicalselfservicesubscriptionrenewal_is_canceled_and_more')]
+    migrate_to = [('customer_billing', '0030_backfill_subscription_renewal_cancellations')]
 
     def setUp(self):
         super().setUp()

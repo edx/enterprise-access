@@ -3,6 +3,14 @@
 from django.db import migrations, models
 
 
+def backfill_stripe_event_created_at(apps, schema_editor):
+    """Fill any NULL stripe_event_created_at values with the record's created timestamp."""
+    StripeEventSummary = apps.get_model('customer_billing', 'StripeEventSummary')
+    StripeEventSummary.objects.filter(stripe_event_created_at__isnull=True).update(
+        stripe_event_created_at=models.F('created')
+    )
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -19,5 +27,40 @@ class Migration(migrations.Migration):
             model_name='selfservicesubscriptionrenewal',
             name='is_canceled',
             field=models.BooleanField(db_index=True, default=False, help_text='True if the subscription has been canceled. Can be set back to False if subscription is un-canceled.'),
+        ),
+        migrations.AddField(
+            model_name='historicalselfservicesubscriptionrenewal',
+            name='subscription_cancel_at',
+            field=models.DateTimeField(
+                blank=True,
+                null=True,
+                help_text=(
+                    'Timestamp when the subscription is scheduled to be canceled. '
+                    'Set from Stripe cancel_at on subscription_updated events; '
+                    'cleared on subscription deletion or when cancellation is reversed.'
+                ),
+            ),
+        ),
+        migrations.AddField(
+            model_name='selfservicesubscriptionrenewal',
+            name='subscription_cancel_at',
+            field=models.DateTimeField(
+                blank=True,
+                null=True,
+                help_text=(
+                    'Timestamp when the subscription is scheduled to be canceled. '
+                    'Set from Stripe cancel_at on subscription_updated events; '
+                    'cleared on subscription deletion or when cancellation is reversed.'
+                ),
+            ),
+        ),
+        migrations.RunPython(
+            backfill_stripe_event_created_at,
+            reverse_code=migrations.RunPython.noop,
+        ),
+        migrations.AlterField(
+            model_name='stripeeventsummary',
+            name='stripe_event_created_at',
+            field=models.DateTimeField(db_index=True, help_text='Timestamp when the Stripe event was created'),
         ),
     ]

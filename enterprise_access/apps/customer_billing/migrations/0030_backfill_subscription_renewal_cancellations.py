@@ -53,7 +53,7 @@ def backfill_subscription_renewal_cancellations(apps, schema_editor):
 
 class Migration(migrations.Migration):
     dependencies = [
-        ('customer_billing', '0030_selfservicesubscriptionrenewal_subscription_cancel_at'),
+        ('customer_billing', '0029_historicalselfservicesubscriptionrenewal_is_canceled_and_more'),
     ]
 
     operations = [
