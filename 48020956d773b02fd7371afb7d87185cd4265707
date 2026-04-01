@@ -1,0 +1,24 @@
+enterprise_access/apps/api/v1/tests/test_customer_billing.py
+  8a2875199a4c334e 883-921
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.23",
+  "base_commit_sha": "48020956d773b02fd7371afb7d87185cd4265707",
+  "prompts": {
+    "8a2875199a4c334e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c9ec176e-acb0-435b-8691-a32200a67790",
+        "model": "claude-opus-4-5-20251101"
+      },
+      "human_author": "Alexander Dusenbery <adusenbery@2u.com>",
+      "messages": [],
+      "total_additions": 41,
+      "total_deletions": 2,
+      "accepted_lines": 39,
+      "overriden_lines": 0,
+      "messages_url": "https://usegitai.com/cas/6b0525a7ad181fabbfcabe85781a855542f89bab99cf8593eef6fa0711839078"
+    }
+  }
+}
