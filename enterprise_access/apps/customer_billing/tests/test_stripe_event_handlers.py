@@ -37,6 +37,7 @@ from enterprise_access.apps.customer_billing.tests.factories import (
     StripeEventSummaryFactory,
     get_stripe_object_for_event_type
 )
+from enterprise_access.apps.customer_billing.utils import datetime_from_timestamp
 from enterprise_access.apps.provisioning.models import (
     GetCreateFirstPaidSubscriptionPlanStep,
     GetCreateTrialSubscriptionPlanStep
@@ -732,6 +733,125 @@ class TestStripeEventHandler(TestCase):
         # The different between these two integer timestamps should be small,
         # certainly less than one second.
         self.assertLess(timezone.now().timestamp() - trial_end_value, 1)
+
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.cancel_all_future_plans"
+    )
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_finalized_cancelation_email_task"
+    )
+    def test_subscription_deleted_marks_renewals_canceled(
+        self, mock_send_cancelation_email, mock_cancel,
+    ):
+        """Subscription deleted event marks related renewal records as canceled."""
+        event_data = StripeEventDataFactory(
+            checkout_intent=self.checkout_intent,
+            event_type='customer.subscription.created',
+        )
+        renewal = SelfServiceSubscriptionRenewal.objects.create(
+            checkout_intent=self.checkout_intent,
+            subscription_plan_renewal_id=42,
+            stripe_event_data=event_data,
+            stripe_subscription_id='sub_test_deleted_marks_renewal',
+            renewed_subscription_plan_uuid=uuid.uuid4(),
+            is_canceled=False,
+            subscription_cancel_at=timezone.now() + timedelta(days=30),
+        )
+
+        self._create_existing_event_data_records(
+            'sub_test_deleted_marks_renewal',
+            subscription_status=StripeSubscriptionStatus.ACTIVE,
+        )
+
+        self.checkout_intent.enterprise_uuid = uuid.uuid4()
+        self.checkout_intent.save(update_fields=['enterprise_uuid'])
+
+        mock_event = self._create_mock_stripe_event(
+            'customer.subscription.deleted',
+            {
+                'id': 'sub_test_deleted_marks_renewal',
+                'status': 'canceled',
+                'ended_at': 1700000000,
+                'metadata': self._create_mock_stripe_subscription(self.checkout_intent.id),
+            },
+        )
+
+        StripeEventHandler.dispatch(mock_event)
+
+        renewal.refresh_from_db()
+        self.assertTrue(renewal.is_canceled)
+        self.assertIsNone(renewal.subscription_cancel_at)
+        mock_cancel.assert_called_once_with(self.checkout_intent)
+        mock_send_cancelation_email.delay.assert_called_once_with(
+            checkout_intent_id=self.checkout_intent.id,
+            ended_at_timestamp=1700000000,
+        )
+
+    def test_subscription_updated_active_marks_renewals_uncanceled(self):
+        """
+        Restored subscriptions should flip renewal records back to is_canceled=False and clear subscription_cancel_at.
+        """
+        event_data = StripeEventDataFactory(
+            checkout_intent=self.checkout_intent,
+            event_type='customer.subscription.created',
+        )
+        renewal = SelfServiceSubscriptionRenewal.objects.create(
+            checkout_intent=self.checkout_intent,
+            subscription_plan_renewal_id=43,
+            stripe_event_data=event_data,
+            stripe_subscription_id='sub_test_uncancel',
+            renewed_subscription_plan_uuid=uuid.uuid4(),
+            is_canceled=True,
+            subscription_cancel_at=timezone.now() + timedelta(days=30),
+        )
+
+        mock_event = self._create_mock_stripe_event(
+            'customer.subscription.updated',
+            {
+                'id': 'sub_test_uncancel',
+                'status': StripeSubscriptionStatus.ACTIVE,
+                'metadata': self._create_mock_stripe_subscription(self.checkout_intent.id),
+            },
+        )
+
+        StripeEventHandler.dispatch(mock_event)
+
+        renewal.refresh_from_db()
+        self.assertFalse(renewal.is_canceled)
+        self.assertIsNone(renewal.subscription_cancel_at)
+
+    def test_subscription_updated_sets_subscription_cancel_at(self):
+        """subscription_updated with cancel_at should set subscription_cancel_at on the renewal."""
+        event_data = StripeEventDataFactory(
+            checkout_intent=self.checkout_intent,
+            event_type='customer.subscription.created',
+        )
+        renewal = SelfServiceSubscriptionRenewal.objects.create(
+            checkout_intent=self.checkout_intent,
+            subscription_plan_renewal_id=44,
+            stripe_event_data=event_data,
+            stripe_subscription_id='sub_test_set_cancel_at',
+            renewed_subscription_plan_uuid=uuid.uuid4(),
+            is_canceled=False,
+            subscription_cancel_at=None,
+        )
+
+        cancel_at_timestamp = 1700000000
+        mock_event = self._create_mock_stripe_event(
+            'customer.subscription.updated',
+            {
+                'id': 'sub_test_set_cancel_at',
+                'status': StripeSubscriptionStatus.TRIALING,
+                'cancel_at': cancel_at_timestamp,
+                'metadata': self._create_mock_stripe_subscription(self.checkout_intent.id),
+            },
+        )
+
+        StripeEventHandler.dispatch(mock_event)
+
+        renewal.refresh_from_db()
+        self.assertFalse(renewal.is_canceled)
+        self.assertEqual(renewal.subscription_cancel_at, datetime_from_timestamp(cancel_at_timestamp))
 
     @mock.patch(
         "enterprise_access.apps.customer_billing.stripe_event_handlers.cancel_all_future_plans"

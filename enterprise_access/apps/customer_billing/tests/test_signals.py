@@ -27,6 +27,7 @@ class TestStripeEventDataSignals(TestCase):
         invoice_event_data = {
             'id': 'evt_test_auto_create',
             'type': 'invoice.paid',
+            'created': 1700000000,
             'data': {
                 'object': {
                     'object': 'invoice',
@@ -87,6 +88,7 @@ class TestStripeEventDataSignals(TestCase):
         initial_event_data = {
             'id': 'evt_test_update',
             'type': 'invoice.paid',
+            'created': 1700000000,
             'data': {
                 'object': {
                     'object': 'invoice',
@@ -129,6 +131,7 @@ class TestStripeEventDataSignals(TestCase):
         updated_event_data = {
             'id': 'evt_test_update',
             'type': 'invoice.paid',
+            'created': 1700000000,
             'data': {
                 'object': {
                     'object': 'invoice',

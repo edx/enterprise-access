@@ -718,6 +718,21 @@ class SelfServiceSubscriptionRenewal(TimeStampedModel):
         blank=True,
         help_text='The renewed (or future) subscription plan uuid on this renewal',
     )
+    is_canceled = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text='True if the subscription has been canceled. Can be set back to False if subscription is '
+                  'un-canceled.',
+    )
+    subscription_cancel_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text=(
+            'Timestamp when the subscription is scheduled to be canceled. '
+            'Set from Stripe cancel_at on subscription_updated events; '
+            'cleared on subscription deletion or when cancellation is reversed.'
+        ),
+    )
     stripe_event_data = models.OneToOneField(
         'StripeEventData',
         on_delete=models.CASCADE,
@@ -841,8 +856,6 @@ class StripeEventSummary(TimeStampedModel):
         help_text='The Stripe event type'
     )
     stripe_event_created_at = models.DateTimeField(
-        null=True,
-        blank=True,
         db_index=True,
         help_text='Timestamp when the Stripe event was created'
     )
@@ -992,7 +1005,11 @@ class StripeEventSummary(TimeStampedModel):
         if 'created' in event_data:
             self.stripe_event_created_at = self._timestamp_to_datetime(event_data['created'])
         else:
-            logger.warning(f"No 'created' timestamp found in event {stripe_event_data.event_id}")
+            logger.warning(
+                "No 'created' timestamp found in event %s, falling back to StripeEventData.created",
+                stripe_event_data.event_id,
+            )
+            self.stripe_event_created_at = stripe_event_data.created
 
         # Get subscription plan UUID from related workflow
         if checkout_intent and checkout_intent.workflow:

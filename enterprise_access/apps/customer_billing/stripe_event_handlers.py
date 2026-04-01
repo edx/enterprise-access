@@ -8,6 +8,7 @@ from uuid import UUID
 
 import stripe
 from django.utils import timezone
+from simple_history.utils import bulk_update_with_history
 
 from enterprise_access.apps.api_client.license_manager_client import LicenseManagerApiClient
 from enterprise_access.apps.customer_billing.constants import (
@@ -171,6 +172,30 @@ def cancel_all_future_plans(checkout_intent):
         logger.info('Future plan %s de-activated for Checkout Intent %s', deactivated_plan_uuid, checkout_intent.uuid)
 
     return deactivated
+
+
+def _update_renewal_cancellation_state(
+    checkout_intent: CheckoutIntent,
+    is_canceled: bool,
+    subscription_cancel_at=None,
+) -> None:
+    """Set cancellation state on all renewals for a checkout intent."""
+    renewals = list(checkout_intent.renewals.all())
+    for renewal in renewals:
+        renewal.is_canceled = is_canceled
+        renewal.subscription_cancel_at = subscription_cancel_at
+        renewal.modified = timezone.now()
+
+    updated = bulk_update_with_history(
+        renewals,
+        SelfServiceSubscriptionRenewal,
+        ['is_canceled', 'subscription_cancel_at', 'modified'],
+        batch_size=100,
+    )
+    logger.info(
+        'Updated %d renewal(s) for CheckoutIntent %s: is_canceled=%s, subscription_cancel_at=%s',
+        updated, checkout_intent.id, is_canceled, subscription_cancel_at,
+    )
 
 
 def _try_enable_pending_updates(stripe_subscription_id):
@@ -628,6 +653,9 @@ class StripeEventHandler:
             checkout_intent_id, event.id
         )
         link_event_data_to_checkout_intent(event, checkout_intent)
+        # Explicitly mark as not canceled on subscription creation rather than relying on the model default.
+        # This ensures consistency since cancellations can be triggered by both updates and deletions.
+        _update_renewal_cancellation_state(checkout_intent, is_canceled=False)
 
         checkout_intent.stripe_customer_id = subscription.get('customer', None)
         checkout_intent.save()
@@ -662,6 +690,21 @@ class StripeEventHandler:
             handle_pending_update(subscription.id, checkout_intent_id, pending_update)
 
         current_status = subscription.get("status")
+        current_cancel_at = subscription.get('cancel_at')
+        current_cancel_at_datetime = datetime_from_timestamp(current_cancel_at) if current_cancel_at else None
+
+        if current_status in [StripeSubscriptionStatus.ACTIVE, StripeSubscriptionStatus.TRIALING]:
+            # Proactively mark as not canceled whenever the subscription is active/trialing.
+            # This guards against edge cases where cancellation state is not cleared on creation
+            # and ensures correctness when a previously-canceled subscription is re-activated.
+            # Also keeps subscription_cancel_at in sync: set it when cancel_at is present,
+            # clear it when the subscription is active with no scheduled cancellation.
+            _update_renewal_cancellation_state(
+                checkout_intent,
+                is_canceled=False,
+                subscription_cancel_at=current_cancel_at_datetime,
+            )
+
         previous_summary = checkout_intent.previous_summary(event, stripe_object_type='subscription')
         if not previous_summary:
             logger.warning(
@@ -688,10 +731,6 @@ class StripeEventHandler:
         # Handle subscription cancellation scheduling (when user clicks cancel in Stripe)
         # This triggers before the subscription status actually changes
         prior_cancel_at = previous_summary.subscription_cancel_at
-        current_cancel_at = subscription.get('cancel_at')
-        current_cancel_at_datetime = None
-        if current_cancel_at:
-            current_cancel_at_datetime = datetime_from_timestamp(current_cancel_at)
 
         # Detect when cancellation is newly scheduled (was None, now has value)
         if prior_cancel_at is None and current_cancel_at_datetime is not None:
@@ -745,6 +784,7 @@ class StripeEventHandler:
                 subscription.id,
                 checkout_intent.id,
             )
+        _update_renewal_cancellation_state(checkout_intent, is_canceled=True, subscription_cancel_at=None)
 
         previous_summary = checkout_intent.previous_summary(event, stripe_object_type='subscription')
         if previous_summary.subscription_status == StripeSubscriptionStatus.ACTIVE:

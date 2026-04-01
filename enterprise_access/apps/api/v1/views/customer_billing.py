@@ -634,16 +634,31 @@ class StripeEventSummaryViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
             subscription_plan_uuid=subscription_plan_uuid,
         ).select_related('checkout_intent').order_by('-stripe_event_created_at').first()
         checkout_intent_uuid, canceled_date, currency, upcoming_invoice_amount_due = None, None, None, None
+        is_canceled = False
+        renewed_subscription_plan_uuid = None
 
+        # TODO: Once paid->paid renewals are generated, filter only on prior_subscription_plan_uuid
+        # and drop the renewed_subscription_plan_uuid condition. Today we need both sides of the OR
+        # so that both the trial plan and the first paid plan can locate the same renewal record.
+        # Once paid->paid renewals exist, a paid plan could match two renewals (the one where it is
+        # the renewed plan, and a future one where it is the prior plan), making it ambiguous which
+        # to use, and it would be odd to key off an already-completed renewal for information about
+        # a future cancellation.
         first_related_renewal = SelfServiceSubscriptionRenewal.objects.filter(
             Q(prior_subscription_plan_uuid=subscription_plan_uuid) |
             Q(renewed_subscription_plan_uuid=subscription_plan_uuid)
         ).select_related('checkout_intent').order_by('created').first()
         if first_related_renewal:
             checkout_intent_uuid = first_related_renewal.checkout_intent.uuid
+            is_canceled = first_related_renewal.is_canceled
+            renewed_subscription_plan_uuid = first_related_renewal.renewed_subscription_plan_uuid
+            canceled_date = first_related_renewal.subscription_cancel_at
 
         if updated_event_summary:
-            canceled_date = updated_event_summary.subscription_cancel_at
+            # Fall back to the event summary's cancel_at for records predating the
+            # subscription_cancel_at field on SelfServiceSubscriptionRenewal.
+            if canceled_date is None:
+                canceled_date = updated_event_summary.subscription_cancel_at
             checkout_intent_uuid = updated_event_summary.checkout_intent.uuid \
                 if updated_event_summary.checkout_intent else checkout_intent_uuid
 
@@ -660,7 +675,9 @@ class StripeEventSummaryViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
                 'upcoming_invoice_amount_due': upcoming_invoice_amount_due,
                 'currency': currency,
                 'canceled_date': canceled_date,
-                'checkout_intent_uuid': checkout_intent_uuid
+                'checkout_intent_uuid': checkout_intent_uuid,
+                'is_canceled': is_canceled,
+                'renewed_subscription_plan_uuid': renewed_subscription_plan_uuid,
             },
         )
         if not subscription_plan_uuid:
