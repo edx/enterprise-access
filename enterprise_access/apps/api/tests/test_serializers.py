@@ -16,7 +16,10 @@ from enterprise_access.apps.api.serializers.subsidy_access_policy import (
     SubsidyAccessPolicyCreditsAvailableResponseSerializer,
     SubsidyAccessPolicyRedeemableResponseSerializer
 )
-from enterprise_access.apps.api.serializers.subsidy_requests import LearnerCreditRequestSerializer
+from enterprise_access.apps.api.serializers.subsidy_requests import (
+    LearnerCreditRequestBulkCancelSerializer,
+    LearnerCreditRequestSerializer
+)
 from enterprise_access.apps.content_assignments.tests.factories import (
     AssignmentConfigurationFactory,
     LearnerContentAssignmentFactory
@@ -519,3 +522,55 @@ class TestLearnerCreditRequestSerializer(TestCase):
         self.assertIn('learner_request_state', data)
         expected_state = SubsidyRequestStates.REQUESTED
         self.assertEqual(data['learner_request_state'], expected_state)
+
+
+class TestLearnerCreditRequestBulkCancelSerializer(TestCase):
+    """
+    Tests for the LearnerCreditRequestBulkCancelSerializer.
+    """
+
+    def test_valid_data(self):
+        """Test serializer accepts valid data with UUIDs and enterprise_customer_uuid."""
+        data = {
+            'learner_credit_request_uuids': [str(uuid4()), str(uuid4())],
+            'enterprise_customer_uuid': str(uuid4()),
+        }
+        serializer = LearnerCreditRequestBulkCancelSerializer(data=data)
+        self.assertTrue(serializer.is_valid())
+
+    def test_empty_uuids_rejected(self):
+        """Test serializer rejects empty UUID list."""
+        data = {
+            'learner_credit_request_uuids': [],
+            'enterprise_customer_uuid': str(uuid4()),
+        }
+        serializer = LearnerCreditRequestBulkCancelSerializer(data=data)
+        self.assertFalse(serializer.is_valid())
+        self.assertIn('learner_credit_request_uuids', serializer.errors)
+
+    def test_missing_enterprise_customer_uuid(self):
+        """Test serializer rejects missing enterprise_customer_uuid."""
+        data = {
+            'learner_credit_request_uuids': [str(uuid4())],
+        }
+        serializer = LearnerCreditRequestBulkCancelSerializer(data=data)
+        self.assertFalse(serializer.is_valid())
+        self.assertIn('enterprise_customer_uuid', serializer.errors)
+
+    def test_invalid_uuid_format_rejected(self):
+        """Test serializer rejects invalid UUID format in the list."""
+        data = {
+            'learner_credit_request_uuids': ['not-a-uuid'],
+            'enterprise_customer_uuid': str(uuid4()),
+        }
+        serializer = LearnerCreditRequestBulkCancelSerializer(data=data)
+        self.assertFalse(serializer.is_valid())
+
+    def test_missing_uuids_field(self):
+        """Test serializer rejects missing learner_credit_request_uuids."""
+        data = {
+            'enterprise_customer_uuid': str(uuid4()),
+        }
+        serializer = LearnerCreditRequestBulkCancelSerializer(data=data)
+        self.assertFalse(serializer.is_valid())
+        self.assertIn('learner_credit_request_uuids', serializer.errors)

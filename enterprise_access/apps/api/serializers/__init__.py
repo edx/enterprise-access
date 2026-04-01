@@ -67,6 +67,7 @@ from .subsidy_requests import (
     CouponCodeRequestSerializer,
     LearnerCreditRequestApproveAllSerializer,
     LearnerCreditRequestApproveRequestSerializer,
+    LearnerCreditRequestBulkCancelSerializer,
     LearnerCreditRequestCancelAllSerializer,
     LearnerCreditRequestCancelSerializer,
     LearnerCreditRequestDeclineAllSerializer,

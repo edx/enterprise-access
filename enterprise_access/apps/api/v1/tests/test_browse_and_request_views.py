@@ -3479,6 +3479,225 @@ class TestLearnerCreditRequestViewSet(BaseEnterpriseAccessTestCase):
         assert approved_request.state == SubsidyRequestStates.CANCELLED
         assert approved_request.reviewer == self.user
 
+    @mock.patch('enterprise_access.apps.subsidy_request.tasks.send_learner_credit_bnr_cancel_notification_task.delay')
+    @mock.patch('enterprise_access.apps.content_assignments.api.cancel_assignments')
+    def test_cancel_all_with_learner_request_state_filter(self, mock_cancel_assignments, mock_cancel_task):
+        """
+        Test cancel-all with learner_request_state filter only cancels matching requests.
+        """
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': str(self.enterprise_customer_uuid_1)
+        }])
+
+        # Create two approved requests with assignments and different action states
+        assignment_waiting = LearnerContentAssignmentFactory(
+            assignment_configuration=self.assignment_config,
+            content_quantity=-1000,
+            state='allocated'
+        )
+        request_waiting = LearnerCreditRequestFactory(
+            enterprise_customer_uuid=self.enterprise_customer_uuid_1,
+            user=self.user,
+            learner_credit_request_config=self.learner_credit_config,
+            course_price=1000,
+            state=SubsidyRequestStates.APPROVED,
+            assignment=assignment_waiting
+        )
+        # Create an action so learner_request_state is 'waiting'
+        LearnerCreditRequestActions.create_action(
+            learner_credit_request=request_waiting,
+            recent_action=SubsidyRequestStates.APPROVED,
+            status=SubsidyRequestStates.APPROVED,
+        )
+
+        assignment_failed = LearnerContentAssignmentFactory(
+            assignment_configuration=self.assignment_config,
+            content_quantity=-1000,
+            state='allocated'
+        )
+        request_failed = LearnerCreditRequestFactory(
+            enterprise_customer_uuid=self.enterprise_customer_uuid_1,
+            user=self.user,
+            learner_credit_request_config=self.learner_credit_config,
+            course_price=1000,
+            state=SubsidyRequestStates.APPROVED,
+            assignment=assignment_failed
+        )
+        # Create an action with error_reason so learner_request_state is 'failed'
+        LearnerCreditRequestActions.create_action(
+            learner_credit_request=request_failed,
+            recent_action=SubsidyRequestStates.APPROVED,
+            status=SubsidyRequestStates.APPROVED,
+            error_reason=LearnerCreditRequestActionErrorReasons.FAILED_APPROVAL,
+        )
+
+        mock_cancel_assignments.return_value = {'non_cancelable': []}
+
+        url = reverse('api:v1:learner-credit-requests-cancel-all')
+        data = {
+            'enterprise_customer_uuid': str(self.enterprise_customer_uuid_1),
+            'policy_uuid': str(self.policy.uuid),
+            'learner_request_state': 'waiting',
+        }
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(url, data, content_type='application/json')
+
+        assert response.status_code == status.HTTP_202_ACCEPTED
+
+        # Only the 'waiting' request should be cancelled
+        request_waiting.refresh_from_db()
+        request_failed.refresh_from_db()
+        assert request_waiting.state == SubsidyRequestStates.CANCELLED
+        assert request_failed.state == SubsidyRequestStates.APPROVED
+
+    @mock.patch('enterprise_access.apps.subsidy_request.tasks.send_learner_credit_bnr_cancel_notification_task.delay')
+    @mock.patch('enterprise_access.apps.content_assignments.api.cancel_assignments')
+    def test_bulk_cancel_success(self, mock_cancel_assignments, mock_cancel_task):
+        """
+        Test successful bulk-cancel with specific UUIDs.
+        """
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': str(self.enterprise_customer_uuid_1)
+        }])
+
+        assignment_1 = LearnerContentAssignmentFactory(
+            assignment_configuration=self.assignment_config,
+            content_quantity=-1000,
+            state='allocated'
+        )
+        assignment_2 = LearnerContentAssignmentFactory(
+            assignment_configuration=self.assignment_config,
+            content_quantity=-1000,
+            state='allocated'
+        )
+        request_1 = LearnerCreditRequestFactory(
+            enterprise_customer_uuid=self.enterprise_customer_uuid_1,
+            user=self.user,
+            learner_credit_request_config=self.learner_credit_config,
+            course_price=1000,
+            state=SubsidyRequestStates.APPROVED,
+            assignment=assignment_1
+        )
+        request_2 = LearnerCreditRequestFactory(
+            enterprise_customer_uuid=self.enterprise_customer_uuid_1,
+            user=self.user,
+            learner_credit_request_config=self.learner_credit_config,
+            course_price=1000,
+            state=SubsidyRequestStates.APPROVED,
+            assignment=assignment_2
+        )
+
+        mock_cancel_assignments.return_value = {'non_cancelable': []}
+
+        url = reverse('api:v1:learner-credit-requests-bulk-cancel')
+        data = {
+            'enterprise_customer_uuid': str(self.enterprise_customer_uuid_1),
+            'learner_credit_request_uuids': [str(request_1.uuid), str(request_2.uuid)]
+        }
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(url, data, content_type='application/json')
+
+        assert response.status_code == status.HTTP_202_ACCEPTED
+
+        request_1.refresh_from_db()
+        request_2.refresh_from_db()
+        assert request_1.state == SubsidyRequestStates.CANCELLED
+        assert request_2.state == SubsidyRequestStates.CANCELLED
+        assert mock_cancel_task.call_count == 2
+
+    def test_bulk_cancel_uuid_not_found(self):
+        """
+        Test bulk-cancel returns 404 when one or more UUIDs not found.
+        """
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': str(self.enterprise_customer_uuid_1)
+        }])
+
+        url = reverse('api:v1:learner-credit-requests-bulk-cancel')
+        data = {
+            'enterprise_customer_uuid': str(self.enterprise_customer_uuid_1),
+            'learner_credit_request_uuids': [str(uuid4())]
+        }
+        response = self.client.post(url, data, content_type='application/json')
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        assert 'not found' in response.data['detail'].lower()
+
+    @mock.patch('enterprise_access.apps.content_assignments.api.cancel_assignments')
+    def test_bulk_cancel_non_cancelable(self, mock_cancel_assignments):
+        """
+        Test bulk-cancel returns 422 when some requests cannot be cancelled.
+        """
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': str(self.enterprise_customer_uuid_1)
+        }])
+
+        assignment = LearnerContentAssignmentFactory(
+            assignment_configuration=self.assignment_config,
+            content_quantity=-1000,
+            state='allocated'
+        )
+        approved_request = LearnerCreditRequestFactory(
+            enterprise_customer_uuid=self.enterprise_customer_uuid_1,
+            user=self.user,
+            learner_credit_request_config=self.learner_credit_config,
+            course_price=1000,
+            state=SubsidyRequestStates.APPROVED,
+            assignment=assignment
+        )
+
+        mock_cancel_assignments.return_value = {'non_cancelable': [assignment]}
+
+        url = reverse('api:v1:learner-credit-requests-bulk-cancel')
+        data = {
+            'enterprise_customer_uuid': str(self.enterprise_customer_uuid_1),
+            'learner_credit_request_uuids': [str(approved_request.uuid)]
+        }
+        response = self.client.post(url, data, content_type='application/json')
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert 'non_cancelable' in response.data
+
+    def test_bulk_cancel_403_for_learner(self):
+        """
+        Test that learners receive a 403 if they attempt to access the bulk-cancel endpoint.
+        """
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE,
+            'context': str(self.enterprise_customer_uuid_1)
+        }])
+
+        url = reverse('api:v1:learner-credit-requests-bulk-cancel')
+        data = {
+            'enterprise_customer_uuid': str(self.enterprise_customer_uuid_1),
+            'learner_credit_request_uuids': [str(uuid4())]
+        }
+        response = self.client.post(url, data, content_type='application/json')
+
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+
+    def test_bulk_cancel_empty_uuids_rejected(self):
+        """
+        Test that bulk-cancel rejects an empty UUID list.
+        """
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': str(self.enterprise_customer_uuid_1)
+        }])
+
+        url = reverse('api:v1:learner-credit-requests-bulk-cancel')
+        data = {
+            'enterprise_customer_uuid': str(self.enterprise_customer_uuid_1),
+            'learner_credit_request_uuids': []
+        }
+        response = self.client.post(url, data, content_type='application/json')
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
     @ddt.data(
         'latest_action_status',
         '-latest_action_status',
@@ -3939,6 +4158,69 @@ class TestLearnerCreditRequestViewSet(BaseEnterpriseAccessTestCase):
         response = self.client.post(url, data, content_type='application/json')
 
         assert response.status_code == status.HTTP_403_FORBIDDEN
+
+    @mock.patch('enterprise_access.apps.subsidy_request.api.send_reminder_email_for_pending_learner_credit_request')
+    def test_remind_all_with_learner_request_state_filter(self, mock_send_reminder_task):
+        """
+        Test remind-all with learner_request_state filter only reminds matching requests.
+        """
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': str(self.enterprise_customer_uuid_1)
+        }])
+
+        # Create a 'waiting' request (approved action, no error)
+        assignment_waiting = LearnerContentAssignmentFactory(
+            assignment_configuration=self.assignment_config,
+            content_quantity=-1000,
+            state='allocated'
+        )
+        request_waiting = LearnerCreditRequestFactory(
+            enterprise_customer_uuid=self.enterprise_customer_uuid_1,
+            user=self.user,
+            learner_credit_request_config=self.learner_credit_config,
+            course_price=1000,
+            state=SubsidyRequestStates.APPROVED,
+            assignment=assignment_waiting
+        )
+        LearnerCreditRequestActions.create_action(
+            learner_credit_request=request_waiting,
+            recent_action=SubsidyRequestStates.APPROVED,
+            status=SubsidyRequestStates.APPROVED,
+        )
+
+        # Create a 'failed' request (approved action with error_reason)
+        assignment_failed = LearnerContentAssignmentFactory(
+            assignment_configuration=self.assignment_config,
+            content_quantity=-1000,
+            state='allocated'
+        )
+        request_failed = LearnerCreditRequestFactory(
+            enterprise_customer_uuid=self.enterprise_customer_uuid_1,
+            user=self.user,
+            learner_credit_request_config=self.learner_credit_config,
+            course_price=1000,
+            state=SubsidyRequestStates.APPROVED,
+            assignment=assignment_failed
+        )
+        LearnerCreditRequestActions.create_action(
+            learner_credit_request=request_failed,
+            recent_action=SubsidyRequestStates.APPROVED,
+            status=SubsidyRequestStates.APPROVED,
+            error_reason=LearnerCreditRequestActionErrorReasons.FAILED_APPROVAL,
+        )
+
+        url = reverse('api:v1:learner-credit-requests-remind-all')
+        data = {
+            'enterprise_customer_uuid': str(self.enterprise_customer_uuid_1),
+            'policy_uuid': str(self.policy.uuid),
+            'learner_request_state': 'waiting',
+        }
+        response = self.client.post(url, data, content_type='application/json')
+
+        assert response.status_code == status.HTTP_202_ACCEPTED
+        # Only the 'waiting' request should be reminded
+        assert mock_send_reminder_task.delay.call_count == 1
 
     @mock.patch('enterprise_access.apps.subsidy_request.api.send_learner_credit_bnr_decline_notification_task')
     def test_decline_all_success(self, mock_decline_notification_task):

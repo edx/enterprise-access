@@ -51,6 +51,7 @@ from enterprise_access.apps.subsidy_access_policy.models import SubsidyAccessPol
 from enterprise_access.apps.subsidy_request import api as subsidy_request_api
 from enterprise_access.apps.subsidy_request.constants import (
     APPROVABLE_STATES,
+    CANCELABLE_STATES,
     DECLINABLE_STATES,
     REMINDABLE_STATES,
     REUSABLE_REQUEST_STATES,
@@ -1229,12 +1230,18 @@ class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
         serializer.is_valid(raise_exception=True)
 
         policy_uuid = serializer.validated_data['policy_uuid']
+        learner_request_state = serializer.validated_data.get('learner_request_state')
 
         # Filter to remindable requests for this policy
-        learner_credit_requests = self.get_queryset().select_related('assignment').filter(
-            state__in=REMINDABLE_STATES,
-            learner_credit_request_config__learner_credit_config__uuid=policy_uuid
-        )
+        filter_kwargs = {
+            'state__in': REMINDABLE_STATES,
+            'learner_credit_request_config__learner_credit_config__uuid': policy_uuid,
+        }
+        queryset = self.get_queryset()
+        if learner_request_state:
+            queryset = LearnerCreditRequest.annotate_dynamic_fields_onto_queryset(queryset)
+            filter_kwargs['learner_request_state'] = learner_request_state
+        learner_credit_requests = queryset.select_related('assignment').filter(**filter_kwargs)
 
         if not learner_credit_requests.exists():
             return Response(
@@ -1281,13 +1288,19 @@ class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
 
         policy_uuid = serializer.validated_data['policy_uuid']
         enterprise_customer_uuid = serializer.validated_data['enterprise_customer_uuid']
+        learner_request_state = serializer.validated_data.get('learner_request_state')
 
         # Filter to APPROVED requests for this policy AND enterprise customer
-        learner_credit_requests = self.get_queryset().select_related('assignment').filter(
-            state=SubsidyRequestStates.APPROVED,
-            enterprise_customer_uuid=enterprise_customer_uuid,
-            learner_credit_request_config__learner_credit_config__uuid=policy_uuid
-        )
+        filter_kwargs = {
+            'state__in': CANCELABLE_STATES,
+            'enterprise_customer_uuid': enterprise_customer_uuid,
+            'learner_credit_request_config__learner_credit_config__uuid': policy_uuid,
+        }
+        queryset = self.get_queryset()
+        if learner_request_state:
+            queryset = LearnerCreditRequest.annotate_dynamic_fields_onto_queryset(queryset)
+            filter_kwargs['learner_request_state'] = learner_request_state
+        learner_credit_requests = queryset.select_related('assignment').filter(**filter_kwargs)
 
         if not learner_credit_requests.exists():
             return Response(
@@ -1305,6 +1318,50 @@ class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
                 {
                     "detail": "Some requests could not be cancelled.",
                     "non_cancelable": [str(r.uuid) for r in result['non_cancelable']]
+                },
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+
+        return Response(status=status.HTTP_202_ACCEPTED)
+
+    @permission_required(
+        constants.REQUESTS_ADMIN_ACCESS_PERMISSION,
+        fn=get_enterprise_uuid_from_request_data,
+    )
+    @action(detail=False, url_path='bulk-cancel', methods=['post'])
+    def bulk_cancel(self, request, *args, **kwargs):
+        """
+        Cancel multiple LearnerCreditRequests by UUID list.
+
+        Accepts a list of learner_credit_request_uuids and enterprise_customer_uuid.
+        Returns 404 if any UUIDs not found.
+        Returns 422 if some requests cannot be cancelled.
+        Returns 202 if all requests were successfully cancelled.
+        """
+        serializer = serializers.LearnerCreditRequestBulkCancelSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        learner_credit_request_uuids = serializer.validated_data['learner_credit_request_uuids']
+
+        learner_credit_requests = self.get_queryset().select_related('assignment').filter(
+            uuid__in=learner_credit_request_uuids
+        )
+
+        if len(learner_credit_requests) != len(set(learner_credit_request_uuids)):
+            return Response(
+                {"detail": "One or more learner credit request UUIDs not found."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        result = subsidy_request_api.cancel_learner_credit_requests(
+            learner_credit_requests, request.user
+        )
+
+        if result.get('non_cancelable'):
+            return Response(
+                {
+                    "detail": "Some requests could not be cancelled.",
+                    "non_cancelable": [str(r.uuid) for r in result['non_cancelable']],
                 },
                 status=status.HTTP_422_UNPROCESSABLE_ENTITY
             )
