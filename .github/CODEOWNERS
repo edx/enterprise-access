@@ -1,2 +1,10 @@
-# Grant all Enterprise/B2B squads merge permission to entire repo.
-* @edx/enterprise-titans @edx/enterprise-markhors @edx/enterprise-sunrise @edx/enterprise-lakshy
+# Catch-all: only Titans can approve/merge anything not matched below.
+* @edx/enterprise-titans
+
+# Application code: Titans + trusted maintainer subteams from each contractor.
+/enterprise_access/ @edx/enterprise-titans @edx/enterprise-sunrise-maintainers @edx/enterprise-lakshy-maintainers
+
+# Docs, markdown, and RST files: Titans + full contractor teams.
+/docs/ @edx/enterprise-titans @edx/enterprise-sunrise @edx/enterprise-lakshy
+*.md @edx/enterprise-titans @edx/enterprise-sunrise @edx/enterprise-lakshy
+*.rst @edx/enterprise-titans @edx/enterprise-sunrise @edx/enterprise-lakshy
