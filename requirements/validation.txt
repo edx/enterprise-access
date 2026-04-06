@@ -75,12 +75,12 @@ cffi==2.0.0
     #   -r requirements/test.txt
     #   cryptography
     #   pynacl
-charset-normalizer==3.4.6
+charset-normalizer==3.4.7
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
     #   requests
-click==8.3.1
+click==8.3.2
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -373,7 +373,7 @@ edx-lint==6.0.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
-edx-opaque-keys[django]==3.1.0
+edx-opaque-keys[django]==4.0.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -525,7 +525,7 @@ monotonic==1.6
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
     #   analytics-python
-more-itertools==10.8.0
+more-itertools==11.0.1
     # via
     #   -r requirements/quality.txt
     #   jaraco-classes
@@ -858,7 +858,7 @@ typing-extensions==4.15.0
     #   edx-opaque-keys
     #   referencing
     #   stripe
-tzdata==2025.3
+tzdata==2026.1
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
