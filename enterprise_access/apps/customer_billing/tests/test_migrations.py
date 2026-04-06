@@ -381,84 +381,84 @@ class TestBackfillSubscriptionRenewalCancellations(TransactionTestCase):
     #   expected_is_canceled      - bool: asserted on renewal after migration
     #   expected_cancel_at        - datetime or None: asserted on renewal after migration
     @ddt.data(
-        dict(
-            initial_is_canceled=False,
-            initial_cancel_at_offset=None,
-            events=[
+        {
+            'initial_is_canceled': False,
+            'initial_cancel_at_offset': None,
+            'events': [
                 ('customer.subscription.deleted', timedelta(days=1), None, None),
             ],
-            expected_is_canceled=True,
-            expected_cancel_at=None,
-        ),
-        dict(
-            initial_is_canceled=True,
-            initial_cancel_at_offset=None,
-            events=[
+            'expected_is_canceled': True,
+            'expected_cancel_at': None,
+        },
+        {
+            'initial_is_canceled': True,
+            'initial_cancel_at_offset': None,
+            'events': [
                 ('customer.subscription.deleted', timedelta(days=2), 'canceled', None),
                 ('customer.subscription.updated', timedelta(days=1), 'active', None),
             ],
-            expected_is_canceled=False,
-            expected_cancel_at=None,
-        ),
-        dict(
-            initial_is_canceled=True,
-            initial_cancel_at_offset=None,
-            events=[
+            'expected_is_canceled': False,
+            'expected_cancel_at': None,
+        },
+        {
+            'initial_is_canceled': True,
+            'initial_cancel_at_offset': None,
+            'events': [
                 ('customer.subscription.deleted', timedelta(hours=1), None, None),
             ],
-            expected_is_canceled=True,
-            expected_cancel_at=None,
-        ),
-        dict(
-            initial_is_canceled=True,
-            initial_cancel_at_offset=None,
-            events=[
+            'expected_is_canceled': True,
+            'expected_cancel_at': None,
+        },
+        {
+            'initial_is_canceled': True,
+            'initial_cancel_at_offset': None,
+            'events': [
                 ('customer.subscription.deleted', timedelta(days=2), None, None),
                 ('customer.subscription.created', timedelta(days=1), None, None),
             ],
-            expected_is_canceled=False,
-            expected_cancel_at=None,
-        ),
-        dict(
-            initial_is_canceled=False,
-            initial_cancel_at_offset=None,
-            events=[
+            'expected_is_canceled': False,
+            'expected_cancel_at': None,
+        },
+        {
+            'initial_is_canceled': False,
+            'initial_cancel_at_offset': None,
+            'events': [
                 ('customer.subscription.updated', timedelta(days=3), 'active', None),
                 ('customer.subscription.deleted', timedelta(days=1), None, None),
             ],
-            expected_is_canceled=True,
-            expected_cancel_at=None,
-        ),
-        dict(
-            initial_is_canceled=False,
-            initial_cancel_at_offset=timedelta(days=30),
-            events=[
+            'expected_is_canceled': True,
+            'expected_cancel_at': None,
+        },
+        {
+            'initial_is_canceled': False,
+            'initial_cancel_at_offset': timedelta(days=30),
+            'events': [
                 ('customer.subscription.deleted', timedelta(hours=1), None, None),
             ],
-            expected_is_canceled=True,
-            expected_cancel_at=None,
-        ),
-        dict(
-            initial_is_canceled=True,
-            initial_cancel_at_offset=None,
-            events=[
+            'expected_is_canceled': True,
+            'expected_cancel_at': None,
+        },
+        {
+            'initial_is_canceled': True,
+            'initial_cancel_at_offset': None,
+            'events': [
                 ('customer.subscription.deleted', timedelta(days=2), None, None),
                 ('customer.subscription.updated', timedelta(days=1), 'active',
                  datetime(2026, 6, 1, tzinfo=timezone.utc)),
             ],
-            expected_is_canceled=False,
-            expected_cancel_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
-        ),
-        dict(
-            initial_is_canceled=True,
-            initial_cancel_at_offset=timedelta(days=10),
-            events=[
+            'expected_is_canceled': False,
+            'expected_cancel_at': datetime(2026, 6, 1, tzinfo=timezone.utc),
+        },
+        {
+            'initial_is_canceled': True,
+            'initial_cancel_at_offset': timedelta(days=10),
+            'events': [
                 ('customer.subscription.deleted', timedelta(days=2), None, None),
                 ('customer.subscription.updated', timedelta(days=1), 'active', None),
             ],
-            expected_is_canceled=False,
-            expected_cancel_at=None,
-        ),
+            'expected_is_canceled': False,
+            'expected_cancel_at': None,
+        },
     )
     @ddt.unpack
     def test_cancellation_scenario(
