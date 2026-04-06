@@ -316,6 +316,46 @@ def send_billing_error_email_task(checkout_intent_id: int):
 
 
 @shared_task(base=LoggedTaskWithRetry)
+def send_reinstatement_email_task(checkout_intent_id: int):
+    """
+    Send Braze email notification when a subscription is reinstated after a scheduled cancellation.
+
+    This task handles sending a confirmation email to enterprise admins when their
+    subscription cancellation is reversed (i.e., the subscription is restored).
+
+    Args:
+        checkout_intent_id (int): ID of the CheckoutIntent record
+    """
+    checkout_intent = CheckoutIntent.objects.get(id=checkout_intent_id)
+    enterprise_slug = checkout_intent.enterprise_slug
+
+    admin_users = get_enterprise_admins(enterprise_slug, raise_if_empty=True)
+    braze_client = BrazeApiClient()
+    recipients = prepare_admin_braze_recipients(
+        braze_client, admin_users, enterprise_slug, raise_if_empty=True,
+    )
+
+    logger.info(
+        "Sending reinstatement email for CheckoutIntent %s (enterprise slug: %s)",
+        checkout_intent_id,
+        enterprise_slug,
+    )
+
+    braze_trigger_properties = {
+        "enterprise_admin_portal_url": f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/{enterprise_slug}',
+    }
+
+    send_campaign_message(
+        braze_client,
+        settings.BRAZE_SSP_SUBSCRIPTION_REINSTATED_CAMPAIGN,
+        recipients=recipients,
+        trigger_properties=braze_trigger_properties,
+        organization_name=checkout_intent.enterprise_name,
+        email_description='subscription reinstatement email',
+    )
+
+
+@shared_task(base=LoggedTaskWithRetry)
 def send_trial_ending_reminder_email_task(checkout_intent_id):
     """
     Send Braze email notification 72 hours before trial subscription ends.

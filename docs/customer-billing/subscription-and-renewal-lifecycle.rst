@@ -6,7 +6,8 @@ Overview
 
 The customer billing domain manages the complete lifecycle of self-service enterprise subscriptions,
 from initial checkout through annual renewals. This system orchestrates interactions between Stripe (payments),
-Salesforce (CRM), and License Manager (subscription management) to provide a seamless subscription experience.
+Salesforce (CRM), License Manager (subscription management), and Braze (email notifications)
+to provide a seamless subscription experience.
 
 **Key Principles:**
 
@@ -18,7 +19,7 @@ Salesforce (CRM), and License Manager (subscription management) to provide a sea
 Architecture Overview
 ---------------------
 
-The subscription lifecycle spans four main services, each with distinct responsibilities:
+The subscription lifecycle spans five main services, each with distinct responsibilities:
 
 **Stripe (Payment Processing)**
 
@@ -37,12 +38,18 @@ The subscription lifecycle spans four main services, each with distinct responsi
 * Processes Stripe webhooks and maintains customer subscription state
 * Provides provisioning API for Salesforce integration
 * Provides REST and BFF APIs for integration with our frontends
-* Orchestrates License Manager ``SusbscriptionPlan`` and renewal operations
+* Orchestrates License Manager ``SubscriptionPlan`` and renewal operations
+* Triggers Braze email campaigns at key lifecycle events
 
 **License Manager (Subscription & License Management)**
 
 * Manages subscription plans and license allocation (i.e. the core edX Enterprise subscription domain records)
 * Processes subscription renewals and transitions
+
+**Braze (Email Notifications)**
+
+* Handles transactional email delivery to enterprise admins
+* Campaigns are triggered via API from Enterprise Access Celery tasks
 
 Core Models and Relationships
 -----------------------------
@@ -57,7 +64,7 @@ Key Fields:
 
 * ``enterprise_uuid``: Links to the enterprise customer in downstream systems
 * ``stripe_customer_id``: Links to the Stripe customer record
-* ``state``: Tracks the overall subscription state (CREATED → PAID → FULFILLED)
+* ``state``: Tracks the overall subscription state (CREATED -> PAID -> FULFILLED)
 * ``workflow``: Links to the provisioning workflow that created the subscription
 
 **StripeEventData**
@@ -81,6 +88,8 @@ Key Fields:
 
 * ``subscription_plan_uuid``: Links to the License Manager subscription plan
 * ``stripe_subscription_id``: Stripe's subscription identifier
+* ``subscription_status``: Current Stripe subscription status (trialing, active, past_due, canceled)
+* ``subscription_cancel_at``: Timestamp when subscription is scheduled to cancel (if any)
 
 **SelfServiceSubscriptionRenewal**
 
@@ -91,7 +100,10 @@ Key Fields:
 
 * ``subscription_plan_renewal_id``: UUID of the renewal record in License Manager
 * ``stripe_event_data``: Links to the specific Stripe event that triggered the renewal
+* ``stripe_invoice_id``: Links to the Stripe invoice for this renewal period
 * ``processed_at``: Timestamp when the renewal was successfully processed
+* ``is_canceled``: Whether the subscription is currently canceled
+* ``subscription_cancel_at``: Timestamp when the subscription is scheduled to cancel
 
 Subscription Lifecycle States
 -----------------------------
@@ -101,58 +113,156 @@ Subscription Lifecycle States
 When a customer completes self-service checkout,
 Stripe creates a subscription in trial status and sends an ``invoice.paid`` event (amount=$0). This triggers:
 
-1. CheckoutIntent state transitions from CREATED → PAID → FULFILLED
+1. CheckoutIntent state transitions from CREATED -> PAID -> FULFILLED
 2. Salesforce receives the webhook and creates Account/Contact/Opportunity records
 3. Salesforce calls the ``/provisioning`` API to create our internal enterprise customer and subscription records
-   (for both the trial and 1st paid plan) via API calls to downstream services.
+   (for both the trial and 1st paid plan) via API calls to downstream services
+
+*Braze Emails:* Signup confirmation email sent after provisioning completes.
+
+* ``BRAZE_ENTERPRISE_PROVISION_SIGNUP_CONFIRMATION_CAMPAIGN`` - Signup confirmation with subscription dates, amounts, and names.
+
+**Trial Period (72 Hours Before End)**
+
+Stripe sends a ``customer.subscription.trial_will_end`` event 72 hours before the trial ends.
+
+*Braze Emails:* ``BRAZE_ENTERPRISE_PROVISION_TRIAL_ENDING_SOON_CAMPAIGN`` - Reminder email with
+subscription details, renewal amount, and management link.
 
 **Trial-to-Paid Transition**
 
-When the trial period ends, Stripe automatically transitions the subscription to an ``active`` status and
-sends a ``customer.subscription.updated`` event (trialing -> active). This triggers:
+When the trial period ends, Stripe automatically:
 
-1. Enterprise Access webhook handler detects the status change
+1. Transitions the subscription to ``active`` status
+2. Creates and charges the first invoice (amount > $0), sending an ``invoice.created`` event.
+3. Charges the first invoice (amount > $0), sending an ``invoice.paid`` event.
+
+On ``invoice.paid`` (amount > $0), Enterprise Access:
+
+1. Links the invoice to the corresponding ``SelfServiceSubscriptionRenewal`` (matched by ``stripe_invoice_id``)
 2. Calls License Manager's ``/api/v1/provisioning-admins/subscription-plan-renewals/{id}/process/`` endpoint
-3. License Manager processes the renewal from the trial -> paid subscription plan
-4. Creates a ``SelfServiceSubscriptionRenewal`` record to track the processing
+3. License Manager processes the renewal from trial -> paid subscription plan
+4. Marks the ``SelfServiceSubscriptionRenewal`` as processed
+5. Activates the paid subscription plan in License Manager
+
+*Braze Emails:*
+
+* ``BRAZE_ENTERPRISE_PROVISION_PAYMENT_RECEIPT_CAMPAIGN`` - Payment receipt with amount, license count, billing details
+* ``BRAZE_ENTERPRISE_PROVISION_TRIAL_END_SUBSCRIPTION_STARTED_CAMPAIGN`` - Confirmation that trial has ended and paid subscription is active
 
 **Active Subscription Management**
 
 During the active subscription period:
-  
-* First paid invoice generates ``invoice.paid`` event (amount>$0)
-* Salesforce creates a paid Opportunity Line Item
+
+* Subsequent ``invoice.paid`` events (amount > $0) trigger payment receipt emails
+* Salesforce creates paid Opportunity Line Items
 * Salesforce calls ``/api/v1/provisioning/subscription-plan-oli-update`` API to associate the OLI with the paid subscription plan
 
-**Payment Errors**
+*Braze Emails:* ``BRAZE_ENTERPRISE_PROVISION_PAYMENT_RECEIPT_CAMPAIGN`` on each successful payment.
 
-We rely on Stripe’s Pending Updates feature to help prevent subscriptions from becoming active
+**Payment Errors (past_due)**
+
+We rely on Stripe's Pending Updates feature to help prevent subscriptions from becoming active
 before a payment is *successfully* processed. When a payment fails, the Stripe subscription enters a ``past_due``
-state. When we observe this state:
+state via ``customer.subscription.updated``. When we observe this state:
 
-* All *future* license-manager subscription plans related to the stripe subscription are updated to
-  have ``active=False``.
-* We do this regardless of whether the corresponding renewal has been processed (in case there's some other
-  state change that temporarily puts the stripe subscription in an ``active`` state.
+* All *future* License Manager subscription plans related to the Stripe subscription are deactivated (``is_active=False``)
+* We do this regardless of whether the corresponding renewal has been processed
+
+*Braze Emails:* ``BRAZE_BILLING_ERROR_CAMPAIGN`` - Notifies admins of payment failure with link to update payment method.
+
+**Subscription Cancellation (Scheduled)**
+
+When a customer schedules cancellation (e.g., via Stripe billing portal), Stripe sends
+``customer.subscription.updated`` with ``cancel_at`` set to a future timestamp.
+
+On cancellation scheduling:
+
+* ``SelfServiceSubscriptionRenewal`` records are updated with ``subscription_cancel_at`` timestamp
+* **Note:** License Manager subscription plans are NOT modified at this point - the subscription
+  remains active until the actual cancellation date
+
+*Braze Emails:*
+
+* **Trial subscriptions only:** ``BRAZE_TRIAL_CANCELLATION_CAMPAIGN`` - Confirms scheduled cancellation with end date
+* **Active subscriptions:** (gap) No cancellation-scheduled email currently sent
+
+**Subscription Reinstatement**
+
+When a customer reverses a scheduled cancellation (removes the ``cancel_at`` date), Stripe sends
+``customer.subscription.updated`` with ``cancel_at`` cleared to ``null``.
+
+On reinstatement:
+
+* ``SelfServiceSubscriptionRenewal`` records are updated: ``is_canceled=False``, ``subscription_cancel_at=None``
+* **Note:** Because License Manager plans were never modified during cancellation scheduling,
+  no License Manager changes are needed on reinstatement
+
+*Braze Emails:* ``BRAZE_SSP_SUBSCRIPTION_REINSTATED_CAMPAIGN`` - Confirms subscription has been restored.
+
+**Subscription Termination (Finalized)**
+
+When the subscription actually ends (either at the scheduled ``cancel_at`` date or immediately),
+Stripe sends ``customer.subscription.deleted``.
+
+On subscription deletion:
+
+* All future License Manager subscription plans are deactivated via ``cancel_all_future_plans()``
+* ``SelfServiceSubscriptionRenewal`` records are updated: ``is_canceled=True``, ``subscription_cancel_at=None``
+* Cancellation reason/feedback is tracked to Segment analytics
+
+*Braze Emails:*
+
+* **Previously active subscriptions only:** ``BRAZE_SSP_CANCELATION_FINALIZATION_CAMPAIGN`` - Final confirmation that subscription has ended
+* **Trial subscriptions:** No finalization email (they already received the trial cancellation email)
 
 **Annual Renewals**
 
 i.e. the second and ensuing paid periods. TBD on the actual flow, here.
 
-**Subscription Termination at period end**
+Braze Campaign Summary
+----------------------
 
-When subscriptions are canceled, ``customer.subscription.updated`` events trigger:
+Key: ``[BEP] = BRAZE_ENTERPRISE_PROVISION``
 
-* License deactivation in License Manager
-* Cancellation notifications to customers
-* Opportunity updates in Salesforce (maybe ?)
++--------------------------------------+-----------------------------------------------------+-------------------------------------------+
+| Event/Trigger                        | Braze Campaign Setting                              | Description                               |
++======================================+=====================================================+===========================================+
+| Provisioning complete                | ``[BEP]_SIGNUP_CONFIRMATION_CAMPAIGN``              | Signup confirmation with trial details    |
++--------------------------------------+-----------------------------------------------------+-------------------------------------------+
+| 72 hours before trial ends           | ``[BEP]_TRIAL_ENDING_SOON_CAMPAIGN``                | Trial ending reminder with renewal info   |
++--------------------------------------+-----------------------------------------------------+-------------------------------------------+
+| Trial ends, paid subscription starts | ``[BEP]_TRIAL_END_SUBSCRIPTION_STARTED_CAMPAIGN``   | Confirmation of paid subscription start   |
++--------------------------------------+-----------------------------------------------------+-------------------------------------------+
+| Invoice paid (amount > $0)           | ``[BEP]_PAYMENT_RECEIPT_CAMPAIGN``                  | Payment receipt with billing details      |
++--------------------------------------+-----------------------------------------------------+-------------------------------------------+
+| Subscription becomes past_due        | ``BRAZE_BILLING_ERROR_CAMPAIGN``                    | Payment failure notification              |
++--------------------------------------+-----------------------------------------------------+-------------------------------------------+
+| Trial cancellation scheduled         | ``BRAZE_TRIAL_CANCELLATION_CAMPAIGN``               | Scheduled cancellation confirmation       |
++--------------------------------------+-----------------------------------------------------+-------------------------------------------+
+| Cancellation reversed (reinstated)   | ``BRAZE_SSP_SUBSCRIPTION_REINSTATED_CAMPAIGN``      | Subscription restored confirmation        |
++--------------------------------------+-----------------------------------------------------+-------------------------------------------+
+| Active subscription deleted          | ``BRAZE_SSP_CANCELATION_FINALIZATION_CAMPAIGN``     | Final cancellation confirmation           |
++--------------------------------------+-----------------------------------------------------+-------------------------------------------+
 
 Event Processing Flows
 ----------------------
 
+**Stripe Webhook Handlers**
+
+See ``stripe_event_handlers.py`` for implementation details:
+
+* ``invoice.created``: Links Stripe invoice to ``SelfServiceSubscriptionRenewal`` by matching subscription ID and effective date
+* ``invoice.paid``: Triggers payment receipt, trial-to-paid processing (for amount > $0), or CheckoutIntent state update (for amount = $0)
+* ``customer.subscription.created``: Enables pending updates, initializes cancellation state
+* ``customer.subscription.updated``: Handles status changes, cancellation scheduling/reinstatement, payment method changes
+* ``customer.subscription.deleted``: Deactivates plans, tracks cancellation analytics
+* ``customer.subscription.trial_will_end``: Triggers trial ending reminder email
+
 **Salesforce API Integration**
 
 ``POST /provisioning``:
+
 * Initiates enterprise customer provisioning workflow
 * Creates initial trial subscription plan in License Manager
 * Links Salesforce Opportunity Line Item to trial subscription plan
@@ -173,7 +283,7 @@ Data Relationships Across Services
 * Used to correlate webhook events with enterprise customers
 * Enables lookup of original CheckoutIntent for Year 2+ renewals
 
-``enterprise_uuid:``
+``enterprise_uuid``:
 
 * The ``EnterpriseCustomer.uuid`` field
 
@@ -190,18 +300,22 @@ Data Relationships Across Services
 
 Error Scenarios
 ---------------
+
 **API Integration Failures**
 
 * License Manager API timeouts during renewal processing
 * Salesforce API failures during provisioning requests
+* Braze API failures during email sending (retried via Celery)
 
 **Data Consistency Issues**
 
 * Missing CheckoutIntent records for webhook events
-* Failed renewal processing leaving ``SelfServiceSubscriptionRenwal`` records in unprocessed state
+* Failed renewal processing leaving ``SelfServiceSubscriptionRenewal`` records in unprocessed state
+* Out-of-order webhook delivery (e.g., ``invoice.paid`` before ``invoice.created``)
 
 Future Considerations
 --------------------
+
 **Database Normalization Improvements**
 
 Pros of Better Normalization:
@@ -227,4 +341,9 @@ Potential Improvements:
 Currently, two external systems (Salesforce, Stripe)
 can trigger actions in enterprise-access through webhooks and API calls.
 Furthermore, Stripe can trigger Salesforce record creation and other actions prior
-to Salesforce, in turn, trigger actions in enterprise-access.
+to Salesforce, in turn, triggering actions in enterprise-access.
+
+**Email Campaign Gaps**
+
+* Active subscription cancellation-scheduled email (only trial subscriptions get this currently)
+* Payment recovery success email (when payment succeeds after past_due)
