@@ -1,0 +1,36 @@
+enterprise_access/apps/customer_billing/tests/test_stripe_event_handlers.py
+  f63c823f897a1971 574-641
+enterprise_access/apps/customer_billing/stripe_event_handlers.py
+  f63c823f897a1971 30,756-763
+enterprise_access/apps/customer_billing/tests/test_migrations.py
+  f63c823f897a1971 384-387,390-396,400-406,409-415,419-425,429-435,438-444,449-455,459-461
+enterprise_access/apps/customer_billing/tasks.py
+  f63c823f897a1971 319-357
+enterprise_access/settings/test.py
+  f63c823f897a1971 62
+enterprise_access/settings/base.py
+  f63c823f897a1971 541
+enterprise_access/apps/customer_billing/tests/test_tasks.py
+  f63c823f897a1971 21,233-340,549-559,853-860,1080-1087
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "b7219fad56fcd8d40d08b99088feec1be9810891",
+  "prompts": {
+    "f63c823f897a1971": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b4b407bc-2d18-4e82-af93-d2a0d4ac157e",
+        "model": "claude-opus-4-5-20251101"
+      },
+      "human_author": "Alexander Dusenbery",
+      "messages": [],
+      "total_additions": 329,
+      "total_deletions": 85,
+      "accepted_lines": 312,
+      "overriden_lines": 0,
+      "messages_url": "https://usegitai.com/cas/a8bd0b77a7d833d730da6f110fc2cec19127b54d1b70ab2f2a28a305372fd85a"
+    }
+  }
+}
