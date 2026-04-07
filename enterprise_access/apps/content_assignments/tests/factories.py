@@ -35,7 +35,7 @@ class LearnerContentAssignmentFactory(factory.django.DjangoModelFactory):
 
     uuid = factory.LazyFunction(uuid4)
     learner_email = factory.LazyAttribute(lambda _: FAKER.email())
-    lms_user_id = factory.LazyAttribute(lambda _: FAKER.pyint())
+    lms_user_id = factory.Sequence(lambda n: n + 1)
     content_key = factory.LazyAttribute(lambda _: random_content_key())
     parent_content_key = factory.LazyAttribute(lambda _: random_parent_content_key())
     is_assigned_course_run = True

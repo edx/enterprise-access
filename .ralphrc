@@ -13,7 +13,7 @@ CLAUDE_OUTPUT_FORMAT="json"
 
 # Tool permissions
 # Comma-separated list of allowed tools
-ALLOWED_TOOLS="Write,Read,Edit,Bash"
+ALLOWED_TOOLS="Write,Read,Edit,Bash,WebSearch"
 
 # Session management
 SESSION_CONTINUITY=true

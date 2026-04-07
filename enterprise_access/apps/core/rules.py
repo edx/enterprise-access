@@ -460,7 +460,7 @@ has_admin_learner_profile_admin_access = (
 )
 
 has_stripe_event_summary_admin_access = (
-    has_implicit_access_to_requests_admin | has_explicit_access_to_requests_admin
+    has_implicit_access_to_stripe_event_summary_admin | has_explicit_access_to_stripe_event_summary_admin
 )
 
 ###############################################

@@ -771,6 +771,7 @@ class GetCreateSubscriptionPlanRenewalStep(CheckoutIntentStepMixin, AbstractWork
                     'stripe_event_data': latest_summary.stripe_event_data,
                     'prior_subscription_plan_uuid': result_dict.get('prior_subscription_plan'),
                     'renewed_subscription_plan_uuid': result_dict.get('renewed_subscription_plan'),
+                    'effective_date': accumulated_output.create_trial_subscription_plan_output.expiration_date,
                 }
             )
         except Exception as exc:

@@ -63,6 +63,12 @@ REUSABLE_REQUEST_STATES = [
     SubsidyRequestStates.REVERSED,
 ]
 
+# State groups for bulk operations — mirrors content_assignments/constants.py pattern.
+APPROVABLE_STATES = (SubsidyRequestStates.REQUESTED, SubsidyRequestStates.ERROR)
+DECLINABLE_STATES = (SubsidyRequestStates.REQUESTED,)
+REMINDABLE_STATES = (SubsidyRequestStates.APPROVED,)
+CANCELABLE_STATES = (SubsidyRequestStates.APPROVED,)
+
 
 class SubsidyTypeChoices:
     """ Type of subsidies. """
