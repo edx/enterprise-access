@@ -2,7 +2,7 @@
 name: unit-tests
 description: Run Django unit tests in the enterprise-access Docker container. Use when the user wants to run tests, check if tests pass, or verify test coverage.
 argument-hint: "<TEST_FILES>"
-allowed-tools: Bash(docker *), Bash(make *)
+allowed-tools: Bash(docker *), Bash(make *), Bash(colima *)
 ---
 
 ## Arguments
@@ -26,10 +26,10 @@ Examples:
 
 ### 1. Make sure the app container is running
 
-Determine if the enterprise-access.app container is running:
+Determine if the app container is running:
 
 ```bash
-docker ps | grep enterprise-access.app
+docker compose ps
 ```
 
 Start the app container if not running:
@@ -43,7 +43,7 @@ make dev.up
 If `<TEST_FILES>` specify .py files or functions/classes within, run only those tests using `pytest.local.ini` to disable coverage and warnings:
 
 ```bash
-docker exec enterprise-access.app bash -c "pytest -c pytest.local.ini <TEST_FILES>"
+docker compose exec app bash -c "pytest -c pytest.local.ini <TEST_FILES>"
 ```
 
 Example `<TEST_FILES>` which match this case:
@@ -60,10 +60,10 @@ If `<TEST_FILES>` specifies a single directory which represents a domain, such a
 Convert the directory path to a Python module path for `--cov`: replace `/` with `.` and strip any trailing slash. Example: `enterprise_access/apps/bffs/` → `enterprise_access.apps.bffs`
 
 ```bash
-docker exec enterprise-access.app bash -c "pytest -c pytest.local.ini <TEST_DOMAIN> --cov=<MODULE_PATH_OF_TEST_DOMAIN>"
+docker compose exec app bash -c "pytest -c pytest.local.ini <TEST_DOMAIN> --cov=<MODULE_PATH_OF_TEST_DOMAIN>"
 
 # Example: <TEST_FILES> is "enterprise_access/apps/bffs"
-docker exec enterprise-access.app bash -c "pytest -c pytest.local.ini enterprise_access/apps/bffs --cov=enterprise_access.apps.bffs"
+docker compose exec app bash -c "pytest -c pytest.local.ini enterprise_access/apps/bffs --cov=enterprise_access.apps.bffs"
 ```
 
 Example `<TEST_FILES>` which match this case:
@@ -80,7 +80,27 @@ Whole-domain coverage will be reported in the console output. Specific line numb
 If no arguments are given, assume the user wants to run the full test suite for the entire project:
 
 ```bash
-docker exec enterprise-access.app bash -c "make test"
+docker compose exec app bash -c "make test"
 ```
 
 Whole-project coverage will be reported in the console output. Specific line numbers with missing coverage will be reported.
+
+## Troubleshooting
+
+### ModuleNotFoundError
+
+If tests fail due to missing imports, first try to install requirements:
+
+```bash
+docker compose exec app make ci_requirements
+```
+
+This is necessary at least when adding new requirements which have not yet been built into the image.
+
+### Failed to connect to the docker API on MacOS
+
+This likely just means colima needs to be started:
+
+```bash
+colima start
+```
