@@ -28,6 +28,7 @@ from enterprise_access.apps.customer_billing.tasks import (
     send_finalized_cancelation_email_task,
     send_paid_cancellation_email_task,
     send_payment_receipt_email,
+    send_reinstatement_email_task,
     send_trial_cancellation_email_task,
     send_trial_end_and_subscription_started_email_task,
     send_trial_ending_reminder_email_task
@@ -700,6 +701,13 @@ class StripeEventHandler:
             # and ensures correctness when a previously-canceled subscription is re-activated.
             # Also keeps subscription_cancel_at in sync: set it when cancel_at is present,
             # clear it when the subscription is active with no scheduled cancellation.
+            # Note that this also handles the reinstatement of a stripe subscription (that is,
+            # when a user clears the `cancel_at` time of a subscription record.
+            # 1. User reinstates (to either active or trialing) ->
+            #    Stripe sends customer.subscription.updated with cancel_at=null
+            # 2. Handler extracts cancel_at -> gets None
+            # 3. We call _update_renewal_cancellation_state(is_canceled=False, subscription_cancel_at=None)
+            # 4. Renewal record's subscription_cancel_at is cleared to None
             _update_renewal_cancellation_state(
                 checkout_intent,
                 is_canceled=False,
@@ -751,6 +759,14 @@ class StripeEventHandler:
                     checkout_intent_id=checkout_intent.id,
                     cancel_at_timestamp=current_cancel_at,
                 )
+
+        # Detect when cancellation is reversed/reinstated (had value, now None)
+        if prior_cancel_at is not None and current_cancel_at_datetime is None:
+            logger.info(
+                f"Subscription {subscription.id} was reinstated (cancellation reversed). "
+                f"Processing reinstatement notification for checkout_intent_id={checkout_intent_id}"
+            )
+            send_reinstatement_email_task.delay(checkout_intent_id=checkout_intent.id)
 
         # Everything belows handles a subscription state change. If the status
         # hasn't changed, we're all done.

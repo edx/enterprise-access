@@ -60,6 +60,7 @@ BRAZE_TRIAL_CANCELLATION_CAMPAIGN = 'test-trial-cancellation-campaign'
 BRAZE_PAID_CANCELLATION_CAMPAIGN = 'test-paid-cancellation-campaign'
 BRAZE_ENTERPRISE_PROVISION_TRIAL_ENDING_SOON_CAMPAIGN = 'test-trial-ending-reminder-campaign'
 BRAZE_BILLING_ERROR_CAMPAIGN = 'test-billing-error-campaign'
+BRAZE_SSP_SUBSCRIPTION_REINSTATED_CAMPAIGN = 'test-subscription-reinstated-campaign'
 
 ################### Kafka Related Settings ##############################
 KAFKA_ENABLED = False

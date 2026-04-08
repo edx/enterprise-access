@@ -571,6 +571,75 @@ class TestStripeEventHandler(TestCase):
         mock_email_task.delay.assert_not_called()
 
     @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_reinstatement_email_task"
+    )
+    def test_subscription_updated_sends_email_when_reinstated(self, mock_email_task):
+        """Test that subscription_updated sends reinstatement email when cancel_at is cleared."""
+        subscription_id = "sub_test_reinstate_123"
+        trial_end_timestamp = int((timezone.now() + timedelta(days=14)).timestamp())
+
+        # Create prior event WITH cancel_at set (subscription was scheduled for cancellation)
+        _, prior_summary = self._create_existing_event_data_records(
+            subscription_id,
+            subscription_status=StripeSubscriptionStatus.TRIALING,
+        )
+        # Set cancel_at on the prior summary (subscription was pending cancellation)
+        prior_summary.subscription_cancel_at = timezone.now() + timedelta(days=7)
+        prior_summary.save()
+
+        # Create new event WITHOUT cancel_at (user reinstated/un-cancelled)
+        subscription_data = {
+            "id": subscription_id,
+            "status": "trialing",
+            "trial_end": trial_end_timestamp,
+            # No cancel_at field - cancellation was reversed
+            "metadata": self._create_mock_stripe_subscription(self.checkout_intent.id),
+        }
+
+        mock_event = self._create_mock_stripe_event(
+            "customer.subscription.updated", subscription_data
+        )
+
+        StripeEventHandler.dispatch(mock_event)
+
+        mock_email_task.delay.assert_called_once_with(
+            checkout_intent_id=self.checkout_intent.id,
+        )
+
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_reinstatement_email_task"
+    )
+    def test_subscription_updated_no_reinstatement_email_when_never_cancelled(self, mock_email_task):
+        """Test that we don't send reinstatement email if cancel_at was already None."""
+        subscription_id = "sub_test_no_reinstate_123"
+        trial_end_timestamp = int((timezone.now() + timedelta(days=14)).timestamp())
+
+        # Create prior event WITHOUT cancel_at (subscription was never scheduled for cancellation)
+        _, prior_summary = self._create_existing_event_data_records(
+            subscription_id,
+            subscription_status=StripeSubscriptionStatus.TRIALING,
+        )
+        prior_summary.subscription_cancel_at = None
+        prior_summary.save()
+
+        # Create new event also WITHOUT cancel_at (normal update, not a reinstatement)
+        subscription_data = {
+            "id": subscription_id,
+            "status": "trialing",
+            "trial_end": trial_end_timestamp,
+            "metadata": self._create_mock_stripe_subscription(self.checkout_intent.id),
+        }
+
+        mock_event = self._create_mock_stripe_event(
+            "customer.subscription.updated", subscription_data
+        )
+
+        StripeEventHandler.dispatch(mock_event)
+
+        # Should NOT send reinstatement email since cancel_at was never set
+        mock_email_task.delay.assert_not_called()
+
+    @mock.patch(
         "enterprise_access.apps.customer_billing.stripe_event_handlers.send_trial_cancellation_email_task"
     )
     @mock.patch(
