@@ -71,7 +71,6 @@ THIRD_PARTY_APPS = (
     'django_filters',
     'django_object_actions',
     'rest_framework',
-    'rest_framework_swagger',
     'rules.apps.AutodiscoverRulesConfig',
     'simple_history',
     'social_django',
