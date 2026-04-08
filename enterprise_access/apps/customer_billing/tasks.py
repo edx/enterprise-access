@@ -335,10 +335,14 @@ def send_reinstatement_email_task(checkout_intent_id: int):
         braze_client, admin_users, enterprise_slug, raise_if_empty=True,
     )
 
+    campaign_id = settings.BRAZE_SSP_SUBSCRIPTION_REINSTATED_CAMPAIGN
     logger.info(
-        "Sending reinstatement email for CheckoutIntent %s (enterprise slug: %s)",
+        "Sending reinstatement email for CheckoutIntent %s (enterprise slug: %s). "
+        "Campaign ID: %r (type: %s)",
         checkout_intent_id,
         enterprise_slug,
+        campaign_id,
+        type(campaign_id).__name__,
     )
 
     braze_trigger_properties = {
@@ -347,7 +351,7 @@ def send_reinstatement_email_task(checkout_intent_id: int):
 
     send_campaign_message(
         braze_client,
-        settings.BRAZE_SSP_SUBSCRIPTION_REINSTATED_CAMPAIGN,
+        campaign_id,
         recipients=recipients,
         trigger_properties=braze_trigger_properties,
         organization_name=checkout_intent.enterprise_name,
