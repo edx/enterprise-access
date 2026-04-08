@@ -163,6 +163,9 @@ enterprise_access/assets
 # claude code personalization
 .claude/settings.local.json
 
+# personal notes
+.notes/
+
 # Ralph
 .ralph/.*
 .ralph/status.json
