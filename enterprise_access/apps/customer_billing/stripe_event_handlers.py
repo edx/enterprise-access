@@ -676,7 +676,7 @@ class StripeEventHandler:
         """
         Handle customer.subscription.updated events.
         Track when subscriptions have pending updates and update related CheckoutIntent state.
-        Send cancellation notification email when a trial subscription is canceled.
+        Send cancellation notification email when a subscription cancellation is scheduled.
 
         See https://docs.stripe.com/api/subscriptions/object#subscription_object-status for
         important information about allowed state transitions.
