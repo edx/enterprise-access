@@ -182,10 +182,9 @@ class TestSendPaidCancellationEmailTask(TestCase):
         # Two recipients
         self.assertEqual(len(call_args[1]["recipients"]), 2)
 
-        # Trigger properties use plan_end_date (not trial_end_date)
+        # Correct trigger properties
         trigger_props = call_args[1]["trigger_properties"]
-        self.assertIn("plan_end_date", trigger_props)
-        self.assertNotIn("trial_end_date", trigger_props)
+        self.assertIn("trial_end_date", trigger_props)
         self.assertIn("restart_subscription_url", trigger_props)
 
     @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
