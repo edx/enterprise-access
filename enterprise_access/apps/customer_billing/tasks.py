@@ -286,8 +286,10 @@ def _send_cancelation_campaign(checkout_intent_id, ending_timestamp, campaign_id
         output_pattern=BRAZE_DATE_FORMAT_2
     )
 
+    # TODO: remove "trial_end_date" property once BRAZE_TRIAL_CANCELLATION_CAMPAIGN is updated in braze
     braze_trigger_properties = {
         "trial_end_date": ending_date,
+        "period_end_date": ending_date,
         "restart_subscription_url": f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/{enterprise_slug}',
     }
 
