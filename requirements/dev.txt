@@ -64,13 +64,13 @@ cffi==2.0.0
     #   -r requirements/validation.txt
     #   cryptography
     #   pynacl
-chardet==7.4.0.post2
+chardet==7.4.1
     # via diff-cover
-charset-normalizer==3.4.6
+charset-normalizer==3.4.7
     # via
     #   -r requirements/validation.txt
     #   requests
-click==8.3.1
+click==8.3.2
     # via
     #   -r requirements/pip-tools.txt
     #   -r requirements/validation.txt
@@ -110,22 +110,13 @@ colorama==0.4.6
     #   tox
 confluent-kafka[avro,schema-registry]==2.6.1
     # via -r requirements/validation.txt
-coreapi==2.3.3
-    # via
-    #   -r requirements/validation.txt
-    #   django-rest-swagger
-    #   openapi-codec
-coreschema==0.0.4
-    # via
-    #   -r requirements/validation.txt
-    #   coreapi
 coverage[toml]==7.13.5
     # via
     #   -r requirements/validation.txt
     #   pytest-cov
 crispy-bootstrap5==2026.3
     # via -r requirements/validation.txt
-cryptography==46.0.6
+cryptography==46.0.7
     # via
     #   -r requirements/validation.txt
     #   pyjwt
@@ -151,7 +142,7 @@ distlib==0.4.0
     # via
     #   -r requirements/validation.txt
     #   virtualenv
-django==5.2.12
+django==5.2.13
     # via
     #   -r requirements/validation.txt
     #   crispy-bootstrap5
@@ -200,7 +191,7 @@ django-crum==0.7.9
     #   edx-django-utils
     #   edx-rbac
     #   edx-toggles
-django-debug-toolbar==6.2.0
+django-debug-toolbar==6.3.0
     # via -r requirements/dev.in
 django-dynamic-fixture==4.0.1
     # via -r requirements/validation.txt
@@ -217,8 +208,6 @@ django-model-utils==5.0.0
     #   edx-rbac
 django-object-actions==5.0.0
     # via -r requirements/validation.txt
-django-rest-swagger==2.2.0
-    # via -r requirements/validation.txt
 django-simple-history==3.11.0
     # via -r requirements/validation.txt
 django-test-migrations==1.5.0
@@ -234,7 +223,6 @@ djangoql==0.19.1
 djangorestframework==3.17.1
     # via
     #   -r requirements/validation.txt
-    #   django-rest-swagger
     #   djangorestframework-csv
     #   drf-jwt
     #   drf-spectacular
@@ -271,7 +259,7 @@ edx-ccx-keys==2.0.2
     # via
     #   -r requirements/validation.txt
     #   openedx-events
-edx-celeryutils==1.4.0
+edx-celeryutils==2.0.0
     # via -r requirements/validation.txt
 edx-django-release-util==1.5.0
     # via -r requirements/validation.txt
@@ -296,7 +284,7 @@ edx-i18n-tools==2.0.0
     # via -r requirements/dev.in
 edx-lint==6.0.0
     # via -r requirements/validation.txt
-edx-opaque-keys[django]==3.1.0
+edx-opaque-keys[django]==4.0.0
     # via
     #   -r requirements/validation.txt
     #   edx-ccx-keys
@@ -304,18 +292,18 @@ edx-opaque-keys[django]==3.1.0
     #   openedx-events
 edx-rbac==3.0.0
     # via -r requirements/validation.txt
-edx-rest-api-client==6.2.0
+edx-rest-api-client==7.0.0
     # via
     #   -r requirements/validation.txt
     #   edx-enterprise-subsidy-client
-edx-toggles==5.4.1
+edx-toggles==6.0.0
     # via
     #   -r requirements/validation.txt
     #   edx-auth-backends
     #   edx-event-bus-kafka
 factory-boy==3.3.3
     # via -r requirements/validation.txt
-faker==40.12.0
+faker==40.13.0
     # via
     #   -r requirements/validation.txt
     #   factory-boy
@@ -353,10 +341,6 @@ isort==8.0.1
     # via
     #   -r requirements/validation.txt
     #   pylint
-itypes==1.2.0
-    # via
-    #   -r requirements/validation.txt
-    #   coreapi
 jaraco-classes==3.4.0
     # via
     #   -r requirements/validation.txt
@@ -378,7 +362,6 @@ jinja2==3.1.6
     # via
     #   -r requirements/validation.txt
     #   code-annotations
-    #   coreschema
     #   diff-cover
 jsonfield==3.2.0
     # via
@@ -428,7 +411,7 @@ monotonic==1.6
     # via
     #   -r requirements/validation.txt
     #   analytics-python
-more-itertools==10.8.0
+more-itertools==11.0.1
     # via
     #   -r requirements/validation.txt
     #   jaraco-classes
@@ -446,10 +429,6 @@ oauthlib==3.3.1
     #   -r requirements/validation.txt
     #   requests-oauthlib
     #   social-auth-core
-openapi-codec==1.3.2
-    # via
-    #   -r requirements/validation.txt
-    #   django-rest-swagger
 openedx-events==11.1.0
     # via
     #   -r requirements/validation.txt
@@ -562,7 +541,7 @@ pyproject-hooks==1.2.0
     #   pip-tools
 pyright==1.1.408
     # via -r requirements/dev.in
-pytest==9.0.2
+pytest==9.0.3
     # via
     #   -r requirements/validation.txt
     #   pytest-cov
@@ -579,7 +558,7 @@ python-dateutil==2.9.0.post0
     #   analytics-python
     #   celery
     #   freezegun
-python-discovery==1.2.1
+python-discovery==1.2.2
     # via
     #   -r requirements/validation.txt
     #   tox
@@ -620,7 +599,6 @@ requests==2.33.1
     #   -r requirements/validation.txt
     #   analytics-python
     #   confluent-kafka
-    #   coreapi
     #   edx-drf-extensions
     #   edx-rest-api-client
     #   requests-oauthlib
@@ -659,10 +637,6 @@ semantic-version==2.10.0
     # via
     #   -r requirements/validation.txt
     #   edx-drf-extensions
-simplejson==3.20.2
-    # via
-    #   -r requirements/validation.txt
-    #   django-rest-swagger
 six==1.17.0
     # via
     #   -r requirements/validation.txt
@@ -725,7 +699,7 @@ typing-extensions==4.15.0
     #   pyright
     #   referencing
     #   stripe
-tzdata==2025.3
+tzdata==2026.1
     # via
     #   -r requirements/validation.txt
     #   kombu
@@ -736,7 +710,6 @@ tzlocal==5.3.1
 uritemplate==4.2.0
     # via
     #   -r requirements/validation.txt
-    #   coreapi
     #   drf-spectacular
     #   drf-yasg
 urllib3==2.6.3

@@ -16,7 +16,6 @@ django-crum
 django-extensions
 django-filter
 django-object-actions
-django-rest-swagger
 django-simple-history
 django-waffle
 djangorestframework
