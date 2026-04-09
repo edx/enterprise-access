@@ -368,9 +368,24 @@ class HandlerContext(BaseHandlerContext):
         """
         Initializes the secured algolia api key for the request user.
         """
+        self.refresh_secured_algolia_api_keys()
+
+    def refresh_secured_algolia_api_keys(self, catalog_uuids=None):
+        """
+        Refreshes the secured Algolia api key metadata for the request user.
+
+        Arguments:
+            catalog_uuids (list[str] | set[str] | None): Optional subset of enterprise catalog UUIDs
+                to scope the secured Algolia key to. If omitted, all enterprise catalogs are used.
+        """
+        scoped_catalog_uuids = None
+        if catalog_uuids is not None:
+            scoped_catalog_uuids = sorted(catalog_uuids) or ['__none__']
+
         secured_algolia_api_key_data = get_and_cache_secured_algolia_search_keys(
             self.request,
             self._enterprise_customer_uuid,
+            catalog_uuids=scoped_catalog_uuids,
         )
 
         secured_algolia_api_key = None

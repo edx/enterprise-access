@@ -262,13 +262,42 @@ class SubscriptionLicenseStatusSerializer(BaseBffSerializer):
 class SubscriptionsSerializer(BaseBffSerializer):
     """
     Serializer for subscriptions subsidies.
+    
+    Supports both multi-license (collection-first) and single-license (legacy) modes.
+    New fields enable efficient course-to-license matching for learners with multiple licenses.
     """
 
     customer_agreement = CustomerAgreementSerializer(required=False, allow_null=True)
+    
+    # Collection-first fields (canonical for multi-license support)
     subscription_licenses = SubscriptionLicenseSerializer(many=True, required=False, default=list)
     subscription_licenses_by_status = SubscriptionLicenseStatusSerializer(required=False)
+    
+    # Pre-computed catalog index for O(1) course-to-license lookups
+    # Maps catalog_uuid -> list of licenses that have access to that catalog
+    # Only populated when enterprise_access.enable_multi_license_entitlements_bff is ON.
+    licenses_by_catalog = serializers.DictField(
+        child=serializers.ListField(child=SubscriptionLicenseSerializer()),
+        required=False,
+        allow_null=True,
+        default=dict,
+        help_text="Pre-computed mapping of catalog UUID to licenses for efficient O(1) lookups.",
+    )
+
+    # Schema version signals to the MFE which response shape is active.
+    # 'v1' = legacy single-license only (flag OFF)
+    # 'v2' = multi-license collection fields populated (flag ON)
+    license_schema_version = serializers.CharField(
+        required=False,
+        default='v1',
+        help_text="'v1' = single-license legacy mode; 'v2' = multi-license collection mode.",
+    )
+
+    # Legacy singular fields (backward compatibility - deprecated)
+    # These contain the "first" license based on priority: ACTIVATED > ASSIGNED > REVOKED
     subscription_license = SubscriptionLicenseSerializer(required=False, allow_null=True)
     subscription_plan = SubscriptionPlanSerializer(required=False, allow_null=True)
+    
     show_expiration_notifications = serializers.BooleanField(required=False, default=False)
 
 

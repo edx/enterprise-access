@@ -8,6 +8,7 @@ from rest_framework import status
 from enterprise_access.apps.bffs.context import HandlerContext
 from enterprise_access.apps.bffs.handlers import BaseHandler, BaseLearnerPortalHandler, DashboardHandler
 from enterprise_access.apps.bffs.tests.utils import TestHandlerContextMixin
+from enterprise_access.apps.api_client.constants import LicenseStatuses
 
 
 class TestBaseHandler(TestHandlerContextMixin):
@@ -44,6 +45,268 @@ class TestBaseHandler(TestHandlerContextMixin):
         base_handler = BaseHandler(context)
         base_handler.add_warning(**self.mock_warning)
         self.assertEqual(self.mock_warning, base_handler.context.warnings[0])
+
+
+class TestSelectBestLicense(TestHandlerContextMixin):
+    """
+    Unit tests for SubscriptionLicenseProcessor._select_best_license.
+
+    Business rule (ENT-11672): When a learner has multiple licenses that all cover
+    a given course, the license they FIRST ACTIVATED wins. Expiration date is used
+    only as a secondary tie-breaker.
+
+    Tie-breaker precedence:
+        1. Earliest activation_date (ASC)  — primary: first-activated wins
+        2. Latest expiration_date (DESC)   — secondary: longer access window
+        3. UUID (DESC)                     — deterministic stable fallback
+    """
+
+    def _make_license(self, uuid, activation_date, expiration_date, catalog_uuid='cat-a'):
+        return {
+            'uuid': uuid,
+            'status': 'activated',
+            'activation_date': activation_date,
+            'subscription_plan': {
+                'enterprise_catalog_uuid': catalog_uuid,
+                'is_current': True,
+                'expiration_date': expiration_date,
+            },
+        }
+
+    def _processor(self):
+        return BaseLearnerPortalHandler.__new__(BaseLearnerPortalHandler)
+
+    def test_single_license_returned_directly(self):
+        """Single candidate is always returned without sorting."""
+        lic = self._make_license('lic-a', '2024-06-01', '2026-01-01')
+        result = self._processor()._select_best_license([lic])
+        self.assertEqual(result['uuid'], 'lic-a')
+
+    def test_earliest_activation_wins_regardless_of_expiration(self):
+        """
+        ENT-11672 primary rule: the license activated FIRST wins,
+        even when the other license has a later expiration date.
+        """
+        lic_first  = self._make_license('lic-first',  '2023-01-15', '2025-06-30')  # activated earlier, expires sooner
+        lic_second = self._make_license('lic-second', '2024-03-01', '2026-12-31')  # activated later,  expires later
+
+        result = self._processor()._select_best_license([lic_first, lic_second])
+        self.assertEqual(result['uuid'], 'lic-first',
+                         "Earliest activation_date must win regardless of expiration_date")
+
+    def test_latest_expiration_wins_when_activation_dates_equal(self):
+        """
+        Secondary rule: when activation_date is identical,
+        the license with the latest expiration_date is preferred.
+        """
+        shared_activation = '2024-03-01'
+        lic_short = self._make_license('lic-short', shared_activation, '2025-06-30')
+        lic_long  = self._make_license('lic-long',  shared_activation, '2026-12-31')
+
+        result = self._processor()._select_best_license([lic_short, lic_long])
+        self.assertEqual(result['uuid'], 'lic-long',
+                         "When activation_date ties, latest expiration_date must win")
+
+    def test_uuid_desc_is_stable_fallback(self):
+        """
+        When both activation_date and expiration_date are identical,
+        UUID descending order is the deterministic fallback.
+        """
+        shared_activation = '2024-03-01'
+        shared_expiration = '2026-12-31'
+        lic_a = self._make_license('aaa-111', shared_activation, shared_expiration)
+        lic_b = self._make_license('zzz-999', shared_activation, shared_expiration)
+        # 'zzz-999' > 'aaa-111' lexicographically, so UUID DESC → zzz-999 wins
+        result = self._processor()._select_best_license([lic_a, lic_b])
+        self.assertEqual(result['uuid'], 'zzz-999')
+
+    def test_result_is_stable_regardless_of_input_order(self):
+        """Same winner regardless of which order licenses are passed in."""
+        lic_first  = self._make_license('lic-first',  '2023-01-15', '2025-06-30')
+        lic_second = self._make_license('lic-second', '2024-03-01', '2026-12-31')
+
+        proc = self._processor()
+        r1 = proc._select_best_license([lic_first, lic_second])
+        r2 = proc._select_best_license([lic_second, lic_first])
+        self.assertEqual(r1['uuid'], r2['uuid'])
+
+    def test_three_licenses_picks_first_activated(self):
+        """With three candidates, the one with the earliest activation_date wins."""
+        lic_a = self._make_license('lic-a', '2024-05-01', '2026-12-31')
+        lic_b = self._make_license('lic-b', '2022-11-01', '2025-06-30')  # earliest activation
+        lic_c = self._make_license('lic-c', '2023-08-15', '2027-01-01')
+
+        result = self._processor()._select_best_license([lic_a, lic_b, lic_c])
+        self.assertEqual(result['uuid'], 'lic-b',
+                         "License activated in 2022 must beat those activated in 2023 and 2024")
+
+    def test_missing_activation_date_sorts_last(self):
+        """
+        A license with no activation_date should lose to one that has a date,
+        because None/empty is replaced by '9999-12-31' (sorts last ascending).
+        """
+        lic_with_date    = self._make_license('lic-dated',   '2024-01-01', '2026-12-31')
+        lic_without_date = self._make_license('lic-no-date', None,         '2026-12-31')
+
+        result = self._processor()._select_best_license([lic_with_date, lic_without_date])
+        self.assertEqual(result['uuid'], 'lic-dated',
+                         "License with an actual activation_date must beat one with no date")
+
+
+class TestMapCoursesToLicenses(TestHandlerContextMixin):
+    """
+    Tests for BaseLearnerPortalHandler._map_courses_to_licenses.
+    Verifies per-course license matching using the real _select_best_license implementation.
+    """
+
+    def _make_handler(self):
+        class _DummyHandler(BaseLearnerPortalHandler):
+            pass
+        context = HandlerContext(self.request)
+        return _DummyHandler(context)
+
+    def _make_license(self, uuid, activation_date, expiration_date, catalog_uuid):
+        return {
+            'uuid': uuid,
+            'status': 'activated',
+            'activation_date': activation_date,
+            'subscription_plan': {
+                'enterprise_catalog_uuid': catalog_uuid,
+                'is_current': True,
+                'expiration_date': expiration_date,
+            },
+        }
+
+    def test_each_course_mapped_to_its_catalog_license(self):
+        """Three courses in three separate catalogs each map to the correct license."""
+        licenses = [
+            self._make_license('lic-1', '2024-01-01', '2026-01-01', 'catalog-a'),
+            self._make_license('lic-2', '2024-01-01', '2026-01-01', 'catalog-b'),
+            self._make_license('lic-3', '2024-01-01', '2026-01-01', 'catalog-c'),
+        ]
+        intentions = [
+            {'course_run_key': 'course-a', 'applicable_enterprise_catalog_uuids': ['catalog-a']},
+            {'course_run_key': 'course-b', 'applicable_enterprise_catalog_uuids': ['catalog-b']},
+            {'course_run_key': 'course-c', 'applicable_enterprise_catalog_uuids': ['catalog-c']},
+        ]
+        handler = self._make_handler()
+        with mock.patch.object(
+            type(handler), 'current_activated_licenses',
+            new_callable=mock.PropertyMock, return_value=licenses,
+        ):
+            mappings = handler._map_courses_to_licenses(intentions)
+        self.assertEqual(mappings['course-a'], 'lic-1')
+        self.assertEqual(mappings['course-b'], 'lic-2')
+        self.assertEqual(mappings['course-c'], 'lic-3')
+
+    def test_overlapping_catalogs_picks_earliest_activation(self):
+        """
+        ENT-11672: when a course is in two catalogs covered by different licenses,
+        the license activated FIRST wins (not the one with the latest expiration).
+        """
+        licenses = [
+            # license-1: activated later, expires later
+            self._make_license('license-1', '2024-01-01', '2027-01-01', 'catalog-1'),
+            # license-2: activated earlier, expires sooner — should WIN
+            self._make_license('license-2', '2023-01-01', '2026-01-01', 'catalog-2'),
+        ]
+        intentions = [
+            {
+                'course_run_key': 'course-overlap',
+                'applicable_enterprise_catalog_uuids': ['catalog-1', 'catalog-2'],
+            },
+        ]
+        handler = self._make_handler()
+        with mock.patch.object(
+            type(handler), 'current_activated_licenses',
+            new_callable=mock.PropertyMock, return_value=licenses,
+        ):
+            mappings = handler._map_courses_to_licenses(intentions)
+        self.assertEqual(mappings['course-overlap'], 'license-2',
+                         "license-2 activated in 2023 must beat license-1 activated in 2024")
+
+    def test_course_with_no_matching_license_is_omitted(self):
+        """A course whose catalog has no active license must not appear in the result."""
+        licenses = [self._make_license('lic-1', '2024-01-01', '2026-01-01', 'catalog-a')]
+        intentions = [
+            {'course_run_key': 'course-x', 'applicable_enterprise_catalog_uuids': ['catalog-z']},
+        ]
+        handler = self._make_handler()
+        with mock.patch.object(
+            type(handler), 'current_activated_licenses',
+            new_callable=mock.PropertyMock, return_value=licenses,
+        ):
+            mappings = handler._map_courses_to_licenses(intentions)
+        self.assertNotIn('course-x', mappings)
+
+    def test_no_activated_licenses_returns_empty(self):
+        """When the learner has no activated licenses, the mapping is empty."""
+        intentions = [
+            {'course_run_key': 'course-x', 'applicable_enterprise_catalog_uuids': ['catalog-a']},
+        ]
+        handler = self._make_handler()
+        with mock.patch.object(
+            type(handler), 'current_activated_licenses',
+            new_callable=mock.PropertyMock, return_value=[],
+        ):
+            mappings = handler._map_courses_to_licenses(intentions)
+        self.assertEqual(mappings, {})
+
+    def test_single_catalog_course_maps_directly(self):
+        """A course in a single catalog picks that catalog's license with no tie-breaking needed."""
+        licenses = [self._make_license('lic-only', '2024-01-01', '2026-01-01', 'catalog-a')]
+        intentions = [
+            {'course_run_key': 'course-a', 'applicable_enterprise_catalog_uuids': ['catalog-a']},
+        ]
+        handler = self._make_handler()
+        with mock.patch.object(
+            type(handler), 'current_activated_licenses',
+            new_callable=mock.PropertyMock, return_value=licenses,
+        ):
+            mappings = handler._map_courses_to_licenses(intentions)
+        self.assertEqual(mappings['course-a'], 'lic-only')
+
+
+class TestScopedAlgoliaRefresh(TestHandlerContextMixin):
+    """Tests for scoping the secured Algolia key to the learner's activated catalogs."""
+
+    def _make_handler(self):
+        handler = BaseLearnerPortalHandler.__new__(BaseLearnerPortalHandler)
+        class SimpleContext:
+            def __init__(self):
+                self.data = {}
+                self.refresh_secured_algolia_api_keys = mock.Mock()
+        handler.context = SimpleContext()
+        return handler
+
+    def _make_license(self, uuid, catalog_uuid):
+        return {
+            'uuid': uuid,
+            'status': LicenseStatuses.ACTIVATED,
+            'activation_date': '2024-01-01',
+            'subscription_plan': {
+                'enterprise_catalog_uuid': catalog_uuid,
+                'is_current': True,
+                'expiration_date': '2026-01-01',
+            },
+        }
+
+    @mock.patch('enterprise_access.apps.bffs.handlers.enable_multi_license_entitlements_bff', return_value=True)
+    def test_scope_secured_algolia_api_keys_to_activated_licenses(self, mock_toggle):
+        handler = self._make_handler()
+        licenses = [
+            self._make_license('lic-1', 'catalog-a'),
+            self._make_license('lic-2', 'catalog-b'),
+        ]
+        
+        # Manually attach properties to avoid PropertyMock complexity if any.
+        # However, it should work fine as a PropertyMock.
+        with mock.patch.object(type(handler), 'current_activated_licenses', new_callable=mock.PropertyMock, return_value=licenses):
+            handler.scope_secured_algolia_api_keys_to_activated_licenses()
+
+        handler.context.refresh_secured_algolia_api_keys.assert_called_once()
+        called_args = handler.context.refresh_secured_algolia_api_keys.call_args[1]['catalog_uuids']
+        self.assertSetEqual(set(called_args), {'catalog-a', 'catalog-b'}, f"catalog_uuids was: {called_args}")
 
 
 class TestBaseLearnerPortalHandler(TestHandlerContextMixin):
@@ -105,8 +368,13 @@ class TestBaseLearnerPortalHandler(TestHandlerContextMixin):
         'enterprise_access.apps.api_client.lms_client.LmsUserApiClient'
         '.get_default_enterprise_enrollment_intentions_learner_status'
     )
+    @mock.patch(
+        'enterprise_access.apps.api_client.enterprise_catalog_client'
+        '.EnterpriseCatalogUserV1ApiClient.get_secured_algolia_api_key'
+    )
     def test_load_and_process(
         self,
+        mock_get_secured_algolia_api_key_for_user,
         mock_get_default_enrollment_intentions_learner_status,
         mock_get_subscription_licenses_for_learner,
         mock_get_enterprise_customers_for_user,
@@ -116,6 +384,7 @@ class TestBaseLearnerPortalHandler(TestHandlerContextMixin):
         """
         mock_get_enterprise_customers_for_user.return_value = self.mock_enterprise_learner_response_data
         mock_get_subscription_licenses_for_learner.return_value = self.mock_subscription_licenses_data
+        mock_get_secured_algolia_api_key_for_user.return_value = self.mock_secured_algolia_api_key_response
         mock_get_default_enrollment_intentions_learner_status.return_value =\
             self.mock_default_enterprise_enrollment_intentions_learner_status_data
 
@@ -148,6 +417,8 @@ class TestBaseLearnerPortalHandler(TestHandlerContextMixin):
             'customer_agreement': None,
             'subscription_licenses': [],
             'subscription_licenses_by_status': {},
+            'licenses_by_catalog': {},
+            'license_schema_version': 'v1',  # waffle flag is OFF in tests
             'subscription_license': None,
             'subscription_plan': None,
             'show_expiration_notifications': False,
@@ -374,7 +645,7 @@ class TestBaseLearnerPortalHandler(TestHandlerContextMixin):
         context.data['enterprise_customer_user_subsidies'] = {
             'subscriptions': {
                 'subscription_licenses_by_status': {
-                    'activated': [{
+                    LicenseStatuses.ACTIVATED: [{
                         'uuid': 'license-1',
                         'subscription_plan': {
                             'is_current': True,

@@ -3,6 +3,7 @@ Celery tasks for Enterprise Access API.
 """
 import logging
 
+import requests
 from celery import shared_task
 from django.conf import settings
 

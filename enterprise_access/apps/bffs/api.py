@@ -26,8 +26,11 @@ def enterprise_customer_cache_key(enterprise_customer_slug, enterprise_customer_
     return versioned_cache_key('enterprise_customer', enterprise_customer_slug, enterprise_customer_uuid)
 
 
-def secured_algolia_api_key_cache_key(enterprise_customer_uuid, request_user_id):
-    return versioned_cache_key('secured_algolia_api_key', enterprise_customer_uuid, request_user_id)
+def secured_algolia_api_key_cache_key(enterprise_customer_uuid, request_user_id, catalog_uuids=None):
+    catalog_scope = 'all'
+    if catalog_uuids is not None:
+        catalog_scope = ','.join(sorted(str(catalog_uuid) for catalog_uuid in catalog_uuids))
+    return versioned_cache_key('secured_algolia_api_key', enterprise_customer_uuid, request_user_id, catalog_scope)
 
 
 def subscription_licenses_cache_key(enterprise_customer_uuid, lms_user_id):
@@ -93,6 +96,7 @@ def get_and_cache_enterprise_customer(
 def get_and_cache_secured_algolia_search_keys(
     request,
     enterprise_customer_uuid,
+    catalog_uuids=None,
     timeout=settings.SECURED_ALGOLIA_API_KEY_CACHE_TIMEOUT,
 ):
     """
@@ -105,6 +109,7 @@ def get_and_cache_secured_algolia_search_keys(
     cache_key = secured_algolia_api_key_cache_key(
         enterprise_customer_uuid,
         request.user.id,
+        catalog_uuids=catalog_uuids,
     )
     cached_response = TieredCache.get_cached_response(cache_key)
     if cached_response.is_found:
@@ -113,6 +118,7 @@ def get_and_cache_secured_algolia_search_keys(
     client = EnterpriseCatalogUserV1ApiClient(request)
     response_payload = client.get_secured_algolia_api_key(
         enterprise_customer_uuid=enterprise_customer_uuid,
+        catalog_uuids=catalog_uuids,
     )
 
     TieredCache.set_all_tiers(cache_key, response_payload, timeout)

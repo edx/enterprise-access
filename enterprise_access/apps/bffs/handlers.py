@@ -17,8 +17,74 @@ from enterprise_access.apps.bffs.api import (
 from enterprise_access.apps.bffs.context import BaseHandlerContext, HandlerContext
 from enterprise_access.apps.bffs.mixins import BaseLearnerDataMixin, LearnerDashboardDataMixin
 from enterprise_access.apps.bffs.serializers import EnterpriseCustomerUserSubsidiesSerializer
+from enterprise_access.toggles import enable_multi_license_entitlements_bff
 
 logger = logging.getLogger(__name__)
+
+
+class SubscriptionLicenseProcessor:
+    """
+    Handles subscription license data transformation.
+    Preserves collection semantics while maintaining backward compatibility.
+    
+    This processor supports multi-license scenarios where a learner may have
+    access to multiple subscription licenses across different catalogs.
+    """
+
+    def _build_catalog_index(self, licenses):
+        """
+        Build catalog_uuid → licenses mapping for efficient O(1) lookups.
+        
+        Args:
+            licenses: List of subscription licenses
+            
+        Returns:
+            Dict[str, List[License]]: Mapping of catalog UUID to licenses
+        """
+        catalog_index = {}
+        for license in licenses:
+            catalog_uuid = license.get('subscription_plan', {}).get('enterprise_catalog_uuid')
+            if catalog_uuid:
+                catalog_index.setdefault(catalog_uuid, []).append(license)
+        return catalog_index
+
+    def _select_best_license(self, licenses):
+        """
+        Deterministic tie-breaker for multiple matching licenses.
+
+        When a learner has access to more than one subscription license for the same course
+        (course is in multiple catalogs), this selects the license they first activated,
+        per the ENT-11672 business rule:
+          "the enrollment record is on the license they first activate that has the
+           course in the catalog."
+
+        Precedence:
+        1. Earliest activation_date ASC  — first-activated license wins
+        2. Latest expiration_date DESC   — longer access window as secondary criterion
+        3. UUID DESC                     — stable, deterministic fallback
+
+        Args:
+            licenses: Non-empty list of candidate licenses.
+
+        Returns:
+            License: The best matching license dict.
+        """
+        if len(licenses) == 1:
+            return licenses[0]
+
+        def _sort_key(lic):
+            activation = lic.get('activation_date') or '9999-12-31'
+            expiration = (
+                lic.get('subscription_plan', {}).get('expiration_date') or '0000-00-00'
+            )
+            uuid = lic.get('uuid') or ''
+            # For DESC ordering on string fields, negate each character's ordinal value.
+            # ISO-8601 date strings and UUIDs are ASCII, so ord() is safe and deterministic.
+            exp_desc = tuple(-(ord(c)) for c in expiration)
+            uuid_desc = tuple(-(ord(c)) for c in uuid)
+            return (activation, exp_desc, uuid_desc)
+
+        return sorted(licenses, key=_sort_key)[0]
 
 
 class BaseHandler:
@@ -64,7 +130,7 @@ class BaseHandler:
         )
 
 
-class BaseLearnerPortalHandler(BaseHandler, BaseLearnerDataMixin):
+class BaseLearnerPortalHandler(BaseHandler, BaseLearnerDataMixin, SubscriptionLicenseProcessor):
     """
     A base handler class for learner-focused routes.
 
@@ -100,6 +166,9 @@ class BaseLearnerPortalHandler(BaseHandler, BaseLearnerDataMixin):
 
             # Retrieve and process subscription licenses. Handles activation and auto-apply logic.
             self.load_and_process_subsidies()
+
+            # Scope Algolia search access to the learner's current activated license catalogs.
+            self.scope_secured_algolia_api_keys_to_activated_licenses()
 
             # Retrieve default enterprise courses and enroll in the redeemable ones
             self.load_default_enterprise_enrollment_intentions()
@@ -280,7 +349,11 @@ class BaseLearnerPortalHandler(BaseHandler, BaseLearnerDataMixin):
 
     def transform_subscriptions_result(self, subscriptions_result):
         """
-        Transform subscription licenses data if needed.
+        Transform subscription licenses data with support for multiple licenses.
+        
+        Returns both collection-first fields (subscription_licenses, licenses_by_catalog) 
+        and legacy singular fields (subscription_license, subscription_plan) for 
+        backward compatibility.
         """
         subscription_licenses = subscriptions_result.get('results', [])
         subscription_licenses_by_status = {}
@@ -303,6 +376,28 @@ class BaseLearnerPortalHandler(BaseHandler, BaseLearnerDataMixin):
         subscription_license = self._extract_subscription_license(subscription_licenses_by_status)
         subscription_plan = subscription_license.get('subscription_plan') if subscription_license else None
 
+        # Check the multi-license feature flag.
+        # When ON: populate the catalog index and advertise schema v2.
+        # When OFF: return empty catalog index and schema v1 for full backward compatibility.
+        multi_license_flag_enabled = enable_multi_license_entitlements_bff()
+
+        # Build catalog index for activated licenses to enable efficient course-to-license matching
+        activated_licenses = subscription_licenses_by_status.get(LicenseStatuses.ACTIVATED, [])
+        if multi_license_flag_enabled and activated_licenses:
+            licenses_by_catalog = self._build_catalog_index(activated_licenses)
+            # ENT-11672: When multi-license flag is ON, the legacy subscription_license field
+            # must also use the first-activated selection rule so that it is consistent with
+            # courses_by_catalog and the enrollment record business rule.
+            best_activated = self._select_best_license(activated_licenses)
+            subscription_license = best_activated
+            subscription_plan = best_activated.get('subscription_plan') if best_activated else subscription_plan
+            # v2: expose all licenses in the flat collection field
+            response_subscription_licenses = subscription_licenses
+        else:
+            licenses_by_catalog = {}
+            # v1 (flag OFF): preserve main's flat list behavior and expose all licenses.
+            response_subscription_licenses = subscription_licenses
+
         # Determine if expiration notifications should be shown
         if not customer_agreement:
             show_expiration_notifications = False
@@ -313,12 +408,48 @@ class BaseLearnerPortalHandler(BaseHandler, BaseLearnerDataMixin):
 
         return {
             'customer_agreement': customer_agreement,
-            'subscription_licenses': subscription_licenses,
+            # Collection-first fields (canonical for multi-license support)
+            'subscription_licenses': response_subscription_licenses,
             'subscription_licenses_by_status': subscription_licenses_by_status,
+            'licenses_by_catalog': licenses_by_catalog,
+            # Schema version lets the MFE know which response shape to expect.
+            # 'v2' = multi-license fields populated; 'v1' = legacy single-license only.
+            'license_schema_version': 'v2' if multi_license_flag_enabled else 'v1',
+            # Legacy singular fields (backward compatibility - deprecated)
             'subscription_license': subscription_license,
             'subscription_plan': subscription_plan,
             'show_expiration_notifications': show_expiration_notifications,
         }
+
+    def refresh_subscription_data(self, subscription_licenses):
+        """
+        Rebuilds the subscription payload in context from a flat license list.
+        """
+        subscriptions_data = self.transform_subscriptions_result({
+            'results': subscription_licenses,
+            'customer_agreement': self.customer_agreement,
+        })
+        self.context.data['enterprise_customer_user_subsidies']['subscriptions'].update(subscriptions_data)
+
+    def scope_secured_algolia_api_keys_to_activated_licenses(self):
+        """
+        Refresh the secured Algolia key so it is limited to the learner's current activated catalogs.
+        """
+        # Legacy mode (flag OFF): scope search to a single selected activated license,
+        # preserving "either/or" access semantics.
+        # Multi-license mode (flag ON): scope search to all current activated licenses.
+        if enable_multi_license_entitlements_bff():
+            scoped_licenses = self.current_activated_licenses
+        else:
+            selected_license = self.subscriptions.get('subscription_license') or self.current_activated_license
+            scoped_licenses = [selected_license] if selected_license else []
+
+        activated_catalog_uuids = {
+            license.get('subscription_plan', {}).get('enterprise_catalog_uuid')
+            for license in scoped_licenses
+            if license.get('subscription_plan', {}).get('enterprise_catalog_uuid')
+        }
+        self.context.refresh_secured_algolia_api_keys(catalog_uuids=activated_catalog_uuids)
 
     def _current_subscription_licenses_for_status(self, status):
         """
@@ -461,25 +592,12 @@ class BaseLearnerPortalHandler(BaseHandler, BaseLearnerDataMixin):
         })
 
         # Update the subscription_licenses data with the activated licenses
-        updated_subscription_licenses = []
-        for subscription_license in self.subscription_licenses:
-            for activated_license in activated_licenses:
-                if subscription_license.get('uuid') == activated_license.get('uuid'):
-                    updated_subscription_licenses.append(activated_license)
-                    break
-                updated_subscription_licenses.append(subscription_license)
-        if updated_subscription_licenses:
-            self.context.data['enterprise_customer_user_subsidies']['subscriptions'].update({
-                'subscription_licenses': updated_subscription_licenses,
-            })
-
-        # Update the subscription_license and subscription_plan data given the activated license
-        subscription_license = self._extract_subscription_license(subscription_licenses_by_status)
-        subscription_plan = subscription_license.get('subscription_plan') if subscription_license else None
-        self.context.data['enterprise_customer_user_subsidies']['subscriptions'].update({
-            'subscription_license': subscription_license,
-            'subscription_plan': subscription_plan,
-        })
+        activated_by_uuid = {license['uuid']: license for license in activated_licenses}
+        updated_subscription_licenses = [
+            activated_by_uuid.get(subscription_license.get('uuid'), subscription_license)
+            for subscription_license in self.subscription_licenses
+        ]
+        self.refresh_subscription_data(updated_subscription_licenses)
 
     def check_and_auto_apply_license(self):
         """
@@ -521,12 +639,7 @@ class BaseLearnerPortalHandler(BaseHandler, BaseLearnerDataMixin):
             # Update the context with the auto-applied license data
             licenses = self.subscription_licenses + [auto_applied_license]
             subscription_licenses_by_status['activated'] = [auto_applied_license]
-            self.context.data['enterprise_customer_user_subsidies']['subscriptions'].update({
-                'subscription_licenses': licenses,
-                'subscription_licenses_by_status': subscription_licenses_by_status,
-                'subscription_license': auto_applied_license,
-                'subscription_plan': auto_applied_license.get('subscription_plan'),
-            })
+            self.refresh_subscription_data(licenses)
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.exception(
                 "Error auto-applying subscription license for user %s and "
@@ -576,9 +689,88 @@ class BaseLearnerPortalHandler(BaseHandler, BaseLearnerDataMixin):
                 developer_message=f"Could not load default enterprise enrollment intentions. Error: {e}",
             )
 
+    def _map_courses_to_licenses(self, enrollment_intentions):
+        """
+        Map each course to the best matching license from multiple available licenses.
+        
+        When a learner has access to more than one subscription license and they enroll 
+        in a course that is in multiple catalogs, the enrollment uses the license they 
+        first activate that has the course in the catalog (as per ENT-11672).
+        
+        Algorithm:
+        1. For each course, find ALL licenses whose catalog contains the course.
+        2. If multiple match, apply deterministic tie-breaker (_select_best_license):
+           a. Earliest activation_date (first activated)
+           b. Latest expiration_date (maximize access window)
+           c. UUID descending order (deterministic fallback)
+        
+        Args:
+            enrollment_intentions: List of enrollment intentions with course_run_key 
+                                   and applicable_enterprise_catalog_uuids
+        
+        Returns:
+            dict: Mapping of course_run_key to license UUID
+        """
+        license_uuids_by_course_run_key = {}
+        
+        # Get all current activated licenses
+        activated_licenses = self.current_activated_licenses
+        
+        if not activated_licenses:
+            logger.info(
+                "No activated licenses found for course-to-license mapping for request user %s",
+                self.context.lms_user_id,
+            )
+            return license_uuids_by_course_run_key
+        
+        # Build catalog index for efficient O(1) lookups
+        licenses_by_catalog = self._build_catalog_index(activated_licenses)
+        
+        # For each course, find all matching licenses and select the best one
+        for enrollment_intention in enrollment_intentions:
+            course_run_key = enrollment_intention.get('course_run_key')
+            applicable_catalog_uuids = enrollment_intention.get('applicable_enterprise_catalog_uuids', [])
+            
+            # Collect all licenses that have this course in their catalog
+            matching_licenses = []
+            for catalog_uuid in applicable_catalog_uuids:
+                matching_licenses.extend(licenses_by_catalog.get(catalog_uuid, []))
+            
+            # Remove duplicates (a license might appear in multiple catalogs)
+            unique_licenses = {lic['uuid']: lic for lic in matching_licenses}.values()
+            
+            if not unique_licenses:
+                logger.debug(
+                    "No license found for course %s (catalogs: %s) for user %s",
+                    course_run_key,
+                    applicable_catalog_uuids,
+                    self.context.lms_user_id,
+                )
+                continue
+            
+            # Select the best license using deterministic tie-breaker
+            best_license = self._select_best_license(list(unique_licenses))
+            license_uuids_by_course_run_key[course_run_key] = best_license['uuid']
+            
+            logger.info(
+                "Mapped course %s to license %s (catalog: %s, activated: %s, expires: %s) for user %s",
+                course_run_key,
+                best_license['uuid'],
+                best_license.get('subscription_plan', {}).get('enterprise_catalog_uuid'),
+                best_license.get('activation_date'),
+                best_license.get('subscription_plan', {}).get('expiration_date'),
+                self.context.lms_user_id,
+            )
+        
+        return license_uuids_by_course_run_key
+
     def enroll_in_redeemable_default_enterprise_enrollment_intentions(self):
         """
         Enroll in redeemable courses.
+        
+        For multiple licenses: Maps each course to the appropriate license based on 
+        catalog membership. When a course is in multiple catalogs with multiple matching 
+        licenses, uses the first activated license (ENT-11672).
         """
         enrollment_statuses = self.default_enterprise_enrollment_intentions.get('enrollment_statuses', {})
         needs_enrollment = enrollment_statuses.get('needs_enrollment', {})
@@ -594,26 +786,24 @@ class BaseLearnerPortalHandler(BaseHandler, BaseLearnerDataMixin):
             )
             return
 
-        if not self.current_activated_license:
-            # Skip enrolling in default enterprise courses if there is no activated license
+        if not self.current_activated_licenses:
+            # Skip enrolling in default enterprise courses if there are no activated licenses
             logger.info(
-                "No activated license found for request user %s and enterprise customer %s. "
+                "No activated licenses found for request user %s and enterprise customer %s. "
                 "Skipping realization of default enterprise enrollment intentions.",
                 self.context.lms_user_id,
                 self.context.enterprise_customer_uuid,
             )
             return
 
-        license_uuids_by_course_run_key = {}
-        for enrollment_intention in needs_enrollment_enrollable:
-            subscription_plan = self.current_activated_license.get('subscription_plan', {})
-            subscription_catalog = subscription_plan.get('enterprise_catalog_uuid')
-            applicable_catalog_to_enrollment_intention = enrollment_intention.get(
-                'applicable_enterprise_catalog_uuids'
-            )
-            if subscription_catalog in applicable_catalog_to_enrollment_intention:
-                course_run_key = enrollment_intention['course_run_key']
-                license_uuids_by_course_run_key[course_run_key] = self.current_activated_license['uuid']
+        # Gate multi-license course mapping behind the feature flag.
+        # When OFF, fall back to the legacy single-license mapping so existing
+        # behavior is completely unchanged.
+        multi_license_flag_enabled = enable_multi_license_entitlements_bff()
+        if multi_license_flag_enabled:
+            license_uuids_by_course_run_key = self._map_courses_to_licenses(needs_enrollment_enrollable)
+        else:
+            license_uuids_by_course_run_key = self._map_courses_to_single_license(needs_enrollment_enrollable)
 
         response_payload = self._request_default_enrollment_realizations(license_uuids_by_course_run_key)
 
@@ -648,6 +838,35 @@ class BaseLearnerPortalHandler(BaseHandler, BaseLearnerDataMixin):
                 'enrollment_status': 'enrolled',
                 'subscription_license_uuid': license_uuids_by_course_run_key.get(course_run_key),
             })
+
+    def _map_courses_to_single_license(self, enrollment_intentions):
+        """
+        Legacy (pre-ENT-11672) single-license course mapping.
+
+        Used when ENABLE_MULTI_LICENSE_ENTITLEMENTS_BFF waffle flag is OFF to preserve
+        the original behavior: every enrollable course is mapped to the one
+        current activated license, if that license's catalog covers the course.
+
+        Args:
+            enrollment_intentions: List of enrollment intention dicts, each containing
+                ``course_run_key`` and ``applicable_enterprise_catalog_uuids``.
+
+        Returns:
+            dict: Mapping of course_run_key → license UUID (may be empty).
+        """
+        current_license = self.current_activated_license
+        if not current_license:
+            return {}
+
+        subscription_catalog = (
+            current_license.get('subscription_plan', {}).get('enterprise_catalog_uuid')
+        )
+        mappings = {}
+        for intention in enrollment_intentions:
+            applicable_catalogs = intention.get('applicable_enterprise_catalog_uuids', [])
+            if subscription_catalog in applicable_catalogs:
+                mappings[intention['course_run_key']] = current_license['uuid']
+        return mappings
 
     def _request_default_enrollment_realizations(self, license_uuids_by_course_run_key):
         """

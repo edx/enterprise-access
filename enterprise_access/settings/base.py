@@ -71,6 +71,7 @@ THIRD_PARTY_APPS = (
     'django_filters',
     'django_object_actions',
     'rest_framework',
+    'rest_framework_swagger',
     'rules.apps.AutodiscoverRulesConfig',
     'simple_history',
     'social_django',
@@ -537,7 +538,6 @@ BRAZE_TRIAL_CANCELLATION_CAMPAIGN = ''
 BRAZE_ENTERPRISE_PROVISION_TRIAL_ENDING_SOON_CAMPAIGN = ''
 BRAZE_BILLING_ERROR_CAMPAIGN = ''
 BRAZE_SSP_CANCELATION_FINALIZATION_CAMPAIGN = ''
-BRAZE_SSP_SUBSCRIPTION_REINSTATED_CAMPAIGN = ''
 
 # Braze configuration
 BRAZE_API_URL = ''
