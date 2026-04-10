@@ -27,9 +27,13 @@ from enterprise_access.apps.customer_billing.models import (
     StripeEventSummary
 )
 from enterprise_access.apps.customer_billing.stripe_event_handlers import (
+    CheckoutIntentLookupError,
     StripeEventHandler,
     _valid_invoice_event_type,
-    cancel_all_future_plans
+    cancel_all_future_plans,
+    get_checkout_intent_identifier_from_subscription,
+    get_checkout_intent_or_raise,
+    persist_stripe_event
 )
 from enterprise_access.apps.customer_billing.tests.factories import (
     SelfServiceSubscriptionRenewalFactory,
@@ -123,15 +127,42 @@ class TestStripeEventHandler(TestCase):
 
         return event
 
-    def _create_mock_stripe_subscription(self, checkout_intent_id):
-        """Helper to create a mock Stripe subscription."""
-        return {
+    def _create_mock_stripe_subscription(
+        self,
+        checkout_intent_id=None,
+        checkout_intent_uuid=None,
+        include_both=True,
+    ):
+        """
+        Helper to create a mock Stripe subscription metadata.
+
+        Args:
+            checkout_intent_id: Integer ID to include in metadata (or CheckoutIntent object)
+            checkout_intent_uuid: UUID to include in metadata
+            include_both: If True and a CheckoutIntent is passed as checkout_intent_id,
+                         include both id and uuid for realistic data
+        """
+        metadata = {
             'id': randint(1, 100000),
-            'checkout_intent_id': str(checkout_intent_id),
             'enterprise_customer_name': 'Test Enterprise',
             'enterprise_customer_slug': 'test-enterprise',
             'lms_user_id': str(self.user.lms_user_id),
         }
+
+        # Handle the case where a CheckoutIntent object is passed
+        if hasattr(checkout_intent_id, 'id') and hasattr(checkout_intent_id, 'uuid'):
+            checkout_intent = checkout_intent_id
+            if include_both:
+                metadata['checkout_intent_uuid'] = str(checkout_intent.uuid)
+            metadata['checkout_intent_id'] = str(checkout_intent.id)
+        else:
+            # Raw values passed
+            if checkout_intent_uuid:
+                metadata['checkout_intent_uuid'] = str(checkout_intent_uuid)
+            if checkout_intent_id is not None:
+                metadata['checkout_intent_id'] = str(checkout_intent_id)
+
+        return metadata
 
     def _create_existing_event_data_records(
         self,
@@ -171,6 +202,133 @@ class TestStripeEventHandler(TestCase):
         mock_event = self._create_mock_stripe_event('unknown.event.type', {})
 
         StripeEventHandler.dispatch(mock_event)
+
+    @ddt.data(
+        # (name, include_uuid, include_id, id_value, expect_uuid, expect_id)
+        ('uuid_and_id_both_present', True, True, 'valid', True, True),
+        ('id_only_legacy', False, True, 'valid', False, True),
+        ('uuid_only', True, False, None, True, False),
+        ('neither_present', False, False, None, False, False),
+        ('invalid_id_format', True, True, 'not_an_integer', True, False),
+    )
+    @ddt.unpack
+    def test_get_checkout_intent_identifier_from_subscription(
+        self, name, include_uuid, include_id, id_value, expect_uuid, expect_id
+    ):
+        """Test get_checkout_intent_identifier_from_subscription with various metadata combinations."""
+        metadata = {}
+        if include_uuid:
+            metadata['checkout_intent_uuid'] = str(self.checkout_intent.uuid)
+        if include_id:
+            metadata['checkout_intent_id'] = (
+                str(self.checkout_intent.id) if id_value == 'valid' else id_value
+            )
+
+        subscription = AttrDict({'id': 'sub_test_123', 'metadata': metadata})
+        uuid_str, id_int = get_checkout_intent_identifier_from_subscription(subscription)
+
+        if expect_uuid:
+            self.assertEqual(uuid_str, str(self.checkout_intent.uuid), msg=f'Assertion failed on case {name}')
+        else:
+            self.assertIsNone(uuid_str, msg=f'Assertion failed on case {name}')
+
+        if expect_id:
+            self.assertEqual(id_int, self.checkout_intent.id, msg=f'Assertion failed on case {name}')
+        else:
+            self.assertIsNone(id_int, msg=f'Assertion failed on case {name}')
+
+    @ddt.data(
+        # (name, uuid_type, id_type, should_find)
+        ('uuid_lookup', 'valid', None, True),
+        ('id_fallback', None, 'valid', True),
+        ('invalid_uuid_falls_back_to_id', 'invalid', 'valid', True),
+        ('not_found', 'nonexistent', 'nonexistent', False),
+    )
+    @ddt.unpack
+    def test_get_checkout_intent_or_raise(self, name, uuid_type, id_type, should_find):
+        """Test get_checkout_intent_or_raise with various identifier combinations."""
+        uuid_str = {
+            'valid': str(self.checkout_intent.uuid),
+            'invalid': 'not-a-valid-uuid',
+            'nonexistent': str(uuid.uuid4()),
+            None: None,
+        }[uuid_type]
+
+        id_int = {
+            'valid': self.checkout_intent.id,
+            'nonexistent': 99999,
+            None: None,
+        }[id_type]
+
+        if should_find:
+            result = get_checkout_intent_or_raise(uuid_str, id_int, 'evt_test')
+            self.assertEqual(result.id, self.checkout_intent.id, msg=f'Assertion failed on case {name}')
+        else:
+            with self.assertRaises(CheckoutIntentLookupError, msg=f'Assertion failed on case {name}'):
+                get_checkout_intent_or_raise(uuid_str, id_int, 'evt_test')
+
+    def test_get_checkout_intent_or_raise_uuid_preferred_over_id(self):
+        """Test UUID is preferred when both present and point to different records."""
+        second_intent = CheckoutIntent.create_intent(
+            user=cast(Type[AbstractUser], self.user),
+            slug='second-enterprise',
+            name='Second Enterprise',
+            quantity=5,
+            country='US',
+            terms_metadata={'version': '1.0'}
+        )
+
+        # Pass UUID of second intent but ID of first intent - should return second
+        result = get_checkout_intent_or_raise(
+            uuid_str=str(second_intent.uuid),
+            id_int=self.checkout_intent.id,
+            event_id='evt_test',
+        )
+        self.assertEqual(result.id, second_intent.id)
+
+    def test_persist_stripe_event_unsupported_event_type_returns_none(self):
+        """Test persist_stripe_event returns None for unsupported event types."""
+        # Create an event with an unsupported type so persist_stripe_event
+        # returns None without creating StripeEventData.
+        mock_event = self._create_mock_stripe_event(
+            'payment_intent.succeeded',  # Not a supported event type
+            {'id': 'pi_test_123', 'customer': 'cus_test_123'},
+        )
+
+        result = persist_stripe_event(mock_event)
+
+        self.assertIsNone(result)
+        # Verify no StripeEventData was created
+        self.assertFalse(StripeEventData.objects.filter(event_id=mock_event.id).exists())
+
+    def test_persist_stripe_event_invalid_uuid_format_falls_back_to_id(self):
+        """Test persist_stripe_event handles invalid UUID format gracefully."""
+        # Set up checkout intent with stripe customer ID
+        self.checkout_intent.stripe_customer_id = 'cus_test_456'
+        self.checkout_intent.save()
+
+        # Create a subscription event whose metadata includes an invalid UUID and
+        # a valid checkout intent ID so the handler falls back to ID lookup.
+        subscription_data = {
+            'id': 'sub_test_789',
+            'status': 'active',
+            'customer': 'cus_test_456',
+            'metadata': {
+                'checkout_intent_uuid': 'not-a-valid-uuid-format',  # Invalid UUID
+                'checkout_intent_id': str(self.checkout_intent.id),  # Valid ID fallback
+            },
+        }
+        mock_event = self._create_mock_stripe_event(
+            'customer.subscription.created',
+            subscription_data,
+        )
+
+        result = persist_stripe_event(mock_event)
+
+        # Should succeed by falling back to ID lookup
+        self.assertIsNotNone(result)
+        self.assertEqual(result.checkout_intent, self.checkout_intent)
+        self.assertEqual(result.event_id, mock_event.id)
 
     @ddt.data(
         # Happy path: correct parent type at lines.data[0].parent.type
@@ -300,12 +458,11 @@ class TestStripeEventHandler(TestCase):
             'expected_final_state': CheckoutIntentState.CREATED,  # Unchanged.
             'expect_matching_intent': False,
         },
-        # Sad Test case: invalid checkout_intent_id format
+        # Sad Test case: invalid checkout_intent_id format - now handled gracefully (no exception)
         {
             'intent_id_override': 'not_an_integer',
-            'expected_exception': ValueError,
             'expect_matching_intent': False,
-            'expected_final_state': CheckoutIntentState.CREATED,  # Unchanged.
+            'expected_final_state': CheckoutIntentState.CREATED,  # Unchanged - checkout intent not found.
         },
     )
     @ddt.unpack
@@ -451,7 +608,7 @@ class TestStripeEventHandler(TestCase):
         """Test that invoice.paid handler is idempotent when called with same stripe_customer_id."""
         subscription_id = 'sub_test_idempotent_123'
         stripe_customer_id = 'cus_test_idempotent_456'
-        mock_subscription = self._create_mock_stripe_subscription(self.checkout_intent.id)
+        mock_subscription = self._create_mock_stripe_subscription(self.checkout_intent)
 
         # First mark the intent as paid with the customer_id
         self.checkout_intent.mark_as_paid(stripe_customer_id=stripe_customer_id)
@@ -519,7 +676,7 @@ class TestStripeEventHandler(TestCase):
             "status": "trialing",  # Status hasn't changed yet
             "trial_end": trial_end_timestamp,
             "cancel_at": cancel_at_timestamp,
-            "metadata": self._create_mock_stripe_subscription(self.checkout_intent.id),
+            "metadata": self._create_mock_stripe_subscription(self.checkout_intent),
         }
 
         mock_event = self._create_mock_stripe_event(
@@ -558,7 +715,7 @@ class TestStripeEventHandler(TestCase):
             "status": "trialing",
             "trial_end": trial_end_timestamp,
             "cancel_at": cancel_at_timestamp,
-            "metadata": self._create_mock_stripe_subscription(self.checkout_intent.id),
+            "metadata": self._create_mock_stripe_subscription(self.checkout_intent),
         }
 
         mock_event = self._create_mock_stripe_event(
@@ -593,7 +750,7 @@ class TestStripeEventHandler(TestCase):
             "status": "trialing",
             "trial_end": trial_end_timestamp,
             # No cancel_at field - cancellation was reversed
-            "metadata": self._create_mock_stripe_subscription(self.checkout_intent.id),
+            "metadata": self._create_mock_stripe_subscription(self.checkout_intent),
         }
 
         mock_event = self._create_mock_stripe_event(
@@ -627,7 +784,7 @@ class TestStripeEventHandler(TestCase):
             "id": subscription_id,
             "status": "trialing",
             "trial_end": trial_end_timestamp,
-            "metadata": self._create_mock_stripe_subscription(self.checkout_intent.id),
+            "metadata": self._create_mock_stripe_subscription(self.checkout_intent),
         }
 
         mock_event = self._create_mock_stripe_event(
@@ -725,7 +882,7 @@ class TestStripeEventHandler(TestCase):
             "id": subscription_id,
             "status": "past_due",
             "default_payment_method": None,
-            "metadata": self._create_mock_stripe_subscription(self.checkout_intent.id),
+            "metadata": self._create_mock_stripe_subscription(self.checkout_intent),
         }
 
         self._create_existing_event_data_records(
@@ -810,7 +967,7 @@ class TestStripeEventHandler(TestCase):
             'id': subscription_id,
             'status': StripeSubscriptionStatus.TRIALING,
             'default_payment_method': 'new_payment_method',
-            'metadata': self._create_mock_stripe_subscription(self.checkout_intent.id),
+            'metadata': self._create_mock_stripe_subscription(self.checkout_intent),
         }
 
         self._create_existing_event_data_records(
@@ -845,7 +1002,7 @@ class TestStripeEventHandler(TestCase):
             "id": subscription_id,
             "status": "canceled",
             "default_payment_method": None,
-            "metadata": self._create_mock_stripe_subscription(self.checkout_intent.id),
+            "metadata": self._create_mock_stripe_subscription(self.checkout_intent),
         }
 
         self._create_existing_event_data_records(
@@ -912,7 +1069,7 @@ class TestStripeEventHandler(TestCase):
                 'id': 'sub_test_deleted_marks_renewal',
                 'status': 'canceled',
                 'ended_at': 1700000000,
-                'metadata': self._create_mock_stripe_subscription(self.checkout_intent.id),
+                'metadata': self._create_mock_stripe_subscription(self.checkout_intent),
             },
         )
 
@@ -950,7 +1107,7 @@ class TestStripeEventHandler(TestCase):
             {
                 'id': 'sub_test_uncancel',
                 'status': StripeSubscriptionStatus.ACTIVE,
-                'metadata': self._create_mock_stripe_subscription(self.checkout_intent.id),
+                'metadata': self._create_mock_stripe_subscription(self.checkout_intent),
             },
         )
 
@@ -983,7 +1140,7 @@ class TestStripeEventHandler(TestCase):
                 'id': 'sub_test_set_cancel_at',
                 'status': StripeSubscriptionStatus.TRIALING,
                 'cancel_at': cancel_at_timestamp,
-                'metadata': self._create_mock_stripe_subscription(self.checkout_intent.id),
+                'metadata': self._create_mock_stripe_subscription(self.checkout_intent),
             },
         )
 
@@ -1009,7 +1166,7 @@ class TestStripeEventHandler(TestCase):
             "status": "canceled",
             "trial_end": 987654321,
             "ended_at": 1234567890,
-            "metadata": self._create_mock_stripe_subscription(self.checkout_intent.id),
+            "metadata": self._create_mock_stripe_subscription(self.checkout_intent),
         }
 
         # Create prior event with ACTIVE status (not TRIALING)
@@ -1078,7 +1235,7 @@ class TestStripeEventHandler(TestCase):
             "trial_end": 987654321,
             "ended_at": 1234567890,
             "cancellation_details": cancellation_details,
-            "metadata": self._create_mock_stripe_subscription(self.checkout_intent.id),
+            "metadata": self._create_mock_stripe_subscription(self.checkout_intent),
         }
 
         # Create prior event with ACTIVE status
@@ -1196,7 +1353,7 @@ class TestStripeEventHandler(TestCase):
         subscription_data = {
             "id": "sub_test_456",
             "status": StripeSubscriptionStatus.ACTIVE,
-            "metadata": self._create_mock_stripe_subscription(self.checkout_intent.id),
+            "metadata": self._create_mock_stripe_subscription(self.checkout_intent),
         }
 
         mock_event = self._create_mock_stripe_event(
@@ -1234,7 +1391,7 @@ class TestStripeEventHandler(TestCase):
             'customer.subscription.updated',
             id=stripe_subscription_id,
             status=StripeSubscriptionStatus.ACTIVE,
-            metadata=self._create_mock_stripe_subscription(self.checkout_intent.id),
+            metadata=self._create_mock_stripe_subscription(self.checkout_intent),
         )
 
         mock_event = self._create_mock_stripe_event(
@@ -1356,6 +1513,7 @@ class TestStripeEventHandler(TestCase):
                     'status': 'trialing',
                     'metadata': {
                         'checkout_intent_id': str(self.checkout_intent.id),
+                        'checkout_intent_uuid': str(self.checkout_intent.uuid),
                     },
                     'items': {
                         'data': [
@@ -1425,6 +1583,7 @@ class TestStripeEventHandler(TestCase):
                     'status': StripeSubscriptionStatus.ACTIVE,  # Back to active after payment
                     'metadata': {
                         'checkout_intent_id': str(self.checkout_intent.id),
+                        'checkout_intent_uuid': str(self.checkout_intent.uuid),
                     },
                 }
             }
@@ -1561,6 +1720,7 @@ class TestStripeEventHandler(TestCase):
                     'status': 'trialing',
                     'metadata': {
                         'checkout_intent_id': str(self.checkout_intent.id),
+                        'checkout_intent_uuid': str(self.checkout_intent.uuid),
                     },
                     'items': {
                         'data': [
@@ -1630,6 +1790,7 @@ class TestStripeEventHandler(TestCase):
                     'status': StripeSubscriptionStatus.ACTIVE,  # Now active after first payment
                     'metadata': {
                         'checkout_intent_id': str(self.checkout_intent.id),
+                        'checkout_intent_uuid': str(self.checkout_intent.uuid),
                     },
                 }
             }
@@ -1714,7 +1875,7 @@ class TestStripeEventHandler(TestCase):
             'customer.subscription.updated',
             id=stripe_subscription_id,
             status=StripeSubscriptionStatus.ACTIVE,
-            metadata=self._create_mock_stripe_subscription(self.checkout_intent.id),
+            metadata=self._create_mock_stripe_subscription(self.checkout_intent),
         )
 
         mock_event = self._create_mock_stripe_event(
@@ -1858,6 +2019,7 @@ class TestStripeEventHandler(TestCase):
                     'status': StripeSubscriptionStatus.ACTIVE,
                     'metadata': {
                         'checkout_intent_id': str(self.checkout_intent.id),
+                        'checkout_intent_uuid': str(self.checkout_intent.uuid),
                     },
                 }
             }
@@ -1962,6 +2124,7 @@ class TestStripeEventHandler(TestCase):
                                 'status': StripeSubscriptionStatus.ACTIVE,
                                 'metadata': {
                                     'checkout_intent_id': str(self.checkout_intent.id),
+                                    'checkout_intent_uuid': str(self.checkout_intent.uuid),
                                 },
                             }
                         }
@@ -1996,6 +2159,7 @@ class TestStripeEventHandler(TestCase):
                     'status': StripeSubscriptionStatus.ACTIVE,
                     'metadata': {
                         'checkout_intent_id': str(self.checkout_intent.id),
+                        'checkout_intent_uuid': str(self.checkout_intent.uuid),
                     },
                 }
             }
@@ -2029,7 +2193,7 @@ class TestStripeEventHandler(TestCase):
         hasn't been processed yet), forcing Stripe to retry the webhook.
         """
         stripe_subscription_id = 'sub_test_no_renewal'
-        mock_subscription = self._create_mock_stripe_subscription(self.checkout_intent.id)
+        mock_subscription = self._create_mock_stripe_subscription(self.checkout_intent)
 
         invoice_data = {
             'id': 'in_test_no_renewal',
@@ -2100,7 +2264,7 @@ class TestStripeEventHandler(TestCase):
             processed_at=timezone.now(),
         )
 
-        mock_subscription = self._create_mock_stripe_subscription(self.checkout_intent.id)
+        mock_subscription = self._create_mock_stripe_subscription(self.checkout_intent)
         invoice_data = {
             'id': stripe_invoice_id,
             'customer': 'cus_test_customer_456',
@@ -2138,7 +2302,7 @@ class TestStripeEventHandler(TestCase):
             'id': subscription_id,
             'status': StripeSubscriptionStatus.TRIALING,
             'object': 'subscription',
-            'metadata': self._create_mock_stripe_subscription(self.checkout_intent.id),
+            'metadata': self._create_mock_stripe_subscription(self.checkout_intent),
         }
 
         mock_event = self._create_mock_stripe_event(
@@ -2179,8 +2343,8 @@ class TestStripeEventHandler(TestCase):
             'customer.subscription.created', subscription_data
         )
 
-        # Should raise CheckoutIntent.DoesNotExist
-        with self.assertRaises(Exception):
+        # Should raise CheckoutIntentLookupError
+        with self.assertRaises(CheckoutIntentLookupError):
             StripeEventHandler.dispatch(mock_event)
 
         # Verify stripe.Subscription.modify was NOT called
@@ -2194,7 +2358,7 @@ class TestStripeEventHandler(TestCase):
             'id': subscription_id,
             'status': StripeSubscriptionStatus.TRIALING,
             'object': 'subscription',
-            'metadata': self._create_mock_stripe_subscription(self.checkout_intent.id),
+            'metadata': self._create_mock_stripe_subscription(self.checkout_intent),
         }
 
         mock_event = self._create_mock_stripe_event(
@@ -2258,6 +2422,7 @@ class TestInvoiceCreatedHandler(TestCase):
         mock_subscription = {
             'id': subscription_id,
             'checkout_intent_id': str(self.checkout_intent.id),
+            'checkout_intent_uuid': str(self.checkout_intent.uuid),
             'enterprise_customer_name': 'Test Enterprise',
             'enterprise_customer_slug': 'test-enterprise',
             'lms_user_id': str(self.user.lms_user_id),
@@ -2371,6 +2536,7 @@ class TestInvoiceCreatedHandler(TestCase):
         mock_subscription = {
             'id': self.subscription_id,
             'checkout_intent_id': str(self.checkout_intent.id),
+            'checkout_intent_uuid': str(self.checkout_intent.uuid),
             'enterprise_customer_name': 'Test Enterprise',
             'enterprise_customer_slug': 'test-enterprise',
             'lms_user_id': str(self.user.lms_user_id),
@@ -2426,6 +2592,7 @@ class TestInvoiceCreatedHandler(TestCase):
         mock_subscription = {
             'id': self.subscription_id,
             'checkout_intent_id': str(self.checkout_intent.id),
+            'checkout_intent_uuid': str(self.checkout_intent.uuid),
         }
         invoice_data = {
             'id': self.invoice_id,
@@ -2465,8 +2632,10 @@ class TestInvoiceCreatedHandler(TestCase):
         """Test that invoice.created handler gracefully handles missing CheckoutIntent."""
         self._create_renewal_with_effective_date()
         event = self._create_invoice_created_event()
-        # Override the checkout_intent_id to a non-existent value
-        event.data.object['parent']['subscription_details']['metadata']['checkout_intent_id'] = '99999'
+        # Override both checkout_intent_id and checkout_intent_uuid to non-existent values
+        metadata = event.data.object['parent']['subscription_details']['metadata']
+        metadata['checkout_intent_id'] = '99999'
+        metadata['checkout_intent_uuid'] = str(uuid.uuid4())  # Random non-existent UUID
 
         # Should not raise
         StripeEventHandler.dispatch(event)

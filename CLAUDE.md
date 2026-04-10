@@ -73,7 +73,8 @@ Always read `docs/architecture-patterns.md` before starting.
 ### Docker Development
 
 - Full devstack (app, worker, DB, Kafka, etc.) is managed in the devstack repository
-- The `docker-compose.yml` in this repo provides a lightweight container for running tests and quality checks only
+- The container name is typically `edx.devstack.enterprise-access`,
+  you can also do `docker ps | grep enterprise-access` to search for the container name.
 
 ## Testing Notes
 
