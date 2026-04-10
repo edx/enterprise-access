@@ -155,12 +155,13 @@ class EnterpriseCatalogUserV1ApiClient(BaseUserApiClient):
         secured_algolia_api_key_path: str = f'enterprise-customer/{enterprise_customer_uuid}/secured-algolia-api-key/'
         return urljoin(self.api_base_url, secured_algolia_api_key_path)
 
-    def get_secured_algolia_api_key(self, enterprise_customer_uuid):
+    def get_secured_algolia_api_key(self, enterprise_customer_uuid, catalog_uuids=None):
         """
         Fetch secured algolia API keys
 
         Arguments:
             enterprise_customer_uuid (uuid): UUID of the enterprise customer
+            catalog_uuids (list[str], optional): Catalog UUIDs to restrict the secured key to.
 
         Returns:
             200:
@@ -174,6 +175,10 @@ class EnterpriseCatalogUserV1ApiClient(BaseUserApiClient):
                 'user_message' (str): Message of corresponding error indicating a user oriented message
                 'developer_message' (str): Message of corresponding error indicating an actionable developer message
         """
-        response = self.get(self.secured_algolia_api_key_endpoint(enterprise_customer_uuid))
+        query_params = {'catalog_uuids': catalog_uuids} if catalog_uuids is not None else None
+        response = self.get(
+            self.secured_algolia_api_key_endpoint(enterprise_customer_uuid),
+            params=query_params,
+        )
         response.raise_for_status()
         return response.json()

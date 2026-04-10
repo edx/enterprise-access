@@ -44,20 +44,22 @@ class BaseBFFViewSetMixin:
     Mixin class containing common BFF viewset functionality.
     """
 
-    def _create_context(self, request, context_class):
+    def _create_context(self, request, context_class, context_kwargs=None):
         """
         Creates the appropriate context for the request.
 
         Args:
             request: The incoming HTTP request
             context_class: The context class to instantiate
+            context_kwargs (dict | None): Extra keyword arguments forwarded to the
+                context constructor (e.g. ``initialize_secured_algolia_api_keys=False``).
 
         Returns:
             tuple: (context_instance, error_response_data, error_status_code)
             If successful, error_response_data and error_status_code will be None
         """
         try:
-            context = context_class(request=request)
+            context = context_class(request=request, **(context_kwargs or {}))
             return context, None, None
         except Exception as exc:  # pylint: disable=broad-except
             logger.exception("Could not instantiate the handler context for the request.")
@@ -157,7 +159,14 @@ class BaseBFFViewSetMixin:
 
         return dict(ordered_representation), status_code
 
-    def load_route_data_and_build_response(self, request, handler_class, response_builder_class, context_class):
+    def load_route_data_and_build_response(
+        self,
+        request,
+        handler_class,
+        response_builder_class,
+        context_class,
+        context_kwargs=None,
+    ):
         """
         Handles the route and builds the response with the specified context class.
 
@@ -166,12 +175,16 @@ class BaseBFFViewSetMixin:
             handler_class: The handler class to use
             response_builder_class: The response builder class to use
             context_class: The context class to use
+            context_kwargs (dict | None): Extra keyword arguments forwarded to the
+                context constructor (e.g. ``initialize_secured_algolia_api_keys=False``).
 
         Returns:
             tuple: (response_data, status_code)
         """
         # Create the context based on the request
-        context, error_response, error_status = self._create_context(request, context_class)
+        context, error_response, error_status = self._create_context(
+            request, context_class, context_kwargs=context_kwargs,
+        )
         if context is None:
             return error_response, error_status
 
@@ -191,12 +204,22 @@ class BaseBFFViewSet(BaseBFFViewSetMixin, ViewSet):
     authentication_classes = [JwtAuthentication]
     permission_classes = [IsAuthenticated]
 
-    def load_route_data_and_build_response(self, request, handler_class, response_builder_class):
+    def load_route_data_and_build_response(
+        self,
+        request,
+        handler_class,
+        response_builder_class,
+        context_kwargs=None,
+    ):
         """
         Handles the route and builds the response using HandlerContext for authenticated requests.
         """
         return super().load_route_data_and_build_response(
-            request, handler_class, response_builder_class, HandlerContext
+            request,
+            handler_class,
+            response_builder_class,
+            HandlerContext,
+            context_kwargs=context_kwargs,
         )
 
 

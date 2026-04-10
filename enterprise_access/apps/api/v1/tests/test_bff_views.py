@@ -341,6 +341,38 @@ class TestLearnerPortalBFFViewSet(TestHandlerContextMixin, MockLicenseManagerMet
         assert check_objects(response.json(), expected_response_data)
 
     @mock_dashboard_dependencies
+    def test_dashboard_with_activated_license_fetches_secured_algolia_key_once(
+        self,
+        mock_get_enterprise_customers_for_user,
+        mock_get_secured_algolia_api_key_for_user,
+        mock_get_default_enrollment_intentions_learner_status,
+        mock_get_subscription_licenses_for_learner,
+        mock_get_enterprise_course_enrollments,
+    ):
+        """Learner-portal routes should not perform duplicate unscoped+scoped Algolia fetches."""
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE,
+            'context': self.mock_enterprise_customer_uuid,
+        }])
+        mock_get_enterprise_customers_for_user.return_value = self.mock_enterprise_learner_response_data
+        mock_get_secured_algolia_api_key_for_user.return_value = self.mock_secured_algolia_api_key_response
+        mock_get_subscription_licenses_for_learner.return_value = {
+            'customer_agreement': self.mock_customer_agreement,
+            'results': [self.mock_subscription_license],
+        }
+        mock_get_default_enrollment_intentions_learner_status.return_value = \
+            self.mock_default_enterprise_enrollment_intentions_learner_status_data
+        mock_get_enterprise_course_enrollments.return_value = self.mock_enterprise_course_enrollments
+
+        dashboard_url = reverse('api:v1:learner-portal-bff-dashboard')
+        dashboard_url += f"?{urlencode({'enterprise_customer_slug': self.mock_enterprise_customer_slug})}"
+
+        response = self.client.post(dashboard_url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        mock_get_secured_algolia_api_key_for_user.assert_called_once()
+
+    @mock_dashboard_dependencies
     @mock.patch('enterprise_access.apps.api_client.license_manager_client.LicenseManagerUserApiClient.activate_license')
     def test_dashboard_with_subscriptions_license_activation(
         self,

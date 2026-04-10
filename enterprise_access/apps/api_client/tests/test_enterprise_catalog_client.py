@@ -44,8 +44,9 @@ class TestEnterpriseCatalogApiClient(TestCase):
 
         assert contains_content_items
 
+        expected_endpoint = client.enterprise_catalog_endpoint + str(ent_uuid) + '/contains_content_items/'
         mock_oauth_client.return_value.get.assert_called_with(
-            f'http://enterprise-catalog.example.com/api/v2/enterprise-catalogs/{ent_uuid}/contains_content_items/',
+            expected_endpoint,
             params={'course_run_ids': ['AB+CD101']},
         )
 
@@ -75,8 +76,9 @@ class TestEnterpriseCatalogApiClient(TestCase):
         fetched_metadata = client.catalog_content_metadata(customer_uuid, content_keys)
 
         self.assertEqual(fetched_metadata['results'], mock_response_json['results'])
+        expected_endpoint = f'{client.enterprise_catalog_endpoint}{customer_uuid}/get_content_metadata/'
         mock_oauth_client.return_value.get.assert_called_with(
-            f'http://enterprise-catalog.example.com/api/v2/enterprise-catalogs/{customer_uuid}/get_content_metadata/',
+            expected_endpoint,
             params={
                 'content_keys': content_keys,
                 'traverse_pagination': True,
@@ -88,6 +90,8 @@ class TestEnterpriseCatalogApiClient(TestCase):
         content_keys = ['course+A', 'course+B']
         request_response = Response()
         request_response.status_code = 400
+        request_response.url = 'http://test.example.com'
+        request_response.raise_for_status = mock.Mock(side_effect=HTTPError())
 
         mock_oauth_client.return_value.get.return_value = request_response
 
@@ -97,13 +101,39 @@ class TestEnterpriseCatalogApiClient(TestCase):
         with self.assertRaises(HTTPError):
             client.catalog_content_metadata(customer_uuid, content_keys)
 
+        expected_endpoint = f'{client.enterprise_catalog_endpoint}{customer_uuid}/get_content_metadata/'
         mock_oauth_client.return_value.get.assert_called_with(
-            f'http://enterprise-catalog.example.com/api/v2/enterprise-catalogs/{customer_uuid}/get_content_metadata/',
+            expected_endpoint,
             params={
                 'content_keys': content_keys,
                 'traverse_pagination': True,
             },
         )
+
+    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient')
+    def test_catalog_content_metadata_raises_for_empty_keys_with_traverse_pagination(self, mock_oauth_client):
+        """
+        catalog_content_metadata raises when content_keys is empty and traverse_pagination=True,
+        to prevent fetching all metadata for an entire catalog (potentially thousands of records).
+        """
+        catalog_uuid = uuid4()
+        client = EnterpriseCatalogApiClient()
+
+        with self.assertRaises(Exception) as ctx:
+            client.catalog_content_metadata(catalog_uuid, content_keys=[], traverse_pagination=True)
+
+        self.assertIn('Cannot request all metadata', str(ctx.exception))
+        mock_oauth_client.return_value.get.assert_not_called()
+
+    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient')
+    def test_content_metadata_v2_raises_not_implemented(self, mock_oauth_client):
+        """EnterpriseCatalogApiClient.content_metadata (V2) is intentionally unimplemented."""
+        client = EnterpriseCatalogApiClient()
+
+        with self.assertRaises(NotImplementedError):
+            client.content_metadata('course+SomeKey')
+
+        mock_oauth_client.return_value.get.assert_not_called()
 
     @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient')
     def test_get_content_metadata_count(self, mock_oauth_client):
@@ -119,8 +149,9 @@ class TestEnterpriseCatalogApiClient(TestCase):
         fetched_metadata = client.get_content_metadata_count(catalog_uuid)
 
         self.assertEqual(fetched_metadata, mock_response_json['count'])
+        expected_endpoint = client.enterprise_catalog_endpoint + str(catalog_uuid) + '/get_content_metadata/'
         mock_oauth_client.return_value.get.assert_called_with(
-            f'http://enterprise-catalog.example.com/api/v2/enterprise-catalogs/{catalog_uuid}/get_content_metadata/',
+            expected_endpoint,
         )
 
 
@@ -154,8 +185,9 @@ class TestEnterpriseCatalogApiV1Client(TestCase):
         expected_query_params_kwarg = {}
         if coerce_to_parent_course:
             expected_query_params_kwarg |= {'params': {'coerce_to_parent_course': True}}
+        expected_endpoint = f'{client.content_metadata_endpoint}{content_key}'
         mock_oauth_client.return_value.get.assert_called_with(
-            f'http://enterprise-catalog.example.com/api/v1/content-metadata/{content_key}',
+            expected_endpoint,
             **expected_query_params_kwarg,
         )
 
@@ -164,6 +196,8 @@ class TestEnterpriseCatalogApiV1Client(TestCase):
         content_key = 'course+A'
         request_response = Response()
         request_response.status_code = 400
+        request_response.url = 'http://test.example.com'
+        request_response.raise_for_status = mock.Mock(side_effect=HTTPError())
 
         mock_oauth_client.return_value.get.return_value = request_response
 
@@ -172,8 +206,9 @@ class TestEnterpriseCatalogApiV1Client(TestCase):
         with self.assertRaises(HTTPError):
             client.content_metadata(content_key)
 
+        expected_endpoint = f'{client.content_metadata_endpoint}{content_key}'
         mock_oauth_client.return_value.get.assert_called_with(
-            f'http://enterprise-catalog.example.com/api/v1/content-metadata/{content_key}',
+            expected_endpoint,
         )
 
 
@@ -200,11 +235,7 @@ class TestEnterpriseCatalogUserV1ApiClient(TestCase):
     )
     @ddt.unpack
     def test_secured_algolia_api_key_endpoint(self, enterprise_customer_uuid):
-        expected_url = (
-            f'http://enterprise-catalog.example.com/api/v1'
-            f'/enterprise-customer/{enterprise_customer_uuid}/secured-algolia-api-key/'
-        )
-        request = self.factory.get(expected_url)
+        request = self.factory.get('http://test.example.com')
         request.headers = {
             "Authorization": 'test-auth',
             self.request_id_key: 'test-request-id'
@@ -223,16 +254,16 @@ class TestEnterpriseCatalogUserV1ApiClient(TestCase):
             secured_algolia_api_key_url = client.secured_algolia_api_key_endpoint(
                 enterprise_customer_uuid=enterprise_customer_uuid
             )
+            expected_url = (
+                f'{client.api_base_url}'
+                f'enterprise-customer/{enterprise_customer_uuid}/secured-algolia-api-key/'
+            )
             self.assertEqual(secured_algolia_api_key_url, expected_url)
 
     @mock.patch('requests.Session.send')
     @mock.patch('crum.get_current_request')
     def test_secured_algolia_api_key(self, mock_crum_get_current_request, mock_send):
-        expected_url = (
-            f'http://enterprise-catalog.example.com/api/v1'
-            f'/enterprise-customer/{self.mock_enterprise_customer_uuid}/secured-algolia-api-key/'
-        )
-        request = self.factory.get(expected_url)
+        request = self.factory.get('http://test.example.com')
         request.headers = {
             "Authorization": 'test-auth',
             self.request_id_key: 'test-request-id'
@@ -264,6 +295,10 @@ class TestEnterpriseCatalogUserV1ApiClient(TestCase):
         prepared_request = mock_send.call_args[0][0]
 
         # Assert base request URL/method is correct
+        expected_url = (
+            f'{client.api_base_url}'
+            f'enterprise-customer/{self.mock_enterprise_customer_uuid}/secured-algolia-api-key/'
+        )
         parsed_url = urlparse(prepared_request.url)
         self.assertEqual(f"{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path}", expected_url)
         self.assertEqual(prepared_request.method, 'GET')
@@ -274,3 +309,41 @@ class TestEnterpriseCatalogUserV1ApiClient(TestCase):
 
         # Assert the response is as expected
         self.assertEqual(result, expected_result)
+
+    @mock.patch('requests.Session.send')
+    @mock.patch('crum.get_current_request')
+    def test_secured_algolia_api_key_with_catalog_scope(self, mock_crum_get_current_request, mock_send):
+        request = self.factory.get('http://test.example.com')
+        request.headers = {
+            "Authorization": 'test-auth',
+            self.request_id_key: 'test-request-id'
+        }
+        request.user = self.user
+
+        mock_crum_get_current_request.return_value = request
+        mock_response = mock.Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            'algolia': {
+                'secured_api_key': 'key',
+                'valid_until': _days_from_now(1, DATE_FORMAT_ISO_8601),
+            },
+            'catalog_uuids_to_catalog_query_uuids': {},
+        }
+        mock_send.return_value = mock_response
+
+        client = EnterpriseCatalogUserV1ApiClient(request)
+        client.get_secured_algolia_api_key(
+            enterprise_customer_uuid=self.mock_enterprise_customer_uuid,
+            catalog_uuids=['cat-a', 'cat-b'],
+        )
+        prepared_request = mock_send.call_args[0][0]
+        parsed_url = urlparse(prepared_request.url)
+
+        expected_url = (
+            f'{client.api_base_url}'
+            f'enterprise-customer/{self.mock_enterprise_customer_uuid}/secured-algolia-api-key/'
+        )
+        self.assertEqual(f"{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path}", expected_url)
+        self.assertIn('catalog_uuids=cat-a', parsed_url.query)
+        self.assertIn('catalog_uuids=cat-b', parsed_url.query)

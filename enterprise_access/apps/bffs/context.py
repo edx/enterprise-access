@@ -2,8 +2,8 @@
 HandlerContext for bffs app.
 """
 import logging
-from urllib.error import HTTPError
 
+from requests.exceptions import HTTPError
 from rest_framework import status
 
 from enterprise_access.apps.bffs import serializers
@@ -125,11 +125,16 @@ class HandlerContext(BaseHandlerContext):
           to the resolved enterprise customer.
     """
 
-    def __init__(self, request):
+    def __init__(self, request, initialize_secured_algolia_api_keys=True):
         """
         Initializes the HandlerContext with request information, route, and optional initial data.
         Args:
             request: The incoming HTTP request.
+            initialize_secured_algolia_api_keys (bool): When True (default), an unscoped
+                enterprise-catalog fetch is performed during context setup. Set to False for
+                flows (e.g. learner portal routes) that always scope the Algolia key to
+                activated license catalogs later via ``refresh_secured_algolia_api_keys()``;
+                this avoids a redundant unscoped fetch on every request.
         """
         super().__init__(request)
 
@@ -137,6 +142,7 @@ class HandlerContext(BaseHandlerContext):
         self._enterprise_customer_slug = None
         self._lms_user_id = getattr(self.user, 'lms_user_id', None)
         self._enterprise_features = {}
+        self._initialize_secured_algolia_api_keys_on_context_setup = initialize_secured_algolia_api_keys
 
         # Initialize common context data
         self._initialize_common_context_data()
@@ -274,53 +280,51 @@ class HandlerContext(BaseHandlerContext):
         if not self.enterprise_customer_uuid:
             self._enterprise_customer_uuid = self.enterprise_customer.get('uuid')
 
-        # Initialize the secured algolia api keys metadata derived from enterprise catalog
-        try:
-            self._initialize_secured_algolia_api_keys()
-        except HTTPError as exc:
-            exception_response = exc.response.json()
-            exception_response_user_message = exception_response.get('user_message')
-            exception_response_developer_message = exception_response.get('developer_message')
-            logger.exception(
-                'HTTP Error initializing the secured algolia api keys for request user %s, '
-                'enterprise customer uuid %s',
-                self.lms_user_id,
-                enterprise_customer_uuid,
-            )
-            self.add_error(
-                user_message=exception_response_user_message or 'HTTP Error initializing the secured algolia api keys',
-                developer_message=exception_response_developer_message or
-                f'Could not initialize the secured algolia api keys. Error: {exc}',
-            )
-        except Exception as exc:  # pylint: disable=broad-except
-            logger.exception(
-                'Error initializing the secured algolia api keys for request user %s, '
-                'enterprise customer uuid %s',
-                self.lms_user_id,
-                enterprise_customer_uuid,
-            )
-            self.add_error(
-                user_message='Error initializing the secured algolia api keys',
-                developer_message=f'Could not initialize the secured algolia api keys. Error: {exc}',
-            )
+        # Initialize the secured algolia api keys metadata derived from enterprise catalog.
+        # When initialize_secured_algolia_api_keys=False (e.g. learner portal routes) the
+        # unscoped fetch is intentionally skipped here; those handlers always call
+        # refresh_secured_algolia_api_keys() with a catalog scope later, so doing an
+        # unscoped call now would only produce a redundant enterprise-catalog request and a
+        # throw-away cache entry.
+        if self._initialize_secured_algolia_api_keys_on_context_setup:
+            try:
+                self._initialize_secured_algolia_api_keys()
+            except HTTPError as exc:
+                exception_response = exc.response.json()
+                exception_response_user_message = exception_response.get('user_message')
+                exception_response_developer_message = exception_response.get('developer_message')
+                logger.exception(
+                    'HTTP Error initializing the secured algolia api keys for request user %s, '
+                    'enterprise customer uuid %s',
+                    self.lms_user_id,
+                    enterprise_customer_uuid,
+                )
+                user_message = exception_response_user_message or 'HTTP Error initializing the secured algolia api keys'
+                if exception_response_developer_message:
+                    developer_message = exception_response_developer_message
+                else:
+                    developer_message = f'Could not initialize the secured algolia api keys. Error: {exc}'
+                self.add_error(
+                    user_message=user_message,
+                    developer_message=developer_message,
+                )
+            except Exception as exc:  # pylint: disable=broad-except
+                logger.exception(
+                    'Error initializing the secured algolia api keys for request user %s, '
+                    'enterprise customer uuid %s',
+                    self.lms_user_id,
+                    enterprise_customer_uuid,
+                )
+                self.add_error(
+                    user_message='Error initializing the secured algolia api keys',
+                    developer_message=f'Could not initialize the secured algolia api keys. Error: {exc}',
+                )
 
-        if not (self.secured_algolia_api_key and self.catalog_uuids_to_catalog_query_uuids and self.valid_until):
-            logger.info(
-                'No secured algolia key found for request user %s, enterprise customer uuid %s, '
-                'and/or enterprise slug %s',
-                self.lms_user_id,
-                enterprise_customer_uuid,
-                enterprise_customer_slug,
-            )
-            self.add_error(
-                user_message='No secured algolia api key or catalog query mapping found',
-                developer_message=(
-                    f'No secured algolia api key or catalog query mapping found for request '
-                    f'user {self.lms_user_id} and enterprise uuid '
-                    f'{enterprise_customer_uuid}, and/or enterprise slug {enterprise_customer_slug}'
-                ),
-            )
-            return
+        # Note: secured Algolia key initialization happens during context setup via
+        # _initialize_secured_algolia_api_keys() (unless deferred). Handlers may still call
+        # refresh_secured_algolia_api_keys() later, once relevant catalog UUIDs are known,
+        # to perform scoped/catalog-specific refreshes. Do not assume that later refresh
+        # has already happened here.
 
     def _initialize_enterprise_customer_users(self):
         """
@@ -366,11 +370,40 @@ class HandlerContext(BaseHandlerContext):
 
     def _initialize_secured_algolia_api_keys(self):
         """
-        Initializes the secured algolia api key for the request user.
+        Initializes the secured algolia api key context for the request user.
+
+        This fetches the default, unscoped key used by routes that do not yet know
+        the learner's activated catalog UUIDs. Handlers may later replace it with a
+        scoped key via `refresh_secured_algolia_api_keys()` once the relevant
+        catalogs are known.
         """
+        self.refresh_secured_algolia_api_keys()
+
+    def refresh_secured_algolia_api_keys(self, catalog_uuids=None):
+        """
+        Refreshes the secured Algolia api key metadata for the request user.
+
+        Arguments:
+            catalog_uuids (list[str] | set[str] | None): Optional subset of enterprise catalog UUIDs
+                to scope the secured Algolia key to. If omitted, all enterprise catalogs are used.
+        """
+        scoped_catalog_uuids = None
+        if catalog_uuids is not None:
+            scoped_catalog_uuids = sorted(catalog_uuids)
+            if not scoped_catalog_uuids:
+                self.data.update({
+                    'catalog_uuids_to_catalog_query_uuids': {},
+                    'algolia': {
+                        'secured_algolia_api_key': None,
+                        'valid_until': None,
+                    }
+                })
+                return
+
         secured_algolia_api_key_data = get_and_cache_secured_algolia_search_keys(
             self.request,
             self._enterprise_customer_uuid,
+            catalog_uuids=scoped_catalog_uuids,
         )
 
         secured_algolia_api_key = None

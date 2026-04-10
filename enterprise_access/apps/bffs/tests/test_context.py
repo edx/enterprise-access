@@ -5,6 +5,7 @@ Tests for the BFF context
 from unittest import mock
 
 import ddt
+from requests.exceptions import HTTPError
 from rest_framework import status
 from rest_framework.exceptions import ValidationError
 
@@ -100,6 +101,12 @@ class TestHandlerContext(TestHandlerContextMixin):
         self.assertEqual(context.enterprise_customer, expected_enterprise_customer)
         expected_is_linked_user = False if raises_exception else True
         self.assertEqual(context.is_request_user_linked_to_enterprise_customer, expected_is_linked_user)
+        if not raises_exception:
+            self.assertEqual(
+                context.secured_algolia_api_key,
+                self.mock_algolia_object['secured_algolia_api_key'],
+            )
+            self.assertEqual(context.valid_until, self.mock_algolia_object['valid_until'])
 
     @ddt.data(
         {'raises_exception': False},
@@ -351,3 +358,205 @@ class TestHandlerContext(TestHandlerContextMixin):
         }
         with self.assertRaises(ValidationError):
             context.add_error(**malformed_output)
+
+    @mock.patch('enterprise_access.apps.bffs.context.transform_secured_algolia_api_key_response')
+    @mock.patch('enterprise_access.apps.bffs.context.get_and_cache_secured_algolia_search_keys')
+    @mock.patch('enterprise_access.apps.api_client.lms_client.LmsUserApiClient.get_enterprise_customers_for_user')
+    def test_handler_context_init_deferred_algolia_skips_upstream_call(
+        self,
+        mock_get_enterprise_customers_for_user,
+        mock_get_and_cache_secured_algolia_search_keys,
+        _mock_transform,
+    ):
+        """initialize_secured_algolia_api_keys=False skips the unscoped enterprise-catalog fetch."""
+        mock_get_enterprise_customers_for_user.return_value = self.mock_enterprise_learner_response_data
+
+        context = HandlerContext(self.request, initialize_secured_algolia_api_keys=False)
+
+        mock_get_and_cache_secured_algolia_search_keys.assert_not_called()
+        self.assertIsNone(context.data.get('algolia'))
+        self.assertIsNone(context.data.get('catalog_uuids_to_catalog_query_uuids'))
+        # Enterprise customer data is still fully initialised
+        self.assertEqual(context.enterprise_customer, self.mock_enterprise_customer)
+
+    @mock.patch('enterprise_access.apps.bffs.context.transform_secured_algolia_api_key_response')
+    @mock.patch('enterprise_access.apps.bffs.context.get_and_cache_secured_algolia_search_keys')
+    @mock.patch('enterprise_access.apps.api_client.lms_client.LmsUserApiClient.get_enterprise_customers_for_user')
+    def test_refresh_secured_algolia_api_keys_empty_catalogs_short_circuits(
+        self,
+        mock_get_enterprise_customers_for_user,
+        mock_get_and_cache_secured_algolia_search_keys,
+        mock_transform_secured_algolia_api_key_response,
+    ):
+        """Explicit empty catalog scope clears Algolia fields without upstream refresh call."""
+        mock_get_enterprise_customers_for_user.return_value = self.mock_enterprise_learner_response_data
+        mock_get_and_cache_secured_algolia_search_keys.return_value = self.mock_secured_algolia_api_key_response
+        mock_transform_secured_algolia_api_key_response.return_value = (
+            self.mock_algolia_object['secured_algolia_api_key'],
+            self.mock_catalog_uuids_to_catalog_query_uuids,
+            self.mock_algolia_object['valid_until'],
+        )
+
+        context = HandlerContext(self.request)
+        mock_get_and_cache_secured_algolia_search_keys.reset_mock()
+        mock_transform_secured_algolia_api_key_response.reset_mock()
+
+        context.refresh_secured_algolia_api_keys(catalog_uuids=[])
+
+        mock_get_and_cache_secured_algolia_search_keys.assert_not_called()
+        mock_transform_secured_algolia_api_key_response.assert_not_called()
+        self.assertEqual(context.data.get('catalog_uuids_to_catalog_query_uuids'), {})
+        self.assertEqual(
+            context.data.get('algolia'),
+            {
+                'secured_algolia_api_key': None,
+                'valid_until': None,
+            }
+        )
+
+    @mock.patch('enterprise_access.apps.api_client.lms_client.LmsUserApiClient.get_enterprise_customers_for_user')
+    def test_handler_context_properties_with_deferred_algolia(
+        self,
+        mock_get_enterprise_customers_for_user,
+    ):
+        """
+        Exercises HandlerContext properties not covered by other tests.
+
+        Uses a deferred-init context (initialize_secured_algolia_api_keys=False)
+        so that the algolia dict is absent from context.data.  This hits the
+        ``return None`` branches of ``secured_algolia_api_key`` and ``valid_until``
+        and covers ``algolia``, ``catalog_uuids_to_catalog_query_uuids``,
+        ``active_enterprise_customer``, ``staff_enterprise_customer``, and
+        ``should_update_active_enterprise_customer_user``.
+        """
+        mock_get_enterprise_customers_for_user.return_value = self.mock_enterprise_learner_response_data
+
+        context = HandlerContext(self.request, initialize_secured_algolia_api_keys=False)
+
+        # Algolia absent → None-branches covered
+        self.assertIsNone(context.secured_algolia_api_key)
+        self.assertIsNone(context.valid_until)
+        self.assertIsNone(context.algolia)
+        self.assertIsNone(context.catalog_uuids_to_catalog_query_uuids)
+
+        # Standard enterprise-customer properties
+        self.assertEqual(context.active_enterprise_customer, self.mock_enterprise_customer)
+        self.assertIsNone(context.staff_enterprise_customer)
+        self.assertFalse(context.should_update_active_enterprise_customer_user)
+
+    @mock.patch('enterprise_access.apps.bffs.context.HTTPError', new=HTTPError)
+    @mock.patch('enterprise_access.apps.bffs.context.get_and_cache_secured_algolia_search_keys')
+    @mock.patch('enterprise_access.apps.api_client.lms_client.LmsUserApiClient.get_enterprise_customers_for_user')
+    def test_handler_context_http_error_during_algolia_init(
+        self,
+        mock_get_enterprise_customers_for_user,
+        mock_get_and_cache_secured_algolia_search_keys,
+    ):
+        """
+        HTTPError raised by the enterprise-catalog Algolia key endpoint during context
+        initialization is caught; its user_message / developer_message are forwarded
+        as a structured error on the context.
+        """
+        mock_get_enterprise_customers_for_user.return_value = self.mock_enterprise_learner_response_data
+
+        mock_response = mock.Mock()
+        mock_response.json.return_value = {
+            'user_message': 'Algolia key error',
+            'developer_message': 'Invalid enterprise customer',
+        }
+        mock_get_and_cache_secured_algolia_search_keys.side_effect = HTTPError(response=mock_response)
+
+        context = HandlerContext(self.request)
+
+        self.assertEqual(len(context.errors), 1)
+        self.assertEqual(context.errors[0]['user_message'], 'Algolia key error')
+        self.assertEqual(context.errors[0]['developer_message'], 'Invalid enterprise customer')
+
+    @mock.patch('enterprise_access.apps.bffs.context.HTTPError', new=HTTPError)
+    @mock.patch('enterprise_access.apps.bffs.context.get_and_cache_secured_algolia_search_keys')
+    @mock.patch('enterprise_access.apps.api_client.lms_client.LmsUserApiClient.get_enterprise_customers_for_user')
+    def test_handler_context_http_error_during_algolia_init_without_developer_message(
+        self,
+        mock_get_enterprise_customers_for_user,
+        mock_get_and_cache_secured_algolia_search_keys,
+    ):
+        """
+        When the upstream HTTP error payload omits developer_message, the context
+        falls back to the default developer-facing message built from the exception.
+        """
+        mock_get_enterprise_customers_for_user.return_value = self.mock_enterprise_learner_response_data
+
+        mock_response = mock.Mock()
+        mock_response.json.return_value = {
+            'user_message': 'Algolia key error',
+        }
+        mock_get_and_cache_secured_algolia_search_keys.side_effect = HTTPError(response=mock_response)
+
+        context = HandlerContext(self.request)
+
+        self.assertEqual(len(context.errors), 1)
+        self.assertEqual(context.errors[0]['user_message'], 'Algolia key error')
+        self.assertIn(
+            'Could not initialize the secured algolia api keys. Error:',
+            context.errors[0]['developer_message'],
+        )
+
+    @mock.patch('enterprise_access.apps.bffs.context.transform_secured_algolia_api_key_response')
+    @mock.patch('enterprise_access.apps.bffs.context.get_and_cache_secured_algolia_search_keys')
+    @mock.patch('enterprise_access.apps.api_client.lms_client.LmsUserApiClient.get_enterprise_customers_for_user')
+    def test_refresh_secured_algolia_api_keys_transform_exception_is_swallowed(
+        self,
+        mock_get_enterprise_customers_for_user,
+        mock_get_and_cache_secured_algolia_search_keys,
+        mock_transform_secured_algolia_api_key_response,
+    ):
+        """
+        When transform_secured_algolia_api_key_response raises, the broad-except
+        handler swallows the error.  context.data is still updated with None/empty
+        algolia values and no error is appended to context.errors.
+        """
+        mock_get_enterprise_customers_for_user.return_value = self.mock_enterprise_learner_response_data
+        mock_get_and_cache_secured_algolia_search_keys.return_value = {}
+        mock_transform_secured_algolia_api_key_response.side_effect = Exception('transform failed')
+
+        context = HandlerContext(self.request, initialize_secured_algolia_api_keys=False)
+        context.refresh_secured_algolia_api_keys()
+
+        self.assertIsNone(context.data['algolia']['secured_algolia_api_key'])
+        self.assertIsNone(context.data['algolia']['valid_until'])
+        self.assertEqual(context.data['catalog_uuids_to_catalog_query_uuids'], {})
+        # The broad-except handler only logs; no error is surfaced to callers.
+        self.assertEqual(context.errors, [])
+
+    @mock.patch('enterprise_access.apps.bffs.context.transform_secured_algolia_api_key_response')
+    @mock.patch('enterprise_access.apps.bffs.context.get_and_cache_secured_algolia_search_keys')
+    @mock.patch('enterprise_access.apps.api_client.lms_client.LmsUserApiClient.get_enterprise_customers_for_user')
+    def test_refresh_secured_algolia_api_keys_with_nonempty_catalog_scope(
+        self,
+        mock_get_enterprise_customers_for_user,
+        mock_get_and_cache_secured_algolia_search_keys,
+        mock_transform_secured_algolia_api_key_response,
+    ):
+        """Non-empty catalog scopes are sorted and forwarded to the upstream fetch."""
+        mock_get_enterprise_customers_for_user.return_value = self.mock_enterprise_learner_response_data
+        mock_get_and_cache_secured_algolia_search_keys.return_value = self.mock_secured_algolia_api_key_response
+        mock_transform_secured_algolia_api_key_response.return_value = (
+            self.mock_algolia_object['secured_algolia_api_key'],
+            self.mock_catalog_uuids_to_catalog_query_uuids,
+            self.mock_algolia_object['valid_until'],
+        )
+
+        context = HandlerContext(self.request, initialize_secured_algolia_api_keys=False)
+
+        context.refresh_secured_algolia_api_keys(catalog_uuids={'cat-b', 'cat-a'})
+
+        mock_get_and_cache_secured_algolia_search_keys.assert_called_once_with(
+            self.request,
+            self.mock_enterprise_customer_uuid,
+            catalog_uuids=['cat-a', 'cat-b'],
+        )
+        self.assertEqual(
+            context.data['catalog_uuids_to_catalog_query_uuids'],
+            self.mock_catalog_uuids_to_catalog_query_uuids,
+        )
+        self.assertEqual(context.data['algolia'], self.mock_algolia_object)

@@ -5,6 +5,7 @@ from unittest import mock
 
 from rest_framework import status
 
+from enterprise_access.apps.api_client.constants import LicenseStatuses
 from enterprise_access.apps.bffs.context import HandlerContext
 from enterprise_access.apps.bffs.handlers import BaseHandler, BaseLearnerPortalHandler, DashboardHandler
 from enterprise_access.apps.bffs.tests.utils import TestHandlerContextMixin
@@ -44,6 +45,89 @@ class TestBaseHandler(TestHandlerContextMixin):
         base_handler = BaseHandler(context)
         base_handler.add_warning(**self.mock_warning)
         self.assertEqual(self.mock_warning, base_handler.context.warnings[0])
+
+
+class TestScopedAlgoliaRefresh(TestHandlerContextMixin):
+    """Tests for scoping the secured Algolia key to the learner's activated catalogs."""
+
+    def _make_handler(self):
+        handler = BaseLearnerPortalHandler.__new__(BaseLearnerPortalHandler)
+
+        class SimpleContext:
+            def __init__(self):
+                self.data = {}
+                self.refresh_secured_algolia_api_keys = mock.Mock()
+
+        handler.context = SimpleContext()
+        return handler
+
+    def _make_license(self, uuid, catalog_uuid):
+        return {
+            'uuid': uuid,
+            'status': LicenseStatuses.ACTIVATED,
+            'activation_date': '2024-01-01',
+            'subscription_plan': {
+                'enterprise_catalog_uuid': catalog_uuid,
+                'is_current': True,
+                'expiration_date': '2026-01-01',
+            },
+        }
+
+    @mock.patch('enterprise_access.apps.bffs.handlers.enable_multi_license_entitlements_bff', return_value=True)
+    def test_scope_secured_algolia_api_keys_to_activated_licenses(self, mock_toggle):
+        handler = self._make_handler()
+        licenses = [
+            self._make_license('lic-1', 'catalog-a'),
+            self._make_license('lic-2', 'catalog-b'),
+        ]
+
+        # Manually attach properties to avoid PropertyMock complexity if any.
+        # However, it should work fine as a PropertyMock.
+        with mock.patch.object(
+            type(handler),
+            'current_activated_licenses',
+            new_callable=mock.PropertyMock,
+            return_value=licenses,
+        ):
+            handler.scope_secured_algolia_api_keys_to_activated_licenses()
+
+        handler.context.refresh_secured_algolia_api_keys.assert_called_once()
+        called_args = handler.context.refresh_secured_algolia_api_keys.call_args[1]['catalog_uuids']
+        self.assertSetEqual(set(called_args), {'catalog-a', 'catalog-b'}, f"catalog_uuids was: {called_args}")
+
+    @mock.patch('enterprise_access.apps.bffs.handlers.enable_multi_license_entitlements_bff', return_value=True)
+    def test_scope_secured_algolia_fallback_unscoped_when_no_catalogs_and_no_key(self, _mock_flag):
+        """
+        When no activated license catalogs exist and no Algolia key has been populated yet
+        (deferred context init), an unscoped refresh is issued so consumers always have a key.
+        """
+        handler = self._make_handler()
+        handler.context.secured_algolia_api_key = None  # deferred path
+
+        with mock.patch.object(
+            type(handler), 'current_activated_licenses',
+            new_callable=mock.PropertyMock, return_value=[],
+        ):
+            handler.scope_secured_algolia_api_keys_to_activated_licenses()
+
+        handler.context.refresh_secured_algolia_api_keys.assert_called_once_with()
+
+    @mock.patch('enterprise_access.apps.bffs.handlers.enable_multi_license_entitlements_bff', return_value=True)
+    def test_scope_secured_algolia_no_refresh_when_no_catalogs_but_key_present(self, _mock_flag):
+        """
+        When no activated license catalogs exist but a key was already fetched (eager init),
+        skip the upstream call to avoid a redundant enterprise-catalog request.
+        """
+        handler = self._make_handler()
+        handler.context.secured_algolia_api_key = 'existing-key'
+
+        with mock.patch.object(
+            type(handler), 'current_activated_licenses',
+            new_callable=mock.PropertyMock, return_value=[],
+        ):
+            handler.scope_secured_algolia_api_keys_to_activated_licenses()
+
+        handler.context.refresh_secured_algolia_api_keys.assert_not_called()
 
 
 class TestBaseLearnerPortalHandler(TestHandlerContextMixin):
@@ -105,8 +189,13 @@ class TestBaseLearnerPortalHandler(TestHandlerContextMixin):
         'enterprise_access.apps.api_client.lms_client.LmsUserApiClient'
         '.get_default_enterprise_enrollment_intentions_learner_status'
     )
+    @mock.patch(
+        'enterprise_access.apps.api_client.enterprise_catalog_client'
+        '.EnterpriseCatalogUserV1ApiClient.get_secured_algolia_api_key'
+    )
     def test_load_and_process(
         self,
+        mock_get_secured_algolia_api_key_for_user,
         mock_get_default_enrollment_intentions_learner_status,
         mock_get_subscription_licenses_for_learner,
         mock_get_enterprise_customers_for_user,
@@ -116,6 +205,7 @@ class TestBaseLearnerPortalHandler(TestHandlerContextMixin):
         """
         mock_get_enterprise_customers_for_user.return_value = self.mock_enterprise_learner_response_data
         mock_get_subscription_licenses_for_learner.return_value = self.mock_subscription_licenses_data
+        mock_get_secured_algolia_api_key_for_user.return_value = self.mock_secured_algolia_api_key_response
         mock_get_default_enrollment_intentions_learner_status.return_value =\
             self.mock_default_enterprise_enrollment_intentions_learner_status_data
 
@@ -374,7 +464,7 @@ class TestBaseLearnerPortalHandler(TestHandlerContextMixin):
         context.data['enterprise_customer_user_subsidies'] = {
             'subscriptions': {
                 'subscription_licenses_by_status': {
-                    'activated': [{
+                    LicenseStatuses.ACTIVATED: [{
                         'uuid': 'license-1',
                         'subscription_plan': {
                             'is_current': True,

@@ -62,6 +62,7 @@ class LearnerPortalBFFViewSet(BaseBFFViewSet):
             request=request,
             handler_class=DashboardHandler,
             response_builder_class=LearnerDashboardResponseBuilder,
+            context_kwargs={'initialize_secured_algolia_api_keys': False},
         )
         return Response(response_data, status=status_code)
 
@@ -92,6 +93,7 @@ class LearnerPortalBFFViewSet(BaseBFFViewSet):
             request=request,
             handler_class=SearchHandler,
             response_builder_class=LearnerSearchResponseBuilder,
+            context_kwargs={'initialize_secured_algolia_api_keys': False},
         )
         return Response(response_data, status=status_code)
 
@@ -122,6 +124,7 @@ class LearnerPortalBFFViewSet(BaseBFFViewSet):
             request=request,
             handler_class=AcademyHandler,
             response_builder_class=LearnerAcademyResponseBuilder,
+            context_kwargs={'initialize_secured_algolia_api_keys': False},
         )
         return Response(response_data, status=status_code)
 
@@ -152,5 +155,6 @@ class LearnerPortalBFFViewSet(BaseBFFViewSet):
             request=request,
             handler_class=SkillsQuizHandler,
             response_builder_class=LearnerSkillsQuizResponseBuilder,
+            context_kwargs={'initialize_secured_algolia_api_keys': False},
         )
         return Response(response_data, status=status_code)

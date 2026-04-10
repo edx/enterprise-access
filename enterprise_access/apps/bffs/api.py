@@ -1,6 +1,7 @@
 """
 API methods for retrieving data from downstream services in the bffs app.
 """
+import hashlib
 import logging
 
 from django.conf import settings
@@ -26,8 +27,21 @@ def enterprise_customer_cache_key(enterprise_customer_slug, enterprise_customer_
     return versioned_cache_key('enterprise_customer', enterprise_customer_slug, enterprise_customer_uuid)
 
 
-def secured_algolia_api_key_cache_key(enterprise_customer_uuid, request_user_id):
-    return versioned_cache_key('secured_algolia_api_key', enterprise_customer_uuid, request_user_id)
+def secured_algolia_api_key_cache_key(enterprise_customer_uuid, request_user_id, catalog_uuids=None):
+    """
+    Build a stable, bounded cache key for a secured Algolia API key scoped to the given catalogs.
+
+    When ``catalog_uuids`` is provided, the sorted list is SHA-256 hashed to prevent
+    the key from exceeding cache-backend limits (e.g. Memcached's 250-byte maximum).
+    """
+    if catalog_uuids is None:
+        catalog_scope = 'all'
+    else:
+        digest = hashlib.sha256(
+            ','.join(sorted(str(u) for u in catalog_uuids)).encode()
+        ).hexdigest()[:16]
+        catalog_scope = f'catalogs:{digest}'
+    return versioned_cache_key('secured_algolia_api_key', enterprise_customer_uuid, request_user_id, catalog_scope)
 
 
 def subscription_licenses_cache_key(enterprise_customer_uuid, lms_user_id):
@@ -93,6 +107,7 @@ def get_and_cache_enterprise_customer(
 def get_and_cache_secured_algolia_search_keys(
     request,
     enterprise_customer_uuid,
+    catalog_uuids=None,
     timeout=settings.SECURED_ALGOLIA_API_KEY_CACHE_TIMEOUT,
 ):
     """
@@ -105,6 +120,7 @@ def get_and_cache_secured_algolia_search_keys(
     cache_key = secured_algolia_api_key_cache_key(
         enterprise_customer_uuid,
         request.user.id,
+        catalog_uuids=catalog_uuids,
     )
     cached_response = TieredCache.get_cached_response(cache_key)
     if cached_response.is_found:
@@ -113,6 +129,7 @@ def get_and_cache_secured_algolia_search_keys(
     client = EnterpriseCatalogUserV1ApiClient(request)
     response_payload = client.get_secured_algolia_api_key(
         enterprise_customer_uuid=enterprise_customer_uuid,
+        catalog_uuids=catalog_uuids,
     )
 
     TieredCache.set_all_tiers(cache_key, response_payload, timeout)
