@@ -38,6 +38,11 @@ from enterprise_access.apps.track.segment import track_event
 
 logger = logging.getLogger(__name__)
 
+
+class CheckoutIntentLookupError(Exception):
+    """Raised when CheckoutIntent cannot be found by UUID or ID."""
+
+
 # Central registry for event handlers.
 #
 # Needs to be in module scope instead of class scope because the decorator
@@ -54,24 +59,46 @@ def get_invoice_and_subscription(event: stripe.Event):
     return invoice, subscription_details
 
 
-def get_checkout_intent_id_from_subscription(stripe_subscription):
+def get_checkout_intent_identifier_from_subscription(stripe_subscription) -> tuple[str | None, int | None]:
     """
-    Returns the CheckoutIntent identifier stored in the given
-    stripe subscription's metadata, or None if no such value is present.
+    Returns the CheckoutIntent identifiers stored in the given
+    stripe subscription's metadata.
+
+    Returns:
+        tuple: (uuid_str, id_int) - Either may be None. UUID is preferred if both present.
     """
-    if 'checkout_intent_id' in stripe_subscription.metadata:
-        # The stripe subscription object may actually be a SubscriptionDetails
-        # record from an invoice.
-        stripe_subscription_id = (
-            getattr(stripe_subscription, 'id', None) or getattr(stripe_subscription, 'subscription', None)
-        )
-        checkout_intent_id = int(stripe_subscription.metadata['checkout_intent_id'])
+    metadata = stripe_subscription.metadata
+    # The stripe subscription object may actually be a SubscriptionDetails
+    # record from an invoice.
+    stripe_subscription_id = (
+        getattr(stripe_subscription, 'id', None) or getattr(stripe_subscription, 'subscription', None)
+    )
+
+    uuid_str = metadata.get('checkout_intent_uuid')
+    id_str = metadata.get('checkout_intent_id')
+    id_int = None
+
+    if id_str:
+        try:
+            id_int = int(id_str)
+        except (ValueError, TypeError):
+            logger.warning(
+                'Invalid checkout_intent_id format in metadata: %s for subscription=%s',
+                id_str, stripe_subscription_id,
+            )
+
+    if uuid_str:
         logger.info(
-            'Found checkout_intent_id=%s from subscription=%s',
-            checkout_intent_id, stripe_subscription_id,
+            'Found checkout_intent_uuid=%s from subscription=%s',
+            uuid_str, stripe_subscription_id,
         )
-        return checkout_intent_id
-    return None
+    elif id_int is not None:
+        logger.info(
+            'Found checkout_intent_id=%s from subscription=%s (UUID not present - legacy record)',
+            id_int, stripe_subscription_id,
+        )
+
+    return uuid_str, id_int
 
 
 def persist_stripe_event(event: stripe.Event) -> StripeEventData | None:
@@ -93,11 +120,26 @@ def persist_stripe_event(event: stripe.Event) -> StripeEventData | None:
         )
         return None
 
-    checkout_intent_id = get_checkout_intent_id_from_subscription(stripe_subscription)
-    checkout_intent = CheckoutIntent.objects.filter(
-        id=checkout_intent_id,
-        stripe_customer_id=event.data.object.get('customer'),
-    ).first()
+    uuid_str, id_int = get_checkout_intent_identifier_from_subscription(stripe_subscription)
+    checkout_intent = None
+    stripe_customer_id = event.data.object.get('customer')
+
+    # Prefer UUID lookup, fall back to ID for legacy records
+    if uuid_str:
+        try:
+            uuid_value = UUID(uuid_str)
+            checkout_intent = CheckoutIntent.objects.filter(
+                uuid=uuid_value,
+                stripe_customer_id=stripe_customer_id,
+            ).first()
+        except (ValueError, TypeError) as exc:
+            logger.warning('Invalid UUID format in metadata: %s, error: %s', uuid_str, exc)
+
+    if not checkout_intent and id_int is not None:
+        checkout_intent = CheckoutIntent.objects.filter(
+            id=id_int,
+            stripe_customer_id=stripe_customer_id,
+        ).first()
 
     record, _ = StripeEventData.objects.get_or_create(
         event_id=event.id,
@@ -111,19 +153,60 @@ def persist_stripe_event(event: stripe.Event) -> StripeEventData | None:
     return record
 
 
-def get_checkout_intent_or_raise(checkout_intent_id, event_id) -> CheckoutIntent:
+def get_checkout_intent_or_raise(
+    uuid_str: str | None,
+    id_int: int | None,
+    event_id: str,
+) -> CheckoutIntent:
     """
-    Returns a CheckoutIntent with the given id, or logs and raises an exception.
+    Returns a CheckoutIntent by UUID (preferred) or ID (fallback).
+
+    Args:
+        uuid_str: The UUID string from metadata, may be None
+        id_int: The integer ID from metadata, may be None
+        event_id: The Stripe event ID for logging
+
+    Returns:
+        CheckoutIntent: The found record
+
+    Raises:
+        CheckoutIntentLookupError: If no matching record found
     """
-    try:
-        checkout_intent = CheckoutIntent.objects.get(id=checkout_intent_id)
-        return checkout_intent
-    except CheckoutIntent.DoesNotExist:
-        logger.warning(
-            'Could not find CheckoutIntent record with id %s for event %s',
-            checkout_intent_id, event_id,
-        )
-        raise
+    root_cause = None
+
+    # Prefer UUID lookup
+    if uuid_str:
+        try:
+            uuid_value = UUID(uuid_str)
+            return CheckoutIntent.objects.get(uuid=uuid_value)
+        except (ValueError, TypeError) as exc:
+            logger.warning(
+                'Invalid UUID format %s for event %s: %s',
+                uuid_str, event_id, exc,
+            )
+            root_cause = exc
+        except CheckoutIntent.DoesNotExist as exc:
+            logger.warning(
+                'CheckoutIntent with uuid=%s not found for event %s',
+                uuid_str, event_id,
+            )
+            root_cause = exc
+
+    # Fall back to ID lookup
+    if id_int is not None:
+        try:
+            return CheckoutIntent.objects.get(id=id_int)
+        except CheckoutIntent.DoesNotExist as exc:
+            logger.warning(
+                'CheckoutIntent with id=%s not found for event %s',
+                id_int, event_id,
+            )
+            root_cause = exc
+
+    # Both lookups failed
+    raise CheckoutIntentLookupError(
+        f'No CheckoutIntent found for uuid={uuid_str} or id={id_int} (event {event_id})'
+    ) from root_cause
 
 
 def handle_pending_update(subscription_id: str, checkout_intent_id: int, pending_update):
@@ -482,13 +565,14 @@ class StripeEventHandler:
         invoice, subscription_details = get_invoice_and_subscription(event)
         stripe_customer_id = invoice['customer']
 
-        checkout_intent_id = get_checkout_intent_id_from_subscription(subscription_details)
+        uuid_str, id_int = get_checkout_intent_identifier_from_subscription(subscription_details)
         try:
-            checkout_intent = get_checkout_intent_or_raise(checkout_intent_id, event.id)
-        except CheckoutIntent.DoesNotExist:
+            checkout_intent = get_checkout_intent_or_raise(uuid_str, id_int, event.id)
+        except CheckoutIntentLookupError:
             logger.error(
-                '[StripeEventHandler] invoice.paid event %s could not find Checkout Intent id=%s to mark as paid',
-                event.id, checkout_intent_id,
+                '[StripeEventHandler] invoice.paid event %s could not find Checkout Intent '
+                'uuid=%s id=%s to mark as paid',
+                event.id, uuid_str, id_int,
             )
             return
 
@@ -511,13 +595,13 @@ class StripeEventHandler:
         try:
             checkout_intent.mark_as_paid(stripe_customer_id=stripe_customer_id)
             logger.info(
-                'Marked checkout_intent_id=%s as paid via invoice=%s',
-                checkout_intent_id, invoice.id,
+                'Marked checkout_intent uuid=%s as paid via invoice=%s',
+                checkout_intent.uuid, invoice.id,
             )
         except ValueError as exc:
             logger.warning(
                 'Could not mark checkout intent %s as paid via invoice %s, because %s',
-                checkout_intent_id, invoice.id, exc,
+                checkout_intent.uuid, invoice.id, exc,
             )
 
     @on_stripe_event('invoice.created')
@@ -533,13 +617,13 @@ class StripeEventHandler:
         invoice, subscription_details = get_invoice_and_subscription(event)
         stripe_subscription_id = subscription_details.get('subscription')
 
-        checkout_intent_id = get_checkout_intent_id_from_subscription(subscription_details)
+        uuid_str, id_int = get_checkout_intent_identifier_from_subscription(subscription_details)
         try:
-            checkout_intent = get_checkout_intent_or_raise(checkout_intent_id, event.id)
-        except CheckoutIntent.DoesNotExist:
+            checkout_intent = get_checkout_intent_or_raise(uuid_str, id_int, event.id)
+        except CheckoutIntentLookupError:
             logger.error(
-                '[StripeEventHandler] invoice.created event %s could not find Checkout Intent id=%s',
-                event.id, checkout_intent_id,
+                '[StripeEventHandler] invoice.created event %s could not find Checkout Intent uuid=%s id=%s',
+                event.id, uuid_str, id_int,
             )
             return
 
@@ -604,30 +688,25 @@ class StripeEventHandler:
         Send reminder email 72 hours before trial ends.
         """
         subscription = event.data.object
-        checkout_intent_id = get_checkout_intent_id_from_subscription(
-            subscription
-        )
+        uuid_str, id_int = get_checkout_intent_identifier_from_subscription(subscription)
         try:
-            checkout_intent = get_checkout_intent_or_raise(
-                checkout_intent_id, event.id
-            )
-        except CheckoutIntent.DoesNotExist:
+            checkout_intent = get_checkout_intent_or_raise(uuid_str, id_int, event.id)
+        except CheckoutIntentLookupError:
             logger.error(
-                "[StripeEventHandler] trial_will_end event %s could not find CheckoutIntent id=%s",
+                "[StripeEventHandler] trial_will_end event %s could not find CheckoutIntent uuid=%s id=%s",
                 event.id,
-                checkout_intent_id,
+                uuid_str,
+                id_int,
             )
             return
 
         link_event_data_to_checkout_intent(event, checkout_intent)
 
         logger.info(
-            (
-                "Subscription %s trial ending in 72 hours. "
-                "Queuing trial ending reminder email for checkout_intent_id=%s"
-            ),
+            "Subscription %s trial ending in 72 hours. "
+            "Queuing trial ending reminder email for checkout_intent uuid=%s",
             subscription.id,
-            checkout_intent_id,
+            checkout_intent.uuid,
         )
 
         # Queue the trial ending reminder email task
@@ -648,12 +727,8 @@ class StripeEventHandler:
         Enable pending updates to prevent license count drift on failed payments.
         """
         subscription = event.data.object
-        checkout_intent_id = get_checkout_intent_id_from_subscription(
-            subscription
-        )
-        checkout_intent = get_checkout_intent_or_raise(
-            checkout_intent_id, event.id
-        )
+        uuid_str, id_int = get_checkout_intent_identifier_from_subscription(subscription)
+        checkout_intent = get_checkout_intent_or_raise(uuid_str, id_int, event.id)
         link_event_data_to_checkout_intent(event, checkout_intent)
         # Explicitly mark as not canceled on subscription creation rather than relying on the model default.
         # This ensures consistency since cancellations can be triggered by both updates and deletions.
@@ -682,14 +757,14 @@ class StripeEventHandler:
         important information about allowed state transitions.
         """
         subscription = event.data.object
-        checkout_intent_id = get_checkout_intent_id_from_subscription(subscription)
-        checkout_intent = get_checkout_intent_or_raise(checkout_intent_id, event.id)
+        uuid_str, id_int = get_checkout_intent_identifier_from_subscription(subscription)
+        checkout_intent = get_checkout_intent_or_raise(uuid_str, id_int, event.id)
         link_event_data_to_checkout_intent(event, checkout_intent)
 
         # Pending update
         pending_update = getattr(subscription, "pending_update", None)
         if pending_update:
-            handle_pending_update(subscription.id, checkout_intent_id, pending_update)
+            handle_pending_update(subscription.id, checkout_intent.id, pending_update)
 
         current_status = subscription.get("status")
         current_cancel_at = subscription.get('cancel_at')
@@ -745,10 +820,10 @@ class StripeEventHandler:
         if prior_cancel_at is None and current_cancel_at_datetime is not None:
             logger.info(
                 f"Subscription {subscription.id} was scheduled for cancellation at {current_cancel_at_datetime}. "
-                f"Processing cancellation notification for checkout_intent_id={checkout_intent_id}"
+                f"Processing cancellation notification for checkout_intent uuid={checkout_intent.uuid}"
             )
             if current_status == StripeSubscriptionStatus.TRIALING:
-                logger.info(f"Queuing trial cancellation email for checkout_intent_id={checkout_intent_id}")
+                logger.info(f"Queuing trial cancellation email for checkout_intent uuid={checkout_intent.uuid}")
                 send_trial_cancellation_email_task.delay(
                     checkout_intent_id=checkout_intent.id,
                     cancel_at_timestamp=current_cancel_at,
@@ -764,7 +839,7 @@ class StripeEventHandler:
         if prior_cancel_at is not None and current_cancel_at_datetime is None:
             logger.info(
                 f"Subscription {subscription.id} was reinstated (cancellation reversed). "
-                f"Processing reinstatement notification for checkout_intent_id={checkout_intent_id}"
+                f"Processing reinstatement notification for checkout_intent uuid={checkout_intent.uuid}"
             )
             send_reinstatement_email_task.delay(checkout_intent_id=checkout_intent.id)
 
@@ -782,8 +857,8 @@ class StripeEventHandler:
         Handle customer.subscription.deleted events.
         """
         subscription = event.data.object
-        checkout_intent_id = get_checkout_intent_id_from_subscription(subscription)
-        checkout_intent = get_checkout_intent_or_raise(checkout_intent_id, event.id)
+        uuid_str, id_int = get_checkout_intent_identifier_from_subscription(subscription)
+        checkout_intent = get_checkout_intent_or_raise(uuid_str, id_int, event.id)
         link_event_data_to_checkout_intent(event, checkout_intent)
 
         logger.info(
@@ -814,8 +889,8 @@ class StripeEventHandler:
             # https://docs.stripe.com/api/subscriptions/object#subscription_object-ended_at
             ended_at = subscription.get("ended_at") or timezone.now().timestamp()
             logger.info(
-                "Queuing cancelation finalization email for checkout_intent_id=%s",
-                checkout_intent_id,
+                "Queuing cancelation finalization email for checkout_intent uuid=%s",
+                checkout_intent.uuid,
             )
             send_finalized_cancelation_email_task.delay(
                 checkout_intent_id=checkout_intent.id,
