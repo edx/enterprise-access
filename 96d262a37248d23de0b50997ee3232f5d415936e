@@ -1,0 +1,26 @@
+enterprise_access/apps/customer_billing/tests/test_stripe_event_handlers.py
+  ef4eca78bd7b2c07 32-34,128-143,150-163,204-286,415,419,565,633,672,707,741,768,853,888,955,993,1026,1052,1121,1239,1277,1399,1469,1606,1676,1761,1905,2010,2045,2079,2150,2188,2244,2308,2422,2478,2518-2521
+enterprise_access/apps/customer_billing/stripe_event_handlers.py
+  ef4eca78bd7b2c07 56,58-62,64-87,89,91-92,94-95,117-136,150-154,156-167,169-200,559,561,564-566,589-590,595,611,613,616-617,682,684,687,689-690,697-698,700,721-722,751-752,758,814,817,827,845-846,877-878
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.6",
+  "base_commit_sha": "96d262a37248d23de0b50997ee3232f5d415936e",
+  "prompts": {
+    "ef4eca78bd7b2c07": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9b0f9c8e-c302-4b38-b01f-6bb80cbb89a4",
+        "model": "claude-opus-4-5-20251101"
+      },
+      "human_author": "Alexander Dusenbery",
+      "messages": [],
+      "total_additions": 508,
+      "total_deletions": 213,
+      "accepted_lines": 289,
+      "overriden_lines": 0,
+      "messages_url": "https://usegitai.com/cas/e2cf0671e81196e14316ab8abb37e123e1113a72a572d62856836de94f634300"
+    }
+  }
+}
