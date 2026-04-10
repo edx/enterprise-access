@@ -90,6 +90,59 @@ Uses `edx-rbac` for fine-grained permissions with:
 ### 15. Use ddt to parameterize unit tests
 - Improve test DRYness by using the `ddt` packages `@data` and `@unpack` decorators.
 
+### 16. Module Splitting with Re-exports
+When files grow too large (>500-1000 lines), split them while maintaining backwards compatibility:
+
+**Pattern:**
+1. Create new submodule(s) with extracted code
+2. Re-export from original module so existing imports continue to work
+3. Add pylint/noqa comments to suppress false-positive warnings on re-exports
+
+**Example - handlers.py (avoiding circular imports):**
+```python
+# bffs/base.py - base class with no handler dependencies
+class BaseHandler:
+    ...
+
+# bffs/learner_portal/handlers.py - imports from base.py (not handlers.py)
+from enterprise_access.apps.bffs.base import BaseHandler
+
+class BaseLearnerPortalHandler(BaseHandler):
+    ...
+
+# bffs/handlers.py - pure re-exports for backwards compatibility
+from enterprise_access.apps.bffs.base import BaseHandler
+from enterprise_access.apps.bffs.learner_portal.handlers import (
+    BaseLearnerPortalHandler,
+    DashboardHandler,
+)
+```
+
+**Example - models.py:**
+```python
+# models.py - keeps core models, re-exports supporting models
+class SubsidyAccessPolicy:
+    ...
+
+# Re-export for backwards compatibility
+# pylint: disable=wrong-import-position,unused-import
+from .models_supporting import (  # noqa: E402,F401
+    PolicyGroupAssociation,
+    ForcedPolicyRedemption,
+)
+```
+
+**When to use:**
+- Files exceed ~1000 lines
+- Clear domain boundaries exist for extraction
+- ForeignKey relationships use string references (`'app.Model'`) to avoid circular imports
+- Base classes go in separate `base.py` to prevent circular imports when child classes are in submodules
+
+**Benefits:**
+- No changes required to existing import statements
+- Reduced cognitive load per file
+- Easier testing and maintenance
+
 ### Key Takeaways for Implementation:
 - Check permissions early using `@permission_required` decorator
 - Use separate serializers for request/response

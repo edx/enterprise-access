@@ -180,7 +180,8 @@ class ForcedPolicyRedemptionAssignmentTests(BaseForcedRedemptionTestCase):
     """
     def setUp(self):
         """
-        Mocks out the ``content_assignments.api.get_and_cache_content_metadata`` function.
+        Mocks out the ``content_assignments.api.get_and_cache_content_metadata`` function
+        and the ``models_supporting.get_and_cache_content_metadata`` function.
         """
         super().setUp()
 
@@ -189,6 +190,13 @@ class ForcedPolicyRedemptionAssignmentTests(BaseForcedRedemptionTestCase):
         )
         self.mock_assignment_content_metadata = mock_assignment_content_metadata_patcher.start()
         self.addCleanup(mock_assignment_content_metadata_patcher.stop)
+
+        # Mock the content metadata lookup used by ForcedPolicyRedemption.create_assignment()
+        mock_models_supporting_content_metadata_patcher = mock.patch(
+            'enterprise_access.apps.subsidy_access_policy.models_supporting.get_and_cache_content_metadata',
+        )
+        self.mock_models_supporting_content_metadata = mock_models_supporting_content_metadata_patcher.start()
+        self.addCleanup(mock_models_supporting_content_metadata_patcher.stop)
 
     def _setup_redemption_state(
         self, content_price=None, course_key=None, course_run_key=None, can_redeem=True,
@@ -203,6 +211,11 @@ class ForcedPolicyRedemptionAssignmentTests(BaseForcedRedemptionTestCase):
             existing_aggregates=existing_aggregates, user_email=user_email,
         )
         self.mock_assignment_content_metadata.return_value = {
+            'content_price': content_price or self.default_content_price,
+            'content_key': course_key or self.course_key,
+            'course_run_key': course_run_key or self.course_run_key,
+        }
+        self.mock_models_supporting_content_metadata.return_value = {
             'content_price': content_price or self.default_content_price,
             'content_key': course_key or self.course_key,
             'course_run_key': course_run_key or self.course_run_key,
