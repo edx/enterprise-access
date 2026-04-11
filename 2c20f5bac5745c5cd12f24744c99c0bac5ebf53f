@@ -1,0 +1,38 @@
+enterprise_access/apps/bffs/learner_portal/__init__.py
+  6d951b4cefb62f32 1-3
+enterprise_access/apps/bffs/learner_portal/handlers.py
+  6d951b4cefb62f32 1-707
+enterprise_access/apps/bffs/handlers.py
+  6d951b4cefb62f32 4-14,18-25
+enterprise_access/apps/subsidy_access_policy/tests/test_forced_redemption.py
+  6d951b4cefb62f32 183-184,194-199,218-222
+enterprise_access/apps/bffs/base.py
+  6d951b4cefb62f32 1-51
+docs/architecture-patterns.md
+  6d951b4cefb62f32 93-145
+enterprise_access/apps/subsidy_access_policy/models_supporting.py
+  6d951b4cefb62f32 1-16,18,20-222
+enterprise_access/apps/subsidy_access_policy/models.py
+  6d951b4cefb62f32 426-428,797,1286-1288,1324-1326,1328,1377-1383,1385,2086-2090,2092
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "2c20f5bac5745c5cd12f24744c99c0bac5ebf53f",
+  "prompts": {
+    "6d951b4cefb62f32": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a0f03c59-e09e-4452-9397-fcae0282441f",
+        "model": "claude-opus-4-5-20251101"
+      },
+      "human_author": "Alexander Dusenbery",
+      "messages": [],
+      "total_additions": 1118,
+      "total_deletions": 971,
+      "accepted_lines": 1092,
+      "overriden_lines": 0,
+      "messages_url": "https://usegitai.com/cas/1eaceb50d97018e0e06b03d349136c3afc9eaf983977d7bfb13b51944c47b12c"
+    }
+  }
+}
