@@ -40,6 +40,114 @@ class SlugReservationConflict(Exception):
     pass
 
 
+class EnterpriseAcademy(TimeStampedModel):
+    """
+    Centralized Academy metadata used by checkout and internal service integrations.
+
+    Stripe remains the source of truth for pricing.
+
+    .. no_pii:
+    """
+
+    uuid = models.UUIDField(
+        unique=True,
+        default=uuid4,
+        editable=False,
+        help_text='Unique identifier for this Academy record.',
+    )
+
+    name = models.CharField(
+        max_length=255,
+        unique=True,
+        help_text='Short identifier name for the Academy.',
+    )
+    long_name = models.CharField(
+        max_length=512,
+        blank=True,
+        default='',
+        help_text='Full public name of the Academy.',
+    )
+    description = models.TextField(
+        blank=True,
+        default='',
+        help_text='Marketing summary of the Academy.',
+    )
+    marketing_url = models.URLField(
+        max_length=2048,
+        blank=True,
+        default='',
+        help_text='Public-facing marketing URL for the Academy.',
+    )
+    thumbnail_url = models.CharField(
+        max_length=2048,
+        blank=True,
+        default='',
+        help_text='Stored thumbnail path or URL for the Academy image.',
+    )
+    tags = models.JSONField(
+        default=list,
+        blank=True,
+        help_text='List of competency tags associated with the Academy.',
+    )
+    stripe_product_id = models.CharField(
+        max_length=255,
+        blank=True,
+        default='',
+        db_index=True,
+        help_text='Stripe Product ID associated with the Academy.',
+    )
+    stripe_price_lookup_key = models.CharField(
+        max_length=255,
+        unique=True,
+        blank=True,
+        default='',
+        db_index=True,
+        help_text='Stripe price lookup key used to resolve academy pricing context.',
+    )
+    edx_catalog_id = models.UUIDField(
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text='Related edX catalog UUID.',
+    )
+    product_key = models.SlugField(
+        max_length=255,
+        unique=True,
+        blank=True,
+        default='',
+        db_index=True,
+        help_text='Routing key that maps to ?product_key= checkout entry parameter.',
+    )
+    slug = models.SlugField(
+        max_length=255,
+        unique=True,
+        blank=True,
+        default='',
+        db_index=True,
+        help_text='Stable URL-safe slug for academy routes.',
+    )
+    is_active = models.BooleanField(
+        default=True,
+        db_index=True,
+        help_text='Controls whether this academy is active for API consumers.',
+    )
+    display_order = models.PositiveIntegerField(
+        default=0,
+        db_index=True,
+        help_text='Ascending list sort order for academy responses.',
+    )
+
+    history = HistoricalRecords()
+
+    class Meta:
+        verbose_name = 'Academy'
+        verbose_name_plural = 'Academies'
+        ordering = ['display_order', 'name']
+
+    def __str__(self):
+        return f'<Academy id={self.id} name={self.name}>'
+
+
 class CheckoutIntent(TimeStampedModel):
     """
     Tracks the complete lifecycle of a self-service checkout process:
