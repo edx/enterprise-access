@@ -640,6 +640,77 @@ class TestStripeEventHandler(TestCase):
         mock_email_task.delay.assert_not_called()
 
     @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_trial_cancellation_email_task"
+    )
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_paid_cancellation_email_task"
+    )
+    def test_subscription_updated_active_sends_paid_cancellation_email_when_cancel_at_set(
+        self, mock_paid_email_task, mock_trial_email_task,
+    ):
+        """Test that subscription_updated sends paid cancellation email when cancel_at is newly set on an active sub."""
+        subscription_id = "sub_test_active_cancel_at_123"
+        cancel_at_timestamp = int((timezone.now() + timedelta(days=30)).timestamp())
+
+        _, prior_summary = self._create_existing_event_data_records(
+            subscription_id,
+            subscription_status=StripeSubscriptionStatus.ACTIVE,
+        )
+        prior_summary.subscription_cancel_at = None
+        prior_summary.save()
+
+        subscription_data = {
+            "id": subscription_id,
+            "status": StripeSubscriptionStatus.ACTIVE,
+            "cancel_at": cancel_at_timestamp,
+            "metadata": self._create_mock_stripe_subscription(self.checkout_intent.id),
+        }
+
+        mock_event = self._create_mock_stripe_event(
+            "customer.subscription.updated", subscription_data
+        )
+
+        StripeEventHandler.dispatch(mock_event)
+
+        mock_paid_email_task.delay.assert_called_once_with(
+            checkout_intent_id=self.checkout_intent.id,
+            cancel_at_timestamp=cancel_at_timestamp,
+        )
+        mock_trial_email_task.delay.assert_not_called()
+
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_paid_cancellation_email_task"
+    )
+    def test_subscription_updated_active_no_duplicate_paid_cancellation_email_when_cancel_at_already_set(
+        self, mock_paid_email_task,
+    ):
+        """Test that we don't send a duplicate paid cancellation email if cancel_at was already set."""
+        subscription_id = "sub_test_active_cancel_at_dupe_123"
+        cancel_at_timestamp = int((timezone.now() + timedelta(days=30)).timestamp())
+
+        _, prior_summary = self._create_existing_event_data_records(
+            subscription_id,
+            subscription_status=StripeSubscriptionStatus.ACTIVE,
+        )
+        prior_summary.subscription_cancel_at = timezone.now() + timedelta(days=30)
+        prior_summary.save()
+
+        subscription_data = {
+            "id": subscription_id,
+            "status": StripeSubscriptionStatus.ACTIVE,
+            "cancel_at": cancel_at_timestamp,
+            "metadata": self._create_mock_stripe_subscription(self.checkout_intent.id),
+        }
+
+        mock_event = self._create_mock_stripe_event(
+            "customer.subscription.updated", subscription_data
+        )
+
+        StripeEventHandler.dispatch(mock_event)
+
+        mock_paid_email_task.delay.assert_not_called()
+
+    @mock.patch(
         "enterprise_access.apps.customer_billing.stripe_event_handlers.cancel_all_future_plans"
     )
     @mock.patch(

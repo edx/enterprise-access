@@ -207,6 +207,7 @@ def send_finalized_cancelation_email_task(checkout_intent_id, ended_at_timestamp
         checkout_intent_id,
         ended_at_timestamp,
         settings.BRAZE_SSP_CANCELATION_FINALIZATION_CAMPAIGN,
+        'cancelation finalized email',
     )
 
 
@@ -231,10 +232,36 @@ def send_trial_cancellation_email_task(checkout_intent_id, cancel_at_timestamp):
         checkout_intent_id,
         cancel_at_timestamp,
         settings.BRAZE_TRIAL_CANCELLATION_CAMPAIGN,
+        'trial cancelation email',
     )
 
 
-def _send_cancelation_campaign(checkout_intent_id, ending_timestamp, campaign_identifier):
+@shared_task(base=LoggedTaskWithRetry)
+def send_paid_cancellation_email_task(checkout_intent_id, cancel_at_timestamp):
+    """
+    Send Braze email notification when a paid subscription cancelation is scheduled.
+
+    This task handles sending a scheduled cancelation confirmation email to enterprise
+    admins. The email includes the subscription end date and a link to
+    restart their subscription via the Stripe billing portal.
+
+    Args:
+        checkout_intent_id (int): ID of the CheckoutIntent record
+        cancel_at_timestamp (int): Unix timestamp of when the paid subscription will become canceled.
+
+    Raises:
+        BrazeClientError: If there's an error communicating with Braze
+        Exception: For any other unexpected errors during email sending
+    """
+    _send_cancelation_campaign(
+        checkout_intent_id,
+        cancel_at_timestamp,
+        settings.BRAZE_PAID_CANCELLATION_CAMPAIGN,
+        'paid cancelation scheduled email',
+    )
+
+
+def _send_cancelation_campaign(checkout_intent_id, ending_timestamp, campaign_identifier, email_description):
     """
     Helper for sending campaign message related to subscription cancelation.
     """
@@ -248,19 +275,21 @@ def _send_cancelation_campaign(checkout_intent_id, ending_timestamp, campaign_id
     )
 
     logger.info(
-        "Sending trial cancellation email for CheckoutIntent %s (enterprise slug: %s)",
+        "Sending cancellation email for CheckoutIntent %s (enterprise slug: %s)",
         checkout_intent_id,
         enterprise_slug,
     )
 
-    # Format trial end date for email template
+    # Format end date for email template
     ending_date = format_datetime_obj(
         datetime_from_timestamp(ending_timestamp),
         output_pattern=BRAZE_DATE_FORMAT_2
     )
 
+    # TODO: remove "trial_end_date" property once BRAZE_TRIAL_CANCELLATION_CAMPAIGN is updated in braze
     braze_trigger_properties = {
         "trial_end_date": ending_date,
+        "period_end_date": ending_date,
         "restart_subscription_url": f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/{enterprise_slug}',
     }
 
@@ -270,7 +299,7 @@ def _send_cancelation_campaign(checkout_intent_id, ending_timestamp, campaign_id
         recipients=recipients,
         trigger_properties=braze_trigger_properties,
         organization_name=checkout_intent.enterprise_name,
-        email_description='trial cancelation email',
+        email_description=email_description,
     )
 
 
