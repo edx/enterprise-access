@@ -40,7 +40,7 @@ billiard==4.2.4
     # via
     #   -r requirements/validation.txt
     #   celery
-build==1.4.2
+build==1.4.3
     # via
     #   -r requirements/pip-tools.txt
     #   pip-tools
@@ -64,7 +64,7 @@ cffi==2.0.0
     #   -r requirements/validation.txt
     #   cryptography
     #   pynacl
-chardet==7.4.1
+chardet==7.4.2
     # via diff-cover
 charset-normalizer==3.4.7
     # via
@@ -385,7 +385,7 @@ kombu==5.6.2
     # via
     #   -r requirements/validation.txt
     #   celery
-lxml[html-clean]==6.0.2
+lxml[html-clean]==6.0.4
     # via
     #   edx-i18n-tools
     #   lxml-html-clean
@@ -411,7 +411,7 @@ monotonic==1.6
     # via
     #   -r requirements/validation.txt
     #   analytics-python
-more-itertools==11.0.1
+more-itertools==11.0.2
     # via
     #   -r requirements/validation.txt
     #   jaraco-classes
@@ -429,7 +429,7 @@ oauthlib==3.3.1
     #   -r requirements/validation.txt
     #   requests-oauthlib
     #   social-auth-core
-openedx-events==11.1.0
+openedx-events==11.1.1
     # via
     #   -r requirements/validation.txt
     #   edx-event-bus-kafka
@@ -449,7 +449,7 @@ path==16.16.0
     # via edx-i18n-tools
 pip-tools==7.5.3
     # via -r requirements/pip-tools.txt
-platformdirs==4.9.4
+platformdirs==4.9.6
     # via
     #   -r requirements/validation.txt
     #   pylint
@@ -618,7 +618,7 @@ rfc3986==2.0.0
     # via
     #   -r requirements/validation.txt
     #   twine
-rich==14.3.3
+rich==15.0.0
     # via
     #   -r requirements/validation.txt
     #   twine
@@ -685,7 +685,7 @@ tomlkit==0.14.0
     # via
     #   -r requirements/validation.txt
     #   pylint
-tox==4.52.0
+tox==4.52.1
     # via -r requirements/validation.txt
 twine==6.2.0
     # via -r requirements/validation.txt
@@ -724,7 +724,7 @@ vine==5.1.0
     #   amqp
     #   celery
     #   kombu
-virtualenv==21.2.0
+virtualenv==21.2.1
     # via
     #   -r requirements/validation.txt
     #   tox

@@ -379,7 +379,7 @@ monotonic==1.6
     # via
     #   -r requirements/test.txt
     #   analytics-python
-more-itertools==11.0.1
+more-itertools==11.0.2
     # via
     #   jaraco-classes
     #   jaraco-functools
@@ -392,7 +392,7 @@ oauthlib==3.3.1
     #   -r requirements/test.txt
     #   requests-oauthlib
     #   social-auth-core
-openedx-events==11.1.0
+openedx-events==11.1.1
     # via
     #   -r requirements/test.txt
     #   edx-event-bus-kafka
@@ -405,7 +405,7 @@ packaging==26.0
     #   pytest
     #   tox
     #   twine
-platformdirs==4.9.4
+platformdirs==4.9.6
     # via
     #   -r requirements/test.txt
     #   pylint
@@ -556,7 +556,7 @@ requests-toolbelt==1.0.0
     # via twine
 rfc3986==2.0.0
     # via twine
-rich==14.3.3
+rich==15.0.0
     # via twine
 rpds-py==0.30.0
     # via
@@ -618,7 +618,7 @@ tomlkit==0.14.0
     # via
     #   -r requirements/test.txt
     #   pylint
-tox==4.52.0
+tox==4.52.1
     # via -r requirements/test.txt
 twine==6.2.0
     # via -r requirements/quality.in
@@ -656,7 +656,7 @@ vine==5.1.0
     #   amqp
     #   celery
     #   kombu
-virtualenv==21.2.0
+virtualenv==21.2.1
     # via
     #   -r requirements/test.txt
     #   tox

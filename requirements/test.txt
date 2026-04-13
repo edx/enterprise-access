@@ -340,7 +340,7 @@ oauthlib==3.3.1
     #   -r requirements/base.txt
     #   requests-oauthlib
     #   social-auth-core
-openedx-events==11.1.0
+openedx-events==11.1.1
     # via
     #   -r requirements/base.txt
     #   edx-event-bus-kafka
@@ -352,7 +352,7 @@ packaging==26.0
     #   pyproject-api
     #   pytest
     #   tox
-platformdirs==4.9.4
+platformdirs==4.9.6
     # via
     #   pylint
     #   python-discovery
@@ -529,7 +529,7 @@ tomli-w==1.2.0
     # via tox
 tomlkit==0.14.0
     # via pylint
-tox==4.52.0
+tox==4.52.1
     # via -r requirements/test.in
 typing-extensions==4.15.0
     # via
@@ -563,7 +563,7 @@ vine==5.1.0
     #   amqp
     #   celery
     #   kombu
-virtualenv==21.2.0
+virtualenv==21.2.1
     # via tox
 wcwidth==0.6.0
     # via
