@@ -13,7 +13,8 @@ import ddt
 import stripe
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import AbstractUser
-from django.test import TestCase, override_settings
+from django.db import IntegrityError, transaction
+from django.test import TestCase, TransactionTestCase, override_settings
 from django.utils import timezone
 
 from enterprise_access.apps.core.tests.factories import UserFactory
@@ -21,6 +22,7 @@ from enterprise_access.apps.customer_billing import stripe_api
 from enterprise_access.apps.customer_billing.constants import CheckoutIntentState
 from enterprise_access.apps.customer_billing.models import (
     CheckoutIntent,
+    EnterpriseAcademy,
     FailedCheckoutIntentConflict,
     SelfServiceSubscriptionRenewal,
     SlugReservationConflict,
@@ -37,6 +39,130 @@ from enterprise_access.apps.provisioning.models import (
 from enterprise_access.apps.provisioning.tests.factories import ProvisionNewCustomerWorkflowFactory
 
 User = get_user_model()
+
+
+class TestEnterpriseAcademyModel(TransactionTestCase):
+    """Tests for the EnterpriseAcademy model."""
+
+    def _create_academy(self, **overrides):
+        """Create an EnterpriseAcademy test instance with default values."""
+        data = {
+            'name': 'AI Academy',
+            'long_name': 'Artificial Intelligence Academy',
+            'description': 'Academy focused on AI fundamentals and applications.',
+            'marketing_url': 'https://example.com/ai-academy',
+            'thumbnail_url': 'academies/ai/thumbnail.png',
+            'tags': ['ai', 'ml'],
+            'stripe_product_id': 'prod_ai_123',
+            'stripe_price_lookup_key': 'essentials_ai_annual',
+            'edx_catalog_id': uuid4(),
+            'product_key': 'ai-academy',
+            'slug': 'ai-academy',
+            'is_active': True,
+            'display_order': 10,
+        }
+        data.update(overrides)
+        return EnterpriseAcademy.objects.create(**data)
+
+    def test_create_with_all_fields(self):
+        """Verify all model fields can be persisted and read correctly."""
+        edx_catalog_id = uuid4()
+        academy = self._create_academy(edx_catalog_id=edx_catalog_id)
+
+        self.assertIsNotNone(academy.id)
+        self.assertIsNotNone(academy.uuid)
+        self.assertEqual(academy.name, 'AI Academy')
+        self.assertEqual(academy.long_name, 'Artificial Intelligence Academy')
+        self.assertEqual(academy.description, 'Academy focused on AI fundamentals and applications.')
+        self.assertEqual(academy.marketing_url, 'https://example.com/ai-academy')
+        self.assertEqual(academy.thumbnail_url, 'academies/ai/thumbnail.png')
+        self.assertEqual(academy.tags, ['ai', 'ml'])
+        self.assertEqual(academy.stripe_product_id, 'prod_ai_123')
+        self.assertEqual(academy.stripe_price_lookup_key, 'essentials_ai_annual')
+        self.assertEqual(academy.edx_catalog_id, edx_catalog_id)
+        self.assertEqual(academy.product_key, 'ai-academy')
+        self.assertEqual(academy.slug, 'ai-academy')
+        self.assertTrue(academy.is_active)
+        self.assertEqual(academy.display_order, 10)
+
+    def test_defaults(self):
+        """Verify default values for optional fields."""
+        academy = EnterpriseAcademy.objects.create(name='Data Academy')
+
+        self.assertIsNotNone(academy.id)
+        self.assertIsNotNone(academy.uuid)
+        self.assertEqual(academy.long_name, '')
+        self.assertEqual(academy.description, '')
+        self.assertEqual(academy.marketing_url, '')
+        self.assertEqual(academy.thumbnail_url, '')
+        self.assertEqual(academy.tags, [])
+        self.assertEqual(academy.stripe_product_id, '')
+        self.assertEqual(academy.stripe_price_lookup_key, '')
+        self.assertIsNone(academy.edx_catalog_id)
+        self.assertEqual(academy.product_key, '')
+        self.assertEqual(academy.slug, '')
+        self.assertTrue(academy.is_active)
+        self.assertEqual(academy.display_order, 0)
+
+    def test_unique_constraints(self):
+        """Verify unique constraints are enforced."""
+        self._create_academy()
+
+        with transaction.atomic():
+            with self.assertRaises(IntegrityError):
+                self._create_academy(name='AI Academy', slug='ai-academy-2', product_key='ai-academy-2',
+                                     stripe_price_lookup_key='lookup-2')
+
+        with transaction.atomic():
+            with self.assertRaises(IntegrityError):
+                self._create_academy(name='Cloud Academy', slug='ai-academy', product_key='cloud-academy',
+                                     stripe_price_lookup_key='lookup-3')
+
+        with transaction.atomic():
+            with self.assertRaises(IntegrityError):
+                self._create_academy(name='DevOps Academy', slug='devops-academy', product_key='ai-academy',
+                                     stripe_price_lookup_key='lookup-4')
+
+        with transaction.atomic():
+            with self.assertRaises(IntegrityError):
+                self._create_academy(
+                    name='Security Academy',
+                    slug='security-academy',
+                    product_key='security-academy',
+                    stripe_price_lookup_key='essentials_ai_annual',
+                )
+
+    def test_ordering(self):
+        """Verify model Meta ordering by display_order then name."""
+        self._create_academy(
+            name='Z Academy',
+            slug='z-academy',
+            product_key='z-academy',
+            stripe_price_lookup_key='z-lookup',
+            display_order=2,
+        )
+        self._create_academy(
+            name='A Academy',
+            slug='a-academy',
+            product_key='a-academy',
+            stripe_price_lookup_key='a-lookup',
+            display_order=2,
+        )
+        self._create_academy(
+            name='B Academy',
+            slug='b-academy',
+            product_key='b-academy',
+            stripe_price_lookup_key='b-lookup',
+            display_order=1,
+        )
+
+        names = list(EnterpriseAcademy.objects.values_list('name', flat=True))
+        self.assertEqual(names, ['B Academy', 'A Academy', 'Z Academy'])
+
+    def test_str_representation(self):
+        """Verify __str__ returns the expected format."""
+        academy = self._create_academy()
+        self.assertEqual(str(academy), f'<Academy id={academy.id} name={academy.name}>')
 
 
 @ddt.ddt
