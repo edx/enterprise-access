@@ -1,0 +1,23 @@
+docs/customer-billing/checkout-intent-uuid-migration-plan.md
+  ef4eca78bd7b2c07 34,67,69-70
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "02e1a1e8ea5ec61fb41a46601bb73292c29904b8",
+  "prompts": {
+    "ef4eca78bd7b2c07": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9b0f9c8e-c302-4b38-b01f-6bb80cbb89a4",
+        "model": "claude-opus-4-5-20251101"
+      },
+      "human_author": "Alexander Dusenbery",
+      "messages": [],
+      "total_additions": 7,
+      "total_deletions": 6,
+      "accepted_lines": 7,
+      "overriden_lines": 0
+    }
+  }
+}
