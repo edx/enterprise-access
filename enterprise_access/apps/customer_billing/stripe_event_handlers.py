@@ -754,7 +754,7 @@ class StripeEventHandler:
                     cancel_at_timestamp=current_cancel_at,
                 )
             elif current_status == StripeSubscriptionStatus.ACTIVE:
-                logger.info(f"Queuing paid cancellation email for checkout_intent_id={checkout_intent_id}")
+                logger.info(f"Queuing paid cancellation email for checkout_intent.id={checkout_intent.id}")
                 send_paid_cancellation_email_task.delay(
                     checkout_intent_id=checkout_intent.id,
                     cancel_at_timestamp=current_cancel_at,
