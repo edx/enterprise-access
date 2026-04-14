@@ -15,19 +15,16 @@ from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.subsidy_access_policy.exceptions import SubisidyAccessPolicyRequestApprovalError
 from enterprise_access.apps.subsidy_request import api as subsidy_request_api
 from enterprise_access.apps.subsidy_request.constants import (
-    APPROVABLE_STATES,
-    DECLINABLE_STATES,
-    REMINDABLE_STATES,
     LearnerCreditAdditionalActionStates,
     LearnerCreditRequestActionErrorReasons,
     SubsidyRequestStates
 )
-from enterprise_access.apps.subsidy_request.models import LearnerCreditRequest, LearnerCreditRequestActions
+from enterprise_access.apps.subsidy_request.models import LearnerCreditRequestActions
 from enterprise_access.apps.subsidy_request.tests.factories import (
     LearnerCreditRequestConfigurationFactory,
     LearnerCreditRequestFactory
 )
-from enterprise_access.apps.subsidy_request.utils import get_action_choice, get_user_message_choice
+from enterprise_access.apps.subsidy_request.utils import get_action_choice
 
 
 @ddt.ddt
@@ -50,7 +47,7 @@ class TestDeclineLearnerCreditRequests(TestCase):
         )
 
     @mock.patch('enterprise_access.apps.subsidy_request.api.send_learner_credit_bnr_decline_notification_task')
-    def test_decline_success(self, mock_decline_task):
+    def test_decline_success(self, _mock_decline_task):
         """All REQUESTED requests are declined, actions created, and notifications queued."""
         request_1 = self._create_request()
         request_2 = self._create_request()
@@ -77,7 +74,7 @@ class TestDeclineLearnerCreditRequests(TestCase):
             )
 
     @mock.patch('enterprise_access.apps.subsidy_request.api.send_learner_credit_bnr_decline_notification_task')
-    def test_decline_filters_non_declinable(self, mock_decline_task):
+    def test_decline_filters_non_declinable(self, _mock_decline_task):
         """Requests not in DECLINABLE_STATES are returned as non_declinable."""
         declinable = self._create_request(state=SubsidyRequestStates.REQUESTED)
         non_declinable = self._create_request(state=SubsidyRequestStates.APPROVED)
@@ -108,7 +105,7 @@ class TestDeclineLearnerCreditRequests(TestCase):
         mock_decline_task.delay.assert_not_called()
 
     @mock.patch('enterprise_access.apps.subsidy_request.api.send_learner_credit_bnr_decline_notification_task')
-    def test_decline_no_reason(self, mock_decline_task):
+    def test_decline_no_reason(self, _mock_decline_task):
         """Decline works without a reason."""
         request = self._create_request()
 
@@ -147,7 +144,7 @@ class TestRemindLearnerCreditRequests(TestCase):
         self.enterprise_customer_uuid = uuid4()
 
     def _create_approved_request_with_assignment(self):
-        from enterprise_access.apps.content_assignments.tests.factories import AssignmentConfigurationFactory
+        """Create an approved request with a linked assignment for testing."""
         assignment_config = AssignmentConfigurationFactory(
             enterprise_customer_uuid=self.enterprise_customer_uuid,
         )
@@ -200,7 +197,7 @@ class TestRemindLearnerCreditRequests(TestCase):
         mock_reminder_task.delay.assert_not_called()
 
     @mock.patch('enterprise_access.apps.subsidy_request.api.send_reminder_email_for_pending_learner_credit_request')
-    def test_remind_wrong_state(self, mock_reminder_task):
+    def test_remind_wrong_state(self, _mock_reminder_task):
         """Requests not in REMINDABLE_STATES are non-remindable."""
         request = LearnerCreditRequestFactory(
             enterprise_customer_uuid=self.enterprise_customer_uuid,
@@ -409,7 +406,7 @@ class TestApproveLearnerCreditRequests(TestCase):
 
     @mock.patch('enterprise_access.apps.subsidy_request.api.send_learner_credit_bnr_request_approve_task')
     @mock.patch('enterprise_access.apps.subsidy_request.api.approve_learner_credit_requests_via_policy')
-    def test_approve_error_state_is_approvable(self, mock_approve_via_policy, mock_approve_task):
+    def test_approve_error_state_is_approvable(self, mock_approve_via_policy, _mock_approve_task):
         """Requests in ERROR state can be re-approved."""
         error_request = self._create_request(state=SubsidyRequestStates.ERROR)
         assignment = self._make_assignment()
@@ -458,6 +455,7 @@ class TestCancelLearnerCreditRequests(TestCase):
         self.enterprise_customer_uuid = uuid4()
 
     def _create_approved_request_with_assignment(self):
+        """Create an approved request with a linked assignment for testing."""
         assignment_config = AssignmentConfigurationFactory(
             enterprise_customer_uuid=self.enterprise_customer_uuid,
         )
@@ -531,7 +529,7 @@ class TestCancelLearnerCreditRequests(TestCase):
 
     @mock.patch('enterprise_access.apps.subsidy_request.api.send_learner_credit_bnr_cancel_notification_task')
     @mock.patch('enterprise_access.apps.subsidy_request.api.assignments_api.cancel_assignments')
-    def test_cancel_no_assignment(self, mock_cancel_assignments, mock_cancel_task):
+    def test_cancel_no_assignment(self, mock_cancel_assignments, _mock_cancel_task):
         """Approved requests without assignments are returned as non_cancelable."""
         request = LearnerCreditRequestFactory(
             enterprise_customer_uuid=self.enterprise_customer_uuid,

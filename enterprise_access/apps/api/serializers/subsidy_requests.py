@@ -338,7 +338,7 @@ class LearnerCreditRequestApproveAllSerializer(serializers.Serializer):
         raise NotImplementedError("This serializer is for validation only")
 
 
-class LearnerCreditRequestDeclineAllSerializer(serializers.Serializer):
+class LearnerCreditRequestDeclineAllSerializer(serializers.Serializer):  # pylint: disable=abstract-method
     """
     Request serializer to validate the decline-all action.
     """

@@ -1,3 +1,6 @@
+"""
+Tests for testimonials API endpoints.
+"""
 from django.contrib.auth import get_user_model
 from rest_framework import status
 from rest_framework.test import APITestCase
@@ -8,6 +11,7 @@ User = get_user_model()
 
 
 class TestimonialAPITestCase(APITestCase):
+    """Tests for the TestimonialViewSet API."""
 
     def setUp(self):
         # Create test user and grant staff privileges so IsAdminUser permission passes

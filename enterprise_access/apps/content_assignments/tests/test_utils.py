@@ -9,18 +9,14 @@ from django.test import TestCase
 
 from enterprise_access.apps.api_client.tests.test_constants import DATE_FORMAT_ISO_8601
 from enterprise_access.apps.content_assignments.constants import BRAZE_TIMESTAMP_FORMAT
+from enterprise_access.apps.content_assignments.content_metadata_api import get_normalized_metadata_for_assignment
 from enterprise_access.apps.content_assignments.tests.factories import LearnerContentAssignmentFactory
 from enterprise_access.apps.content_assignments.utils import (
     get_self_paced_normalized_start_date,
     has_time_to_complete,
     is_within_minimum_start_date_threshold
 )
-from enterprise_access.utils import (
-    _curr_date,
-    _days_from_now,
-    get_course_run_metadata_for_assignment,
-    get_normalized_metadata_for_assignment
-)
+from enterprise_access.utils import _curr_date, _days_from_now, get_course_run_metadata_for_assignment
 
 mock_course_run_1 = {
     'start_date': _days_from_now(-370, DATE_FORMAT_ISO_8601),

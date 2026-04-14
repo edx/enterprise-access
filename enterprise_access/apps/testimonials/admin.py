@@ -1,3 +1,6 @@
+"""
+Django admin configuration for testimonials.
+"""
 from django.contrib import admin
 
 from .models import Testimonial
@@ -5,6 +8,7 @@ from .models import Testimonial
 
 @admin.register(Testimonial)
 class TestimonialAdmin(admin.ModelAdmin):
+    """Admin interface for managing Testimonial records."""
     list_display = (
         "attribution_name",
         "attribution_title",

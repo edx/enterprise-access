@@ -2,7 +2,6 @@
 REST API views for the billing provider (Stripe) integration.
 """
 import logging
-import time
 import uuid
 
 import stripe
