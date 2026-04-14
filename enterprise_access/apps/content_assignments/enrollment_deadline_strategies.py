@@ -4,14 +4,16 @@ Enrollment deadline calculation strategies for different assignment types.
 import logging
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import TYPE_CHECKING, Optional
+from typing import Optional
 
-if TYPE_CHECKING:
-    from enterprise_access.apps.content_assignments.models import LearnerContentAssignment
-
+from django.utils import timezone
 from pytz import UTC
 
-from enterprise_access.apps.content_assignments.content_metadata_api import parse_datetime_string
+from enterprise_access.apps.content_assignments.content_metadata_api import (
+    get_normalized_metadata_for_assignment,
+    parse_datetime_string
+)
+from enterprise_access.apps.content_assignments.models import LearnerContentAssignment
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +26,7 @@ class EnrollmentDeadlineStrategy(ABC):
     @abstractmethod
     def get_enrollment_deadline(
         self,
-        assignment: "LearnerContentAssignment",
+        assignment: LearnerContentAssignment,
         content_metadata: dict
     ) -> Optional[datetime]:
         """
@@ -50,12 +52,9 @@ class DefaultEnrollmentDeadlineStrategy(EnrollmentDeadlineStrategy):
 
     def get_enrollment_deadline(
         self,
-        assignment: "LearnerContentAssignment",
+        assignment: LearnerContentAssignment,
         content_metadata: dict
     ) -> Optional[datetime]:
-        # Import here to avoid circular import with enterprise_access.utils
-        from enterprise_access.utils import get_normalized_metadata_for_assignment
-
         if not content_metadata:
             return None
 
@@ -77,7 +76,6 @@ class DefaultEnrollmentDeadlineStrategy(EnrollmentDeadlineStrategy):
                 content_metadata.get('key'),
                 enrollment_end_date_str,
             )
-            pass
 
         return None
 
@@ -102,9 +100,6 @@ class CreditRequestEnrollmentDeadlineStrategy(EnrollmentDeadlineStrategy):
         assignment,
         content_metadata: dict
     ) -> Optional[datetime]:
-        # Import here to avoid circular import with enterprise_access.utils
-        from enterprise_access.utils import localized_utcnow
-
         if not content_metadata:
             return None
 
@@ -112,7 +107,7 @@ class CreditRequestEnrollmentDeadlineStrategy(EnrollmentDeadlineStrategy):
         last_run_deadline = self._get_last_course_run_enrollment_deadline(content_metadata)
 
         # If the last run's deadline is in the future, use it
-        if last_run_deadline and last_run_deadline > localized_utcnow():
+        if last_run_deadline and last_run_deadline > timezone.now():
             return last_run_deadline
 
         # Fall back to the default behavior (current advertised run)
@@ -156,7 +151,7 @@ class EnrollmentDeadlineStrategyFactory:
     """
 
     @staticmethod
-    def get_strategy(assignment: "LearnerContentAssignment") -> EnrollmentDeadlineStrategy:
+    def get_strategy(assignment: LearnerContentAssignment) -> EnrollmentDeadlineStrategy:
         """
         Select the appropriate strategy based on assignment characteristics.
 

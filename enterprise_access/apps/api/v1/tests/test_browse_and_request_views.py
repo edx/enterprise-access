@@ -56,6 +56,7 @@ from enterprise_access.apps.subsidy_request.models import (
 )
 from enterprise_access.apps.subsidy_request.tests.factories import (
     CouponCodeRequestFactory,
+    LearnerCreditRequestActionsFactory,
     LearnerCreditRequestConfigurationFactory,
     LearnerCreditRequestFactory,
     LicenseRequestFactory,
@@ -3438,7 +3439,7 @@ class TestLearnerCreditRequestViewSet(BaseEnterpriseAccessTestCase):
 
     @mock.patch('enterprise_access.apps.subsidy_request.tasks.send_learner_credit_bnr_cancel_notification_task.delay')
     @mock.patch('enterprise_access.apps.content_assignments.api.cancel_assignments')
-    def test_cancel_all_reviewer_set_correctly(self, mock_cancel_assignments, mock_cancel_task):
+    def test_cancel_all_reviewer_set_correctly(self, mock_cancel_assignments, _mock_cancel_task):
         """
         Test that cancel-all properly sets the reviewer on cancelled requests.
         """
@@ -3481,7 +3482,7 @@ class TestLearnerCreditRequestViewSet(BaseEnterpriseAccessTestCase):
 
     @mock.patch('enterprise_access.apps.subsidy_request.tasks.send_learner_credit_bnr_cancel_notification_task.delay')
     @mock.patch('enterprise_access.apps.content_assignments.api.cancel_assignments')
-    def test_cancel_all_with_learner_request_state_filter(self, mock_cancel_assignments, mock_cancel_task):
+    def test_cancel_all_with_learner_request_state_filter(self, mock_cancel_assignments, _mock_cancel_task):
         """
         Test cancel-all with learner_request_state filter only cancels matching requests.
         """
@@ -4223,7 +4224,7 @@ class TestLearnerCreditRequestViewSet(BaseEnterpriseAccessTestCase):
         assert mock_send_reminder_task.delay.call_count == 1
 
     @mock.patch('enterprise_access.apps.subsidy_request.api.send_learner_credit_bnr_decline_notification_task')
-    def test_decline_all_success(self, mock_decline_notification_task):
+    def test_decline_all_success(self, _mock_decline_notification_task):
         """Test decline_all declines all REQUESTED requests for a policy."""
         self.set_jwt_cookie([{
             'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
@@ -4300,7 +4301,7 @@ class TestLearnerCreditRequestViewSet(BaseEnterpriseAccessTestCase):
         side_effect=Exception('Unexpected failure'),
     )
     @mock.patch('enterprise_access.apps.api.v1.views.browse_and_request.get_enterprise_uuid_from_request_data')
-    def test_decline_unexpected_error(self, mock_get_enterprise_uuid, mock_decline_api):
+    def test_decline_unexpected_error(self, mock_get_enterprise_uuid, _mock_decline_api):
         """Test decline returns 422 when an unexpected exception occurs."""
         mock_get_enterprise_uuid.return_value = str(self.enterprise_customer_uuid_1)
         self.set_jwt_cookie([{
@@ -4323,7 +4324,7 @@ class TestLearnerCreditRequestViewSet(BaseEnterpriseAccessTestCase):
         'enterprise_access.apps.subsidy_request.api.decline_learner_credit_requests',
         side_effect=Exception('Unexpected failure'),
     )
-    def test_decline_all_unexpected_error(self, mock_decline_api):
+    def test_decline_all_unexpected_error(self, _mock_decline_api):
         """Test decline_all returns 422 when an unexpected exception occurs."""
         self.set_jwt_cookie([{
             'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
@@ -4522,8 +4523,6 @@ class TestLearnerCreditRequestViewSet(BaseEnterpriseAccessTestCase):
         Test that requests with error actions are counted as 'failed' in
         learner_request_state_counts, verifying action-based state computation.
         """
-        from enterprise_access.apps.subsidy_request.tests.factories import LearnerCreditRequestActionsFactory
-
         self.set_jwt_cookie([{
             'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
             'context': str(self.enterprise_customer_uuid_1)

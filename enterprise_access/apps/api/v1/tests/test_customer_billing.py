@@ -3,17 +3,18 @@ Tests for customer billing API endpoints.
 """
 import json
 import uuid
-from datetime import datetime, timedelta
-from datetime import timezone as dt_timezone
+from datetime import timedelta
 from unittest import mock
 
 import ddt
 import stripe
-from django.test import override_settings
+from django.core.cache import cache
+from django.test import RequestFactory, override_settings
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework import status
 
+from enterprise_access.apps.api.v1.views.customer_billing import BillingManagementViewSet, CheckoutIntentPermission
 from enterprise_access.apps.core.constants import (
     SYSTEM_ENTERPRISE_ADMIN_ROLE,
     SYSTEM_ENTERPRISE_LEARNER_ROLE,
@@ -21,7 +22,7 @@ from enterprise_access.apps.core.constants import (
 )
 from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.customer_billing.constants import CheckoutIntentState
-from enterprise_access.apps.customer_billing.models import CheckoutIntent
+from enterprise_access.apps.customer_billing.models import CheckoutIntent, StripeEventData, StripeEventSummary
 from test_utils import APITest
 
 
@@ -51,7 +52,6 @@ class CustomerBillingPortalSessionTests(APITest):
     def tearDown(self):
         CheckoutIntent.objects.all().delete()
         # Clear Django cache to prevent Stripe API cache pollution between tests
-        from django.core.cache import cache
         cache.clear()
         super().tearDown()
 
@@ -97,7 +97,7 @@ class CustomerBillingPortalSessionTests(APITest):
     )
     @ddt.unpack
     def test_create_enterprise_admin_portal_session_rbac(
-        self, scenario, role, uuid_type, include_uuid, expected_status
+        self, _scenario, role, _uuid_type, include_uuid, expected_status
     ):
         """
         Test RBAC scenarios for enterprise admin portal session endpoint.
@@ -242,7 +242,7 @@ class CustomerBillingPortalSessionTests(APITest):
     )
     @ddt.unpack
     def test_create_checkout_portal_session_rbac(
-        self, scenario, user_type, intent_pk, expected_status
+        self, _scenario, user_type, intent_pk, expected_status
     ):
         """
         Test RBAC scenarios for checkout portal session endpoint.
@@ -632,10 +632,6 @@ class CheckoutIntentPermissionTests(APITest):
         """
         Test CheckoutIntentPermission when pk is invalid for both UUID and int (TypeError).
         """
-        from django.test import RequestFactory
-
-        from enterprise_access.apps.api.v1.views.customer_billing import CheckoutIntentPermission
-
         permission = CheckoutIntentPermission()
         factory = RequestFactory()
 
@@ -658,10 +654,6 @@ class CheckoutIntentPermissionTests(APITest):
         """
         Test CheckoutIntentPermission when pk fails int() conversion (ValueError).
         """
-        from django.test import RequestFactory
-
-        from enterprise_access.apps.api.v1.views.customer_billing import CheckoutIntentPermission
-
         permission = CheckoutIntentPermission()
         factory = RequestFactory()
 
@@ -713,7 +705,6 @@ class BillingManagementBaseTest(APITest):
     def tearDown(self):
         CheckoutIntent.objects.all().delete()
         # Clear Django cache to prevent Stripe API cache pollution between tests
-        from django.core.cache import cache
         cache.clear()
         super().tearDown()
 
@@ -1070,7 +1061,7 @@ class BillingManagementAddressUpdateTests(BillingManagementBaseTest):
         ),
     )
     @ddt.unpack
-    def test_update_address_validation_errors(self, scenario, request_data, expected_error_fields):
+    def test_update_address_validation_errors(self, _scenario, request_data, expected_error_fields):
         """
         Test validation errors for update address endpoint.
         Scenarios: missing_required_fields (400), invalid_country_code (400).
@@ -1770,8 +1761,6 @@ class BillingManagementSetDefaultPaymentMethodTests(BillingManagementBaseTest):
         """
         Test that operator role can also set default payment method.
         """
-        from enterprise_access.apps.core.constants import SYSTEM_ENTERPRISE_OPERATOR_ROLE
-
         # Set JWT cookie with operator role
         self.set_jwt_cookie([{
             'system_wide_role': SYSTEM_ENTERPRISE_OPERATOR_ROLE,
@@ -1919,7 +1908,7 @@ class BillingManagementDeletePaymentMethodTests(BillingManagementBaseTest):
         ('wrong_role', SYSTEM_ENTERPRISE_LEARNER_ROLE, 'existing', status.HTTP_403_FORBIDDEN),
     )
     @ddt.unpack
-    def test_delete_payment_method_rbac(self, scenario, role, uuid_type, expected_status):
+    def test_delete_payment_method_rbac(self, _scenario, role, uuid_type, expected_status):
         """
         Test RBAC scenarios for delete payment method endpoint.
         Scenarios: missing_uuid (403), nonexistent_uuid (403), wrong_role (403).
@@ -2162,7 +2151,7 @@ class BillingManagementTransactionsTests(BillingManagementBaseTest):
         ('wrong_role', SYSTEM_ENTERPRISE_LEARNER_ROLE, 'existing', status.HTTP_403_FORBIDDEN),
     )
     @ddt.unpack
-    def test_list_transactions_rbac(self, scenario, role, uuid_type, expected_status):
+    def test_list_transactions_rbac(self, _scenario, role, uuid_type, expected_status):
         """
         Test RBAC scenarios for list transactions endpoint.
         Scenarios: missing_uuid (403), nonexistent_uuid (403), wrong_role (403).
@@ -2204,7 +2193,7 @@ class BillingManagementTransactionsTests(BillingManagementBaseTest):
 
     @mock.patch('stripe.Charge.retrieve')
     @mock.patch('stripe.Invoice.list')
-    def test_list_transactions_empty_list(self, mock_invoice_list, mock_charge_retrieve):
+    def test_list_transactions_empty_list(self, mock_invoice_list, _mock_charge_retrieve):
         """
         Test returning empty transaction list.
         """
@@ -2222,7 +2211,7 @@ class BillingManagementTransactionsTests(BillingManagementBaseTest):
 
     @mock.patch('stripe.Charge.retrieve')
     @mock.patch('stripe.Invoice.list')
-    def test_list_transactions_normalizes_status(self, mock_invoice_list, mock_charge_retrieve):
+    def test_list_transactions_normalizes_status(self, mock_invoice_list, _mock_charge_retrieve):
         """
         Test that invoice statuses are normalized correctly.
         """
@@ -2286,7 +2275,6 @@ class BillingManagementSubscriptionTests(BillingManagementBaseTest):
         """
         Test successfully retrieving subscription from StripeEventSummary.
         """
-        from enterprise_access.apps.customer_billing.models import StripeEventData, StripeEventSummary
 
         # Create subscription event data
         sub_event_data = StripeEventData.objects.create(
@@ -2363,7 +2351,6 @@ class BillingManagementSubscriptionTests(BillingManagementBaseTest):
         Test retrieving subscription data during trial period with $0 invoice.
         Verifies fallback to upcoming_invoice_amount_due from subscription.created event.
         """
-        from enterprise_access.apps.customer_billing.models import StripeEventData, StripeEventSummary
 
         # Create subscription.created event with upcoming_invoice_amount_due
         sub_created_event_data = StripeEventData.objects.create(
@@ -2425,7 +2412,7 @@ class BillingManagementSubscriptionTests(BillingManagementBaseTest):
         ('wrong_role', SYSTEM_ENTERPRISE_LEARNER_ROLE, 'existing', status.HTTP_403_FORBIDDEN),
     )
     @ddt.unpack
-    def test_get_subscription_rbac(self, scenario, role, uuid_type, expected_status):
+    def test_get_subscription_rbac(self, _scenario, role, uuid_type, expected_status):
         """
         Test RBAC scenarios for get subscription endpoint.
         Scenarios: missing_uuid (403), nonexistent_uuid (403), wrong_role (403).
@@ -2454,7 +2441,6 @@ class BillingManagementSubscriptionTests(BillingManagementBaseTest):
         """
         Test yearly amount calculation from invoice event data.
         """
-        from enterprise_access.apps.customer_billing.models import StripeEventData, StripeEventSummary
 
         # Create subscription event data
         sub_event_data = StripeEventData.objects.create(
@@ -2528,7 +2514,6 @@ class BillingManagementCancelSubscriptionTests(BillingManagementBaseTest):
         """
         Test successfully cancelling a Teams plan subscription.
         """
-        from enterprise_access.apps.customer_billing.models import StripeEventData, StripeEventSummary
 
         # Create StripeEventSummary with active subscription (not scheduled for cancellation)
         event_data = StripeEventData.objects.create(
@@ -2537,7 +2522,7 @@ class BillingManagementCancelSubscriptionTests(BillingManagementBaseTest):
             checkout_intent=self.checkout_intent,
             data={'data': {'object': {}}},
         )
-        event_summary = StripeEventSummary.objects.create(
+        _event_summary = StripeEventSummary.objects.create(
             stripe_event_data=event_data,
             event_id='evt_cancel_teams',
             event_type='customer.subscription.updated',
@@ -2600,7 +2585,6 @@ class BillingManagementCancelSubscriptionTests(BillingManagementBaseTest):
         """
         Test successfully cancelling an Essentials plan subscription.
         """
-        from enterprise_access.apps.customer_billing.models import StripeEventData, StripeEventSummary
 
         # Create StripeEventSummary with active subscription (not scheduled for cancellation)
         event_data = StripeEventData.objects.create(
@@ -2609,7 +2593,7 @@ class BillingManagementCancelSubscriptionTests(BillingManagementBaseTest):
             checkout_intent=self.checkout_intent,
             data={'data': {'object': {}}},
         )
-        event_summary = StripeEventSummary.objects.create(
+        _event_summary = StripeEventSummary.objects.create(
             stripe_event_data=event_data,
             event_id='evt_cancel_essentials',
             event_type='customer.subscription.updated',
@@ -2664,7 +2648,6 @@ class BillingManagementCancelSubscriptionTests(BillingManagementBaseTest):
         """
         Test that cancelling LearnerCredit plan returns 403.
         """
-        from enterprise_access.apps.customer_billing.models import StripeEventData, StripeEventSummary
 
         # Create StripeEventSummary with active subscription
         event_data = StripeEventData.objects.create(
@@ -2673,7 +2656,7 @@ class BillingManagementCancelSubscriptionTests(BillingManagementBaseTest):
             checkout_intent=self.checkout_intent,
             data={'data': {'object': {}}},
         )
-        event_summary = StripeEventSummary.objects.create(
+        _event_summary = StripeEventSummary.objects.create(
             stripe_event_data=event_data,
             event_id='evt_cancel_lc',
             event_type='customer.subscription.updated',
@@ -2720,7 +2703,6 @@ class BillingManagementCancelSubscriptionTests(BillingManagementBaseTest):
         """
         Test that cancelling Other plan returns 403.
         """
-        from enterprise_access.apps.customer_billing.models import StripeEventData, StripeEventSummary
 
         # Create StripeEventSummary with active subscription
         event_data = StripeEventData.objects.create(
@@ -2729,7 +2711,7 @@ class BillingManagementCancelSubscriptionTests(BillingManagementBaseTest):
             checkout_intent=self.checkout_intent,
             data={'data': {'object': {}}},
         )
-        event_summary = StripeEventSummary.objects.create(
+        _event_summary = StripeEventSummary.objects.create(
             stripe_event_data=event_data,
             event_id='evt_cancel_other',
             event_type='customer.subscription.updated',
@@ -2774,7 +2756,6 @@ class BillingManagementCancelSubscriptionTests(BillingManagementBaseTest):
         """
         Test that cancelling an already-cancelling subscription returns 409.
         """
-        from enterprise_access.apps.customer_billing.models import StripeEventData, StripeEventSummary
 
         # Create StripeEventSummary with subscription already scheduled for cancellation
         event_data = StripeEventData.objects.create(
@@ -2783,7 +2764,7 @@ class BillingManagementCancelSubscriptionTests(BillingManagementBaseTest):
             checkout_intent=self.checkout_intent,
             data={'data': {'object': {}}},
         )
-        event_summary = StripeEventSummary.objects.create(
+        _event_summary = StripeEventSummary.objects.create(
             stripe_event_data=event_data,
             event_id='evt_already_cancelling',
             event_type='customer.subscription.updated',
@@ -2825,7 +2806,7 @@ class BillingManagementCancelSubscriptionTests(BillingManagementBaseTest):
         ('wrong_role', SYSTEM_ENTERPRISE_LEARNER_ROLE, 'existing', status.HTTP_403_FORBIDDEN),
     )
     @ddt.unpack
-    def test_cancel_subscription_rbac(self, scenario, role, uuid_type, expected_status):
+    def test_cancel_subscription_rbac(self, _scenario, role, uuid_type, expected_status):
         """
         Test RBAC scenarios for cancel subscription endpoint.
         Scenarios: missing_uuid (403), nonexistent_uuid (403), wrong_role (403).
@@ -2860,7 +2841,6 @@ class BillingManagementCancelSubscriptionTests(BillingManagementBaseTest):
         """
         Test that endpoint handles Stripe API errors gracefully.
         """
-        from enterprise_access.apps.customer_billing.models import StripeEventData, StripeEventSummary
 
         # Create StripeEventSummary with active subscription
         event_data = StripeEventData.objects.create(
@@ -2869,7 +2849,7 @@ class BillingManagementCancelSubscriptionTests(BillingManagementBaseTest):
             checkout_intent=self.checkout_intent,
             data={'data': {'object': {}}},
         )
-        event_summary = StripeEventSummary.objects.create(
+        _event_summary = StripeEventSummary.objects.create(
             stripe_event_data=event_data,
             event_id='evt_cancel_error',
             event_type='customer.subscription.updated',
@@ -2935,7 +2915,6 @@ class BillingManagementReinstateSubscriptionTests(BillingManagementBaseTest):
         """
         Test successfully reinstating a Teams plan subscription.
         """
-        from enterprise_access.apps.customer_billing.models import StripeEventData, StripeEventSummary
 
         # Create StripeEventSummary with subscription scheduled for cancellation
         future_cancel_at = timezone.now() + timedelta(days=30)
@@ -2945,7 +2924,7 @@ class BillingManagementReinstateSubscriptionTests(BillingManagementBaseTest):
             checkout_intent=self.checkout_intent,
             data={'data': {'object': {}}},
         )
-        event_summary = StripeEventSummary.objects.create(
+        _event_summary = StripeEventSummary.objects.create(
             stripe_event_data=event_data,
             event_id='evt_reinstate_teams',
             event_type='customer.subscription.updated',
@@ -3009,7 +2988,6 @@ class BillingManagementReinstateSubscriptionTests(BillingManagementBaseTest):
         """
         Test successfully reinstating an Essentials plan subscription.
         """
-        from enterprise_access.apps.customer_billing.models import StripeEventData, StripeEventSummary
 
         # Create StripeEventSummary with subscription scheduled for cancellation
         future_cancel_at = timezone.now() + timedelta(days=30)
@@ -3019,7 +2997,7 @@ class BillingManagementReinstateSubscriptionTests(BillingManagementBaseTest):
             checkout_intent=self.checkout_intent,
             data={'data': {'object': {}}},
         )
-        event_summary = StripeEventSummary.objects.create(
+        _event_summary = StripeEventSummary.objects.create(
             stripe_event_data=event_data,
             event_id='evt_reinstate_essentials',
             event_type='customer.subscription.updated',
@@ -3074,7 +3052,6 @@ class BillingManagementReinstateSubscriptionTests(BillingManagementBaseTest):
         """
         Test that reinstating LearnerCredit plan returns 403.
         """
-        from enterprise_access.apps.customer_billing.models import StripeEventData, StripeEventSummary
 
         # Create StripeEventSummary with subscription scheduled for cancellation
         future_cancel_at = timezone.now() + timedelta(days=30)
@@ -3084,7 +3061,7 @@ class BillingManagementReinstateSubscriptionTests(BillingManagementBaseTest):
             checkout_intent=self.checkout_intent,
             data={'data': {'object': {}}},
         )
-        event_summary = StripeEventSummary.objects.create(
+        _event_summary = StripeEventSummary.objects.create(
             stripe_event_data=event_data,
             event_id='evt_reinstate_lc',
             event_type='customer.subscription.updated',
@@ -3127,7 +3104,6 @@ class BillingManagementReinstateSubscriptionTests(BillingManagementBaseTest):
         """
         Test that reinstating a subscription not pending cancellation returns 409.
         """
-        from enterprise_access.apps.customer_billing.models import StripeEventData, StripeEventSummary
 
         # Create StripeEventSummary with subscription NOT scheduled for cancellation
         event_data = StripeEventData.objects.create(
@@ -3136,7 +3112,7 @@ class BillingManagementReinstateSubscriptionTests(BillingManagementBaseTest):
             checkout_intent=self.checkout_intent,
             data={'data': {'object': {}}},
         )
-        event_summary = StripeEventSummary.objects.create(
+        _event_summary = StripeEventSummary.objects.create(
             stripe_event_data=event_data,
             event_id='evt_reinstate_not_pending',
             event_type='customer.subscription.updated',
@@ -3161,7 +3137,6 @@ class BillingManagementReinstateSubscriptionTests(BillingManagementBaseTest):
         """
         Test that reinstating when period has ended returns 409.
         """
-        from enterprise_access.apps.customer_billing.models import StripeEventData, StripeEventSummary
 
         # Create StripeEventSummary with subscription period already ended
         past_period_end = timezone.now() - timedelta(days=1)  # 1 day ago
@@ -3171,7 +3146,7 @@ class BillingManagementReinstateSubscriptionTests(BillingManagementBaseTest):
             checkout_intent=self.checkout_intent,
             data={'data': {'object': {}}},
         )
-        event_summary = StripeEventSummary.objects.create(
+        _event_summary = StripeEventSummary.objects.create(
             stripe_event_data=event_data,
             event_id='evt_reinstate_ended',
             event_type='customer.subscription.updated',
@@ -3213,7 +3188,7 @@ class BillingManagementReinstateSubscriptionTests(BillingManagementBaseTest):
         ('wrong_role', SYSTEM_ENTERPRISE_LEARNER_ROLE, 'existing', status.HTTP_403_FORBIDDEN),
     )
     @ddt.unpack
-    def test_reinstate_subscription_rbac(self, scenario, role, uuid_type, expected_status):
+    def test_reinstate_subscription_rbac(self, _scenario, role, uuid_type, expected_status):
         """
         Test RBAC scenarios for reinstate subscription endpoint.
         Scenarios: missing_uuid (403), nonexistent_uuid (403), wrong_role (403).
@@ -3248,7 +3223,6 @@ class BillingManagementReinstateSubscriptionTests(BillingManagementBaseTest):
         """
         Test that endpoint handles Stripe API errors gracefully.
         """
-        from enterprise_access.apps.customer_billing.models import StripeEventData, StripeEventSummary
 
         # Create StripeEventSummary with subscription scheduled for cancellation
         future_cancel_at = timezone.now() + timedelta(days=30)
@@ -3258,7 +3232,7 @@ class BillingManagementReinstateSubscriptionTests(BillingManagementBaseTest):
             checkout_intent=self.checkout_intent,
             data={'data': {'object': {}}},
         )
-        event_summary = StripeEventSummary.objects.create(
+        _event_summary = StripeEventSummary.objects.create(
             stripe_event_data=event_data,
             event_id='evt_reinstate_error',
             event_type='customer.subscription.updated',
@@ -3332,7 +3306,7 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
 
     @mock.patch('stripe.Customer.retrieve')
     @mock.patch('enterprise_access.apps.api.serializers.customer_billing.BillingAddressResponseSerializer.is_valid')
-    def test_get_address_general_exception(self, mock_is_valid, mock_get_stripe_customer):
+    def test_get_address_general_exception(self, _mock_is_valid, mock_get_stripe_customer):
         """
         Test get address with general (non-Stripe) exception.
         """
@@ -3346,7 +3320,7 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
 
     @mock.patch('stripe.Customer.modify')
     @mock.patch('enterprise_access.apps.api.serializers.customer_billing.BillingAddressResponseSerializer.is_valid')
-    def test_update_address_general_exception(self, mock_is_valid, mock_customer_modify):
+    def test_update_address_general_exception(self, _mock_is_valid, mock_customer_modify):
         """
         Test update address with general (non-Stripe) exception.
         """
@@ -3407,7 +3381,7 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
     @mock.patch('stripe.PaymentMethod.list')
     @mock.patch('stripe.Customer.retrieve')
     @mock.patch('enterprise_access.apps.api.serializers.customer_billing.PaymentMethodsListResponseSerializer.is_valid')
-    def test_list_payment_methods_general_exception(self, mock_is_valid, mock_customer_retrieve, mock_pm_list):
+    def test_list_payment_methods_general_exception(self, _mock_is_valid, mock_customer_retrieve, _mock_pm_list):
         """
         Test list payment methods with general exception.
         """
@@ -3424,7 +3398,7 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
     @mock.patch(
         'enterprise_access.apps.api.serializers.customer_billing.AttachPaymentMethodResponseSerializer.is_valid'
     )
-    def test_attach_payment_method_general_exception(self, mock_is_valid, mock_pm_retrieve, mock_pm_attach):
+    def test_attach_payment_method_general_exception(self, _mock_is_valid, mock_pm_retrieve, _mock_pm_attach):
         """
         Test attach payment method with general exception.
         """
@@ -3589,9 +3563,8 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
         """
         Test _normalize_invoice_status with uncollectible status.
         """
-        from enterprise_access.apps.api.v1.views.customer_billing import BillingManagementViewSet
 
-        result = BillingManagementViewSet._normalize_invoice_status('uncollectible')
+        result = BillingManagementViewSet._normalize_invoice_status('uncollectible')  # pylint: disable=protected-access
         self.assertEqual(result, 'uncollectible')
 
     # Subscription endpoint edge cases
@@ -3601,7 +3574,6 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
         """
         Test cancel subscription with Stripe InvalidRequestError.
         """
-        from enterprise_access.apps.customer_billing.models import StripeEventData, StripeEventSummary
 
         # Create StripeEventSummary with active subscription
         event_data = StripeEventData.objects.create(
@@ -3610,7 +3582,7 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
             checkout_intent=self.checkout_intent,
             data={'data': {'object': {}}},
         )
-        event_summary = StripeEventSummary.objects.create(
+        _event_summary = StripeEventSummary.objects.create(
             stripe_event_data=event_data,
             event_id='evt_cancel_invalid',
             event_type='customer.subscription.updated',
@@ -3636,7 +3608,6 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
         """
         Test cancel subscription with general exception.
         """
-        from enterprise_access.apps.customer_billing.models import StripeEventData, StripeEventSummary
 
         # Create StripeEventSummary with active subscription
         event_data = StripeEventData.objects.create(
@@ -3645,7 +3616,7 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
             checkout_intent=self.checkout_intent,
             data={'data': {'object': {}}},
         )
-        event_summary = StripeEventSummary.objects.create(
+        _event_summary = StripeEventSummary.objects.create(
             stripe_event_data=event_data,
             event_id='evt_cancel_exception',
             event_type='customer.subscription.updated',
@@ -3672,7 +3643,6 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
         """
         Test reinstate subscription with Stripe InvalidRequestError.
         """
-        from enterprise_access.apps.customer_billing.models import StripeEventData, StripeEventSummary
 
         # Create StripeEventSummary with subscription scheduled for cancellation
         future_cancel_at = timezone.now() + timedelta(days=30)
@@ -3682,7 +3652,7 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
             checkout_intent=self.checkout_intent,
             data={'data': {'object': {}}},
         )
-        event_summary = StripeEventSummary.objects.create(
+        _event_summary = StripeEventSummary.objects.create(
             stripe_event_data=event_data,
             event_id='evt_reinstate_invalid',
             event_type='customer.subscription.updated',
@@ -3708,7 +3678,6 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
         """
         Test reinstate subscription with general exception.
         """
-        from enterprise_access.apps.customer_billing.models import StripeEventData, StripeEventSummary
 
         # Create StripeEventSummary with subscription scheduled for cancellation
         future_cancel_at = timezone.now() + timedelta(days=30)
@@ -3718,7 +3687,7 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
             checkout_intent=self.checkout_intent,
             data={'data': {'object': {}}},
         )
-        event_summary = StripeEventSummary.objects.create(
+        _event_summary = StripeEventSummary.objects.create(
             stripe_event_data=event_data,
             event_id='evt_reinstate_exception',
             event_type='customer.subscription.updated',
@@ -3744,7 +3713,6 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
         """
         Test _get_payment_method_status with failed bank account verification.
         """
-        from enterprise_access.apps.api.v1.views.customer_billing import BillingManagementViewSet
 
         payment_method = {
             'type': 'us_bank_account',
@@ -3752,10 +3720,10 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
                 'status_details': {'status': 'verification_failed'}
             }
         }
-        result = BillingManagementViewSet._get_payment_method_status(payment_method)
+        result = BillingManagementViewSet._get_payment_method_status(payment_method)  # pylint: disable=protected-access
         self.assertEqual(result, 'failed')
 
         # Test with 'errored' status
         payment_method['us_bank_account']['status_details']['status'] = 'errored'
-        result = BillingManagementViewSet._get_payment_method_status(payment_method)
+        result = BillingManagementViewSet._get_payment_method_status(payment_method)  # pylint: disable=protected-access
         self.assertEqual(result, 'failed')

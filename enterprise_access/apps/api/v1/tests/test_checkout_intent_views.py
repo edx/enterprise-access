@@ -10,12 +10,7 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.reverse import reverse
 
-from enterprise_access.apps.core.constants import (
-    ALL_ACCESS_CONTEXT,
-    SYSTEM_ENTERPRISE_LEARNER_ROLE,
-    SYSTEM_ENTERPRISE_OPERATOR_ROLE,
-    SYSTEM_ENTERPRISE_PROVISIONING_ADMIN_ROLE
-)
+from enterprise_access.apps.core.constants import SYSTEM_ENTERPRISE_LEARNER_ROLE
 from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.customer_billing.constants import CheckoutIntentState
 from enterprise_access.apps.customer_billing.models import CheckoutIntent

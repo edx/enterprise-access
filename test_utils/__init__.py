@@ -124,6 +124,7 @@ class APITest(APITestCase):
         self.user = UserFactory(username=username, is_active=True, is_staff=is_staff, **kwargs)
         self.user.set_password(password)
         self.user.save()
+        return self.user
 
     def load_json(self, content):
         """

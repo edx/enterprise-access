@@ -1,3 +1,6 @@
+"""
+REST API views for testimonials.
+"""
 from django.db.models.functions import Random
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ReadOnlyModelViewSet
