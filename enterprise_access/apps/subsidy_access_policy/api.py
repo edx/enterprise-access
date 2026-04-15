@@ -34,83 +34,87 @@ def get_subsidy_access_policy(uuid):
         return None
 
 
-def approve_learner_credit_requests_via_policy(
-    policy_uuid: str,
-    learner_credit_requests: Iterable[LearnerCreditRequest],
-) -> dict:
+def get_policy_for_approval(policy_uuid):
     """
-    Approves a batch of Learner Credit Requests via the specified SubsidyAccessPolicy.
-    If the policy does not exist, raises a `SubisidyAccessPolicyRequestApprovalError`.
-    This now handles partial success and failure, creating assignments only for valid requests.
+    Fetch and validate that a policy exists for approval.
 
-    Args:
-        policy_uuid (str): The UUID of the policy to approve against.
-        learner_credit_requests (list[LearnerCreditRequest]): The requests to process.
-
-    Returns:
-        A dictionary containing 'approved_requests' (with their assignments) and
-        'failed_requests_by_reason'.
+    Raises:
+        SubisidyAccessPolicyRequestApprovalError: If the policy does not exist.
     """
     policy = get_subsidy_access_policy(policy_uuid)
     if not policy:
         error_msg = f"Policy with UUID {policy_uuid} does not exist."
         logger.error(error_msg)
-        raise SubisidyAccessPolicyRequestApprovalError(message=error_msg, status_code=status.HTTP_404_NOT_FOUND)
-
-    try:
-        with policy.lock():
-            # 1. Call can_approve, which now returns a dictionary of valid and failed requests.
-            validation_result = policy.can_approve(learner_credit_requests)
-
-            error_reason = validation_result.get("error_reason", '')
-            if error_reason:
-                raise SubisidyAccessPolicyRequestApprovalError(
-                    message=error_reason,
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY
-                )
-
-            valid_requests = validation_result.get("valid_requests", [])
-            failed_requests_by_reason = validation_result.get("failed_requests_by_reason", {})
-
-            approved_requests_map = {}
-            if valid_requests:
-                # 2. If there are valid requests, call approve() only with that list.
-                request_to_assignment_map = policy.approve(valid_requests)
-                for request in valid_requests:
-                    assignment = request_to_assignment_map.get(request.uuid)
-                    if not assignment:
-                        # This would indicate a major internal error, as allocation should be atomic.
-                        raise SubisidyAccessPolicyRequestApprovalError(
-                            f"Consistency Error: Missing assignment for approved request {request.uuid}"
-                        )
-                    approved_requests_map[request.uuid] = {
-                        "request": request,
-                        "assignment": assignment,
-                    }
-
-            return {
-                "approved_requests": approved_requests_map,
-                "failed_requests_by_reason": failed_requests_by_reason,
-            }
-
-    except SubsidyAccessPolicyLockAttemptFailed as exc:
-        logger.exception(exc)
-        error_msg = (
-            f"Failed to acquire lock for policy UUID {policy_uuid}. "
-            "Please try again later."
-        )
         raise SubisidyAccessPolicyRequestApprovalError(
             message=error_msg,
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY
-        ) from exc
+            status_code=status.HTTP_404_NOT_FOUND,
+        )
+    return policy
+
+
+def validate_and_allocate(
+    policy: SubsidyAccessPolicy,
+    learner_credit_requests: Iterable[LearnerCreditRequest],
+) -> tuple:
+    """
+    Validate requests against the policy and allocate assignments for valid ones.
+
+    The caller MUST hold ``policy.lock()`` before calling this function
+    to prevent concurrent budget races.
+
+    Args:
+        policy: The SubsidyAccessPolicy to approve against.
+        learner_credit_requests: The requests to process.
+
+    Returns:
+        A tuple of (approved_requests_map, failed_requests_by_reason) where:
+        - approved_requests_map maps request UUID -> {"request": ..., "assignment": ...}
+        - failed_requests_by_reason maps reason string -> list of failed requests
+
+    Raises:
+        SubisidyAccessPolicyRequestApprovalError: On validation failure, allocation error,
+            or internal consistency error.
+    """
+    try:
+        validation_result = policy.can_approve(learner_credit_requests)
+
+        error_reason = validation_result.get("error_reason", '')
+        if error_reason:
+            raise SubisidyAccessPolicyRequestApprovalError(
+                message=error_reason,
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
+
+        valid_requests = validation_result.get("valid_requests", [])
+        failed_requests_by_reason = validation_result.get("failed_requests_by_reason", {})
+
+        approved_requests_map = {}
+        if valid_requests:
+            request_to_assignment_map = policy.approve(valid_requests)
+            for request in valid_requests:
+                assignment = request_to_assignment_map.get(request.uuid)
+                if not assignment:
+                    raise SubisidyAccessPolicyRequestApprovalError(
+                        f"Consistency Error: Missing assignment for approved request {request.uuid}"
+                    )
+                approved_requests_map[request.uuid] = {
+                    "request": request,
+                    "assignment": assignment,
+                }
+
+        return approved_requests_map, failed_requests_by_reason
+
+    except SubisidyAccessPolicyRequestApprovalError:
+        raise
     except (
         AllocationException, PriceValidationError, ValidationError, DatabaseError,
-        HTTPError, ConnectionError, ContentPriceNullException
+        HTTPError, ConnectionError, ContentPriceNullException,
     ) as exc:
         logger.exception(
-            "A validation or database error occurred during bulk approval for policy %s: %s", policy_uuid, exc
+            "A validation or database error occurred during bulk approval for policy %s: %s",
+            policy.uuid, exc,
         )
         raise SubisidyAccessPolicyRequestApprovalError(
             message=str(exc),
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         ) from exc

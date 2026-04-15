@@ -9,8 +9,11 @@ from typing import Iterable
 from django.db import transaction
 
 from enterprise_access.apps.content_assignments import api as assignments_api
-from enterprise_access.apps.subsidy_access_policy.api import approve_learner_credit_requests_via_policy
-from enterprise_access.apps.subsidy_access_policy.exceptions import SubisidyAccessPolicyRequestApprovalError
+from enterprise_access.apps.subsidy_access_policy.api import get_policy_for_approval, validate_and_allocate
+from enterprise_access.apps.subsidy_access_policy.exceptions import (
+    SubisidyAccessPolicyRequestApprovalError,
+    SubsidyAccessPolicyLockAttemptFailed
+)
 from enterprise_access.apps.subsidy_request.constants import (
     APPROVABLE_STATES,
     CANCELABLE_STATES,
@@ -44,83 +47,148 @@ def approve_learner_credit_requests(
 ) -> dict:
     """
     Bulk approve Learner Credit Requests against a specific policy.
-    This handles partial success and failure, using bulk operations for maximum performance.
+
+    Acquires the policy lock and performs validation, assignment allocation,
+    request state update, and audit trail creation in a single transaction.
+    On approval failures, makes a best-effort attempt to record failure
+    actions for the affected requests.
     """
     requests_to_process = [
         req for req in learner_credit_requests
         if req.state in APPROVABLE_STATES
     ]
     if not requests_to_process:
-        return {"approved": [], "failed": list(learner_credit_requests)}
+        # 'failed' = pre-filtered by state (never reached the policy).
+        # 'failed_approval' stays empty because nothing entered the approval flow.
+        return {
+            "approved": [],
+            "failed": list(learner_credit_requests),
+            "failed_approval": [],
+            "error_message": None,
+        }
 
+    try:
+        policy = get_policy_for_approval(policy_uuid)
+        with policy.lock():
+            return _approve_under_lock(policy, requests_to_process, reviewer)
+    except SubsidyAccessPolicyLockAttemptFailed as exc:
+        error_message = f"Failed to acquire lock for policy {policy_uuid}. Try again later."
+        logger.warning("Bulk approval failed for policy %s: lock not acquired.", policy_uuid)
+        _record_failure_actions(requests_to_process, exc)
+        return {
+            "approved": [],
+            "failed": [],
+            "failed_approval": requests_to_process,
+            "error_message": error_message,
+        }
+    except SubisidyAccessPolicyRequestApprovalError as exc:
+        logger.warning(
+            "Bulk approval failed for policy %s with a global error. Reason: %s", policy_uuid, exc.message,
+        )
+        _record_failure_actions(requests_to_process, exc)
+        return {
+            "approved": [],
+            "failed": [],
+            "failed_approval": requests_to_process,
+            "error_message": exc.message,
+        }
+    except Exception as exc:
+        # Sanitized for the client response; full exception + traceback stay in logs
+        # (via logger.exception) and in the LearnerCreditRequestActions audit row.
+        error_message = "Unexpected error during approval."
+        logger.exception("Unexpected error approving requests for policy %s", policy_uuid)
+        _record_failure_actions(requests_to_process, exc)
+        return {
+            "approved": [],
+            "failed": [],
+            "failed_approval": requests_to_process,
+            "error_message": error_message,
+        }
+
+
+def _approve_under_lock(policy, requests_to_process, reviewer):
+    """
+    Perform the full approval flow while the policy lock is held.
+
+    All DB mutations (assignment allocation, request state update, and audit trail)
+    occur in a single transaction. If any step fails, everything rolls back.
+    """
     approved_requests = []
     failed_requests = []
     actions_to_create = []
-    error_message = None
 
-    try:
-        response = approve_learner_credit_requests_via_policy(
-            policy_uuid,
-            requests_to_process
+    with transaction.atomic():
+        # This call runs inside the outer transaction opened here; any nested
+        # savepoint behavior depends on validate_and_allocate() or code it calls.
+        approved_requests_map, failed_requests_by_reason = validate_and_allocate(
+            policy, requests_to_process,
         )
-        approved_requests_map = response.get("approved_requests", {})
-        failed_requests_by_reason = response.get("failed_requests_by_reason", {})
 
-        # prepare all data for bulk operations.
         approved_requests = _prepare_requests_for_update(approved_requests_map, reviewer)
         failed_requests, failed_actions = _prepare_failed_requests_and_actions(failed_requests_by_reason)
         actions_to_create.extend(failed_actions)
 
-    except SubisidyAccessPolicyRequestApprovalError as exc:
-        # Handle global failures by preparing failure actions for all requests.
-        logger.warning(
-            "Bulk approval failed for policy %s with a global error. Reason: %s", policy_uuid, exc.message
-        )
-        error_message = exc.message
-        for request in requests_to_process:
-            actions_to_create.append(
-                LearnerCreditRequestActions(
-                    learner_credit_request=request,
-                    recent_action=get_action_choice(SubsidyRequestStates.APPROVED),
-                    status=get_user_message_choice(SubsidyRequestStates.REQUESTED),
-                    error_reason=LearnerCreditRequestActionErrorReasons.FAILED_APPROVAL,
-                    traceback=format_traceback(exc),
-                )
-            )
-        failed_requests.extend(requests_to_process)
-
-    # This transaction ensures the LearnerCreditRequest records are in their final state
-    # before any dependent actions are created.
-    if approved_requests:
-        with transaction.atomic():
+        if approved_requests:
             approved_requests = _update_and_refresh_requests(
-                approved_requests, ['state', 'assignment', 'reviewer', 'reviewed_at']
+                approved_requests, ['state', 'assignment', 'reviewer', 'reviewed_at'],
             )
 
-    # Now that we have refreshed `approved_requests`, prepare the success actions.
-    success_actions_to_create = [
-        LearnerCreditRequestActions(
-            learner_credit_request=request,
-            recent_action=get_action_choice(SubsidyRequestStates.APPROVED),
-            status=get_user_message_choice(SubsidyRequestStates.APPROVED),
-        ) for request in approved_requests
-    ]
-    actions_to_create.extend(success_actions_to_create)
+        actions_to_create.extend(_build_success_action(request) for request in approved_requests)
 
-    # In a separate transaction, create the audit trail for the entire batch.
-    if actions_to_create:
+        LearnerCreditRequestActions.bulk_create(actions_to_create)
+
+        # on_commit registered inside atomic() fires once the outer transaction commits —
+        # so notifications never run if we roll back.
+        for request in approved_requests:
+            transaction.on_commit(
+                lambda assignment_uuid=request.assignment.uuid:
+                    send_learner_credit_bnr_request_approve_task.delay(assignment_uuid)
+            )
+
+    return {
+        "approved": approved_requests,
+        "failed": [],
+        "failed_approval": failed_requests,
+        "error_message": None,
+    }
+
+
+def _build_success_action(request):
+    return LearnerCreditRequestActions(
+        learner_credit_request=request,
+        recent_action=get_action_choice(SubsidyRequestStates.APPROVED),
+        status=get_user_message_choice(SubsidyRequestStates.APPROVED),
+    )
+
+
+def _build_failure_action(request, traceback_str):
+    return LearnerCreditRequestActions(
+        learner_credit_request=request,
+        recent_action=get_action_choice(SubsidyRequestStates.APPROVED),
+        status=get_user_message_choice(SubsidyRequestStates.REQUESTED),
+        error_reason=LearnerCreditRequestActionErrorReasons.FAILED_APPROVAL,
+        traceback=traceback_str,
+    )
+
+
+def _record_failure_actions(requests, exception):
+    """
+    Record failure audit trail for all requests.
+
+    Runs in its own transaction since the main transaction may have rolled back.
+    Swallows exceptions to avoid masking the original error.
+    """
+    traceback_str = format_traceback(exception)
+    actions = [_build_failure_action(request, traceback_str) for request in requests]
+    try:
         with transaction.atomic():
-            LearnerCreditRequestActions.bulk_create(actions_to_create)
-
-    # Enqueue notifications
-    for request in approved_requests:
-        transaction.on_commit(
-            lambda assignment_uuid=request.assignment.uuid: send_learner_credit_bnr_request_approve_task.delay(
-                assignment_uuid
-            )
+            LearnerCreditRequestActions.bulk_create(actions)
+    except Exception:
+        logger.exception(
+            "Failed to record failure audit trail for approval attempt. "
+            "Original exception: %r. Request uuids: %s",
+            exception, [str(r.uuid) for r in requests],
         )
-
-    return {"approved": approved_requests, "failed_approval": failed_requests, "error_message": error_message}
 
 
 def _update_and_refresh_requests(requests_to_update, fields_to_update):
@@ -133,10 +201,13 @@ def _update_and_refresh_requests(requests_to_update, fields_to_update):
 
     LearnerCreditRequest.bulk_update(requests_to_update, fields_to_update)
 
-    # Get a list of refreshed objects that we just updated.
     return list(
-        LearnerCreditRequest.objects.prefetch_related('actions').filter(
-            uuid__in=[record.uuid for record in requests_to_update],
+        LearnerCreditRequest.objects.select_related(
+            'assignment'
+        ).prefetch_related(
+            'actions'
+        ).filter(
+            uuid__in=[record.uuid for record in requests_to_update]
         )
     )
 
@@ -166,15 +237,9 @@ def _prepare_failed_requests_and_actions(failed_requests_by_reason):
     for reason, requests in failed_requests_by_reason.items():
         for request in requests:
             failure_reason_str = getattr(request, 'failure_reason', reason)
-            actions_to_create.append(
-                LearnerCreditRequestActions(
-                    learner_credit_request=request,
-                    recent_action=get_action_choice(SubsidyRequestStates.APPROVED),
-                    status=get_user_message_choice(SubsidyRequestStates.REQUESTED),
-                    error_reason=LearnerCreditRequestActionErrorReasons.FAILED_APPROVAL,
-                    traceback=f"Validation failed with reason: {failure_reason_str}",
-                )
-            )
+            actions_to_create.append(_build_failure_action(
+                request, traceback_str=f"Validation failed with reason: {failure_reason_str}",
+            ))
         all_failed_requests.extend(requests)
     return all_failed_requests, actions_to_create
 

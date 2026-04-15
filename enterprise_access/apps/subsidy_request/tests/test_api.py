@@ -1,10 +1,12 @@
 """
 Tests for the subsidy_request.api module.
 """
+import contextlib
 from unittest import mock
 from uuid import uuid4
 
 import ddt
+from django.db import DatabaseError
 from django.test import TestCase
 
 from enterprise_access.apps.content_assignments.tests.factories import (
@@ -12,7 +14,10 @@ from enterprise_access.apps.content_assignments.tests.factories import (
     LearnerContentAssignmentFactory
 )
 from enterprise_access.apps.core.tests.factories import UserFactory
-from enterprise_access.apps.subsidy_access_policy.exceptions import SubisidyAccessPolicyRequestApprovalError
+from enterprise_access.apps.subsidy_access_policy.exceptions import (
+    SubisidyAccessPolicyRequestApprovalError,
+    SubsidyAccessPolicyLockAttemptFailed
+)
 from enterprise_access.apps.subsidy_request import api as subsidy_request_api
 from enterprise_access.apps.subsidy_request.constants import (
     LearnerCreditAdditionalActionStates,
@@ -24,7 +29,7 @@ from enterprise_access.apps.subsidy_request.tests.factories import (
     LearnerCreditRequestConfigurationFactory,
     LearnerCreditRequestFactory
 )
-from enterprise_access.apps.subsidy_request.utils import get_action_choice
+from enterprise_access.apps.subsidy_request.utils import get_action_choice, get_user_message_choice
 
 
 @ddt.ddt
@@ -242,10 +247,9 @@ class TestRemindLearnerCreditRequests(TestCase):
         )
 
 
+@ddt.ddt
 class TestApproveLearnerCreditRequests(TestCase):
-    """
-    Tests for approve_learner_credit_requests API function.
-    """
+    """Tests for approve_learner_credit_requests API function."""
 
     def setUp(self):
         super().setUp()
@@ -253,6 +257,10 @@ class TestApproveLearnerCreditRequests(TestCase):
         self.config = LearnerCreditRequestConfigurationFactory(active=True)
         self.enterprise_customer_uuid = uuid4()
         self.policy_uuid = uuid4()
+
+        # Mock policy with a no-op lock context manager
+        self.mock_policy = mock.MagicMock()
+        self.mock_policy.lock.return_value = contextlib.nullcontext()
 
     def _create_request(self, state=SubsidyRequestStates.REQUESTED):
         return LearnerCreditRequestFactory(
@@ -271,165 +279,91 @@ class TestApproveLearnerCreditRequests(TestCase):
             state='allocated',
         )
 
-    @mock.patch('enterprise_access.apps.subsidy_request.api.send_learner_credit_bnr_request_approve_task')
-    @mock.patch('enterprise_access.apps.subsidy_request.api.approve_learner_credit_requests_via_policy')
-    def test_approve_success(self, mock_approve_via_policy, mock_approve_task):
-        """Successful approval updates state, creates actions, and queues notifications."""
-        request_1 = self._create_request()
-        request_2 = self._create_request()
-        assignment_1 = self._make_assignment()
-        assignment_2 = self._make_assignment()
+    def _build_approval_result(self, requests, approved_count):
+        """
+        Build mock return value for validate_and_allocate.
 
-        mock_approve_via_policy.return_value = {
-            "approved_requests": {
-                request_1.uuid: {"request": request_1, "assignment": assignment_1},
-                request_2.uuid: {"request": request_2, "assignment": assignment_2},
-            },
-            "failed_requests_by_reason": {},
+        First ``approved_count`` requests are approved (with assignments),
+        the rest are failed with reason 'content_not_in_catalog'.
+        """
+        approved = requests[:approved_count]
+        failed = requests[approved_count:]
+        approved_map = {
+            req.uuid: {"request": req, "assignment": self._make_assignment()}
+            for req in approved
         }
+        failed_by_reason = {"content_not_in_catalog": failed} if failed else {}
+        return approved_map, failed_by_reason
 
-        with self.captureOnCommitCallbacks(execute=True):
-            result = subsidy_request_api.approve_learner_credit_requests(
-                [request_1, request_2],
-                policy_uuid=str(self.policy_uuid),
-                reviewer=self.reviewer,
-            )
+    EXPECTED_RESULT_KEYS = {'approved', 'failed', 'failed_approval', 'error_message'}
 
-        self.assertEqual(len(result['approved']), 2)
-        self.assertEqual(len(result['failed_approval']), 0)
-        self.assertIsNone(result['error_message'])
-
-        # Verify state was updated
-        for req in result['approved']:
-            req.refresh_from_db()
-            self.assertEqual(req.state, SubsidyRequestStates.APPROVED)
-            self.assertEqual(req.reviewer, self.reviewer)
-            self.assertIsNotNone(req.reviewed_at)
-            # Verify action record was created
-            self.assertTrue(
-                req.actions.filter(
-                    recent_action=get_action_choice(SubsidyRequestStates.APPROVED),
-                ).exists()
-            )
-
-        # Verify notification tasks were queued
-        self.assertEqual(mock_approve_task.delay.call_count, 2)
+    def _assert_has_expected_keys(self, result):
+        self.assertEqual(set(result.keys()), self.EXPECTED_RESULT_KEYS)
 
     @mock.patch('enterprise_access.apps.subsidy_request.api.send_learner_credit_bnr_request_approve_task')
-    @mock.patch('enterprise_access.apps.subsidy_request.api.approve_learner_credit_requests_via_policy')
-    def test_approve_partial_failure(self, mock_approve_via_policy, mock_approve_task):
-        """Partial failure returns approved and failed lists with failure action records."""
-        request_1 = self._create_request()
-        request_2 = self._create_request()
-        assignment_1 = self._make_assignment()
+    @mock.patch('enterprise_access.apps.subsidy_request.api.validate_and_allocate')
+    @mock.patch('enterprise_access.apps.subsidy_request.api.get_policy_for_approval')
+    def test_return_shape_is_consistent_across_paths(
+        self, mock_get_policy, mock_validate, mock_approve_task,
+    ):
+        """Every return path produces the same 4-key dict so callers don't branch on shape."""
+        mock_get_policy.return_value = self.mock_policy
 
-        mock_approve_via_policy.return_value = {
-            "approved_requests": {
-                request_1.uuid: {"request": request_1, "assignment": assignment_1},
-            },
-            "failed_requests_by_reason": {
-                "content_not_in_catalog": [request_2],
-            },
-        }
+        # 1. non-approvable-only early return
+        self._assert_has_expected_keys(subsidy_request_api.approve_learner_credit_requests(
+            [self._create_request(state=SubsidyRequestStates.DECLINED)],
+            policy_uuid=str(self.policy_uuid), reviewer=self.reviewer,
+        ))
 
-        with self.captureOnCommitCallbacks(execute=True):
-            result = subsidy_request_api.approve_learner_credit_requests(
-                [request_1, request_2],
-                policy_uuid=str(self.policy_uuid),
-                reviewer=self.reviewer,
-            )
+        # 2. happy path
+        request = self._create_request()
+        mock_validate.return_value = self._build_approval_result([request], approved_count=1)
+        self._assert_has_expected_keys(subsidy_request_api.approve_learner_credit_requests(
+            [request], policy_uuid=str(self.policy_uuid), reviewer=self.reviewer,
+        ))
 
-        self.assertEqual(len(result['approved']), 1)
-        self.assertEqual(len(result['failed_approval']), 1)
-        self.assertIsNone(result['error_message'])
+        # 3. lock failure
+        self.mock_policy.lock.side_effect = SubsidyAccessPolicyLockAttemptFailed("busy")
+        self._assert_has_expected_keys(subsidy_request_api.approve_learner_credit_requests(
+            [self._create_request()], policy_uuid=str(self.policy_uuid), reviewer=self.reviewer,
+        ))
+        self.mock_policy.lock.side_effect = None
+        self.mock_policy.lock.return_value = contextlib.nullcontext()
 
-        # Failed request should have error action
-        failed_actions = LearnerCreditRequestActions.objects.filter(
-            learner_credit_request=request_2,
-            error_reason=LearnerCreditRequestActionErrorReasons.FAILED_APPROVAL,
-        )
-        self.assertTrue(failed_actions.exists())
+        # 4. policy-level failure
+        mock_validate.side_effect = SubisidyAccessPolicyRequestApprovalError(message="nope", status_code=422)
+        self._assert_has_expected_keys(subsidy_request_api.approve_learner_credit_requests(
+            [self._create_request()], policy_uuid=str(self.policy_uuid), reviewer=self.reviewer,
+        ))
 
-        # Notification only for approved
-        self.assertEqual(mock_approve_task.delay.call_count, 1)
+        # 5. unexpected exception
+        mock_validate.side_effect = RuntimeError("boom")
+        self._assert_has_expected_keys(subsidy_request_api.approve_learner_credit_requests(
+            [self._create_request()], policy_uuid=str(self.policy_uuid), reviewer=self.reviewer,
+        ))
 
-    @mock.patch('enterprise_access.apps.subsidy_request.api.send_learner_credit_bnr_request_approve_task')
-    @mock.patch('enterprise_access.apps.subsidy_request.api.approve_learner_credit_requests_via_policy')
-    def test_approve_global_failure(self, mock_approve_via_policy, mock_approve_task):
-        """Global failure from SubisidyAccessPolicyRequestApprovalError marks all as failed."""
-        request_1 = self._create_request()
-        request_2 = self._create_request()
-
-        mock_approve_via_policy.side_effect = SubisidyAccessPolicyRequestApprovalError(
-            message="Policy expired",
-            status_code=422,
-        )
+    @ddt.data(
+        SubsidyRequestStates.DECLINED,
+        SubsidyRequestStates.APPROVED,
+        SubsidyRequestStates.CANCELLED,
+    )
+    @mock.patch('enterprise_access.apps.subsidy_request.api.get_policy_for_approval')
+    def test_non_approvable_requests_are_filtered(self, state, mock_get_policy):
+        """Requests not in APPROVABLE_STATES are returned as 'failed' without touching the policy."""
+        request = self._create_request(state=state)
 
         result = subsidy_request_api.approve_learner_credit_requests(
-            [request_1, request_2],
-            policy_uuid=str(self.policy_uuid),
-            reviewer=self.reviewer,
-        )
-
-        self.assertEqual(len(result['approved']), 0)
-        self.assertEqual(len(result['failed_approval']), 2)
-        self.assertEqual(result['error_message'], "Policy expired")
-
-        # Verify error action records created for all requests
-        for req in [request_1, request_2]:
-            self.assertTrue(
-                LearnerCreditRequestActions.objects.filter(
-                    learner_credit_request=req,
-                    error_reason=LearnerCreditRequestActionErrorReasons.FAILED_APPROVAL,
-                ).exists()
-            )
-
-        # No notifications sent
-        mock_approve_task.delay.assert_not_called()
-
-    @mock.patch('enterprise_access.apps.subsidy_request.api.send_learner_credit_bnr_request_approve_task')
-    @mock.patch('enterprise_access.apps.subsidy_request.api.approve_learner_credit_requests_via_policy')
-    def test_approve_filters_non_approvable_states(self, mock_approve_via_policy, mock_approve_task):
-        """Requests not in APPROVABLE_STATES are returned as failed without calling policy."""
-        declined_request = self._create_request(state=SubsidyRequestStates.DECLINED)
-
-        result = subsidy_request_api.approve_learner_credit_requests(
-            [declined_request],
+            [request],
             policy_uuid=str(self.policy_uuid),
             reviewer=self.reviewer,
         )
 
         self.assertEqual(len(result['approved']), 0)
         self.assertEqual(len(result['failed']), 1)
-        mock_approve_via_policy.assert_not_called()
-        mock_approve_task.delay.assert_not_called()
+        mock_get_policy.assert_not_called()
 
-    @mock.patch('enterprise_access.apps.subsidy_request.api.send_learner_credit_bnr_request_approve_task')
-    @mock.patch('enterprise_access.apps.subsidy_request.api.approve_learner_credit_requests_via_policy')
-    def test_approve_error_state_is_approvable(self, mock_approve_via_policy, _mock_approve_task):
-        """Requests in ERROR state can be re-approved."""
-        error_request = self._create_request(state=SubsidyRequestStates.ERROR)
-        assignment = self._make_assignment()
-
-        mock_approve_via_policy.return_value = {
-            "approved_requests": {
-                error_request.uuid: {"request": error_request, "assignment": assignment},
-            },
-            "failed_requests_by_reason": {},
-        }
-
-        result = subsidy_request_api.approve_learner_credit_requests(
-            [error_request],
-            policy_uuid=str(self.policy_uuid),
-            reviewer=self.reviewer,
-        )
-
-        self.assertEqual(len(result['approved']), 1)
-        mock_approve_via_policy.assert_called_once()
-
-    @mock.patch('enterprise_access.apps.subsidy_request.api.send_learner_credit_bnr_request_approve_task')
-    @mock.patch('enterprise_access.apps.subsidy_request.api.approve_learner_credit_requests_via_policy')
-    def test_approve_empty_list(self, mock_approve_via_policy, mock_approve_task):
+    @mock.patch('enterprise_access.apps.subsidy_request.api.get_policy_for_approval')
+    def test_empty_list_returns_early(self, mock_get_policy):
         """Empty input returns empty results without calling policy."""
         result = subsidy_request_api.approve_learner_credit_requests(
             [],
@@ -439,7 +373,331 @@ class TestApproveLearnerCreditRequests(TestCase):
 
         self.assertEqual(result['approved'], [])
         self.assertEqual(len(result['failed']), 0)
-        mock_approve_via_policy.assert_not_called()
+        mock_get_policy.assert_not_called()
+
+    @ddt.data(
+        # (approved_count, failed_count)
+        (2, 0),  # all approved
+        (1, 1),  # partial failure
+        (0, 2),  # all failed validation
+    )
+    @ddt.unpack
+    @mock.patch('enterprise_access.apps.subsidy_request.api.send_learner_credit_bnr_request_approve_task')
+    @mock.patch('enterprise_access.apps.subsidy_request.api.validate_and_allocate')
+    @mock.patch('enterprise_access.apps.subsidy_request.api.get_policy_for_approval')
+    def test_approval_outcomes(
+        self, approved_count, failed_count,
+        mock_get_policy, mock_validate, mock_approve_task,
+    ):
+        """
+        Approved requests get state=APPROVED, success actions, and notifications.
+        Failed-validation requests get error actions and no state change.
+        """
+        mock_get_policy.return_value = self.mock_policy
+        requests = [self._create_request() for _ in range(approved_count + failed_count)]
+        mock_validate.return_value = self._build_approval_result(requests, approved_count)
+
+        with self.captureOnCommitCallbacks(execute=True):
+            result = subsidy_request_api.approve_learner_credit_requests(
+                requests,
+                policy_uuid=str(self.policy_uuid),
+                reviewer=self.reviewer,
+            )
+
+        self.assertEqual(len(result['approved']), approved_count)
+        self.assertEqual(len(result['failed_approval']), failed_count)
+        self.assertIsNone(result['error_message'])
+
+        # Approved requests: state updated, success action created
+        for req in result['approved']:
+            req.refresh_from_db()
+            self.assertEqual(req.state, SubsidyRequestStates.APPROVED)
+            self.assertEqual(req.reviewer, self.reviewer)
+            self.assertIsNotNone(req.reviewed_at)
+            self.assertTrue(req.actions.filter(
+                recent_action=get_action_choice(SubsidyRequestStates.APPROVED),
+                status=get_user_message_choice(SubsidyRequestStates.APPROVED),
+            ).exists())
+
+        # Failed requests: error action, state unchanged
+        for req in result['failed_approval']:
+            req.refresh_from_db()
+            self.assertEqual(req.state, SubsidyRequestStates.REQUESTED)
+            self.assertTrue(LearnerCreditRequestActions.objects.filter(
+                learner_credit_request=req,
+                error_reason=LearnerCreditRequestActionErrorReasons.FAILED_APPROVAL,
+            ).exists())
+
+        # Notifications only for approved
+        self.assertEqual(mock_approve_task.delay.call_count, approved_count)
+
+    @mock.patch('enterprise_access.apps.subsidy_request.api.send_learner_credit_bnr_request_approve_task')
+    @mock.patch('enterprise_access.apps.subsidy_request.api.validate_and_allocate')
+    @mock.patch('enterprise_access.apps.subsidy_request.api.get_policy_for_approval')
+    def test_error_state_is_approvable(self, mock_get_policy, mock_validate, mock_approve_task):
+        """Requests in ERROR state can be re-approved (ERROR is in APPROVABLE_STATES)."""
+        mock_get_policy.return_value = self.mock_policy
+        request = self._create_request(state=SubsidyRequestStates.ERROR)
+        mock_validate.return_value = self._build_approval_result([request], approved_count=1)
+
+        result = subsidy_request_api.approve_learner_credit_requests(
+            [request],
+            policy_uuid=str(self.policy_uuid),
+            reviewer=self.reviewer,
+        )
+
+        self.assertEqual(len(result['approved']), 1)
+        mock_validate.assert_called_once()
+
+    @ddt.data(
+        (
+            'enterprise_access.apps.subsidy_request.api.validate_and_allocate',
+            SubisidyAccessPolicyRequestApprovalError(message="Policy expired", status_code=422),
+        ),
+        (
+            'enterprise_access.apps.subsidy_request.api.validate_and_allocate',
+            RuntimeError("Something unexpected"),
+        ),
+    )
+    @ddt.unpack
+    @mock.patch('enterprise_access.apps.subsidy_request.api.send_learner_credit_bnr_request_approve_task')
+    @mock.patch('enterprise_access.apps.subsidy_request.api.get_policy_for_approval')
+    def test_failure_always_creates_audit_trail(
+        self, mock_target, exception,
+        mock_get_policy, mock_approve_task,
+    ):
+        """Any exception produces error action records for all requests and zero notifications."""
+        mock_get_policy.return_value = self.mock_policy
+        requests = [self._create_request() for _ in range(2)]
+
+        with mock.patch(mock_target, side_effect=exception):
+            result = subsidy_request_api.approve_learner_credit_requests(
+                requests,
+                policy_uuid=str(self.policy_uuid),
+                reviewer=self.reviewer,
+            )
+
+        self.assertEqual(len(result['approved']), 0)
+        self.assertEqual(len(result['failed_approval']), 2)
+        self.assertIsNotNone(result['error_message'])
+
+        for req in requests:
+            self.assertTrue(LearnerCreditRequestActions.objects.filter(
+                learner_credit_request=req,
+                error_reason=LearnerCreditRequestActionErrorReasons.FAILED_APPROVAL,
+            ).exists())
+
+        mock_approve_task.delay.assert_not_called()
+
+    @mock.patch('enterprise_access.apps.subsidy_request.api.send_learner_credit_bnr_request_approve_task')
+    @mock.patch('enterprise_access.apps.subsidy_request.api.get_policy_for_approval')
+    def test_lock_failure_creates_audit_trail(self, mock_get_policy, mock_approve_task):
+        """Lock acquisition failure produces error actions for all requests."""
+        mock_policy = mock.MagicMock()
+        mock_policy.lock.side_effect = SubsidyAccessPolicyLockAttemptFailed("Lock busy")
+        mock_get_policy.return_value = mock_policy
+
+        requests = [self._create_request() for _ in range(2)]
+
+        result = subsidy_request_api.approve_learner_credit_requests(
+            requests,
+            policy_uuid=str(self.policy_uuid),
+            reviewer=self.reviewer,
+        )
+
+        self.assertEqual(len(result['approved']), 0)
+        self.assertEqual(len(result['failed_approval']), 2)
+        self.assertIn("lock", result['error_message'].lower())
+
+        for req in requests:
+            self.assertTrue(LearnerCreditRequestActions.objects.filter(
+                learner_credit_request=req,
+                error_reason=LearnerCreditRequestActionErrorReasons.FAILED_APPROVAL,
+            ).exists())
+
+        mock_approve_task.delay.assert_not_called()
+
+    @mock.patch('enterprise_access.apps.subsidy_request.api.send_learner_credit_bnr_request_approve_task')
+    @mock.patch('enterprise_access.apps.subsidy_request.api.validate_and_allocate')
+    @mock.patch('enterprise_access.apps.subsidy_request.api.get_policy_for_approval')
+    def test_db_error_during_audit_trail_rolls_back_state(
+        self, mock_get_policy, mock_validate, mock_approve_task,
+    ):
+        """
+        When the in-transaction bulk_create fails, the state update is rolled back,
+        and _record_failure_actions still writes a FAILED_APPROVAL audit row on retry.
+        """
+        mock_get_policy.return_value = self.mock_policy
+        request = self._create_request()
+        mock_validate.return_value = self._build_approval_result([request], approved_count=1)
+
+        # First call (inside _approve_under_lock) fails; retry in _record_failure_actions succeeds.
+        with mock.patch.object(
+            LearnerCreditRequestActions, 'bulk_create',
+            side_effect=[DatabaseError("DB error"), None],
+        ):
+            result = subsidy_request_api.approve_learner_credit_requests(
+                [request],
+                policy_uuid=str(self.policy_uuid),
+                reviewer=self.reviewer,
+            )
+
+        self.assertEqual(len(result['approved']), 0)
+        self.assertIsNotNone(result['error_message'])
+
+        request.refresh_from_db()
+        self.assertEqual(request.state, SubsidyRequestStates.REQUESTED)
+        mock_approve_task.delay.assert_not_called()
+
+    @mock.patch('enterprise_access.apps.subsidy_request.api.send_learner_credit_bnr_request_approve_task')
+    @mock.patch('enterprise_access.apps.subsidy_request.api.validate_and_allocate')
+    @mock.patch('enterprise_access.apps.subsidy_request.api.get_policy_for_approval')
+    def test_double_failure_swallowed_in_record_failure_actions(
+        self, mock_get_policy, mock_validate, mock_approve_task,
+    ):
+        """
+        If both the main bulk_create and the _record_failure_actions retry fail,
+        the outer function still returns a structured error_message and logs the secondary failure.
+        """
+        mock_get_policy.return_value = self.mock_policy
+        request = self._create_request()
+        mock_validate.return_value = self._build_approval_result([request], approved_count=1)
+
+        with mock.patch.object(
+            LearnerCreditRequestActions, 'bulk_create', side_effect=DatabaseError("DB down"),
+        ), self.assertLogs(
+            'enterprise_access.apps.subsidy_request.api', level='ERROR',
+        ) as log_ctx:
+            result = subsidy_request_api.approve_learner_credit_requests(
+                [request],
+                policy_uuid=str(self.policy_uuid),
+                reviewer=self.reviewer,
+            )
+
+        self.assertEqual(len(result['approved']), 0)
+        self.assertIsNotNone(result['error_message'])
+        self.assertTrue(
+            any('Failed to record failure audit trail' in msg for msg in log_ctx.output),
+            "expected _record_failure_actions to log its own failure",
+        )
+
+        self.assertFalse(
+            LearnerCreditRequestActions.objects.filter(learner_credit_request=request).exists(),
+            "no audit actions should exist when both bulk_create calls fail",
+        )
+        request.refresh_from_db()
+        self.assertEqual(request.state, SubsidyRequestStates.REQUESTED)
+
+    @mock.patch('enterprise_access.apps.subsidy_request.api.send_learner_credit_bnr_request_approve_task')
+    @mock.patch('enterprise_access.apps.subsidy_request.api.validate_and_allocate')
+    @mock.patch('enterprise_access.apps.subsidy_request.api.get_policy_for_approval')
+    def test_unexpected_runtime_error_creates_audit_trail(
+        self, mock_get_policy, mock_validate, mock_approve_task,
+    ):
+        """
+        An unhandled exception yields:
+          - a FAILED_APPROVAL audit row per request, carrying the full exception detail
+          - a fixed client-facing error_message (exception detail stays internal)
+        """
+        mock_get_policy.return_value = self.mock_policy
+        requests = [self._create_request() for _ in range(2)]
+        exception_detail = "connection refused on upstream-7f3a"
+        mock_validate.side_effect = RuntimeError(exception_detail)
+
+        result = subsidy_request_api.approve_learner_credit_requests(
+            requests,
+            policy_uuid=str(self.policy_uuid),
+            reviewer=self.reviewer,
+        )
+
+        self.assertEqual(len(result['approved']), 0)
+        self.assertEqual(len(result['failed_approval']), 2)
+        self.assertEqual(result['error_message'], "Unexpected error during approval.")
+
+        for req in requests:
+            action = LearnerCreditRequestActions.objects.filter(
+                learner_credit_request=req,
+                error_reason=LearnerCreditRequestActionErrorReasons.FAILED_APPROVAL,
+            ).first()
+            self.assertIsNotNone(action)
+            self.assertIn(exception_detail, action.traceback)
+        mock_approve_task.delay.assert_not_called()
+
+    @mock.patch('enterprise_access.apps.subsidy_request.api.send_learner_credit_bnr_request_approve_task')
+    @mock.patch('enterprise_access.apps.subsidy_request.api.get_policy_for_approval')
+    def test_policy_vanishes_mid_flight(self, mock_get_policy, mock_approve_task):
+        """
+        If the policy is deleted between the view's pre-filter and get_policy_for_approval,
+        the service must return a structured error — not raise.
+        """
+        mock_get_policy.side_effect = SubisidyAccessPolicyRequestApprovalError(
+            message=f"Policy with UUID {self.policy_uuid} does not exist.",
+            status_code=404,
+        )
+        request = self._create_request()
+
+        result = subsidy_request_api.approve_learner_credit_requests(
+            [request],
+            policy_uuid=str(self.policy_uuid),
+            reviewer=self.reviewer,
+        )
+
+        self.assertEqual(len(result['approved']), 0)
+        self.assertEqual(len(result['failed_approval']), 1)
+        self.assertIn("does not exist", result['error_message'])
+        self.assertTrue(LearnerCreditRequestActions.objects.filter(
+            learner_credit_request=request,
+            error_reason=LearnerCreditRequestActionErrorReasons.FAILED_APPROVAL,
+        ).exists())
+        mock_approve_task.delay.assert_not_called()
+
+    @mock.patch('enterprise_access.apps.subsidy_request.api.send_learner_credit_bnr_request_approve_task')
+    @mock.patch('enterprise_access.apps.subsidy_request.api.validate_and_allocate')
+    @mock.patch('enterprise_access.apps.subsidy_request.api.get_policy_for_approval')
+    def test_notifications_deferred_to_post_commit(self, mock_get_policy, mock_validate, mock_approve_task):
+        """Notifications are registered via on_commit and carry the approved assignment uuid."""
+        mock_get_policy.return_value = self.mock_policy
+        request = self._create_request()
+        approved_map, _ = self._build_approval_result([request], approved_count=1)
+        expected_assignment_uuid = approved_map[request.uuid]['assignment'].uuid
+        mock_validate.return_value = (approved_map, {})
+
+        with self.captureOnCommitCallbacks(execute=False) as callbacks:
+            subsidy_request_api.approve_learner_credit_requests(
+                [request],
+                policy_uuid=str(self.policy_uuid),
+                reviewer=self.reviewer,
+            )
+
+        mock_approve_task.delay.assert_not_called()
+        self.assertEqual(len(callbacks), 1)
+
+        callbacks[0]()
+        mock_approve_task.delay.assert_called_once_with(expected_assignment_uuid)
+
+    @mock.patch('enterprise_access.apps.subsidy_request.api.send_learner_credit_bnr_request_approve_task')
+    @mock.patch('enterprise_access.apps.subsidy_request.api.validate_and_allocate')
+    @mock.patch('enterprise_access.apps.subsidy_request.api.get_policy_for_approval')
+    def test_no_notifications_registered_on_rollback(
+        self, mock_get_policy, mock_validate, mock_approve_task,
+    ):
+        """When the atomic block rolls back, no on_commit callbacks are registered."""
+        mock_get_policy.return_value = self.mock_policy
+        request = self._create_request()
+        mock_validate.return_value = self._build_approval_result([request], approved_count=1)
+
+        with self.captureOnCommitCallbacks(execute=False) as callbacks, mock.patch.object(
+            LearnerCreditRequestActions, 'bulk_create',
+            side_effect=[DatabaseError("DB error"), None],
+        ):
+            result = subsidy_request_api.approve_learner_credit_requests(
+                [request],
+                policy_uuid=str(self.policy_uuid),
+                reviewer=self.reviewer,
+            )
+
+        self.assertIsNotNone(result['error_message'])
+        self.assertEqual(callbacks, [])
         mock_approve_task.delay.assert_not_called()
 
 
