@@ -47,8 +47,8 @@ class MonthlyImpactReportCommandTests(TestCase):
                 '\n'.join(log.output),
             )
 
-    @mock.patch('enterprise_access.apps.core.management.commands.monthly_impact_report.connections')
-    def test_get_query_results_from_reporting_db(self, mock_connections):
+    @mock.patch('enterprise_access.apps.core.management.commands.monthly_impact_report.fetch_all_query_results')
+    def test_get_query_results_from_reporting_db(self, mock_fetch_all_query_results):
         """
         Test get_query_results_from_reporting_db executes and returns all rows.
         """
@@ -57,12 +57,9 @@ class MonthlyImpactReportCommandTests(TestCase):
             fromlist=['Command'],
         ).Command()
 
-        mock_cursor = mock.MagicMock()
-        mock_cursor.fetchall.return_value = [tuple(range(50)), tuple(range(50))]
-        mock_connections.__getitem__.return_value.cursor.return_value.__enter__.return_value = mock_cursor
+        mock_fetch_all_query_results.return_value = [tuple(range(50)), tuple(range(50))]
 
         rows = list(command.get_query_results_from_reporting_db())
 
         self.assertEqual(rows, [tuple(range(50)), tuple(range(50))])
-        mock_cursor.execute.assert_called_once()
-        mock_cursor.fetchall.assert_called_once()
+        mock_fetch_all_query_results.assert_called_once()

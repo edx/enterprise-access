@@ -143,6 +143,7 @@ class EnterpriseCustomerSerializer(BaseBffSerializer):
     enable_demo_data_for_analytics_and_lpr = serializers.BooleanField()
     enable_academies = serializers.BooleanField()
     enable_one_academy = serializers.BooleanField()
+
     active_integrations = EnterpriseCustomerActiveIntegration(many=True, required=False, default=list)
     show_videos_in_learner_portal_search_results = serializers.BooleanField()
     default_language = serializers.CharField(required=False, allow_null=True)

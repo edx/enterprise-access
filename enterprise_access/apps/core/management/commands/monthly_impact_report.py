@@ -5,9 +5,8 @@ import logging
 
 from django.conf import settings
 from django.core.management import BaseCommand
-from django.db import connections
-from django.db.utils import ConnectionDoesNotExist
 
+from enterprise_access.apps.core.snowflake import fetch_all_query_results
 from enterprise_access.apps.track.segment import track_event
 
 LOGGER = logging.getLogger(__name__)
@@ -912,29 +911,11 @@ class Command(BaseCommand):
             help='Dry Run, print log messages without committing anything.',
         )
 
-    def _get_reporting_db_alias(self):
-        """
-        Resolve the DB alias used to execute the report query.
-        """
-        configured_alias = getattr(settings, 'MONTHLY_IMPACT_REPORT_DB_ALIAS', 'reporting')
-        try:
-            connections[configured_alias]
-            return configured_alias
-        except ConnectionDoesNotExist:
-            LOGGER.warning(
-                '[Monthly Impact Report] Reporting DB alias %s not configured; falling back to default.',
-                configured_alias,
-            )
-            return 'default'
-
     def get_query_results_from_reporting_db(self):
         """
-        Get query results from configured reporting DB and yield each row.
+        Get query results from Snowflake and yield each row.
         """
-        with connections[self._get_reporting_db_alias()].cursor() as cursor:
-            cursor.execute(QUERY)
-            rows = cursor.fetchall()
-            yield from rows
+        yield from fetch_all_query_results(QUERY)
 
     def emit_event(self, **kwargs):
         """

@@ -5,9 +5,8 @@ import logging
 
 from django.conf import settings
 from django.core.management import BaseCommand
-from django.db import connections
-from django.db.utils import ConnectionDoesNotExist
 
+from enterprise_access.apps.core.snowflake import fetch_all_query_results
 from enterprise_access.apps.track.segment import track_event
 
 LOGGER = logging.getLogger(__name__)
@@ -112,6 +111,125 @@ QUERY = '''
 '''
 
 
+POSTGRES_QUERY = '''
+    WITH first_video_ranked as (
+        SELECT
+            course_id,
+            ROW_NUMBER() OVER (PARTITION BY course_id ORDER BY order_index) as row_num,
+            display_name,
+            lms_web_url
+        FROM
+            core_sources.course_structure
+        WHERE
+            block_type = 'video'
+        AND
+            is_visible_to_staff_only = FALSE
+    ),
+    first_video as (
+        SELECT
+            course_id,
+            display_name,
+            lms_web_url
+        FROM
+            first_video_ranked
+        WHERE
+            row_num = 1
+    ),
+    not_started as (
+        SELECT
+            lms_user_id,
+            lms_courserun_key,
+            split_part(course_key,'+',1) as org_name,
+            course_title,
+            lms_enrollment_created
+        FROM
+            enterprise.ent_base_enterprise_enrollment
+        WHERE
+            DATE(lms_enrollment_created) BETWEEN CURRENT_DATE - 13 AND CURRENT_DATE - 7
+        AND
+            COALESCE(course_progress, 0) = 0
+        AND
+            consent_granted = TRUE
+    ),
+    course_data as (
+        SELECT
+            dcr.courserun_key,
+            dcr.start_datetime,
+            cmcr.min_effort,
+            cmcr.max_effort,
+            cmcr.enrollment_count,
+            CASE WHEN cmcr.pacing_type = 'self_paced' THEN 'Self Paced' ELSE 'Instructor Paced' END as pacing_type,
+            cmcr.weeks_to_complete,
+            'https://prod-discovery.edx-cdn.org/' || cmc.image as course_image
+        FROM
+            core.dim_courseruns as dcr
+        LEFT JOIN
+            discovery.course_metadata_courserun as cmcr
+        ON
+            dcr.courserun_key = cmcr.key
+        LEFT JOIN
+            discovery.course_metadata_course as cmc
+        ON
+            cmcr.course_id = cmc.id
+        WHERE
+            cmcr.draft = FALSE
+        AND
+            cmc.draft = FALSE
+    ),
+    ranked_results as (
+        SELECT
+            not_started.lms_user_id as external_id,
+            not_started.org_name,
+            not_started.course_title,
+            course_data.enrollment_count,
+            course_data.min_effort,
+            course_data.max_effort,
+            course_data.weeks_to_complete,
+            course_data.pacing_type,
+            CASE WHEN course_data.pacing_type = 'Instructor Paced' THEN 'Led on a course schedule' ELSE 'Move at your speed' END as pacing_subtitle,
+            COALESCE(CASE WHEN first_video.display_name = 'Video' THEN 'First Video' ELSE first_video.display_name END,'First Video') as display_name,
+            course_data.course_image,
+            first_video.lms_web_url,
+            'https://courses.edx.org/courses/' || not_started.lms_courserun_key || '/discussion/forum/' as discussion_link,
+            'https://learning.edx.org/course/' || not_started.lms_courserun_key || '/home' as home_link,
+            ROW_NUMBER() OVER (PARTITION BY not_started.lms_user_id ORDER BY not_started.lms_enrollment_created DESC) as learner_row_num
+        FROM
+            not_started
+        LEFT JOIN
+            first_video
+        ON
+            not_started.lms_courserun_key = first_video.course_id
+        LEFT JOIN
+            course_data
+        ON
+            not_started.lms_courserun_key = course_data.courserun_key
+        WHERE
+            course_data.start_datetime <= CURRENT_DATE
+        AND
+            first_video.lms_web_url IS NOT NULL
+    )
+    SELECT
+        external_id,
+        org_name,
+        course_title,
+        enrollment_count,
+        min_effort,
+        max_effort,
+        weeks_to_complete,
+        pacing_type,
+        pacing_subtitle,
+        display_name,
+        course_image,
+        lms_web_url,
+        discussion_link,
+        home_link
+    FROM
+        ranked_results
+    WHERE
+        learner_row_num = 1
+'''
+
+
 class Command(BaseCommand):
     """
     Django management command to send nudge email to dormant enrolled enterprise learners.
@@ -129,30 +247,38 @@ class Command(BaseCommand):
             default=False,
             help='Dry Run, print log messages without committing anything.',
         )
+        parser.add_argument(
+            '--use-local-postgres',
+            action='store_true',
+            dest='use_local_postgres',
+            default=False,
+            help='Run a PostgreSQL-compatible local query for manual testing instead of Snowflake.',
+        )
 
-    def _get_reporting_db_alias(self):
+    def get_query_results_from_reporting_db(self, use_local_postgres=False):
         """
-        Resolve the DB alias used to execute the report query.
+        Get query results from Snowflake and yield each row.
+        For local manual testing only, pass use_local_postgres=True to query
+        localhost:5433 (enterprise_lpr) instead of Snowflake.
         """
-        configured_alias = getattr(settings, 'DORMANT_NUDGE_REPORT_DB_ALIAS', 'reporting')
-        try:
-            connections[configured_alias]
-            return configured_alias
-        except ConnectionDoesNotExist:
-            LOGGER.warning(
-                '[Dormant Nudge] Reporting DB alias %s not configured; falling back to default.',
-                configured_alias,
+        if use_local_postgres:
+            import psycopg2  # pylint: disable=import-outside-toplevel
+            conn = psycopg2.connect(
+                host='localhost',
+                port=5433,
+                user='edx',
+                password='edx1234',
+                dbname='enterprise_lpr',
             )
-            return 'default'
+            try:
+                with conn.cursor() as cursor:
+                    cursor.execute(POSTGRES_QUERY)
+                    yield from cursor.fetchall()
+            finally:
+                conn.close()
+            return
 
-    def get_query_results_from_reporting_db(self):
-        """
-        Get query results from configured reporting DB and yield each row.
-        """
-        with connections[self._get_reporting_db_alias()].cursor() as cursor:
-            cursor.execute(QUERY)
-            rows = cursor.fetchall()
-            yield from rows
+        yield from fetch_all_query_results(QUERY)
 
     def emit_event(self, **kwargs):
         """
@@ -170,9 +296,10 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         should_commit = not options['no_commit']
+        use_local_postgres = options['use_local_postgres']
 
         LOGGER.info('[Dormant Nudge]  Process started.')
-        for next_row in self.get_query_results_from_reporting_db():
+        for next_row in self.get_query_results_from_reporting_db(use_local_postgres=use_local_postgres):
             message_data = {
                 'EXTERNAL_ID': next_row[0],
                 'ORG_NAME': next_row[1],
