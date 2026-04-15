@@ -20,15 +20,6 @@ class Migration(migrations.Migration):
             name="EnterpriseAcademy",
             fields=[
                 (
-                    "id",
-                    models.BigAutoField(
-                        auto_created=True,
-                        primary_key=True,
-                        serialize=False,
-                        verbose_name="ID",
-                    ),
-                ),
-                (
                     "created",
                     django_extensions.db.fields.CreationDateTimeField(
                         auto_now_add=True, verbose_name="created"
@@ -46,7 +37,8 @@ class Migration(migrations.Migration):
                         default=uuid.uuid4,
                         editable=False,
                         help_text="Unique identifier for this Academy record.",
-                        unique=True,
+                        primary_key=True,
+                        serialize=False,
                     ),
                 ),
                 (
@@ -122,7 +114,7 @@ class Migration(migrations.Migration):
                     ),
                 ),
                 (
-                    "edx_catalog_id",
+                    "enterprise_catalog_uuid",
                     models.UUIDField(
                         blank=True,
                         db_index=True,
@@ -177,12 +169,6 @@ class Migration(migrations.Migration):
             name="HistoricalEnterpriseAcademy",
             fields=[
                 (
-                    "id",
-                    models.BigIntegerField(
-                        auto_created=True, blank=True, db_index=True, verbose_name="ID"
-                    ),
-                ),
-                (
                     "created",
                     django_extensions.db.fields.CreationDateTimeField(
                         auto_now_add=True, verbose_name="created"
@@ -275,7 +261,7 @@ class Migration(migrations.Migration):
                     ),
                 ),
                 (
-                    "edx_catalog_id",
+                    "enterprise_catalog_uuid",
                     models.UUIDField(
                         blank=True,
                         db_index=True,
