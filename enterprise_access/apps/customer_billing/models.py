@@ -50,7 +50,8 @@ class EnterpriseAcademy(TimeStampedModel):
     """
 
     uuid = models.UUIDField(
-        unique=True,
+        primary_key=True,
+        serialize=False,
         default=uuid4,
         editable=False,
         help_text='Unique identifier for this Academy record.',
@@ -100,11 +101,11 @@ class EnterpriseAcademy(TimeStampedModel):
         max_length=255,
         unique=True,
         blank=True,
-        default='',
         db_index=True,
+        default='',
         help_text='Stripe price lookup key used to resolve academy pricing context.',
     )
-    edx_catalog_id = models.UUIDField(
+    enterprise_catalog_uuid = models.UUIDField(
         null=True,
         blank=True,
         db_index=True,
@@ -115,7 +116,6 @@ class EnterpriseAcademy(TimeStampedModel):
         unique=True,
         blank=True,
         default='',
-        db_index=True,
         help_text='Routing key that maps to ?product_key= checkout entry parameter.',
     )
     slug = models.SlugField(
@@ -123,7 +123,6 @@ class EnterpriseAcademy(TimeStampedModel):
         unique=True,
         blank=True,
         default='',
-        db_index=True,
         help_text='Stable URL-safe slug for academy routes.',
     )
     is_active = models.BooleanField(
@@ -138,6 +137,7 @@ class EnterpriseAcademy(TimeStampedModel):
     )
 
     history = HistoricalRecords()
+    # no_pii: HistoricalEnterpriseAcademy model
 
     class Meta:
         verbose_name = 'Academy'
@@ -145,7 +145,7 @@ class EnterpriseAcademy(TimeStampedModel):
         ordering = ['display_order', 'name']
 
     def __str__(self):
-        return f'<Academy id={self.id} name={self.name}>'
+        return f'<Academy id={self.uuid} name={self.name}>'
 
 
 class CheckoutIntent(TimeStampedModel):

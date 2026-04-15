@@ -55,7 +55,7 @@ class TestEnterpriseAcademyModel(TransactionTestCase):
             'tags': ['ai', 'ml'],
             'stripe_product_id': 'prod_ai_123',
             'stripe_price_lookup_key': 'essentials_ai_annual',
-            'edx_catalog_id': uuid4(),
+            'enterprise_catalog_uuid': uuid4(),
             'product_key': 'ai-academy',
             'slug': 'ai-academy',
             'is_active': True,
@@ -66,10 +66,9 @@ class TestEnterpriseAcademyModel(TransactionTestCase):
 
     def test_create_with_all_fields(self):
         """Verify all model fields can be persisted and read correctly."""
-        edx_catalog_id = uuid4()
-        academy = self._create_academy(edx_catalog_id=edx_catalog_id)
+        enterprise_catalog_uuid = uuid4()
+        academy = self._create_academy(enterprise_catalog_uuid=enterprise_catalog_uuid)
 
-        self.assertIsNotNone(academy.id)
         self.assertIsNotNone(academy.uuid)
         self.assertEqual(academy.name, 'AI Academy')
         self.assertEqual(academy.long_name, 'Artificial Intelligence Academy')
@@ -79,7 +78,7 @@ class TestEnterpriseAcademyModel(TransactionTestCase):
         self.assertEqual(academy.tags, ['ai', 'ml'])
         self.assertEqual(academy.stripe_product_id, 'prod_ai_123')
         self.assertEqual(academy.stripe_price_lookup_key, 'essentials_ai_annual')
-        self.assertEqual(academy.edx_catalog_id, edx_catalog_id)
+        self.assertEqual(academy.enterprise_catalog_uuid, enterprise_catalog_uuid)
         self.assertEqual(academy.product_key, 'ai-academy')
         self.assertEqual(academy.slug, 'ai-academy')
         self.assertTrue(academy.is_active)
@@ -89,7 +88,6 @@ class TestEnterpriseAcademyModel(TransactionTestCase):
         """Verify default values for optional fields."""
         academy = EnterpriseAcademy.objects.create(name='Data Academy')
 
-        self.assertIsNotNone(academy.id)
         self.assertIsNotNone(academy.uuid)
         self.assertEqual(academy.long_name, '')
         self.assertEqual(academy.description, '')
@@ -98,7 +96,7 @@ class TestEnterpriseAcademyModel(TransactionTestCase):
         self.assertEqual(academy.tags, [])
         self.assertEqual(academy.stripe_product_id, '')
         self.assertEqual(academy.stripe_price_lookup_key, '')
-        self.assertIsNone(academy.edx_catalog_id)
+        self.assertIsNone(academy.enterprise_catalog_uuid)
         self.assertEqual(academy.product_key, '')
         self.assertEqual(academy.slug, '')
         self.assertTrue(academy.is_active)
@@ -162,7 +160,7 @@ class TestEnterpriseAcademyModel(TransactionTestCase):
     def test_str_representation(self):
         """Verify __str__ returns the expected format."""
         academy = self._create_academy()
-        self.assertEqual(str(academy), f'<Academy id={academy.id} name={academy.name}>')
+        self.assertEqual(str(academy), f'<Academy id={academy.uuid} name={academy.name}>')
 
 
 @ddt.ddt
