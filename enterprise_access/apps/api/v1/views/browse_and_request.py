@@ -999,6 +999,29 @@ class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
 
         return response
 
+    @staticmethod
+    def _build_approval_response(service_result, success_status):
+        """
+        Turn the service-layer result dict into a serialized HTTP response.
+
+        Any populated failure list or error_message produces 422; otherwise ``success_status``.
+        Shape is declared by LearnerCreditRequestApprovalResponseSerializer so both
+        ``approve`` and ``approve_all`` emit identical payloads.
+        """
+        failed_requests = (
+            list(service_result.get('failed_approval', [])) +
+            list(service_result.get('failed', []))
+        )
+        payload = {
+            'approved': [r.uuid for r in service_result.get('approved', [])],
+            'failed': [r.uuid for r in failed_requests],
+            'error_message': service_result.get('error_message'),
+        }
+        response_serializer = serializers.LearnerCreditRequestApprovalResponseSerializer(payload)
+        if failed_requests or service_result.get('error_message'):
+            return Response(response_serializer.data, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+        return Response(response_serializer.data, status=success_status)
+
     @permission_required(
         constants.REQUESTS_ADMIN_ACCESS_PERMISSION,
         fn=get_enterprise_uuid_from_request_data,
@@ -1008,9 +1031,10 @@ class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
         """
         Approve a list of learner credit requests against a single policy.
 
-        - On success, returns a `200 OK` with a list of the approved request objects.
+        - On success, returns a `200 OK` with the approved/failed UUID breakdown.
         - If any of the specified requests fail to be approved, returns a
-          `422 Unprocessable Entity`. The successful approvals will still be committed.
+          `422 Unprocessable Entity` with the same body shape. Successful approvals
+          are still committed.
         """
         serializer = serializers.LearnerCreditRequestApproveRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -1024,36 +1048,14 @@ class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
         )
 
         if len(learner_credit_requests) != len(set(learner_credit_request_uuids)):
-            return Response(
-                status=status.HTTP_404_NOT_FOUND
-            )
+            return Response(status=status.HTTP_404_NOT_FOUND)
 
-        try:
-            response = subsidy_request_api.approve_learner_credit_requests(
-                learner_credit_requests=learner_credit_requests,
-                policy_uuid=policy_uuid,
-                reviewer=request.user
-            )
-            if response.get("error_message"):
-                error_msg = (
-                    f"[LC REQUEST APPROVAL] Failed to approve learner credit requests. "
-                    f"Reason: {response['error_message']}."
-                )
-                logger.exception(error_msg)
-
-                return Response({"detail": error_msg}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
-            if response.get("failed_approval"):
-                return Response(
-                    {"detail": "[LC REQUEST APPROVAL] Failed to approve some learner credit requests."},
-                    status=status.HTTP_422_UNPROCESSABLE_ENTITY
-                )
-            return Response(status=status.HTTP_200_OK)
-        except Exception as e:  # pylint: disable=broad-except
-            logger.exception(e)
-            return Response(
-                {"detail": "Unexpected error during bulk approval."},
-                status=status.HTTP_422_UNPROCESSABLE_ENTITY
-            )
+        result = subsidy_request_api.approve_learner_credit_requests(
+            learner_credit_requests=learner_credit_requests,
+            policy_uuid=policy_uuid,
+            reviewer=request.user,
+        )
+        return self._build_approval_response(result, success_status=status.HTTP_200_OK)
 
     @permission_required(
         constants.REQUESTS_ADMIN_ACCESS_PERMISSION,
@@ -1064,12 +1066,11 @@ class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
         """
         Approve all filtered learner credit requests against a single policy.
 
-        - On success, returns a `202 Accepted` status, indicating that the
-          bulk approval process has been initiated.
+        - On success, returns a `202 Accepted` with the approved/failed UUID breakdown.
         - If no approvable requests are found for the given policy and filters,
           returns a `404 Not Found`.
         - If any requests fail during the bulk approval, returns a
-          `422 Unprocessable Entity` to indicate a partial failure.
+          `422 Unprocessable Entity` with the same body shape.
         """
         serializer = serializers.LearnerCreditRequestApproveAllSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -1081,32 +1082,14 @@ class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
         )
 
         if not learner_credit_requests.exists():
-            return Response(
-                status=status.HTTP_404_NOT_FOUND
-            )
+            return Response(status=status.HTTP_404_NOT_FOUND)
 
-        try:
-            response = subsidy_request_api.approve_learner_credit_requests(
-                learner_credit_requests=learner_credit_requests,
-                policy_uuid=policy_uuid,
-                reviewer=request.user
-            )
-            failed_requests = list(response.get('failed_approval', [])) + list(response.get('failed', []))
-            result = {
-                'approved': [str(r.uuid) for r in response.get('approved', [])],
-                'failed': [str(r.uuid) for r in failed_requests],
-            }
-            if response.get('error_message'):
-                result['error_message'] = response['error_message']
-
-            if failed_requests or response.get('error_message'):
-                return Response(result, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
-            return Response(result, status=status.HTTP_202_ACCEPTED)
-        except Exception:  # pylint: disable=broad-except
-            return Response(
-                {"detail": "Unexpected error during bulk approval."},
-                status=status.HTTP_422_UNPROCESSABLE_ENTITY
-            )
+        result = subsidy_request_api.approve_learner_credit_requests(
+            learner_credit_requests=learner_credit_requests,
+            policy_uuid=policy_uuid,
+            reviewer=request.user,
+        )
+        return self._build_approval_response(result, success_status=status.HTTP_202_ACCEPTED)
 
     @permission_required(
         constants.REQUESTS_ADMIN_ACCESS_PERMISSION,

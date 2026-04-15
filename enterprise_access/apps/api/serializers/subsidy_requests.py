@@ -338,6 +338,34 @@ class LearnerCreditRequestApproveAllSerializer(serializers.Serializer):
         raise NotImplementedError("This serializer is for validation only")
 
 
+class LearnerCreditRequestApprovalResponseSerializer(serializers.Serializer):  # pylint: disable=abstract-method
+    """
+    Response serializer shared by LearnerCreditRequestViewSet.approve and .approve_all.
+
+    Guarantees a single, stable response contract across every return statement of both
+    endpoints so callers don't branch on shape. Approved / failed UUIDs are split into
+    two lists; ``error_message`` is only populated when the service itself failed
+    (policy missing, lock contention, unhandled exception).
+    """
+    approved = serializers.ListField(
+        child=serializers.UUIDField(),
+        help_text="UUIDs of requests that transitioned to APPROVED.",
+    )
+    failed = serializers.ListField(
+        child=serializers.UUIDField(),
+        help_text=(
+            "UUIDs of requests that did not transition to APPROVED, whether because they "
+            "were in a non-approvable state or were rejected by the policy."
+        ),
+    )
+    error_message = serializers.CharField(
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+        help_text="Human-readable summary of a service-level failure, if any.",
+    )
+
+
 class LearnerCreditRequestDeclineAllSerializer(serializers.Serializer):  # pylint: disable=abstract-method
     """
     Request serializer to validate the decline-all action.
