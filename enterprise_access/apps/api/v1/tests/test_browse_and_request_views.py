@@ -2412,7 +2412,7 @@ class TestLearnerCreditRequestViewSet(BaseEnterpriseAccessTestCase):
         }
         response = self.client.post(url, data)
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
-        assert REASON_POLICY_EXPIRED in response.data['detail'].lower()
+        assert REASON_POLICY_EXPIRED in response.data['error_message'].lower()
 
         # Verify request was not approved
         self.user_request_1.refresh_from_db()
@@ -2461,7 +2461,8 @@ class TestLearnerCreditRequestViewSet(BaseEnterpriseAccessTestCase):
         response = self.client.post(url, data)
 
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
-        assert 'failed to approve' in response.data['detail'].lower()
+        assert str(self.user_request_1.uuid) in response.data['failed']
+        assert response.data['error_message'] is None
 
         # Verify request was not approved
         self.user_request_1.refresh_from_db()
@@ -2521,7 +2522,7 @@ class TestLearnerCreditRequestViewSet(BaseEnterpriseAccessTestCase):
         response = self.client.post(url, data)
 
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
-        assert REASON_SUBSIDY_EXPIRED in response.data['detail'].lower()
+        assert REASON_SUBSIDY_EXPIRED in response.data['error_message'].lower()
 
         # Verify request was not approved
         self.user_request_1.refresh_from_db()
@@ -2600,7 +2601,7 @@ class TestLearnerCreditRequestViewSet(BaseEnterpriseAccessTestCase):
         response = self.client.post(url, data)
 
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
-        assert REASON_NOT_ENOUGH_VALUE_IN_SUBSIDY in response.data['detail'].lower()
+        assert REASON_NOT_ENOUGH_VALUE_IN_SUBSIDY in response.data['error_message'].lower()
 
         # Verify request was not approved
         self.user_request_1.refresh_from_db()
@@ -2692,7 +2693,7 @@ class TestLearnerCreditRequestViewSet(BaseEnterpriseAccessTestCase):
         response = self.client.post(url, data)
 
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
-        assert REASON_POLICY_SPEND_LIMIT_REACHED in response.data['detail'].lower()
+        assert REASON_POLICY_SPEND_LIMIT_REACHED in response.data['error_message'].lower()
 
         # Verify request was not approved
         request_exceed_spend_limit.refresh_from_db()
@@ -2881,12 +2882,129 @@ class TestLearnerCreditRequestViewSet(BaseEnterpriseAccessTestCase):
         response = self.client.post(url, data)
 
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
-        assert "failed to acquire lock" in response.data['detail'].lower()
+        assert "failed to acquire lock" in response.data['error_message'].lower()
 
         # Verify request was not approved
         self.user_request_1.refresh_from_db()
         assert self.user_request_1.state == SubsidyRequestStates.REQUESTED
         assert self.user_request_1.assignment is None
+
+    @mock.patch(BNR_VIEW_PATH + '.subsidy_request_api.approve_learner_credit_requests')
+    def test_approve_returns_422_when_all_inputs_non_approvable(self, mock_approve):
+        """
+        If every submitted UUID is filtered out as non-approvable (service returns `failed`,
+        not `failed_approval`), the view must still return 422 — not 200.
+        """
+        mock_approve.return_value = {
+            'approved': [],
+            'failed_approval': [],
+            'failed': [self.user_request_1],
+            'error_message': None,
+        }
+
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': str(self.enterprise_customer_uuid_1),
+        }])
+        url = reverse('api:v1:learner-credit-requests-approve')
+        response = self.client.post(url, {
+            'enterprise_customer_uuid': str(self.enterprise_customer_uuid_1),
+            'policy_uuid': str(self.policy.uuid),
+            'learner_credit_request_uuids': [str(self.user_request_1.uuid)],
+        })
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert str(self.user_request_1.uuid) in response.data['failed']
+        assert response.data['error_message'] is None
+
+    def _post_approve_all(self, policy_uuid=None):
+        """Helper: hit the approve-all endpoint as an admin of enterprise_customer_uuid_1."""
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': str(self.enterprise_customer_uuid_1),
+        }])
+        url = reverse('api:v1:learner-credit-requests-approve-all')
+        return self.client.post(url, {
+            'enterprise_customer_uuid': str(self.enterprise_customer_uuid_1),
+            'policy_uuid': str(policy_uuid or self.policy.uuid),
+        })
+
+    def test_approve_all_no_approvable_requests(self):
+        """Returns 404 when no approvable requests exist for the policy."""
+        LearnerCreditRequest.objects.filter(
+            learner_credit_request_config=self.learner_credit_config,
+        ).update(state=SubsidyRequestStates.DECLINED)
+
+        response = self._post_approve_all()
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_approve_all_missing_policy_uuid(self):
+        """Returns 400 when policy_uuid is missing."""
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': str(self.enterprise_customer_uuid_1),
+        }])
+        url = reverse('api:v1:learner-credit-requests-approve-all')
+        response = self.client.post(url, {
+            'enterprise_customer_uuid': str(self.enterprise_customer_uuid_1),
+        })
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    @mock.patch(BNR_VIEW_PATH + '.subsidy_request_api.approve_learner_credit_requests')
+    def test_approve_all_happy_path(self, mock_approve):
+        """Returns 202 with the approved UUIDs when all requests approve cleanly."""
+        mock_approve.return_value = {
+            'approved': [self.user_request_1],
+            'failed_approval': [],
+            'failed': [],
+            'error_message': None,
+        }
+
+        response = self._post_approve_all()
+
+        assert response.status_code == status.HTTP_202_ACCEPTED
+        assert response.data == {
+            'approved': [str(self.user_request_1.uuid)],
+            'failed': [],
+            'error_message': None,
+        }
+        mock_approve.assert_called_once()
+
+    @mock.patch(BNR_VIEW_PATH + '.subsidy_request_api.approve_learner_credit_requests')
+    def test_approve_all_partial_failure(self, mock_approve):
+        """Returns 422 with both approved and failed lists on partial failure."""
+        mock_approve.return_value = {
+            'approved': [self.user_request_1],
+            'failed_approval': [self.enterprise_request],
+            'failed': [],
+            'error_message': None,
+        }
+
+        response = self._post_approve_all()
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert sorted(response.data['approved']) == [str(self.user_request_1.uuid)]
+        assert sorted(response.data['failed']) == [str(self.enterprise_request.uuid)]
+        assert response.data['error_message'] is None
+
+    @mock.patch(BNR_VIEW_PATH + '.subsidy_request_api.approve_learner_credit_requests')
+    def test_approve_all_global_error_propagates_error_message(self, mock_approve):
+        """Returns 422 with error_message when the service reports a global failure."""
+        mock_approve.return_value = {
+            'approved': [],
+            'failed_approval': [self.user_request_1, self.enterprise_request],
+            'failed': [],
+            'error_message': 'Policy expired',
+        }
+
+        response = self._post_approve_all()
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.data['error_message'] == 'Policy expired'
+        assert response.data['approved'] == []
+        assert sorted(response.data['failed']) == sorted(
+            [str(self.user_request_1.uuid), str(self.enterprise_request.uuid)]
+        )
 
     def test_cancel_invalid_request_uuid(self):
         """
