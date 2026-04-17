@@ -11,10 +11,30 @@ from enterprise_access.apps.track.management.commands import nudge_dormant_enrol
     SNOWFLAKE_ACCOUNT='test_account',
     SNOWFLAKE_DATABASE='test_database',
 )
-@mock.patch('enterprise_access.apps.track.management.commands.nudge_dormant_enrolled_enterprise_learners.snowflake.connector.connect')
+@mock.patch.object(
+    nudge_dormant_enrolled_enterprise_learners.snowflake.connector,
+    'connect',
+)
 def test_get_query_results_from_snowflake_closes_cursor_and_connection(mock_connect):
     mock_cursor = mock.MagicMock()
-    mock_cursor.fetchall.return_value = [('1', 'org', 'Course', 10, 1, 2, 3, 'Self Paced', 'subtitle', 'First Video', 'https://img', 'https://video', 'https://discussion', 'https://home')]
+    mock_cursor.fetchall.return_value = [
+        (
+            '1',
+            'org',
+            'Course',
+            10,
+            1,
+            2,
+            3,
+            'Self Paced',
+            'subtitle',
+            'First Video',
+            'https://img',
+            'https://video',
+            'https://discussion',
+            'https://home',
+        ),
+    ]
     mock_connection = mock.MagicMock()
     mock_connection.cursor.return_value = mock_cursor
     mock_connect.return_value = mock_connection
@@ -53,8 +73,14 @@ def test_emit_event_calls_track_event(mock_track_event):
     )
 
 
-@mock.patch('enterprise_access.apps.track.management.commands.nudge_dormant_enrolled_enterprise_learners.Command.emit_event')
-@mock.patch('enterprise_access.apps.track.management.commands.nudge_dormant_enrolled_enterprise_learners.Command.get_query_results_from_snowflake')
+@mock.patch.object(
+    nudge_dormant_enrolled_enterprise_learners.Command,
+    'emit_event',
+)
+@mock.patch.object(
+    nudge_dormant_enrolled_enterprise_learners.Command,
+    'get_query_results_from_snowflake',
+)
 def test_handle_commits_and_emits_events(mock_get_query_results, mock_emit_event):
     row = (
         '1',
@@ -95,11 +121,32 @@ def test_handle_commits_and_emits_events(mock_get_query_results, mock_emit_event
     )
 
 
-@mock.patch('enterprise_access.apps.track.management.commands.nudge_dormant_enrolled_enterprise_learners.Command.emit_event')
-@mock.patch('enterprise_access.apps.track.management.commands.nudge_dormant_enrolled_enterprise_learners.Command.get_query_results_from_snowflake')
+@mock.patch.object(
+    nudge_dormant_enrolled_enterprise_learners.Command,
+    'emit_event',
+)
+@mock.patch.object(
+    nudge_dormant_enrolled_enterprise_learners.Command,
+    'get_query_results_from_snowflake',
+)
 def test_handle_dry_run_does_not_emit_events(mock_get_query_results, mock_emit_event):
     mock_get_query_results.return_value = [
-        ('1', 'org', 'Course', 10, 1, 2, 3, 'Self Paced', 'subtitle', 'First Video', 'https://img', 'https://video', 'https://discussion', 'https://home')
+        (
+            '1',
+            'org',
+            'Course',
+            10,
+            1,
+            2,
+            3,
+            'Self Paced',
+            'subtitle',
+            'First Video',
+            'https://img',
+            'https://video',
+            'https://discussion',
+            'https://home',
+        ),
     ]
 
     command = nudge_dormant_enrolled_enterprise_learners.Command()
