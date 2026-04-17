@@ -4,10 +4,9 @@ Django management command to send nudge emails to dormant enrolled enterprise le
 """
 import logging
 
+import snowflake.connector
 from django.conf import settings
 from django.core.management import BaseCommand
-
-import snowflake.connector
 
 from enterprise_access.apps.track.segment import track_event
 
@@ -172,11 +171,10 @@ class Command(BaseCommand):
         )
         LOGGER.info(
             '[Dormant Nudge] Segment event fired for nudge email to dormant enrolled enterprise learners. '
-            'LMS User Id: {user_id}, Organization Name: {org_name}, Course Title: {course_title}'.format(
-                user_id=kwargs['EXTERNAL_ID'],
-                org_name=kwargs['ORG_NAME'],
-                course_title=kwargs['COURSE_TITLE']
-            )
+            'LMS User Id: %s, Organization Name: %s, Course Title: %s',
+            kwargs['EXTERNAL_ID'],
+            kwargs['ORG_NAME'],
+            kwargs['COURSE_TITLE'],
         )
 
     def handle(self, *args, **options):

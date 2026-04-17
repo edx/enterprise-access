@@ -73,6 +73,17 @@ def test_emit_event_calls_track_event(mock_track_event):
     )
 
 
+def test_add_arguments_parses_no_commit_flag():
+    command = nudge_dormant_enrolled_enterprise_learners.Command()
+    parser = command.create_parser(
+        'manage.py',
+        'nudge_dormant_enrolled_enterprise_learners',
+    )
+    options = parser.parse_args(['--no-commit'])
+
+    assert options.no_commit is True
+
+
 @mock.patch.object(
     nudge_dormant_enrolled_enterprise_learners.Command,
     'emit_event',
