@@ -4,10 +4,10 @@ Django management command to send nudge emails to dormant enrolled enterprise le
 """
 import logging
 
-import snowflake.connector
-
 from django.conf import settings
 from django.core.management import BaseCommand
+
+import snowflake.connector
 
 from enterprise_access.apps.track.segment import track_event
 
