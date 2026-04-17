@@ -26,7 +26,7 @@ edx-auth-backends
 edx-braze-client
 edx-celeryutils
 edx-django-utils
-snowflake-connector-python
+snowflake-connector-python>=3.12.4,<4
 edx-django-release-util
 edx-drf-extensions
 edx-enterprise-subsidy-client
