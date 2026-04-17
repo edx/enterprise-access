@@ -689,3 +689,12 @@ EMBARGOED_COUNTRY_CODES = os.environ.get(
 ).split(',')
 
 ################# End Embargo Settings #################
+
+# Snowflake connection settings (used by dormant nudge & monthly impact report commands)
+SNOWFLAKE_SERVICE_USER = os.environ.get('SNOWFLAKE_SERVICE_USER', '')
+SNOWFLAKE_SERVICE_USER_PASSWORD = os.environ.get('SNOWFLAKE_SERVICE_USER_PASSWORD', '')
+SNOWFLAKE_ACCOUNT = os.environ.get('SNOWFLAKE_ACCOUNT', 'edx.us-east-1')
+SNOWFLAKE_DATABASE = os.environ.get('SNOWFLAKE_DATABASE', 'prod')
+
+# Segment write key (used for Segment event tracking in management commands)
+SEGMENT_KEY = os.environ.get('SEGMENT_KEY', '')
