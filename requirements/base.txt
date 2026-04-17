@@ -361,7 +361,7 @@ vine==5.1.0
     #   kombu
 wcwidth==0.6.0
     # via prompt-toolkit
-snowflake-connector-python==3.0.3
+snowflake-connector-python==3.12.4
     # via
     #   -c requirements/constraints.txt
     #   edx-django-utils
