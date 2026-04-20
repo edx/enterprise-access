@@ -569,6 +569,8 @@ wcwidth==0.6.0
     # via
     #   -r requirements/base.txt
     #   prompt-toolkit
+snowflake-connector-python==4.3.0
+    # via -r requirements/test-master.txt
 
 # The following packages are considered to be unsafe in a requirements file:
 # setuptools

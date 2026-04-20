@@ -26,6 +26,7 @@ edx-auth-backends
 edx-braze-client
 edx-celeryutils
 edx-django-utils
+snowflake-connector-python>=3.12.4,<4
 edx-django-release-util
 edx-drf-extensions
 edx-enterprise-subsidy-client
@@ -41,5 +42,6 @@ pytz
 redis
 rules
 stripe
+snowflake-connector-python
 drf-spectacular
 django-log-request-id
