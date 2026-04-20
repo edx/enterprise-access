@@ -306,7 +306,7 @@ edx-toggles==6.0.0
     #   edx-event-bus-kafka
 factory-boy==3.3.3
     # via -r requirements/test.txt
-faker==40.13.0
+faker==40.15.0
     # via
     #   -r requirements/test.txt
     #   factory-boy
@@ -315,7 +315,7 @@ fastavro==1.12.1
     #   -r requirements/test.txt
     #   confluent-kafka
     #   openedx-events
-filelock==3.25.2
+filelock==3.29.0
     # via
     #   -r requirements/test.txt
     #   python-discovery
@@ -386,11 +386,11 @@ oauthlib==3.3.1
     #   -r requirements/test.txt
     #   requests-oauthlib
     #   social-auth-core
-openedx-events==11.1.0
+openedx-events==11.1.1
     # via
     #   -r requirements/test.txt
     #   edx-event-bus-kafka
-packaging==26.0
+packaging==26.1
     # via
     #   -r requirements/test.txt
     #   drf-yasg
@@ -399,7 +399,7 @@ packaging==26.0
     #   pytest
     #   sphinx
     #   tox
-platformdirs==4.9.4
+platformdirs==4.9.6
     # via
     #   -r requirements/test.txt
     #   pylint
@@ -630,7 +630,7 @@ tomlkit==0.14.0
     # via
     #   -r requirements/test.txt
     #   pylint
-tox==4.52.0
+tox==4.53.0
     # via -r requirements/test.txt
 typing-extensions==4.15.0
     # via
@@ -666,7 +666,7 @@ vine==5.1.0
     #   amqp
     #   celery
     #   kombu
-virtualenv==21.2.0
+virtualenv==21.2.4
     # via
     #   -r requirements/test.txt
     #   tox
