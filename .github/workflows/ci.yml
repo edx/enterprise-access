@@ -54,7 +54,7 @@ jobs:
     - name: Upgrade packages
       run: pip install -U pip wheel
     - name: Run pylint
-      run: pylint --rcfile=pylintrc enterprise_access/ *.py -v --ignore-paths="enterprise_access/apps/customer_billing/models.py,enterprise_access/apps/customer_billing/admin.py,enterprise_access/apps/api/v1/tests/test_checkout_bff_views.py"
+      run: pylint --rcfile=pylintrc enterprise_access/ *.py --ignore-paths="enterprise_access/apps/customer_billing/models.py,enterprise_access/apps/customer_billing/admin.py,enterprise_access/apps/api/v1/tests/test_checkout_bff_views.py"
     - name: Run pycodestyle
       run: make style
     - name: Run isort
