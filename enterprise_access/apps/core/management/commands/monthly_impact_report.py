@@ -3,7 +3,6 @@ Django management command to send monthly impact report to enterprise admins.
 """
 import logging
 
-from django.conf import settings
 from django.core.management import BaseCommand
 
 from enterprise_access.apps.core.snowflake import fetch_all_query_results
@@ -864,14 +863,10 @@ QUERY = '''
         FROM (
 
         SELECT
-            acc.integration_enterprise_uuid_c as uuid,
-            MAX(opp.contract_end_date_c) latest_contract_end_date
+            opp.enterprise_customer_uuid as uuid,
+            MAX(opp.contract_expiration_date) latest_contract_end_date
         FROM
-            salesforce_prod_pii.opportunity as opp
-        LEFT JOIN
-            salesforce_prod_pii._account as acc
-        ON
-            opp.account_id = acc.id
+            prod.enterprise.ent_base_salesforce_opportunity as opp
         WHERE
             -- only closed won contracts
             opp.stage_name = 'Closed Won'
@@ -891,6 +886,7 @@ QUERY = '''
     ORDER BY
         tma.enterprise_name
 '''
+
 
 
 class Command(BaseCommand):
@@ -919,15 +915,14 @@ class Command(BaseCommand):
 
     def emit_event(self, **kwargs):
         """
-         Emit the Segment event which will be used by Braze to send the email
+        Emit the Segment event which will be used by Braze to send the email
         """
         track_event(kwargs['EXTERNAL_ID'], 'edx.bi.enterprise.user.admin.impact_report', kwargs)
         LOGGER.info(
             '[Monthly Impact Report] Segment event fired for monthly impact report. '
-            'lms_user_id: {user_id}, Enterprise Name: {enterprise_name}'.format(
-                user_id=kwargs['EXTERNAL_ID'],
-                enterprise_name=kwargs['ENTERPRISE_NAME']
-            )
+            'lms_user_id: %s, Enterprise Name: %s',
+            kwargs['EXTERNAL_ID'],
+            kwargs['ENTERPRISE_NAME'],
         )
 
     def handle(self, *args, **options):
