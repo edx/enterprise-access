@@ -1,0 +1,29 @@
+enterprise_access/apps/subsidy_request/tests/test_api.py
+  cfb640877ca2014e 307,437,556
+enterprise_access/apps/subsidy_request/api.py
+  cfb640877ca2014e 95,186
+enterprise_access/apps/subsidy_access_policy/api.py
+  cfb640877ca2014e 15
+enterprise_access/apps/content_assignments/enrollment_deadline_strategies.py
+  cfb640877ca2014e 7,16-18,31,57,156
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "30b5d20fff2682c0da971f154b6e1511cf86f4ef",
+  "prompts": {
+    "cfb640877ca2014e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3da4f3b2-ce9a-44c0-8812-f179c2f644d4",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Alexander Dusenbery",
+      "messages": [],
+      "total_additions": 25,
+      "total_deletions": 30,
+      "accepted_lines": 18,
+      "overriden_lines": 0
+    }
+  }
+}
