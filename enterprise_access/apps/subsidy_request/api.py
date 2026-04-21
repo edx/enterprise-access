@@ -92,7 +92,7 @@ def approve_learner_credit_requests(
             "failed_approval": requests_to_process,
             "error_message": exc.message,
         }
-    except Exception as exc:
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         # Sanitized for the client response; full exception + traceback stay in logs
         # (via logger.exception) and in the LearnerCreditRequestActions audit row.
         error_message = "Unexpected error during approval."
@@ -183,7 +183,7 @@ def _record_failure_actions(requests, exception):
     try:
         with transaction.atomic():
             LearnerCreditRequestActions.bulk_create(actions)
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught
         logger.exception(
             "Failed to record failure audit trail for approval attempt. "
             "Original exception: %r. Request uuids: %s",

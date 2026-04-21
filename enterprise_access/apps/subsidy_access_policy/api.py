@@ -12,12 +12,7 @@ from rest_framework import status
 from enterprise_access.apps.content_assignments.api import AllocationException
 from enterprise_access.apps.subsidy_request.models import LearnerCreditRequest
 
-from .exceptions import (
-    ContentPriceNullException,
-    PriceValidationError,
-    SubisidyAccessPolicyRequestApprovalError,
-    SubsidyAccessPolicyLockAttemptFailed
-)
+from .exceptions import ContentPriceNullException, PriceValidationError, SubisidyAccessPolicyRequestApprovalError
 from .models import SubsidyAccessPolicy
 
 logger = logging.getLogger(__name__)
@@ -104,8 +99,6 @@ def validate_and_allocate(
 
         return approved_requests_map, failed_requests_by_reason
 
-    except SubisidyAccessPolicyRequestApprovalError:
-        raise
     except (
         AllocationException, PriceValidationError, ValidationError, DatabaseError,
         HTTPError, ConnectionError, ContentPriceNullException,
