@@ -304,7 +304,7 @@ class TestApproveLearnerCreditRequests(TestCase):
     @mock.patch('enterprise_access.apps.subsidy_request.api.validate_and_allocate')
     @mock.patch('enterprise_access.apps.subsidy_request.api.get_policy_for_approval')
     def test_return_shape_is_consistent_across_paths(
-        self, mock_get_policy, mock_validate, mock_approve_task,
+        self, mock_get_policy, mock_validate, _mock_approve_task,
     ):
         """Every return path produces the same 4-key dict so callers don't branch on shape."""
         mock_get_policy.return_value = self.mock_policy
@@ -434,7 +434,7 @@ class TestApproveLearnerCreditRequests(TestCase):
     @mock.patch('enterprise_access.apps.subsidy_request.api.send_learner_credit_bnr_request_approve_task')
     @mock.patch('enterprise_access.apps.subsidy_request.api.validate_and_allocate')
     @mock.patch('enterprise_access.apps.subsidy_request.api.get_policy_for_approval')
-    def test_error_state_is_approvable(self, mock_get_policy, mock_validate, mock_approve_task):
+    def test_error_state_is_approvable(self, mock_get_policy, mock_validate, _mock_approve_task):
         """Requests in ERROR state can be re-approved (ERROR is in APPROVABLE_STATES)."""
         mock_get_policy.return_value = self.mock_policy
         request = self._create_request(state=SubsidyRequestStates.ERROR)
@@ -553,7 +553,7 @@ class TestApproveLearnerCreditRequests(TestCase):
     @mock.patch('enterprise_access.apps.subsidy_request.api.validate_and_allocate')
     @mock.patch('enterprise_access.apps.subsidy_request.api.get_policy_for_approval')
     def test_double_failure_swallowed_in_record_failure_actions(
-        self, mock_get_policy, mock_validate, mock_approve_task,
+        self, mock_get_policy, mock_validate, _mock_approve_task,
     ):
         """
         If both the main bulk_create and the _record_failure_actions retry fail,
