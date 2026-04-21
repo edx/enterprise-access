@@ -190,7 +190,7 @@ class BaseResponseSerializer(MinimalBffResponseSerializer):
     staff_enterprise_customer = EnterpriseCustomerSerializer(required=False, allow_null=True)
     should_update_active_enterprise_customer_user = serializers.BooleanField()
     catalog_uuids_to_catalog_query_uuids = serializers.DictField(
-        child=serializers.UUIDField(),
+        child=serializers.UUIDField(allow_null=True),
         help_text='Mapping of catalog UUIDs to catalog query UUIDs.',
     )
     algolia = SecuredAlgoliaMetadataSerializer(required=False, allow_null=True)
@@ -262,14 +262,45 @@ class SubscriptionLicenseStatusSerializer(BaseBffSerializer):
 class SubscriptionsSerializer(BaseBffSerializer):
     """
     Serializer for subscriptions subsidies.
+
+    Supports both multi-license (collection-first) and single-license (legacy) modes.
+    New fields enable efficient course-to-license matching for learners with multiple licenses.
     """
 
     customer_agreement = CustomerAgreementSerializer(required=False, allow_null=True)
+
+    # Collection-first fields (canonical for multi-license support)
     subscription_licenses = SubscriptionLicenseSerializer(many=True, required=False, default=list)
     subscription_licenses_by_status = SubscriptionLicenseStatusSerializer(required=False)
+
+    # Pre-computed catalog index for O(1) course-to-license lookups.
+    # Only present in the response when enable_multi_license_entitlements_bff is ON.
+    licenses_by_catalog = serializers.DictField(
+        child=serializers.ListField(child=SubscriptionLicenseSerializer()),
+        required=False,
+        allow_null=True,
+        help_text="Pre-computed mapping of catalog UUID to licenses (multi-license flag ON only).",
+    )
+
+    # Legacy singular fields (backward compatibility)
     subscription_license = SubscriptionLicenseSerializer(required=False, allow_null=True)
     subscription_plan = SubscriptionPlanSerializer(required=False, allow_null=True)
+
     show_expiration_notifications = serializers.BooleanField(required=False, default=False)
+
+    # Fields that are only included in the response when explicitly provided by the handler
+    # (i.e. when enable_multi_license_entitlements_bff is ON).
+    _MULTI_LICENSE_ONLY_FIELDS = ('licenses_by_catalog',)
+
+    def to_representation(self, instance):
+        ret = super().to_representation(instance)
+        # Drop multi-license-only fields if the handler did not include them in the source data.
+        # `instance` is a dict when coming from transform_subscriptions_result.
+        if isinstance(instance, dict):
+            for field in self._MULTI_LICENSE_ONLY_FIELDS:
+                if field not in instance:
+                    ret.pop(field, None)
+        return ret
 
 
 class EnterpriseCustomerUserSubsidiesSerializer(BaseBffSerializer):
