@@ -38,5 +38,28 @@ jobs:
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
         fail_ci_if_error: false
-    - name: Run style
-      run: make style isort_check pii_check check_keywords
+  quality:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+        architecture: x64
+    - name: Install requirements
+      run: make requirements
+    - name: Upgrade packages
+      run: pip install -U pip wheel
+    - name: Run pylint
+      run: pylint --rcfile=pylintrc enterprise_access/ *.py -v
+    - name: Run pycodestyle
+      run: make style
+    - name: Run isort
+      run: make isort_check
+    - name: Run pii check
+      run: make pii_check
+    - name: Run check keywords
+      run: make check_keywords
