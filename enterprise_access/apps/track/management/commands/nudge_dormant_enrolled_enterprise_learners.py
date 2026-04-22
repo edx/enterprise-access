@@ -4,10 +4,9 @@ Django management command to send nudge emails to dormant enrolled enterprise le
 """
 import logging
 
-import snowflake.connector
-from django.conf import settings
 from django.core.management import BaseCommand
 
+from enterprise_access.apps.core.snowflake import fetch_all_query_results
 from enterprise_access.apps.track.segment import track_event
 
 LOGGER = logging.getLogger(__name__)
@@ -143,22 +142,9 @@ class Command(BaseCommand):
 
     def get_query_results_from_snowflake(self):
         """
-        Connect to Snowflake, execute the dormant-learner query, and yield each row.
+        Execute the dormant-learner query via the shared Snowflake helper.
         """
-        ctx = snowflake.connector.connect(
-            user=settings.SNOWFLAKE_SERVICE_USER,
-            password=settings.SNOWFLAKE_SERVICE_USER_PASSWORD,
-            account=getattr(settings, 'SNOWFLAKE_ACCOUNT', 'edx.us-east-1'),
-            database=getattr(settings, 'SNOWFLAKE_DATABASE', 'prod'),
-        )
-        cs = ctx.cursor()
-        try:
-            cs.execute(QUERY)
-            rows = cs.fetchall()
-            yield from rows
-        finally:
-            cs.close()
-        ctx.close()
+        return fetch_all_query_results(QUERY)
 
     def emit_event(self, **kwargs):
         """

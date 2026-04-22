@@ -42,6 +42,5 @@ pytz
 redis
 rules
 stripe
-snowflake-connector-python
 drf-spectacular
 django-log-request-id

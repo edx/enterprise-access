@@ -1,23 +1,16 @@
 from unittest import mock
 
-from django.test import override_settings
-
 from enterprise_access.apps.track.management.commands import nudge_dormant_enrolled_enterprise_learners
 
 
-@override_settings(
-    SNOWFLAKE_SERVICE_USER='user',
-    SNOWFLAKE_SERVICE_USER_PASSWORD='password',
-    SNOWFLAKE_ACCOUNT='test_account',
-    SNOWFLAKE_DATABASE='test_database',
+@mock.patch(
+    (
+        'enterprise_access.apps.track.management.commands.'
+        'nudge_dormant_enrolled_enterprise_learners.fetch_all_query_results'
+    )
 )
-@mock.patch.object(
-    nudge_dormant_enrolled_enterprise_learners.snowflake.connector,
-    'connect',
-)
-def test_get_query_results_from_snowflake_closes_cursor_and_connection(mock_connect):
-    mock_cursor = mock.MagicMock()
-    mock_cursor.fetchall.return_value = [
+def test_get_query_results_from_snowflake_uses_shared_helper(mock_fetch_all_query_results):
+    mock_fetch_all_query_results.return_value = [
         (
             '1',
             'org',
@@ -35,24 +28,14 @@ def test_get_query_results_from_snowflake_closes_cursor_and_connection(mock_conn
             'https://home',
         ),
     ]
-    mock_connection = mock.MagicMock()
-    mock_connection.cursor.return_value = mock_cursor
-    mock_connect.return_value = mock_connection
 
     command = nudge_dormant_enrolled_enterprise_learners.Command()
     rows = list(command.get_query_results_from_snowflake())
 
-    mock_connect.assert_called_once_with(
-        user='user',
-        password='password',
-        account='test_account',
-        database='test_database',
+    mock_fetch_all_query_results.assert_called_once_with(
+        nudge_dormant_enrolled_enterprise_learners.QUERY
     )
-    mock_cursor.execute.assert_called_once_with(nudge_dormant_enrolled_enterprise_learners.QUERY)
-    mock_cursor.fetchall.assert_called_once()
-    mock_cursor.close.assert_called_once()
-    mock_connection.close.assert_called_once()
-    assert rows == mock_cursor.fetchall.return_value
+    assert rows == mock_fetch_all_query_results.return_value
 
 
 @mock.patch('enterprise_access.apps.track.management.commands.nudge_dormant_enrolled_enterprise_learners.track_event')
