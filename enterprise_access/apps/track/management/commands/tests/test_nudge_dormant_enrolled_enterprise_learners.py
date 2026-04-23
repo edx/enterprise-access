@@ -45,15 +45,25 @@ def test_emit_event_calls_track_event(mock_track_event):
         'EXTERNAL_ID': '1',
         'ORG_NAME': 'org',
         'COURSE_TITLE': 'Course',
+        'ENROLLMENT_COUNT': 10,
     }
 
-    command.emit_event(**event_data)
+    with mock.patch.object(
+        nudge_dormant_enrolled_enterprise_learners,
+        'LOGGER',
+    ) as mock_logger:
+        command.emit_event(**event_data)
 
     mock_track_event.assert_called_once_with(
         '1',
         'edx.bi.enterprise.user.dormant.nudge',
         event_data,
     )
+    logged_message = mock_logger.info.call_args[0][0]
+    assert 'LMS User Id' not in logged_message
+    assert 'Organization Name' not in logged_message
+    assert 'Course Title' not in logged_message
+    assert 'external_id_hash=%s' in logged_message
 
 
 def test_add_arguments_parses_no_commit_flag():

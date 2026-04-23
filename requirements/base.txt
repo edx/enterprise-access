@@ -27,9 +27,9 @@ backoff==1.10.0
     # via analytics-python
 billiard==4.2.4
     # via celery
-boto3==1.42.93
+boto3==1.42.94
     # via snowflake-connector-python
-botocore==1.42.93
+botocore==1.42.94
     # via
     #   boto3
     #   s3transfer
@@ -41,19 +41,20 @@ celery==5.6.3
     #   -r requirements/base.in
     #   django-celery-results
     #   edx-celeryutils
-certifi==2026.2.25
+certifi==2026.4.22
     # via
     #   requests
     #   snowflake-connector-python
-cffi==2.0.0
+cffi==1.17.1
     # via
     #   cryptography
     #   pynacl
+    #   snowflake-connector-python
 charset-normalizer==3.4.7
     # via
     #   requests
     #   snowflake-connector-python
-click==8.3.2
+click==8.3.3
     # via
     #   celery
     #   click-didyoumean
@@ -75,7 +76,7 @@ confluent-kafka[avro,schema-registry]==2.6.1
     #   -r requirements/base.in
 crispy-bootstrap5==2026.3
     # via -r requirements/base.in
-cryptography==46.0.7
+cryptography==46.0.0
     # via
     #   pyjwt
     #   pyopenssl
@@ -226,7 +227,7 @@ fastavro==1.12.1
     #   openedx-events
 filelock==3.29.0
     # via snowflake-connector-python
-idna==3.12
+idna==3.13
     # via
     #   requests
     #   snowflake-connector-python
@@ -260,7 +261,7 @@ oauthlib==3.3.1
     # via
     #   requests-oauthlib
     #   social-auth-core
-openedx-events==11.1.1
+openedx-events==11.2.0
     # via
     #   -r requirements/base.in
     #   edx-event-bus-kafka
@@ -293,9 +294,9 @@ pymemcache==4.0.0
     # via -r requirements/base.in
 pymongo==4.17.0
     # via edx-opaque-keys
-pynacl==1.6.2
+pynacl==1.6.0
     # via edx-django-utils
-pyopenssl==26.0.0
+pyopenssl==25.3.0
     # via snowflake-connector-python
 python-dateutil==2.9.0.post0
     # via
@@ -341,7 +342,7 @@ rpds-py==0.30.0
     #   referencing
 rules==3.5
     # via -r requirements/base.in
-s3transfer==0.16.0
+s3transfer==0.16.1
     # via boto3
 semantic-version==2.10.0
     # via edx-drf-extensions
@@ -353,7 +354,7 @@ six==1.17.0
     #   edx-django-release-util
     #   edx-rbac
     #   python-dateutil
-snowflake-connector-python==4.4.0
+snowflake-connector-python==3.18.0
     # via -r requirements/base.in
 social-auth-app-django==5.8.0
     # via edx-auth-backends
@@ -406,9 +407,6 @@ vine==5.1.0
     #   kombu
 wcwidth==0.6.0
     # via prompt-toolkit
-snowflake-connector-python==3.12.4
-    # via
-    #   -c requirements/constraints.txt
-    #   edx-django-utils
+
 # The following packages are considered to be unsafe in a requirements file:
 # setuptools

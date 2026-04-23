@@ -2,6 +2,7 @@
 Django management command to send nudge emails to dormant enrolled enterprise learners.
 
 """
+import hashlib
 import logging
 
 from django.core.management import BaseCommand
@@ -150,6 +151,8 @@ class Command(BaseCommand):
         """
         Emit the Segment event that Braze uses to trigger the nudge email.
         """
+        external_id = str(kwargs['EXTERNAL_ID'])
+        external_id_hash = hashlib.sha256(external_id.encode('utf-8')).hexdigest()[:12]
         track_event(
             kwargs['EXTERNAL_ID'],
             'edx.bi.enterprise.user.dormant.nudge',
@@ -157,10 +160,9 @@ class Command(BaseCommand):
         )
         LOGGER.info(
             '[Dormant Nudge] Segment event fired for nudge email to dormant enrolled enterprise learners. '
-            'LMS User Id: %s, Organization Name: %s, Course Title: %s',
-            kwargs['EXTERNAL_ID'],
-            kwargs['ORG_NAME'],
-            kwargs['COURSE_TITLE'],
+            'external_id_hash=%s enrollment_count=%s',
+            external_id_hash,
+            kwargs.get('ENROLLMENT_COUNT'),
         )
 
     def handle(self, *args, **options):
@@ -190,9 +192,9 @@ class Command(BaseCommand):
                 event_count += 1
             else:
                 LOGGER.info(
-                    '[Dormant Nudge] [DRY RUN] Would send event for LMS User Id: %s, Course: %s',
-                    message_data['EXTERNAL_ID'],
-                    message_data['COURSE_TITLE'],
+                    '[Dormant Nudge] [DRY RUN] Would send event for one learner. '
+                    'enrollment_count=%s',
+                    message_data['ENROLLMENT_COUNT'],
                 )
 
         LOGGER.info(

@@ -3,20 +3,29 @@
 from contextlib import contextmanager
 
 from django.conf import settings
-
-SNOWFLAKE_ACCOUNT = 'edx.us-east-1'
-SNOWFLAKE_DATABASE = 'prod'
+from django.core.exceptions import ImproperlyConfigured
 
 
 def get_snowflake_connection():
     """Create a Snowflake connection using enterprise-access settings."""
+    if not getattr(settings, 'SNOWFLAKE_SERVICE_USER', ''):
+        raise ImproperlyConfigured(
+            'SNOWFLAKE_SERVICE_USER is required but not set. '
+            'Set the SNOWFLAKE_SERVICE_USER environment variable.'
+        )
+    if not getattr(settings, 'SNOWFLAKE_SERVICE_USER_PASSWORD', ''):
+        raise ImproperlyConfigured(
+            'SNOWFLAKE_SERVICE_USER_PASSWORD is required but not set. '
+            'Set the SNOWFLAKE_SERVICE_USER_PASSWORD environment variable.'
+        )
+
     from snowflake import connector as snowflake_connector  # pylint: disable=import-outside-toplevel
 
     connection_kwargs = {
         'user': settings.SNOWFLAKE_SERVICE_USER,
         'password': settings.SNOWFLAKE_SERVICE_USER_PASSWORD,
-        'account': getattr(settings, 'SNOWFLAKE_ACCOUNT', SNOWFLAKE_ACCOUNT),
-        'database': getattr(settings, 'SNOWFLAKE_DATABASE', SNOWFLAKE_DATABASE),
+        'account': settings.SNOWFLAKE_ACCOUNT,
+        'database': settings.SNOWFLAKE_DATABASE,
     }
     warehouse = getattr(settings, 'SNOWFLAKE_WAREHOUSE', None)
     if warehouse:

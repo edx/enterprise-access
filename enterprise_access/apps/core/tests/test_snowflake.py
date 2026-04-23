@@ -4,17 +4,51 @@ import sys
 from types import SimpleNamespace
 from unittest import TestCase, mock
 
+from django.core.exceptions import ImproperlyConfigured
+
 from enterprise_access.apps.core import snowflake
 
 
 class TestSnowflakeHelpers(TestCase):
     """Unit tests for shared Snowflake helper functions."""
 
+    def test_get_snowflake_connection_raises_when_user_missing(self):
+        """Connection helper should raise ImproperlyConfigured when SNOWFLAKE_SERVICE_USER is unset."""
+        mock_settings = SimpleNamespace(
+            SNOWFLAKE_SERVICE_USER='',
+            SNOWFLAKE_SERVICE_USER_PASSWORD='svc-pass',
+            SNOWFLAKE_ACCOUNT='edx.us-east-1',
+            SNOWFLAKE_DATABASE='prod',
+        )
+        with mock.patch.object(snowflake, 'settings', mock_settings), mock.patch.dict(
+            sys.modules, {'snowflake': mock.Mock()}
+        ):
+            with self.assertRaises(ImproperlyConfigured) as ctx:
+                snowflake.get_snowflake_connection()
+        self.assertIn('SNOWFLAKE_SERVICE_USER', str(ctx.exception))
+
+    def test_get_snowflake_connection_raises_when_password_missing(self):
+        """Connection helper should raise ImproperlyConfigured when SNOWFLAKE_SERVICE_USER_PASSWORD is unset."""
+        mock_settings = SimpleNamespace(
+            SNOWFLAKE_SERVICE_USER='svc-user',
+            SNOWFLAKE_SERVICE_USER_PASSWORD='',
+            SNOWFLAKE_ACCOUNT='edx.us-east-1',
+            SNOWFLAKE_DATABASE='prod',
+        )
+        with mock.patch.object(snowflake, 'settings', mock_settings), mock.patch.dict(
+            sys.modules, {'snowflake': mock.Mock()}
+        ):
+            with self.assertRaises(ImproperlyConfigured) as ctx:
+                snowflake.get_snowflake_connection()
+        self.assertIn('SNOWFLAKE_SERVICE_USER_PASSWORD', str(ctx.exception))
+
     def test_get_snowflake_connection_uses_default_account_and_database(self):
-        """Connection helper should use default account and database when unset."""
+        """Connection helper should use default account and database from settings."""
         mock_settings = SimpleNamespace(
             SNOWFLAKE_SERVICE_USER='svc-user',
             SNOWFLAKE_SERVICE_USER_PASSWORD='svc-pass',
+            SNOWFLAKE_ACCOUNT='edx.us-east-1',
+            SNOWFLAKE_DATABASE='prod',
         )
 
         mock_connect = mock.Mock()
