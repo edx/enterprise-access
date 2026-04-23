@@ -375,6 +375,42 @@ class BillingAddressResponseSerializer(serializers.Serializer):
     )
 
 
+class AcademyProductPriceRecurringSerializer(serializers.Serializer):
+    """Recurring details for a Stripe price object."""
+
+    interval = serializers.CharField(required=False, allow_null=True)
+    interval_count = serializers.IntegerField(required=False, allow_null=True)
+    usage_type = serializers.CharField(required=False, allow_null=True)
+
+
+class AcademyProductPriceSerializer(serializers.Serializer):
+    """Stripe price data returned for an academy product."""
+
+    id = serializers.CharField()
+    product = serializers.CharField()
+    lookup_key = serializers.CharField(required=False, allow_null=True)
+    recurring = AcademyProductPriceRecurringSerializer(required=False, allow_null=True)
+    currency = serializers.CharField(required=False, allow_null=True)
+    unit_amount = serializers.IntegerField(required=False, allow_null=True)
+    unit_amount_decimal = serializers.CharField(required=False, allow_null=True)
+
+
+class AcademyProductResponseSerializer(serializers.Serializer):
+    """Public response serializer for academy products endpoint."""
+
+    id = serializers.CharField()
+    name = serializers.CharField()
+    long_name = serializers.CharField(allow_blank=True)
+    description = serializers.CharField(allow_blank=True)
+    marketing_url = serializers.CharField(allow_blank=True)
+    thumbnail_url = serializers.CharField(allow_blank=True)
+    prices = AcademyProductPriceSerializer(many=True)
+    tags = serializers.ListField(child=serializers.CharField(), required=False)
+    stripe_product_id = serializers.CharField(allow_blank=True)
+    enterprise_catalog_uuid = serializers.UUIDField(required=False, allow_null=True)
+    edx_catalog_id = serializers.UUIDField(required=False, allow_null=True)
+
+
 # pylint: disable=abstract-method
 class BillingAddressUpdateRequestSerializer(serializers.Serializer):
     """

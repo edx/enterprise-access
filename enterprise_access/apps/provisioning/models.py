@@ -1002,6 +1002,67 @@ class ProvisionNewCustomerWorkflow(AbstractWorkflow):
     def notification_output_dict(self):
         return self.output_data[NotificationStepOutput.KEY]
 
+    @classmethod
+    def create_and_execute_for_checkout_intent(
+        cls,
+        checkout_intent: CheckoutIntent,
+        trial_start: datetime,
+        trial_end: datetime,
+    ) -> 'ProvisionNewCustomerWorkflow':
+        """
+        Create and execute the provisioning workflow for a paid CheckoutIntent.
+
+        This is intended for self-service checkout flows where payment confirmation
+        should progress directly into provisioning.
+        """
+        country_code = str(checkout_intent.country or 'US')
+        enterprise_name = checkout_intent.enterprise_name or f'Enterprise-{checkout_intent.id}'
+        enterprise_slug = checkout_intent.enterprise_slug or f'enterprise-{checkout_intent.id}'
+
+        trial_product_id = settings.PROVISIONING_TRIAL_SUBSCRIPTION_PRODUCT_ID
+        paid_product_id = settings.PROVISIONING_PAID_SUBSCRIPTION_PRODUCT_ID
+        default_catalog_query_id = settings.PROVISIONING_DEFAULTS['catalog']['catalog_query_id']
+        catalog_query_id = settings.PRODUCT_ID_TO_CATALOG_QUERY_ID_MAPPING.get(
+            str(trial_product_id),
+            default_catalog_query_id,
+        )
+
+        workflow_input_dict = cls.generate_input_dict(
+            {
+                'name': enterprise_name,
+                'slug': enterprise_slug,
+                'country': country_code,
+            },
+            [checkout_intent.user.email],
+            {
+                'title': f'{enterprise_name} Catalog',
+                'catalog_query_id': catalog_query_id,
+            },
+            {
+                'default_catalog_uuid': None,
+            },
+            {
+                'title': f'{enterprise_name} Trial Subscription',
+                'salesforce_opportunity_line_item': '',
+                'start_date': trial_start,
+                'expiration_date': trial_end,
+                'desired_num_licenses': checkout_intent.quantity,
+                'product_id': trial_product_id,
+                'enterprise_catalog_uuid': None,
+            },
+            {
+                'title': f'{enterprise_name} First Paid Subscription',
+                'product_id': paid_product_id,
+                'salesforce_opportunity_line_item': None,
+            },
+        )
+
+        workflow = cls.objects.create(input_data=workflow_input_dict)
+        checkout_intent.workflow = workflow
+        checkout_intent.save(update_fields=['workflow', 'modified'])
+        workflow.execute()
+        return workflow
+
 
 class TriggerProvisionSubscriptionTrialCustomerWorkflow(ProvisionNewCustomerWorkflow):
     """

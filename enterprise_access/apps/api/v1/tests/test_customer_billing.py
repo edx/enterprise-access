@@ -1,6 +1,8 @@
 """
 Tests for customer billing API endpoints.
 """
+# pylint: disable=import-outside-toplevel,unused-argument,unused-variable
+# pylint: disable=redefined-outer-name,reimported,protected-access
 import json
 import uuid
 from datetime import timedelta
@@ -8,13 +10,12 @@ from unittest import mock
 
 import ddt
 import stripe
-from django.core.cache import cache
-from django.test import RequestFactory, override_settings
+from django.test import override_settings
 from django.urls import reverse
 from django.utils import timezone
+from edx_django_utils.cache import TieredCache
 from rest_framework import status
 
-from enterprise_access.apps.api.v1.views.customer_billing import BillingManagementViewSet, CheckoutIntentPermission
 from enterprise_access.apps.core.constants import (
     SYSTEM_ENTERPRISE_ADMIN_ROLE,
     SYSTEM_ENTERPRISE_LEARNER_ROLE,
@@ -22,8 +23,392 @@ from enterprise_access.apps.core.constants import (
 )
 from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.customer_billing.constants import CheckoutIntentState
-from enterprise_access.apps.customer_billing.models import CheckoutIntent, StripeEventData, StripeEventSummary
+from enterprise_access.apps.customer_billing.models import CheckoutIntent
 from test_utils import APITest
+
+
+class AcademyProductsApiTests(APITest):
+    """Tests for public academy products endpoint."""
+
+    def setUp(self):
+        super().setUp()
+        self.catalog_uuid = str(uuid.uuid4())
+        self.settings_context = self.settings(
+            ACADEMY_THUMBNAIL_S3_BASE_URL='https://assets.example.com/academies/',
+            STRIPE_API_KEY='sk_test_123',
+        )
+        self.settings_context.enable()
+        TieredCache.dangerous_clear_all_tiers()
+        self.active_products = [
+            {
+                'id': 'prod_ai',
+                'name': 'AI Academy',
+                'description': 'AI track',
+                'active': True,
+                'metadata': {
+                    'long_name': 'Artificial Intelligence Academy',
+                    'marketing_url': 'https://example.com/ai',
+                    'thumbnail_url': 'thumbnails/ai.png',
+                    'tags': 'ai,ml',
+                    'product_key': 'essentials_ai',
+                    'enterprise_catalog_uuid': self.catalog_uuid,
+                },
+            },
+            {
+                'id': 'prod_data',
+                'name': 'Data Academy',
+                'description': 'Data track',
+                'active': True,
+                'metadata': {
+                    'long_name': 'Data Science Academy',
+                    'marketing_url': 'https://example.com/data',
+                    'thumbnail_url': 'thumbnails/data.png',
+                    'tags': '["python", "ml"]',
+                    'product_key': 'academy_data',
+                },
+            },
+        ]
+        self.inactive_product = {
+            'id': 'prod_legacy',
+            'name': 'Legacy Academy',
+            'description': 'Legacy',
+            'active': False,
+            'metadata': {
+                'long_name': 'Legacy Academy',
+                'marketing_url': 'https://example.com/legacy',
+                'thumbnail_url': 'thumbnails/legacy.png',
+                'tags': 'legacy',
+                'product_key': 'essentials_legacy',
+            },
+        }
+        self.price_payload = [
+            {
+                'id': 'price_ai_year',
+                'lookup_key': 'essentials_ai',
+                'currency': 'usd',
+                'unit_amount': 14900,
+                'unit_amount_decimal': 149,
+                'recurring': {'interval': 'year', 'interval_count': 1, 'usage_type': 'licensed'},
+                'product': {'id': 'prod_ai'},
+            },
+            {
+                'id': 'price_data_year',
+                'lookup_key': 'academy_data',
+                'currency': 'usd',
+                'unit_amount': 15900,
+                'unit_amount_decimal': 159,
+                'recurring': {'interval': 'year', 'interval_count': 1, 'usage_type': 'licensed'},
+                'product': {'id': 'prod_data'},
+            },
+        ]
+
+    def tearDown(self):
+        TieredCache.dangerous_clear_all_tiers()
+        self.settings_context.disable()
+        super().tearDown()
+
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_all_active_stripe_prices')
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.stripe.Product.list')
+    def test_list_returns_expected_fields_and_prices(self, mock_product_list, mock_active_prices):
+        products_obj = mock.Mock()
+        products_obj.auto_paging_iter.return_value = self.active_products
+        mock_product_list.return_value = products_obj
+        mock_active_prices.return_value = self.price_payload
+
+        url = reverse('api:v1:academy-products-list')
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['count'], 2)
+        first = response.data['results'][0]
+        self.assertEqual(first['name'], 'AI Academy')
+        self.assertEqual(first['thumbnail_url'], 'https://assets.example.com/academies/thumbnails/ai.png')
+        self.assertEqual(first['prices'][0]['unit_amount'], 14900)
+        self.assertEqual(first['prices'][0]['unit_amount_decimal'], '149.00')
+        self.assertEqual(first['edx_catalog_id'], self.catalog_uuid)
+
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_all_active_stripe_prices')
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.stripe.Product.list')
+    def test_list_supports_pagination_and_count_param(self, mock_product_list, mock_active_prices):
+        products_obj = mock.Mock()
+        products_obj.auto_paging_iter.return_value = self.active_products
+        mock_product_list.return_value = products_obj
+        mock_active_prices.return_value = self.price_payload
+
+        url = reverse('api:v1:academy-products-list')
+        response = self.client.get(url, {'count': 1, 'page': 2})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data['results']), 1)
+        self.assertIsNotNone(response.data['previous'])
+
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_all_active_stripe_prices')
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.stripe.Product.list')
+    def test_list_filters_by_active_product_key_and_tags(self, mock_product_list, mock_active_prices):
+        products_obj = mock.Mock()
+        products_obj.auto_paging_iter.return_value = self.active_products
+        mock_product_list.return_value = products_obj
+        mock_active_prices.return_value = self.price_payload
+
+        url = reverse('api:v1:academy-products-list')
+        response = self.client.get(url, {'product_key': 'academy_data', 'tag': ['python', 'ml']})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['count'], 1)
+        self.assertEqual(response.data['results'][0]['name'], 'Data Academy')
+
+        products_obj.auto_paging_iter.return_value = [self.inactive_product]
+        inactive_response = self.client.get(url, {'active': 'false'})
+        self.assertEqual(inactive_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(inactive_response.data['count'], 1)
+        self.assertEqual(inactive_response.data['results'][0]['name'], 'Legacy Academy')
+
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.stripe.Product.retrieve')
+    def test_retrieve_returns_404_for_inactive_by_default(self, mock_product_retrieve):
+        mock_product_retrieve.return_value = self.inactive_product
+
+        url = reverse('api:v1:academy-products-detail', kwargs={'pk': self.inactive_product['id']})
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.stripe.Product.retrieve')
+    def test_retrieve_returns_502_when_stripe_unavailable(self, mock_product_retrieve):
+        mock_product_retrieve.side_effect = stripe.StripeError('stripe down')
+
+        url = reverse('api:v1:academy-products-detail', kwargs={'pk': 'prod_ai'})
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY)
+        self.assertEqual(response.data['error_code'], 'stripe_temporarily_unavailable')
+
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_all_active_stripe_prices')
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.stripe.Product.retrieve')
+    def test_retrieve_returns_expected_payload(self, mock_product_retrieve, mock_active_prices):
+        mock_product_retrieve.return_value = self.active_products[0]
+        mock_active_prices.return_value = self.price_payload
+
+        url = reverse('api:v1:academy-products-detail', kwargs={'pk': 'prod_ai'})
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['id'], 'prod_ai')
+        self.assertEqual(response.data['name'], 'AI Academy')
+        self.assertEqual(response.data['prices'][0]['id'], 'price_ai_year')
+        self.assertEqual(response.data['prices'][0]['unit_amount_decimal'], '149.00')
+        self.assertEqual(response.data['edx_catalog_id'], self.catalog_uuid)
+
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.stripe.Product.list')
+    def test_list_returns_502_when_stripe_unavailable(self, mock_product_list):
+        mock_product_list.side_effect = stripe.StripeError('stripe down')
+
+        url = reverse('api:v1:academy-products-list')
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY)
+        self.assertEqual(response.data['error_code'], 'stripe_temporarily_unavailable')
+
+    @override_settings(ACADEMY_THUMBNAIL_S3_BASE_URL='')
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_all_active_stripe_prices')
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.stripe.Product.list')
+    def test_list_keeps_absolute_thumbnail_url(self, mock_product_list, mock_active_prices):
+        absolute_thumb_product = self.active_products[0].copy()
+        absolute_thumb_product['metadata'] = absolute_thumb_product['metadata'].copy()
+        absolute_thumb_product['metadata']['thumbnail_url'] = 'https://cdn.example.com/ai.png'
+
+        products_obj = mock.Mock()
+        products_obj.auto_paging_iter.return_value = [absolute_thumb_product]
+        mock_product_list.return_value = products_obj
+        mock_active_prices.return_value = []
+
+        url = reverse('api:v1:academy-products-list')
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['results'][0]['thumbnail_url'], 'https://cdn.example.com/ai.png')
+
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_all_active_stripe_prices')
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.stripe.Product.list')
+    def test_list_skips_invalid_price_product_and_serializes_optional_fields(
+        self,
+        mock_product_list,
+        mock_active_prices,
+    ):
+        products_obj = mock.Mock()
+        products_obj.auto_paging_iter.return_value = [self.active_products[0]]
+        mock_product_list.return_value = products_obj
+        mock_active_prices.return_value = [
+            {
+                'id': 'price_invalid_no_product',
+                'product': {},
+                'lookup_key': 'invalid',
+                'recurring': {'interval': 'year', 'interval_count': 1, 'usage_type': 'licensed'},
+                'currency': 'usd',
+                'unit_amount': 5000,
+                'unit_amount_decimal': 50,
+            },
+            {
+                'id': 'price_ai_optional_fields',
+                'product': {'id': 'prod_ai', 'name': 'AI Academy', 'description': '', 'metadata': {}},
+                'lookup_key': 'essentials_ai',
+                'recurring': None,
+                'currency': 'usd',
+                'unit_amount': None,
+                'unit_amount_decimal': None,
+            },
+        ]
+
+        url = reverse('api:v1:academy-products-list')
+        response = self.client.get(url, {'product_key': 'essentials_ai'})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['count'], 1)
+        prices = response.data['results'][0]['prices']
+        self.assertEqual(len(prices), 1)
+        self.assertEqual(prices[0]['id'], 'price_ai_optional_fields')
+        self.assertIsNone(prices[0]['recurring'])
+        self.assertIsNone(prices[0]['unit_amount'])
+        self.assertIsNone(prices[0]['unit_amount_decimal'])
+
+    @mock.patch(
+        'enterprise_access.apps.api.v1.views.customer_billing.AcademyProductsAnonRateThrottle.get_rate',
+        return_value='1/min',
+    )
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_all_active_stripe_prices')
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.stripe.Product.list')
+    def test_list_is_rate_limited_for_unauthenticated_requests(
+        self,
+        mock_product_list,
+        mock_active_prices,
+        _mock_get_rate,
+    ):
+        from django.core.cache import cache  # pylint: disable=import-outside-toplevel
+        cache.clear()
+        products_obj = mock.Mock()
+        products_obj.auto_paging_iter.return_value = self.active_products
+        mock_product_list.return_value = products_obj
+        mock_active_prices.return_value = self.price_payload
+
+        url = reverse('api:v1:academy-products-list')
+        first_response = self.client.get(url)
+        second_response = self.client.get(url)
+
+        self.assertEqual(first_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(second_response.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+
+    @override_settings(ACADEMY_THUMBNAIL_S3_BASE_URL='')
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_all_active_stripe_prices')
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.stripe.Product.list')
+    def test_list_returns_relative_thumbnail_when_base_url_missing(self, mock_product_list, mock_active_prices):
+        products_obj = mock.Mock()
+        products_obj.auto_paging_iter.return_value = [self.active_products[0]]
+        mock_product_list.return_value = products_obj
+        mock_active_prices.return_value = self.price_payload
+
+        url = reverse('api:v1:academy-products-list')
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['results'][0]['thumbnail_url'], 'thumbnails/ai.png')
+
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_all_active_stripe_prices')
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.stripe.Product.retrieve')
+    def test_retrieve_returns_404_for_unknown_product(self, mock_product_retrieve, mock_active_prices):
+        mock_product_retrieve.side_effect = stripe.InvalidRequestError('missing', 'id')
+        mock_active_prices.return_value = self.price_payload
+
+        url = reverse('api:v1:academy-products-detail', kwargs={'pk': 'prod_missing'})
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_all_active_stripe_prices')
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.stripe.Product.list')
+    def test_list_uses_cached_products_without_calling_stripe(self, mock_product_list, mock_active_prices):
+        products_obj = mock.Mock()
+        products_obj.auto_paging_iter.return_value = self.active_products
+        mock_product_list.return_value = products_obj
+        mock_active_prices.return_value = self.price_payload
+
+        url = reverse('api:v1:academy-products-list')
+        first_response = self.client.get(url)
+        second_response = self.client.get(url)
+
+        self.assertEqual(first_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(second_response.status_code, status.HTTP_200_OK)
+        mock_product_list.assert_called_once_with(active=True, limit=100)
+
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_all_active_stripe_prices')
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.stripe.Product.list')
+    def test_list_serializes_non_string_tags_as_empty(self, mock_product_list, mock_active_prices):
+        product = self.active_products[0].copy()
+        product['metadata'] = product['metadata'].copy()
+        product['metadata']['tags'] = {'topic': 'ai'}
+
+        products_obj = mock.Mock()
+        products_obj.auto_paging_iter.return_value = [product]
+        mock_product_list.return_value = products_obj
+        mock_active_prices.return_value = self.price_payload
+
+        url = reverse('api:v1:academy-products-list')
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['results'][0]['tags'], [])
+
+    def test_academy_helper_methods_cover_edge_cases(self):
+        from rest_framework.request import Request  # pylint: disable=import-outside-toplevel
+        from rest_framework.response import Response  # pylint: disable=import-outside-toplevel
+        from rest_framework.test import APIRequestFactory  # pylint: disable=import-outside-toplevel
+
+        from enterprise_access.apps.api.v1.views.customer_billing import (  # pylint: disable=import-outside-toplevel
+            AcademyProductsViewSet
+        )
+
+        factory = APIRequestFactory()
+        view = AcademyProductsViewSet()
+        view.request = Request(factory.get('/api/v1/customer-billing/academy-products', {'tag': ['ml']}))
+
+        self.assertEqual(view._resolve_thumbnail_url(''), '')
+        self.assertEqual(view._parse_metadata_tags([]), [])
+        self.assertEqual(view._parse_metadata_tags([' ai ', '', 'ml']), ['ai', 'ml'])
+        self.assertEqual(view._parse_metadata_tags('{"topic": "ai"}'), ['{"topic": "ai"}'])
+        self.assertEqual(view._parse_metadata_tags({'topic': 'ai'}), [])
+
+        cached_products = [
+            {'id': 'prod_ai', 'metadata': {'tags': 'ai'}},
+            {'id': 'prod_ml', 'metadata': {'tags': 'ml'}},
+        ]
+        with mock.patch(
+            'enterprise_access.apps.api.v1.views.customer_billing.TieredCache.get_cached_response',
+            return_value=mock.Mock(is_found=True, value=cached_products),
+        ):
+            filtered_products = view._get_products()
+
+        self.assertEqual(filtered_products, [cached_products[1]])
+
+        list_view = AcademyProductsViewSet()
+        list_request = Request(factory.get('/api/v1/customer-billing/academy-products'))
+        list_view.request = list_request
+        list_view.format_kwarg = None
+        sample_products = [{'id': 'prod_ai', 'name': 'AI Academy', 'metadata': {}}]
+
+        def serializer_side_effect(payload, many=False):
+            return mock.Mock(data=payload)
+
+        def paginated_response_side_effect(data):
+            return Response(data)
+
+        with (
+            mock.patch.object(list_view, '_get_products', return_value=sample_products),
+            mock.patch.object(list_view, '_build_price_map', return_value={}),
+            mock.patch.object(list_view, 'paginate_queryset', return_value=None),
+            mock.patch.object(list_view, 'get_serializer', side_effect=serializer_side_effect),
+            mock.patch.object(list_view, 'get_paginated_response', side_effect=paginated_response_side_effect),
+        ):
+            response = list_view.list(list_request)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data[0]['id'], 'prod_ai')
 
 
 @ddt.ddt
@@ -52,6 +437,7 @@ class CustomerBillingPortalSessionTests(APITest):
     def tearDown(self):
         CheckoutIntent.objects.all().delete()
         # Clear Django cache to prevent Stripe API cache pollution between tests
+        from django.core.cache import cache
         cache.clear()
         super().tearDown()
 
@@ -97,7 +483,7 @@ class CustomerBillingPortalSessionTests(APITest):
     )
     @ddt.unpack
     def test_create_enterprise_admin_portal_session_rbac(
-        self, _scenario, role, _uuid_type, include_uuid, expected_status
+        self, scenario, role, uuid_type, include_uuid, expected_status
     ):
         """
         Test RBAC scenarios for enterprise admin portal session endpoint.
@@ -242,7 +628,7 @@ class CustomerBillingPortalSessionTests(APITest):
     )
     @ddt.unpack
     def test_create_checkout_portal_session_rbac(
-        self, _scenario, user_type, intent_pk, expected_status
+        self, scenario, user_type, intent_pk, expected_status
     ):
         """
         Test RBAC scenarios for checkout portal session endpoint.
@@ -632,6 +1018,10 @@ class CheckoutIntentPermissionTests(APITest):
         """
         Test CheckoutIntentPermission when pk is invalid for both UUID and int (TypeError).
         """
+        from django.test import RequestFactory
+
+        from enterprise_access.apps.api.v1.views.customer_billing import CheckoutIntentPermission
+
         permission = CheckoutIntentPermission()
         factory = RequestFactory()
 
@@ -654,6 +1044,10 @@ class CheckoutIntentPermissionTests(APITest):
         """
         Test CheckoutIntentPermission when pk fails int() conversion (ValueError).
         """
+        from django.test import RequestFactory
+
+        from enterprise_access.apps.api.v1.views.customer_billing import CheckoutIntentPermission
+
         permission = CheckoutIntentPermission()
         factory = RequestFactory()
 
@@ -705,6 +1099,7 @@ class BillingManagementBaseTest(APITest):
     def tearDown(self):
         CheckoutIntent.objects.all().delete()
         # Clear Django cache to prevent Stripe API cache pollution between tests
+        from django.core.cache import cache
         cache.clear()
         super().tearDown()
 
@@ -1761,6 +2156,8 @@ class BillingManagementSetDefaultPaymentMethodTests(BillingManagementBaseTest):
         """
         Test that operator role can also set default payment method.
         """
+        from enterprise_access.apps.core.constants import SYSTEM_ENTERPRISE_OPERATOR_ROLE
+
         # Set JWT cookie with operator role
         self.set_jwt_cookie([{
             'system_wide_role': SYSTEM_ENTERPRISE_OPERATOR_ROLE,
@@ -1908,7 +2305,7 @@ class BillingManagementDeletePaymentMethodTests(BillingManagementBaseTest):
         ('wrong_role', SYSTEM_ENTERPRISE_LEARNER_ROLE, 'existing', status.HTTP_403_FORBIDDEN),
     )
     @ddt.unpack
-    def test_delete_payment_method_rbac(self, _scenario, role, uuid_type, expected_status):
+    def test_delete_payment_method_rbac(self, scenario, role, uuid_type, expected_status):
         """
         Test RBAC scenarios for delete payment method endpoint.
         Scenarios: missing_uuid (403), nonexistent_uuid (403), wrong_role (403).
@@ -2151,7 +2548,7 @@ class BillingManagementTransactionsTests(BillingManagementBaseTest):
         ('wrong_role', SYSTEM_ENTERPRISE_LEARNER_ROLE, 'existing', status.HTTP_403_FORBIDDEN),
     )
     @ddt.unpack
-    def test_list_transactions_rbac(self, _scenario, role, uuid_type, expected_status):
+    def test_list_transactions_rbac(self, scenario, role, uuid_type, expected_status):
         """
         Test RBAC scenarios for list transactions endpoint.
         Scenarios: missing_uuid (403), nonexistent_uuid (403), wrong_role (403).
@@ -2193,7 +2590,7 @@ class BillingManagementTransactionsTests(BillingManagementBaseTest):
 
     @mock.patch('stripe.Charge.retrieve')
     @mock.patch('stripe.Invoice.list')
-    def test_list_transactions_empty_list(self, mock_invoice_list, _mock_charge_retrieve):
+    def test_list_transactions_empty_list(self, mock_invoice_list, mock_charge_retrieve):
         """
         Test returning empty transaction list.
         """
@@ -2211,7 +2608,7 @@ class BillingManagementTransactionsTests(BillingManagementBaseTest):
 
     @mock.patch('stripe.Charge.retrieve')
     @mock.patch('stripe.Invoice.list')
-    def test_list_transactions_normalizes_status(self, mock_invoice_list, _mock_charge_retrieve):
+    def test_list_transactions_normalizes_status(self, mock_invoice_list, mock_charge_retrieve):
         """
         Test that invoice statuses are normalized correctly.
         """
@@ -2275,6 +2672,7 @@ class BillingManagementSubscriptionTests(BillingManagementBaseTest):
         """
         Test successfully retrieving subscription from StripeEventSummary.
         """
+        from enterprise_access.apps.customer_billing.models import StripeEventData, StripeEventSummary
 
         # Create subscription event data
         sub_event_data = StripeEventData.objects.create(
@@ -2351,6 +2749,7 @@ class BillingManagementSubscriptionTests(BillingManagementBaseTest):
         Test retrieving subscription data during trial period with $0 invoice.
         Verifies fallback to upcoming_invoice_amount_due from subscription.created event.
         """
+        from enterprise_access.apps.customer_billing.models import StripeEventData, StripeEventSummary
 
         # Create subscription.created event with upcoming_invoice_amount_due
         sub_created_event_data = StripeEventData.objects.create(
@@ -2412,7 +2811,7 @@ class BillingManagementSubscriptionTests(BillingManagementBaseTest):
         ('wrong_role', SYSTEM_ENTERPRISE_LEARNER_ROLE, 'existing', status.HTTP_403_FORBIDDEN),
     )
     @ddt.unpack
-    def test_get_subscription_rbac(self, _scenario, role, uuid_type, expected_status):
+    def test_get_subscription_rbac(self, scenario, role, uuid_type, expected_status):
         """
         Test RBAC scenarios for get subscription endpoint.
         Scenarios: missing_uuid (403), nonexistent_uuid (403), wrong_role (403).
@@ -2441,6 +2840,7 @@ class BillingManagementSubscriptionTests(BillingManagementBaseTest):
         """
         Test yearly amount calculation from invoice event data.
         """
+        from enterprise_access.apps.customer_billing.models import StripeEventData, StripeEventSummary
 
         # Create subscription event data
         sub_event_data = StripeEventData.objects.create(
@@ -2514,6 +2914,7 @@ class BillingManagementCancelSubscriptionTests(BillingManagementBaseTest):
         """
         Test successfully cancelling a Teams plan subscription.
         """
+        from enterprise_access.apps.customer_billing.models import StripeEventData, StripeEventSummary
 
         # Create StripeEventSummary with active subscription (not scheduled for cancellation)
         event_data = StripeEventData.objects.create(
@@ -2522,7 +2923,7 @@ class BillingManagementCancelSubscriptionTests(BillingManagementBaseTest):
             checkout_intent=self.checkout_intent,
             data={'data': {'object': {}}},
         )
-        _event_summary = StripeEventSummary.objects.create(
+        event_summary = StripeEventSummary.objects.create(
             stripe_event_data=event_data,
             event_id='evt_cancel_teams',
             event_type='customer.subscription.updated',
@@ -2585,6 +2986,7 @@ class BillingManagementCancelSubscriptionTests(BillingManagementBaseTest):
         """
         Test successfully cancelling an Essentials plan subscription.
         """
+        from enterprise_access.apps.customer_billing.models import StripeEventData, StripeEventSummary
 
         # Create StripeEventSummary with active subscription (not scheduled for cancellation)
         event_data = StripeEventData.objects.create(
@@ -2593,7 +2995,7 @@ class BillingManagementCancelSubscriptionTests(BillingManagementBaseTest):
             checkout_intent=self.checkout_intent,
             data={'data': {'object': {}}},
         )
-        _event_summary = StripeEventSummary.objects.create(
+        event_summary = StripeEventSummary.objects.create(
             stripe_event_data=event_data,
             event_id='evt_cancel_essentials',
             event_type='customer.subscription.updated',
@@ -2648,6 +3050,7 @@ class BillingManagementCancelSubscriptionTests(BillingManagementBaseTest):
         """
         Test that cancelling LearnerCredit plan returns 403.
         """
+        from enterprise_access.apps.customer_billing.models import StripeEventData, StripeEventSummary
 
         # Create StripeEventSummary with active subscription
         event_data = StripeEventData.objects.create(
@@ -2656,7 +3059,7 @@ class BillingManagementCancelSubscriptionTests(BillingManagementBaseTest):
             checkout_intent=self.checkout_intent,
             data={'data': {'object': {}}},
         )
-        _event_summary = StripeEventSummary.objects.create(
+        event_summary = StripeEventSummary.objects.create(
             stripe_event_data=event_data,
             event_id='evt_cancel_lc',
             event_type='customer.subscription.updated',
@@ -2703,6 +3106,7 @@ class BillingManagementCancelSubscriptionTests(BillingManagementBaseTest):
         """
         Test that cancelling Other plan returns 403.
         """
+        from enterprise_access.apps.customer_billing.models import StripeEventData, StripeEventSummary
 
         # Create StripeEventSummary with active subscription
         event_data = StripeEventData.objects.create(
@@ -2711,7 +3115,7 @@ class BillingManagementCancelSubscriptionTests(BillingManagementBaseTest):
             checkout_intent=self.checkout_intent,
             data={'data': {'object': {}}},
         )
-        _event_summary = StripeEventSummary.objects.create(
+        event_summary = StripeEventSummary.objects.create(
             stripe_event_data=event_data,
             event_id='evt_cancel_other',
             event_type='customer.subscription.updated',
@@ -2756,6 +3160,7 @@ class BillingManagementCancelSubscriptionTests(BillingManagementBaseTest):
         """
         Test that cancelling an already-cancelling subscription returns 409.
         """
+        from enterprise_access.apps.customer_billing.models import StripeEventData, StripeEventSummary
 
         # Create StripeEventSummary with subscription already scheduled for cancellation
         event_data = StripeEventData.objects.create(
@@ -2764,7 +3169,7 @@ class BillingManagementCancelSubscriptionTests(BillingManagementBaseTest):
             checkout_intent=self.checkout_intent,
             data={'data': {'object': {}}},
         )
-        _event_summary = StripeEventSummary.objects.create(
+        event_summary = StripeEventSummary.objects.create(
             stripe_event_data=event_data,
             event_id='evt_already_cancelling',
             event_type='customer.subscription.updated',
@@ -2806,7 +3211,7 @@ class BillingManagementCancelSubscriptionTests(BillingManagementBaseTest):
         ('wrong_role', SYSTEM_ENTERPRISE_LEARNER_ROLE, 'existing', status.HTTP_403_FORBIDDEN),
     )
     @ddt.unpack
-    def test_cancel_subscription_rbac(self, _scenario, role, uuid_type, expected_status):
+    def test_cancel_subscription_rbac(self, scenario, role, uuid_type, expected_status):
         """
         Test RBAC scenarios for cancel subscription endpoint.
         Scenarios: missing_uuid (403), nonexistent_uuid (403), wrong_role (403).
@@ -2841,6 +3246,7 @@ class BillingManagementCancelSubscriptionTests(BillingManagementBaseTest):
         """
         Test that endpoint handles Stripe API errors gracefully.
         """
+        from enterprise_access.apps.customer_billing.models import StripeEventData, StripeEventSummary
 
         # Create StripeEventSummary with active subscription
         event_data = StripeEventData.objects.create(
@@ -2849,7 +3255,7 @@ class BillingManagementCancelSubscriptionTests(BillingManagementBaseTest):
             checkout_intent=self.checkout_intent,
             data={'data': {'object': {}}},
         )
-        _event_summary = StripeEventSummary.objects.create(
+        event_summary = StripeEventSummary.objects.create(
             stripe_event_data=event_data,
             event_id='evt_cancel_error',
             event_type='customer.subscription.updated',
@@ -2915,6 +3321,7 @@ class BillingManagementReinstateSubscriptionTests(BillingManagementBaseTest):
         """
         Test successfully reinstating a Teams plan subscription.
         """
+        from enterprise_access.apps.customer_billing.models import StripeEventData, StripeEventSummary
 
         # Create StripeEventSummary with subscription scheduled for cancellation
         future_cancel_at = timezone.now() + timedelta(days=30)
@@ -2924,7 +3331,7 @@ class BillingManagementReinstateSubscriptionTests(BillingManagementBaseTest):
             checkout_intent=self.checkout_intent,
             data={'data': {'object': {}}},
         )
-        _event_summary = StripeEventSummary.objects.create(
+        event_summary = StripeEventSummary.objects.create(
             stripe_event_data=event_data,
             event_id='evt_reinstate_teams',
             event_type='customer.subscription.updated',
@@ -2988,6 +3395,7 @@ class BillingManagementReinstateSubscriptionTests(BillingManagementBaseTest):
         """
         Test successfully reinstating an Essentials plan subscription.
         """
+        from enterprise_access.apps.customer_billing.models import StripeEventData, StripeEventSummary
 
         # Create StripeEventSummary with subscription scheduled for cancellation
         future_cancel_at = timezone.now() + timedelta(days=30)
@@ -2997,7 +3405,7 @@ class BillingManagementReinstateSubscriptionTests(BillingManagementBaseTest):
             checkout_intent=self.checkout_intent,
             data={'data': {'object': {}}},
         )
-        _event_summary = StripeEventSummary.objects.create(
+        event_summary = StripeEventSummary.objects.create(
             stripe_event_data=event_data,
             event_id='evt_reinstate_essentials',
             event_type='customer.subscription.updated',
@@ -3052,6 +3460,7 @@ class BillingManagementReinstateSubscriptionTests(BillingManagementBaseTest):
         """
         Test that reinstating LearnerCredit plan returns 403.
         """
+        from enterprise_access.apps.customer_billing.models import StripeEventData, StripeEventSummary
 
         # Create StripeEventSummary with subscription scheduled for cancellation
         future_cancel_at = timezone.now() + timedelta(days=30)
@@ -3061,7 +3470,7 @@ class BillingManagementReinstateSubscriptionTests(BillingManagementBaseTest):
             checkout_intent=self.checkout_intent,
             data={'data': {'object': {}}},
         )
-        _event_summary = StripeEventSummary.objects.create(
+        event_summary = StripeEventSummary.objects.create(
             stripe_event_data=event_data,
             event_id='evt_reinstate_lc',
             event_type='customer.subscription.updated',
@@ -3104,6 +3513,7 @@ class BillingManagementReinstateSubscriptionTests(BillingManagementBaseTest):
         """
         Test that reinstating a subscription not pending cancellation returns 409.
         """
+        from enterprise_access.apps.customer_billing.models import StripeEventData, StripeEventSummary
 
         # Create StripeEventSummary with subscription NOT scheduled for cancellation
         event_data = StripeEventData.objects.create(
@@ -3112,7 +3522,7 @@ class BillingManagementReinstateSubscriptionTests(BillingManagementBaseTest):
             checkout_intent=self.checkout_intent,
             data={'data': {'object': {}}},
         )
-        _event_summary = StripeEventSummary.objects.create(
+        event_summary = StripeEventSummary.objects.create(
             stripe_event_data=event_data,
             event_id='evt_reinstate_not_pending',
             event_type='customer.subscription.updated',
@@ -3137,6 +3547,7 @@ class BillingManagementReinstateSubscriptionTests(BillingManagementBaseTest):
         """
         Test that reinstating when period has ended returns 409.
         """
+        from enterprise_access.apps.customer_billing.models import StripeEventData, StripeEventSummary
 
         # Create StripeEventSummary with subscription period already ended
         past_period_end = timezone.now() - timedelta(days=1)  # 1 day ago
@@ -3146,7 +3557,7 @@ class BillingManagementReinstateSubscriptionTests(BillingManagementBaseTest):
             checkout_intent=self.checkout_intent,
             data={'data': {'object': {}}},
         )
-        _event_summary = StripeEventSummary.objects.create(
+        event_summary = StripeEventSummary.objects.create(
             stripe_event_data=event_data,
             event_id='evt_reinstate_ended',
             event_type='customer.subscription.updated',
@@ -3188,7 +3599,7 @@ class BillingManagementReinstateSubscriptionTests(BillingManagementBaseTest):
         ('wrong_role', SYSTEM_ENTERPRISE_LEARNER_ROLE, 'existing', status.HTTP_403_FORBIDDEN),
     )
     @ddt.unpack
-    def test_reinstate_subscription_rbac(self, _scenario, role, uuid_type, expected_status):
+    def test_reinstate_subscription_rbac(self, scenario, role, uuid_type, expected_status):
         """
         Test RBAC scenarios for reinstate subscription endpoint.
         Scenarios: missing_uuid (403), nonexistent_uuid (403), wrong_role (403).
@@ -3223,6 +3634,7 @@ class BillingManagementReinstateSubscriptionTests(BillingManagementBaseTest):
         """
         Test that endpoint handles Stripe API errors gracefully.
         """
+        from enterprise_access.apps.customer_billing.models import StripeEventData, StripeEventSummary
 
         # Create StripeEventSummary with subscription scheduled for cancellation
         future_cancel_at = timezone.now() + timedelta(days=30)
@@ -3232,7 +3644,7 @@ class BillingManagementReinstateSubscriptionTests(BillingManagementBaseTest):
             checkout_intent=self.checkout_intent,
             data={'data': {'object': {}}},
         )
-        _event_summary = StripeEventSummary.objects.create(
+        event_summary = StripeEventSummary.objects.create(
             stripe_event_data=event_data,
             event_id='evt_reinstate_error',
             event_type='customer.subscription.updated',
@@ -3306,7 +3718,7 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
 
     @mock.patch('stripe.Customer.retrieve')
     @mock.patch('enterprise_access.apps.api.serializers.customer_billing.BillingAddressResponseSerializer.is_valid')
-    def test_get_address_general_exception(self, _mock_is_valid, mock_get_stripe_customer):
+    def test_get_address_general_exception(self, mock_is_valid, mock_get_stripe_customer):
         """
         Test get address with general (non-Stripe) exception.
         """
@@ -3320,7 +3732,7 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
 
     @mock.patch('stripe.Customer.modify')
     @mock.patch('enterprise_access.apps.api.serializers.customer_billing.BillingAddressResponseSerializer.is_valid')
-    def test_update_address_general_exception(self, _mock_is_valid, mock_customer_modify):
+    def test_update_address_general_exception(self, mock_is_valid, mock_customer_modify):
         """
         Test update address with general (non-Stripe) exception.
         """
@@ -3381,7 +3793,7 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
     @mock.patch('stripe.PaymentMethod.list')
     @mock.patch('stripe.Customer.retrieve')
     @mock.patch('enterprise_access.apps.api.serializers.customer_billing.PaymentMethodsListResponseSerializer.is_valid')
-    def test_list_payment_methods_general_exception(self, _mock_is_valid, mock_customer_retrieve, _mock_pm_list):
+    def test_list_payment_methods_general_exception(self, mock_is_valid, mock_customer_retrieve, mock_pm_list):
         """
         Test list payment methods with general exception.
         """
@@ -3398,7 +3810,7 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
     @mock.patch(
         'enterprise_access.apps.api.serializers.customer_billing.AttachPaymentMethodResponseSerializer.is_valid'
     )
-    def test_attach_payment_method_general_exception(self, _mock_is_valid, mock_pm_retrieve, _mock_pm_attach):
+    def test_attach_payment_method_general_exception(self, mock_is_valid, mock_pm_retrieve, mock_pm_attach):
         """
         Test attach payment method with general exception.
         """
@@ -3563,6 +3975,7 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
         """
         Test _normalize_invoice_status with uncollectible status.
         """
+        from enterprise_access.apps.api.v1.views.customer_billing import BillingManagementViewSet
 
         result = BillingManagementViewSet._normalize_invoice_status('uncollectible')  # pylint: disable=protected-access
         self.assertEqual(result, 'uncollectible')
@@ -3574,6 +3987,7 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
         """
         Test cancel subscription with Stripe InvalidRequestError.
         """
+        from enterprise_access.apps.customer_billing.models import StripeEventData, StripeEventSummary
 
         # Create StripeEventSummary with active subscription
         event_data = StripeEventData.objects.create(
@@ -3582,7 +3996,7 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
             checkout_intent=self.checkout_intent,
             data={'data': {'object': {}}},
         )
-        _event_summary = StripeEventSummary.objects.create(
+        event_summary = StripeEventSummary.objects.create(
             stripe_event_data=event_data,
             event_id='evt_cancel_invalid',
             event_type='customer.subscription.updated',
@@ -3608,6 +4022,7 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
         """
         Test cancel subscription with general exception.
         """
+        from enterprise_access.apps.customer_billing.models import StripeEventData, StripeEventSummary
 
         # Create StripeEventSummary with active subscription
         event_data = StripeEventData.objects.create(
@@ -3616,7 +4031,7 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
             checkout_intent=self.checkout_intent,
             data={'data': {'object': {}}},
         )
-        _event_summary = StripeEventSummary.objects.create(
+        event_summary = StripeEventSummary.objects.create(
             stripe_event_data=event_data,
             event_id='evt_cancel_exception',
             event_type='customer.subscription.updated',
@@ -3643,6 +4058,7 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
         """
         Test reinstate subscription with Stripe InvalidRequestError.
         """
+        from enterprise_access.apps.customer_billing.models import StripeEventData, StripeEventSummary
 
         # Create StripeEventSummary with subscription scheduled for cancellation
         future_cancel_at = timezone.now() + timedelta(days=30)
@@ -3652,7 +4068,7 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
             checkout_intent=self.checkout_intent,
             data={'data': {'object': {}}},
         )
-        _event_summary = StripeEventSummary.objects.create(
+        event_summary = StripeEventSummary.objects.create(
             stripe_event_data=event_data,
             event_id='evt_reinstate_invalid',
             event_type='customer.subscription.updated',
@@ -3678,6 +4094,7 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
         """
         Test reinstate subscription with general exception.
         """
+        from enterprise_access.apps.customer_billing.models import StripeEventData, StripeEventSummary
 
         # Create StripeEventSummary with subscription scheduled for cancellation
         future_cancel_at = timezone.now() + timedelta(days=30)
@@ -3687,7 +4104,7 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
             checkout_intent=self.checkout_intent,
             data={'data': {'object': {}}},
         )
-        _event_summary = StripeEventSummary.objects.create(
+        event_summary = StripeEventSummary.objects.create(
             stripe_event_data=event_data,
             event_id='evt_reinstate_exception',
             event_type='customer.subscription.updated',
@@ -3713,6 +4130,7 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
         """
         Test _get_payment_method_status with failed bank account verification.
         """
+        from enterprise_access.apps.api.v1.views.customer_billing import BillingManagementViewSet
 
         payment_method = {
             'type': 'us_bank_account',
@@ -3720,10 +4138,10 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
                 'status_details': {'status': 'verification_failed'}
             }
         }
-        result = BillingManagementViewSet._get_payment_method_status(payment_method)  # pylint: disable=protected-access
+        result = BillingManagementViewSet._get_payment_method_status(payment_method)
         self.assertEqual(result, 'failed')
 
         # Test with 'errored' status
         payment_method['us_bank_account']['status_details']['status'] = 'errored'
-        result = BillingManagementViewSet._get_payment_method_status(payment_method)  # pylint: disable=protected-access
+        result = BillingManagementViewSet._get_payment_method_status(payment_method)
         self.assertEqual(result, 'failed')

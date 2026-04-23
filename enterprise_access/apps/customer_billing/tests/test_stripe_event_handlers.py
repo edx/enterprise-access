@@ -29,6 +29,8 @@ from enterprise_access.apps.customer_billing.models import (
 from enterprise_access.apps.customer_billing.stripe_event_handlers import (
     CheckoutIntentLookupError,
     StripeEventHandler,
+    _extract_invoice_trial_window,
+    _maybe_auto_provision_paid_checkout_intent,
     _valid_invoice_event_type,
     cancel_all_future_plans,
     get_checkout_intent_identifier_from_subscription,
@@ -2627,6 +2629,191 @@ class TestInvoiceCreatedHandler(TestCase):
         # Renewal unchanged
         renewal = SelfServiceSubscriptionRenewal.objects.first()
         self.assertIsNone(renewal.stripe_invoice_id)
+
+    def test_extract_invoice_trial_window_with_valid_periods(self):
+        """Test _extract_invoice_trial_window extracts start/end timestamps correctly."""
+        start_ts = int(timezone.now().timestamp())
+        end_ts = start_ts + 86400
+        invoice = {
+            'lines': {
+                'data': [
+                    {
+                        'period': {
+                            'start': start_ts,
+                            'end': end_ts,
+                        }
+                    }
+                ]
+            }
+        }
+
+        start_dt, end_dt = _extract_invoice_trial_window(invoice)
+
+        self.assertIsNotNone(start_dt)
+        self.assertIsNotNone(end_dt)
+        self.assertEqual(start_dt.timestamp(), start_ts)
+        self.assertEqual(end_dt.timestamp(), end_ts)
+
+    def test_extract_invoice_trial_window_with_missing_lines(self):
+        """Test _extract_invoice_trial_window returns None when lines are missing."""
+        invoice = {}
+
+        start_dt, end_dt = _extract_invoice_trial_window(invoice)
+
+        self.assertIsNone(start_dt)
+        self.assertIsNone(end_dt)
+
+    def test_extract_invoice_trial_window_with_empty_line_data(self):
+        """Test _extract_invoice_trial_window returns None when line data is empty."""
+        invoice = {
+            'lines': {
+                'data': []
+            }
+        }
+
+        start_dt, end_dt = _extract_invoice_trial_window(invoice)
+
+        self.assertIsNone(start_dt)
+        self.assertIsNone(end_dt)
+
+    def test_extract_invoice_trial_window_with_missing_period(self):
+        """Test _extract_invoice_trial_window returns None when period is missing."""
+        invoice = {
+            'lines': {
+                'data': [
+                    {
+                        'parent': {'type': SUBSCRIPTION_ITEM_TYPE}
+                    }
+                ]
+            }
+        }
+
+        start_dt, end_dt = _extract_invoice_trial_window(invoice)
+
+        self.assertIsNone(start_dt)
+        self.assertIsNone(end_dt)
+
+    @mock.patch("enterprise_access.apps.customer_billing.stripe_event_handlers.ProvisionNewCustomerWorkflow")
+    def test_maybe_auto_provision_skips_if_workflow_exists(self, mock_workflow_class):
+        """Test that auto-provisioning skips if workflow already exists."""
+        workflow = ProvisionNewCustomerWorkflowFactory.create()
+        self.checkout_intent.workflow = workflow
+        self.checkout_intent.save()
+
+        _maybe_auto_provision_paid_checkout_intent(
+            checkout_intent=self.checkout_intent,
+            trial_start=timezone.now(),
+            trial_end=timezone.now() + timedelta(days=14),
+        )
+
+        # Should not call create_and_execute_for_checkout_intent
+        mock_workflow_class.create_and_execute_for_checkout_intent.assert_not_called()
+
+    @mock.patch("enterprise_access.apps.customer_billing.stripe_event_handlers.ProvisionNewCustomerWorkflow")
+    def test_maybe_auto_provision_skips_if_no_email(self, mock_workflow_class):
+        """Test that auto-provisioning skips if user has no email."""
+        mock_checkout_intent = mock.Mock()
+        mock_checkout_intent.workflow = None
+        mock_checkout_intent.user = None
+        mock_checkout_intent.id = self.checkout_intent.id
+
+        _maybe_auto_provision_paid_checkout_intent(
+            checkout_intent=mock_checkout_intent,
+            trial_start=timezone.now(),
+            trial_end=timezone.now() + timedelta(days=14),
+        )
+
+        # Should not call create_and_execute_for_checkout_intent
+        mock_workflow_class.create_and_execute_for_checkout_intent.assert_not_called()
+
+    @mock.patch("enterprise_access.apps.customer_billing.stripe_event_handlers.ProvisionNewCustomerWorkflow")
+    def test_maybe_auto_provision_uses_provided_trial_window(self, mock_workflow_class):
+        """Test that auto-provisioning uses provided trial start/end dates."""
+        mock_workflow = mock.Mock()
+        mock_workflow_class.create_and_execute_for_checkout_intent.return_value = mock_workflow
+
+        trial_start = timezone.now()
+        trial_end = timezone.now() + timedelta(days=30)
+
+        _maybe_auto_provision_paid_checkout_intent(
+            checkout_intent=self.checkout_intent,
+            trial_start=trial_start,
+            trial_end=trial_end,
+        )
+
+        mock_workflow_class.create_and_execute_for_checkout_intent.assert_called_once()
+        call_kwargs = mock_workflow_class.create_and_execute_for_checkout_intent.call_args[1]
+        self.assertEqual(call_kwargs['trial_start'], trial_start)
+        self.assertEqual(call_kwargs['trial_end'], trial_end)
+
+    @mock.patch("enterprise_access.apps.customer_billing.stripe_event_handlers.ProvisionNewCustomerWorkflow")
+    def test_maybe_auto_provision_uses_fallback_trial_window(self, mock_workflow_class):
+        """Test that auto-provisioning uses fallback trial window when not provided."""
+        mock_workflow = mock.Mock()
+        mock_workflow_class.create_and_execute_for_checkout_intent.return_value = mock_workflow
+
+        before_call = timezone.now()
+        _maybe_auto_provision_paid_checkout_intent(
+            checkout_intent=self.checkout_intent,
+            trial_start=None,
+            trial_end=None,
+        )
+        after_call = timezone.now()
+
+        mock_workflow_class.create_and_execute_for_checkout_intent.assert_called_once()
+        call_kwargs = mock_workflow_class.create_and_execute_for_checkout_intent.call_args[1]
+
+        trial_start = call_kwargs['trial_start']
+        trial_end = call_kwargs['trial_end']
+
+        # Trial start should be roughly now
+        self.assertGreaterEqual(trial_start, before_call)
+        self.assertLessEqual(trial_start, after_call)
+
+        # Trial end should be 14 days later (the default)
+        delta = trial_end - trial_start
+        self.assertAlmostEqual(delta.days, 14, delta=1)
+
+    @mock.patch("enterprise_access.apps.customer_billing.stripe_event_handlers.ProvisionNewCustomerWorkflow")
+    def test_maybe_auto_provision_handles_workflow_exception(self, mock_workflow_class):
+        """Test that auto-provisioning gracefully handles workflow execution failures."""
+        mock_workflow_class.create_and_execute_for_checkout_intent.side_effect = Exception(
+            "Invalid OAuth URL"
+        )
+
+        # Should not raise, just log the error
+        _maybe_auto_provision_paid_checkout_intent(
+            checkout_intent=self.checkout_intent,
+            trial_start=timezone.now(),
+            trial_end=timezone.now() + timedelta(days=14),
+        )
+
+        # Checkout intent should remain in PAID state (not transitioned to errored)
+        self.checkout_intent.refresh_from_db()
+        self.assertEqual(self.checkout_intent.state, CheckoutIntentState.CREATED)
+
+    @mock.patch("enterprise_access.apps.customer_billing.stripe_event_handlers.ProvisionNewCustomerWorkflow")
+    def test_maybe_auto_provision_success_creates_workflow(self, mock_workflow_class):
+        """Test that auto-provisioning successfully creates and executes workflow."""
+        mock_workflow = mock.Mock()
+        mock_workflow.uuid = uuid.uuid4()
+        mock_workflow_class.create_and_execute_for_checkout_intent.return_value = mock_workflow
+
+        trial_start = timezone.now()
+        trial_end = timezone.now() + timedelta(days=14)
+
+        _maybe_auto_provision_paid_checkout_intent(
+            checkout_intent=self.checkout_intent,
+            trial_start=trial_start,
+            trial_end=trial_end,
+        )
+
+        # Verify the workflow was created with correct inputs
+        mock_workflow_class.create_and_execute_for_checkout_intent.assert_called_once_with(
+            checkout_intent=self.checkout_intent,
+            trial_start=trial_start,
+            trial_end=trial_end,
+        )
 
     def test_invoice_created_checkout_intent_not_found(self):
         """Test that invoice.created handler gracefully handles missing CheckoutIntent."""
