@@ -3684,3 +3684,156 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
         payment_method['us_bank_account']['status_details']['status'] = 'errored'
         result = BillingManagementViewSet._get_payment_method_status(payment_method)  # pylint: disable=protected-access
         self.assertEqual(result, 'failed')
+
+    # _get_plan_type_from_subscription helper tests
+    @ddt.data(
+        # (subscription_dict, price_return, product_return, price_side_effect, expected)
+        # no items → 'Other', no Stripe calls made
+        ({'items': {'data': []}}, None, None, None, 'Other'),
+        # item present but no price ID → 'Other', no Stripe calls made
+        ({'items': {'data': [{'price': {}}]}}, None, None, None, 'Other'),
+        # plan_type found in price metadata → returned directly
+        (
+            {'items': {'data': [{'price': {'id': 'price_123'}}]}},
+            {'metadata': {'plan_type': 'Teams'}, 'product': None},
+            None, None, 'Teams',
+        ),
+        # plan_type absent in price metadata, found in product metadata → returned from product
+        (
+            {'items': {'data': [{'price': {'id': 'price_123'}}]}},
+            {'metadata': {}, 'product': 'prod_123'},
+            {'metadata': {'plan_type': 'Essentials'}},
+            None, 'Essentials',
+        ),
+        # plan_type absent from both price and product metadata → 'Other'
+        (
+            {'items': {'data': [{'price': {'id': 'price_123'}}]}},
+            {'metadata': {}, 'product': 'prod_123'},
+            {'metadata': {}},
+            None, 'Other',
+        ),
+        # price has no product ID and price metadata lacks plan_type → 'Other'
+        (
+            {'items': {'data': [{'price': {'id': 'price_123'}}]}},
+            {'metadata': {}, 'product': None},
+            None, None, 'Other',
+        ),
+        # StripeError raised → 'Other'
+        (
+            {'items': {'data': [{'price': {'id': 'price_123'}}]}},
+            None, None, stripe.error.StripeError('Stripe unavailable'), 'Other',
+        ),
+        # unexpected Exception raised → 'Other'
+        (
+            {'items': {'data': [{'price': {'id': 'price_123'}}]}},
+            None, None, Exception('Unexpected failure'), 'Other',
+        ),
+    )
+    @ddt.unpack
+    @mock.patch('stripe.Product.retrieve')
+    @mock.patch('stripe.Price.retrieve')
+    def test_get_plan_type_from_subscription(
+        self,
+        subscription_dict,
+        price_return,
+        product_return,
+        price_side_effect,
+        expected,
+        mock_price_retrieve,
+        mock_product_retrieve,
+    ):
+        """
+        Tests all branches of _get_plan_type_from_subscription.
+        """
+        if price_side_effect is not None:
+            mock_price_retrieve.side_effect = price_side_effect
+        elif price_return is not None:
+            mock_price_retrieve.return_value = AttrDict.wrap(price_return)
+
+        if product_return is not None:
+            mock_product_retrieve.return_value = AttrDict.wrap(product_return)
+
+        sub = AttrDict.wrap(subscription_dict)
+        result = BillingManagementViewSet._get_plan_type_from_subscription(sub)  # pylint: disable=protected-access
+        self.assertEqual(result, expected)
+
+    # _get_yearly_amount helper tests
+    @ddt.data(
+        # (subscription_dict, price_retrieve_return, price_side_effect, expected)
+        # no items → 0
+        ({'items': {'data': []}}, None, None, 0),
+        # unit_amount inline, yearly billing, quantity 2
+        (
+            {'items': {'data': [{'price': {'unit_amount': 1000, 'recurring': {'interval': 'year'}}, 'quantity': 2}]}},
+            None, None, 2000,
+        ),
+        # unit_amount inline, monthly billing, quantity 1
+        (
+            {'items': {'data': [{'price': {'unit_amount': 500, 'recurring': {'interval': 'month'}}, 'quantity': 1}]}},
+            None, None, 6000,
+        ),
+        # unit_amount inline, weekly billing, quantity 1
+        (
+            {'items': {'data': [{'price': {'unit_amount': 100, 'recurring': {'interval': 'week'}}, 'quantity': 1}]}},
+            None, None, 5200,
+        ),
+        # unit_amount inline, unknown billing period → 0
+        (
+            {'items': {'data': [{'price': {'unit_amount': 1000, 'recurring': {'interval': 'day'}}, 'quantity': 1}]}},
+            None, None, 0,
+        ),
+        # no unit_amount in price, has price_id → retrieves price and calculates (monthly)
+        (
+            {'items': {'data': [{'price': {'id': 'price_123'}, 'quantity': 3}]}},
+            {'unit_amount': 5000, 'recurring': {'interval': 'month'}},
+            None, 180000,
+        ),
+        # no unit_amount in price, has price_id → StripeError on retrieve → item skipped
+        (
+            {'items': {'data': [{'price': {'id': 'price_123'}, 'quantity': 1}]}},
+            None, stripe.error.StripeError('Stripe error'), 0,
+        ),
+        # no unit_amount in price, no price_id → unit_amount defaults to 0
+        (
+            {'items': {'data': [{'price': {}, 'quantity': 5}]}},
+            None, None, 0,
+        ),
+        # multiple items summed: yearly (1000*1) + monthly (500*2*12) = 13000
+        (
+            {'items': {'data': [
+                {'price': {'unit_amount': 1000, 'recurring': {'interval': 'year'}}, 'quantity': 1},
+                {'price': {'unit_amount': 500, 'recurring': {'interval': 'month'}}, 'quantity': 2},
+            ]}},
+            None, None, 13000,
+        ),
+    )
+    @ddt.unpack
+    @mock.patch('stripe.Price.retrieve')
+    def test_get_yearly_amount(
+        self,
+        subscription_dict,
+        price_retrieve_return,
+        price_side_effect,
+        expected,
+        mock_price_retrieve,
+    ):
+        """
+        Tests all branches of _get_yearly_amount.
+        """
+        if price_side_effect is not None:
+            mock_price_retrieve.side_effect = price_side_effect
+        elif price_retrieve_return is not None:
+            mock_price_retrieve.return_value = AttrDict.wrap(price_retrieve_return)
+
+        sub = AttrDict.wrap(subscription_dict)
+        result = BillingManagementViewSet._get_yearly_amount(sub)  # pylint: disable=protected-access
+        self.assertEqual(result, expected)
+
+    def test_get_yearly_amount_general_exception(self):
+        """
+        Returns 0 when subscription.to_dict() raises an unexpected exception.
+        """
+        sub = mock.Mock()
+        sub.to_dict.side_effect = Exception('Unexpected failure')
+        result = BillingManagementViewSet._get_yearly_amount(sub)  # pylint: disable=protected-access
+        self.assertEqual(result, 0)
