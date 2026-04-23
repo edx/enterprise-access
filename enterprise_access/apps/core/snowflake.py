@@ -1,31 +1,35 @@
 """Shared Snowflake helpers for enterprise-access reporting commands."""
 
 from contextlib import contextmanager, suppress
+from importlib import import_module
 
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
+
+SNOWFLAKE_ACCOUNT = 'edx.us-east-1'
+SNOWFLAKE_DATABASE = 'prod'
 
 
 def get_snowflake_connection():
     """Create a Snowflake connection using enterprise-access settings."""
     if not getattr(settings, 'SNOWFLAKE_SERVICE_USER', ''):
-        raise ImproperlyConfigured(
-            'SNOWFLAKE_SERVICE_USER is required but not set. '
-            'Set the SNOWFLAKE_SERVICE_USER environment variable.'
-        )
+        raise ImproperlyConfigured('SNOWFLAKE_SERVICE_USER is required but not set.')
     if not getattr(settings, 'SNOWFLAKE_SERVICE_USER_PASSWORD', ''):
-        raise ImproperlyConfigured(
-            'SNOWFLAKE_SERVICE_USER_PASSWORD is required but not set. '
-            'Set the SNOWFLAKE_SERVICE_USER_PASSWORD environment variable.'
-        )
+        raise ImproperlyConfigured('SNOWFLAKE_SERVICE_USER_PASSWORD is required but not set.')
 
-    from snowflake import connector as snowflake_connector  # pylint: disable=import-outside-toplevel
+    try:
+        snowflake_module = import_module('snowflake')
+        snowflake_connector = snowflake_module.connector
+    except (ModuleNotFoundError, AttributeError) as exc:
+        raise ImproperlyConfigured(
+            'snowflake-connector-python is required but not installed correctly.'
+        ) from exc
 
     connection_kwargs = {
         'user': settings.SNOWFLAKE_SERVICE_USER,
         'password': settings.SNOWFLAKE_SERVICE_USER_PASSWORD,
-        'account': settings.SNOWFLAKE_ACCOUNT,
-        'database': settings.SNOWFLAKE_DATABASE,
+        'account': getattr(settings, 'SNOWFLAKE_ACCOUNT', SNOWFLAKE_ACCOUNT),
+        'database': getattr(settings, 'SNOWFLAKE_DATABASE', SNOWFLAKE_DATABASE),
     }
     warehouse = getattr(settings, 'SNOWFLAKE_WAREHOUSE', None)
     if warehouse:
