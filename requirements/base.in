@@ -43,3 +43,4 @@ rules
 stripe
 drf-spectacular
 django-log-request-id
+snowflake-connector-python
