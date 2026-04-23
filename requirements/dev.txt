@@ -6,74 +6,74 @@
 #
 amqp==5.3.1
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   kombu
 analytics-python==1.4.post1
-    # via -r requirements/validation.txt
+    # via -r validation.txt
 asgiref==3.11.1
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   django
     #   django-cors-headers
     #   django-countries
 astroid==4.0.4
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   pylint
     #   pylint-celery
 attrs==26.1.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   cattrs
     #   jsonschema
     #   openedx-events
     #   referencing
 avro==1.12.1
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   confluent-kafka
 backoff==1.10.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   analytics-python
 billiard==4.2.4
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   celery
 build==1.4.2
     # via
-    #   -r requirements/pip-tools.txt
+    #   -r pip-tools.txt
     #   pip-tools
 cachetools==7.0.5
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   tox
 cattrs==26.1.0
-    # via -r requirements/validation.txt
+    # via -r validation.txt
 celery==5.6.3
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   django-celery-results
     #   edx-celeryutils
 certifi==2026.2.25
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   requests
 cffi==2.0.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   cryptography
     #   pynacl
 chardet==7.4.1
     # via diff-cover
 charset-normalizer==3.4.7
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   requests
 click==8.3.2
     # via
-    #   -r requirements/pip-tools.txt
-    #   -r requirements/validation.txt
+    #   -r pip-tools.txt
+    #   -r validation.txt
     #   celery
     #   click-didyoumean
     #   click-log
@@ -85,66 +85,66 @@ click==8.3.2
     #   pip-tools
 click-didyoumean==0.3.1
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   celery
 click-log==0.4.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   edx-lint
 click-plugins==1.1.1.2
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   celery
 click-repl==0.3.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   celery
 code-annotations==3.0.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   edx-lint
     #   edx-toggles
 colorama==0.4.6
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   tox
 confluent-kafka[avro,schema-registry]==2.6.1
-    # via -r requirements/validation.txt
+    # via -r validation.txt
 coverage[toml]==7.13.5
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   pytest-cov
 crispy-bootstrap5==2026.3
-    # via -r requirements/validation.txt
+    # via -r validation.txt
 cryptography==46.0.7
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   pyjwt
     #   secretstorage
 ddt==1.7.2
-    # via -r requirements/validation.txt
+    # via -r validation.txt
 defusedxml==0.7.1
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   python3-openid
     #   social-auth-core
 dictdiffer==0.9.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   pytest-dictsdiff
 diff-cover==10.2.0
-    # via -r requirements/dev.in
+    # via -r dev.in
 dill==0.4.1
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   pylint
 distlib==0.4.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   virtualenv
 django==5.2.13
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   crispy-bootstrap5
     #   django-celery-results
     #   django-cors-headers
@@ -176,53 +176,53 @@ django==5.2.13
     #   openedx-events
     #   social-auth-app-django
 django-celery-results==2.6.0
-    # via -r requirements/validation.txt
+    # via -r validation.txt
 django-cors-headers==4.9.0
-    # via -r requirements/validation.txt
+    # via -r validation.txt
 django-countries==8.2.0
-    # via -r requirements/validation.txt
+    # via -r validation.txt
 django-crispy-forms==2.6
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   crispy-bootstrap5
 django-crum==0.7.9
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   edx-django-utils
     #   edx-rbac
     #   edx-toggles
 django-debug-toolbar==6.3.0
-    # via -r requirements/dev.in
+    # via -r dev.in
 django-dynamic-fixture==4.0.1
-    # via -r requirements/validation.txt
+    # via -r validation.txt
 django-extensions==4.1
-    # via -r requirements/validation.txt
+    # via -r validation.txt
 django-filter==25.2
-    # via -r requirements/validation.txt
+    # via -r validation.txt
 django-log-request-id==2.1.2
-    # via -r requirements/validation.txt
+    # via -r validation.txt
 django-model-utils==5.0.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   edx-celeryutils
     #   edx-rbac
 django-object-actions==5.0.0
-    # via -r requirements/validation.txt
+    # via -r validation.txt
 django-simple-history==3.11.0
-    # via -r requirements/validation.txt
+    # via -r validation.txt
 django-test-migrations==1.5.0
-    # via -r requirements/validation.txt
+    # via -r validation.txt
 django-waffle==5.0.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   edx-django-utils
     #   edx-drf-extensions
     #   edx-toggles
 djangoql==0.19.1
-    # via -r requirements/validation.txt
+    # via -r validation.txt
 djangorestframework==3.17.1
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   djangorestframework-csv
     #   drf-jwt
     #   drf-spectacular
@@ -230,42 +230,42 @@ djangorestframework==3.17.1
     #   edx-api-doc-tools
     #   edx-drf-extensions
 djangorestframework-csv==3.0.2
-    # via -r requirements/validation.txt
+    # via -r validation.txt
 dnspython==2.8.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   pymongo
 docutils==0.22.4
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   readme-renderer
 drf-jwt==1.19.2
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   edx-drf-extensions
 drf-spectacular==0.29.0
-    # via -r requirements/validation.txt
+    # via -r validation.txt
 drf-yasg==1.21.15
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   edx-api-doc-tools
 edx-api-doc-tools==3.0.0
-    # via -r requirements/validation.txt
+    # via -r validation.txt
 edx-auth-backends==5.0.0
-    # via -r requirements/validation.txt
+    # via -r validation.txt
 edx-braze-client==0.2.5
-    # via -r requirements/validation.txt
+    # via -r validation.txt
 edx-ccx-keys==2.0.2
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   openedx-events
 edx-celeryutils==2.0.0
-    # via -r requirements/validation.txt
+    # via -r validation.txt
 edx-django-release-util==1.5.0
-    # via -r requirements/validation.txt
+    # via -r validation.txt
 edx-django-utils==8.0.1
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   edx-auth-backends
     #   edx-drf-extensions
     #   edx-event-bus-kafka
@@ -274,118 +274,118 @@ edx-django-utils==8.0.1
     #   openedx-events
 edx-drf-extensions==10.6.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   edx-rbac
 edx-enterprise-subsidy-client==2.1.1
-    # via -r requirements/validation.txt
+    # via -r validation.txt
 edx-event-bus-kafka==6.1.0
-    # via -r requirements/validation.txt
+    # via -r validation.txt
 edx-i18n-tools==2.0.0
-    # via -r requirements/dev.in
+    # via -r dev.in
 edx-lint==6.0.0
-    # via -r requirements/validation.txt
+    # via -r validation.txt
 edx-opaque-keys[django]==4.0.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   edx-ccx-keys
     #   edx-drf-extensions
     #   openedx-events
 edx-rbac==3.0.0
-    # via -r requirements/validation.txt
+    # via -r validation.txt
 edx-rest-api-client==7.0.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   edx-enterprise-subsidy-client
 edx-toggles==6.0.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   edx-auth-backends
     #   edx-event-bus-kafka
 factory-boy==3.3.3
-    # via -r requirements/validation.txt
+    # via -r validation.txt
 faker==40.13.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   factory-boy
 fastavro==1.12.1
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   confluent-kafka
     #   openedx-events
 filelock==3.25.2
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   python-discovery
     #   tox
     #   virtualenv
 freezegun==1.5.5
-    # via -r requirements/validation.txt
+    # via -r validation.txt
 id==1.6.1
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   twine
 idna==3.11
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   requests
 inflection==0.5.1
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   drf-spectacular
     #   drf-yasg
 iniconfig==2.3.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   pytest
 isort==8.0.1
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   pylint
 jaraco-classes==3.4.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   keyring
 jaraco-context==6.1.2
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   keyring
 jaraco-functools==4.4.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   keyring
 jeepney==0.9.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   keyring
     #   secretstorage
 jinja2==3.1.6
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   code-annotations
     #   diff-cover
 jsonfield==3.2.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   edx-celeryutils
 jsonfield2==4.0.0.post0
-    # via -r requirements/validation.txt
+    # via -r validation.txt
 jsonschema==4.26.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   drf-spectacular
 jsonschema-specifications==2025.9.1
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   jsonschema
 keyring==25.7.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   twine
 kombu==5.6.2
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   celery
-lxml[html-clean]==6.0.2
+lxml[html-clean]==6.1.0
     # via
     #   edx-i18n-tools
     #   lxml-html-clean
@@ -393,50 +393,50 @@ lxml-html-clean==0.4.4
     # via lxml
 markdown-it-py==4.0.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   rich
 markupsafe==3.0.3
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   jinja2
 mccabe==0.7.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   pylint
 mdurl==0.1.2
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   markdown-it-py
 monotonic==1.6
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   analytics-python
 more-itertools==11.0.1
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   jaraco-classes
     #   jaraco-functools
 mysqlclient==2.2.8
-    # via -r requirements/validation.txt
+    # via -r validation.txt
 nh3==0.3.4
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   readme-renderer
 nodeenv==1.10.0
     # via pyright
 oauthlib==3.3.1
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   requests-oauthlib
     #   social-auth-core
 openedx-events==11.1.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   edx-event-bus-kafka
 packaging==26.0
     # via
-    #   -r requirements/pip-tools.txt
-    #   -r requirements/validation.txt
+    #   -r pip-tools.txt
+    #   -r validation.txt
     #   build
     #   drf-yasg
     #   kombu
@@ -448,53 +448,53 @@ packaging==26.0
 path==16.16.0
     # via edx-i18n-tools
 pip-tools==7.5.3
-    # via -r requirements/pip-tools.txt
+    # via -r pip-tools.txt
 platformdirs==4.9.4
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   pylint
     #   python-discovery
     #   tox
     #   virtualenv
 pluggy==1.6.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   diff-cover
     #   pytest
     #   pytest-cov
     #   tox
 ply==3.11
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   djangoql
 polib==1.2.0
     # via edx-i18n-tools
 prompt-toolkit==3.0.52
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   click-repl
 psutil==7.2.2
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   edx-django-utils
 pycodestyle==2.14.0
-    # via -r requirements/validation.txt
+    # via -r validation.txt
 pycparser==3.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   cffi
 pydocstyle==6.3.0
-    # via -r requirements/validation.txt
+    # via -r validation.txt
 pygments==2.20.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   diff-cover
     #   pytest
     #   readme-renderer
     #   rich
 pyjwt[crypto]==2.12.1
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   drf-jwt
     #   edx-auth-backends
     #   edx-drf-extensions
@@ -502,82 +502,82 @@ pyjwt[crypto]==2.12.1
     #   social-auth-core
 pylint==4.0.5
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   edx-lint
     #   pylint-celery
     #   pylint-django
     #   pylint-plugin-utils
 pylint-celery==0.3
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   edx-lint
 pylint-django==2.7.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   edx-lint
 pylint-plugin-utils==0.9.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   pylint-celery
     #   pylint-django
 pymemcache==4.0.0
-    # via -r requirements/validation.txt
+    # via -r validation.txt
 pymongo==4.16.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   edx-opaque-keys
 pynacl==1.6.2
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   edx-django-utils
 pyproject-api==1.10.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   tox
 pyproject-hooks==1.2.0
     # via
-    #   -r requirements/pip-tools.txt
+    #   -r pip-tools.txt
     #   build
     #   pip-tools
 pyright==1.1.408
-    # via -r requirements/dev.in
+    # via -r dev.in
 pytest==9.0.3
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   pytest-cov
     #   pytest-django
 pytest-cov==7.1.0
-    # via -r requirements/validation.txt
+    # via -r validation.txt
 pytest-dictsdiff==0.5.8
-    # via -r requirements/validation.txt
+    # via -r validation.txt
 pytest-django==4.12.0
-    # via -r requirements/validation.txt
+    # via -r validation.txt
 python-dateutil==2.9.0.post0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   analytics-python
     #   celery
     #   freezegun
 python-discovery==1.2.2
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   tox
     #   virtualenv
 python-slugify==8.0.4
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   code-annotations
 python3-openid==3.2.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   social-auth-core
 pytz==2026.1.post1
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   drf-yasg
 pyyaml==6.0.3
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   code-annotations
     #   drf-spectacular
     #   drf-yasg
@@ -585,18 +585,18 @@ pyyaml==6.0.3
     #   edx-i18n-tools
 readme-renderer==44.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   twine
 redis==7.4.0
-    # via -r requirements/validation.txt
+    # via -r validation.txt
 referencing==0.37.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   jsonschema
     #   jsonschema-specifications
 requests==2.33.1
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   analytics-python
     #   confluent-kafka
     #   edx-drf-extensions
@@ -608,38 +608,38 @@ requests==2.33.1
     #   twine
 requests-oauthlib==2.0.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   social-auth-core
 requests-toolbelt==1.0.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   twine
 rfc3986==2.0.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   twine
 rich==14.3.3
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   twine
 rpds-py==0.30.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   jsonschema
     #   referencing
 rules==3.5
-    # via -r requirements/validation.txt
+    # via -r validation.txt
 secretstorage==3.5.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   keyring
 semantic-version==2.10.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   edx-drf-extensions
 six==1.17.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   analytics-python
     #   edx-auth-backends
     #   edx-ccx-keys
@@ -649,49 +649,49 @@ six==1.17.0
     #   python-dateutil
 snowballstemmer==3.0.1
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   pydocstyle
 social-auth-app-django==5.7.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   edx-auth-backends
 social-auth-core==4.8.5
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   edx-auth-backends
     #   social-auth-app-django
 sqlparse==0.5.5
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   django
     #   django-debug-toolbar
 stevedore==5.7.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   code-annotations
     #   edx-django-utils
     #   edx-opaque-keys
 stripe==14.4.1
-    # via -r requirements/validation.txt
+    # via -r validation.txt
 text-unidecode==1.3
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   python-slugify
 tomli-w==1.2.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   tox
 tomlkit==0.14.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   pylint
 tox==4.52.0
-    # via -r requirements/validation.txt
+    # via -r validation.txt
 twine==6.2.0
-    # via -r requirements/validation.txt
+    # via -r validation.txt
 typing-extensions==4.15.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   cattrs
     #   django-countries
     #   django-test-migrations
@@ -701,40 +701,40 @@ typing-extensions==4.15.0
     #   stripe
 tzdata==2026.1
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   kombu
 tzlocal==5.3.1
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   celery
 uritemplate==4.2.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   drf-spectacular
     #   drf-yasg
 urllib3==2.6.3
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   id
     #   requests
     #   twine
 vine==5.1.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   amqp
     #   celery
     #   kombu
 virtualenv==21.2.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   tox
 wcwidth==0.6.0
     # via
-    #   -r requirements/validation.txt
+    #   -r validation.txt
     #   prompt-toolkit
 wheel==0.46.3
     # via
-    #   -r requirements/pip-tools.txt
+    #   -r pip-tools.txt
     #   pip-tools
 
 # The following packages are considered to be unsafe in a requirements file:
