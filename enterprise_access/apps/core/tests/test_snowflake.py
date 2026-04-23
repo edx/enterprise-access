@@ -131,3 +131,32 @@ class TestSnowflakeHelpers(TestCase):
         mock_connection.cursor.assert_called_once_with()
         mock_cursor.close.assert_called_once_with()
         mock_connection.close.assert_called_once_with()
+
+    @mock.patch('enterprise_access.apps.core.snowflake.get_snowflake_connection')
+    def test_snowflake_cursor_closes_connection_when_cursor_creation_fails(self, mock_get_connection):
+        """Connection must be closed even when cursor() itself raises, preventing a resource leak."""
+        mock_connection = mock.Mock()
+        mock_connection.cursor.side_effect = RuntimeError('cursor creation failed')
+        mock_get_connection.return_value = mock_connection
+
+        with self.assertRaisesRegex(RuntimeError, 'cursor creation failed'):
+            with snowflake.snowflake_cursor():
+                pass  # pragma: no cover
+
+        mock_connection.close.assert_called_once_with()
+
+    @mock.patch('enterprise_access.apps.core.snowflake.get_snowflake_connection')
+    def test_snowflake_cursor_closes_connection_when_cursor_close_raises(self, mock_get_connection):
+        """Connection must close even if cursor.close() itself raises."""
+        mock_connection = mock.Mock()
+        mock_cursor = mock.Mock()
+        mock_cursor.close.side_effect = RuntimeError('cursor close failed')
+        mock_connection.cursor.return_value = mock_cursor
+        mock_get_connection.return_value = mock_connection
+
+        # No exception bubbles up from the context manager itself
+        with snowflake.snowflake_cursor():
+            pass
+
+        mock_cursor.close.assert_called_once_with()
+        mock_connection.close.assert_called_once_with()

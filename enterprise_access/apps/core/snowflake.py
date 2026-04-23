@@ -1,6 +1,6 @@
 """Shared Snowflake helpers for enterprise-access reporting commands."""
 
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
@@ -41,12 +41,16 @@ def get_snowflake_connection():
 def snowflake_cursor():
     """Yield a Snowflake cursor and ensure all resources are closed."""
     connection = get_snowflake_connection()
-    cursor = connection.cursor()
     try:
-        yield cursor
+        cursor = connection.cursor()
+        try:
+            yield cursor
+        finally:
+            with suppress(Exception):
+                cursor.close()
     finally:
-        cursor.close()
-        connection.close()
+        with suppress(Exception):
+            connection.close()
 
 
 def fetch_all_query_results(query):
