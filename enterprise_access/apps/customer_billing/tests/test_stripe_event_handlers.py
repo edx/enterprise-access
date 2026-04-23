@@ -79,6 +79,7 @@ class AttrDict(dict):
         self[name] = value
 
     def to_dict(self):
+        """Recursively convert AttrDict to a plain dict."""
         def _convert(v):
             if isinstance(v, AttrDict):
                 return v.to_dict()
@@ -89,6 +90,7 @@ class AttrDict(dict):
 
     @staticmethod
     def wrap(value):
+        """Recursively wrap dicts and lists in AttrDict."""
         if isinstance(value, dict) and not isinstance(value, AttrDict):
             return AttrDict({k: AttrDict.wrap(v) for k, v in value.items()})
         if isinstance(value, list):
