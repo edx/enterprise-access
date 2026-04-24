@@ -277,28 +277,51 @@ See ``stripe_event_handlers.py`` for implementation details:
 Data Relationships Across Services
 ----------------------------------
 
-**Key Identifiers**
+The table below documents the primary cross-domain join keys that link objects across services.
+These are widely consumed by many of our APIs, and often stored and passed to 3rd party systems.
 
-``stripe_customer_id``:
+.. list-table::
+   :header-rows: 1
+   :widths: 35 65
 
-* Links CheckoutIntent to Stripe Customer records
-* Used to correlate webhook events with enterprise customers
-* Enables lookup of original CheckoutIntent for Year 2+ renewals
+   * - Join Key
+     - Purpose
+   * - Price Lookup Key
+     - These are special slow-changing strings (provisioned via terraform) which represent Stripe
+       Price objects. These help identify the correct Stripe Price to pay for, and can also be used
+       to find its associated Stripe Product.
+   * - CheckoutIntent UUID
+     - This is the primary lifecycle record for a customer's self-service checkout flow, but also a
+       long-lived record which is essentially a proxy for the long-lived Stripe Subscription.
+   * - Stripe Subscription ID
+     - Long-lived record which globally represents a customer's recurring subscription.
+   * - Stripe Customer ID
+     - Represents the Customer object in Stripe. Should be 1:1 with the EnterpriseCustomer.
+   * - EnterpriseCustomer UUID
+     - Represents the customer record in the LMS. Linked with the long-lived records (Stripe
+       Subscription, CheckoutIntent) to help find the EnterpriseCustomer provisioned after initial
+       payment.
+   * - EnterpriseCustomer Slug
+     - Also globally represents the customer record in the LMS. Stripe passes this to Salesforce to
+       quickly identify the enterprise customer internally.
+   * - LMS User ID
+     - Identifies the admin user who initiated checkout.
+   * - Stripe Invoice ID
+     - Globally represents a specific payment due for renewing a subscription.
+   * - SubscriptionPlanRenewal ID
+     - Used by the renewal tracker in enterprise-access to find a SubscriptionPlanRenewal in
+       license-manager.
+   * - Salesforce Opportunity Line Item ID
+     - The primary Salesforce accounting records for revenue recognition. Also used as an
+       idempotency key during provisioning.
+   * - Salesforce Product2 ID
+     - Used in Salesforce to attribute an incoming invoice payment to a specific product to
+       provision.
 
-``enterprise_uuid``:
+The following ERD diagram provides a visual overview of these inter-domain relationships.
 
-* The ``EnterpriseCustomer.uuid`` field
-
-``checkout_intent_{id,uuid}``:
-
-* Stored in Stripe subscription metadata
-* Enables webhook events to find the correct CheckoutIntent
-
-``salesforce_opportunity_line_item``:
-
-* Links subscription plans to Salesforce accounting records
-* Ensures revenue recognition and financial reporting alignment
-* Used for idempotent API operations
+.. image:: ../images/ssp_erd_2026-04.png
+   :alt: Entity-relationship diagram (ERD) of self-service subscription objects across Stripe, Enterprise Access, License Manager, LMS, and Salesforce
 
 Error Scenarios
 ---------------
@@ -316,7 +339,7 @@ Error Scenarios
 * Out-of-order webhook delivery (e.g., ``invoice.paid`` before ``invoice.created``)
 
 Future Considerations
---------------------
+---------------------
 
 **Database Normalization Improvements**
 
