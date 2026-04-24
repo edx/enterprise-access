@@ -3,16 +3,19 @@ Stripe event handlers
 """
 import logging
 from collections.abc import Callable
+from datetime import timedelta
 from functools import wraps
 from uuid import UUID
 
 import stripe
+from django.conf import settings
 from django.utils import timezone
 from simple_history.utils import bulk_update_with_history
 
 from enterprise_access.apps.api_client.license_manager_client import LicenseManagerApiClient
 from enterprise_access.apps.customer_billing.constants import (
     SUBSCRIPTION_ITEM_TYPE,
+    CheckoutIntentState,
     StripeSegmentEvents,
     StripeSubscriptionStatus
 )
@@ -34,6 +37,7 @@ from enterprise_access.apps.customer_billing.tasks import (
     send_trial_ending_reminder_email_task
 )
 from enterprise_access.apps.customer_billing.utils import datetime_from_timestamp
+from enterprise_access.apps.provisioning.models import ProvisionNewCustomerWorkflow
 from enterprise_access.apps.track.segment import track_event
 
 logger = logging.getLogger(__name__)
@@ -305,6 +309,70 @@ def _try_enable_pending_updates(stripe_subscription_id):
         logger.info('Successfully enabled pending updates for subscription %s', stripe_subscription_id)
     except stripe.StripeError as e:
         logger.error('Failed to enable pending updates for subscription %s: %s', stripe_subscription_id, e)
+
+
+def _extract_invoice_trial_window(invoice) -> tuple:
+    """
+    Attempt to infer trial period boundaries from invoice line item periods.
+    """
+    try:
+        line_items = invoice.get('lines', {}).get('data', [])
+        if not line_items:
+            return None, None
+        period = line_items[0].get('period', {})
+        start_ts = period.get('start')
+        end_ts = period.get('end')
+        start_dt = datetime_from_timestamp(start_ts) if start_ts else None
+        end_dt = datetime_from_timestamp(end_ts) if end_ts else None
+        return start_dt, end_dt
+    except Exception:  # pylint: disable=broad-except
+        return None, None
+
+
+def _maybe_auto_provision_paid_checkout_intent(
+    checkout_intent: CheckoutIntent,
+    trial_start=None,
+    trial_end=None,
+) -> None:
+    """
+    Create and execute provisioning workflow for a paid checkout intent when missing.
+    """
+    if checkout_intent.workflow:
+        logger.info(
+            'Skipping auto-provisioning for CheckoutIntent %s because workflow %s already exists',
+            checkout_intent.id,
+            checkout_intent.workflow_id,
+        )
+        return
+
+    if not checkout_intent.user or not checkout_intent.user.email:
+        logger.warning(
+            'Skipping auto-provisioning for CheckoutIntent %s because admin email is unavailable',
+            checkout_intent.id,
+        )
+        return
+
+    if not trial_start or not trial_end:
+        trial_start = timezone.now()
+        trial_end = timezone.now() + timedelta(days=getattr(settings, 'SSP_TRIAL_PERIOD_DAYS', 14))
+
+    try:
+        workflow = ProvisionNewCustomerWorkflow.create_and_execute_for_checkout_intent(
+            checkout_intent=checkout_intent,
+            trial_start=trial_start,
+            trial_end=trial_end,
+        )
+        logger.info(
+            'Auto-provisioning workflow %s executed for CheckoutIntent %s',
+            workflow.uuid,
+            checkout_intent.id,
+        )
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.exception(
+            'Auto-provisioning failed for CheckoutIntent %s: %s',
+            checkout_intent.id,
+            exc,
+        )
 
 
 def track_subscription_cancellation(checkout_intent: CheckoutIntent, cancellation_details: dict):
@@ -592,8 +660,12 @@ class StripeEventHandler:
             _handle_invoice_paid_status_updated(event, checkout_intent)
             return
 
+        trial_start, trial_end = _extract_invoice_trial_window(invoice)
+
+        transitioned_to_paid = False
         try:
             checkout_intent.mark_as_paid(stripe_customer_id=stripe_customer_id)
+            transitioned_to_paid = True
             logger.info(
                 'Marked checkout_intent uuid=%s as paid via invoice=%s',
                 checkout_intent.uuid, invoice.id,
@@ -602,6 +674,13 @@ class StripeEventHandler:
             logger.warning(
                 'Could not mark checkout intent %s as paid via invoice %s, because %s',
                 checkout_intent.uuid, invoice.id, exc,
+            )
+
+        if transitioned_to_paid and checkout_intent.state == CheckoutIntentState.PAID:
+            _maybe_auto_provision_paid_checkout_intent(
+                checkout_intent=checkout_intent,
+                trial_start=trial_start,
+                trial_end=trial_end,
             )
 
     @on_stripe_event('invoice.created')
