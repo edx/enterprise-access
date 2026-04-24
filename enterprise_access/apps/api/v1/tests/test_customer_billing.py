@@ -23,7 +23,7 @@ from enterprise_access.apps.core.constants import (
 from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.customer_billing.constants import CheckoutIntentState
 from enterprise_access.apps.customer_billing.models import CheckoutIntent, StripeEventData, StripeEventSummary
-from enterprise_access.apps.customer_billing.tests.test_stripe_event_handlers import AttrDict
+from enterprise_access.apps.customer_billing.tests.utils import AttrDict
 from test_utils import APITest
 
 

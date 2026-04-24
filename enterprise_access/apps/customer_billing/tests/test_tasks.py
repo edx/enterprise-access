@@ -24,7 +24,7 @@ from enterprise_access.apps.customer_billing.tasks import (
     send_trial_end_and_subscription_started_email_task,
     send_trial_ending_reminder_email_task
 )
-from enterprise_access.apps.customer_billing.tests.test_stripe_event_handlers import AttrDict
+from enterprise_access.apps.customer_billing.tests.utils import AttrDict
 from enterprise_access.utils import format_datetime_obj
 
 

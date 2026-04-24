@@ -26,7 +26,7 @@ from enterprise_access.apps.bffs.tests.utils import default_field_constraints
 from enterprise_access.apps.core.constants import SYSTEM_ENTERPRISE_LEARNER_ROLE
 from enterprise_access.apps.customer_billing.constants import CheckoutIntentState
 from enterprise_access.apps.customer_billing.models import CheckoutIntent
-from enterprise_access.apps.customer_billing.tests.test_stripe_event_handlers import AttrDict
+from enterprise_access.apps.customer_billing.tests.utils import AttrDict
 from test_utils import APITest
 
 

@@ -29,7 +29,7 @@ from enterprise_access.apps.bffs.checkout.handlers import (
 )
 from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.customer_billing.models import CheckoutIntent
-from enterprise_access.apps.customer_billing.tests.test_stripe_event_handlers import AttrDict
+from enterprise_access.apps.customer_billing.tests.utils import AttrDict
 from test_utils import APITest
 
 User = get_user_model()
