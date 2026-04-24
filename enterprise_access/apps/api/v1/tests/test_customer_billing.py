@@ -3837,3 +3837,32 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
         sub.to_dict.side_effect = Exception('Unexpected failure')
         result = BillingManagementViewSet._get_yearly_amount(sub)  # pylint: disable=protected-access
         self.assertEqual(result, 0)
+
+    # _get_license_count helper tests
+    @ddt.data(
+        # empty items list → 0
+        ({'items': {'data': []}}, 0),
+        # single item with quantity
+        ({'items': {'data': [{'quantity': 5}]}}, 5),
+        # multiple items summed
+        ({'items': {'data': [{'quantity': 3}, {'quantity': 7}]}}, 10),
+        # item missing quantity key → defaults to 0
+        ({'items': {'data': [{'quantity': 4}, {}]}}, 4),
+    )
+    @ddt.unpack
+    def test_get_license_count(self, subscription_dict, expected):
+        """
+        Tests all branches of _get_license_count.
+        """
+        sub = AttrDict.wrap(subscription_dict)
+        result = BillingManagementViewSet._get_license_count(sub)  # pylint: disable=protected-access
+        self.assertEqual(result, expected)
+
+    def test_get_license_count_general_exception(self):
+        """
+        Returns 0 when subscription.to_dict() raises an unexpected exception.
+        """
+        sub = mock.Mock()
+        sub.to_dict.side_effect = Exception('Unexpected failure')
+        result = BillingManagementViewSet._get_license_count(sub)  # pylint: disable=protected-access
+        self.assertEqual(result, 0)

@@ -1170,6 +1170,37 @@ class TestStripeEventHandler(TestCase):
         self.assertEqual(renewal.subscription_cancel_at, datetime_from_timestamp(cancel_at_timestamp))
 
     @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.handle_pending_update"
+    )
+    def test_subscription_updated_with_pending_update(self, mock_handle_pending_update):
+        """subscription_updated with pending_update present should call handle_pending_update."""
+        subscription_id = "sub_test_pending_update_123"
+        pending_update = {"subscription_items": [{"price": "price_new_plan"}]}
+
+        self._create_existing_event_data_records(
+            subscription_id,
+            subscription_status=StripeSubscriptionStatus.ACTIVE,
+        )
+
+        mock_event = self._create_mock_stripe_event(
+            "customer.subscription.updated",
+            {
+                "id": subscription_id,
+                "status": StripeSubscriptionStatus.ACTIVE,
+                "pending_update": pending_update,
+                "metadata": self._create_mock_stripe_subscription(self.checkout_intent),
+            },
+        )
+
+        StripeEventHandler.dispatch(mock_event)
+
+        mock_handle_pending_update.assert_called_once_with(
+            subscription_id,
+            self.checkout_intent.id,
+            pending_update,
+        )
+
+    @mock.patch(
         "enterprise_access.apps.customer_billing.stripe_event_handlers.cancel_all_future_plans"
     )
     @mock.patch(
