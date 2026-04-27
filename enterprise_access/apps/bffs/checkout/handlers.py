@@ -395,7 +395,7 @@ class CheckoutSuccessHandler(CheckoutContextHandler):
         # Try payment intent first (for paid subscriptions)
         if payment_intent_id := session.get('payment_intent'):
             try:
-                payment_intent = get_stripe_payment_intent(payment_intent_id)
+                payment_intent = get_stripe_payment_intent(payment_intent_id).to_dict()
                 payment_method_id = payment_intent.get('payment_method')
             except stripe.StripeError:
                 logger.exception("Error retrieving Stripe payment intent: %s", payment_intent_id)
@@ -403,7 +403,7 @@ class CheckoutSuccessHandler(CheckoutContextHandler):
         # If no payment method yet, try subscription (for trial subscriptions)
         if not payment_method_id and (subscription_id := session.get('subscription')):
             try:
-                subscription = get_stripe_subscription(subscription_id)
+                subscription = get_stripe_subscription(subscription_id).to_dict()
                 payment_method_id = subscription.get('default_payment_method')
             except stripe.StripeError:
                 logger.exception("Error retrieving Stripe subscription: %s", subscription_id)
@@ -413,7 +413,7 @@ class CheckoutSuccessHandler(CheckoutContextHandler):
             return None
 
         try:
-            return get_stripe_payment_method(payment_method_id)
+            return get_stripe_payment_method(payment_method_id).to_dict()
         except stripe.StripeError:
             logger.exception("Error retrieving Stripe payment method: %s", payment_method_id)
             return None
@@ -435,7 +435,7 @@ class CheckoutSuccessHandler(CheckoutContextHandler):
         if not invoice_id and subscription_id:
             # If there's no invoice directly on the session, try to get it from the subscription
             try:
-                subscription = get_stripe_subscription(subscription_id)
+                subscription = get_stripe_subscription(subscription_id).to_dict()
                 invoice_id = subscription.get('latest_invoice')
             except stripe.StripeError:
                 logger.exception("Error retrieving Stripe subscription: %s", subscription_id)
@@ -448,7 +448,7 @@ class CheckoutSuccessHandler(CheckoutContextHandler):
             return None
 
         try:
-            return get_stripe_invoice(invoice_id)
+            return get_stripe_invoice(invoice_id).to_dict()
         except stripe.StripeError:
             logger.exception("Error retrieving Stripe invoice: %s", invoice_id)
             return None
@@ -486,7 +486,7 @@ class CheckoutSuccessHandler(CheckoutContextHandler):
             return result
 
         try:
-            customer = get_stripe_customer(customer_id)
+            customer = get_stripe_customer(customer_id).to_dict()
             result['customer_name'] = customer.get('name')
             result['customer_phone'] = customer.get('phone')
         except stripe.StripeError:
