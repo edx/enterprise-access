@@ -27,9 +27,9 @@ backoff==1.10.0
     # via analytics-python
 billiard==4.2.4
     # via celery
-boto3==1.42.93
+boto3==1.42.96
     # via snowflake-connector-python
-botocore==1.42.93
+botocore==1.42.96
     # via
     #   boto3
     #   s3transfer
@@ -41,7 +41,7 @@ celery==5.6.3
     #   -r requirements/base.in
     #   django-celery-results
     #   edx-celeryutils
-certifi==2026.2.25
+certifi==2026.4.22
     # via
     #   requests
     #   snowflake-connector-python
@@ -53,7 +53,7 @@ charset-normalizer==3.4.7
     # via
     #   requests
     #   snowflake-connector-python
-click==8.3.2
+click==8.3.3
     # via
     #   celery
     #   click-didyoumean
@@ -75,7 +75,7 @@ confluent-kafka[avro,schema-registry]==2.6.1
     #   -r requirements/base.in
 crispy-bootstrap5==2026.3
     # via -r requirements/base.in
-cryptography==46.0.7
+cryptography==47.0.0
     # via
     #   pyjwt
     #   pyopenssl
@@ -219,14 +219,14 @@ edx-toggles==6.0.0
     # via
     #   edx-auth-backends
     #   edx-event-bus-kafka
-fastavro==1.12.1
+fastavro==1.12.2
     # via
     #   -r requirements/base.in
     #   confluent-kafka
     #   openedx-events
 filelock==3.29.0
     # via snowflake-connector-python
-idna==3.12
+idna==3.13
     # via
     #   requests
     #   snowflake-connector-python
@@ -260,11 +260,11 @@ oauthlib==3.3.1
     # via
     #   requests-oauthlib
     #   social-auth-core
-openedx-events==11.1.1
+openedx-events==11.2.0
     # via
     #   -r requirements/base.in
     #   edx-event-bus-kafka
-packaging==26.1
+packaging==26.2
     # via
     #   drf-yasg
     #   kombu
@@ -295,7 +295,7 @@ pymongo==4.17.0
     # via edx-opaque-keys
 pynacl==1.6.2
     # via edx-django-utils
-pyopenssl==26.0.0
+pyopenssl==26.1.0
     # via snowflake-connector-python
 python-dateutil==2.9.0.post0
     # via
@@ -341,7 +341,7 @@ rpds-py==0.30.0
     #   referencing
 rules==3.5
     # via -r requirements/base.in
-s3transfer==0.16.0
+s3transfer==0.16.1
     # via boto3
 semantic-version==2.10.0
     # via edx-drf-extensions
@@ -357,7 +357,7 @@ snowflake-connector-python==4.4.0
     # via -r requirements/base.in
 social-auth-app-django==5.8.0
     # via edx-auth-backends
-social-auth-core==4.8.6
+social-auth-core==4.8.7
     # via
     #   edx-auth-backends
     #   social-auth-app-django
@@ -387,7 +387,7 @@ typing-extensions==4.15.0
     #   referencing
     #   snowflake-connector-python
     #   stripe
-tzdata==2026.1
+tzdata==2026.2
     # via kombu
 tzlocal==5.3.1
     # via celery
