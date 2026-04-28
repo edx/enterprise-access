@@ -114,12 +114,11 @@ class Command(BaseCommand):
             if dry_run:
                 self.stdout.write(self.style.WARNING('DRY RUN - Events would be processed:'))
                 for event in events.data:
-                    obj = event.data.object.to_dict()
                     self.stdout.write(
                         f"  - ID: {event.id}, Type: {event.type}, "
                         f"Created: {datetime.fromtimestamp(event.created).isoformat()}, "
-                        f"Customer id: {obj.get('customer')}, "
-                        f"Customer email: {obj.get('customer_email')}"
+                        f"Customer id: {event.data.object.get('customer')}, "
+                        f"Customer email: {event.data.object.get('customer_email')}"
                     )
                 return
 

@@ -1144,13 +1144,13 @@ class StripeEventSummary(TimeStampedModel):
         stripe_object_data = event_data.get('data', {}).get('object', {})
         self.stripe_object_type = stripe_object_data['object']
         # pylint: disable=protected-access
-        stripe_object = stripe._util.convert_to_stripe_object(event_data['data']['object']).to_dict()
+        stripe_object = stripe._util.convert_to_stripe_object(event_data['data']['object'])
 
         # Extract subscription-specific fields
         if self.stripe_object_type == 'subscription' or self.event_type.startswith('customer.subscription'):
             subscription_obj = stripe_object
 
-            self.stripe_subscription_id = subscription_obj['id']
+            self.stripe_subscription_id = subscription_obj.id
             self.subscription_status = subscription_obj.get('status')
             self.currency = subscription_obj.get('currency')
             self.subscription_cancel_at = self._timestamp_to_datetime(
@@ -1170,10 +1170,10 @@ class StripeEventSummary(TimeStampedModel):
         # Extract invoice-specific fields
         elif self.stripe_object_type == 'invoice' or self.event_type.startswith('invoice'):
             invoice_obj = stripe_object
-            self.stripe_invoice_id = invoice_obj['id']
+            self.stripe_invoice_id = invoice_obj.id
             try:
-                self.stripe_subscription_id = invoice_obj['parent']['subscription_details']['subscription']
-            except (KeyError, TypeError):
+                self.stripe_subscription_id = invoice_obj.parent.subscription_details.subscription
+            except AttributeError:
                 pass
             self.invoice_amount_paid = invoice_obj.get('amount_paid')
             self.invoice_currency = invoice_obj.get('currency')
@@ -1183,13 +1183,11 @@ class StripeEventSummary(TimeStampedModel):
             if lines:
                 primary_line = lines[0]
                 if 'pricing' in primary_line:
-                    pricing = primary_line.get('pricing', {})
-                    self.invoice_unit_amount = pricing.get('unit_amount')
-                    unit_amount_decimal = pricing.get('unit_amount_decimal')
-                    self.invoice_unit_amount_decimal = Decimal(unit_amount_decimal) if unit_amount_decimal else None
+                    self.invoice_unit_amount = getattr(primary_line.pricing, 'unit_amount', None)
+                    self.invoice_unit_amount_decimal = Decimal(primary_line.pricing.unit_amount_decimal)
                     if 'quantity' in primary_line:
-                        self.invoice_quantity = primary_line.get('quantity')
-                    if self.invoice_unit_amount is None and self.invoice_unit_amount_decimal is not None:
+                        self.invoice_quantity = primary_line.quantity
+                    if self.invoice_unit_amount is None:
                         self.invoice_unit_amount = int(self.invoice_unit_amount_decimal)
 
     def update_upcoming_invoice_amount_due(self):

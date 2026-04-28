@@ -23,7 +23,6 @@ from enterprise_access.apps.core.constants import (
 from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.customer_billing.constants import CheckoutIntentState
 from enterprise_access.apps.customer_billing.models import CheckoutIntent, StripeEventData, StripeEventSummary
-from enterprise_access.apps.customer_billing.tests.utils import AttrDict
 from test_utils import APITest
 
 
@@ -765,7 +764,7 @@ class BillingManagementAddressEndpointTests(BillingManagementBaseTest):
         """
         Test successful retrieval of billing address.
         """
-        mock_stripe_customer = AttrDict.wrap({
+        mock_stripe_customer = {
             'id': self.stripe_customer_id,
             'name': 'John Doe',
             'email': 'john@example.com',
@@ -778,7 +777,7 @@ class BillingManagementAddressEndpointTests(BillingManagementBaseTest):
                 'postal_code': '94105',
                 'country': 'US',
             },
-        })
+        }
         mock_stripe_customer_retrieve.return_value = mock_stripe_customer
 
         url = reverse('api:v1:billing-management-address')
@@ -852,13 +851,13 @@ class BillingManagementAddressEndpointTests(BillingManagementBaseTest):
         """
         Test that endpoint handles Stripe customers with partial address data.
         """
-        mock_stripe_customer = AttrDict.wrap({
+        mock_stripe_customer = {
             'id': self.stripe_customer_id,
             'name': 'Jane Doe',
             'email': 'jane@example.com',
             'phone': None,
             'address': None,
-        })
+        }
         mock_stripe_customer_retrieve.return_value = mock_stripe_customer
 
         url = reverse('api:v1:billing-management-address')
@@ -880,7 +879,7 @@ class BillingManagementAddressEndpointTests(BillingManagementBaseTest):
         Stripe may return empty strings for address fields rather than null values.
         The response serializer should accept these without validation errors.
         """
-        mock_stripe_customer = AttrDict.wrap({
+        mock_stripe_customer = {
             'id': self.stripe_customer_id,
             'name': 'Jane Doe',
             'email': 'jane@example.com',
@@ -893,7 +892,7 @@ class BillingManagementAddressEndpointTests(BillingManagementBaseTest):
                 'postal_code': '',
                 'country': 'US',
             },
-        })
+        }
         mock_stripe_customer_retrieve.return_value = mock_stripe_customer
 
         url = reverse('api:v1:billing-management-address')
@@ -926,7 +925,7 @@ class BillingManagementAddressUpdateTests(BillingManagementBaseTest):
         """
         Test successful update of billing address.
         """
-        updated_customer = AttrDict.wrap({
+        updated_customer = {
             'id': self.stripe_customer_id,
             'name': 'Jane Smith',
             'email': 'jane.smith@example.com',
@@ -939,7 +938,7 @@ class BillingManagementAddressUpdateTests(BillingManagementBaseTest):
                 'postal_code': '10001',
                 'country': 'US',
             },
-        })
+        }
         mock_customer_modify.return_value = updated_customer
 
         url = reverse('api:v1:billing-management-address')
@@ -1110,7 +1109,7 @@ class BillingManagementAddressUpdateTests(BillingManagementBaseTest):
         """
         Test that update works when optional fields are omitted.
         """
-        updated_customer = AttrDict.wrap({
+        updated_customer = {
             'id': self.stripe_customer_id,
             'name': 'John Doe',
             'email': 'john@example.com',
@@ -1123,7 +1122,7 @@ class BillingManagementAddressUpdateTests(BillingManagementBaseTest):
                 'postal_code': '90001',
                 'country': 'US',
             },
-        })
+        }
         mock_customer_modify.return_value = updated_customer
 
         url = reverse('api:v1:billing-management-address')
@@ -1164,11 +1163,11 @@ class BillingManagementPaymentMethodsTests(BillingManagementBaseTest):
         """
         Test successful retrieval of payment methods.
         """
-        mock_customer = AttrDict.wrap({'invoice_settings': {'default_payment_method': 'pm_card_visa'}})
+        mock_customer = {'invoice_settings': {'default_payment_method': 'pm_card_visa'}}
         mock_customer_retrieve.return_value = mock_customer
 
         mock_payment_methods = [
-            AttrDict.wrap({
+            {
                 'id': 'pm_card_visa',
                 'type': 'card',
                 'card': {
@@ -1177,8 +1176,8 @@ class BillingManagementPaymentMethodsTests(BillingManagementBaseTest):
                     'exp_month': 12,
                     'exp_year': 2025,
                 }
-            }),
-            AttrDict.wrap({
+            },
+            {
                 'id': 'pm_card_mastercard',
                 'type': 'card',
                 'card': {
@@ -1187,7 +1186,7 @@ class BillingManagementPaymentMethodsTests(BillingManagementBaseTest):
                     'exp_month': 6,
                     'exp_year': 2026,
                 }
-            }),
+            }
         ]
         mock_payment_method_list.return_value = mock.Mock(data=mock_payment_methods)
 
@@ -1224,7 +1223,7 @@ class BillingManagementPaymentMethodsTests(BillingManagementBaseTest):
         """
         Test that empty payment methods list returns successfully.
         """
-        mock_customer = AttrDict.wrap({'invoice_settings': {}})
+        mock_customer = {'invoice_settings': {}}
         mock_customer_retrieve.return_value = mock_customer
         mock_payment_method_list.return_value = mock.Mock(data=[])
 
@@ -1292,17 +1291,17 @@ class BillingManagementPaymentMethodsTests(BillingManagementBaseTest):
         """
         Test that payment methods include bank account details when present.
         """
-        mock_customer = AttrDict.wrap({'invoice_settings': {'default_payment_method': 'pm_bank_account'}})
+        mock_customer = {'invoice_settings': {'default_payment_method': 'pm_bank_account'}}
         mock_customer_retrieve.return_value = mock_customer
 
         mock_payment_methods = [
-            AttrDict.wrap({
+            {
                 'id': 'pm_bank_account',
                 'type': 'us_bank_account',
                 'us_bank_account': {
                     'last4': '6789',
                 }
-            }),
+            }
         ]
         mock_payment_method_list.return_value = mock.Mock(data=mock_payment_methods)
 
@@ -1336,11 +1335,11 @@ class BillingManagementPaymentMethodsTests(BillingManagementBaseTest):
         """
         Test that bank account payment methods return correct status based on Stripe verification status.
         """
-        mock_customer = AttrDict.wrap({'invoice_settings': {'default_payment_method': 'pm_bank_account'}})
+        mock_customer = {'invoice_settings': {'default_payment_method': 'pm_bank_account'}}
         mock_customer_retrieve.return_value = mock_customer
 
         mock_payment_methods = [
-            AttrDict.wrap({
+            {
                 'id': 'pm_bank_account',
                 'type': 'us_bank_account',
                 'status': stripe_status,
@@ -1350,7 +1349,7 @@ class BillingManagementPaymentMethodsTests(BillingManagementBaseTest):
                         'status': stripe_status,
                     },
                 }
-            }),
+            }
         ]
         mock_payment_method_list.return_value = mock.Mock(data=mock_payment_methods)
 
@@ -1610,7 +1609,9 @@ class BillingManagementSetDefaultPaymentMethodTests(BillingManagementBaseTest):
         """
         Test successfully setting a payment method as default.
         """
-        mock_payment_method_retrieve.return_value = AttrDict.wrap({'customer': self.stripe_customer_id})
+        mock_payment_method = mock.Mock()
+        mock_payment_method.get.return_value = self.stripe_customer_id
+        mock_payment_method_retrieve.return_value = mock_payment_method
 
         url = reverse('api:v1:billing-management-set-default-payment-method', args=[self.payment_method_id])
         response = self.client.post(
@@ -1695,7 +1696,9 @@ class BillingManagementSetDefaultPaymentMethodTests(BillingManagementBaseTest):
         Test that payment method belonging to different customer returns 404.
         """
         # Mock payment method belonging to a different customer
-        mock_payment_method_retrieve.return_value = AttrDict.wrap({'customer': 'cus_different_customer'})
+        mock_payment_method = mock.Mock()
+        mock_payment_method.get.return_value = 'cus_different_customer'
+        mock_payment_method_retrieve.return_value = mock_payment_method
 
         url = reverse('api:v1:billing-management-set-default-payment-method', args=[self.payment_method_id])
         response = self.client.post(
@@ -1714,7 +1717,9 @@ class BillingManagementSetDefaultPaymentMethodTests(BillingManagementBaseTest):
         """
         Test that Stripe API errors are handled gracefully.
         """
-        mock_payment_method_retrieve.return_value = AttrDict.wrap({'customer': self.stripe_customer_id})
+        mock_payment_method = mock.Mock()
+        mock_payment_method.get.return_value = self.stripe_customer_id
+        mock_payment_method_retrieve.return_value = mock_payment_method
         mock_customer_modify.side_effect = stripe.error.StripeError('Stripe API Error')
 
         url = reverse('api:v1:billing-management-set-default-payment-method', args=[self.payment_method_id])
@@ -1762,7 +1767,9 @@ class BillingManagementSetDefaultPaymentMethodTests(BillingManagementBaseTest):
             'context': self.enterprise_uuid,
         }])
 
-        mock_payment_method_retrieve.return_value = AttrDict.wrap({'customer': self.stripe_customer_id})
+        mock_payment_method = mock.Mock()
+        mock_payment_method.get.return_value = self.stripe_customer_id
+        mock_payment_method_retrieve.return_value = mock_payment_method
 
         url = reverse('api:v1:billing-management-set-default-payment-method', args=[self.payment_method_id])
         response = self.client.post(
@@ -1791,19 +1798,27 @@ class BillingManagementDeletePaymentMethodTests(BillingManagementBaseTest):
         """
         Test successfully deleting a non-default payment method when others exist.
         """
-        mock_retrieve_pm.return_value = AttrDict.wrap({
+        mock_payment_method = mock.Mock()
+        mock_payment_method.get.side_effect = lambda key, default=None: {
             'id': 'pm_test123',
             'customer': self.stripe_customer_id,
-        })
+        }.get(key, default)
+        mock_retrieve_pm.return_value = mock_payment_method
 
         # Mock customer with different default
-        mock_retrieve_cust.return_value = AttrDict.wrap({
+        mock_customer = mock.Mock()
+        mock_customer.get.side_effect = lambda key, default=None: {
             'id': self.stripe_customer_id,
             'invoice_settings': {'default_payment_method': 'pm_default'},
-        })
+        }.get(key, default)
+        mock_retrieve_cust.return_value = mock_customer
 
-        # Mock multiple payment methods (only len() is called, no .to_dict())
-        mock_list_pm.return_value = mock.Mock(data=['pm_default', 'pm_test123'])
+        # Mock multiple payment methods
+        mock_payment_methods = [
+            mock.Mock(get=lambda key, default=None: {'id': 'pm_default'}.get(key, default)),
+            mock.Mock(get=lambda key, default=None: {'id': 'pm_test123'}.get(key, default)),
+        ]
+        mock_list_pm.return_value = mock.Mock(data=mock_payment_methods)
 
         url = reverse('api:v1:billing-management-delete-payment-method', kwargs={'payment_method_id': 'pm_test123'})
         response = self.client.delete(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}')
@@ -1821,19 +1836,26 @@ class BillingManagementDeletePaymentMethodTests(BillingManagementBaseTest):
         """
         Test that deleting the only payment method returns 409 conflict.
         """
-        mock_retrieve_pm.return_value = AttrDict.wrap({
+        mock_payment_method = mock.Mock()
+        mock_payment_method.get.side_effect = lambda key, default=None: {
             'id': 'pm_only',
             'customer': self.stripe_customer_id,
-        })
+        }.get(key, default)
+        mock_retrieve_pm.return_value = mock_payment_method
 
         # Mock customer
-        mock_retrieve_cust.return_value = AttrDict.wrap({
+        mock_customer = mock.Mock()
+        mock_customer.get.side_effect = lambda key, default=None: {
             'id': self.stripe_customer_id,
             'invoice_settings': {'default_payment_method': 'pm_only'},
-        })
+        }.get(key, default)
+        mock_retrieve_cust.return_value = mock_customer
 
-        # Mock only one payment method (only len() is called)
-        mock_list_pm.return_value = mock.Mock(data=['pm_only'])
+        # Mock only one payment method
+        mock_payment_methods = [
+            mock.Mock(get=lambda key, default=None: {'id': 'pm_only'}.get(key, default)),
+        ]
+        mock_list_pm.return_value = mock.Mock(data=mock_payment_methods)
 
         url = reverse('api:v1:billing-management-delete-payment-method', kwargs={'payment_method_id': 'pm_only'})
         response = self.client.delete(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}')
@@ -1850,19 +1872,27 @@ class BillingManagementDeletePaymentMethodTests(BillingManagementBaseTest):
         """
         Test that deleting the default payment method when others exist returns 409 conflict.
         """
-        mock_retrieve_pm.return_value = AttrDict.wrap({
+        mock_payment_method = mock.Mock()
+        mock_payment_method.get.side_effect = lambda key, default=None: {
             'id': 'pm_default',
             'customer': self.stripe_customer_id,
-        })
+        }.get(key, default)
+        mock_retrieve_pm.return_value = mock_payment_method
 
         # Mock customer with this method as default
-        mock_retrieve_cust.return_value = AttrDict.wrap({
+        mock_customer = mock.Mock()
+        mock_customer.get.side_effect = lambda key, default=None: {
             'id': self.stripe_customer_id,
             'invoice_settings': {'default_payment_method': 'pm_default'},
-        })
+        }.get(key, default)
+        mock_retrieve_cust.return_value = mock_customer
 
-        # Mock multiple payment methods (only len() is called)
-        mock_list_pm.return_value = mock.Mock(data=['pm_default', 'pm_other'])
+        # Mock multiple payment methods
+        mock_payment_methods = [
+            mock.Mock(get=lambda key, default=None: {'id': 'pm_default'}.get(key, default)),
+            mock.Mock(get=lambda key, default=None: {'id': 'pm_other'}.get(key, default)),
+        ]
+        mock_list_pm.return_value = mock.Mock(data=mock_payment_methods)
 
         url = reverse('api:v1:billing-management-delete-payment-method', kwargs={'payment_method_id': 'pm_default'})
         response = self.client.delete(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}')
@@ -1922,10 +1952,12 @@ class BillingManagementDeletePaymentMethodTests(BillingManagementBaseTest):
         """
         Test that endpoint returns 404 when payment method belongs to different customer.
         """
-        mock_retrieve_pm.return_value = AttrDict.wrap({
+        mock_payment_method = mock.Mock()
+        mock_payment_method.get.side_effect = lambda key, default=None: {
             'id': 'pm_test123',
             'customer': 'cus_different_customer',
-        })
+        }.get(key, default)
+        mock_retrieve_pm.return_value = mock_payment_method
 
         url = reverse('api:v1:billing-management-delete-payment-method', kwargs={'payment_method_id': 'pm_test123'})
         response = self.client.delete(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}')
@@ -1942,19 +1974,27 @@ class BillingManagementDeletePaymentMethodTests(BillingManagementBaseTest):
         """
         Test that endpoint handles Stripe API errors gracefully.
         """
-        mock_retrieve_pm.return_value = AttrDict.wrap({
+        mock_payment_method = mock.Mock()
+        mock_payment_method.get.side_effect = lambda key, default=None: {
             'id': 'pm_test123',
             'customer': self.stripe_customer_id,
-        })
+        }.get(key, default)
+        mock_retrieve_pm.return_value = mock_payment_method
 
         # Mock customer
-        mock_retrieve_cust.return_value = AttrDict.wrap({
+        mock_customer = mock.Mock()
+        mock_customer.get.side_effect = lambda key, default=None: {
             'id': self.stripe_customer_id,
             'invoice_settings': {'default_payment_method': 'pm_default'},
-        })
+        }.get(key, default)
+        mock_retrieve_cust.return_value = mock_customer
 
-        # Mock multiple payment methods (only len() is called)
-        mock_list_pm.return_value = mock.Mock(data=['pm_default', 'pm_test123'])
+        # Mock multiple payment methods but detach fails
+        mock_payment_methods = [
+            mock.Mock(get=lambda key, default=None: {'id': 'pm_default'}.get(key, default)),
+            mock.Mock(get=lambda key, default=None: {'id': 'pm_test123'}.get(key, default)),
+        ]
+        mock_list_pm.return_value = mock.Mock(data=mock_payment_methods)
 
         # Mock detach to fail
         with mock.patch('stripe.PaymentMethod.detach', side_effect=stripe.error.StripeError('Connection error')):
@@ -1984,7 +2024,7 @@ class BillingManagementTransactionsTests(BillingManagementBaseTest):
         """
         # Mock invoice response
         mock_invoices = [
-            AttrDict.wrap({
+            {
                 'id': 'in_test123',
                 'created': 1640000000,  # Unix timestamp
                 'amount_paid': 9900,
@@ -1993,8 +2033,8 @@ class BillingManagementTransactionsTests(BillingManagementBaseTest):
                 'description': 'Test Invoice 1',
                 'hosted_invoice_url': 'https://stripe.com/invoice/1',
                 'charge': 'ch_test123',
-            }),
-            AttrDict.wrap({
+            },
+            {
                 'id': 'in_test456',
                 'created': 1639900000,  # Unix timestamp
                 'amount_paid': 5000,
@@ -2003,7 +2043,7 @@ class BillingManagementTransactionsTests(BillingManagementBaseTest):
                 'description': 'Test Invoice 2',
                 'hosted_invoice_url': 'https://stripe.com/invoice/2',
                 'charge': None,
-            }),
+            },
         ]
         mock_invoice_list.return_value = mock.Mock(
             data=mock_invoices,
@@ -2011,10 +2051,10 @@ class BillingManagementTransactionsTests(BillingManagementBaseTest):
         )
 
         # Mock charge response
-        mock_charge = AttrDict.wrap({
+        mock_charge = {
             'id': 'ch_test123',
             'receipt_url': 'https://stripe.com/receipt/ch_test123',
-        })
+        }
         mock_charge_retrieve.return_value = mock_charge
 
         url = reverse('api:v1:billing-management-list-transactions')
@@ -2042,7 +2082,7 @@ class BillingManagementTransactionsTests(BillingManagementBaseTest):
         """
         # Mock invoice response with has_more=True
         mock_invoices = [
-            AttrDict.wrap({
+            {
                 'id': 'in_test123',
                 'created': 1640000000,  # Unix timestamp
                 'amount_paid': 9900,
@@ -2051,7 +2091,7 @@ class BillingManagementTransactionsTests(BillingManagementBaseTest):
                 'description': 'Test Invoice 1',
                 'hosted_invoice_url': 'https://stripe.com/invoice/1',
                 'charge': None,
-            }),
+            },
         ]
         mock_invoice_list.return_value = mock.Mock(
             data=mock_invoices,
@@ -2177,7 +2217,7 @@ class BillingManagementTransactionsTests(BillingManagementBaseTest):
         """
         # Mock invoices with various Stripe statuses
         mock_invoices = [
-            AttrDict.wrap({
+            {
                 'id': 'in_paid',
                 'created': 1640000000,  # Unix timestamp
                 'amount_paid': 1000,
@@ -2186,8 +2226,8 @@ class BillingManagementTransactionsTests(BillingManagementBaseTest):
                 'description': 'Paid invoice',
                 'hosted_invoice_url': 'https://stripe.com/invoice/1',
                 'charge': None,
-            }),
-            AttrDict.wrap({
+            },
+            {
                 'id': 'in_draft',
                 'created': 1640000000,  # Unix timestamp
                 'amount_paid': 0,
@@ -2196,8 +2236,8 @@ class BillingManagementTransactionsTests(BillingManagementBaseTest):
                 'description': 'Draft invoice',
                 'hosted_invoice_url': 'https://stripe.com/invoice/2',
                 'charge': None,
-            }),
-            AttrDict.wrap({
+            },
+            {
                 'id': 'in_void',
                 'created': 1640000000,  # Unix timestamp
                 'amount_paid': 0,
@@ -2206,7 +2246,7 @@ class BillingManagementTransactionsTests(BillingManagementBaseTest):
                 'description': 'Void invoice',
                 'hosted_invoice_url': 'https://stripe.com/invoice/3',
                 'charge': None,
-            }),
+            },
         ]
         mock_invoice_list.return_value = mock.Mock(data=mock_invoices, has_more=False)
 
@@ -2518,12 +2558,12 @@ class BillingManagementCancelSubscriptionTests(BillingManagementBaseTest):
                 ]
             },
         }
-        mock_sub_retrieve.return_value = AttrDict.wrap(mock_subscription)
+        mock_sub_retrieve.return_value = mock_subscription
 
         # Mock modified subscription
         mock_modified_subscription = mock_subscription.copy()
         mock_modified_subscription['cancel_at_period_end'] = True
-        mock_sub_modify.return_value = AttrDict.wrap(mock_modified_subscription)
+        mock_sub_modify.return_value = mock_modified_subscription
 
         url = reverse('api:v1:billing-management-cancel-subscription')
         response = self.client.post(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}', format='json')
@@ -2588,11 +2628,11 @@ class BillingManagementCancelSubscriptionTests(BillingManagementBaseTest):
                 ]
             },
         }
-        mock_sub_retrieve.return_value = AttrDict.wrap(mock_subscription)
+        mock_sub_retrieve.return_value = mock_subscription
 
         mock_modified_subscription = mock_subscription.copy()
         mock_modified_subscription['cancel_at_period_end'] = True
-        mock_sub_modify.return_value = AttrDict.wrap(mock_modified_subscription)
+        mock_sub_modify.return_value = mock_modified_subscription
 
         url = reverse('api:v1:billing-management-cancel-subscription')
         response = self.client.post(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}', format='json')
@@ -2647,7 +2687,7 @@ class BillingManagementCancelSubscriptionTests(BillingManagementBaseTest):
                 ]
             },
         }
-        mock_sub_retrieve.return_value = AttrDict.wrap(mock_subscription)
+        mock_sub_retrieve.return_value = mock_subscription
 
         url = reverse('api:v1:billing-management-cancel-subscription')
         response = self.client.post(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}', format='json')
@@ -2702,7 +2742,7 @@ class BillingManagementCancelSubscriptionTests(BillingManagementBaseTest):
                 ]
             },
         }
-        mock_sub_retrieve.return_value = AttrDict.wrap(mock_subscription)
+        mock_sub_retrieve.return_value = mock_subscription
 
         url = reverse('api:v1:billing-management-cancel-subscription')
         response = self.client.post(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}', format='json')
@@ -2844,7 +2884,7 @@ class BillingManagementCancelSubscriptionTests(BillingManagementBaseTest):
                 ]
             },
         }
-        mock_sub_retrieve.return_value = AttrDict.wrap(mock_subscription)
+        mock_sub_retrieve.return_value = mock_subscription
 
         # Mock modify to fail
         with mock.patch('stripe.Subscription.modify', side_effect=stripe.error.StripeError('Connection error')):
@@ -2921,12 +2961,12 @@ class BillingManagementReinstateSubscriptionTests(BillingManagementBaseTest):
                 ]
             },
         }
-        mock_sub_retrieve.return_value = AttrDict.wrap(mock_subscription)
+        mock_sub_retrieve.return_value = mock_subscription
 
         # Mock modified subscription
         mock_modified_subscription = mock_subscription.copy()
         mock_modified_subscription['cancel_at_period_end'] = False
-        mock_sub_modify.return_value = AttrDict.wrap(mock_modified_subscription)
+        mock_sub_modify.return_value = mock_modified_subscription
 
         url = reverse('api:v1:billing-management-reinstate-subscription')
         response = self.client.post(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}', format='json')
@@ -2993,11 +3033,11 @@ class BillingManagementReinstateSubscriptionTests(BillingManagementBaseTest):
                 ]
             },
         }
-        mock_sub_retrieve.return_value = AttrDict.wrap(mock_subscription)
+        mock_sub_retrieve.return_value = mock_subscription
 
         mock_modified_subscription = mock_subscription.copy()
         mock_modified_subscription['cancel_at_period_end'] = False
-        mock_sub_modify.return_value = AttrDict.wrap(mock_modified_subscription)
+        mock_sub_modify.return_value = mock_modified_subscription
 
         url = reverse('api:v1:billing-management-reinstate-subscription')
         response = self.client.post(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}', format='json')
@@ -3050,7 +3090,7 @@ class BillingManagementReinstateSubscriptionTests(BillingManagementBaseTest):
                 ]
             },
         }
-        mock_sub_retrieve.return_value = AttrDict.wrap(mock_subscription)
+        mock_sub_retrieve.return_value = mock_subscription
 
         url = reverse('api:v1:billing-management-reinstate-subscription')
         response = self.client.post(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}', format='json')
@@ -3228,7 +3268,7 @@ class BillingManagementReinstateSubscriptionTests(BillingManagementBaseTest):
                 ]
             },
         }
-        mock_sub_retrieve.return_value = AttrDict.wrap(mock_subscription)
+        mock_sub_retrieve.return_value = mock_subscription
 
         # Mock modify to fail
         with mock.patch('stripe.Subscription.modify', side_effect=stripe.error.StripeError('Connection error')):
@@ -3312,20 +3352,20 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
         """
         Test list payment methods with us_bank_account type.
         """
-        mock_customer_retrieve.return_value = AttrDict.wrap({
+        mock_customer_retrieve.return_value = {
             'id': self.stripe_customer_id,
             'invoice_settings': {'default_payment_method': 'pm_bank_123'},
-        })
+        }
 
         mock_pm_list.return_value = mock.Mock(data=[
-            AttrDict.wrap({
+            {
                 'id': 'pm_bank_123',
                 'type': 'us_bank_account',
                 'us_bank_account': {
                     'last4': '6789',
                     'status_details': {'status': 'verified'},
                 },
-            }),
+            }
         ])
 
         url = reverse('api:v1:billing-management-payment-methods')
@@ -3382,7 +3422,7 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
         """
         Test set default payment method with general exception.
         """
-        mock_pm_retrieve.return_value = AttrDict.wrap({'id': 'pm_test_123', 'customer': self.stripe_customer_id})
+        mock_pm_retrieve.return_value = {'id': 'pm_test_123', 'customer': self.stripe_customer_id}
         mock_customer_modify.side_effect = Exception('Unexpected error')
 
         url = reverse(
@@ -3405,12 +3445,15 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
         """
         Test delete payment method with general exception.
         """
-        mock_pm_retrieve.return_value = AttrDict.wrap({'id': 'pm_test_123', 'customer': self.stripe_customer_id})
-        mock_customer_retrieve.return_value = AttrDict.wrap({
+        mock_pm_retrieve.return_value = {'id': 'pm_test_123', 'customer': self.stripe_customer_id}
+        mock_customer_retrieve.return_value = {
             'id': self.stripe_customer_id,
             'invoice_settings': {'default_payment_method': 'pm_default'},
-        })
-        mock_pm_list.return_value = mock.Mock(data=['pm_test_123', 'pm_default'])
+        }
+        mock_pm_list.return_value = mock.Mock(data=[
+            {'id': 'pm_test_123'},
+            {'id': 'pm_default'},
+        ])
         mock_pm_detach.side_effect = Exception('Unexpected error')
 
         url = reverse('api:v1:billing-management-delete-payment-method', kwargs={'payment_method_id': 'pm_test_123'})
@@ -3469,7 +3512,7 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
         Test list transactions when charge retrieval fails (should set receipt_url to None).
         """
         mock_invoice_list.return_value = mock.Mock(
-            data=[AttrDict.wrap({
+            data=[{
                 'id': 'in_test_123',
                 'created': 1234567890,
                 'amount_paid': 10000,
@@ -3478,7 +3521,7 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
                 'description': 'Test invoice',
                 'hosted_invoice_url': 'https://invoice.stripe.com/test',
                 'charge': 'ch_test_123',
-            })],
+            }],
             has_more=False
         )
         mock_charge_retrieve.side_effect = stripe.error.StripeError('Charge not found')
@@ -3684,185 +3727,3 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
         payment_method['us_bank_account']['status_details']['status'] = 'errored'
         result = BillingManagementViewSet._get_payment_method_status(payment_method)  # pylint: disable=protected-access
         self.assertEqual(result, 'failed')
-
-    # _get_plan_type_from_subscription helper tests
-    @ddt.data(
-        # (subscription_dict, price_return, product_return, price_side_effect, expected)
-        # no items → 'Other', no Stripe calls made
-        ({'items': {'data': []}}, None, None, None, 'Other'),
-        # item present but no price ID → 'Other', no Stripe calls made
-        ({'items': {'data': [{'price': {}}]}}, None, None, None, 'Other'),
-        # plan_type found in price metadata → returned directly
-        (
-            {'items': {'data': [{'price': {'id': 'price_123'}}]}},
-            {'metadata': {'plan_type': 'Teams'}, 'product': None},
-            None, None, 'Teams',
-        ),
-        # plan_type absent in price metadata, found in product metadata → returned from product
-        (
-            {'items': {'data': [{'price': {'id': 'price_123'}}]}},
-            {'metadata': {}, 'product': 'prod_123'},
-            {'metadata': {'plan_type': 'Essentials'}},
-            None, 'Essentials',
-        ),
-        # plan_type absent from both price and product metadata → 'Other'
-        (
-            {'items': {'data': [{'price': {'id': 'price_123'}}]}},
-            {'metadata': {}, 'product': 'prod_123'},
-            {'metadata': {}},
-            None, 'Other',
-        ),
-        # price has no product ID and price metadata lacks plan_type → 'Other'
-        (
-            {'items': {'data': [{'price': {'id': 'price_123'}}]}},
-            {'metadata': {}, 'product': None},
-            None, None, 'Other',
-        ),
-        # StripeError raised → 'Other'
-        (
-            {'items': {'data': [{'price': {'id': 'price_123'}}]}},
-            None, None, stripe.error.StripeError('Stripe unavailable'), 'Other',
-        ),
-        # unexpected Exception raised → 'Other'
-        (
-            {'items': {'data': [{'price': {'id': 'price_123'}}]}},
-            None, None, Exception('Unexpected failure'), 'Other',
-        ),
-    )
-    @ddt.unpack
-    @mock.patch('stripe.Product.retrieve')
-    @mock.patch('stripe.Price.retrieve')
-    def test_get_plan_type_from_subscription(
-        self,
-        subscription_dict,
-        price_return,
-        product_return,
-        price_side_effect,
-        expected,
-        mock_price_retrieve,
-        mock_product_retrieve,
-    ):
-        """
-        Tests all branches of _get_plan_type_from_subscription.
-        """
-        if price_side_effect is not None:
-            mock_price_retrieve.side_effect = price_side_effect
-        elif price_return is not None:
-            mock_price_retrieve.return_value = AttrDict.wrap(price_return)
-
-        if product_return is not None:
-            mock_product_retrieve.return_value = AttrDict.wrap(product_return)
-
-        sub = AttrDict.wrap(subscription_dict)
-        result = BillingManagementViewSet._get_plan_type_from_subscription(sub)  # pylint: disable=protected-access
-        self.assertEqual(result, expected)
-
-    # _get_yearly_amount helper tests
-    @ddt.data(
-        # (subscription_dict, price_retrieve_return, price_side_effect, expected)
-        # no items → 0
-        ({'items': {'data': []}}, None, None, 0),
-        # unit_amount inline, yearly billing, quantity 2
-        (
-            {'items': {'data': [{'price': {'unit_amount': 1000, 'recurring': {'interval': 'year'}}, 'quantity': 2}]}},
-            None, None, 2000,
-        ),
-        # unit_amount inline, monthly billing, quantity 1
-        (
-            {'items': {'data': [{'price': {'unit_amount': 500, 'recurring': {'interval': 'month'}}, 'quantity': 1}]}},
-            None, None, 6000,
-        ),
-        # unit_amount inline, weekly billing, quantity 1
-        (
-            {'items': {'data': [{'price': {'unit_amount': 100, 'recurring': {'interval': 'week'}}, 'quantity': 1}]}},
-            None, None, 5200,
-        ),
-        # unit_amount inline, unknown billing period → 0
-        (
-            {'items': {'data': [{'price': {'unit_amount': 1000, 'recurring': {'interval': 'day'}}, 'quantity': 1}]}},
-            None, None, 0,
-        ),
-        # no unit_amount in price, has price_id → retrieves price and calculates (monthly)
-        (
-            {'items': {'data': [{'price': {'id': 'price_123'}, 'quantity': 3}]}},
-            {'unit_amount': 5000, 'recurring': {'interval': 'month'}},
-            None, 180000,
-        ),
-        # no unit_amount in price, has price_id → StripeError on retrieve → item skipped
-        (
-            {'items': {'data': [{'price': {'id': 'price_123'}, 'quantity': 1}]}},
-            None, stripe.error.StripeError('Stripe error'), 0,
-        ),
-        # no unit_amount in price, no price_id → unit_amount defaults to 0
-        (
-            {'items': {'data': [{'price': {}, 'quantity': 5}]}},
-            None, None, 0,
-        ),
-        # multiple items summed: yearly (1000*1) + monthly (500*2*12) = 13000
-        (
-            {'items': {'data': [
-                {'price': {'unit_amount': 1000, 'recurring': {'interval': 'year'}}, 'quantity': 1},
-                {'price': {'unit_amount': 500, 'recurring': {'interval': 'month'}}, 'quantity': 2},
-            ]}},
-            None, None, 13000,
-        ),
-    )
-    @ddt.unpack
-    @mock.patch('stripe.Price.retrieve')
-    def test_get_yearly_amount(
-        self,
-        subscription_dict,
-        price_retrieve_return,
-        price_side_effect,
-        expected,
-        mock_price_retrieve,
-    ):
-        """
-        Tests all branches of _get_yearly_amount.
-        """
-        if price_side_effect is not None:
-            mock_price_retrieve.side_effect = price_side_effect
-        elif price_retrieve_return is not None:
-            mock_price_retrieve.return_value = AttrDict.wrap(price_retrieve_return)
-
-        sub = AttrDict.wrap(subscription_dict)
-        result = BillingManagementViewSet._get_yearly_amount(sub)  # pylint: disable=protected-access
-        self.assertEqual(result, expected)
-
-    def test_get_yearly_amount_general_exception(self):
-        """
-        Returns 0 when subscription.to_dict() raises an unexpected exception.
-        """
-        sub = mock.Mock()
-        sub.to_dict.side_effect = Exception('Unexpected failure')
-        result = BillingManagementViewSet._get_yearly_amount(sub)  # pylint: disable=protected-access
-        self.assertEqual(result, 0)
-
-    # _get_license_count helper tests
-    @ddt.data(
-        # empty items list → 0
-        ({'items': {'data': []}}, 0),
-        # single item with quantity
-        ({'items': {'data': [{'quantity': 5}]}}, 5),
-        # multiple items summed
-        ({'items': {'data': [{'quantity': 3}, {'quantity': 7}]}}, 10),
-        # item missing quantity key → defaults to 0
-        ({'items': {'data': [{'quantity': 4}, {}]}}, 4),
-    )
-    @ddt.unpack
-    def test_get_license_count(self, subscription_dict, expected):
-        """
-        Tests all branches of _get_license_count.
-        """
-        sub = AttrDict.wrap(subscription_dict)
-        result = BillingManagementViewSet._get_license_count(sub)  # pylint: disable=protected-access
-        self.assertEqual(result, expected)
-
-    def test_get_license_count_general_exception(self):
-        """
-        Returns 0 when subscription.to_dict() raises an unexpected exception.
-        """
-        sub = mock.Mock()
-        sub.to_dict.side_effect = Exception('Unexpected failure')
-        result = BillingManagementViewSet._get_license_count(sub)  # pylint: disable=protected-access
-        self.assertEqual(result, 0)

@@ -882,13 +882,12 @@ class BillingManagementViewSet(viewsets.ViewSet):
                 )
 
             # Get the Stripe customer
-            stripe_customer_obj = get_stripe_customer(stripe_customer_id)
-            if not stripe_customer_obj:
+            stripe_customer = get_stripe_customer(stripe_customer_id)
+            if not stripe_customer:
                 return Response(
                     {'error': 'Stripe customer not found'},
                     status=status.HTTP_404_NOT_FOUND
                 )
-            stripe_customer = stripe_customer_obj.to_dict()
 
             # Extract address fields from Stripe customer object
             address_data = {
@@ -974,7 +973,7 @@ class BillingManagementViewSet(viewsets.ViewSet):
                     'postal_code': validated_data.get('postal_code'),
                     'country': validated_data.get('country'),
                 },
-            ).to_dict()
+            )
 
             # Invalidate cached customer data after successful update
             cache_key = f"stripe_get_stripe_customer_{stripe_customer_id}"
@@ -1126,7 +1125,7 @@ class BillingManagementViewSet(viewsets.ViewSet):
                 )
 
             # Get the Stripe customer to find the default payment method
-            stripe_customer = stripe.Customer.retrieve(stripe_customer_id).to_dict()
+            stripe_customer = stripe.Customer.retrieve(stripe_customer_id)
             default_payment_method_id = stripe_customer.get('invoice_settings', {}).get('default_payment_method')
 
             # List all payment methods for the customer
@@ -1139,7 +1138,6 @@ class BillingManagementViewSet(viewsets.ViewSet):
             # Transform payment methods into response format
             payment_methods = []
             for pm in payment_methods_response.data:
-                pm = pm.to_dict()
                 payment_method_data = {
                     'id': pm.get('id'),
                     'type': pm.get('type'),
@@ -1358,7 +1356,7 @@ class BillingManagementViewSet(viewsets.ViewSet):
                 )
 
             # Verify the payment method exists and belongs to this customer
-            payment_method = stripe.PaymentMethod.retrieve(payment_method_id).to_dict()
+            payment_method = stripe.PaymentMethod.retrieve(payment_method_id)
             if not payment_method or payment_method.get('customer') != stripe_customer_id:
                 logger.warning(
                     f'Payment method {payment_method_id} does not belong to customer {stripe_customer_id}'
@@ -1482,7 +1480,7 @@ class BillingManagementViewSet(viewsets.ViewSet):
                 )
 
             # Verify the payment method exists and belongs to this customer
-            payment_method = stripe.PaymentMethod.retrieve(payment_method_id).to_dict()
+            payment_method = stripe.PaymentMethod.retrieve(payment_method_id)
             if not payment_method or payment_method.get('customer') != stripe_customer_id:
                 logger.warning(
                     f'Payment method {payment_method_id} does not belong to customer {stripe_customer_id}'
@@ -1493,7 +1491,7 @@ class BillingManagementViewSet(viewsets.ViewSet):
                 )
 
             # Get the customer to check payment method count and default
-            stripe_customer = stripe.Customer.retrieve(stripe_customer_id).to_dict()
+            stripe_customer = stripe.Customer.retrieve(stripe_customer_id)
             default_payment_method_id = stripe_customer.get('invoice_settings', {}).get('default_payment_method')
 
             # List all payment methods for the customer
@@ -1639,7 +1637,6 @@ class BillingManagementViewSet(viewsets.ViewSet):
             # Transform invoices to transaction format
             transactions = []
             for invoice in invoices_response.data:
-                invoice = invoice.to_dict()
                 transaction = {
                     'id': invoice.get('id'),
                     'created': invoice.get('created'),  # Unix timestamp from Stripe
@@ -1653,7 +1650,7 @@ class BillingManagementViewSet(viewsets.ViewSet):
                 # Attempt to get receipt_url from associated charge
                 try:
                     if invoice.get('charge'):
-                        charge = stripe.Charge.retrieve(invoice.get('charge')).to_dict()
+                        charge = stripe.Charge.retrieve(invoice.get('charge'))
                         transaction['receipt_url'] = charge.get('receipt_url')
                 except stripe.error.StripeError as e:
                     logger.warning(f'Could not retrieve charge {invoice.get("charge")} for receipt URL: {str(e)}')
@@ -1852,7 +1849,6 @@ class BillingManagementViewSet(viewsets.ViewSet):
         Expected plan_type values: 'Teams', 'Essentials', 'LearnerCredit', 'Other'
         """
         try:
-            subscription = subscription.to_dict()
             # Get the price object from the subscription
             items = subscription.get('items', {}).get('data', [])
             if not items:
@@ -1863,7 +1859,7 @@ class BillingManagementViewSet(viewsets.ViewSet):
                 return 'Other'
 
             # Retrieve the price to access metadata
-            price = stripe.Price.retrieve(price_id).to_dict()
+            price = stripe.Price.retrieve(price_id)
 
             # Check price metadata first
             price_metadata = price.get('metadata', {})
@@ -1873,7 +1869,7 @@ class BillingManagementViewSet(viewsets.ViewSet):
             # Check product metadata
             product_id = price.get('product')
             if product_id:
-                product = stripe.Product.retrieve(product_id).to_dict()
+                product = stripe.Product.retrieve(product_id)
                 product_metadata = product.get('metadata', {})
                 if 'plan_type' in product_metadata:
                     return product_metadata.get('plan_type', 'Other')
@@ -1899,7 +1895,6 @@ class BillingManagementViewSet(viewsets.ViewSet):
             bool: True if subscription price matches an SSP product, False otherwise
         """
         try:
-            subscription = subscription.to_dict()
             # Get the price ID from the subscription
             items = subscription.get('items', {}).get('data', [])
             if not items:
@@ -1936,7 +1931,6 @@ class BillingManagementViewSet(viewsets.ViewSet):
         Returns the total yearly recurring revenue for the subscription.
         """
         try:
-            subscription = subscription.to_dict()
             items = subscription.get('items', {}).get('data', [])
             if not items:
                 return 0
@@ -1951,7 +1945,7 @@ class BillingManagementViewSet(viewsets.ViewSet):
                     price_id = price_obj.get('id')
                     if price_id:
                         try:
-                            price_obj = stripe.Price.retrieve(price_id).to_dict()
+                            price_obj = stripe.Price.retrieve(price_id)
                         except stripe.error.StripeError:
                             logger.warning(f'Could not retrieve price {price_id}')
                             continue
@@ -1983,7 +1977,6 @@ class BillingManagementViewSet(viewsets.ViewSet):
         Returns the sum of quantities across all items.
         """
         try:
-            subscription = subscription.to_dict()
             items = subscription.get('items', {}).get('data', [])
             if not items:
                 return 0
@@ -2095,7 +2088,7 @@ class BillingManagementViewSet(viewsets.ViewSet):
             updated_subscription = stripe.Subscription.modify(
                 event_summary.stripe_subscription_id,
                 cancel_at_period_end=True,
-            ).to_dict()
+            )
 
             # Build response with updated subscription data
             sub_data = {
@@ -2236,7 +2229,7 @@ class BillingManagementViewSet(viewsets.ViewSet):
             updated_subscription = stripe.Subscription.modify(
                 event_summary.stripe_subscription_id,
                 cancel_at_period_end=False,
-            ).to_dict()
+            )
 
             # Build response with updated subscription data
             sub_data = {

@@ -542,7 +542,7 @@ def send_trial_end_and_subscription_started_email_task(
         subscription_id, checkout_intent_id
     )
 
-    subscription = get_stripe_subscription(subscription_id).to_dict()
+    subscription = get_stripe_subscription(subscription_id)
     checkout_intent = CheckoutIntent.objects.get(id=checkout_intent_id)
 
     total_license = subscription.get('quantity')
@@ -665,12 +665,12 @@ def send_payment_receipt_email(
     if payment_intent_id:
         try:
             # Fetch the PaymentIntent object from Stripe
-            payment_intent = get_stripe_payment_intent(payment_intent_id).to_dict()
+            payment_intent = get_stripe_payment_intent(payment_intent_id)
             payment_method_id = payment_intent.get('payment_method')
 
             if payment_method_id:
                 # Fetch the PaymentMethod object from Stripe
-                payment_method = get_stripe_payment_method(payment_method_id).to_dict()
+                payment_method = get_stripe_payment_method(payment_method_id)
 
                 # Extract card details
                 card_details = payment_method.get('card', {})
