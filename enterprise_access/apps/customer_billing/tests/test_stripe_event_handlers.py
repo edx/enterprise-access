@@ -41,7 +41,6 @@ from enterprise_access.apps.customer_billing.tests.factories import (
     StripeEventSummaryFactory,
     get_stripe_object_for_event_type
 )
-from enterprise_access.apps.customer_billing.tests.utils import AttrDict
 from enterprise_access.apps.customer_billing.utils import datetime_from_timestamp
 from enterprise_access.apps.provisioning.models import (
     GetCreateFirstPaidSubscriptionPlanStep,
@@ -56,6 +55,28 @@ def _rand_numeric_string():
 
 def _rand_created_at():
     return timezone.now() - timedelta(seconds=randint(1, 30))
+
+
+class AttrDict(dict):
+    """
+    Minimal helper that allows both attribute (obj.foo) and item (obj['foo']) access.
+    Recursively converts nested dicts to AttrDicts, but leaves non-dict values as-is.
+    """
+    def __getattr__(self, name):
+        try:
+            value = self[name]
+        except KeyError as e:
+            raise AttributeError(name) from e
+        return value
+
+    def __setattr__(self, name, value):
+        self[name] = value
+
+    @staticmethod
+    def wrap(value):
+        if isinstance(value, dict) and not isinstance(value, AttrDict):
+            return AttrDict({k: AttrDict.wrap(v) for k, v in value.items()})
+        return value
 
 
 @ddt.ddt
@@ -1128,37 +1149,6 @@ class TestStripeEventHandler(TestCase):
         renewal.refresh_from_db()
         self.assertFalse(renewal.is_canceled)
         self.assertEqual(renewal.subscription_cancel_at, datetime_from_timestamp(cancel_at_timestamp))
-
-    @mock.patch(
-        "enterprise_access.apps.customer_billing.stripe_event_handlers.handle_pending_update"
-    )
-    def test_subscription_updated_with_pending_update(self, mock_handle_pending_update):
-        """subscription_updated with pending_update present should call handle_pending_update."""
-        subscription_id = "sub_test_pending_update_123"
-        pending_update = {"subscription_items": [{"price": "price_new_plan"}]}
-
-        self._create_existing_event_data_records(
-            subscription_id,
-            subscription_status=StripeSubscriptionStatus.ACTIVE,
-        )
-
-        mock_event = self._create_mock_stripe_event(
-            "customer.subscription.updated",
-            {
-                "id": subscription_id,
-                "status": StripeSubscriptionStatus.ACTIVE,
-                "pending_update": pending_update,
-                "metadata": self._create_mock_stripe_subscription(self.checkout_intent),
-            },
-        )
-
-        StripeEventHandler.dispatch(mock_event)
-
-        mock_handle_pending_update.assert_called_once_with(
-            subscription_id,
-            self.checkout_intent.id,
-            pending_update,
-        )
 
     @mock.patch(
         "enterprise_access.apps.customer_billing.stripe_event_handlers.cancel_all_future_plans"

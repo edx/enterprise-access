@@ -24,7 +24,6 @@ from enterprise_access.apps.customer_billing.tasks import (
     send_trial_end_and_subscription_started_email_task,
     send_trial_ending_reminder_email_task
 )
-from enterprise_access.apps.customer_billing.tests.utils import AttrDict
 from enterprise_access.utils import format_datetime_obj
 
 
@@ -582,11 +581,11 @@ class TestSendPaymentReceiptEmail(TestCase):
             'created': 1761829387,
             'payment_intent': self.payment_intent_id,  # This is a string ID, not an object
         }
-        self.mock_payment_intent = AttrDict.wrap({
+        self.mock_payment_intent = {
             'id': self.payment_intent_id,
             'payment_method': self.payment_method_id,
-        })
-        self.mock_payment_method = AttrDict.wrap({
+        }
+        self.mock_payment_method = {
             'id': self.payment_method_id,
             'card': {
                 'brand': 'visa',
@@ -603,7 +602,7 @@ class TestSendPaymentReceiptEmail(TestCase):
                     'country': 'US'
                 }
             }
-        })
+        }
         self.mock_admin_users = [
             {
                 'email': 'admin1@test.com',
@@ -1235,7 +1234,7 @@ class TestSendTrialEndAndSubscriptionStartedEmailTask(TestCase):
         mock_checkout_intent,
         mock_get_stripe_subscription
     ):
-        subscription = AttrDict.wrap({
+        subscription = {
             'id': 'sub_123',
             'quantity': 5,
             'plan': {'amount': 10000},
@@ -1248,7 +1247,7 @@ class TestSendTrialEndAndSubscriptionStartedEmailTask(TestCase):
                 ]
             },
             'latest_invoice': {'hosted_invoice_url': 'https://invoice.url'},
-        })
+        }
         checkout_intent_obj = mock.Mock()
         checkout_intent_obj.enterprise_name = 'Test Org'
         checkout_intent_obj.enterprise_slug = 'test-org'
@@ -1291,7 +1290,7 @@ class TestSendTrialEndAndSubscriptionStartedEmailTask(TestCase):
         mock_checkout_intent,
         mock_get_stripe_subscription
     ):
-        subscription = AttrDict.wrap({
+        subscription = {
             'id': 'sub_123',
             'quantity': 5,
             'plan': {'amount': 10000},
@@ -1304,7 +1303,7 @@ class TestSendTrialEndAndSubscriptionStartedEmailTask(TestCase):
                 ]
             },
             'latest_invoice': {'hosted_invoice_url': 'https://invoice.url'},
-        })
+        }
         checkout_intent_obj = mock.Mock()
         checkout_intent_obj.enterprise_name = 'Test Org'
         checkout_intent_obj.enterprise_slug = 'test-org'

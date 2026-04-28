@@ -26,7 +26,6 @@ from enterprise_access.apps.bffs.tests.utils import default_field_constraints
 from enterprise_access.apps.core.constants import SYSTEM_ENTERPRISE_LEARNER_ROLE
 from enterprise_access.apps.customer_billing.constants import CheckoutIntentState
 from enterprise_access.apps.customer_billing.models import CheckoutIntent
-from enterprise_access.apps.customer_billing.tests.utils import AttrDict
 from test_utils import APITest
 
 
@@ -618,12 +617,12 @@ class CheckoutBFFSuccessViewSetTests(APITest):
             'subscription': 'sub_test_123',
         }
 
-        mock_payment_intent.return_value = AttrDict.wrap({
+        mock_payment_intent.return_value = {
             'id': 'pi_test_123',
             'payment_method': 'pm_test_123',
-        })
+        }
 
-        mock_payment_method.return_value = AttrDict.wrap({
+        mock_payment_method.return_value = {
             'id': 'pm_test_123',
             'card': {
                 'last4': '4242',
@@ -638,14 +637,14 @@ class CheckoutBFFSuccessViewSetTests(APITest):
                     'state': 'NY',
                 }
             }
-        })
+        }
 
-        mock_subscription.return_value = AttrDict.wrap({
+        mock_subscription.return_value = {
             'id': 'sub_test_123',
             'latest_invoice': 'in_test_123',
-        })
+        }
 
-        mock_invoice.return_value = AttrDict.wrap({
+        mock_invoice.return_value = {
             'id': 'in_test_123',
             'customer': 'cus_test_123',
             'lines': {
@@ -662,13 +661,13 @@ class CheckoutBFFSuccessViewSetTests(APITest):
                     }
                 ]
             }
-        })
+        }
 
-        mock_customer.return_value = AttrDict.wrap({
+        mock_customer.return_value = {
             'id': 'cus_test_123',
             'name': 'Test Customer',
             'phone': '+15551234567',
-        })
+        }
 
         response = self.client.post(self.url, {})
 

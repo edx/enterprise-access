@@ -21,3 +21,7 @@ confluent-kafka<2.6.2
 # as the package is converted to an openedx plugin.
 # https://github.com/edx/braze-client/pull/30
 edx-braze-client<1
+
+# stripe version 15 includes several breaking changes
+# https://github.com/stripe/stripe-python/blob/v15.0.0/CHANGELOG.md
+stripe<15
