@@ -17,6 +17,9 @@ from .content_assignments.assignment_configuration import (
     AssignmentConfigurationUpdateRequestSerializer
 )
 from .customer_billing import (
+    AcademyProductPriceRecurringSerializer,
+    AcademyProductPriceSerializer,
+    AcademyProductResponseSerializer,
     AttachPaymentMethodRequestSerializer,
     AttachPaymentMethodResponseSerializer,
     BillingAddressResponseSerializer,

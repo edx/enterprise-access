@@ -1,8 +1,10 @@
 """
 REST API views for the billing provider (Stripe) integration.
 """
+import json
 import logging
 import uuid
+from urllib.parse import urljoin
 
 import stripe
 from django.conf import settings
@@ -16,7 +18,9 @@ from edx_rbac.decorators import permission_required
 from edx_rest_framework_extensions.auth.jwt.authentication import JwtAuthentication
 from rest_framework import exceptions, mixins, permissions, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
+from rest_framework.throttling import AnonRateThrottle
 
 from enterprise_access.apps.api import serializers
 from enterprise_access.apps.api.authentication import StripeWebhookAuthentication
@@ -36,7 +40,7 @@ from enterprise_access.apps.customer_billing.models import (
     SelfServiceSubscriptionRenewal,
     StripeEventSummary
 )
-from enterprise_access.apps.customer_billing.pricing_api import get_ssp_product_pricing
+from enterprise_access.apps.customer_billing.pricing_api import get_all_active_stripe_prices, get_ssp_product_pricing
 from enterprise_access.apps.customer_billing.stripe_api import get_stripe_customer
 from enterprise_access.apps.customer_billing.stripe_event_handlers import StripeEventHandler
 
@@ -47,6 +51,202 @@ logger = logging.getLogger(__name__)
 
 CUSTOMER_BILLING_API_TAG = 'Customer Billing'
 STRIPE_EVENT_API_TAG = 'Stripe Event Summary'
+
+
+class AcademyProductsPagination(PageNumberPagination):
+    """Pagination for academy products endpoint using count as page-size query param."""
+
+    page_size = 10
+    page_size_query_param = 'count'
+    max_page_size = 100
+
+
+class AcademyProductsAnonRateThrottle(AnonRateThrottle):
+    """Anonymous throttle for public academy product endpoints."""
+
+    scope = 'rest_authenticated'
+
+
+class AcademyProductsViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
+    """Public read-only API for academy products with Stripe-resolved pricing."""
+
+    authentication_classes = ()
+    permission_classes = (permissions.AllowAny,)
+    throttle_classes = (AcademyProductsAnonRateThrottle,)
+    serializer_class = serializers.AcademyProductResponseSerializer
+    pagination_class = AcademyProductsPagination
+
+    def _parse_active_filter(self):
+        """Parse the 'active' query param, defaulting to True."""
+        value = self.request.query_params.get('active', 'true').strip().lower()
+        return value not in ('false', '0', 'no')
+
+    def _resolve_thumbnail_url(self, stored_path):
+        """Return an absolute thumbnail URL by joining the S3 base URL with the stored path."""
+        if not stored_path:
+            return ''
+        if stored_path.startswith('http://') or stored_path.startswith('https://'):
+            return stored_path
+
+        base_url = getattr(settings, 'ACADEMY_THUMBNAIL_S3_BASE_URL', '') or ''
+        if not base_url:
+            return stored_path
+
+        normalized_base = f"{base_url.rstrip('/')}/"
+        normalized_path = stored_path.lstrip('/')
+        return urljoin(normalized_base, normalized_path)
+
+    def _build_price_map(self, product_ids):
+        """Build a dict mapping each product_id to its list of serialized Stripe prices."""
+        all_prices = get_all_active_stripe_prices(timeout=settings.STRIPE_PRICE_DATA_CACHE_TIMEOUT)
+        price_map = {product_id: [] for product_id in product_ids}
+        for price in all_prices:
+            product = price.get('product') or {}
+            product_id = product.get('id')
+            if product_id in price_map:
+                recurring = price.get('recurring')
+                recurring_payload = None
+                if recurring:
+                    recurring_payload = {
+                        'interval': recurring.get('interval'),
+                        'interval_count': recurring.get('interval_count'),
+                        'usage_type': recurring.get('usage_type'),
+                    }
+
+                unit_amount_decimal = price.get('unit_amount_decimal')
+                if unit_amount_decimal is not None:
+                    unit_amount_decimal = f'{unit_amount_decimal:.2f}'
+
+                price_map[product_id].append({
+                    'id': price.get('id'),
+                    'product': product_id,
+                    'lookup_key': price.get('lookup_key'),
+                    'recurring': recurring_payload,
+                    'currency': price.get('currency'),
+                    'unit_amount': price.get('unit_amount'),
+                    'unit_amount_decimal': unit_amount_decimal,
+                })
+        return price_map
+
+    @staticmethod
+    def _parse_metadata_tags(raw_tags):
+        """Parse tags metadata into a normalized list of non-empty strings."""
+        if not raw_tags:
+            return []
+        if isinstance(raw_tags, list):
+            return [str(tag).strip() for tag in raw_tags if str(tag).strip()]
+        if isinstance(raw_tags, str):
+            try:
+                parsed = json.loads(raw_tags)
+                if isinstance(parsed, list):
+                    return [str(tag).strip() for tag in parsed if str(tag).strip()]
+            except (TypeError, ValueError):
+                pass
+            return [tag.strip() for tag in raw_tags.split(',') if tag.strip()]
+        return []
+
+    def _serialize_academy(self, stripe_product, price_map):
+        """Serialize a Stripe product into the academy response payload shape."""
+        metadata = stripe_product.get('metadata') or {}
+        product_id = stripe_product.get('id', '')
+        catalog_uuid = metadata.get('enterprise_catalog_uuid') or metadata.get('edx_catalog_id')
+        thumbnail_path = metadata.get('thumbnail_url', '')
+        return {
+            'id': product_id,
+            'name': stripe_product.get('name') or '',
+            'long_name': metadata.get('long_name') or stripe_product.get('name') or '',
+            'description': stripe_product.get('description') or metadata.get('description') or '',
+            'marketing_url': metadata.get('marketing_url', ''),
+            'thumbnail_url': self._resolve_thumbnail_url(thumbnail_path),
+            'prices': price_map.get(product_id, []),
+            'tags': self._parse_metadata_tags(metadata.get('tags')),
+            'stripe_product_id': product_id,
+            'enterprise_catalog_uuid': catalog_uuid,
+            'edx_catalog_id': catalog_uuid,
+        }
+
+    def _get_products(self):
+        """Fetch Stripe products with optional active/product_key/tag filtering."""
+        include_only_active = self._parse_active_filter()
+
+        cache_key = f'academy_products:stripe_products:v2:{include_only_active}'
+        cached_response = TieredCache.get_cached_response(cache_key)
+        if cached_response.is_found:
+            products = cached_response.value
+        else:
+            products_response = stripe.Product.list(active=include_only_active, limit=100)
+            products = list(products_response.auto_paging_iter())
+            TieredCache.set_all_tiers(
+                cache_key,
+                products,
+                django_cache_timeout=settings.STRIPE_PRICE_DATA_CACHE_TIMEOUT,
+            )
+
+        product_key_filter = self.request.query_params.get('product_key')
+        tags_filter = [tag.strip() for tag in self.request.query_params.getlist('tag') if tag.strip()]
+        if not product_key_filter and not tags_filter:
+            return products
+
+        filtered_products = []
+        for product in products:
+            metadata = product.get('metadata') or {}
+            if product_key_filter and metadata.get('product_key') != product_key_filter:
+                continue
+            if tags_filter:
+                product_tags = set(self._parse_metadata_tags(metadata.get('tags')))
+                if not all(tag in product_tags for tag in tags_filter):
+                    continue
+            filtered_products.append(product)
+
+        return filtered_products
+
+    @extend_schema(
+        tags=[CUSTOMER_BILLING_API_TAG],
+        summary='List academy products for Essentials plan selection.',
+    )
+    def list(self, request, *args, **kwargs):
+        try:
+            all_products = self._get_products()
+            product_ids = {product.get('id') for product in all_products if product.get('id')}
+            price_map = self._build_price_map(product_ids)
+        except stripe.StripeError:
+            return Response(
+                {'error_code': 'stripe_temporarily_unavailable', 'detail': 'Retry later.'},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        academy_page = self.paginate_queryset(all_products)
+        if academy_page is None:
+            academy_page = list(all_products)
+
+        payload = [self._serialize_academy(product, price_map) for product in academy_page]
+        serializer = self.get_serializer(payload, many=True)
+        return self.get_paginated_response(serializer.data)
+
+    @extend_schema(
+        tags=[CUSTOMER_BILLING_API_TAG],
+        summary='Retrieve single academy product by id.',
+        responses={status.HTTP_200_OK: serializers.AcademyProductResponseSerializer},
+    )
+    def retrieve(self, request, *args, **kwargs):
+        try:
+            product_id = kwargs.get('pk')
+            stripe_product = stripe.Product.retrieve(product_id)
+            expected_active = self._parse_active_filter()
+            if stripe_product.get('active') != expected_active:
+                return Response(status=status.HTTP_404_NOT_FOUND)
+            price_map = self._build_price_map({product_id})
+        except stripe.InvalidRequestError:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+        except stripe.StripeError:
+            return Response(
+                {'error_code': 'stripe_temporarily_unavailable', 'detail': 'Retry later.'},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        payload = self._serialize_academy(stripe_product, price_map)
+        serializer = self.get_serializer(payload)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 class CheckoutIntentPermission(permissions.BasePermission):

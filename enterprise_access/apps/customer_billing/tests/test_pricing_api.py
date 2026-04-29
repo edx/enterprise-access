@@ -324,6 +324,16 @@ class TestStripePricingAPI(TestCase):
 
             self.assertIn('Invalid unit_amount type', str(cm.exception))
 
+    def test_validate_stripe_price_schema_invalid_currency_type(self):
+        """Test schema validation with invalid currency type."""
+        mock_price = self._create_mock_stripe_price()
+        mock_price.currency = 123
+
+        with self.assertRaises(pricing_api.StripePricingError) as cm:
+            pricing_api._validate_stripe_price_schema(mock_price)  # pylint: disable=protected-access
+
+        self.assertIn('Invalid currency type', str(cm.exception))
+
     def test_validate_stripe_price_schema_invalid_recurring(self):
         """Test schema validation with invalid recurring data."""
         mock_recurring = mock.MagicMock()
@@ -339,6 +349,20 @@ class TestStripePricingAPI(TestCase):
                 pricing_api.get_stripe_price_data('price_123')
 
             self.assertIn('Recurring price missing interval', str(cm.exception))
+
+    def test_validate_stripe_price_schema_missing_interval_count(self):
+        """Test schema validation with missing recurring interval_count."""
+        mock_recurring = mock.MagicMock()
+        mock_recurring.interval = 'month'
+        mock_recurring.interval_count = None
+        mock_recurring.usage_type = 'licensed'
+
+        mock_price = self._create_mock_stripe_price(recurring=mock_recurring)
+
+        with self.assertRaises(pricing_api.StripePricingError) as cm:
+            pricing_api._validate_stripe_price_schema(mock_price)  # pylint: disable=protected-access
+
+        self.assertIn('Recurring price missing interval_count', str(cm.exception))
 
     @ddt.data(
         # All valid
@@ -409,3 +433,178 @@ class TestStripePricingAPI(TestCase):
             with self.assertRaises(pricing_api.StripePricingError) as cm:
                 pricing_api._validate_stripe_price_schema(mock_price)
             self.assertIn(expect_error, str(cm.exception))
+
+    def test_calculate_subtotal_missing_keys(self):
+        """Test subtotal calculation when price_data lacks required keys."""
+        incomplete_price_data = {
+            'currency': 'usd',
+            # missing unit_amount_decimal and unit_amount
+        }
+
+        result = pricing_api.calculate_subtotal(incomplete_price_data, 5)
+        self.assertIsNone(result)
+
+    def test_calculate_subtotal_invalid_quantity(self):
+        """Test subtotal calculation with invalid quantity type."""
+        price_data = {
+            'unit_amount_decimal': Decimal(100.0),
+            'unit_amount': 10000,
+            'currency': 'usd',
+        }
+
+        # Invalid quantity type should cause exception to be caught
+        result = pricing_api.calculate_subtotal(price_data, "invalid")
+        self.assertIsNone(result)
+
+    def test_format_price_display_invalid_data(self):
+        """Test price display with invalid price data."""
+        invalid_price_data = {
+            'currency': 'usd',
+            # missing unit_amount_decimal
+        }
+
+        result = pricing_api.format_price_display(invalid_price_data)
+        self.assertEqual(result, 'Price unavailable')
+
+    @mock.patch('enterprise_access.apps.customer_billing.pricing_api.stripe.Price.list')
+    def test_get_all_active_stripe_prices_stripe_error(self, mock_price_list):
+        """Test handling of Stripe errors in get_all_active_stripe_prices."""
+        mock_price_list.side_effect = InvalidRequestError('API Error', 'request')
+
+        with self.assertRaises(pricing_api.StripePricingError):
+            pricing_api.get_all_active_stripe_prices()
+
+    @mock.patch('enterprise_access.apps.customer_billing.pricing_api.stripe')
+    def test_get_all_active_stripe_prices_filters_one_time(self, mock_stripe):
+        """Test that one_time prices are filtered out."""
+        recurring_price = self._create_mock_stripe_price()
+        one_time_price = self._create_mock_stripe_price()
+        one_time_price.type = 'one_time'  # Should be filtered
+
+        mock_stripe.Price.list().auto_paging_iter.return_value = [recurring_price, one_time_price]
+
+        result = pricing_api.get_all_active_stripe_prices()
+
+        # Should only include recurring prices
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['id'], recurring_price.id)
+
+    @mock.patch('enterprise_access.apps.customer_billing.pricing_api.get_all_stripe_prices')
+    @override_settings(SSP_PRODUCTS={
+        'test_product': {
+            'lookup_key': 'nonexistent_key',
+            'quantity_range': (5, 30),
+        }
+    })
+    def test_get_ssp_product_pricing_missing_lookup_key(self, mock_get_all_stripe_prices):
+        """Test error when SSP product lookup_key is not found in Stripe prices."""
+        mock_get_all_stripe_prices.return_value = {}
+
+        with self.assertRaises(pricing_api.StripePricingError) as cm:
+            pricing_api.get_ssp_product_pricing()
+
+        self.assertIn('not found in active Stripe prices', str(cm.exception))
+
+    @mock.patch('enterprise_access.apps.customer_billing.pricing_api.get_all_stripe_prices')
+    @override_settings(SSP_PRODUCTS={
+        'test_product': {
+            # missing lookup_key
+            'quantity_range': (5, 30),
+        }
+    })
+    def test_get_ssp_product_pricing_missing_config_lookup_key(self, mock_get_all_stripe_prices):
+        """Test error when SSP product config lacks lookup_key."""
+        mock_get_all_stripe_prices.return_value = {}
+
+        with self.assertRaises(pricing_api.StripePricingError) as cm:
+            pricing_api.get_ssp_product_pricing()
+
+        self.assertIn('missing lookup_key', str(cm.exception))
+
+    @mock.patch('enterprise_access.apps.customer_billing.pricing_api.get_all_active_stripe_prices')
+    def test_get_all_stripe_prices_by_lookup_key(self, mock_get_all_active_stripe_prices):
+        """Test fetching all Stripe prices and mapping by lookup_key."""
+        mock_get_all_active_stripe_prices.return_value = [
+            pricing_api._serialize_basic_format(self._create_mock_stripe_price()),  # pylint: disable=protected-access
+        ]
+
+        result = pricing_api.get_all_stripe_prices()
+
+        # Should be mapped by lookup_key
+        self.assertIn(MOCK_SSP_PRODUCTS['quarterly_license_plan']['lookup_key'], result)
+
+    @mock.patch('enterprise_access.apps.customer_billing.pricing_api.get_all_active_stripe_prices')
+    def test_get_all_stripe_prices_skips_missing_lookup_key(self, mock_get_all_active_stripe_prices):
+        """Test that prices without lookup_key are skipped."""
+        price_with_key = pricing_api._serialize_basic_format(  # pylint: disable=protected-access
+            self._create_mock_stripe_price()
+        )
+        price_without_key = pricing_api._serialize_basic_format(  # pylint: disable=protected-access
+            self._create_mock_stripe_price()
+        )
+        price_without_key['lookup_key'] = None
+
+        mock_get_all_active_stripe_prices.return_value = [price_with_key, price_without_key]
+
+        result = pricing_api.get_all_stripe_prices()
+
+        # Should only include prices with lookup_key
+        self.assertEqual(len(result), 1)
+
+    @mock.patch('enterprise_access.apps.customer_billing.pricing_api.get_all_active_stripe_prices')
+    def test_get_all_stripe_prices_stripe_error(self, mock_get_all_active_stripe_prices):
+        """Test handling of Stripe errors in get_all_stripe_prices."""
+        mock_get_all_active_stripe_prices.side_effect = InvalidRequestError('API Error', 'request')
+
+        with self.assertRaises(pricing_api.StripePricingError):
+            pricing_api.get_all_stripe_prices()
+
+    @mock.patch('enterprise_access.apps.customer_billing.pricing_api.stripe.Price.retrieve')
+    def test_get_stripe_price_data_general_exception(self, mock_price_retrieve):
+        """Test handling of general exceptions in get_stripe_price_data."""
+        mock_price_retrieve.side_effect = Exception('Unexpected error')
+
+        with self.assertRaises(pricing_api.StripePricingError) as cm:
+            pricing_api.get_stripe_price_data('price_123')
+
+        self.assertIn('Unexpected error', str(cm.exception))
+
+    @mock.patch('enterprise_access.apps.customer_billing.pricing_api.stripe.Price.list')
+    def test_get_all_active_stripe_prices_general_exception(self, mock_price_list):
+        """Test handling of general exceptions in get_all_active_stripe_prices."""
+        mock_price_list.side_effect = Exception('Unexpected error')
+
+        with self.assertRaises(pricing_api.StripePricingError) as cm:
+            pricing_api.get_all_active_stripe_prices()
+
+        self.assertIn('Unexpected error', str(cm.exception))
+
+    @mock.patch('enterprise_access.apps.customer_billing.pricing_api.get_all_active_stripe_prices')
+    def test_get_all_stripe_prices_general_exception(self, mock_get_all_active_stripe_prices):
+        """Test handling of general exceptions in get_all_stripe_prices."""
+        mock_get_all_active_stripe_prices.side_effect = Exception('Unexpected error')
+
+        with self.assertRaises(pricing_api.StripePricingError) as cm:
+            pricing_api.get_all_stripe_prices()
+
+        self.assertIn('Unexpected error', str(cm.exception))
+
+    @mock.patch('enterprise_access.apps.customer_billing.pricing_api.TieredCache.get_cached_response')
+    def test_get_all_stripe_prices_cache_hit(self, mock_get_cached_response):
+        """Test get_all_stripe_prices returns cached value without recomputing."""
+        cached_value = {'price_quarterly_0002': {'id': 'price_123'}}
+        mock_get_cached_response.return_value = mock.Mock(is_found=True, value=cached_value)
+
+        result = pricing_api.get_all_stripe_prices()
+
+        self.assertEqual(result, cached_value)
+
+    @mock.patch('enterprise_access.apps.customer_billing.pricing_api.TieredCache.get_cached_response')
+    def test_get_all_active_stripe_prices_cache_hit(self, mock_get_cached_response):
+        """Test get_all_active_stripe_prices returns cached value without Stripe calls."""
+        cached_value = [{'id': 'price_123'}]
+        mock_get_cached_response.return_value = mock.Mock(is_found=True, value=cached_value)
+
+        result = pricing_api.get_all_active_stripe_prices()
+
+        self.assertEqual(result, cached_value)
