@@ -198,7 +198,7 @@ class TestCreateFreeTrialCheckoutSession(TestCase):
         mock_lms_client = mock_lms_client_class.return_value
         mock_lms_client.get_lms_user_account.return_value = [{'id': 9876}]
         mock_lms_client.get_enterprise_customer_data.side_effect = raise_404_error
-        mock_stripe.checkout.Session.create.return_value = {'id': 'new-stripe-session'}
+        mock_stripe.checkout.Session.create.return_value = {'id': 'new-stripe-session', 'customer': None}
         mock_stripe.Customer.search.return_value.data = []
 
         # Create new checkout session with different slug
@@ -212,7 +212,7 @@ class TestCreateFreeTrialCheckoutSession(TestCase):
         )
 
         # Should succeed and replace the old intent
-        self.assertEqual(result, {'id': 'new-stripe-session'})
+        self.assertEqual(result, {'id': 'new-stripe-session', 'customer': None})
 
         # Assert that a CheckoutIntent was updated
         intent = CheckoutIntent.objects.get(user=self.user)
@@ -335,7 +335,7 @@ class TestCreateFreeTrialCheckoutSession(TestCase):
         mock_lms_client = mock_lms_client_class.return_value
         mock_lms_client.get_lms_user_account.return_value = [{'id': 9876}]
         mock_lms_client.get_enterprise_customer_data.side_effect = raise_404_error
-        mock_stripe.checkout.Session.create.return_value = {'id': 'test-session'}
+        mock_stripe.checkout.Session.create.return_value = {'id': 'test-session', 'customer': None}
         mock_stripe.Customer.search.return_value.data = []
 
         # Should be able to reserve the expired slug
@@ -349,7 +349,7 @@ class TestCreateFreeTrialCheckoutSession(TestCase):
         )
 
         # Should succeed
-        self.assertEqual(result, {'id': 'test-session'})
+        self.assertEqual(result, {'id': 'test-session', 'customer': None})
 
         # Assert that a CheckoutIntent was created
         intent = CheckoutIntent.objects.get(user=self.user)

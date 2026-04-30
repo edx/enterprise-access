@@ -49,7 +49,7 @@ billiard==4.2.4
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
     #   celery
-cachetools==7.0.5
+cachetools==7.0.6
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -64,7 +64,7 @@ celery==5.6.3
     #   -r requirements/test.txt
     #   django-celery-results
     #   edx-celeryutils
-certifi==2026.2.25
+certifi==2026.4.22
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -383,7 +383,7 @@ factory-boy==3.3.3
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
-faker==40.13.0
+faker==40.15.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -394,7 +394,7 @@ fastavro==1.12.1
     #   -r requirements/test.txt
     #   confluent-kafka
     #   openedx-events
-filelock==3.25.2
+filelock==3.29.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -409,7 +409,7 @@ id==1.6.1
     # via
     #   -r requirements/quality.txt
     #   twine
-idna==3.11
+idna==3.12
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -503,7 +503,7 @@ monotonic==1.6
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
     #   analytics-python
-more-itertools==11.0.1
+more-itertools==11.0.2
     # via
     #   -r requirements/quality.txt
     #   jaraco-classes
@@ -522,12 +522,12 @@ oauthlib==3.3.1
     #   -r requirements/test.txt
     #   requests-oauthlib
     #   social-auth-core
-openedx-events==11.1.0
+openedx-events==11.1.1
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
     #   edx-event-bus-kafka
-packaging==26.0
+packaging==26.1
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -537,7 +537,7 @@ packaging==26.0
     #   pytest
     #   tox
     #   twine
-platformdirs==4.9.4
+platformdirs==4.9.6
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -620,7 +620,7 @@ pymemcache==4.0.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
-pymongo==4.16.0
+pymongo==4.17.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -729,7 +729,7 @@ rfc3986==2.0.0
     # via
     #   -r requirements/quality.txt
     #   twine
-rich==14.3.3
+rich==15.0.0
     # via
     #   -r requirements/quality.txt
     #   twine
@@ -767,12 +767,12 @@ snowballstemmer==3.0.1
     # via
     #   -r requirements/quality.txt
     #   pydocstyle
-social-auth-app-django==5.7.0
+social-auth-app-django==5.8.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
     #   edx-auth-backends
-social-auth-core==4.8.5
+social-auth-core==4.8.6
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -790,7 +790,7 @@ stevedore==5.7.0
     #   code-annotations
     #   edx-django-utils
     #   edx-opaque-keys
-stripe==14.4.1
+stripe==15.0.1
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -809,7 +809,7 @@ tomlkit==0.14.0
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
     #   pylint
-tox==4.52.0
+tox==4.53.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -855,7 +855,7 @@ vine==5.1.0
     #   amqp
     #   celery
     #   kombu
-virtualenv==21.2.0
+virtualenv==21.2.4
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt

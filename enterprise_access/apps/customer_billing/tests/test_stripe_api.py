@@ -135,6 +135,7 @@ class TestCreateSubscriptionCheckoutSession(StripeApiFunctionsTests):
         _, kwargs = mock_session_create.call_args
         self.assertEqual(kwargs.get('customer_email'), 'new-admin@example.com')
         self.assertNotIn('customer', kwargs)
+        self.assertEqual(kwargs.get('ui_mode'), 'elements')
 
     @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.checkout.Session.create')
     @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Customer.search')
@@ -153,6 +154,7 @@ class TestCreateSubscriptionCheckoutSession(StripeApiFunctionsTests):
         _, kwargs = mock_session_create.call_args
         self.assertEqual(kwargs.get('customer'), 'cus_12345')
         self.assertNotIn('customer_email', kwargs)
+        self.assertEqual(kwargs.get('ui_mode'), 'elements')
 
 
 class TestStripePaymentIntent(StripeApiFunctionsTests):
