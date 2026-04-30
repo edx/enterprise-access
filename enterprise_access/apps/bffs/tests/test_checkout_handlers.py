@@ -744,7 +744,7 @@ class TestCheckoutSuccessHandler(APITest):
     ):
         """Test when there's an error retrieving the payment intent."""
         mock_get_checkout_intent.return_value = self.checkout_intent_data
-        mock_session.return_value = self.stripe_session
+        mock_session.return_value = AttrDict.wrap(self.stripe_session)
         mock_payment_intent.side_effect = stripe.StripeError("API Error")
 
         self.handler.load_and_process()
@@ -762,7 +762,7 @@ class TestCheckoutSuccessHandler(APITest):
     ):
         """Test when there's an error retrieving the payment method."""
         mock_get_checkout_intent.return_value = self.checkout_intent_data
-        mock_session.return_value = self.stripe_session
+        mock_session.return_value = AttrDict.wrap(self.stripe_session)
         mock_payment_intent.return_value = self.stripe_payment_intent
         mock_payment_method.side_effect = stripe.StripeError("API Error")
 
@@ -783,7 +783,7 @@ class TestCheckoutSuccessHandler(APITest):
     ):
         """Test when there's an error retrieving the subscription."""
         mock_get_checkout_intent.return_value = self.checkout_intent_data
-        mock_session.return_value = {**self.stripe_session, 'invoice': None}  # Force subscription path
+        mock_session.return_value = AttrDict.wrap({**self.stripe_session, 'invoice': None})  # Force subscription path
         mock_payment_intent.return_value = AttrDict.wrap(self.stripe_payment_intent)
         mock_payment_method.return_value = AttrDict.wrap(self.stripe_payment_method)
         mock_subscription.side_effect = stripe.StripeError("API Error")
@@ -806,7 +806,7 @@ class TestCheckoutSuccessHandler(APITest):
     ):
         """Test when there's an error retrieving the invoice."""
         mock_get_checkout_intent.return_value = self.checkout_intent_data
-        mock_session.return_value = {**self.stripe_session, 'invoice': None}  # Force subscription path
+        mock_session.return_value = AttrDict.wrap({**self.stripe_session, 'invoice': None})  # Force subscription path
         mock_payment_intent.return_value = AttrDict.wrap(self.stripe_payment_intent)
         mock_payment_method.return_value = AttrDict.wrap(self.stripe_payment_method)
         mock_subscription.return_value = AttrDict.wrap(self.stripe_subscription)
@@ -831,7 +831,7 @@ class TestCheckoutSuccessHandler(APITest):
     ):
         """Test full successful flow."""
         mock_get_checkout_intent.return_value = self.checkout_intent_data
-        mock_session.return_value = {**self.stripe_session, 'invoice': None}  # Force subscription path
+        mock_session.return_value = AttrDict.wrap({**self.stripe_session, 'invoice': None})  # Force subscription path
         mock_payment_intent.return_value = AttrDict.wrap(self.stripe_payment_intent)
         mock_payment_method.return_value = AttrDict.wrap(self.stripe_payment_method)
         mock_subscription.return_value = AttrDict.wrap(self.stripe_subscription)
@@ -878,7 +878,7 @@ class TestCheckoutSuccessHandler(APITest):
         # Trial subscription: no payment_intent on session
         session_no_payment = {**self.stripe_session}
         session_no_payment.pop('payment_intent')
-        mock_session.return_value = session_no_payment
+        mock_session.return_value = AttrDict.wrap(session_no_payment)
 
         # Subscription has default_payment_method (set during checkout)
         subscription_with_payment_method = {**self.stripe_subscription, 'default_payment_method': 'pm_test_123'}
@@ -904,7 +904,7 @@ class TestCheckoutSuccessHandler(APITest):
         mock_get_checkout_intent.return_value = self.checkout_intent_data
         session_no_payment = {**self.stripe_session}
         session_no_payment.pop('payment_intent')
-        mock_session.return_value = session_no_payment
+        mock_session.return_value = AttrDict.wrap(session_no_payment)
         # Mock subscription with no default_payment_method (edge case)
         mock_subscription.return_value = {**self.stripe_subscription, 'default_payment_method': None}
 
@@ -920,7 +920,7 @@ class TestCheckoutSuccessHandler(APITest):
     def test_no_payment_method_in_payment_intent(self, mock_payment_intent, mock_session, mock_get_checkout_intent):
         """Test when payment intent has no payment method."""
         mock_get_checkout_intent.return_value = self.checkout_intent_data
-        mock_session.return_value = self.stripe_session
+        mock_session.return_value = AttrDict.wrap(self.stripe_session)
         payment_intent_no_method = {**self.stripe_payment_intent}
         payment_intent_no_method.pop('payment_method')
         mock_payment_intent.return_value = payment_intent_no_method
@@ -940,7 +940,7 @@ class TestCheckoutSuccessHandler(APITest):
     ):
         """Test when payment method has no card info."""
         mock_get_checkout_intent.return_value = self.checkout_intent_data
-        mock_session.return_value = self.stripe_session
+        mock_session.return_value = AttrDict.wrap(self.stripe_session)
         mock_payment_intent.return_value = AttrDict.wrap(self.stripe_payment_intent)
         payment_method_no_card = {**self.stripe_payment_method}
         payment_method_no_card.pop('card')
@@ -964,7 +964,8 @@ class TestCheckoutSuccessHandler(APITest):
     ):
         """Test when invoice has no line items."""
         mock_get_checkout_intent.return_value = self.checkout_intent_data
-        mock_session.return_value = {**self.stripe_session, 'invoice': 'in_test_123'}  # Direct invoice path
+        # Direct invoice path
+        mock_session.return_value = AttrDict.wrap({**self.stripe_session, 'invoice': 'in_test_123'})
         mock_payment_intent.return_value = AttrDict.wrap(self.stripe_payment_intent)
         mock_payment_method.return_value = AttrDict.wrap(self.stripe_payment_method)
         invoice_no_lines = {**self.stripe_invoice}

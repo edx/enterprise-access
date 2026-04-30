@@ -24,7 +24,7 @@ def create_subscription_checkout_session(input_data, lms_user_id, checkout_inten
     create_kwargs: stripe.checkout.Session.CreateParams = {
         'mode': 'subscription',
         # Intended UI will be a custom react component.
-        'ui_mode': 'custom',
+        'ui_mode': 'elements',
         # Specify the type and quantity of what is being purchased.  Units for `quantity` depends on
         # the price specified, and the product associated with the price.
         'line_items': [{

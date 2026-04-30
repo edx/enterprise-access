@@ -345,7 +345,7 @@ class CheckoutSuccessHandler(CheckoutContextHandler):
             return
 
         try:
-            session = get_stripe_checkout_session(session_id)
+            session = get_stripe_checkout_session(session_id).to_dict()
         except stripe.StripeError:
             logger.exception("Error retrieving Stripe checkout session: %s", session_id)
             return

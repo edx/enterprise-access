@@ -612,11 +612,11 @@ class CheckoutBFFSuccessViewSetTests(APITest):
         mock_for_user.return_value = mock_checkout_intent
 
         # Setup mock Stripe API responses
-        mock_session.return_value = {
+        mock_session.return_value = AttrDict.wrap({
             'id': 'cs_test_123',
             'payment_intent': 'pi_test_123',
             'subscription': 'sub_test_123',
-        }
+        })
 
         mock_payment_intent.return_value = AttrDict.wrap({
             'id': 'pi_test_123',
