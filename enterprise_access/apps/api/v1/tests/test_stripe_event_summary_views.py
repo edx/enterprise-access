@@ -10,7 +10,7 @@ from django.urls import reverse
 from django.utils import timezone
 from rest_framework.exceptions import ErrorDetail
 
-from enterprise_access.apps.core.constants import SYSTEM_ENTERPRISE_ADMIN_ROLE
+from enterprise_access.apps.core.constants import SYSTEM_ENTERPRISE_ADMIN_ROLE, SYSTEM_ENTERPRISE_OPERATOR_ROLE
 from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.customer_billing.constants import CheckoutIntentState
 from enterprise_access.apps.customer_billing.models import (
@@ -456,3 +456,21 @@ class StripeSubscriptionPlanInfoTests(APITest):
         # Renewal's cancel_at (2022-03-01) should take precedence over the event summary's (2021-09-15)
         assert response.data['canceled_date'] == '2022-03-01T00:00:00Z'
         assert response.data['is_canceled'] is False
+
+    def test_get_stripe_subscription_plan_info_operator_role(self):
+        """
+        Users with SYSTEM_ENTERPRISE_OPERATOR_ROLE should have access to get-stripe-subscription-plan-info.
+        """
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_OPERATOR_ROLE,
+            'context': self.enterprise_uuid,
+        }])
+        query_params = {
+            'subscription_plan_uuid': self.subscription_plan_uuid,
+        }
+
+        url = reverse('api:v1:stripe-event-summary-get-stripe-subscription-plan-info')
+        url += f"?{urlencode(query_params)}"
+        response = self.client.get(url)
+        assert response.status_code == 200
+        assert response.data['upcoming_invoice_amount_due'] == 200
