@@ -219,7 +219,7 @@ class CustomerBillingViewSet(viewsets.ViewSet):
             return Response(response_serializer.data, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
 
         response_serializer = serializers.CustomerBillingCreateCheckoutSessionSuccessResponseSerializer(
-            data={'checkout_session_client_secret': session.client_secret},
+            data={'checkout_session_client_secret': session['client_secret']},
         )
         if not response_serializer.is_valid():
             return HttpResponseServerError()
@@ -273,7 +273,7 @@ class CustomerBillingViewSet(viewsets.ViewSet):
             customer_portal_session = stripe.billing_portal.Session.create(
                 customer=stripe_customer_id,
                 return_url=f"{origin_url}/{enterprise_slug}",
-            )
+            ).to_dict()
         except stripe.StripeError as e:
             # TODO: Long term we should be explicit to different types of Stripe error exceptions available
             # https://docs.stripe.com/api/errors/handling, https://docs.stripe.com/error-handling
@@ -341,7 +341,7 @@ class CustomerBillingViewSet(viewsets.ViewSet):
             customer_portal_session = stripe.billing_portal.Session.create(
                 customer=stripe_customer_id,
                 return_url=f"{origin_url}/billing-details/success",
-            )
+            ).to_dict()
         except stripe.StripeError as e:
             # TODO: Long term we should be explicit to different types of Stripe error exceptions available
             # https://docs.stripe.com/api/errors/handling, https://docs.stripe.com/error-handling
@@ -1225,7 +1225,7 @@ class BillingManagementViewSet(viewsets.ViewSet):
 
             # Retrieve payment method to verify it exists and check ownership
             try:
-                payment_method = stripe.PaymentMethod.retrieve(payment_method_id)
+                payment_method = stripe.PaymentMethod.retrieve(payment_method_id).to_dict()
             except stripe.error.InvalidRequestError as e:
                 logger.warning(f'Payment method {payment_method_id} not found: {str(e)}')
                 return Response(

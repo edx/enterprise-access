@@ -95,10 +95,12 @@ class TestCreateFreeTrialCheckoutSession(TestCase):
         mock_lms_client = mock_lms_client_class.return_value
         mock_lms_client.get_lms_user_account.return_value = [{'id': self.user.lms_user_id}]
         mock_lms_client.get_enterprise_customer_data.side_effect = raise_404_error
-        mock_stripe.checkout.Session.create.return_value = {
+        mock_stripe_session = mock.Mock()
+        mock_stripe_session.to_dict.return_value = {
             'id': 'test-stripe-checkout-session',
             'customer': 'cust-123',
         }
+        mock_stripe.checkout.Session.create.return_value = mock_stripe_session
         mock_stripe.Customer.search.return_value.data = []
 
         # Actually call the API under test.
@@ -198,7 +200,9 @@ class TestCreateFreeTrialCheckoutSession(TestCase):
         mock_lms_client = mock_lms_client_class.return_value
         mock_lms_client.get_lms_user_account.return_value = [{'id': 9876}]
         mock_lms_client.get_enterprise_customer_data.side_effect = raise_404_error
-        mock_stripe.checkout.Session.create.return_value = {'id': 'new-stripe-session', 'customer': None}
+        mock_stripe_session = mock.Mock()
+        mock_stripe_session.to_dict.return_value = {'id': 'new-stripe-session', 'customer': None}
+        mock_stripe.checkout.Session.create.return_value = mock_stripe_session
         mock_stripe.Customer.search.return_value.data = []
 
         # Create new checkout session with different slug
@@ -335,7 +339,9 @@ class TestCreateFreeTrialCheckoutSession(TestCase):
         mock_lms_client = mock_lms_client_class.return_value
         mock_lms_client.get_lms_user_account.return_value = [{'id': 9876}]
         mock_lms_client.get_enterprise_customer_data.side_effect = raise_404_error
-        mock_stripe.checkout.Session.create.return_value = {'id': 'test-session', 'customer': None}
+        mock_stripe_session = mock.Mock()
+        mock_stripe_session.to_dict.return_value = {'id': 'test-session', 'customer': None}
+        mock_stripe.checkout.Session.create.return_value = mock_stripe_session
         mock_stripe.Customer.search.return_value.data = []
 
         # Should be able to reserve the expired slug

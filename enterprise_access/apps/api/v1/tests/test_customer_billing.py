@@ -67,14 +67,16 @@ class CustomerBillingPortalSessionTests(APITest):
 
         url = reverse('api:v1:customer-billing-create-enterprise-admin-portal-session')
 
-        mock_session = {
+        mock_session_data = {
             'id': 'bps_test_123',
             'url': 'https://billing.stripe.com/session/test_123',
             'customer': self.stripe_customer_id,
         }
+        mock_stripe_session = mock.Mock()
+        mock_stripe_session.to_dict.return_value = mock_session_data
 
         with mock.patch('stripe.billing_portal.Session.create') as mock_create:
-            mock_create.return_value = mock_session
+            mock_create.return_value = mock_stripe_session
 
             response = self.client.get(
                 url,
@@ -83,7 +85,7 @@ class CustomerBillingPortalSessionTests(APITest):
             )
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data, mock_session)
+        self.assertEqual(response.data, mock_session_data)
 
         # Implementation uses /{enterprise_slug} for Admin portal return URL.
         mock_create.assert_called_once_with(
@@ -221,7 +223,7 @@ class CustomerBillingPortalSessionTests(APITest):
         }
 
         with mock.patch('stripe.billing_portal.Session.create') as mock_create:
-            mock_create.return_value = mock_session
+            mock_create.return_value.to_dict.return_value = mock_session
 
             response = self.client.get(
                 url,
@@ -483,7 +485,7 @@ class StripeWebhookTests(APITest):
         }
 
         with mock.patch('stripe.billing_portal.Session.create') as mock_create:
-            mock_create.return_value = mock_session
+            mock_create.return_value.to_dict.return_value = mock_session
 
             response = self.client.get(
                 url,
@@ -1384,9 +1386,7 @@ class BillingManagementAttachPaymentMethodTests(BillingManagementBaseTest):
         """
         # Mock payment method retrieve (verify it exists)
         mock_pm = mock.Mock()
-        mock_pm.id = self.payment_method_id
-        mock_pm.type = 'card'
-        mock_pm.get.return_value = None  # Not attached to any customer yet
+        mock_pm.to_dict.return_value = {'id': self.payment_method_id, 'type': 'card', 'customer': None}
         mock_pm_retrieve.return_value = mock_pm
 
         # Mock payment method attach
@@ -1419,9 +1419,7 @@ class BillingManagementAttachPaymentMethodTests(BillingManagementBaseTest):
         """
         # Mock payment method retrieve
         mock_pm = mock.Mock()
-        mock_pm.id = self.payment_method_id
-        mock_pm.type = 'us_bank_account'
-        mock_pm.get.return_value = None  # Not attached to any customer yet
+        mock_pm.to_dict.return_value = {'id': self.payment_method_id, 'type': 'us_bank_account', 'customer': None}
         mock_pm_retrieve.return_value = mock_pm
         mock_pm_attach.return_value = mock_pm
 
@@ -1445,10 +1443,10 @@ class BillingManagementAttachPaymentMethodTests(BillingManagementBaseTest):
         Stripe.PaymentMethod.attach() is idempotent - returns success if already attached to same customer.
         """
         mock_pm = mock.Mock()
-        mock_pm.id = self.payment_method_id
-        mock_pm.type = 'card'
         # Already attached to THIS customer - should return success without calling attach
-        mock_pm.get.return_value = self.stripe_customer_id
+        mock_pm.to_dict.return_value = {
+            'id': self.payment_method_id, 'type': 'card', 'customer': self.stripe_customer_id,
+        }
         mock_pm_retrieve.return_value = mock_pm
 
         url = reverse('api:v1:billing-management-payment-methods')
@@ -1529,7 +1527,7 @@ class BillingManagementAttachPaymentMethodTests(BillingManagementBaseTest):
         Test Stripe API error returns 422.
         """
         mock_pm = mock.Mock()
-        mock_pm.get.return_value = None  # Not attached to any customer yet
+        mock_pm.to_dict.return_value = {'customer': None}
         mock_pm_retrieve.return_value = mock_pm
         mock_pm_attach.side_effect = stripe.error.StripeError('Stripe error occurred')
 
@@ -1557,8 +1555,7 @@ class BillingManagementAttachPaymentMethodTests(BillingManagementBaseTest):
         }])
 
         mock_pm = mock.Mock()
-        mock_pm.id = self.payment_method_id
-        mock_pm.get.return_value = None  # Not attached to any customer yet
+        mock_pm.to_dict.return_value = {'id': self.payment_method_id, 'customer': None}
         mock_pm_retrieve.return_value = mock_pm
         mock_pm_attach.return_value = mock_pm
 
@@ -3866,3 +3863,56 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
         sub.to_dict.side_effect = Exception('Unexpected failure')
         result = BillingManagementViewSet._get_license_count(sub)  # pylint: disable=protected-access
         self.assertEqual(result, 0)
+
+
+class CreateCheckoutSessionViewTests(APITest):
+    """
+    Tests for the CustomerBillingViewSet.create_checkout_session endpoint.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.url = reverse('api:v1:customer-billing-create-checkout-session')
+
+    def tearDown(self):
+        CheckoutIntent.objects.all().delete()
+        super().tearDown()
+
+    @mock.patch('enterprise_access.apps.customer_billing.api.create_subscription_checkout_session')
+    @mock.patch('enterprise_access.apps.customer_billing.api.CheckoutIntent.create_intent')
+    @mock.patch('enterprise_access.apps.customer_billing.api.CheckoutSessionInputValidator.validate')
+    def test_create_checkout_session_returns_client_secret_from_dict(
+        self, mock_validate, mock_create_intent, mock_create_stripe_session,
+    ):
+        """
+        client_secret is read via dict access from the dict returned by create_subscription_checkout_session,
+        not via attribute access. Regression test for the .to_dict() change in stripe_api.py.
+        """
+        self.set_jwt_cookie()
+        mock_validate.return_value = {}  # no validation errors
+        mock_intent = mock.MagicMock()
+        mock_intent.id = 1
+        mock_create_intent.return_value = mock_intent
+        mock_create_stripe_session.return_value = {
+            'id': 'cs_test_abc',
+            'customer': 'cus_test_123',
+            'client_secret': 'cs_test_abc_secret_xyz',
+        }
+
+        response = self.client.post(
+            self.url,
+            data={
+                'admin_email': self.user.email,
+                'enterprise_slug': 'test-slug',
+                'company_name': 'Test Co',
+                'quantity': 5,
+                'stripe_price_id': 'price_abc123',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(
+            response.data['checkout_session_client_secret'],
+            'cs_test_abc_secret_xyz',
+        )
