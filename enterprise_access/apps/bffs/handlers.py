@@ -600,12 +600,12 @@ class BaseLearnerPortalHandler(BaseHandler, BaseLearnerDataMixin, SubscriptionLi
         """
         Check if auto-apply licenses are available and apply them to the user.
         """
-        if (self.subscription_licenses or not self.context.is_request_user_linked_to_enterprise_customer):
-            # Skip auto-apply if:
-            #   - User has assigned/current license(s)
-            #   - User has activated/current license(s)
-            #   - User has revoked/current license(s)
-            #   - User is not explicitly linked to the enterprise customer (e.g., staff request user)
+        # Skip auto-apply if the user is not explicitly linked to the enterprise customer (e.g., staff request user)
+        if not self.context.is_request_user_linked_to_enterprise_customer:
+            return
+
+        # Skip if the users has an activated, assigned, or revoked license in the current plan
+        if self.current_activated_license or self.current_assigned_licenses or self.current_revoked_licenses:
             return
 
         customer_agreement = self.subscriptions.get('customer_agreement') or {}
