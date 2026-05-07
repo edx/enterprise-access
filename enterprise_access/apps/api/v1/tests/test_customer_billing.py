@@ -74,9 +74,7 @@ class CustomerBillingPortalSessionTests(APITest):
         }
 
         with mock.patch('stripe.billing_portal.Session.create') as mock_create:
-            mock_stripe_session = mock.Mock()
-            mock_stripe_session.to_dict.return_value = mock_session
-            mock_create.return_value = mock_stripe_session
+            mock_create.return_value.to_dict.return_value = mock_session
 
             response = self.client.get(
                 url,
@@ -223,9 +221,7 @@ class CustomerBillingPortalSessionTests(APITest):
         }
 
         with mock.patch('stripe.billing_portal.Session.create') as mock_create:
-            mock_stripe_session = mock.Mock()
-            mock_stripe_session.to_dict.return_value = mock_session
-            mock_create.return_value = mock_stripe_session
+            mock_create.return_value.to_dict.return_value = mock_session
 
             response = self.client.get(
                 url,
@@ -487,9 +483,7 @@ class StripeWebhookTests(APITest):
         }
 
         with mock.patch('stripe.billing_portal.Session.create') as mock_create:
-            mock_stripe_session = mock.Mock()
-            mock_stripe_session.to_dict.return_value = mock_session
-            mock_create.return_value = mock_stripe_session
+            mock_create.return_value.to_dict.return_value = mock_session
 
             response = self.client.get(
                 url,
@@ -3879,7 +3873,6 @@ class CreateCheckoutSessionViewTests(APITest):
         self.url = reverse('api:v1:customer-billing-create-checkout-session')
 
     def tearDown(self):
-        from enterprise_access.apps.customer_billing.models import CheckoutIntent
         CheckoutIntent.objects.all().delete()
         super().tearDown()
 
