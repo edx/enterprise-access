@@ -219,7 +219,7 @@ class CustomerBillingViewSet(viewsets.ViewSet):
             return Response(response_serializer.data, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
 
         response_serializer = serializers.CustomerBillingCreateCheckoutSessionSuccessResponseSerializer(
-            data={'checkout_session_client_secret': session.client_secret},
+            data={'checkout_session_client_secret': session['client_secret']},
         )
         if not response_serializer.is_valid():
             return HttpResponseServerError()

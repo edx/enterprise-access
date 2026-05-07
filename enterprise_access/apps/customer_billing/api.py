@@ -410,7 +410,7 @@ class CreateCheckoutSessionFailedConflict(Exception):
 
 def create_free_trial_checkout_session(
     **input_data: Unpack[CheckoutSessionInputData],
-) -> stripe.checkout.Session:
+) -> dict:
     """
     Create a Stripe "Checkout Session" for a free trial subscription plan.
     """

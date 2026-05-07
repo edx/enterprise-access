@@ -3867,3 +3867,57 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
         sub.to_dict.side_effect = Exception('Unexpected failure')
         result = BillingManagementViewSet._get_license_count(sub)  # pylint: disable=protected-access
         self.assertEqual(result, 0)
+
+
+class CreateCheckoutSessionViewTests(APITest):
+    """
+    Tests for the CustomerBillingViewSet.create_checkout_session endpoint.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.url = reverse('api:v1:customer-billing-create-checkout-session')
+
+    def tearDown(self):
+        from enterprise_access.apps.customer_billing.models import CheckoutIntent
+        CheckoutIntent.objects.all().delete()
+        super().tearDown()
+
+    @mock.patch('enterprise_access.apps.customer_billing.api.create_subscription_checkout_session')
+    @mock.patch('enterprise_access.apps.customer_billing.api.CheckoutIntent.create_intent')
+    @mock.patch('enterprise_access.apps.customer_billing.api.CheckoutSessionInputValidator.validate')
+    def test_create_checkout_session_returns_client_secret_from_dict(
+        self, mock_validate, mock_create_intent, mock_create_stripe_session,
+    ):
+        """
+        client_secret is read via dict access from the dict returned by create_subscription_checkout_session,
+        not via attribute access. Regression test for the .to_dict() change in stripe_api.py.
+        """
+        self.set_jwt_cookie()
+        mock_validate.return_value = {}  # no validation errors
+        mock_intent = mock.MagicMock()
+        mock_intent.id = 1
+        mock_create_intent.return_value = mock_intent
+        mock_create_stripe_session.return_value = {
+            'id': 'cs_test_abc',
+            'customer': 'cus_test_123',
+            'client_secret': 'cs_test_abc_secret_xyz',
+        }
+
+        response = self.client.post(
+            self.url,
+            data={
+                'admin_email': self.user.email,
+                'enterprise_slug': 'test-slug',
+                'company_name': 'Test Co',
+                'quantity': 5,
+                'stripe_price_id': 'price_abc123',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(
+            response.data['checkout_session_client_secret'],
+            'cs_test_abc_secret_xyz',
+        )
