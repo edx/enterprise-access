@@ -67,14 +67,16 @@ class CustomerBillingPortalSessionTests(APITest):
 
         url = reverse('api:v1:customer-billing-create-enterprise-admin-portal-session')
 
-        mock_session = {
+        mock_session_data = {
             'id': 'bps_test_123',
             'url': 'https://billing.stripe.com/session/test_123',
             'customer': self.stripe_customer_id,
         }
+        mock_stripe_session = mock.Mock()
+        mock_stripe_session.to_dict.return_value = mock_session_data
 
         with mock.patch('stripe.billing_portal.Session.create') as mock_create:
-            mock_create.return_value.to_dict.return_value = mock_session
+            mock_create.return_value = mock_stripe_session
 
             response = self.client.get(
                 url,
@@ -83,7 +85,7 @@ class CustomerBillingPortalSessionTests(APITest):
             )
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data, mock_session)
+        self.assertEqual(response.data, mock_session_data)
 
         # Implementation uses /{enterprise_slug} for Admin portal return URL.
         mock_create.assert_called_once_with(
