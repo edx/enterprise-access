@@ -74,7 +74,9 @@ class CustomerBillingPortalSessionTests(APITest):
         }
 
         with mock.patch('stripe.billing_portal.Session.create') as mock_create:
-            mock_create.return_value = mock_session
+            mock_stripe_session = mock.Mock()
+            mock_stripe_session.to_dict.return_value = mock_session
+            mock_create.return_value = mock_stripe_session
 
             response = self.client.get(
                 url,
@@ -221,7 +223,9 @@ class CustomerBillingPortalSessionTests(APITest):
         }
 
         with mock.patch('stripe.billing_portal.Session.create') as mock_create:
-            mock_create.return_value = mock_session
+            mock_stripe_session = mock.Mock()
+            mock_stripe_session.to_dict.return_value = mock_session
+            mock_create.return_value = mock_stripe_session
 
             response = self.client.get(
                 url,
@@ -483,7 +487,9 @@ class StripeWebhookTests(APITest):
         }
 
         with mock.patch('stripe.billing_portal.Session.create') as mock_create:
-            mock_create.return_value = mock_session
+            mock_stripe_session = mock.Mock()
+            mock_stripe_session.to_dict.return_value = mock_session
+            mock_create.return_value = mock_stripe_session
 
             response = self.client.get(
                 url,
@@ -1384,9 +1390,7 @@ class BillingManagementAttachPaymentMethodTests(BillingManagementBaseTest):
         """
         # Mock payment method retrieve (verify it exists)
         mock_pm = mock.Mock()
-        mock_pm.id = self.payment_method_id
-        mock_pm.type = 'card'
-        mock_pm.get.return_value = None  # Not attached to any customer yet
+        mock_pm.to_dict.return_value = {'id': self.payment_method_id, 'type': 'card', 'customer': None}
         mock_pm_retrieve.return_value = mock_pm
 
         # Mock payment method attach
@@ -1419,9 +1423,7 @@ class BillingManagementAttachPaymentMethodTests(BillingManagementBaseTest):
         """
         # Mock payment method retrieve
         mock_pm = mock.Mock()
-        mock_pm.id = self.payment_method_id
-        mock_pm.type = 'us_bank_account'
-        mock_pm.get.return_value = None  # Not attached to any customer yet
+        mock_pm.to_dict.return_value = {'id': self.payment_method_id, 'type': 'us_bank_account', 'customer': None}
         mock_pm_retrieve.return_value = mock_pm
         mock_pm_attach.return_value = mock_pm
 
@@ -1445,10 +1447,10 @@ class BillingManagementAttachPaymentMethodTests(BillingManagementBaseTest):
         Stripe.PaymentMethod.attach() is idempotent - returns success if already attached to same customer.
         """
         mock_pm = mock.Mock()
-        mock_pm.id = self.payment_method_id
-        mock_pm.type = 'card'
         # Already attached to THIS customer - should return success without calling attach
-        mock_pm.get.return_value = self.stripe_customer_id
+        mock_pm.to_dict.return_value = {
+            'id': self.payment_method_id, 'type': 'card', 'customer': self.stripe_customer_id,
+        }
         mock_pm_retrieve.return_value = mock_pm
 
         url = reverse('api:v1:billing-management-payment-methods')
@@ -1529,7 +1531,7 @@ class BillingManagementAttachPaymentMethodTests(BillingManagementBaseTest):
         Test Stripe API error returns 422.
         """
         mock_pm = mock.Mock()
-        mock_pm.get.return_value = None  # Not attached to any customer yet
+        mock_pm.to_dict.return_value = {'customer': None}
         mock_pm_retrieve.return_value = mock_pm
         mock_pm_attach.side_effect = stripe.error.StripeError('Stripe error occurred')
 
@@ -1557,8 +1559,7 @@ class BillingManagementAttachPaymentMethodTests(BillingManagementBaseTest):
         }])
 
         mock_pm = mock.Mock()
-        mock_pm.id = self.payment_method_id
-        mock_pm.get.return_value = None  # Not attached to any customer yet
+        mock_pm.to_dict.return_value = {'id': self.payment_method_id, 'customer': None}
         mock_pm_retrieve.return_value = mock_pm
         mock_pm_attach.return_value = mock_pm
 

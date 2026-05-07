@@ -123,7 +123,9 @@ class TestCreateSubscriptionCheckoutSession(StripeApiFunctionsTests):
     def test_sets_customer_email_when_no_existing_customer(self, mock_customer_search, mock_session_create):
         """When no Stripe customer exists for admin_email, pass customer_email and not customer."""
         mock_customer_search.return_value = mock.MagicMock(data=[])
-        mock_session_create.return_value = {'id': 'cs_test_abc'}
+        mock_stripe_session = mock.Mock()
+        mock_stripe_session.to_dict.return_value = {'id': 'cs_test_abc'}
+        mock_session_create.return_value = mock_stripe_session
 
         input_data = self._base_input(admin_email='new-admin@example.com')
         checkout_intent = mock.MagicMock()
@@ -142,7 +144,9 @@ class TestCreateSubscriptionCheckoutSession(StripeApiFunctionsTests):
     def test_sets_customer_when_existing_customer_found(self, mock_customer_search, mock_session_create):
         """When a Stripe customer exists for admin_email, pass customer and not customer_email."""
         mock_customer_search.return_value = mock.MagicMock(data=[{'id': 'cus_12345'}])
-        mock_session_create.return_value = {'id': 'cs_test_def'}
+        mock_stripe_session = mock.Mock()
+        mock_stripe_session.to_dict.return_value = {'id': 'cs_test_def'}
+        mock_session_create.return_value = mock_stripe_session
 
         input_data = self._base_input(admin_email='existing-admin@example.com')
         checkout_intent = mock.MagicMock()

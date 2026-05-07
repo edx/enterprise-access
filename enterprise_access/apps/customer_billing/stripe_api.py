@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 stripe.api_key = settings.STRIPE_API_KEY
 
 
-def create_subscription_checkout_session(input_data, lms_user_id, checkout_intent) -> stripe.checkout.Session:
+def create_subscription_checkout_session(input_data, lms_user_id, checkout_intent) -> dict:
     """
     Creates a free trial subscription checkout session.
     """
@@ -76,7 +76,7 @@ def create_subscription_checkout_session(input_data, lms_user_id, checkout_inten
     else:
         create_kwargs['customer_email'] = input_data['admin_email']
 
-    return stripe.checkout.Session.create(**create_kwargs)
+    return stripe.checkout.Session.create(**create_kwargs).to_dict()
 
 
 def stripe_cache(timeout=settings.DEFAULT_STRIPE_CACHE_TIMEOUT):
