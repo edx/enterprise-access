@@ -222,11 +222,28 @@ class LearnerCreditRequestActionsSerializer(serializers.ModelSerializer):
 
 class LearnerCreditRequestDeclineSerializer(serializers.Serializer):
     """
-    Serializer for declining a learner credit request.
+    Serializer for declining one or more learner credit requests.
+
+    Accepts either ``subsidy_request_uuid`` (single UUID, legacy) or
+    ``subsidy_request_uuids`` (list, mirrors the ``approve`` endpoint contract).
+    Exactly one of the two MUST be provided.
     """
 
     subsidy_request_uuid = serializers.UUIDField(
-        required=True, help_text="UUID of the learner credit request to decline"
+        required=False, help_text="UUID of a single learner credit request to decline."
+    )
+    subsidy_request_uuids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        allow_empty=False,
+        help_text="List of LearnerCreditRequest UUIDs to decline.",
+    )
+    policy_uuid = serializers.UUIDField(
+        required=False,
+        help_text=(
+            "The UUID of the SubsidyAccessPolicy associated with the requests. "
+            "Optional; included for symmetry with the approve endpoint contract."
+        ),
     )
     send_notification = serializers.BooleanField(
         default=False, help_text="Whether to send decline notification email to the learner"
@@ -234,55 +251,68 @@ class LearnerCreditRequestDeclineSerializer(serializers.Serializer):
     disassociate_from_org = serializers.BooleanField(
         default=False, help_text="Whether to unlink the user from the enterprise organization"
     )
-    # Add a new optional field 'decline_reason' to capture reason for decline
-    # Default value is None (null) if not provided
     decline_reason = serializers.CharField(
-        required=False,     # makes the field optional
-        allow_blank=True,   # allows empty string ""
-        allow_null=True,    # allows null value
-        help_text="Reason for declining"
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        help_text="Reason for declining",
     )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._learner_credit_request = None
+        self._learner_credit_requests = []
 
-    def validate_subsidy_request_uuid(self, value):
-        """
-        Validate that the subsidy request exists and can be declined.
-        """
-        try:
-            learner_credit_request = LearnerCreditRequest.objects.get(uuid=value)
-        except LearnerCreditRequest.DoesNotExist as exc:
-            raise serializers.ValidationError(f"Learner Credit Request with UUID {value} not found.") from exc
+    def validate(self, attrs):
+        single_uuid = attrs.get('subsidy_request_uuid')
+        many_uuids = attrs.get('subsidy_request_uuids')
 
-        if learner_credit_request.state not in [SubsidyRequestStates.REQUESTED]:
+        if single_uuid and many_uuids:
             raise serializers.ValidationError(
-                f'Learner Credit Request with UUID {value} cannot be declined. '
-                f'Current state: {learner_credit_request.state}'
+                "Provide either subsidy_request_uuid or subsidy_request_uuids, not both."
+            )
+        if not single_uuid and not many_uuids:
+            raise serializers.ValidationError(
+                "Must provide subsidy_request_uuid or subsidy_request_uuids."
             )
 
-        # Store the fetched object for later use
-        self._learner_credit_request = learner_credit_request
+        uuids = [single_uuid] if single_uuid else many_uuids
 
-        return value
+        learner_credit_requests = list(LearnerCreditRequest.objects.filter(uuid__in=uuids))
+        found_uuids = {r.uuid for r in learner_credit_requests}
+        missing = [str(u) for u in uuids if u not in found_uuids]
+        if missing:
+            raise serializers.ValidationError(
+                f"Learner Credit Request(s) with UUID(s) {missing} not found."
+            )
+
+        non_declinable = [
+            f'{r.uuid} (state: {r.state})' for r in learner_credit_requests
+            if r.state != SubsidyRequestStates.REQUESTED
+        ]
+        if non_declinable:
+            raise serializers.ValidationError(
+                f"Learner Credit Request(s) cannot be declined: {non_declinable}"
+            )
+
+        self._learner_credit_requests = learner_credit_requests
+        return attrs
 
     def get_learner_credit_request(self):
         """
-        Return the already-fetched LearnerCreditRequest object
+        Legacy accessor; returns the single (or first) validated request.
         """
-        return self._learner_credit_request
+        return self._learner_credit_requests[0] if self._learner_credit_requests else None
+
+    def get_learner_credit_requests(self):
+        """
+        Return all validated declinable LearnerCreditRequest objects.
+        """
+        return self._learner_credit_requests
 
     def create(self, validated_data):
-        """
-        Not implemented - this serializer is for validation only
-        """
         raise NotImplementedError("This serializer is for validation only")
 
     def update(self, instance, validated_data):
-        """
-        Not implemented - this serializer is for validation only
-        """
         raise NotImplementedError("This serializer is for validation only")
 
 

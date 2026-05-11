@@ -1358,42 +1358,48 @@ class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
     @action(detail=False, url_path="decline", methods=["post"])
     def decline(self, request, *args, **kwargs):
         """
-        Decline a single learner credit request.
+        Decline one or more learner credit requests.
+
+        Accepts either a single ``subsidy_request_uuid`` or a list of UUIDs
+        ``subsidy_request_uuids``, mirroring the ``approve`` endpoint contract.
 
         ```
         Raises:
-            400 if input validation fails (including when the request is not in a declinable state)
-            422 if the backend service reports the request as non-declinable or another processing error occurs
+            400 if input validation fails (including when any request is not in a declinable state)
+            422 if the backend service reports any request as non-declinable or another processing
+                error occurs
         ```
         """
         serializer = serializers.LearnerCreditRequestDeclineSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        learner_credit_request = serializer.get_learner_credit_request()
+        learner_credit_requests = serializer.get_learner_credit_requests()
 
         try:
             result = subsidy_request_api.decline_learner_credit_requests(
-                [learner_credit_request],
+                learner_credit_requests,
                 reviewer=request.user,
                 reason=serializer.validated_data.get('decline_reason'),
             )
+            declined_requests = result.get('declined', [])
             response_data = {
-                'declined': [str(r.uuid) for r in result.get('declined', [])],
+                'declined': [str(r.uuid) for r in declined_requests],
                 'non_declinable': [str(r.uuid) for r in result.get('non_declinable', [])],
             }
             if result.get('non_declinable'):
                 return Response(response_data, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
 
             # Handle optional post-decline side effects
-            if serializer.validated_data.get('send_notification') and result.get('declined'):
-                logger.info(
-                    "Decline notification already queued by api layer for request %s",
-                    learner_credit_request.uuid,
-                )
-            if serializer.validated_data.get('disassociate_from_org') and result.get('declined'):
+            if serializer.validated_data.get('send_notification') and declined_requests:
+                for declined_request in declined_requests:
+                    logger.info(
+                        "Decline notification already queued by api layer for request %s",
+                        declined_request.uuid,
+                    )
+            if serializer.validated_data.get('disassociate_from_org') and declined_requests:
                 enterprise_customer_uuid = get_enterprise_uuid_from_request_data(request)
-                lms_user_id = serializers.LearnerCreditRequestSerializer(learner_credit_request).data['lms_user_id']
-                unlink_users_from_enterprise_task.delay(enterprise_customer_uuid, [lms_user_id])
+                lms_user_ids = [declined_request.user.lms_user_id for declined_request in declined_requests]
+                unlink_users_from_enterprise_task.delay(enterprise_customer_uuid, lms_user_ids)
 
             return Response(response_data, status=status.HTTP_200_OK)
         except Exception:  # pylint: disable=broad-except
