@@ -4,6 +4,8 @@
 #
 #    make upgrade
 #
+2u-enterprise-subsidy-client==2.2.1
+    # via -r requirements/base.txt
 amqp==5.3.1
     # via
     #   -r requirements/base.txt
@@ -44,11 +46,11 @@ billiard==4.2.4
     # via
     #   -r requirements/base.txt
     #   celery
-boto3==1.43.2
+boto3==1.43.6
     # via
     #   -r requirements/base.txt
     #   snowflake-connector-python
-botocore==1.43.2
+botocore==1.43.6
     # via
     #   -r requirements/base.txt
     #   boto3
@@ -115,13 +117,13 @@ confluent-kafka[avro,schema-registry]==2.6.1
     # via
     #   -c requirements/constraints.txt
     #   -r requirements/base.txt
-coverage[toml]==7.13.5
+coverage[toml]==7.14.0
     # via
     #   -r requirements/test.in
     #   pytest-cov
 crispy-bootstrap5==2026.3
     # via -r requirements/base.txt
-cryptography==47.0.0
+cryptography==48.0.0
     # via
     #   -r requirements/base.txt
     #   pyjwt
@@ -269,8 +271,6 @@ edx-drf-extensions==10.6.0
     # via
     #   -r requirements/base.txt
     #   edx-rbac
-2u-enterprise-subsidy-client==2.2.1
-    # via -r requirements/base.txt
 edx-event-bus-kafka==6.1.0
     # via -r requirements/base.txt
 edx-lint==6.1.0
@@ -310,7 +310,7 @@ filelock==3.29.0
     #   virtualenv
 freezegun==1.5.5
     # via -r requirements/test.in
-idna==3.13
+idna==3.14
     # via
     #   -r requirements/base.txt
     #   requests
@@ -447,7 +447,7 @@ pynacl==1.6.2
     # via
     #   -r requirements/base.txt
     #   edx-django-utils
-pyopenssl==26.1.0
+pyopenssl==26.2.0
     # via
     #   -r requirements/base.txt
     #   snowflake-connector-python
@@ -470,7 +470,7 @@ python-dateutil==2.9.0.post0
     #   botocore
     #   celery
     #   freezegun
-python-discovery==1.2.2
+python-discovery==1.3.0
     # via
     #   tox
     #   virtualenv
@@ -574,7 +574,7 @@ text-unidecode==1.3
     #   python-slugify
 tomli-w==1.2.0
     # via tox
-tomlkit==0.14.0
+tomlkit==0.15.0
     # via
     #   -r requirements/base.txt
     #   edx-lint
@@ -606,7 +606,7 @@ uritemplate==4.2.0
     #   -r requirements/base.txt
     #   drf-spectacular
     #   drf-yasg
-urllib3==2.6.3
+urllib3==2.7.0
     # via
     #   -r requirements/base.txt
     #   botocore
@@ -617,7 +617,7 @@ vine==5.1.0
     #   amqp
     #   celery
     #   kombu
-virtualenv==21.3.0
+virtualenv==21.3.1
     # via tox
 wcwidth==0.7.0
     # via
