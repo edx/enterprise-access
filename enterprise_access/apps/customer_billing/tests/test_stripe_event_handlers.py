@@ -554,7 +554,7 @@ class TestStripeEventHandler(TestCase):
         if invoice_total:
             mock_send_payment_receipt_email.delay.assert_called_once_with(
                 invoice_id=invoice_data['id'],
-                invoice_data=mock_event.data.object,
+                invoice_data=mock_event.data.object.to_dict(),
                 enterprise_customer_name=self.checkout_intent.enterprise_name,
                 enterprise_slug=self.checkout_intent.enterprise_slug,
             )
