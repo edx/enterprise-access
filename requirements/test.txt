@@ -4,6 +4,8 @@
 #
 #    make upgrade
 #
+2u-enterprise-subsidy-client==2.2.1
+    # via -r requirements/base.txt
 amqp==5.3.1
     # via
     #   -r requirements/base.txt
@@ -44,17 +46,17 @@ billiard==4.2.4
     # via
     #   -r requirements/base.txt
     #   celery
-boto3==1.43.2
+boto3==1.43.9
     # via
     #   -r requirements/base.txt
     #   snowflake-connector-python
-botocore==1.43.2
+botocore==1.43.9
     # via
     #   -r requirements/base.txt
     #   boto3
     #   s3transfer
     #   snowflake-connector-python
-cachetools==7.1.1
+cachetools==7.1.2
     # via tox
 cattrs==26.1.0
     # via -r requirements/base.txt
@@ -78,7 +80,7 @@ charset-normalizer==3.4.7
     #   -r requirements/base.txt
     #   requests
     #   snowflake-connector-python
-click==8.3.3
+click==8.4.0
     # via
     #   -r requirements/base.txt
     #   celery
@@ -115,13 +117,13 @@ confluent-kafka[avro,schema-registry]==2.6.1
     # via
     #   -c requirements/constraints.txt
     #   -r requirements/base.txt
-coverage[toml]==7.13.5
+coverage[toml]==7.14.0
     # via
     #   -r requirements/test.in
     #   pytest-cov
 crispy-bootstrap5==2026.3
     # via -r requirements/base.txt
-cryptography==47.0.0
+cryptography==48.0.0
     # via
     #   -r requirements/base.txt
     #   pyjwt
@@ -269,8 +271,6 @@ edx-drf-extensions==10.6.0
     # via
     #   -r requirements/base.txt
     #   edx-rbac
-2u-enterprise-subsidy-client==2.2.1
-    # via -r requirements/base.txt
 edx-event-bus-kafka==6.1.0
     # via -r requirements/base.txt
 edx-lint==6.1.0
@@ -294,7 +294,7 @@ edx-toggles==6.0.0
     #   edx-event-bus-kafka
 factory-boy==3.3.3
     # via -r requirements/test.in
-faker==40.15.0
+faker==40.18.0
     # via factory-boy
 fastavro==1.12.2
     # via
@@ -310,7 +310,7 @@ filelock==3.29.0
     #   virtualenv
 freezegun==1.5.5
     # via -r requirements/test.in
-idna==3.13
+idna==3.15
     # via
     #   -r requirements/base.txt
     #   requests
@@ -447,7 +447,7 @@ pynacl==1.6.2
     # via
     #   -r requirements/base.txt
     #   edx-django-utils
-pyopenssl==26.1.0
+pyopenssl==26.2.0
     # via
     #   -r requirements/base.txt
     #   snowflake-connector-python
@@ -470,7 +470,7 @@ python-dateutil==2.9.0.post0
     #   botocore
     #   celery
     #   freezegun
-python-discovery==1.2.2
+python-discovery==1.3.1
     # via
     #   tox
     #   virtualenv
@@ -501,7 +501,7 @@ referencing==0.37.0
     #   -r requirements/base.txt
     #   jsonschema
     #   jsonschema-specifications
-requests==2.33.1
+requests==2.34.2
     # via
     #   -r requirements/base.txt
     #   analytics-python
@@ -541,7 +541,7 @@ six==1.17.0
     #   edx-lint
     #   edx-rbac
     #   python-dateutil
-snowflake-connector-python==4.4.0
+snowflake-connector-python==4.5.0
     # via -r requirements/base.txt
 social-auth-app-django==5.9.0
     # via
@@ -574,13 +574,13 @@ text-unidecode==1.3
     #   python-slugify
 tomli-w==1.2.0
     # via tox
-tomlkit==0.14.0
+tomlkit==0.15.0
     # via
     #   -r requirements/base.txt
     #   edx-lint
     #   pylint
     #   snowflake-connector-python
-tox==4.53.1
+tox==4.54.0
     # via -r requirements/test.in
 typing-extensions==4.15.0
     # via
@@ -606,7 +606,7 @@ uritemplate==4.2.0
     #   -r requirements/base.txt
     #   drf-spectacular
     #   drf-yasg
-urllib3==2.6.3
+urllib3==2.7.0
     # via
     #   -r requirements/base.txt
     #   botocore
@@ -617,7 +617,7 @@ vine==5.1.0
     #   amqp
     #   celery
     #   kombu
-virtualenv==21.3.0
+virtualenv==21.3.3
     # via tox
 wcwidth==0.7.0
     # via
