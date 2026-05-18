@@ -28,7 +28,7 @@ from enterprise_access.apps.bffs.checkout.handlers import (
     CheckoutValidationHandler
 )
 from enterprise_access.apps.core.tests.factories import UserFactory
-from enterprise_access.apps.customer_billing.models import CheckoutIntent
+from enterprise_access.apps.customer_billing.models import CheckoutIntent, EnterpriseAcademy
 from enterprise_access.apps.customer_billing.tests.utils import AttrDict
 from test_utils import APITest
 
@@ -193,6 +193,51 @@ class TestCheckoutContextHandler(APITest):
         self.assertIn('default_by_lookup_key', pricing)
         self.assertIn('prices', pricing)
         self.assertEqual(len(pricing['prices']), 2)
+
+    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_all_active_stripe_prices')
+    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.stripe.Product.retrieve')
+    @mock.patch.object(settings, 'ENABLE_ESSENTIALS_CHECKOUT', True)
+    def test_resolve_stripe_product_matches_academy_name_case_insensitively(
+        self,
+        mock_product_retrieve,
+        mock_active_prices,
+    ):
+        """Essentials product resolution should match academy names case-insensitively."""
+        EnterpriseAcademy.objects.create(
+            name='Data Science',
+            slug='data-science',
+            product_key='data-science',
+            stripe_price_lookup_key='data_science_lookup',
+            stripe_product_id='prod_abc123',
+            catalog_query_uuid='00000000-0000-0000-0000-000000000042',
+        )
+        mock_product_retrieve.return_value = {
+            'id': 'prod_abc123',
+            'metadata': {
+                'name': 'data science',
+                'product_type': 'essentials',
+            },
+        }
+        mock_active_prices.return_value = []
+
+        context = self._create_context()
+        handler = CheckoutContextHandler(context)
+
+        resolved_product = handler.resolve_stripe_product('prod_abc123')
+
+        self.assertIsNotNone(resolved_product)
+        self.assertEqual(
+            resolved_product['catalog_query_uuid'],
+            '00000000-0000-0000-0000-000000000042',
+        )
+        self.assertEqual(
+            resolved_product['catalog_query_id'],
+            '00000000-0000-0000-0000-000000000042',
+        )
+        self.assertEqual(
+            resolved_product['edx_catalog_id'],
+            '00000000-0000-0000-0000-000000000042',
+        )
 
     def test_get_field_constraints_default_values(self):
         """

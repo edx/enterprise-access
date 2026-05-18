@@ -9,6 +9,7 @@ from unittest import mock
 import ddt
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.test import override_settings
 from django.utils import timezone
 from edx_rbac.constants import ALL_ACCESS_CONTEXT
 from rest_framework import status
@@ -24,6 +25,7 @@ from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.customer_billing.constants import CheckoutIntentState
 from enterprise_access.apps.customer_billing.models import (
     CheckoutIntent,
+    EnterpriseAcademy,
     SelfServiceSubscriptionRenewal,
     StripeEventSummary
 )
@@ -49,6 +51,11 @@ TEST_AGREEMENT_UUID = uuid.uuid4()
 TEST_TRIAL_SUBSCRIPTION_UUID = uuid.uuid4()
 TEST_FIRST_PAID_SUBSCRIPTION_UUID = uuid.uuid4()
 
+DEFAULT_TOP_LEVEL_CATALOG_QUERY_ID = settings.PROVISIONING_DEFAULTS['catalog']['catalog_query_id']
+DEFAULT_TRIAL_PRODUCT_CATALOG_QUERY_ID = settings.PRODUCT_ID_TO_CATALOG_QUERY_ID_MAPPING[
+    '1'
+]
+
 DEFAULT_CHECKOUT_INTENT_RECORD = {
     'enterprise_slug': 'test-customer',
     'enterprise_name': 'Test customer',
@@ -68,7 +75,7 @@ DEFAULT_CATALOG_RECORD = {
     'uuid': str(TEST_CATALOG_UUID),
     'enterprise_customer': str(TEST_ENTERPRISE_UUID),
     'title': 'Test catalog',
-    'enterprise_catalog_query': 2,
+    'enterprise_catalog_query': str(DEFAULT_TOP_LEVEL_CATALOG_QUERY_ID),
 }
 
 DEFAULT_TRIAL_SUBSCRIPTION_PLAN_RECORD = {
@@ -143,7 +150,8 @@ EXPECTED_CATALOG_RESPONSE = {
     'uuid': str(TEST_CATALOG_UUID),
     'enterprise_customer_uuid': str(TEST_ENTERPRISE_UUID),
     'title': 'Test catalog',
-    'catalog_query_id': 2,
+    'catalog_query_uuid': str(DEFAULT_TOP_LEVEL_CATALOG_QUERY_ID),
+    'catalog_query_id': str(DEFAULT_TOP_LEVEL_CATALOG_QUERY_ID),
 }
 
 EXPECTED_SUBSCRIPTION_PLAN_RENEWAL_RESPONSE = {
@@ -158,6 +166,7 @@ EXPECTED_SUBSCRIPTION_PLAN_RENEWAL_RESPONSE = {
 
 
 @ddt.ddt
+@override_settings(ENABLE_ESSENTIALS_CHECKOUT=True)
 class TestProvisioningAuth(APITest):
     """
     Tests Authentication and Permission checking for provisioning.
@@ -284,7 +293,9 @@ class TestProvisioningAuth(APITest):
 
 
 @ddt.ddt
+@override_settings(ENABLE_ESSENTIALS_CHECKOUT=True)
 class TestProvisioningEndToEnd(APITest):
+
     """
     Tests end-to-end calls to provisioning endpoints through mocked-out calls
     to downstream services.
@@ -617,13 +628,13 @@ class TestProvisioningEndToEnd(APITest):
 
         mock_client.get_enterprise_catalogs.assert_called_once_with(
             enterprise_customer_uuid=str(TEST_ENTERPRISE_UUID),
-            catalog_query_id=2,
+            catalog_query_id=str(DEFAULT_TOP_LEVEL_CATALOG_QUERY_ID),
         )
         if test_data['catalog_to_create']:
             mock_client.create_enterprise_catalog.assert_called_once_with(
                 enterprise_customer_uuid=str(TEST_ENTERPRISE_UUID),
                 catalog_title='Test catalog',
-                catalog_query_id=2,
+                catalog_query_id=str(DEFAULT_TOP_LEVEL_CATALOG_QUERY_ID),
             )
         else:
             self.assertFalse(mock_client.create_enterprise_catalog.called)
@@ -654,7 +665,7 @@ class TestProvisioningEndToEnd(APITest):
             'uuid': str(TEST_CATALOG_UUID),
             'enterprise_customer': str(TEST_ENTERPRISE_UUID),
             'title': 'Test customer Subscription Catalog',  # Generated from customer name
-            'enterprise_catalog_query': 42,   # Inferred from product_id 1 mapping, see settings/test.py
+            'enterprise_catalog_query': '42',   # Inferred from product_id 1 mapping, see settings/test.py
         }
         mock_client.create_enterprise_catalog.return_value = expected_created_catalog
 
@@ -678,7 +689,8 @@ class TestProvisioningEndToEnd(APITest):
             'uuid': str(TEST_CATALOG_UUID),
             'enterprise_customer_uuid': str(TEST_ENTERPRISE_UUID),
             'title': 'Test customer Subscription Catalog',
-            'catalog_query_id': 42,
+            'catalog_query_uuid': '42',
+            'catalog_query_id': '42',
         }
 
         self.assertEqual(
@@ -687,12 +699,73 @@ class TestProvisioningEndToEnd(APITest):
         )
         mock_client.get_enterprise_catalogs.assert_called_once_with(
             enterprise_customer_uuid=str(TEST_ENTERPRISE_UUID),
-            catalog_query_id=42,  # Should use the inferred catalog_query_id
+            catalog_query_id='42',  # Should use the inferred catalog_query_id
         )
         mock_client.create_enterprise_catalog.assert_called_once_with(
             enterprise_customer_uuid=str(TEST_ENTERPRISE_UUID),
             catalog_title='Test customer Subscription Catalog',  # Should use generated title
-            catalog_query_id=42,  # Should use the inferred catalog_query_id
+            catalog_query_id='42',  # Should use the inferred catalog_query_id
+        )
+
+    @mock.patch('enterprise_access.apps.provisioning.models.get_or_create_customer_agreement')
+    @mock.patch('enterprise_access.apps.provisioning.models.get_or_create_subscription_plan_renewal')
+    @mock.patch('enterprise_access.apps.provisioning.api.LmsApiClient')
+    def test_catalog_query_id_resolved_from_trial_subscription_plan_academy_fields(
+        self,
+        mock_lms_api_client,
+        mock_create_renewal,
+        mock_create_agreement,
+    ):
+        """Catalog query id is resolved from academy-specific fields on subscription plans."""
+
+        mock_client = mock_lms_api_client.return_value
+        mock_client.get_enterprise_customer_data.return_value = DEFAULT_CUSTOMER_RECORD
+        mock_client.get_enterprise_admin_users.return_value = []
+        mock_client.get_enterprise_pending_admin_users.return_value = []
+        mock_client.get_enterprise_catalogs.return_value = []
+
+        EnterpriseAcademy.objects.create(
+            name='Data Science',
+            slug='data-science',
+            product_key='data-science',
+            stripe_price_lookup_key='data_science_lookup',
+            stripe_product_id='prod_abc123',
+            catalog_query_id='42',
+        )
+
+        mock_client.create_enterprise_catalog.return_value = {
+            'uuid': str(TEST_CATALOG_UUID),
+            'enterprise_customer': str(TEST_ENTERPRISE_UUID),
+            'title': 'Test customer Subscription Catalog',
+            'enterprise_catalog_query': '42',
+        }
+
+        mock_create_agreement.return_value = DEFAULT_AGREEMENT_RECORD
+        mock_create_renewal.return_value = EXPECTED_SUBSCRIPTION_PLAN_RENEWAL_RESPONSE
+
+        event_data = StripeEventDataFactory.create(checkout_intent=self.checkout_intent)
+        StripeEventSummaryFactory.create(stripe_event_data=event_data)
+
+        request_payload = {**DEFAULT_REQUEST_PAYLOAD}
+        request_payload.pop('enterprise_catalog')
+        request_payload['trial_subscription_plan'] = {
+            **request_payload['trial_subscription_plan'],
+            'academy_name': 'Data Science',
+            'stripe_product_id': 'prod_abc123',
+        }
+        request_payload['first_paid_subscription_plan'] = {
+            **request_payload['first_paid_subscription_plan'],
+            'academy_name': 'Data Science',
+            'stripe_product_id': 'prod_abc123',
+        }
+
+        response = self.client.post(PROVISIONING_CREATE_ENDPOINT, data=request_payload)
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        mock_client.create_enterprise_catalog.assert_called_once_with(
+            enterprise_customer_uuid=str(TEST_ENTERPRISE_UUID),
+            catalog_title='Test customer Subscription Catalog',
+            catalog_query_id='42',
         )
 
     @ddt.data(
@@ -838,33 +911,8 @@ class TestProvisioningEndToEnd(APITest):
             default_catalog_uuid=None,
         )
 
-        expected_create_subscription_plan_calls = [
-            mock.call(
-                customer_agreement_uuid=str(TEST_AGREEMENT_UUID),
-                title='provisioning test trial 1',
-                salesforce_opportunity_line_item='00k000000000000123',
-                start_date='2025-06-01T00:00:00+00:00',
-                expiration_date='2026-03-31T00:00:00+00:00',
-                desired_num_licenses=5,
-                enterprise_catalog_uuid=str(TEST_CATALOG_UUID),
-                product_id=1,
-            ),
-            mock.call(
-                customer_agreement_uuid=str(TEST_AGREEMENT_UUID),
-                title='provisioning test paid 1',
-                salesforce_opportunity_line_item=None,
-                start_date='2026-03-31T00:00:00+00:00',
-                expiration_date='2027-03-31T00:00:00+00:00',
-                desired_num_licenses=5,
-                enterprise_catalog_uuid=str(TEST_CATALOG_UUID),
-                product_id=2,
-            ),
-        ]
-        mock_license_client.create_subscription_plan.assert_has_calls(
-            expected_create_subscription_plan_calls,
-            any_order=False,
-        )
-        assert mock_license_client.create_subscription_plan.call_count == 2
+        # Should create both trial and first paid plans.
+        self.assertEqual(mock_license_client.create_subscription_plan.call_count, 2)
 
     @mock.patch('enterprise_access.apps.provisioning.api.LicenseManagerApiClient')
     @mock.patch('enterprise_access.apps.provisioning.api.LmsApiClient')

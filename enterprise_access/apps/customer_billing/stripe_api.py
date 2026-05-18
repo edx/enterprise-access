@@ -9,6 +9,12 @@ import stripe
 from django.conf import settings
 from edx_django_utils.cache import TieredCache
 
+from enterprise_access.apps.customer_billing.constants import (
+    STRIPE_PRODUCT_KEY_METADATA_KEY,
+    STRIPE_PRODUCT_TYPE_ESSENTIAL_ACADEMY,
+    STRIPE_PRODUCT_TYPE_METADATA_KEY
+)
+
 logger = logging.getLogger(__name__)
 
 ## This is where the Stripe API key is set on the client.
@@ -16,11 +22,57 @@ logger = logging.getLogger(__name__)
 stripe.api_key = settings.STRIPE_API_KEY
 
 
-def create_subscription_checkout_session(input_data, lms_user_id, checkout_intent) -> stripe.checkout.Session:
+def _get_subscription_product_metadata(checkout_intent) -> dict:
+    """
+    Resolve Stripe product metadata for subscription creation.
+
+    Returns:
+        dict: Contains optional `name` and `product_type` keys when present.
+    """
+    stripe_product_id = getattr(checkout_intent, 'stripe_product_id', None)
+    if not stripe_product_id:
+        return {}
+
+    try:
+        stripe_product = stripe.Product.retrieve(stripe_product_id)
+        product_metadata = stripe_product.get('metadata') or {}
+    except stripe.StripeError as exc:
+        logger.warning(
+            'Unable to retrieve Stripe product metadata for product=%s, intent_uuid=%s: %s',
+            stripe_product_id,
+            getattr(checkout_intent, 'uuid', None),
+            exc,
+        )
+        return {}
+
+    metadata = {}
+    if product_metadata.get('name'):
+        metadata['name'] = product_metadata.get('name')
+    if product_metadata.get('product_type'):
+        metadata['product_type'] = product_metadata.get('product_type')
+    return metadata
+
+
+def create_subscription_checkout_session(input_data, lms_user_id, checkout_intent) -> dict:
     """
     Creates a free trial subscription checkout session.
+
+    Returns:
+        dict: Serialized Stripe checkout session payload.
     """
     stripe.api_key = settings.STRIPE_API_KEY
+    subscription_metadata = {
+        # Downstream services need to know the intended enterprise customer name & slug.
+        'enterprise_customer_name': input_data['company_name'],
+        'enterprise_customer_slug': input_data['enterprise_slug'],
+        # Store the lms_user_id for improved debugging experience.
+        'lms_user_id': str(lms_user_id),
+        # Store the checkout_intent ID for cross-service reference
+        'checkout_intent_id': str(checkout_intent.id),
+        'checkout_intent_uuid': str(checkout_intent.uuid),
+    }
+    subscription_metadata.update(_get_subscription_product_metadata(checkout_intent))
+
     create_kwargs: stripe.checkout.Session.CreateParams = {
         'mode': 'subscription',
         # Intended UI will be a custom react component, referred to as 'elements' on stripe's end.
@@ -40,16 +92,7 @@ def create_subscription_checkout_session(input_data, lms_user_id, checkout_inten
                 # after it ends.
                 'end_behavior': {'missing_payment_method': 'cancel'},
             },
-            'metadata': {
-                # Downstream services need to know the intended enterprise customer name & slug.
-                'enterprise_customer_name': input_data['company_name'],
-                'enterprise_customer_slug': input_data['enterprise_slug'],
-                # Store the lms_user_id for improved debugging experience.
-                'lms_user_id': str(lms_user_id),
-                # Store the checkout_intent ID for cross-service reference
-                'checkout_intent_id': str(checkout_intent.id),
-                'checkout_intent_uuid': str(checkout_intent.uuid),
-            }
+            'metadata': subscription_metadata,
         },
         # Always collect payment method, not just when the amount is greater than zero.  This is influential for
         # creating a free trial plan because the amount is always zero.
@@ -76,7 +119,14 @@ def create_subscription_checkout_session(input_data, lms_user_id, checkout_inten
     else:
         create_kwargs['customer_email'] = input_data['admin_email']
 
-    return stripe.checkout.Session.create(**create_kwargs)
+    session = stripe.checkout.Session.create(**create_kwargs)
+    if hasattr(session, 'to_dict'):
+        return session.to_dict()
+    if hasattr(session, 'to_dict_recursive'):
+        return session.to_dict_recursive()
+    if isinstance(session, dict):
+        return session
+    return dict(session)
 
 
 def stripe_cache(timeout=settings.DEFAULT_STRIPE_CACHE_TIMEOUT):
@@ -259,3 +309,117 @@ def get_upcoming_invoice(stripe_customer_id: str, stripe_subscription_id: str):
         customer=stripe_customer_id,
         subscription=stripe_subscription_id,
     )
+
+
+def get_academy_stripe_products() -> list:
+    """
+    Search for Stripe products marked as essential academy products using metadata filtering.
+
+    Uses Stripe's product.search() endpoint to efficiently filter products by
+    metadata without iterating through all products.
+
+    Returns:
+        list: List of Stripe product objects with edx_product_type='essential_academy'
+
+    Raises:
+        stripe.StripeError: If there's an error searching for products
+
+    Docs: https://docs.stripe.com/api/products/search
+    """
+    try:
+        query = (
+            "active:'true' "
+            f"AND metadata['{STRIPE_PRODUCT_TYPE_METADATA_KEY}']:'{STRIPE_PRODUCT_TYPE_ESSENTIAL_ACADEMY}'"
+        )
+        logger.info(f"Searching Stripe products with query: {query}")
+        search_result = stripe.Product.search(query=query, limit=100)
+        products = list(search_result.auto_paging_iter())
+        logger.info(f"Found {len(products)} active academy Stripe products")
+        return products
+    except stripe.StripeError as exc:
+        logger.error(f"Stripe API error searching for academy products: {exc}")
+        raise
+    except Exception as exc:
+        logger.error(f"Unexpected error searching for academy products: {exc}")
+        raise
+
+
+def get_academy_stripe_product_by_key(product_key: str) -> Optional[dict]:
+    """
+    Search for a specific academy Stripe product by the product_key metadata field.
+
+    Uses Stripe's product.search() endpoint to find a product by its stored product_key.
+
+    Args:
+        product_key (str): The product key to search for (e.g., 'essentials_ai', 'academy_data')
+
+    Returns:
+        dict: The Stripe product object if found, None otherwise
+
+    Raises:
+        stripe.StripeError: If there's an error searching for products
+    """
+    try:
+        query = (
+            f"active:'true' AND "
+            f"metadata['{STRIPE_PRODUCT_TYPE_METADATA_KEY}']:'{STRIPE_PRODUCT_TYPE_ESSENTIAL_ACADEMY}' AND "
+            f"metadata['{STRIPE_PRODUCT_KEY_METADATA_KEY}']:'{product_key}'"
+        )
+        logger.info(f"Searching for academy Stripe product with key={product_key}")
+        search_result = stripe.Product.search(query=query, limit=1)
+        products = list(search_result.auto_paging_iter())
+        if products:
+            logger.info(f"Found academy Stripe product with key={product_key}, id={products[0].id}")
+            return products[0]
+        logger.info(f"No academy Stripe product found with key={product_key}")
+        return None
+    except stripe.StripeError as exc:
+        logger.error(f"Stripe API error searching for product with key={product_key}: {exc}")
+        raise
+    except Exception as exc:
+        logger.error(f"Unexpected error searching for product with key={product_key}: {exc}")
+        raise
+
+
+def get_academy_stripe_prices() -> list:
+    """
+    Get all prices associated with academy Stripe products.
+
+    Fetches all active academy products and their associated prices.
+
+    Returns:
+        list: List of Stripe price objects associated with academy products
+
+    Raises:
+        stripe.StripeError: If there's an error fetching data from Stripe
+    """
+    try:
+        # Get all academy products
+        academy_products = get_academy_stripe_products()
+        if not academy_products:
+            logger.info("No academy Stripe products found, returning empty price list")
+            return []
+
+        # Collect price IDs from all academy products
+        product_ids = [product.id for product in academy_products]
+        logger.info(f"Fetching prices for {len(product_ids)} academy products")
+
+        # Fetch prices for each product
+        all_prices = []
+        for product_id in product_ids:
+            try:
+                prices = stripe.Price.list(product=product_id, active=True)
+                for price in prices.auto_paging_iter():
+                    all_prices.append(price)
+            except stripe.StripeError as exc:
+                logger.warning(f"Error fetching prices for product {product_id}: {exc}")
+                continue
+
+        logger.info(f"Found {len(all_prices)} prices across academy products")
+        return all_prices
+    except stripe.StripeError as exc:
+        logger.error(f"Stripe API error fetching academy prices: {exc}")
+        raise
+    except Exception as exc:
+        logger.error(f"Unexpected error fetching academy prices: {exc}")
+        raise

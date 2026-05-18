@@ -4,13 +4,92 @@ Python API for provisioning operations.
 import logging
 from operator import itemgetter
 
+from django.conf import settings
 from rest_framework import status
 
 from ..api_client.exceptions import APIClientException
 from ..api_client.license_manager_client import LicenseManagerApiClient
 from ..api_client.lms_client import LmsApiClient
+from ..customer_billing.models import EnterpriseAcademy
 
 logger = logging.getLogger(__name__)
+
+
+def _provisioning_bad_request(message):
+    exc = Exception(message)
+    error = APIClientException(message, exc)
+    error.status_code = status.HTTP_400_BAD_REQUEST
+    return error
+
+
+def get_academy_catalog_query_id(academy_name):
+    """
+    Lookup an EnterpriseAcademy by name and return its catalog_query_uuid.
+
+    Args:
+        academy_name (str): The name of the academy to look up.
+
+    Returns:
+        str: The catalog_query_uuid from the academy record.
+
+    Raises:
+        APIClientException: If the academy is not found or does not have a catalog_query_uuid.
+    """
+    try:
+        academy = EnterpriseAcademy.objects.get(name__iexact=academy_name)
+    except EnterpriseAcademy.DoesNotExist:
+        raise _provisioning_bad_request(f"Academy '{academy_name}' not found.") from None
+
+    catalog_query_value = academy.catalog_query_id
+    if catalog_query_value in (None, '', 0, '0'):
+        raise _provisioning_bad_request(
+            f"Academy '{academy_name}' does not have a catalog_query_uuid configured."
+        )
+
+    return catalog_query_value
+
+
+def resolve_academy_catalog_query_id(*, academy_name=None, stripe_product_id=None):
+    """
+    Resolve an academy-specific catalog_query_uuid for Essentials provisioning.
+
+    Resolution order:
+    1. academy_name
+    2. stripe_product_id
+
+    Raises:
+        APIClientException: If an academy is referenced but cannot be resolved or lacks catalog_query_uuid.
+    """
+    academy = None
+
+    if not getattr(settings, 'ENABLE_ESSENTIALS_CHECKOUT', False):
+        if academy_name or stripe_product_id:
+            raise _provisioning_bad_request('Essentials checkout is disabled.')
+        return None
+
+    if academy_name:
+        try:
+            academy = EnterpriseAcademy.objects.get(name__iexact=academy_name)
+        except EnterpriseAcademy.DoesNotExist:
+            raise _provisioning_bad_request(f"Academy '{academy_name}' not found.") from None
+    elif stripe_product_id:
+        try:
+            academy = EnterpriseAcademy.objects.get(stripe_product_id=stripe_product_id)
+        except EnterpriseAcademy.DoesNotExist:
+            raise _provisioning_bad_request(
+                f"Academy with stripe_product_id '{stripe_product_id}' not found."
+            ) from None
+    else:
+        return None
+
+    catalog_query_value = academy.catalog_query_id
+    if catalog_query_value in (None, '', 0, '0'):
+        identifier = academy_name or stripe_product_id
+        raise _provisioning_bad_request(
+            f"Academy '{identifier}' does not have a catalog_query_uuid configured."
+        )
+
+    return catalog_query_value
 
 
 def get_or_create_enterprise_customer(*, name, slug, country, **kwargs):

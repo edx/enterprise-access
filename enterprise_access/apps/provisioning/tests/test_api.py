@@ -10,6 +10,7 @@ from django.test import TestCase
 from rest_framework import status
 
 from enterprise_access.apps.api_client.exceptions import APIClientException
+from enterprise_access.apps.customer_billing.models import EnterpriseAcademy
 from enterprise_access.apps.provisioning import api as provisioning_api
 from test_utils import TEST_ENTERPRISE_UUID
 
@@ -585,3 +586,51 @@ class TestGetOrCreateSubscriptionPlan(TestCase):
             desired_num_licenses=50,
             product_id=None,
         )
+
+
+class TestGetAcademyCatalogQueryId(TestCase):
+    """
+    Tests for the ``get_academy_catalog_query_id()`` function.
+    """
+
+    def setUp(self):
+        """Set up test academy."""
+        self.test_academy = EnterpriseAcademy.objects.create(
+            name='Test Academy',
+            catalog_query_id=42,
+        )
+
+    def test_academy_found_with_catalog_query_id(self):
+        """Test that we successfully find an academy and return its catalog_query_id."""
+        result = provisioning_api.get_academy_catalog_query_id('Test Academy')
+        self.assertEqual(result, '42')
+
+    def test_academy_found_case_insensitive(self):
+        """Test that academy lookup is case insensitive."""
+        result = provisioning_api.get_academy_catalog_query_id('test academy')
+        self.assertEqual(result, '42')
+
+    def test_academy_not_found(self):
+        """Test that APIClientException is raised when academy is not found."""
+        with self.assertRaises(APIClientException) as context:
+            provisioning_api.get_academy_catalog_query_id('Nonexistent Academy')
+
+        self.assertIn('not found', str(context.exception))
+        self.assertEqual(context.exception.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_academy_without_catalog_query_id(self):
+        """Test that APIClientException is raised when academy has no catalog_query_id."""
+        # Create an academy without catalog_query_id
+        EnterpriseAcademy.objects.create(
+            name='Academy Without ID',
+            catalog_query_id=None,
+            product_key='academy-without-id-product',
+            slug='academy-without-id',
+            stripe_price_lookup_key='academy-without-id-price-key',
+        )
+
+        with self.assertRaises(APIClientException) as context:
+            provisioning_api.get_academy_catalog_query_id('Academy Without ID')
+
+        self.assertIn('does not have a catalog_query_uuid', str(context.exception))
+        self.assertEqual(context.exception.status_code, status.HTTP_400_BAD_REQUEST)

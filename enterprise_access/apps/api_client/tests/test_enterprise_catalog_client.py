@@ -123,6 +123,68 @@ class TestEnterpriseCatalogApiClient(TestCase):
             f'http://enterprise-catalog.example.com/api/v2/enterprise-catalogs/{catalog_uuid}/get_content_metadata/',
         )
 
+    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient')
+    def test_get_academies(self, mock_oauth_client):
+        mock_response_json = {'results': [{'title': 'Artificial Intelligence'}]}
+        request_response = Response()
+        request_response.status_code = 200
+        mock_oauth_client.return_value.get.return_value.json.return_value = mock_response_json
+
+        client = EnterpriseCatalogApiClient()
+        fetched = client.get_academies()
+
+        self.assertEqual(fetched, mock_response_json)
+        mock_oauth_client.return_value.get.assert_called_with(
+            'http://enterprise-catalog.example.com/api/v2/academies/',
+            params=None,
+        )
+
+    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient')
+    def test_get_academies_with_uuid(self, mock_oauth_client):
+        mock_response_json = {'results': []}
+        request_response = Response()
+        request_response.status_code = 200
+        mock_oauth_client.return_value.get.return_value.json.return_value = mock_response_json
+
+        academy_uuid = uuid4()
+        client = EnterpriseCatalogApiClient()
+        fetched = client.get_academies(academy_uuid=academy_uuid)
+
+        self.assertEqual(fetched, mock_response_json)
+        mock_oauth_client.return_value.get.assert_called_with(
+            'http://enterprise-catalog.example.com/api/v2/academies/',
+            params={'academy_uuid': str(academy_uuid)},
+        )
+
+    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient')
+    def test_get_catalogs(self, mock_oauth_client):
+        mock_response_json = {'results': [{'uuid': str(uuid4())}]}
+        request_response = Response()
+        request_response.status_code = 200
+        mock_oauth_client.return_value.get.return_value.json.return_value = mock_response_json
+
+        client = EnterpriseCatalogApiClient()
+        fetched = client.get_catalogs()
+
+        self.assertEqual(fetched, mock_response_json)
+        mock_oauth_client.return_value.get.assert_called_with(
+            'http://enterprise-catalog.example.com/api/v2/enterprise-catalogs/',
+        )
+
+    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient')
+    def test_compat_get_enterprise_customer_academies(self, _mock_oauth_client):
+        """Test that the compatibility wrapper method works."""
+        client = EnterpriseCatalogApiClient()
+        # This tests the legacy compatibility wrapper
+        self.assertTrue(hasattr(client, 'get_academies'))
+
+    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient')
+    def test_compat_get_enterprise_customer_catalogs(self, _mock_oauth_client):
+        """Test that the compatibility wrapper method works."""
+        client = EnterpriseCatalogApiClient()
+        # This tests the legacy compatibility wrapper
+        self.assertTrue(hasattr(client, 'get_catalogs'))
+
 
 @ddt.ddt
 class TestEnterpriseCatalogApiV1Client(TestCase):

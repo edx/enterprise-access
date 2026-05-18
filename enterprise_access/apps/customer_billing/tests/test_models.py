@@ -17,6 +17,7 @@ from django.db import IntegrityError, transaction
 from django.test import TestCase, TransactionTestCase, override_settings
 from django.utils import timezone
 
+from enterprise_access.apps.api_client.exceptions import APIClientException
 from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.customer_billing import stripe_api
 from enterprise_access.apps.customer_billing.constants import CheckoutIntentState
@@ -31,7 +32,7 @@ from enterprise_access.apps.customer_billing.models import (
 )
 from enterprise_access.apps.customer_billing.stripe_event_handlers import StripeEventHandler
 from enterprise_access.apps.customer_billing.tests.factories import StripeEventDataFactory
-from enterprise_access.apps.customer_billing.tests.utils import AttrDict
+from enterprise_access.apps.provisioning import api as provisioning_api
 from enterprise_access.apps.provisioning.models import (
     GetCreateFirstPaidSubscriptionPlanStep,
     GetCreateTrialSubscriptionPlanStep
@@ -39,6 +40,26 @@ from enterprise_access.apps.provisioning.models import (
 from enterprise_access.apps.provisioning.tests.factories import ProvisionNewCustomerWorkflowFactory
 
 User = get_user_model()
+
+
+class AttrDict(dict):
+    """Dictionary helper that supports both item and attribute access."""
+
+    def __getattr__(self, item):
+        """Resolve attributes using dict key lookups."""
+        try:
+            return self[item]
+        except KeyError as exc:
+            raise AttributeError(item) from exc
+
+    @staticmethod
+    def wrap(value):
+        """Recursively convert nested dict/list values into AttrDict wrappers."""
+        if isinstance(value, dict):
+            return AttrDict({key: AttrDict.wrap(subvalue) for key, subvalue in value.items()})
+        if isinstance(value, list):
+            return [AttrDict.wrap(item) for item in value]
+        return value
 
 
 class TestEnterpriseAcademyModel(TransactionTestCase):
@@ -55,7 +76,7 @@ class TestEnterpriseAcademyModel(TransactionTestCase):
             'tags': ['ai', 'ml'],
             'stripe_product_id': 'prod_ai_123',
             'stripe_price_lookup_key': 'essentials_ai_annual',
-            'enterprise_catalog_uuid': uuid4(),
+            'catalog_query_id': 42,
             'product_key': 'ai-academy',
             'slug': 'ai-academy',
             'is_active': True,
@@ -66,8 +87,8 @@ class TestEnterpriseAcademyModel(TransactionTestCase):
 
     def test_create_with_all_fields(self):
         """Verify all model fields can be persisted and read correctly."""
-        enterprise_catalog_uuid = uuid4()
-        academy = self._create_academy(enterprise_catalog_uuid=enterprise_catalog_uuid)
+        catalog_query_id = 42
+        academy = self._create_academy(catalog_query_id=catalog_query_id)
 
         self.assertIsNotNone(academy.uuid)
         self.assertEqual(academy.name, 'AI Academy')
@@ -78,7 +99,7 @@ class TestEnterpriseAcademyModel(TransactionTestCase):
         self.assertEqual(academy.tags, ['ai', 'ml'])
         self.assertEqual(academy.stripe_product_id, 'prod_ai_123')
         self.assertEqual(academy.stripe_price_lookup_key, 'essentials_ai_annual')
-        self.assertEqual(academy.enterprise_catalog_uuid, enterprise_catalog_uuid)
+        self.assertEqual(academy.catalog_query_id, str(catalog_query_id))
         self.assertEqual(academy.product_key, 'ai-academy')
         self.assertEqual(academy.slug, 'ai-academy')
         self.assertTrue(academy.is_active)
@@ -96,7 +117,7 @@ class TestEnterpriseAcademyModel(TransactionTestCase):
         self.assertEqual(academy.tags, [])
         self.assertEqual(academy.stripe_product_id, '')
         self.assertEqual(academy.stripe_price_lookup_key, '')
-        self.assertIsNone(academy.enterprise_catalog_uuid)
+        self.assertIsNone(academy.catalog_query_id)
         self.assertEqual(academy.product_key, '')
         self.assertEqual(academy.slug, '')
         self.assertTrue(academy.is_active)
@@ -161,6 +182,39 @@ class TestEnterpriseAcademyModel(TransactionTestCase):
         """Verify __str__ returns the expected format."""
         academy = self._create_academy()
         self.assertEqual(str(academy), f'<Academy id={academy.uuid} name={academy.name}>')
+
+
+@override_settings(ENABLE_ESSENTIALS_CHECKOUT=True)
+class TestResolveAcademyCatalogQueryId(TestCase):
+    """Tests for academy-based catalog resolution used by provisioning."""
+
+    def test_resolves_by_academy_name(self):
+        EnterpriseAcademy.objects.create(
+            name='Data Science',
+            catalog_query_id=77,
+        )
+
+        result = provisioning_api.resolve_academy_catalog_query_id(academy_name='data science')
+
+        self.assertEqual(result, '77')
+
+    def test_resolves_by_stripe_product_id(self):
+        EnterpriseAcademy.objects.create(
+            name='AI',
+            stripe_product_id='prod_abc123',
+            catalog_query_id=88,
+        )
+
+        result = provisioning_api.resolve_academy_catalog_query_id(stripe_product_id='prod_abc123')
+
+        self.assertEqual(result, '88')
+
+    def test_returns_none_when_no_academy_inputs_provided(self):
+        self.assertIsNone(provisioning_api.resolve_academy_catalog_query_id())
+
+    def test_raises_when_academy_missing(self):
+        with self.assertRaises(APIClientException):
+            provisioning_api.resolve_academy_catalog_query_id(academy_name='Missing Academy')
 
 
 @ddt.ddt

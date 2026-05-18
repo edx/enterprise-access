@@ -21,6 +21,7 @@ User = get_user_model()
 
 @ddt.ddt
 class CheckoutIntentViewSetTestCase(APITest):
+
     """
     Test cases for CheckoutIntent ViewSet.
     """

@@ -50,6 +50,7 @@ class PricingDataSerializer(serializers.Serializer):
         help_text="Lookup key for the default price option"
     )
     prices = PriceSerializer(many=True, help_text="Available price options")
+    resolved_product = serializers.DictField(required=False, allow_null=True)
 
 
 class QuantityConstraintSerializer(serializers.Serializer):
