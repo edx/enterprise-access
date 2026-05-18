@@ -585,7 +585,7 @@ class StripeEventHandler:
             # day period.
             send_payment_receipt_email.delay(
                 invoice_id=invoice.id,
-                invoice_data=invoice,
+                invoice_data=invoice.to_dict(),
                 enterprise_customer_name=checkout_intent.enterprise_name,
                 enterprise_slug=checkout_intent.enterprise_slug,
             )
