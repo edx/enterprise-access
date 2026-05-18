@@ -3,12 +3,14 @@ Tests for provisioning serializers.
 """
 import uuid
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 
 from enterprise_access.apps.api.serializers.provisioning import (
+    BaseSerializer,
     CustomerAgreementRequestSerializer,
     EnterpriseCatalogRequestSerializer,
     PendingCustomerAdminRequestSerializer,
+    SubscriptionPlanOLIUpdateSerializer,
     SubscriptionPlanRequestSerializer
 )
 
@@ -60,6 +62,16 @@ class EnterpriseCatalogRequestSerializerTests(TestCase):
         # Should be valid - rely on settings for what's allowed
         serializer.is_valid(raise_exception=False)
 
+    def test_catalog_query_uuid_invalid_value(self):
+        """Invalid catalog_query_uuid values should fail validation."""
+        data = {
+            'title': 'Test',
+            'catalog_query_uuid': 'not-a-valid-uuid',
+        }
+        serializer = EnterpriseCatalogRequestSerializer(data=data)
+        self.assertFalse(serializer.is_valid())
+        self.assertIn('catalog_query_uuid', serializer.errors)
+
     def test_legacy_catalog_query_id_alias_still_supported(self):
         """Test deprecated catalog_query_id is still accepted and normalized."""
         data = {
@@ -69,6 +81,33 @@ class EnterpriseCatalogRequestSerializerTests(TestCase):
         serializer = EnterpriseCatalogRequestSerializer(data=data)
         self.assertTrue(serializer.is_valid(raise_exception=False))
         self.assertEqual(serializer.validated_data['catalog_query_uuid'], '1')
+
+    def test_catalog_query_validators_direct(self):
+        """Direct validator methods should normalize accepted legacy ids."""
+        serializer = EnterpriseCatalogRequestSerializer()
+        self.assertEqual(serializer.validate_catalog_query_uuid('1'), '1')
+        self.assertEqual(serializer.validate_catalog_query_id('1'), '1')
+
+    def test_catalog_query_validate_promotes_legacy_alias(self):
+        """Object-level validate should promote legacy alias to catalog_query_uuid."""
+        serializer = EnterpriseCatalogRequestSerializer()
+        attrs = serializer.validate({'catalog_query_id': '1'})
+        self.assertEqual(attrs['catalog_query_uuid'], '1')
+        self.assertEqual(attrs['catalog_query_id'], '1')
+
+    @override_settings(
+        PROVISIONING_DEFAULTS={
+            'catalog': {
+                'catalog_query_id': None,
+                'all_catalog_query_choices': [],
+            },
+        },
+    )
+    def test_catalog_query_uuid_invalid_without_legacy_fallback(self):
+        """Without configured fallback ids, invalid UUID input should fail normalization."""
+        serializer = EnterpriseCatalogRequestSerializer()
+        with self.assertRaises(Exception):
+            serializer.validate_catalog_query_uuid('not-a-uuid')
 
     def test_empty_catalog(self):
         """Test with all optional fields empty."""
@@ -157,6 +196,68 @@ class SubscriptionPlanRequestSerializerTests(TestCase):
             'salesforce_opportunity_line_item': None,
         }
         serializer = SubscriptionPlanRequestSerializer(data=data)
+        self.assertTrue(serializer.is_valid(raise_exception=False))
+
+    def test_subscription_plan_catalog_query_uuid_validator(self):
+        """SubscriptionPlan serializer should validate and normalize catalog_query_uuid."""
+        data = {
+            'title': 'Plan with Catalog Query UUID',
+            'salesforce_opportunity_line_item': '00kCATQ',
+            'catalog_query_uuid': '1',
+        }
+        serializer = SubscriptionPlanRequestSerializer(data=data)
+        self.assertTrue(serializer.is_valid(raise_exception=False))
+        self.assertEqual(serializer.validated_data['catalog_query_uuid'], '1')
+
+    def test_subscription_plan_catalog_query_id_alias_validator(self):
+        """SubscriptionPlan serializer should support legacy catalog_query_id alias."""
+        data = {
+            'title': 'Plan with Legacy Catalog Query',
+            'salesforce_opportunity_line_item': '00kCATLEG',
+            'catalog_query_id': '1',
+        }
+        serializer = SubscriptionPlanRequestSerializer(data=data)
+        self.assertTrue(serializer.is_valid(raise_exception=False))
+        self.assertEqual(serializer.validated_data['catalog_query_uuid'], '1')
+        self.assertEqual(serializer.validated_data['catalog_query_id'], '1')
+
+
+class BaseSerializerTests(TestCase):
+    """Tests for BaseSerializer no-op create/update contract."""
+
+    def test_base_serializer_create_and_update_return_none(self):
+        serializer = BaseSerializer()
+        self.assertIsNone(serializer.create({}))
+        self.assertIsNone(serializer.update(None, {}))
+
+
+class SubscriptionPlanOLIUpdateSerializerTests(TestCase):
+    """Tests for SubscriptionPlanOLIUpdateSerializer."""
+
+    def test_requires_one_checkout_intent_identifier(self):
+        data = {
+            'salesforce_opportunity_line_item': '00k123',
+        }
+        serializer = SubscriptionPlanOLIUpdateSerializer(data=data)
+        self.assertFalse(serializer.is_valid())
+        self.assertIn('One of CheckoutIntent id or uuid is required', str(serializer.errors))
+
+    def test_rejects_both_checkout_intent_identifiers(self):
+        data = {
+            'checkout_intent_id': 1,
+            'checkout_intent_uuid': str(uuid.uuid4()),
+            'salesforce_opportunity_line_item': '00k123',
+        }
+        serializer = SubscriptionPlanOLIUpdateSerializer(data=data)
+        self.assertFalse(serializer.is_valid())
+        self.assertIn('Only one of CheckoutIntent id or uuid can be provided', str(serializer.errors))
+
+    def test_accepts_single_checkout_intent_uuid(self):
+        data = {
+            'checkout_intent_uuid': str(uuid.uuid4()),
+            'salesforce_opportunity_line_item': '00k123',
+        }
+        serializer = SubscriptionPlanOLIUpdateSerializer(data=data)
         self.assertTrue(serializer.is_valid(raise_exception=False))
 
 

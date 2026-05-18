@@ -569,6 +569,27 @@ class TestStripePricingAPI(TestCase):
 
         self.assertIn('Unexpected error', str(cm.exception))
 
+    @mock.patch('enterprise_access.apps.customer_billing.pricing_api.TieredCache.set_all_tiers')
+    @mock.patch('enterprise_access.apps.customer_billing.pricing_api._serialize_basic_format')
+    @mock.patch('enterprise_access.apps.customer_billing.pricing_api._validate_stripe_price_schema')
+    @mock.patch('enterprise_access.apps.customer_billing.pricing_api.stripe.Price.retrieve')
+    def test_get_stripe_price_data_no_cache_when_serialization_empty(
+        self,
+        mock_price_retrieve,
+        mock_validate_schema,
+        mock_serialize_basic,
+        mock_set_all_tiers,
+    ):
+        """If serialization yields no payload, get_stripe_price_data should return None and skip cache writes."""
+        mock_price_retrieve.return_value = self._create_mock_stripe_price()
+        mock_validate_schema.return_value = None
+        mock_serialize_basic.return_value = None
+
+        result = pricing_api.get_stripe_price_data('price_123')
+
+        self.assertIsNone(result)
+        mock_set_all_tiers.assert_not_called()
+
     @mock.patch('enterprise_access.apps.customer_billing.pricing_api.stripe.Price.list')
     def test_get_all_active_stripe_prices_general_exception(self, mock_price_list):
         """Test handling of general exceptions in get_all_active_stripe_prices."""
@@ -608,3 +629,63 @@ class TestStripePricingAPI(TestCase):
         result = pricing_api.get_all_active_stripe_prices()
 
         self.assertEqual(result, cached_value)
+
+    @mock.patch('enterprise_access.apps.customer_billing.pricing_api.TieredCache.get_cached_response')
+    @mock.patch('enterprise_access.apps.customer_billing.pricing_api.get_academy_stripe_prices')
+    @mock.patch('enterprise_access.apps.customer_billing.pricing_api.TieredCache.set_all_tiers')
+    def test_get_all_active_academy_stripe_prices_filters_non_recurring(
+        self,
+        mock_set_all_tiers,
+        mock_get_academy_prices,
+        mock_get_cached_response,
+    ):
+        """Test academy prices only include recurring records and are cached."""
+        mock_get_cached_response.return_value = mock.Mock(is_found=False)
+        recurring_price = self._create_mock_stripe_price(price_id='price_recurring')
+        one_time_price = self._create_mock_stripe_price(price_id='price_one_time')
+        one_time_price.type = 'one_time'
+        mock_get_academy_prices.return_value = [recurring_price, one_time_price]
+
+        result = pricing_api.get_all_active_academy_stripe_prices()
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['id'], 'price_recurring')
+        mock_set_all_tiers.assert_called_once()
+
+    @mock.patch('enterprise_access.apps.customer_billing.pricing_api.TieredCache.get_cached_response')
+    def test_get_all_active_academy_stripe_prices_cache_hit(self, mock_get_cached_response):
+        """Test academy active prices returns cached value when available."""
+        cached_value = [{'id': 'price_cached'}]
+        mock_get_cached_response.return_value = mock.Mock(is_found=True, value=cached_value)
+
+        result = pricing_api.get_all_active_academy_stripe_prices()
+
+        self.assertEqual(result, cached_value)
+
+    @mock.patch('enterprise_access.apps.customer_billing.pricing_api.TieredCache.get_cached_response')
+    @mock.patch('enterprise_access.apps.customer_billing.pricing_api.get_academy_stripe_prices')
+    def test_get_all_active_academy_stripe_prices_stripe_error(
+        self,
+        mock_get_academy_prices,
+        mock_get_cached_response,
+    ):
+        """Test academy active prices wraps Stripe errors."""
+        mock_get_cached_response.return_value = mock.Mock(is_found=False)
+        mock_get_academy_prices.side_effect = InvalidRequestError('bad request', 'request')
+
+        with self.assertRaises(pricing_api.StripePricingError):
+            pricing_api.get_all_active_academy_stripe_prices()
+
+    @mock.patch('enterprise_access.apps.customer_billing.pricing_api.TieredCache.get_cached_response')
+    @mock.patch('enterprise_access.apps.customer_billing.pricing_api.get_academy_stripe_prices')
+    def test_get_all_active_academy_stripe_prices_unexpected_error(
+        self,
+        mock_get_academy_prices,
+        mock_get_cached_response,
+    ):
+        """Test academy active prices wraps unexpected exceptions."""
+        mock_get_cached_response.return_value = mock.Mock(is_found=False)
+        mock_get_academy_prices.side_effect = RuntimeError('boom')
+
+        with self.assertRaises(pricing_api.StripePricingError):
+            pricing_api.get_all_active_academy_stripe_prices()

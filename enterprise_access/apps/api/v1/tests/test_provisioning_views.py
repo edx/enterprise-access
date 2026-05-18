@@ -12,9 +12,11 @@ from django.contrib.auth import get_user_model
 from django.test import override_settings
 from django.utils import timezone
 from edx_rbac.constants import ALL_ACCESS_CONTEXT
+from rest_framework import exceptions as drf_exceptions
 from rest_framework import status
 from rest_framework.reverse import reverse
 
+from enterprise_access.apps.api.v1.views.provisioning import ProvisioningCreateView
 from enterprise_access.apps.core.constants import (
     SYSTEM_ENTERPRISE_ADMIN_ROLE,
     SYSTEM_ENTERPRISE_LEARNER_ROLE,
@@ -1420,3 +1422,193 @@ class TestSubscriptionPlanOLIUpdateView(APITest):
         response = self.client.post(self.endpoint_url, data=request_data)
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_trial_plan_updates_not_supported(self):
+        """is_trial=True should return a server error until trial modifications are implemented."""
+        request_data = {
+            'checkout_intent_uuid': str(self.checkout_intent.uuid),
+            'salesforce_opportunity_line_item': 'new_oli_456',
+            'is_trial': True,
+        }
+
+        with self.assertRaises(NotImplementedError):
+            self.client.post(self.endpoint_url, data=request_data)
+
+    def test_subscription_plan_not_found_returns_404(self):
+        """If no paid plan step exists, endpoint should return 404."""
+        GetCreateFirstPaidSubscriptionPlanStep.objects.all().delete()
+
+        request_data = {
+            'checkout_intent_uuid': str(self.checkout_intent.uuid),
+            'salesforce_opportunity_line_item': 'new_oli_456',
+            'is_trial': False,
+        }
+
+        response = self.client.post(self.endpoint_url, data=request_data)
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertIn('No subscription plan found', str(response.json()))
+
+    def test_subscription_plan_not_found_with_non_matching_step(self):
+        """Step with non-matching product should be ignored and return 404."""
+        GetCreateFirstPaidSubscriptionPlanStep.objects.all().delete()
+        GetCreateFirstPaidSubscriptionPlanStep.objects.create(
+            workflow_record_uuid=self.workflow.uuid,
+            input_data={
+                'title': 'Wrong Product Plan',
+                'product_id': 999999,
+                'salesforce_opportunity_line_item': 'existing_oli_123',
+            },
+            output_data={
+                'uuid': str(uuid.uuid4()),
+                'title': 'Wrong Product Plan',
+                'salesforce_opportunity_line_item': 'existing_oli_123',
+                'created': '2025-01-01T00:00:00Z',
+                'start_date': '2025-01-15T00:00:00Z',
+                'expiration_date': '2025-12-31T23:59:59Z',
+                'is_active': True,
+                'is_current': True,
+                'plan_type': 'Standard',
+                'enterprise_catalog_uuid': str(TEST_CATALOG_UUID),
+                'product': 999999,
+            },
+        )
+
+        request_data = {
+            'checkout_intent_uuid': str(self.checkout_intent.uuid),
+            'salesforce_opportunity_line_item': 'new_oli_456',
+            'is_trial': False,
+        }
+        response = self.client.post(self.endpoint_url, data=request_data)
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_subscription_plan_not_found_with_missing_output_object(self):
+        """Matching paid step without output object should still return 404."""
+        GetCreateFirstPaidSubscriptionPlanStep.objects.all().delete()
+        GetCreateFirstPaidSubscriptionPlanStep.objects.create(
+            workflow_record_uuid=self.workflow.uuid,
+            input_data={
+                'title': 'Paid Plan Missing Output',
+                'product_id': settings.PROVISIONING_PAID_SUBSCRIPTION_PRODUCT_ID,
+                'salesforce_opportunity_line_item': 'existing_oli_123',
+            },
+            output_data=None,
+        )
+
+        request_data = {
+            'checkout_intent_uuid': str(self.checkout_intent.uuid),
+            'salesforce_opportunity_line_item': 'new_oli_456',
+            'is_trial': False,
+        }
+        response = self.client.post(self.endpoint_url, data=request_data)
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+
+@override_settings(ENABLE_ESSENTIALS_CHECKOUT=True)
+class TestProvisioningCreateViewHelpers(APITest):
+    """Focused tests for ProvisioningCreateView helper and exception paths."""
+
+    def setUp(self):
+        super().setUp()
+        self.set_jwt_cookie([
+            {
+                'system_wide_role': SYSTEM_ENTERPRISE_PROVISIONING_ADMIN_ROLE,
+                'context': ALL_ACCESS_CONTEXT,
+            },
+        ])
+
+    def test_transform_legacy_request_data_passthrough_unknown_shape(self):
+        """Unknown payload shapes should pass through unchanged for serializer validation."""
+        view = ProvisioningCreateView()
+        request_data = {'unexpected': 'shape'}
+
+        transformed = view._transform_legacy_request_data(request_data)  # pylint: disable=protected-access
+
+        self.assertEqual(transformed, request_data)
+
+    @mock.patch('enterprise_access.apps.api.v1.views.provisioning.resolve_academy_catalog_query_id')
+    def test_create_returns_422_when_academy_lookup_raises_unexpected_error(self, mock_resolve_catalog_query):
+        """Unexpected academy lookup errors should be wrapped as ProvisioningException with 422."""
+        mock_resolve_catalog_query.side_effect = Exception('boom')
+
+        request_payload = {**DEFAULT_REQUEST_PAYLOAD}
+        request_payload.pop('enterprise_catalog', None)
+        request_payload['trial_subscription_plan'] = {
+            **request_payload['trial_subscription_plan'],
+            'academy_name': 'missing-academy',
+            'stripe_product_id': 'prod_missing',
+        }
+        request_payload['first_paid_subscription_plan'] = {
+            **request_payload['first_paid_subscription_plan'],
+            'academy_name': 'missing-academy',
+            'stripe_product_id': 'prod_missing',
+        }
+
+        response = self.client.post(PROVISIONING_CREATE_ENDPOINT, data=request_payload)
+
+        self.assertEqual(response.status_code, 422)
+        self.assertIn('Error looking up academy', str(response.json()))
+
+    @mock.patch('enterprise_access.apps.api.v1.views.provisioning.resolve_academy_catalog_query_id')
+    def test_create_re_raises_api_exception_from_academy_lookup(self, mock_resolve_catalog_query):
+        """APIException from academy lookup should propagate without wrapping."""
+        mock_resolve_catalog_query.side_effect = drf_exceptions.NotFound('academy not found')
+
+        request_payload = {**DEFAULT_REQUEST_PAYLOAD}
+        request_payload.pop('enterprise_catalog', None)
+        request_payload['trial_subscription_plan'] = {
+            **request_payload['trial_subscription_plan'],
+            'academy_name': 'missing-academy',
+            'stripe_product_id': 'prod_missing',
+        }
+        request_payload['first_paid_subscription_plan'] = {
+            **request_payload['first_paid_subscription_plan'],
+            'academy_name': 'missing-academy',
+            'stripe_product_id': 'prod_missing',
+        }
+
+        response = self.client.post(PROVISIONING_CREATE_ENDPOINT, data=request_payload)
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertIn('academy not found', str(response.json()))
+
+    @mock.patch('enterprise_access.apps.api.v1.views.provisioning.resolve_academy_catalog_query_id')
+    @mock.patch('enterprise_access.apps.api.v1.views.provisioning.ProvisionNewCustomerWorkflow.objects.create')
+    @mock.patch('enterprise_access.apps.api.v1.views.provisioning.ProvisionNewCustomerWorkflow.generate_input_dict')
+    def test_create_skips_academy_lookup_when_catalog_query_already_provided(
+        self,
+        mock_generate_input_dict,
+        mock_workflow_create,
+        mock_resolve_catalog_query,
+    ):
+        """When catalog_query_uuid is provided directly, academy lookup should not be invoked."""
+        request_payload = {**DEFAULT_REQUEST_PAYLOAD}
+        request_payload['trial_subscription_plan'] = {
+            **request_payload['trial_subscription_plan'],
+            'catalog_query_uuid': '1',
+        }
+
+        mock_generate_input_dict.return_value = {'mock': 'input'}
+        workflow = mock.Mock()
+        workflow.execute.return_value = None
+        workflow.customer_output_dict.return_value = DEFAULT_CUSTOMER_RECORD
+        workflow.admin_users_output_dict.return_value = {
+            'created_admins': [],
+            'existing_admins': [],
+        }
+        workflow.catalog_output_dict.return_value = {
+            'uuid': str(TEST_CATALOG_UUID),
+            'enterprise_customer_uuid': str(TEST_ENTERPRISE_UUID),
+            'title': 'Test catalog',
+            'catalog_query_id': '1',
+        }
+        workflow.customer_agreement_output_dict.return_value = DEFAULT_AGREEMENT_RECORD
+        workflow.trial_subscription_plan_output_dict.return_value = DEFAULT_TRIAL_SUBSCRIPTION_PLAN_RECORD
+        workflow.first_paid_subscription_plan_output_dict.return_value = DEFAULT_FIRST_PAID_SUBSCRIPTION_PLAN_RECORD
+        workflow.subscription_plan_renewal_output_dict.return_value = EXPECTED_SUBSCRIPTION_PLAN_RENEWAL_RESPONSE
+        mock_workflow_create.return_value = workflow
+
+        response = self.client.post(PROVISIONING_CREATE_ENDPOINT, data=request_payload)
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        mock_resolve_catalog_query.assert_not_called()

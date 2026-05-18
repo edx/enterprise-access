@@ -28,14 +28,19 @@ from enterprise_access.apps.customer_billing.models import (
 )
 from enterprise_access.apps.customer_billing.stripe_event_handlers import (
     CheckoutIntentLookupError,
+    ProvisionNewCustomerWorkflow,
     StripeEventHandler,
     _extract_invoice_trial_window,
+    _handle_invoice_paid_status_updated,
+    _handle_subscription_updated_status_updates,
     _maybe_auto_provision_paid_checkout_intent,
     _valid_invoice_event_type,
     cancel_all_future_plans,
     get_checkout_intent_identifier_from_subscription,
     get_checkout_intent_or_raise,
-    persist_stripe_event
+    handle_pending_update,
+    persist_stripe_event,
+    track_subscription_cancellation
 )
 from enterprise_access.apps.customer_billing.tests.factories import (
     SelfServiceSubscriptionRenewalFactory,
@@ -267,6 +272,24 @@ class TestStripeEventHandler(TestCase):
         )
         self.assertEqual(result.id, second_intent.id)
 
+    def test_extract_invoice_trial_window_missing_period_bounds(self):
+        """Missing trial period start/end timestamps should return (None, None)."""
+        invoice = {
+            'lines': {
+                'data': [
+                    {'period': {'start': None, 'end': 1700000000}},
+                ],
+            },
+        }
+
+        self.assertEqual(_extract_invoice_trial_window(invoice), (None, None))
+
+    def test_extract_invoice_trial_window_handles_bad_shape(self):
+        """Malformed invoice payloads should be swallowed and treated as no trial window."""
+        invoice = {'lines': {'data': [5]}}  # non-dict line item triggers TypeError on .get
+
+        self.assertEqual(_extract_invoice_trial_window(invoice), (None, None))
+
     def test_persist_stripe_event_unsupported_event_type_returns_none(self):
         """Test persist_stripe_event returns None for unsupported event types."""
         # Create an event with an unsupported type so persist_stripe_event
@@ -310,6 +333,248 @@ class TestStripeEventHandler(TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(result.checkout_intent, self.checkout_intent)
         self.assertEqual(result.event_id, mock_event.id)
+
+    def test_legacy_provision_workflow_shim_links_workflow_to_checkout_intent(self):
+        """Legacy workflow shim should create and attach a workflow for compatibility callers."""
+        workflow = ProvisionNewCustomerWorkflow.create_and_execute_for_checkout_intent(
+            self.checkout_intent,
+            trial_start=None,
+            trial_end=None,
+        )
+
+        self.checkout_intent.refresh_from_db()
+        self.assertIsNotNone(workflow)
+        self.assertEqual(self.checkout_intent.workflow_id, workflow.uuid)
+
+    def test_persist_stripe_event_uses_to_dict_when_recursive_missing(self):
+        """Persisted Stripe event should serialize via to_dict when to_dict_recursive is unavailable."""
+
+        class EventWithToDict:
+            """Minimal event object exposing only to_dict serialization helper."""
+
+            def __init__(self):
+                self.id = 'evt_to_dict_only'
+                self.type = 'customer.subscription.created'
+                self.data = AttrDict({'object': {'id': 'sub_x', 'metadata': {}, 'customer': None}})
+
+            def to_dict(self):
+                return {'serialized': 'to_dict'}
+
+        result = persist_stripe_event(EventWithToDict())
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result.data, {'serialized': 'to_dict'})
+
+    def test_persist_stripe_event_falls_back_to_dict_serialization(self):
+        """Persisted Stripe event should fall back to dict(event) serialization when no helper methods exist."""
+
+        class DictBackedEvent(dict):
+            """Dictionary-backed event object used to exercise dict(event) fallback."""
+
+            def __init__(self):
+                super().__init__({'serialized': 'dict_fallback'})
+                self.id = 'evt_dict_fallback'
+                self.type = 'customer.subscription.created'
+                self.data = AttrDict({'object': {'id': 'sub_y', 'metadata': {}, 'customer': None}})
+
+        result = persist_stripe_event(DictBackedEvent())
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result.data, {'serialized': 'dict_fallback'})
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_event_handlers.logger.warning')
+    def test_handle_pending_update_logs_warning(self, mock_warning):
+        """Pending updates should emit a warning with subscription and checkout intent identifiers."""
+        pending_update = {'subscription_items': [{'price': 'price_test'}]}
+
+        handle_pending_update('sub_pending_123', self.checkout_intent.id, pending_update)
+
+        mock_warning.assert_called_once_with(
+            'Subscription %s has pending update: %s. checkout_intent_id: %s',
+            'sub_pending_123',
+            pending_update,
+            self.checkout_intent.id,
+        )
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_event_handlers.link_event_data_to_checkout_intent')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_event_handlers.get_checkout_intent_or_raise')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_event_handlers.get_invoice_and_subscription')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_event_handlers.persist_stripe_event')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_event_handlers.logger.warning')
+    def test_invoice_paid_logs_and_swallows_mark_as_paid_value_error(
+        self,
+        mock_warning,
+        _mock_persist,
+        mock_get_invoice_and_subscription,
+        mock_get_checkout_intent_or_raise,
+        _mock_link,
+    ):
+        """invoice.paid should log and continue when mark_as_paid raises ValueError for zero-total invoices."""
+        mock_event = mock.Mock(id='evt_invoice_paid_value_error')
+        mock_invoice = AttrDict({'id': 'in_test_123', 'total': 0, 'customer': 'cus_test_123'})
+        mock_get_invoice_and_subscription.return_value = (
+            mock_invoice,
+            AttrDict({
+                'subscription': 'sub_test_123',
+                'metadata': {'checkout_intent_id': str(self.checkout_intent.id)},
+            }),
+        )
+        mock_get_checkout_intent_or_raise.return_value = self.checkout_intent
+
+        with mock.patch.object(self.checkout_intent, 'mark_as_paid', side_effect=ValueError('bad state')):
+            StripeEventHandler.invoice_paid(mock_event)
+
+        mock_warning.assert_called_once()
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_event_handlers.persist_stripe_event')
+    def test_payment_method_attached_noop(self, _mock_persist):
+        """payment_method.attached handler is intentionally a no-op."""
+        mock_event = self._create_mock_stripe_event(
+            'payment_method.attached',
+            {'id': 'pm_test_123', 'customer': 'cus_test_123'},
+        )
+        result = StripeEventHandler.dispatch(mock_event)
+        self.assertIsNone(result)
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_event_handlers.logger.warning')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_event_handlers._try_enable_pending_updates')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_event_handlers.StripeEventSummary.objects.get')
+    def test_subscription_created_logs_when_summary_refresh_fails(
+        self,
+        mock_summary_get,
+        _mock_enable_pending_updates,
+        mock_warning,
+    ):
+        """subscription.created should log Stripe API failures while updating upcoming invoice summary."""
+        mock_summary = mock.Mock()
+        mock_summary.update_upcoming_invoice_amount_due.side_effect = stripe.APIError('summary failure')
+        mock_summary_get.return_value = mock_summary
+
+        mock_event = self._create_mock_stripe_event(
+            'customer.subscription.created',
+            {
+                'id': 'sub_summary_error_123',
+                'status': StripeSubscriptionStatus.TRIALING,
+                'customer': 'cus_summary_error',
+                'metadata': self._create_mock_stripe_subscription(self.checkout_intent),
+            },
+        )
+
+        StripeEventHandler.dispatch(mock_event)
+
+        mock_warning.assert_called_once()
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_event_handlers.LicenseManagerApiClient')
+    @mock.patch(
+        'enterprise_access.apps.customer_billing.'
+        'stripe_event_handlers.send_trial_end_and_subscription_started_email_task'
+    )
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_event_handlers._process_trial_to_paid_renewal')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_event_handlers.get_invoice_and_subscription')
+    def test_invoice_paid_status_update_sends_email_when_renewed_plan_uuid_missing(
+        self,
+        mock_get_invoice_and_subscription,
+        mock_process_trial_to_paid_renewal,
+        mock_trial_end_email_task,
+        mock_license_manager_client,
+    ):
+        """First paid invoice should still send trial-end email when renewal lacks renewed plan UUID."""
+        stripe_invoice_id = 'in_missing_paid_uuid'
+        stripe_subscription_id = 'sub_missing_paid_uuid'
+        renewal = SelfServiceSubscriptionRenewalFactory(
+            checkout_intent=self.checkout_intent,
+            stripe_subscription_id=stripe_subscription_id,
+            stripe_invoice_id=stripe_invoice_id,
+            processed_at=None,
+            renewed_subscription_plan_uuid=None,
+        )
+
+        mock_get_invoice_and_subscription.return_value = (
+            AttrDict({'id': stripe_invoice_id}),
+            AttrDict({'subscription': stripe_subscription_id}),
+        )
+
+        def _leave_renewal_without_paid_uuid(*_args, **_kwargs):
+            renewal.processed_at = timezone.now()
+            renewal.renewed_subscription_plan_uuid = None
+            renewal.save(update_fields=['processed_at'])
+
+        mock_process_trial_to_paid_renewal.side_effect = _leave_renewal_without_paid_uuid
+
+        _handle_invoice_paid_status_updated(mock.Mock(), self.checkout_intent)
+
+        mock_license_manager_client.return_value.update_subscription_plan.assert_not_called()
+        mock_trial_end_email_task.delay.assert_called_once_with(
+            subscription_id=stripe_subscription_id,
+            checkout_intent_id=self.checkout_intent.id,
+        )
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_event_handlers.send_trial_cancellation_email_task')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_event_handlers.send_paid_cancellation_email_task')
+    def test_subscription_updated_cancel_scheduled_non_active_trialing_status_sends_no_cancellation_email(
+        self,
+        mock_paid_cancellation_email,
+        mock_trial_cancellation_email,
+    ):
+        """Cancellation scheduling on non-active/non-trialing status should not queue cancellation emails."""
+        subscription_id = 'sub_cancel_schedule_past_due'
+        cancel_at_timestamp = int((timezone.now() + timedelta(days=10)).timestamp())
+
+        _, prior_summary = self._create_existing_event_data_records(
+            subscription_id,
+            subscription_status=StripeSubscriptionStatus.PAST_DUE,
+        )
+        prior_summary.subscription_cancel_at = None
+        prior_summary.save(update_fields=['subscription_cancel_at'])
+
+        mock_event = self._create_mock_stripe_event(
+            'customer.subscription.updated',
+            {
+                'id': subscription_id,
+                'status': StripeSubscriptionStatus.PAST_DUE,
+                'cancel_at': cancel_at_timestamp,
+                'metadata': self._create_mock_stripe_subscription(self.checkout_intent),
+            },
+        )
+
+        StripeEventHandler.dispatch(mock_event)
+
+        mock_paid_cancellation_email.delay.assert_not_called()
+        mock_trial_cancellation_email.delay.assert_not_called()
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_event_handlers.logger.error')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_event_handlers.cancel_all_future_plans')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_event_handlers.send_finalized_cancelation_email_task')
+    def test_subscription_deleted_without_enterprise_uuid_skips_plan_cancel_and_finalized_email(
+        self,
+        mock_send_finalized_email,
+        mock_cancel_all_future_plans,
+        mock_logger_error,
+    ):
+        """Deleted subscriptions without enterprise UUID should log and skip deactivation/finalized email."""
+        subscription_id = 'sub_deleted_no_enterprise_uuid'
+        self._create_existing_event_data_records(
+            subscription_id,
+            subscription_status=StripeSubscriptionStatus.TRIALING,
+        )
+
+        self.checkout_intent.enterprise_uuid = None
+        self.checkout_intent.save(update_fields=['enterprise_uuid'])
+
+        mock_event = self._create_mock_stripe_event(
+            'customer.subscription.deleted',
+            {
+                'id': subscription_id,
+                'status': 'canceled',
+                'metadata': self._create_mock_stripe_subscription(self.checkout_intent),
+            },
+        )
+
+        StripeEventHandler.dispatch(mock_event)
+
+        mock_cancel_all_future_plans.assert_not_called()
+        mock_send_finalized_email.delay.assert_not_called()
+        mock_logger_error.assert_called_once()
 
     @ddt.data(
         # Happy path: correct parent type at lines.data[0].parent.type
@@ -1331,6 +1596,84 @@ class TestStripeEventHandler(TestCase):
         StripeEventHandler.dispatch(mock_event)
 
         mock_email_task.delay.assert_not_called()
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_event_handlers.track_event')
+    def test_track_subscription_cancellation_tracks_event(self, mock_track_event):
+        """Direct test for cancellation tracking helper with details payload."""
+        cancellation_details = {
+            'reason': 'cancellation_requested',
+            'comment': 'Too expensive',
+            'feedback': 'too_expensive',
+        }
+
+        track_subscription_cancellation(self.checkout_intent, cancellation_details)
+
+        mock_track_event.assert_called_once()
+        kwargs = mock_track_event.call_args.kwargs
+        self.assertEqual(kwargs['lms_user_id'], str(self.checkout_intent.user.id))
+        self.assertEqual(kwargs['properties']['checkout_intent_id'], self.checkout_intent.id)
+        self.assertEqual(kwargs['properties']['reason'], 'cancellation_requested')
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_event_handlers.track_event')
+    def test_track_subscription_cancellation_no_details_noop(self, mock_track_event):
+        """Direct test for cancellation tracking helper no-op behavior."""
+        track_subscription_cancellation(self.checkout_intent, None)
+        track_subscription_cancellation(self.checkout_intent, {})
+        mock_track_event.assert_not_called()
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_event_handlers.send_billing_error_email_task')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_event_handlers.cancel_all_future_plans')
+    def test_handle_subscription_updated_status_past_due_with_enterprise_uuid(
+        self,
+        mock_cancel_all_future_plans,
+        mock_send_billing_error_email_task,
+    ):
+        """Past-due transition with enterprise_uuid should cancel future plans and send email."""
+        self.checkout_intent.enterprise_uuid = uuid.uuid4()
+        self.checkout_intent.save(update_fields=['enterprise_uuid'])
+        mock_event = self._create_mock_stripe_event(
+            'customer.subscription.updated',
+            {'id': 'sub_test_past_due'},
+        )
+
+        _handle_subscription_updated_status_updates(
+            mock_event,
+            StripeSubscriptionStatus.ACTIVE,
+            StripeSubscriptionStatus.PAST_DUE,
+            self.checkout_intent,
+        )
+
+        mock_cancel_all_future_plans.assert_called_once_with(self.checkout_intent)
+        mock_send_billing_error_email_task.delay.assert_called_once_with(
+            checkout_intent_id=self.checkout_intent.id,
+        )
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_event_handlers.send_billing_error_email_task')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_event_handlers.cancel_all_future_plans')
+    def test_handle_subscription_updated_status_past_due_without_enterprise_uuid(
+        self,
+        mock_cancel_all_future_plans,
+        mock_send_billing_error_email_task,
+    ):
+        """Past-due transition without enterprise_uuid should skip cancellation but still send email."""
+        self.checkout_intent.enterprise_uuid = None
+        self.checkout_intent.save(update_fields=['enterprise_uuid'])
+        mock_event = self._create_mock_stripe_event(
+            'customer.subscription.updated',
+            {'id': 'sub_test_past_due_no_uuid'},
+        )
+
+        _handle_subscription_updated_status_updates(
+            mock_event,
+            StripeSubscriptionStatus.ACTIVE,
+            StripeSubscriptionStatus.PAST_DUE,
+            self.checkout_intent,
+        )
+
+        mock_cancel_all_future_plans.assert_not_called()
+        mock_send_billing_error_email_task.delay.assert_called_once_with(
+            checkout_intent_id=self.checkout_intent.id,
+        )
 
     @mock.patch(
         "enterprise_access.apps.customer_billing.stripe_event_handlers.send_trial_ending_reminder_email_task"

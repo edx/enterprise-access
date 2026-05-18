@@ -194,6 +194,75 @@ class TestCheckoutContextHandler(APITest):
         self.assertIn('prices', pricing)
         self.assertEqual(len(pricing['prices']), 2)
 
+    @mock.patch.object(settings, 'ENABLE_ESSENTIALS_CHECKOUT', False)
+    def test_get_academy_pricing_data_returns_empty_when_disabled(self):
+        context = self._create_context()
+        handler = CheckoutContextHandler(context)
+
+        self.assertEqual(handler._get_academy_pricing_data(), [])
+
+    @mock.patch.object(settings, 'ENABLE_ESSENTIALS_CHECKOUT', True)
+    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_all_active_stripe_prices')
+    def test_get_academy_pricing_data_includes_prices_by_product_and_lookup_key(self, mock_all_prices):
+        EnterpriseAcademy.objects.create(
+            name='Product Match Academy',
+            slug='product-match-academy',
+            product_key='product-match-academy',
+            stripe_price_lookup_key='product_lookup_key',
+            stripe_product_id='prod_1',
+            is_active=True,
+            display_order=1,
+        )
+        EnterpriseAcademy.objects.create(
+            name='Lookup Match Academy',
+            slug='lookup-match-academy',
+            product_key='lookup-match-academy',
+            stripe_price_lookup_key='lookup_only_key',
+            stripe_product_id='',
+            is_active=True,
+            display_order=2,
+        )
+
+        mock_all_prices.return_value = [
+            {
+                'id': 'price_prod',
+                'product': {'id': 'prod_1'},
+                'lookup_key': 'product_lookup_key',
+                'recurring': {'interval': 'year'},
+                'currency': 'usd',
+                'unit_amount': 1000,
+                'unit_amount_decimal': '1000',
+            },
+            {
+                'id': 'price_lookup',
+                'product': {'id': 'prod_2'},
+                'lookup_key': 'lookup_only_key',
+                'recurring': {'interval': 'year'},
+                'currency': 'usd',
+                'unit_amount': 2000,
+                'unit_amount_decimal': '2000',
+            },
+        ]
+
+        context = self._create_context()
+        handler = CheckoutContextHandler(context)
+
+        academies = handler._get_academy_pricing_data()
+
+        self.assertEqual(len(academies), 2)
+        by_name = {academy['name']: academy for academy in academies}
+        self.assertEqual(by_name['Product Match Academy']['prices'][0]['id'], 'price_prod')
+        self.assertEqual(by_name['Lookup Match Academy']['prices'][0]['id'], 'price_lookup')
+
+    @mock.patch.object(settings, 'ENABLE_ESSENTIALS_CHECKOUT', True)
+    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_all_active_stripe_prices')
+    def test_get_academy_pricing_data_returns_empty_on_exception(self, mock_all_prices):
+        mock_all_prices.side_effect = Exception('boom')
+        context = self._create_context()
+        handler = CheckoutContextHandler(context)
+
+        self.assertEqual(handler._get_academy_pricing_data(), [])
+
     @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_all_active_stripe_prices')
     @mock.patch('enterprise_access.apps.bffs.checkout.handlers.stripe.Product.retrieve')
     @mock.patch.object(settings, 'ENABLE_ESSENTIALS_CHECKOUT', True)
@@ -238,6 +307,28 @@ class TestCheckoutContextHandler(APITest):
             resolved_product['edx_catalog_id'],
             '00000000-0000-0000-0000-000000000042',
         )
+
+    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_all_active_stripe_prices')
+    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.stripe.Product.retrieve')
+    @mock.patch.object(settings, 'ENABLE_ESSENTIALS_CHECKOUT', False)
+    def test_resolve_stripe_product_returns_none_when_essentials_disabled(
+        self,
+        mock_product_retrieve,
+        mock_active_prices,
+    ):
+        mock_product_retrieve.return_value = {
+            'id': 'prod_abc123',
+            'metadata': {
+                'name': 'data science',
+                'product_type': 'essentials',
+            },
+        }
+        mock_active_prices.return_value = []
+
+        context = self._create_context()
+        handler = CheckoutContextHandler(context)
+
+        self.assertIsNone(handler.resolve_stripe_product('prod_abc123'))
 
     def test_get_field_constraints_default_values(self):
         """
