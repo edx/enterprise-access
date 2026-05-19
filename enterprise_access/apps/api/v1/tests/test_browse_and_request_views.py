@@ -13,6 +13,7 @@ from django.test import override_settings
 from rest_framework import status
 from rest_framework.reverse import reverse
 
+from enterprise_access.apps.api.serializers import LearnerCreditRequestDeclineSerializer
 from enterprise_access.apps.content_assignments.constants import LearnerContentAssignmentStateChoices
 from enterprise_access.apps.content_assignments.models import LearnerContentAssignment
 from enterprise_access.apps.content_assignments.tests.factories import (
@@ -2144,6 +2145,258 @@ class TestLearnerCreditRequestViewSet(BaseEnterpriseAccessTestCase):
         assert self.user_request_1.state == SubsidyRequestStates.DECLINED
         assert self.user_request_1.reviewer == self.user
         assert self.user_request_1.decline_reason == 'Request outside program scope'
+
+    @mock.patch('enterprise_access.apps.api.v1.views.browse_and_request.get_enterprise_uuid_from_request_data')
+    def test_decline_with_uuid_list_success(self, mock_get_enterprise_uuid):
+        """
+        Decline accepts a list of UUIDs (``subsidy_request_uuids``) mirroring approve.
+        """
+        mock_get_enterprise_uuid.return_value = str(self.enterprise_customer_uuid_1)
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': str(self.enterprise_customer_uuid_1)
+        }])
+
+        url = reverse('api:v1:learner-credit-requests-decline')
+        uuids = [str(self.user_request_1.uuid), str(self.enterprise_request.uuid)]
+        data = {
+            'enterprise_customer_uuid': str(self.enterprise_customer_uuid_1),
+            'subsidy_request_uuids': uuids,
+            'policy_uuid': str(self.policy.uuid),
+        }
+
+        response = self.client.post(url, data)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert set(response.json()['declined']) == set(uuids)
+
+        for request_obj in (self.user_request_1, self.enterprise_request):
+            request_obj.refresh_from_db()
+            assert request_obj.state == SubsidyRequestStates.DECLINED
+            assert request_obj.reviewer == self.user
+
+    @mock.patch('enterprise_access.apps.api.v1.views.browse_and_request.get_enterprise_uuid_from_request_data')
+    def test_decline_requires_uuid_or_uuids(self, mock_get_enterprise_uuid):
+        """
+        Decline returns 400 when neither ``subsidy_request_uuid`` nor ``subsidy_request_uuids`` is provided.
+        """
+        mock_get_enterprise_uuid.return_value = str(self.enterprise_customer_uuid_1)
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': str(self.enterprise_customer_uuid_1)
+        }])
+
+        url = reverse('api:v1:learner-credit-requests-decline')
+        response = self.client.post(url, {'enterprise_customer_uuid': str(self.enterprise_customer_uuid_1)})
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert 'Must provide subsidy_request_uuid' in str(response.data)
+
+    @mock.patch('enterprise_access.apps.api.v1.views.browse_and_request.get_enterprise_uuid_from_request_data')
+    def test_decline_rejects_both_uuid_and_uuids(self, mock_get_enterprise_uuid):
+        """
+        Decline returns 400 when both single and list payloads are provided.
+        """
+        mock_get_enterprise_uuid.return_value = str(self.enterprise_customer_uuid_1)
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': str(self.enterprise_customer_uuid_1)
+        }])
+
+        url = reverse('api:v1:learner-credit-requests-decline')
+        data = {
+            'enterprise_customer_uuid': str(self.enterprise_customer_uuid_1),
+            'subsidy_request_uuid': str(self.user_request_1.uuid),
+            'subsidy_request_uuids': [str(self.enterprise_request.uuid)],
+        }
+        response = self.client.post(url, data)
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert 'not both' in str(response.data)
+
+    @mock.patch('enterprise_access.apps.api.v1.views.browse_and_request.get_enterprise_uuid_from_request_data')
+    def test_decline_uuid_list_with_non_declinable_request(self, mock_get_enterprise_uuid):
+        """
+        Decline returns 400 when any UUID in the list points at a non-declinable request.
+        """
+        mock_get_enterprise_uuid.return_value = str(self.enterprise_customer_uuid_1)
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': str(self.enterprise_customer_uuid_1)
+        }])
+
+        self.enterprise_request.state = SubsidyRequestStates.APPROVED
+        self.enterprise_request.save()
+
+        url = reverse('api:v1:learner-credit-requests-decline')
+        data = {
+            'enterprise_customer_uuid': str(self.enterprise_customer_uuid_1),
+            'subsidy_request_uuids': [
+                str(self.user_request_1.uuid),
+                str(self.enterprise_request.uuid),
+            ],
+        }
+        response = self.client.post(url, data)
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert 'cannot be declined' in str(response.data)
+
+    @mock.patch('enterprise_access.apps.api.v1.views.browse_and_request.get_enterprise_uuid_from_request_data')
+    def test_decline_uuid_list_with_unknown_uuid(self, mock_get_enterprise_uuid):
+        """
+        Decline returns 400 when any UUID in the list does not exist.
+        """
+        mock_get_enterprise_uuid.return_value = str(self.enterprise_customer_uuid_1)
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': str(self.enterprise_customer_uuid_1)
+        }])
+
+        url = reverse('api:v1:learner-credit-requests-decline')
+        data = {
+            'enterprise_customer_uuid': str(self.enterprise_customer_uuid_1),
+            'subsidy_request_uuids': [str(self.user_request_1.uuid), str(uuid4())],
+        }
+        response = self.client.post(url, data)
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert 'not found' in str(response.data)
+
+    @mock.patch('enterprise_access.apps.api.v1.views.browse_and_request.get_enterprise_uuid_from_request_data')
+    @mock.patch(BNR_VIEW_PATH + '.unlink_users_from_enterprise_task.delay')
+    def test_decline_uuid_list_with_disassociate_from_org(self, mock_unlink_task, mock_get_enterprise_uuid):
+        """
+        Decline with ``disassociate_from_org=True`` unlinks each declined learner.
+        """
+        mock_get_enterprise_uuid.return_value = str(self.enterprise_customer_uuid_1)
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': str(self.enterprise_customer_uuid_1)
+        }])
+
+        url = reverse('api:v1:learner-credit-requests-decline')
+        data = {
+            'enterprise_customer_uuid': str(self.enterprise_customer_uuid_1),
+            'subsidy_request_uuids': [
+                str(self.user_request_1.uuid),
+                str(self.enterprise_request.uuid),
+            ],
+            'disassociate_from_org': True,
+        }
+        response = self.client.post(url, data)
+
+        assert response.status_code == status.HTTP_200_OK
+        mock_unlink_task.assert_called_once()
+        call_args = mock_unlink_task.call_args.args
+        assert call_args[0] == str(self.enterprise_customer_uuid_1)
+        assert set(call_args[1]) == {
+            self.user_request_1.user.lms_user_id,
+            self.enterprise_request.user.lms_user_id,
+        }
+
+    @mock.patch('enterprise_access.apps.api.v1.views.browse_and_request.get_enterprise_uuid_from_request_data')
+    def test_decline_send_notification_true_logs_per_declined_request(self, mock_get_enterprise_uuid):
+        """
+        Decline with ``send_notification=True`` emits a per-request log line for each
+        declined request (one logger.info call per UUID in the input list).
+        """
+        mock_get_enterprise_uuid.return_value = str(self.enterprise_customer_uuid_1)
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': str(self.enterprise_customer_uuid_1)
+        }])
+
+        url = reverse('api:v1:learner-credit-requests-decline')
+        uuids = [str(self.user_request_1.uuid), str(self.enterprise_request.uuid)]
+        data = {
+            'enterprise_customer_uuid': str(self.enterprise_customer_uuid_1),
+            'subsidy_request_uuids': uuids,
+            'send_notification': True,
+        }
+
+        with self.assertLogs(BNR_VIEW_PATH, level='INFO') as captured:
+            response = self.client.post(url, data)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert set(response.json()['declined']) == set(uuids)
+
+        per_request_log_matches = [
+            record for record in captured.output
+            if 'Decline notification already queued by api layer for request' in record
+        ]
+        assert len(per_request_log_matches) == 2
+        for uuid_value in uuids:
+            assert any(uuid_value in record for record in per_request_log_matches)
+
+    @mock.patch('enterprise_access.apps.api.v1.views.browse_and_request.get_enterprise_uuid_from_request_data')
+    @mock.patch(BNR_VIEW_PATH + '.subsidy_request_api.decline_learner_credit_requests')
+    def test_decline_returns_422_when_api_reports_non_declinable(
+        self, mock_decline_api, mock_get_enterprise_uuid,
+    ):
+        """
+        Decline returns 422 if the backend API reports any request as non-declinable
+        (e.g. a race where state changes between serializer validation and the
+        API call). The response surfaces both declined and non_declinable lists.
+        """
+        mock_get_enterprise_uuid.return_value = str(self.enterprise_customer_uuid_1)
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': str(self.enterprise_customer_uuid_1)
+        }])
+
+        mock_decline_api.return_value = {
+            'declined': [self.user_request_1],
+            'non_declinable': [self.enterprise_request],
+        }
+
+        url = reverse('api:v1:learner-credit-requests-decline')
+        data = {
+            'enterprise_customer_uuid': str(self.enterprise_customer_uuid_1),
+            'subsidy_request_uuids': [
+                str(self.user_request_1.uuid),
+                str(self.enterprise_request.uuid),
+            ],
+        }
+        response = self.client.post(url, data)
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        body = response.json()
+        assert body['declined'] == [str(self.user_request_1.uuid)]
+        assert body['non_declinable'] == [str(self.enterprise_request.uuid)]
+
+    def test_decline_serializer_legacy_accessor_returns_first_or_none(self):
+        """
+        ``LearnerCreditRequestDeclineSerializer.get_learner_credit_request`` (legacy
+        singular accessor) returns ``None`` before validation and the first validated
+        request after a successful ``is_valid()``.
+        """
+        serializer = LearnerCreditRequestDeclineSerializer(
+            data={'subsidy_request_uuid': str(self.user_request_1.uuid)},
+        )
+        # Before validation: no underlying requests have been resolved.
+        assert serializer.get_learner_credit_request() is None
+        assert serializer.get_learner_credit_requests() == []
+
+        assert serializer.is_valid(), serializer.errors
+        first = serializer.get_learner_credit_request()
+        assert first is not None
+        assert first.uuid == self.user_request_1.uuid
+
+    def test_decline_serializer_create_and_update_raise_not_implemented(self):
+        """
+        ``LearnerCreditRequestDeclineSerializer`` is validation-only; ``create`` and
+        ``update`` must raise ``NotImplementedError`` so callers cannot misuse it as
+        a ModelSerializer.
+        """
+        serializer = LearnerCreditRequestDeclineSerializer(
+            data={'subsidy_request_uuid': str(self.user_request_1.uuid)},
+        )
+        assert serializer.is_valid(), serializer.errors
+
+        with self.assertRaises(NotImplementedError):
+            serializer.create(serializer.validated_data)
+        with self.assertRaises(NotImplementedError):
+            serializer.update(self.user_request_1, serializer.validated_data)
 
     @mock.patch('enterprise_access.apps.api.v1.views.browse_and_request.get_enterprise_uuid_from_request_data')
     @mock.patch(
