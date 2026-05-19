@@ -4,7 +4,7 @@ from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.test import TestCase
 
-from ..models import PROMPT_TYPE_LEARNER_INTENT, PROMPT_TYPE_RECOMMENDATIONS_FEEDBACK, XpertLearnerPathwaysSystemPrompt
+from ..models import PromptType, XpertLearnerPathwaysSystemPrompt
 from .factories import XpertLearnerPathwaysSystemPromptFactory
 
 
@@ -12,33 +12,33 @@ from .factories import XpertLearnerPathwaysSystemPromptFactory
 class XpertLearnerPathwaysSystemPromptTests(TestCase):
     """Tests for ``XpertLearnerPathwaysSystemPrompt``."""
 
-    @ddt.data(PROMPT_TYPE_LEARNER_INTENT, PROMPT_TYPE_RECOMMENDATIONS_FEEDBACK)
-    def test_get_active_returns_row_for_prompt_type(self, prompt_type):
+    @ddt.data(PromptType.LEARNER_INTENT, PromptType.RECOMMENDATIONS_FEEDBACK)
+    def test_get_current_returns_row_for_prompt_type(self, prompt_type):
         prompt = XpertLearnerPathwaysSystemPromptFactory(prompt_type=prompt_type)
 
         self.assertEqual(
-            XpertLearnerPathwaysSystemPrompt.get_active(prompt_type),
+            XpertLearnerPathwaysSystemPrompt.get_current(prompt_type),
             prompt,
         )
 
-    @ddt.data(PROMPT_TYPE_LEARNER_INTENT, PROMPT_TYPE_RECOMMENDATIONS_FEEDBACK)
-    def test_get_active_returns_none_when_no_row_exists_for_prompt_type(self, prompt_type):
-        self.assertIsNone(XpertLearnerPathwaysSystemPrompt.get_active(prompt_type))
+    @ddt.data(PromptType.LEARNER_INTENT, PromptType.RECOMMENDATIONS_FEEDBACK)
+    def test_get_current_returns_none_when_no_row_exists_for_prompt_type(self, prompt_type):
+        self.assertIsNone(XpertLearnerPathwaysSystemPrompt.get_current(prompt_type))
 
-    def test_get_active_is_scoped_per_prompt_type(self):
+    def test_get_current_is_scoped_per_prompt_type(self):
         intent = XpertLearnerPathwaysSystemPromptFactory(
-            prompt_type=PROMPT_TYPE_LEARNER_INTENT,
+            prompt_type=PromptType.LEARNER_INTENT,
         )
         feedback = XpertLearnerPathwaysSystemPromptFactory(
-            prompt_type=PROMPT_TYPE_RECOMMENDATIONS_FEEDBACK,
+            prompt_type=PromptType.RECOMMENDATIONS_FEEDBACK,
         )
 
         self.assertEqual(
-            XpertLearnerPathwaysSystemPrompt.get_active(PROMPT_TYPE_LEARNER_INTENT),
+            XpertLearnerPathwaysSystemPrompt.get_current(PromptType.LEARNER_INTENT),
             intent,
         )
         self.assertEqual(
-            XpertLearnerPathwaysSystemPrompt.get_active(PROMPT_TYPE_RECOMMENDATIONS_FEEDBACK),
+            XpertLearnerPathwaysSystemPrompt.get_current(PromptType.RECOMMENDATIONS_FEEDBACK),
             feedback,
         )
 
@@ -88,24 +88,42 @@ class XpertLearnerPathwaysSystemPromptTests(TestCase):
         self.assertIn('system_prompt', ctx.exception.message_dict)
 
     def test_save_rejects_duplicate_prompt_type_via_full_clean(self):
-        XpertLearnerPathwaysSystemPromptFactory(prompt_type=PROMPT_TYPE_LEARNER_INTENT)
+        XpertLearnerPathwaysSystemPromptFactory(prompt_type=PromptType.LEARNER_INTENT)
 
         with self.assertRaises(ValidationError):
-            XpertLearnerPathwaysSystemPromptFactory(prompt_type=PROMPT_TYPE_LEARNER_INTENT)
+            XpertLearnerPathwaysSystemPromptFactory(prompt_type=PromptType.LEARNER_INTENT)
 
     def test_db_unique_constraint_blocks_two_rows_same_prompt_type(self):
-        XpertLearnerPathwaysSystemPromptFactory(prompt_type=PROMPT_TYPE_LEARNER_INTENT)
+        XpertLearnerPathwaysSystemPromptFactory(prompt_type=PromptType.LEARNER_INTENT)
         # bulk_create bypasses save()/full_clean(), exercising the DB constraint directly.
         with transaction.atomic(), self.assertRaises(IntegrityError):
             XpertLearnerPathwaysSystemPrompt.objects.bulk_create([
                 XpertLearnerPathwaysSystemPrompt(
-                    prompt_type=PROMPT_TYPE_LEARNER_INTENT,
+                    prompt_type=PromptType.LEARNER_INTENT,
                     system_prompt='You are a helpful assistant.',
                 ),
             ])
 
     def test_unique_constraint_allows_one_row_per_prompt_type(self):
-        XpertLearnerPathwaysSystemPromptFactory(prompt_type=PROMPT_TYPE_LEARNER_INTENT)
-        XpertLearnerPathwaysSystemPromptFactory(prompt_type=PROMPT_TYPE_RECOMMENDATIONS_FEEDBACK)
+        XpertLearnerPathwaysSystemPromptFactory(prompt_type=PromptType.LEARNER_INTENT)
+        XpertLearnerPathwaysSystemPromptFactory(prompt_type=PromptType.RECOMMENDATIONS_FEEDBACK)
 
         self.assertEqual(XpertLearnerPathwaysSystemPrompt.objects.count(), 2)
+
+    def test_edits_preserve_history_via_simple_history(self):
+        prompt = XpertLearnerPathwaysSystemPromptFactory(
+            prompt_type=PromptType.LEARNER_INTENT,
+            system_prompt='Initial draft.',
+        )
+        prompt.system_prompt = 'Revised wording.'
+        prompt.save()
+
+        history = list(prompt.history.order_by('history_date'))
+        self.assertEqual(len(history), 2)
+        self.assertEqual(history[0].system_prompt, 'Initial draft.')
+        self.assertEqual(history[-1].system_prompt, 'Revised wording.')
+        # Latest historical row mirrors the current persisted state.
+        self.assertEqual(
+            XpertLearnerPathwaysSystemPrompt.objects.get(pk=prompt.pk).system_prompt,
+            history[-1].system_prompt,
+        )

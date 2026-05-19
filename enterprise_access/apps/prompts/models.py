@@ -1,29 +1,37 @@
 """Models for the prompts app.
 
-Owns versioned system prompt configuration for features that call the Xpert
-`/v1/message` endpoint. The first consumer is the learner pathways
-recommendation workflow.
+Owns system prompt configuration for features that call the Xpert
+`/v1/message` endpoint. Each concrete model holds exactly one row per
+``prompt_type``; full edit history is preserved by django-simple-history.
+The first consumer is the learner pathways recommendation workflow.
 """
 import uuid
+from typing import Self
 
 from django.core.exceptions import ValidationError
 from django.db import models
 from model_utils.models import TimeStampedModel
 from simple_history.models import HistoricalRecords
 
-PROMPT_TYPE_LEARNER_INTENT = 'learner_intent'
-PROMPT_TYPE_RECOMMENDATIONS_FEEDBACK = 'recommendations_feedback'
 
-PROMPT_TYPE_CHOICES = [
-    (PROMPT_TYPE_LEARNER_INTENT, 'Learner Intent'),
-    (PROMPT_TYPE_RECOMMENDATIONS_FEEDBACK, 'Recommendations Feedback'),
-]
-VALID_PROMPT_TYPES = {value for value, _label in PROMPT_TYPE_CHOICES}
+class PromptType(models.TextChoices):
+    """Valid ``prompt_type`` values for ``XpertLearnerPathwaysSystemPrompt``."""
+    LEARNER_INTENT = 'learner_intent', 'Learner Intent'
+    RECOMMENDATIONS_FEEDBACK = 'recommendations_feedback', 'Recommendations Feedback'
+
+
+# Back-compat string aliases. Prefer ``PromptType.<MEMBER>`` in new code.
+PROMPT_TYPE_LEARNER_INTENT = PromptType.LEARNER_INTENT.value
+PROMPT_TYPE_RECOMMENDATIONS_FEEDBACK = PromptType.RECOMMENDATIONS_FEEDBACK.value
 
 
 class BaseSystemPrompt(TimeStampedModel):
     """
-    Abstract base model for versioned Xpert system prompt configuration.
+    Abstract base model for Xpert system prompt configuration.
+
+    Subclasses persist one canonical row per discriminator (e.g. ``prompt_type``).
+    Edits overwrite the row in place; every change is captured as a historical
+    revision by django-simple-history, so prior wording is always recoverable.
 
     .. no_pii:
     """
@@ -51,7 +59,7 @@ class BaseSystemPrompt(TimeStampedModel):
         abstract = True
         app_label = 'prompts'
 
-    def clean(self):
+    def clean(self) -> None:
         super().clean()
         if not self.system_prompt or not self.system_prompt.strip():
             raise ValidationError(
@@ -62,21 +70,21 @@ class BaseSystemPrompt(TimeStampedModel):
                 {'output_schema': 'output_schema must be a JSON object (dict) when provided.'}
             )
 
-    def save(self, *args, **kwargs):
+    def save(self, *args, **kwargs) -> None:
         self.full_clean()
-        return super().save(*args, **kwargs)
+        super().save(*args, **kwargs)
 
 
 class XpertLearnerPathwaysSystemPrompt(BaseSystemPrompt):
     """
-    Stores system prompt configuration for the Xpert learner pathways workflow.
+    System prompt configuration for the Xpert learner pathways workflow.
 
-    Concrete rows represent prompt configurations used by learner pathways
-    Xpert calls, such as learner intent extraction and recommendations feedback.
+    At most one row exists per ``prompt_type`` (enforced by a unique constraint).
+    Admin edits overwrite that row; history rows preserve every prior revision.
 
     .. no_pii:
     """
-    prompt_type = models.CharField(max_length=64, choices=PROMPT_TYPE_CHOICES)
+    prompt_type = models.CharField(max_length=64, choices=PromptType.choices)
 
     class Meta:
         app_label = 'prompts'
@@ -89,17 +97,17 @@ class XpertLearnerPathwaysSystemPrompt(BaseSystemPrompt):
             ),
         ]
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f'XpertLearnerPathwaysSystemPrompt(type={self.prompt_type})'
 
-    def clean(self):
+    def clean(self) -> None:
         super().clean()
-        if self.prompt_type not in VALID_PROMPT_TYPES:
+        if self.prompt_type not in PromptType.values:
             raise ValidationError(
                 {'prompt_type': f'{self.prompt_type!r} is not a valid prompt_type.'}
             )
 
     @classmethod
-    def get_active(cls, prompt_type):
-        """Return the prompt for ``prompt_type``, or ``None`` if none exists."""
+    def get_current(cls, prompt_type: str) -> Self | None:
+        """Return the configured prompt row for ``prompt_type``, or ``None``."""
         return cls.objects.filter(prompt_type=prompt_type).first()
