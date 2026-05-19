@@ -181,6 +181,7 @@ REST_FRAMEWORK = {
     'TEST_REQUEST_DEFAULT_FORMAT': 'json',
     'DEFAULT_THROTTLE_RATES': {
         'bff_unauthenticated': '100/hour',
+        'ssp_unauthenticated': '100/hour',
     },
 }
 
@@ -661,6 +662,9 @@ SSP_PRODUCTS = {
 # Enable the customer billing API endpoints under /api/v1/customer-billing/*
 ENABLE_CUSTOMER_BILLING_API = True
 
+# Gate the Essentials checkout flow so Teams remains the default path.
+ENABLE_ESSENTIALS_CHECKOUT = False
+
 # Enable the billing management API endpoints under /api/v1/billing-management/*
 ENABLE_BILLING_MANAGEMENT_API = False
 
@@ -670,6 +674,9 @@ DEFAULT_STRIPE_CACHE_TIMEOUT = 60
 
 # How long we consider Stripe prices valid for
 STRIPE_PRICE_DATA_CACHE_TIMEOUT = 300
+
+# Public base URL used to build full academy thumbnail URLs from stored relative paths.
+ACADEMY_THUMBNAIL_S3_BASE_URL = ''
 
 ENABLE_STRIPE_EVENT_SUMMARIES = False
 

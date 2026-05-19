@@ -2,10 +2,13 @@
 REST API views for the billing provider (Stripe) integration.
 """
 import logging
+import re
 import uuid
+from urllib.parse import urljoin
 
 import stripe
 from django.conf import settings
+from django.db import connection
 from django.db.models import Q
 from django.http import HttpResponseServerError
 from django.utils import timezone
@@ -16,7 +19,9 @@ from edx_rbac.decorators import permission_required
 from edx_rest_framework_extensions.auth.jwt.authentication import JwtAuthentication
 from rest_framework import exceptions, mixins, permissions, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
+from rest_framework.throttling import AnonRateThrottle
 
 from enterprise_access.apps.api import serializers
 from enterprise_access.apps.api.authentication import StripeWebhookAuthentication
@@ -33,10 +38,15 @@ from enterprise_access.apps.customer_billing.api import (
 )
 from enterprise_access.apps.customer_billing.models import (
     CheckoutIntent,
+    EnterpriseAcademy,
     SelfServiceSubscriptionRenewal,
     StripeEventSummary
 )
-from enterprise_access.apps.customer_billing.pricing_api import get_ssp_product_pricing
+from enterprise_access.apps.customer_billing.pricing_api import (
+    StripePricingError,
+    get_all_active_stripe_prices,
+    get_ssp_product_pricing
+)
 from enterprise_access.apps.customer_billing.stripe_api import get_stripe_customer
 from enterprise_access.apps.customer_billing.stripe_event_handlers import StripeEventHandler
 
@@ -47,6 +57,315 @@ logger = logging.getLogger(__name__)
 
 CUSTOMER_BILLING_API_TAG = 'Customer Billing'
 STRIPE_EVENT_API_TAG = 'Stripe Event Summary'
+
+
+class AcademyProductsPagination(PageNumberPagination):
+    """Pagination for academy products endpoint using count as page-size query param."""
+
+    page_size = 10
+    page_size_query_param = 'count'
+    max_page_size = 100
+
+
+class AcademyProductsAnonRateThrottle(AnonRateThrottle):
+    """Anonymous throttle for public academy product endpoints."""
+
+    scope = 'ssp_unauthenticated'
+
+
+class AcademyProductsViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
+    """Public read-only API for academy products with Stripe-resolved pricing."""
+
+    authentication_classes = ()
+    permission_classes = (permissions.AllowAny,)
+    throttle_classes = (AcademyProductsAnonRateThrottle,)
+    serializer_class = serializers.AcademyProductResponseSerializer
+    pagination_class = AcademyProductsPagination
+
+    @staticmethod
+    def _essentials_enabled():
+        return getattr(settings, 'ENABLE_ESSENTIALS_CHECKOUT', False)
+
+    @staticmethod
+    def _essentials_lookup_key_allowlist():
+        return {
+            AcademyProductsViewSet._to_lookup_token(value)
+            for value in getattr(settings, 'ESSENTIALS_ACADEMY_LOOKUP_KEY_ALLOWLIST', [])
+            if value
+        }
+
+    @staticmethod
+    def _to_lookup_token(raw_value):
+        """Normalize a value into a Stripe lookup-key token format."""
+        value = (raw_value or '').strip().lower()
+        if not value:
+            return ''
+        value = value.replace('&', ' and ')
+        value = re.sub(r'[^a-z0-9]+', '_', value)
+        value = re.sub(r'_+', '_', value).strip('_')
+        return value
+
+    @staticmethod
+    def _lookup_key_aliases(lookup_key):
+        """Return equivalent lookup keys used across Stripe naming migrations."""
+        normalized_key = AcademyProductsViewSet._to_lookup_token(lookup_key)
+        aliases = {normalized_key}
+        if not normalized_key:
+            return aliases
+
+        if normalized_key.endswith('_subscription_license_yearly'):
+            aliases.add(normalized_key.replace('_subscription_license_yearly', '_academy_yearly'))
+        if normalized_key.endswith('_academy_yearly'):
+            aliases.add(normalized_key.replace('_academy_yearly', '_subscription_license_yearly'))
+
+        if normalized_key == 'essentials_tech_and_digital_transformation':
+            aliases.add('essentials_tech_and_digital_transformation_academy_yearly')
+        if normalized_key == 'essentials_tech_and_digital_transformation_academy_yearly':
+            aliases.add('essentials_tech_and_digital_transformation')
+
+        return aliases
+
+    def _lookup_key_candidates(self, academy):
+        """Return candidate lookup keys to resolve academy prices from Stripe."""
+        candidates = []
+
+        for value in (
+            academy.stripe_price_lookup_key,
+            academy.product_key,
+            academy.slug,
+            academy.name,
+            academy.long_name,
+        ):
+            token = self._to_lookup_token(value)
+            if token:
+                candidates.append(token)
+                if not token.startswith('essentials_'):
+                    candidates.append(f'essentials_{token}_academy_yearly')
+
+                for alias in self._lookup_key_aliases(token):
+                    if alias:
+                        candidates.append(alias)
+
+        unique_candidates = []
+        seen = set()
+        for candidate in candidates:
+            if candidate and candidate not in seen:
+                unique_candidates.append(candidate)
+                seen.add(candidate)
+        return unique_candidates
+
+    def _allowlisted_academies(self, academies):
+        """Restrict academies to the configured essentials lookup-key allowlist."""
+        allowlist = self._essentials_lookup_key_allowlist()
+        if not allowlist:
+            return academies
+
+        expanded_allowlist = set()
+        for lookup_key in allowlist:
+            expanded_allowlist.update(self._lookup_key_aliases(lookup_key))
+
+        return [
+            academy
+            for academy in academies
+            if set(self._lookup_key_candidates(academy)) & expanded_allowlist
+        ]
+
+    def _parse_active_filter(self):
+        """Parse the 'active' query param, defaulting to True."""
+        value = self.request.query_params.get('active', 'true').strip().lower()
+        return value not in ('false', '0', 'no')
+
+    def _resolve_thumbnail_url(self, stored_path):
+        """Return an absolute thumbnail URL by joining the S3 base URL with the stored path."""
+        if not stored_path:
+            return ''
+        if stored_path.startswith('http://') or stored_path.startswith('https://'):
+            return stored_path
+
+        base_url = getattr(settings, 'ACADEMY_THUMBNAIL_S3_BASE_URL', '') or ''
+        if not base_url:
+            return stored_path
+
+        normalized_base = f"{base_url.rstrip('/')}/"
+        normalized_path = stored_path.lstrip('/')
+        return urljoin(normalized_base, normalized_path)
+
+    def _build_price_map(self, product_ids, lookup_keys=None):
+        """Build dicts mapping product ids and lookup keys to serialized Stripe prices."""
+        all_prices = get_all_active_stripe_prices(timeout=settings.STRIPE_PRICE_DATA_CACHE_TIMEOUT)
+        non_empty_product_ids = {product_id for product_id in product_ids if product_id}
+        non_empty_lookup_keys = {lookup_key for lookup_key in (lookup_keys or set()) if lookup_key}
+        price_map = {product_id: [] for product_id in non_empty_product_ids}
+        lookup_key_price_map = {lookup_key: [] for lookup_key in non_empty_lookup_keys}
+        for price in all_prices:
+            product = price.get('product') or {}
+            product_id = product.get('id')
+            lookup_key = price.get('lookup_key')
+
+            recurring = price.get('recurring')
+            recurring_payload = None
+            if recurring:
+                recurring_payload = {
+                    'interval': recurring.get('interval'),
+                    'interval_count': recurring.get('interval_count'),
+                    'usage_type': recurring.get('usage_type'),
+                }
+
+            unit_amount_decimal = price.get('unit_amount_decimal')
+            if unit_amount_decimal is not None:
+                unit_amount_decimal = f'{unit_amount_decimal:.2f}'
+
+            serialized_price = {
+                'id': price.get('id'),
+                'product': product_id,
+                'lookup_key': lookup_key,
+                'recurring': recurring_payload,
+                'currency': price.get('currency'),
+                'unit_amount': price.get('unit_amount'),
+                'unit_amount_decimal': unit_amount_decimal,
+            }
+
+            if product_id in price_map:
+                price_map[product_id].append(serialized_price)
+
+            if lookup_key in lookup_key_price_map:
+                lookup_key_price_map[lookup_key].append(serialized_price)
+
+        price_map.update(lookup_key_price_map)
+        return price_map
+
+    def _serialize_academy(self, academy, price_map):
+        """Serialize an EnterpriseAcademy model instance to API payload shape."""
+        product_id = academy.stripe_product_id
+        resource_id = product_id or academy.product_key or academy.slug or str(academy.uuid)
+        prices = price_map.get(product_id, [])
+        if not prices:
+            for lookup_key in self._lookup_key_candidates(academy):
+                candidate_prices = price_map.get(lookup_key, [])
+                if candidate_prices:
+                    prices = candidate_prices
+                    break
+
+        # Extract stripe product ID from prices if not set on academy
+        if not product_id and prices:
+            product_id = prices[0].get('product')
+
+        catalog_query_uuid = academy.catalog_query_uuid or str(academy.uuid)
+
+        return {
+            'id': resource_id,
+            'name': academy.name,
+            'long_name': academy.long_name or academy.name,
+            'description': academy.description,
+            'marketing_url': academy.marketing_url,
+            'thumbnail_url': self._resolve_thumbnail_url(academy.thumbnail_url),
+            'prices': prices,
+            'tags': academy.tags or [],
+            'stripe_product_id': product_id,
+            'catalog_query_uuid': str(catalog_query_uuid),
+            'catalog_query_id': str(catalog_query_uuid),
+            'edx_catalog_id': str(catalog_query_uuid),
+        }
+
+    def _get_academies_queryset(self):
+        """Fetch academy rows with optional active/product_key/tag filtering."""
+        include_only_active = self._parse_active_filter()
+
+        academies = EnterpriseAcademy.objects.filter(is_active=include_only_active)
+        academy_uuid = self.request.query_params.get('academy_uuid')
+        if academy_uuid:
+            try:
+                parsed_academy_uuid = uuid.UUID(academy_uuid)
+            except (ValueError, AttributeError, TypeError) as exc:
+                raise exceptions.ValidationError({'academy_uuid': 'Must be a valid UUID.'}) from exc
+            academies = academies.filter(uuid=parsed_academy_uuid)
+
+        product_key_filter = self.request.query_params.get('product_key')
+        if product_key_filter:
+            academies = academies.filter(product_key=product_key_filter)
+
+        tags_filter = [tag.strip() for tag in self.request.query_params.getlist('tag') if tag.strip()]
+        if tags_filter:
+            if connection.features.supports_json_field_contains:
+                for tag in tags_filter:
+                    academies = academies.filter(tags__contains=[tag])
+            else:
+                academies = [
+                    academy
+                    for academy in academies
+                    if all(tag in (academy.tags or []) for tag in tags_filter)
+                ]
+
+        academies = self._allowlisted_academies(academies)
+
+        return academies
+
+    @extend_schema(
+        tags=[CUSTOMER_BILLING_API_TAG],
+        summary='List academy products for Essentials plan selection.',
+    )
+    def list(self, request, *args, **kwargs):
+        if not self._essentials_enabled():
+            return Response(
+                {'count': 0, 'next': None, 'previous': None, 'results': []},
+                status=status.HTTP_200_OK,
+            )
+
+        try:
+            all_academies = self._get_academies_queryset()
+            product_ids = {
+                academy.stripe_product_id
+                for academy in all_academies
+                if academy.stripe_product_id
+            }
+            lookup_keys = set()
+            for academy in all_academies:
+                lookup_keys.update(self._lookup_key_candidates(academy))
+            price_map = self._build_price_map(product_ids, lookup_keys=lookup_keys)
+        except (stripe.StripeError, StripePricingError):
+            return Response(
+                {'error_code': 'stripe_temporarily_unavailable', 'detail': 'Retry later.'},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        academy_page = self.paginate_queryset(all_academies)
+        if academy_page is None:
+            academy_page = list(all_academies)
+
+        payload = [self._serialize_academy(academy, price_map) for academy in academy_page]
+        serializer = self.get_serializer(payload, many=True)
+        return self.get_paginated_response(serializer.data)
+
+    @extend_schema(
+        tags=[CUSTOMER_BILLING_API_TAG],
+        summary='Retrieve single academy product by id.',
+        responses={status.HTTP_200_OK: serializers.AcademyProductResponseSerializer},
+    )
+    def retrieve(self, request, *args, **kwargs):
+        if not self._essentials_enabled():
+            return Response(status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            product_id = kwargs.get('pk')
+            academy = EnterpriseAcademy.objects.filter(
+                Q(stripe_product_id=product_id) | Q(product_key=product_id) | Q(slug=product_id),
+                is_active=self._parse_active_filter(),
+            ).first()
+            if academy is None:
+                return Response(status=status.HTTP_404_NOT_FOUND)
+            price_map = self._build_price_map(
+                {academy.stripe_product_id},
+                lookup_keys=set(self._lookup_key_candidates(academy)),
+            )
+        except (stripe.StripeError, StripePricingError):
+            return Response(
+                {'error_code': 'stripe_temporarily_unavailable', 'detail': 'Retry later.'},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        payload = self._serialize_academy(academy, price_map)
+        serializer = self.get_serializer(payload)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 class CheckoutIntentPermission(permissions.BasePermission):

@@ -116,6 +116,11 @@ ALLOWED_CHECKOUT_INTENT_STATE_TRANSITIONS = {
     CheckoutIntentState.FULFILLED: [],
 }
 
+# Stripe product metadata constants for filtering products by type
+STRIPE_PRODUCT_TYPE_METADATA_KEY = 'edx_product_type'
+STRIPE_PRODUCT_TYPE_ESSENTIAL_ACADEMY = 'essential_academy'
+STRIPE_PRODUCT_KEY_METADATA_KEY = 'product_key'
+
 # Patterns used to serialize date/time to be machine-readable by Braze.
 BRAZE_TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 BRAZE_DATE_FORMAT_1 = "%d %B %Y"

@@ -10,6 +10,27 @@ from rest_framework import serializers
 logger = logging.getLogger(__name__)
 
 
+def _normalize_catalog_query_uuid(value):
+    """Validate catalog query UUID input while preserving allowed legacy fallback ids."""
+    if value in (None, ''):
+        return None
+
+    allowed_choices = settings.PROVISIONING_DEFAULTS['catalog'].get('all_catalog_query_choices', [])
+    allowed_ids = {str(choice_id) for choice_id, _choice_label in allowed_choices}
+    default_catalog_query_id = settings.PROVISIONING_DEFAULTS['catalog'].get('catalog_query_id')
+    if default_catalog_query_id is not None:
+        allowed_ids.add(str(default_catalog_query_id))
+
+    try:
+        return str(serializers.UUIDField().to_internal_value(value))
+    except serializers.ValidationError as exc:
+        if str(value) in allowed_ids:
+            return str(value)
+        raise serializers.ValidationError(
+            'catalog_query_uuid must be a valid UUID (or a configured legacy fallback id).'
+        ) from exc
+
+
 class BaseSerializer(serializers.Serializer):
     """
     Base implementation for request and response serializers.
@@ -56,12 +77,43 @@ class EnterpriseCatalogRequestSerializer(BaseSerializer):
     """
     title = serializers.CharField(
         help_text='The name of the Enterprise Catalog.',
+        required=False,
+        allow_blank=True,
     )
-    catalog_query_id = serializers.ChoiceField(
-        choices=settings.PROVISIONING_DEFAULTS['catalog']['all_catalog_query_choices'],
-        default=settings.PROVISIONING_DEFAULTS['subscription']['trial_catalog_query_choices'][0][0],
-        help_text='The id of the related Catalog Query.',
+    academy_name = serializers.CharField(
+        help_text='The name of the Academy to provision (will be used to look up catalog_query_uuid).',
+        required=False,
+        allow_blank=True,
     )
+    catalog_query_uuid = serializers.CharField(
+        help_text='The UUID of the related Catalog Query.',
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+    )
+    catalog_query_id = serializers.CharField(
+        help_text='(DEPRECATED: Use catalog_query_uuid instead) Legacy alias for the related Catalog Query UUID.',
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+        write_only=True,
+    )
+
+    def validate_catalog_query_uuid(self, value):
+        return _normalize_catalog_query_uuid(value)
+
+    def validate_catalog_query_id(self, value):
+        return _normalize_catalog_query_uuid(value)
+
+    def validate(self, attrs):
+        catalog_query_uuid = attrs.get('catalog_query_uuid')
+        legacy_catalog_query_id = attrs.pop('catalog_query_id', None)
+        if catalog_query_uuid in (None, '') and legacy_catalog_query_id not in (None, ''):
+            catalog_query_uuid = legacy_catalog_query_id
+
+        attrs['catalog_query_uuid'] = catalog_query_uuid
+        attrs['catalog_query_id'] = catalog_query_uuid
+        return attrs
 
 
 class CustomerAgreementRequestSerializer(BaseSerializer):
@@ -103,10 +155,49 @@ class SubscriptionPlanRequestSerializer(BaseSerializer):
         required=False, allow_null=False,
         help_text='The number of licenses to create for this plan.',
     )
+    academy_name = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text='Optional academy name used to resolve an academy-specific catalog for Essentials provisioning.',
+    )
+    stripe_product_id = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text='Optional Stripe product id used to resolve an academy-specific catalog for Essentials provisioning.',
+    )
+    catalog_query_uuid = serializers.CharField(
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+        help_text='Optional catalog query UUID used to resolve an academy-specific catalog for provisioning.',
+    )
+    catalog_query_id = serializers.CharField(
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+        write_only=True,
+        help_text='(DEPRECATED: Use catalog_query_uuid instead) Legacy alias for the catalog query UUID.',
+    )
     enterprise_catalog_uuid = serializers.UUIDField(
         required=False, allow_null=True, default=None,
         help_text='Optional. The enterprise catalog uuid associated with this subscription plan.',
     )
+
+    def validate_catalog_query_uuid(self, value):
+        return _normalize_catalog_query_uuid(value)
+
+    def validate_catalog_query_id(self, value):
+        return _normalize_catalog_query_uuid(value)
+
+    def validate(self, attrs):
+        catalog_query_uuid = attrs.get('catalog_query_uuid')
+        legacy_catalog_query_id = attrs.pop('catalog_query_id', None)
+        if catalog_query_uuid in (None, '') and legacy_catalog_query_id not in (None, ''):
+            catalog_query_uuid = legacy_catalog_query_id
+
+        attrs['catalog_query_uuid'] = catalog_query_uuid
+        attrs['catalog_query_id'] = catalog_query_uuid
+        return attrs
 
 
 class ProvisioningRequestSerializer(BaseSerializer):
@@ -177,7 +268,8 @@ class EnterpriseCatalogResponseSerializer(BaseSerializer):
     uuid = serializers.UUIDField()
     enterprise_customer_uuid = serializers.UUIDField()
     title = serializers.CharField()
-    catalog_query_id = serializers.IntegerField()
+    catalog_query_uuid = serializers.CharField(source='catalog_query_id')
+    catalog_query_id = serializers.CharField()
 
 
 class SubscriptionPlanResponseSerializer(BaseSerializer):

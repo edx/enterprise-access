@@ -26,7 +26,9 @@ class CheckoutContext(BaseHandlerContext):
     def pricing(self):
         return self.data.get('pricing', {
             'default_by_lookup_key': settings.DEFAULT_SSP_PRICE_LOOKUP_KEY,
-            'prices': []
+            'prices': [],
+            'academies': [],
+            'resolved_product': None,
         })
 
     @pricing.setter

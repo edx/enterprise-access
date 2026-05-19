@@ -21,6 +21,7 @@ User = get_user_model()
 
 @ddt.ddt
 class CheckoutIntentViewSetTestCase(APITest):
+
     """
     Test cases for CheckoutIntent ViewSet.
     """
@@ -356,6 +357,30 @@ class CheckoutIntentViewSetTestCase(APITest):
         self.assertEqual(response_data['country'], 'NZ')
         self.assertEqual(response_data['terms_metadata'], {'version': '1.0', 'accepted_at': '2024-01-15T10:30:00Z'})
 
+    def test_create_checkout_intent_accepts_catalog_query_id_alias(self):
+        """Test creating checkout intent with catalog_query_id persists catalog_query_uuid."""
+        other_user = UserFactory()
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE,
+            'context': str(uuid.uuid4()),
+        }], user=other_user)
+
+        request_data = {
+            'enterprise_slug': 'test-enterprise-catalog',
+            'enterprise_name': 'Test Enterprise Catalog',
+            'quantity': 7,
+            'catalog_query_id': '00000000-0000-0000-0000-000000000123',
+        }
+
+        response = self.client.post(self.list_url, request_data, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['catalog_query_uuid'], request_data['catalog_query_id'])
+        self.assertEqual(response.data['catalog_query_id'], request_data['catalog_query_id'])
+
+        created_intent = CheckoutIntent.objects.get(id=response.data['id'])
+        self.assertEqual(created_intent.catalog_query_uuid, request_data['catalog_query_id'])
+
     def test_create_or_update_checkout_intent_success(self):
         """Test successful update of checkout intent, even if it happens through a POST."""
         self.set_jwt_cookie([{
@@ -477,6 +502,26 @@ class CheckoutIntentViewSetTestCase(APITest):
         self.checkout_intent_1.refresh_from_db()
         self.assertEqual(self.checkout_intent_1.terms_metadata, new_terms)
         self.assertEqual(self.checkout_intent_1.country, 'AU')
+
+    def test_patch_checkout_intent_accepts_catalog_query_id_alias(self):
+        """Test patching checkout intent with catalog_query_id updates catalog_query_uuid."""
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE,
+            'context': str(uuid.uuid4()),
+        }])
+
+        response = self.client.patch(
+            self.detail_url_1,
+            {'catalog_query_id': '00000000-0000-0000-0000-000000000456'},
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['catalog_query_uuid'], '00000000-0000-0000-0000-000000000456')
+        self.assertEqual(response.data['catalog_query_id'], '00000000-0000-0000-0000-000000000456')
+
+        self.checkout_intent_1.refresh_from_db()
+        self.assertEqual(self.checkout_intent_1.catalog_query_uuid, '00000000-0000-0000-0000-000000000456')
 
     @ddt.data(
         # Test that strings are rejected

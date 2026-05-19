@@ -23,8 +23,8 @@ from enterprise_access.apps.bffs.checkout.serializers import CheckoutIntentModel
 from enterprise_access.apps.bffs.handlers import BaseHandler
 from enterprise_access.apps.customer_billing.api import validate_free_trial_checkout_session
 from enterprise_access.apps.customer_billing.embargo import get_embargoed_countries
-from enterprise_access.apps.customer_billing.models import CheckoutIntent
-from enterprise_access.apps.customer_billing.pricing_api import get_ssp_product_pricing
+from enterprise_access.apps.customer_billing.models import CheckoutIntent, EnterpriseAcademy
+from enterprise_access.apps.customer_billing.pricing_api import get_all_active_stripe_prices, get_ssp_product_pricing
 from enterprise_access.apps.customer_billing.stripe_api import (
     get_stripe_checkout_session,
     get_stripe_customer,
@@ -79,14 +79,67 @@ class CheckoutContextHandler(CheckoutIntentAwareHandlerMixin, BaseHandler):
         Load data and process it for the response.
 
         This method:
-        1. Checks if the user is authenticated
-        2. If authenticated, fetches associated enterprise customers
-        3. Fetches pricing options from Stripe
-        4. Gathers field constraints from settings
-        5. Populates the context with all data
+        1. Extracts stripeProductId from request (if present)
+        2. Resolves and validates the Stripe product
+        3. Updates CheckoutIntent with stripe_product_id
+        4. Checks if the user is authenticated
+        5. If authenticated, fetches associated enterprise customers
+        6. Fetches pricing options from Stripe
+        7. Gathers field constraints from settings
+        8. Populates the context with all data
         """
+        resolved_product = None
         try:
+            # Extract stripeProductId from request body
+            request_data = getattr(self.context.request, 'data', None)
+            if request_data is None:
+                request_data = getattr(self.context.request, 'POST', {})
+            stripe_product_id = request_data.get('stripeProductId')
+
+            # If stripeProductId is provided, resolve and validate it
+            if stripe_product_id and self.context.user and self.context.user.is_authenticated:
+                resolved_product = self.resolve_stripe_product(stripe_product_id)
+                if resolved_product:
+                    # Update the most specific matching CheckoutIntent first, then fall back to latest non-expired.
+                    requested_enterprise_slug = (
+                        request_data.get('enterpriseSlug') or
+                        request_data.get('enterprise_slug')
+                    )
+                    checkout_intent = CheckoutIntent.for_user(
+                        self.context.user,
+                        enterprise_slug=requested_enterprise_slug,
+                        stripe_product_id=stripe_product_id,
+                    )
+                    if not checkout_intent:
+                        checkout_intent = CheckoutIntent.for_user(
+                            self.context.user,
+                            enterprise_slug=requested_enterprise_slug,
+                        )
+                    if not checkout_intent:
+                        checkout_intent = CheckoutIntent.for_user(self.context.user)
+
+                    if checkout_intent:
+                        checkout_intent.stripe_product_id = stripe_product_id
+                        checkout_intent.clean()
+                        checkout_intent.save()
+                        logger.info(
+                            "Updated CheckoutIntent %s with stripe_product_id %s",
+                            checkout_intent.uuid,
+                            stripe_product_id
+                        )
+                else:
+                    logger.warning(
+                        "Failed to resolve Stripe product %s for user %s",
+                        stripe_product_id,
+                        self.context.user.email
+                    )
+                    self.add_error(
+                        user_message="Invalid Stripe product ID.",
+                        developer_message=f"Could not resolve or validate Stripe product: {stripe_product_id}",
+                    )
+
             self.context.pricing = self._get_pricing_data()
+            self.context.pricing['resolved_product'] = resolved_product
             self.context.field_constraints = self._get_field_constraints()
             self.context.checkout_intent = self._get_checkout_intent()
             if self.context.user:
@@ -155,17 +208,14 @@ class CheckoutContextHandler(CheckoutIntentAwareHandlerMixin, BaseHandler):
 
     def _get_pricing_data(self) -> Dict:
         """
-        Get pricing data from Stripe for self-service subscription plans.
+        Get pricing data from Stripe for self-service subscription plans and Essentials academies.
 
         Returns:
-            Dict containing default lookup key and list of price objects
+            Dict containing default lookup key, Teams prices, and academy details with prices
         """
         try:
-            # remember that this function eventually invokes price schema
-            # validation, it may raise a StripePricingError
+            # Fetch Teams subscription pricing
             pricing_data = get_ssp_product_pricing()
-
-            # Format the pricing data according to our API response schema
             prices = []
             for _, price_data in pricing_data.items():
                 prices.append({
@@ -178,9 +228,14 @@ class CheckoutContextHandler(CheckoutIntentAwareHandlerMixin, BaseHandler):
                     'unit_amount_decimal': str(price_data.get('unit_amount_decimal'))
                 })
 
+            # Fetch Essentials academy pricing only when the feature flag is enabled.
+            academies = self._get_academy_pricing_data()
+
             return {
                 'default_by_lookup_key': settings.DEFAULT_SSP_PRICE_LOOKUP_KEY,
-                'prices': prices
+                'prices': prices,
+                'academies': academies,
+                'resolved_product': None,
             }
         except Exception as exc:  # pylint: disable=broad-except
             logger.exception("Error fetching pricing data: %s", exc)
@@ -190,8 +245,84 @@ class CheckoutContextHandler(CheckoutIntentAwareHandlerMixin, BaseHandler):
             )
             return {
                 'default_by_lookup_key': settings.DEFAULT_SSP_PRICE_LOOKUP_KEY,
-                'prices': []
+                'prices': [],
+                'academies': [],
+                'resolved_product': None,
             }
+
+    def _get_academy_pricing_data(self) -> list:
+        """
+        Fetch active Essentials academies and enrich with Stripe pricing data.
+
+        Returns:
+            List of academy objects with pricing information
+        """
+        if not getattr(settings, 'ENABLE_ESSENTIALS_CHECKOUT', False):
+            return []
+
+        try:
+            # Fetch all active Stripe prices
+            all_stripe_prices = get_all_active_stripe_prices(
+                timeout=settings.STRIPE_PRICE_DATA_CACHE_TIMEOUT
+            )
+
+            # Build lookup maps: product_id -> prices and lookup_key -> prices
+            prices_by_product_id = {}
+            prices_by_lookup_key = {}
+            for price in all_stripe_prices:
+                product = price.get('product') or {}
+                product_id = product.get('id')
+                lookup_key = price.get('lookup_key')
+
+                serialized_price = {
+                    'id': price.get('id'),
+                    'product': product_id,
+                    'lookup_key': lookup_key,
+                    'recurring': price.get('recurring'),
+                    'currency': price.get('currency'),
+                    'unit_amount': price.get('unit_amount'),
+                    'unit_amount_decimal': str(price.get('unit_amount_decimal', ''))
+                }
+
+                if product_id:
+                    if product_id not in prices_by_product_id:
+                        prices_by_product_id[product_id] = []
+                    prices_by_product_id[product_id].append(serialized_price)
+
+                if lookup_key:
+                    if lookup_key not in prices_by_lookup_key:
+                        prices_by_lookup_key[lookup_key] = []
+                    prices_by_lookup_key[lookup_key].append(serialized_price)
+
+            # Fetch active academies from database
+            academies_list = []
+            academies = EnterpriseAcademy.objects.filter(is_active=True).order_by('display_order', 'name')
+
+            for academy in academies:
+                # Resolve prices by product_id or lookup_key
+                academy_prices = []
+                if academy.stripe_product_id:
+                    academy_prices = prices_by_product_id.get(academy.stripe_product_id, [])
+
+                if not academy_prices and academy.stripe_price_lookup_key:
+                    academy_prices = prices_by_lookup_key.get(academy.stripe_price_lookup_key, [])
+
+                academies_list.append({
+                    'id': academy.product_key or academy.slug,
+                    'name': academy.name,
+                    'long_name': academy.long_name or academy.name,
+                    'description': academy.description,
+                    'marketing_url': academy.marketing_url,
+                    'thumbnail_url': academy.thumbnail_url,
+                    'tags': academy.tags or [],
+                    'stripe_product_id': academy.stripe_product_id,
+                    'prices': academy_prices,
+                })
+
+            return academies_list
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.exception("Error fetching academy pricing data: %s", exc)
+            return []
 
     def _get_field_constraints(self) -> Dict:
         """
@@ -234,6 +365,117 @@ class CheckoutContextHandler(CheckoutIntentAwareHandlerMixin, BaseHandler):
                 'max_length': 255,
             }
         }
+
+    def resolve_stripe_product(self, stripe_product_id: str) -> Dict | None:
+        """
+        Retrieve and validate a Stripe product by ID.
+
+        This method:
+        1. Fetches the Stripe product
+        2. Validates that metadata.name matches a known academy
+        3. Returns the product with metadata
+
+        Args:
+            stripe_product_id (str): The Stripe Product ID to resolve
+
+        Returns:
+            Dict: Product metadata including name, product_type, catalog_query_uuid, etc.
+            None: If product is invalid or metadata cannot be validated
+
+        Raises:
+            stripe.error.InvalidRequestError: If Stripe product doesn't exist
+            Exception: For other Stripe API errors
+        """
+        if not stripe_product_id:
+            return None
+
+        try:
+            # Retrieve the Stripe product
+            product = stripe.Product.retrieve(stripe_product_id)
+
+            # Extract metadata
+            metadata = product.get('metadata') or {}
+            product_name = metadata.get('name')
+            product_type = metadata.get('product_type')
+
+            all_prices = get_all_active_stripe_prices(timeout=settings.STRIPE_PRICE_DATA_CACHE_TIMEOUT)
+            resolved_prices = [
+                {
+                    'id': price.get('id'),
+                    'product': (price.get('product') or {}).get('id'),
+                    'lookup_key': price.get('lookup_key'),
+                    'recurring': price.get('recurring'),
+                    'currency': price.get('currency'),
+                    'unit_amount': price.get('unit_amount'),
+                    'unit_amount_decimal': str(price.get('unit_amount_decimal', '')),
+                }
+                for price in all_prices
+                if (price.get('product') or {}).get('id') == stripe_product_id
+            ]
+
+            # Validate that product_name corresponds to an academy
+            if product_type == 'essentials' and product_name:
+                if not getattr(settings, 'ENABLE_ESSENTIALS_CHECKOUT', False):
+                    logger.warning(
+                        "Stripe product %s is an Essentials product but ENABLE_ESSENTIALS_CHECKOUT is disabled",
+                        stripe_product_id,
+                    )
+                    return None
+
+                # Check if the academy exists
+                academy = EnterpriseAcademy.objects.filter(name__iexact=product_name).first()
+                if academy:
+                    resolved_product = {
+                        'stripe_product_id': product.get('id'),
+                        'name': product_name,
+                        'product_type': product_type,
+                        'prices': resolved_prices,
+                        'metadata': metadata,
+                    }
+                    if academy.catalog_query_uuid:
+                        catalog_query_uuid = str(academy.catalog_query_uuid)
+                        resolved_product['catalog_query_uuid'] = catalog_query_uuid
+                        resolved_product['catalog_query_id'] = catalog_query_uuid
+                        resolved_product['edx_catalog_id'] = catalog_query_uuid
+                    else:
+                        resolved_product['catalog_query_uuid'] = None
+                        logger.warning(
+                            "Stripe product %s matched academy '%s' without catalog_query_uuid configured",
+                            stripe_product_id,
+                            product_name,
+                        )
+                    return resolved_product
+                else:
+                    logger.warning(
+                        "Stripe product %s references unknown academy: %s",
+                        stripe_product_id,
+                        product_name
+                    )
+                    return None
+
+            # Handle Teams product or other product types
+            if product_type in (None, 'teams', ''):
+                return {
+                    'stripe_product_id': product.get('id'),
+                    'name': product.get('name'),
+                    'product_type': product_type,
+                    'prices': resolved_prices,
+                    'metadata': metadata,
+                }
+
+            logger.warning(
+                "Stripe product %s has unknown product_type: %s",
+                stripe_product_id,
+                product_type
+            )
+            return None
+
+        except stripe.error.InvalidRequestError as exc:
+            logger.warning("Stripe product not found: %s - %s", stripe_product_id, exc)
+            return None
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.exception("Error resolving Stripe product %s: %s", stripe_product_id, exc)
+            return None
 
 
 class CheckoutValidationHandler(BaseHandler):
@@ -313,6 +555,7 @@ class CheckoutSuccessHandler(CheckoutContextHandler):
         if self.context.checkout_intent is None:
             return
 
+        self._set_checkout_intent_academy_name()
         self.context.checkout_intent['first_billable_invoice'] = None
 
         try:
@@ -326,6 +569,19 @@ class CheckoutSuccessHandler(CheckoutContextHandler):
                 user_message="Could not load and/or process checkout success data",
                 developer_message=f"Unable to load and/or process checkout success data: {exc}",
             )
+
+    def _set_checkout_intent_academy_name(self):
+        """Attach academy_name onto checkout_intent payload when a matching academy exists."""
+        checkout_intent_data = self.context.checkout_intent
+        checkout_intent_data['academy_name'] = None
+
+        stripe_product_id = checkout_intent_data.get('stripe_product_id')
+        if not stripe_product_id:
+            return
+
+        academy = EnterpriseAcademy.objects.filter(stripe_product_id=stripe_product_id).only('name').first()
+        if academy:
+            checkout_intent_data['academy_name'] = academy.name
 
     def enhance_with_stripe_data(self):
         """
