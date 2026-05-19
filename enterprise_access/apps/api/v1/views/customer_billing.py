@@ -70,7 +70,7 @@ class AcademyProductsPagination(PageNumberPagination):
 class AcademyProductsAnonRateThrottle(AnonRateThrottle):
     """Anonymous throttle for public academy product endpoints."""
 
-    scope = 'rest_unauthenticated'
+    scope = 'ssp_unauthenticated'
 
 
 class AcademyProductsViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):

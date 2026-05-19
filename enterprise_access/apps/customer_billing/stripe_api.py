@@ -344,7 +344,7 @@ def get_academy_stripe_products() -> list:
         raise
 
 
-def get_academy_stripe_product_by_key(product_key: str) -> Optional[dict]:
+def get_academy_stripe_product_by_key(product_key: str) -> Optional[stripe.Product]:
     """
     Search for a specific academy Stripe product by the product_key metadata field.
 
@@ -354,7 +354,7 @@ def get_academy_stripe_product_by_key(product_key: str) -> Optional[dict]:
         product_key (str): The product key to search for (e.g., 'essentials_ai', 'academy_data')
 
     Returns:
-        dict: The Stripe product object if found, None otherwise
+        stripe.Product: The Stripe product object if found, None otherwise
 
     Raises:
         stripe.StripeError: If there's an error searching for products

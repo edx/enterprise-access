@@ -100,8 +100,24 @@ class CheckoutContextHandler(CheckoutIntentAwareHandlerMixin, BaseHandler):
             if stripe_product_id and self.context.user and self.context.user.is_authenticated:
                 resolved_product = self.resolve_stripe_product(stripe_product_id)
                 if resolved_product:
-                    # Update or create CheckoutIntent with stripe_product_id
-                    checkout_intent = CheckoutIntent.for_user(self.context.user)
+                    # Update the most specific matching CheckoutIntent first, then fall back to latest non-expired.
+                    requested_enterprise_slug = (
+                        request_data.get('enterpriseSlug') or
+                        request_data.get('enterprise_slug')
+                    )
+                    checkout_intent = CheckoutIntent.for_user(
+                        self.context.user,
+                        enterprise_slug=requested_enterprise_slug,
+                        stripe_product_id=stripe_product_id,
+                    )
+                    if not checkout_intent:
+                        checkout_intent = CheckoutIntent.for_user(
+                            self.context.user,
+                            enterprise_slug=requested_enterprise_slug,
+                        )
+                    if not checkout_intent:
+                        checkout_intent = CheckoutIntent.for_user(self.context.user)
+
                     if checkout_intent:
                         checkout_intent.stripe_product_id = stripe_product_id
                         checkout_intent.clean()
@@ -409,17 +425,26 @@ class CheckoutContextHandler(CheckoutIntentAwareHandlerMixin, BaseHandler):
                 # Check if the academy exists
                 academy = EnterpriseAcademy.objects.filter(name__iexact=product_name).first()
                 if academy:
-                    catalog_query_uuid = academy.catalog_query_uuid or str(academy.uuid)
-                    return {
+                    resolved_product = {
                         'stripe_product_id': product.get('id'),
                         'name': product_name,
                         'product_type': product_type,
-                        'catalog_query_uuid': str(catalog_query_uuid),
-                        'catalog_query_id': str(catalog_query_uuid),
-                        'edx_catalog_id': str(catalog_query_uuid),
                         'prices': resolved_prices,
                         'metadata': metadata,
                     }
+                    if academy.catalog_query_uuid:
+                        catalog_query_uuid = str(academy.catalog_query_uuid)
+                        resolved_product['catalog_query_uuid'] = catalog_query_uuid
+                        resolved_product['catalog_query_id'] = catalog_query_uuid
+                        resolved_product['edx_catalog_id'] = catalog_query_uuid
+                    else:
+                        resolved_product['catalog_query_uuid'] = None
+                        logger.warning(
+                            "Stripe product %s matched academy '%s' without catalog_query_uuid configured",
+                            stripe_product_id,
+                            product_name,
+                        )
+                    return resolved_product
                 else:
                     logger.warning(
                         "Stripe product %s references unknown academy: %s",
@@ -530,6 +555,7 @@ class CheckoutSuccessHandler(CheckoutContextHandler):
         if self.context.checkout_intent is None:
             return
 
+        self._set_checkout_intent_academy_name()
         self.context.checkout_intent['first_billable_invoice'] = None
 
         try:
@@ -543,6 +569,19 @@ class CheckoutSuccessHandler(CheckoutContextHandler):
                 user_message="Could not load and/or process checkout success data",
                 developer_message=f"Unable to load and/or process checkout success data: {exc}",
             )
+
+    def _set_checkout_intent_academy_name(self):
+        """Attach academy_name onto checkout_intent payload when a matching academy exists."""
+        checkout_intent_data = self.context.checkout_intent
+        checkout_intent_data['academy_name'] = None
+
+        stripe_product_id = checkout_intent_data.get('stripe_product_id')
+        if not stripe_product_id:
+            return
+
+        academy = EnterpriseAcademy.objects.filter(stripe_product_id=stripe_product_id).only('name').first()
+        if academy:
+            checkout_intent_data['academy_name'] = academy.name
 
     def enhance_with_stripe_data(self):
         """

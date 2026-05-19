@@ -122,6 +122,12 @@ class CheckoutIntentMinimalResponseSerializer(serializers.Serializer):
     enterprise_slug = serializers.CharField(
         help_text='The enterprise slug associated with this record', required=False,
     )
+    academy_name = serializers.CharField(
+        help_text='The academy name associated with this record, if available',
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+    )
     enterprise_uuid = serializers.UUIDField(
         help_text='The enterprise UUID associated with this record',
         required=False,

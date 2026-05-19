@@ -181,8 +181,7 @@ REST_FRAMEWORK = {
     'TEST_REQUEST_DEFAULT_FORMAT': 'json',
     'DEFAULT_THROTTLE_RATES': {
         'bff_unauthenticated': '100/hour',
-        'rest_unauthenticated': '100/hour',
-        'rest_authenticated': '100/hour',
+        'ssp_unauthenticated': '100/hour',
     },
 }
 

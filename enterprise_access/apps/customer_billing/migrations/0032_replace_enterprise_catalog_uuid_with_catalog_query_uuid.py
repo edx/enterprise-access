@@ -44,6 +44,28 @@ class Migration(migrations.Migration):
         ),
         migrations.AddField(
             model_name='checkoutintent',
+            name='catalog_query_uuid',
+            field=models.CharField(
+                blank=True,
+                db_index=True,
+                help_text='Catalog query UUID associated with the selected checkout intent product.',
+                max_length=64,
+                null=True,
+            ),
+        ),
+        migrations.AddField(
+            model_name='historicalcheckoutintent',
+            name='catalog_query_uuid',
+            field=models.CharField(
+                blank=True,
+                db_index=True,
+                help_text='Catalog query UUID associated with the selected checkout intent product.',
+                max_length=64,
+                null=True,
+            ),
+        ),
+        migrations.AddField(
+            model_name='checkoutintent',
             name='stripe_product_id',
             field=models.CharField(
                 blank=True,

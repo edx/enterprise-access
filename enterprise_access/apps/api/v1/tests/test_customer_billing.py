@@ -11,7 +11,7 @@ from unittest import mock
 import ddt
 import stripe
 from django.core.cache import cache
-from django.test import RequestFactory, override_settings
+from django.test import RequestFactory, SimpleTestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 from edx_django_utils.cache import TieredCache
@@ -20,6 +20,11 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.test import APIRequestFactory
 
+from enterprise_access.apps.api.serializers.customer_billing import (
+    BillingAddressUpdateRequestSerializer,
+    CheckoutIntentCreateRequestSerializer,
+    CheckoutIntentUpdateRequestSerializer
+)
 from enterprise_access.apps.api.v1.views.customer_billing import (
     AcademyProductsViewSet,
     BillingManagementViewSet,
@@ -41,6 +46,67 @@ from enterprise_access.apps.customer_billing.models import (
 from enterprise_access.apps.customer_billing.pricing_api import StripePricingError
 from enterprise_access.apps.customer_billing.tests.utils import AttrDict
 from test_utils import APITest
+
+
+class CustomerBillingSerializerUnitTests(SimpleTestCase):
+    """Minimal serializer tests for alias mapping and billing address validation."""
+
+    def test_checkout_intent_create_serializer_maps_alias_fields(self):
+        serializer = CheckoutIntentCreateRequestSerializer(data={
+            'enterprise_slug': 'test-enterprise',
+            'enterprise_name': 'Test Enterprise',
+            'quantity': 5,
+            'country': 'US',
+            'terms_metadata': {'version': '1.0'},
+            'catalog_query_id': '00000000-0000-0000-0000-000000000123',
+            'stripeProductId': 'prod_test_123',
+        })
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        self.assertEqual(serializer.validated_data['catalog_query_uuid'], '00000000-0000-0000-0000-000000000123')
+        self.assertEqual(serializer.validated_data['stripe_product_id'], 'prod_test_123')
+
+    def test_checkout_intent_update_serializer_maps_alias_fields(self):
+        serializer = CheckoutIntentUpdateRequestSerializer(
+            data={
+                'catalog_query_id': '00000000-0000-0000-0000-000000000456',
+                'stripeProductId': 'prod_test_456',
+                'terms_metadata': {'version': '2.0'},
+            },
+            partial=True,
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        self.assertEqual(serializer.validated_data['catalog_query_uuid'], '00000000-0000-0000-0000-000000000456')
+        self.assertEqual(serializer.validated_data['stripe_product_id'], 'prod_test_456')
+
+    def test_billing_address_serializer_rejects_invalid_country(self):
+        serializer = BillingAddressUpdateRequestSerializer(data={
+            'name': 'Test Name',
+            'email': 'test@example.com',
+            'country': 'U1',
+            'address_line_1': '123 Test St',
+            'city': 'Test City',
+            'state': 'TS',
+            'postal_code': '12345',
+        })
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn('country', serializer.errors)
+
+    def test_billing_address_serializer_rejects_blank_postal_code(self):
+        serializer = BillingAddressUpdateRequestSerializer(data={
+            'name': 'Test Name',
+            'email': 'test@example.com',
+            'country': 'US',
+            'address_line_1': '123 Test St',
+            'city': 'Test City',
+            'state': 'TS',
+            'postal_code': '   ',
+        })
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn('postal_code', serializer.errors)
 
 
 @override_settings(ENABLE_ESSENTIALS_CHECKOUT=True)

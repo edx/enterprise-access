@@ -130,11 +130,17 @@ class CheckoutIntentReadOnlySerializer(CountryFieldMixin, serializers.ModelSeria
     """
     workflow = serializers.UUIDField(source='workflow.uuid', read_only=True, allow_null=True)
     stripeProductId = serializers.CharField(source='stripe_product_id', read_only=True, allow_null=True)
+    catalog_query_id = serializers.CharField(source='catalog_query_uuid', read_only=True, allow_null=True)
 
     class Meta:
         model = CheckoutIntent
         fields = '__all__'
         read_only_fields = [field.name for field in CheckoutIntent._meta.get_fields()]
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data['catalog_query_id'] = data.get('catalog_query_uuid')
+        return data
 
 
 class CheckoutIntentUpdateRequestSerializer(CountryFieldMixin, serializers.ModelSerializer):
@@ -147,7 +153,7 @@ class CheckoutIntentUpdateRequestSerializer(CountryFieldMixin, serializers.Model
         fields = '__all__'
         read_only_fields = [
             field.name for field in CheckoutIntent._meta.get_fields()
-            if field.name not in ('state', 'country', 'terms_metadata', 'stripe_product_id')
+            if field.name not in ('state', 'country', 'terms_metadata', 'stripe_product_id', 'catalog_query_uuid')
         ]
 
     def validate_state(self, value):
@@ -169,6 +175,8 @@ class CheckoutIntentUpdateRequestSerializer(CountryFieldMixin, serializers.Model
         payload = data.copy()
         if 'stripeProductId' in payload and 'stripe_product_id' not in payload:
             payload['stripe_product_id'] = payload.get('stripeProductId')
+        if 'catalog_query_id' in payload and 'catalog_query_uuid' not in payload:
+            payload['catalog_query_uuid'] = payload.get('catalog_query_id')
         return super().to_internal_value(payload)
 
     def validate_country(self, value):
@@ -192,6 +200,11 @@ class CheckoutIntentUpdateRequestSerializer(CountryFieldMixin, serializers.Model
             )
         return value
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data['catalog_query_id'] = data.get('catalog_query_uuid')
+        return data
+
 
 class CheckoutIntentCreateRequestSerializer(CountryFieldMixin, serializers.ModelSerializer):
     """
@@ -208,6 +221,7 @@ class CheckoutIntentCreateRequestSerializer(CountryFieldMixin, serializers.Model
                 'quantity',
                 'country',
                 'terms_metadata',
+                'catalog_query_uuid',
                 'stripe_product_id',
             ]
         ]
@@ -220,6 +234,8 @@ class CheckoutIntentCreateRequestSerializer(CountryFieldMixin, serializers.Model
         payload = data.copy()
         if 'stripeProductId' in payload and 'stripe_product_id' not in payload:
             payload['stripe_product_id'] = payload.get('stripeProductId')
+        if 'catalog_query_id' in payload and 'catalog_query_uuid' not in payload:
+            payload['catalog_query_uuid'] = payload.get('catalog_query_id')
         return super().to_internal_value(payload)
 
     def validate_terms_metadata(self, value):
@@ -246,6 +262,11 @@ class CheckoutIntentCreateRequestSerializer(CountryFieldMixin, serializers.Model
             )
         return attrs
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data['catalog_query_id'] = data.get('catalog_query_uuid')
+        return data
+
     def create(self, validated_data):
         """
         Creates a new CheckoutIntent.
@@ -258,6 +279,8 @@ class CheckoutIntentCreateRequestSerializer(CountryFieldMixin, serializers.Model
                 name=validated_data.get('enterprise_name'),
                 country=validated_data.get('country'),
                 terms_metadata=validated_data.get('terms_metadata'),
+                catalog_query_uuid=validated_data.get('catalog_query_uuid'),
+                stripe_product_id=validated_data.get('stripe_product_id'),
             )
 
         # Catch exceptions that should return 422:

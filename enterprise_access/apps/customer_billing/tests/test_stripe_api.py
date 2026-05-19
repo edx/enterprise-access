@@ -22,6 +22,7 @@ from enterprise_access.apps.customer_billing.stripe_api import (
     get_stripe_invoice,
     get_stripe_payment_intent,
     get_stripe_payment_method,
+    get_stripe_trialing_subscription,
     stripe_cache
 )
 
@@ -217,6 +218,88 @@ class TestCreateSubscriptionCheckoutSession(StripeApiFunctionsTests):
         self.assertEqual(metadata['name'], 'Data Science')
         self.assertEqual(metadata['product_type'], 'essentials')
         mock_product_retrieve.assert_called_once_with('prod_academy_123')
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.checkout.Session.create')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Customer.search')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Product.retrieve')
+    def test_returns_to_dict_recursive_when_to_dict_missing(
+        self,
+        mock_product_retrieve,
+        mock_customer_search,
+        mock_session_create,
+    ):
+        """Use to_dict_recursive when to_dict is not available on Stripe session object."""
+        mock_product_retrieve.return_value = {'metadata': {}}
+        mock_customer_search.return_value = mock.MagicMock(data=[])
+        mock_stripe_session = mock.MagicMock(spec=['to_dict_recursive'])
+        mock_stripe_session.to_dict_recursive.return_value = {'id': 'cs_recursive'}
+        mock_session_create.return_value = mock_stripe_session
+
+        checkout_intent = mock.MagicMock(
+            id='chk_r',
+            uuid='uuid_chk_r',
+            stripe_product_id=None,
+        )
+        result = create_subscription_checkout_session(
+            self._base_input(),
+            lms_user_id=1,
+            checkout_intent=checkout_intent,
+        )
+
+        self.assertEqual(result, {'id': 'cs_recursive'})
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.checkout.Session.create')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Customer.search')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Product.retrieve')
+    def test_returns_plain_dict_session_as_is(
+        self,
+        mock_product_retrieve,
+        mock_customer_search,
+        mock_session_create,
+    ):
+        """Return plain dict sessions directly."""
+        mock_product_retrieve.return_value = {'metadata': {}}
+        mock_customer_search.return_value = mock.MagicMock(data=[])
+        mock_session_create.return_value = {'id': 'cs_plain_dict'}
+
+        checkout_intent = mock.MagicMock(
+            id='chk_d',
+            uuid='uuid_chk_d',
+            stripe_product_id=None,
+        )
+        result = create_subscription_checkout_session(
+            self._base_input(),
+            lms_user_id=1,
+            checkout_intent=checkout_intent,
+        )
+
+        self.assertEqual(result, {'id': 'cs_plain_dict'})
+
+
+class TestGetStripeTrialingSubscription(TestCase):
+    """Tests for get_stripe_trialing_subscription."""
+
+    def setUp(self):
+        TieredCache.dangerous_clear_all_tiers()
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Subscription.list')
+    def test_returns_first_subscription_when_found(self, mock_list):
+        subscription = {'id': 'sub_trial'}
+        mock_list.return_value = mock.MagicMock(data=[subscription])
+
+        result = get_stripe_trialing_subscription('cus_123')
+
+        self.assertEqual(result, subscription)
+        mock_list.assert_called_once_with(customer='cus_123', status='trialing', limit=1)
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Subscription.list')
+    def test_returns_none_when_no_matching_subscription(self, mock_list):
+        mock_list.return_value = mock.MagicMock(data=[])
+
+        result = get_stripe_trialing_subscription('cus_123', status='active')
+
+        self.assertIsNone(result)
+        mock_list.assert_called_once_with(customer='cus_123', status='active', limit=1)
 
 
 class TestStripePaymentIntent(StripeApiFunctionsTests):
@@ -580,6 +663,13 @@ class TestGetAcademyStripeProductByKey(TestCase):
         self.assertIn(STRIPE_PRODUCT_KEY_METADATA_KEY, query_arg)
         self.assertIn('essentials_data', query_arg)
 
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Product.search')
+    def test_raises_unexpected_exception(self, mock_search):
+        mock_search.side_effect = RuntimeError('Unexpected error')
+
+        with self.assertRaises(RuntimeError):
+            get_academy_stripe_product_by_key('essentials_ai')
+
 
 class TestGetAcademyStripePrices(TestCase):
     """Tests for get_academy_stripe_prices."""
@@ -659,6 +749,13 @@ class TestGetAcademyStripePrices(TestCase):
         result = get_academy_stripe_prices()
 
         self.assertEqual(len(result), 3)
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.get_academy_stripe_products')
+    def test_raises_when_products_fetch_raises_unexpected_error(self, mock_get_products):
+        mock_get_products.side_effect = RuntimeError('Unexpected failure')
+
+        with self.assertRaises(RuntimeError):
+            get_academy_stripe_prices()
 
 
 class TestGetSubscriptionProductMetadata(TestCase):

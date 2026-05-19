@@ -117,7 +117,6 @@ ALLOWED_CHECKOUT_INTENT_STATE_TRANSITIONS = {
 }
 
 # Stripe product metadata constants for filtering products by type
-# Used in Stripe Product.search() queries to efficiently fetch academy products
 STRIPE_PRODUCT_TYPE_METADATA_KEY = 'edx_product_type'
 STRIPE_PRODUCT_TYPE_ESSENTIAL_ACADEMY = 'essential_academy'
 STRIPE_PRODUCT_KEY_METADATA_KEY = 'product_key'

@@ -205,7 +205,13 @@ class CheckoutIntent(TimeStampedModel):
         constraints = [
             models.UniqueConstraint(
                 fields=['user', 'enterprise_slug', 'stripe_product_id'],
-                name='unique_checkout_intent_user_slug_stripe_product',
+                condition=models.Q(stripe_product_id__isnull=False),
+                name='unique_checkout_intent_user_slug_stripe_product_non_null',
+            ),
+            models.UniqueConstraint(
+                fields=['user', 'enterprise_slug'],
+                condition=models.Q(stripe_product_id__isnull=True),
+                name='unique_checkout_intent_user_slug_null_product',
             ),
         ]
 
@@ -320,6 +326,13 @@ class CheckoutIntent(TimeStampedModel):
         null=True,
         blank=True,
         help_text="Metadata relating to the terms and conditions accepted by the user.",
+    )
+    catalog_query_uuid = models.CharField(
+        max_length=64,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Catalog query UUID associated with the selected checkout intent product.",
     )
     stripe_product_id = models.CharField(
         max_length=255,
@@ -672,6 +685,7 @@ class CheckoutIntent(TimeStampedModel):
         name: str | None = None,
         country: str | None = None,
         terms_metadata: dict | None = None,
+        catalog_query_uuid: str | None = None,
         stripe_product_id: str | None = None,
     ) -> Self:
         """
@@ -784,6 +798,7 @@ class CheckoutIntent(TimeStampedModel):
                 existing_intent.enterprise_name = name or existing_intent.enterprise_name
                 existing_intent.country = country or existing_intent.country
                 existing_intent.terms_metadata = (existing_intent.terms_metadata or {}) | (terms_metadata or {})
+                existing_intent.catalog_query_uuid = catalog_query_uuid or existing_intent.catalog_query_uuid
                 existing_intent.stripe_product_id = stripe_product_id or existing_intent.stripe_product_id
 
                 existing_intent.save()
@@ -798,20 +813,37 @@ class CheckoutIntent(TimeStampedModel):
                 expires_at=expires_at,
                 country=country,
                 terms_metadata=terms_metadata,
+                catalog_query_uuid=catalog_query_uuid,
                 stripe_product_id=stripe_product_id,
             )
 
     @classmethod
-    def for_user(cls, user):
+    def for_user(cls, user, enterprise_slug=None, stripe_product_id=None):
         """
-        Fetch the CheckoutIntent for a user.
+        Fetch the most recent non-expired CheckoutIntent for a user.
+
+        Args:
+          user: The user to fetch intents for.
+          enterprise_slug: Optional enterprise slug to narrow the result.
+          stripe_product_id: Optional Stripe product id to narrow the result.
 
         Returns:
-          CheckoutIntent: The user's checkout intent, or None if not found
+          CheckoutIntent: The most recent matching non-expired checkout intent, or None if not found.
         """
         if not user or not user.is_authenticated:
             return None
-        return cls.objects.filter(user=user).first()
+
+        queryset = cls.objects.filter(
+            user=user,
+            state__in=cls.NON_EXPIRED_STATES,
+        ).order_by('-created')
+
+        if enterprise_slug:
+            queryset = queryset.filter(enterprise_slug=enterprise_slug)
+        if stripe_product_id is not None:
+            queryset = queryset.filter(stripe_product_id=stripe_product_id)
+
+        return queryset.first()
 
     def update_stripe_session_id(self, session_id):
         """
