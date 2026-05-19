@@ -7,7 +7,7 @@ recommendation workflow.
 import uuid
 
 from django.core.exceptions import ValidationError
-from django.db import models, transaction
+from django.db import models
 from model_utils.models import TimeStampedModel
 from simple_history.models import HistoricalRecords
 
@@ -62,6 +62,10 @@ class BaseSystemPrompt(TimeStampedModel):
                 {'output_schema': 'output_schema must be a JSON object (dict) when provided.'}
             )
 
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
 
 class XpertLearnerPathwaysSystemPrompt(BaseSystemPrompt):
     """
@@ -73,7 +77,6 @@ class XpertLearnerPathwaysSystemPrompt(BaseSystemPrompt):
     .. no_pii:
     """
     prompt_type = models.CharField(max_length=64, choices=PROMPT_TYPE_CHOICES)
-    is_active = models.BooleanField(default=False)
 
     class Meta:
         app_label = 'prompts'
@@ -82,16 +85,12 @@ class XpertLearnerPathwaysSystemPrompt(BaseSystemPrompt):
         constraints = [
             models.UniqueConstraint(
                 fields=['prompt_type'],
-                condition=models.Q(is_active=True),
-                name='unique_active_xpert_learner_pathways_prompt_type',
+                name='unique_xpert_learner_pathways_prompt_type',
             ),
         ]
 
     def __str__(self):
-        return (
-            f'XpertLearnerPathwaysSystemPrompt('
-            f'type={self.prompt_type}, active={self.is_active})'
-        )
+        return f'XpertLearnerPathwaysSystemPrompt(type={self.prompt_type})'
 
     def clean(self):
         super().clean()
@@ -102,15 +101,5 @@ class XpertLearnerPathwaysSystemPrompt(BaseSystemPrompt):
 
     @classmethod
     def get_active(cls, prompt_type):
-        """Return the currently active prompt for ``prompt_type``, or ``None``."""
-        return cls.objects.filter(prompt_type=prompt_type, is_active=True).first()
-
-    def activate(self):
-        """Atomically mark this row as the active prompt for its ``prompt_type``."""
-        with transaction.atomic():
-            self.__class__.objects.filter(
-                prompt_type=self.prompt_type,
-                is_active=True,
-            ).exclude(pk=self.pk).update(is_active=False)
-            self.is_active = True
-            self.save()
+        """Return the prompt for ``prompt_type``, or ``None`` if none exists."""
+        return cls.objects.filter(prompt_type=prompt_type).first()

@@ -7,11 +7,7 @@ from ..models import PROMPT_TYPE_LEARNER_INTENT, XpertLearnerPathwaysSystemPromp
 
 
 class XpertLearnerPathwaysSystemPromptFactory(factory.django.DjangoModelFactory):
-    """Factory for ``XpertLearnerPathwaysSystemPrompt``.
-
-    Use the ``active`` trait to flip ``is_active=True`` on the created row:
-    ``XpertLearnerPathwaysSystemPromptFactory(active=True)``.
-    """
+    """Factory for ``XpertLearnerPathwaysSystemPrompt``."""
 
     class Meta:
         model = XpertLearnerPathwaysSystemPrompt
@@ -20,7 +16,3 @@ class XpertLearnerPathwaysSystemPromptFactory(factory.django.DjangoModelFactory)
     prompt_type = PROMPT_TYPE_LEARNER_INTENT
     system_prompt = 'You are a helpful assistant.'
     output_schema = None
-    is_active = False
-
-    class Params:
-        active = factory.Trait(is_active=True)
