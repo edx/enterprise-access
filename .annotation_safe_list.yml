@@ -71,3 +71,5 @@ customer_billing.HistoricalSelfServiceSubscriptionRenewal:
   ".. no_pii:": "This model has no PII"
 customer_billing.HistoricalEnterpriseAcademy:
   ".. no_pii:": "This model has no PII"
+prompts.HistoricalXpertLearnerPathwaysSystemPrompt:
+  ".. no_pii:": "This model has no PII"
