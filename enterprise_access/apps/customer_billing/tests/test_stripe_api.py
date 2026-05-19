@@ -810,3 +810,235 @@ class TestGetSubscriptionProductMetadata(TestCase):
         self.assertNotIn('name', result)
         self.assertNotIn('product_type', result)
         self.assertEqual(result, {})
+
+
+class TestCreateSubscriptionCheckoutSessionReturnPaths(TestCase):
+    """Tests for different return paths in create_subscription_checkout_session."""
+
+    def _base_input(self, admin_email='admin@example.com'):
+        return {
+            'admin_email': admin_email,
+            'company_name': 'Acme Co',
+            'enterprise_slug': 'acme',
+            'stripe_price_id': 'price_123',
+            'quantity': 3,
+        }
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.checkout.Session.create')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Customer.search')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Product.retrieve')
+    def test_returns_to_dict_when_available(self, mock_product_retrieve, mock_customer_search, mock_session_create):
+        """Test return path when session has to_dict method (line 124)."""
+        mock_product_retrieve.return_value = {'metadata': {}}
+        mock_customer_search.return_value = mock.MagicMock(data=[])
+
+        mock_session = mock.MagicMock()
+        mock_session.to_dict.return_value = {'id': 'cs_test_1', 'object': 'checkout.session'}
+        mock_session_create.return_value = mock_session
+
+        input_data = self._base_input()
+        checkout_intent = mock.MagicMock()
+        checkout_intent.id = 'chk_1'
+        checkout_intent.uuid = 'uuid_chk_1'
+
+        result = create_subscription_checkout_session(input_data, 123, checkout_intent)
+
+        self.assertEqual(result['id'], 'cs_test_1')
+        mock_session.to_dict.assert_called_once()
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.checkout.Session.create')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Customer.search')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Product.retrieve')
+    def test_returns_to_dict_recursive_when_to_dict_missing(
+            self, mock_product_retrieve, mock_customer_search, mock_session_create):
+        """Test return path when session uses to_dict_recursive."""
+        mock_product_retrieve.return_value = {'metadata': {}}
+        mock_customer_search.return_value = mock.MagicMock(data=[])
+
+        mock_session = mock.MagicMock(spec=['to_dict_recursive'])
+        mock_session.to_dict_recursive.return_value = {'id': 'cs_test_2', 'object': 'checkout.session'}
+        mock_session_create.return_value = mock_session
+
+        input_data = self._base_input()
+        checkout_intent = mock.MagicMock()
+        checkout_intent.id = 'chk_2'
+        checkout_intent.uuid = 'uuid_chk_2'
+
+        result = create_subscription_checkout_session(input_data, 124, checkout_intent)
+
+        self.assertEqual(result['id'], 'cs_test_2')
+        mock_session.to_dict_recursive.assert_called_once()
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.checkout.Session.create')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Customer.search')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Product.retrieve')
+    def test_returns_dict_when_already_dict(self, mock_product_retrieve, mock_customer_search, mock_session_create):
+        """Test return path when session is already a dict (line 128)."""
+        mock_product_retrieve.return_value = {'metadata': {}}
+        mock_customer_search.return_value = mock.MagicMock(data=[])
+
+        expected_dict = {'id': 'cs_test_3', 'object': 'checkout.session'}
+        mock_session_create.return_value = expected_dict
+
+        input_data = self._base_input()
+        checkout_intent = mock.MagicMock()
+        checkout_intent.id = 'chk_3'
+        checkout_intent.uuid = 'uuid_chk_3'
+
+        result = create_subscription_checkout_session(input_data, 125, checkout_intent)
+
+        self.assertEqual(result, expected_dict)
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.checkout.Session.create')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Customer.search')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Product.retrieve')
+    def test_returns_dict_fallback_when_no_methods(
+            self, mock_product_retrieve, mock_customer_search, mock_session_create):
+        """Test fallback return path dict(session) when object has no methods."""
+        mock_product_retrieve.return_value = {'metadata': {}}
+        mock_customer_search.return_value = mock.MagicMock(data=[])
+
+        # Create an object that looks like a stripe response but has no to_dict methods
+        class StripeSessionLike:
+            """Minimal mapping-like object to exercise dict(session) fallback."""
+
+            def __init__(self):
+                self.id = 'cs_test_4'
+                self.object = 'checkout.session'
+
+            def keys(self):
+                return ['id', 'object']
+
+            def __getitem__(self, key):
+                return getattr(self, key)
+
+            def __iter__(self):
+                return iter(['id', 'object'])
+
+        mock_session = StripeSessionLike()
+        mock_session_create.return_value = mock_session
+
+        input_data = self._base_input()
+        checkout_intent = mock.MagicMock()
+        checkout_intent.id = 'chk_4'
+        checkout_intent.uuid = 'uuid_chk_4'
+
+        result = create_subscription_checkout_session(input_data, 126, checkout_intent)
+
+        self.assertIsInstance(result, dict)
+        self.assertEqual(result.get('id'), 'cs_test_4')
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.checkout.Session.create')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Customer.search')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Product.retrieve')
+    def test_sets_customer_with_existing_stripe_customer(
+            self, mock_product_retrieve, mock_customer_search, mock_session_create):
+        """Test that customer ID set when existing Stripe customer found."""
+        mock_product_retrieve.return_value = {'metadata': {}}
+        mock_existing_customer = {'id': 'cus_existing_123'}
+        mock_customer_search.return_value = mock.MagicMock(data=[mock_existing_customer])
+
+        mock_session = mock.MagicMock()
+        mock_session.to_dict.return_value = {'id': 'cs_with_customer'}
+        mock_session_create.return_value = mock_session
+
+        input_data = self._base_input()
+        checkout_intent = mock.MagicMock()
+        checkout_intent.id = 'chk_5'
+        checkout_intent.uuid = 'uuid_chk_5'
+
+        create_subscription_checkout_session(input_data, 127, checkout_intent)
+
+        # Verify that session.create was called with customer ID
+        call_kwargs = mock_session_create.call_args[1]
+        self.assertEqual(call_kwargs['customer'], 'cus_existing_123')
+        self.assertNotIn('customer_email', call_kwargs)
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.checkout.Session.create')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Customer.search')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Product.retrieve')
+    def test_includes_metadata_with_product_info(
+            self, mock_product_retrieve, mock_customer_search, mock_session_create):
+        """Test product metadata is included in subscription metadata."""
+        mock_product_retrieve.return_value = {
+            'metadata': {
+                'name': 'Premium Academy',
+                'product_type': 'essential_academy',
+                'other_field': 'ignored'
+            }
+        }
+        mock_customer_search.return_value = mock.MagicMock(data=[])
+
+        mock_session = mock.MagicMock()
+        mock_session.to_dict.return_value = {'id': 'cs_with_metadata'}
+        mock_session_create.return_value = mock_session
+
+        input_data = self._base_input()
+        checkout_intent = mock.MagicMock()
+        checkout_intent.stripe_product_id = 'prod_premium'
+        checkout_intent.id = 'chk_6'
+        checkout_intent.uuid = 'uuid_chk_6'
+
+        create_subscription_checkout_session(input_data, 128, checkout_intent)
+
+        call_kwargs = mock_session_create.call_args[1]
+        subscription_metadata = call_kwargs['subscription_data']['metadata']
+        self.assertEqual(subscription_metadata['name'], 'Premium Academy')
+        self.assertEqual(subscription_metadata['product_type'], 'essential_academy')
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.checkout.Session.create')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Customer.search')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Product.retrieve')
+    def test_includes_checkout_intent_in_metadata(
+            self, mock_product_retrieve, mock_customer_search, mock_session_create):
+        """Test that checkout_intent_id/uuid in metadata."""
+        mock_product_retrieve.return_value = {'metadata': {}}
+        mock_customer_search.return_value = mock.MagicMock(data=[])
+
+        mock_session = mock.MagicMock()
+        mock_session.to_dict.return_value = {'id': 'cs_intent_ref'}
+        mock_session_create.return_value = mock_session
+
+        input_data = self._base_input()
+        checkout_intent = mock.MagicMock()
+        checkout_intent.id = 'chk_intent_123'
+        checkout_intent.uuid = 'uuid-intent-456'
+
+        create_subscription_checkout_session(input_data, 129, checkout_intent)
+
+        call_kwargs = mock_session_create.call_args[1]
+        subscription_metadata = call_kwargs['subscription_data']['metadata']
+        self.assertEqual(subscription_metadata['checkout_intent_id'], 'chk_intent_123')
+        self.assertEqual(subscription_metadata['checkout_intent_uuid'], 'uuid-intent-456')
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Product.retrieve')
+    def test_metadata_only_name_when_product_type_missing(self, mock_retrieve):
+        """Test that only name is included when product_type is missing."""
+        mock_retrieve.return_value = {'metadata': {'name': 'Just Name'}}
+        intent = mock.MagicMock(stripe_product_id='prod_partial', uuid='uuid_partial')
+
+        result = _get_subscription_product_metadata(intent)
+
+        self.assertEqual(result, {'name': 'Just Name'})
+        self.assertNotIn('product_type', result)
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Product.retrieve')
+    def test_metadata_only_product_type_when_name_missing(self, mock_retrieve):
+        """Test that only product_type is included when name is missing."""
+        mock_retrieve.return_value = {'metadata': {'product_type': 'academy'}}
+        intent = mock.MagicMock(stripe_product_id='prod_type_only', uuid='uuid_type')
+
+        result = _get_subscription_product_metadata(intent)
+
+        self.assertEqual(result, {'product_type': 'academy'})
+        self.assertNotIn('name', result)
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Product.retrieve')
+    def test_metadata_none_metadata_object(self, mock_retrieve):
+        """Test handling when metadata is None."""
+        mock_retrieve.return_value = {'metadata': None}
+        intent = mock.MagicMock(stripe_product_id='prod_none', uuid='uuid_none')
+
+        result = _get_subscription_product_metadata(intent)
+
+        self.assertEqual(result, {})

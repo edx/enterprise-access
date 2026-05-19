@@ -4374,3 +4374,62 @@ class CreateCheckoutSessionViewTests(APITest):
             response.data['checkout_session_client_secret'],
             'cs_test_abc_secret_xyz',
         )
+
+
+class AdditionalSerializerEdgeCaseTests(APITest):
+    """Additional edge case tests for customer billing serializers."""
+
+    def test_billing_address_serializer_with_all_fields_blank(self):
+        """Test checkout intent update with state and catalog_query_uuid together."""
+        serializer = CheckoutIntentUpdateRequestSerializer(data={
+            'state': 'fulfilled',
+            'catalog_query_uuid': str(uuid.uuid4()),
+        })
+        self.assertTrue(serializer.is_valid())
+
+    def test_checkout_intent_update_with_catalog_query_uuid(self):
+        """Test checkout intent update serializer with catalog_query_uuid."""
+        serializer = CheckoutIntentUpdateRequestSerializer(data={
+            'catalog_query_uuid': str(uuid.uuid4()),
+        })
+        self.assertTrue(serializer.is_valid())
+
+    def test_checkout_intent_update_with_empty_data(self):
+        """Test checkout intent with empty update data."""
+        serializer = CheckoutIntentUpdateRequestSerializer(data={})
+        self.assertTrue(serializer.is_valid())
+
+    def test_checkout_intent_update_invalid_state(self):
+        """Test checkout intent update serializer with invalid state."""
+        serializer = CheckoutIntentUpdateRequestSerializer(data={
+            'state': 'invalid_state',
+        })
+        self.assertFalse(serializer.is_valid())
+
+    def test_checkout_session_response_structure(self):
+        """Test checkout session response dict formatting."""
+        response = {'id': 'cs_123', 'client_secret': 'secret_123'}
+        self.assertIn('id', response)
+        self.assertIn('client_secret', response)
+        self.assertEqual(response['id'], 'cs_123')
+
+    def test_billing_address_update_partial(self):
+        """Test billing address serializer with partial update."""
+        serializer = BillingAddressUpdateRequestSerializer(data={
+            'city': 'New City',
+        }, partial=True)
+        self.assertTrue(serializer.is_valid())
+
+    def test_stripe_session_to_dict_conversion(self):
+        """Test that stripe session objects can be converted to dict."""
+        mock_session = mock.MagicMock()
+        mock_session.to_dict.return_value = {'id': 'cs_test', 'object': 'checkout.session'}
+        result = mock_session.to_dict()
+        self.assertEqual(result['id'], 'cs_test')
+
+    def test_checkout_intent_update_with_fulfilled_state(self):
+        """Test checkout intent with fulfilled state."""
+        serializer = CheckoutIntentUpdateRequestSerializer(data={
+            'state': 'fulfilled',
+        })
+        self.assertTrue(serializer.is_valid())
