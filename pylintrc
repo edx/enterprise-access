@@ -291,7 +291,6 @@ disable =
 	django-not-configured,
 	consider-using-with,
 	useless-option-value,
-	useless-suppression,
 	superfluous-parens,
 	too-many-positional-arguments,
 
@@ -390,4 +389,4 @@ int-import-graph =
 [EXCEPTIONS]
 overgeneral-exceptions = builtins.Exception
 
-# 7ccef48f1829a316030a880d068888632aed6db5
+# 84ee7c7cffc9eaa7b2d36805c0724ce62e929185
