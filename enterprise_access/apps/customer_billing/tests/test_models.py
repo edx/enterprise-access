@@ -13,6 +13,7 @@ import ddt
 import stripe
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import AbstractUser
+from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.test import TestCase, TransactionTestCase, override_settings
 from django.utils import timezone
@@ -1055,6 +1056,295 @@ class TestCheckoutIntentModel(TestCase):
                     quantity=10,
                     expires_at=timezone.now() + timedelta(hours=2),
                 )
+
+    def test_clean_validation_duplicate_teams_intent(self):
+        """Test that clean() raises ValidationError when creating duplicate Teams intent."""
+        user = UserFactory()
+        enterprise_slug = "test-enterprise"
+
+        # Create first Teams intent (stripe_product_id=None)
+        existing_intent = CheckoutIntent.objects.create(
+            user=user,
+            enterprise_name="First Teams Intent",
+            enterprise_slug=enterprise_slug,
+            stripe_product_id=None,
+            quantity=5,
+            expires_at=timezone.now() + timedelta(hours=1),
+            state=CheckoutIntentState.CREATED,
+        )
+
+        # Try to create a second Teams intent with same user and slug
+        duplicate_intent = CheckoutIntent(
+            user=user,
+            enterprise_name="Second Teams Intent",
+            enterprise_slug=enterprise_slug,
+            stripe_product_id=None,
+            quantity=10,
+            expires_at=timezone.now() + timedelta(hours=1),
+            state=CheckoutIntentState.CREATED,
+        )
+
+        # clean() should raise ValidationError
+        with self.assertRaises(ValidationError) as context:
+            duplicate_intent.clean()
+
+        # Verify error message contains expected info
+        error_dict = context.exception.message_dict
+        self.assertIn('user', error_dict)
+        self.assertIn('Teams', error_dict['user'][0])
+        self.assertIn(user.email, error_dict['user'][0])
+        self.assertIn(enterprise_slug, error_dict['user'][0])
+
+    def test_clean_validation_duplicate_academy_intent(self):
+        """Test that clean() raises ValidationError when creating duplicate Academy intent."""
+        user = UserFactory()
+        enterprise_slug = "academy-enterprise"
+        stripe_product_id = "prod_academy_ai"
+
+        # Create first Academy intent
+        existing_intent = CheckoutIntent.objects.create(
+            user=user,
+            enterprise_name="First Academy Intent",
+            enterprise_slug=enterprise_slug,
+            stripe_product_id=stripe_product_id,
+            quantity=5,
+            expires_at=timezone.now() + timedelta(hours=1),
+            state=CheckoutIntentState.CREATED,
+        )
+
+        # Try to create a second Academy intent with same user, slug, and product_id
+        duplicate_intent = CheckoutIntent(
+            user=user,
+            enterprise_name="Second Academy Intent",
+            enterprise_slug=enterprise_slug,
+            stripe_product_id=stripe_product_id,
+            quantity=10,
+            expires_at=timezone.now() + timedelta(hours=1),
+            state=CheckoutIntentState.CREATED,
+        )
+
+        # clean() should raise ValidationError
+        with self.assertRaises(ValidationError) as context:
+            duplicate_intent.clean()
+
+        # Verify error message contains expected info
+        error_dict = context.exception.message_dict
+        self.assertIn('user', error_dict)
+        self.assertIn('Academy', error_dict['user'][0])
+        self.assertIn(user.email, error_dict['user'][0])
+        self.assertIn(enterprise_slug, error_dict['user'][0])
+
+    def test_clean_validation_name_conflict(self):
+        """Test that clean() raises ValidationError when enterprise name is already reserved."""
+        user1 = UserFactory()
+        user2 = UserFactory()
+        enterprise_name = "Conflict Name Enterprise"
+
+        # User 1 creates an intent with a specific name
+        existing_intent = CheckoutIntent.objects.create(
+            user=user1,
+            enterprise_name=enterprise_name,
+            enterprise_slug="user1-slug",
+            quantity=5,
+            expires_at=timezone.now() + timedelta(hours=1),
+            state=CheckoutIntentState.CREATED,
+        )
+
+        # User 2 tries to create an intent with the same name but different slug
+        conflicting_intent = CheckoutIntent(
+            user=user2,
+            enterprise_name=enterprise_name,
+            enterprise_slug="user2-slug",
+            quantity=10,
+            expires_at=timezone.now() + timedelta(hours=1),
+            state=CheckoutIntentState.CREATED,
+        )
+
+        # clean() should raise ValidationError about name conflict
+        with self.assertRaises(ValidationError) as context:
+            conflicting_intent.clean()
+
+        # Verify error message
+        error_dict = context.exception.message_dict
+        self.assertIn('enterprise_name', error_dict)
+        self.assertIn('already reserved', error_dict['enterprise_name'][0])
+        self.assertIn(user1.email, error_dict['enterprise_name'][0])
+
+    def test_clean_validation_slug_conflict(self):
+        """Test that clean() raises ValidationError when enterprise slug is already reserved."""
+        user1 = UserFactory()
+        user2 = UserFactory()
+        enterprise_slug = "conflict-slug"
+
+        # User 1 creates an intent with a specific slug
+        existing_intent = CheckoutIntent.objects.create(
+            user=user1,
+            enterprise_name="User 1 Enterprise",
+            enterprise_slug=enterprise_slug,
+            quantity=5,
+            expires_at=timezone.now() + timedelta(hours=1),
+            state=CheckoutIntentState.CREATED,
+        )
+
+        # User 2 tries to create an intent with the same slug but different name
+        conflicting_intent = CheckoutIntent(
+            user=user2,
+            enterprise_name="User 2 Enterprise",
+            enterprise_slug=enterprise_slug,
+            quantity=10,
+            expires_at=timezone.now() + timedelta(hours=1),
+            state=CheckoutIntentState.CREATED,
+        )
+
+        # clean() should raise ValidationError about slug conflict
+        with self.assertRaises(ValidationError) as context:
+            conflicting_intent.clean()
+
+        # Verify error message
+        error_dict = context.exception.message_dict
+        self.assertIn('enterprise_slug', error_dict)
+        self.assertIn('already reserved', error_dict['enterprise_slug'][0])
+        self.assertIn(user1.email, error_dict['enterprise_slug'][0])
+
+    def test_clean_validation_passes_for_different_product_same_slug(self):
+        """Test that clean() allows same user to have intents with different products for same slug."""
+        user = UserFactory()
+        enterprise_slug = "multi-product-slug"
+
+        # Create Teams intent
+        teams_intent = CheckoutIntent.objects.create(
+            user=user,
+            enterprise_name="Teams Enterprise",
+            enterprise_slug=enterprise_slug,
+            stripe_product_id=None,
+            quantity=5,
+            expires_at=timezone.now() + timedelta(hours=1),
+            state=CheckoutIntentState.CREATED,
+        )
+
+        # Create Academy intent with same slug - should be allowed
+        academy_intent = CheckoutIntent(
+            user=user,
+            enterprise_name="Academy Enterprise",
+            enterprise_slug=enterprise_slug,
+            stripe_product_id="prod_academy_ai",
+            quantity=10,
+            expires_at=timezone.now() + timedelta(hours=1),
+            state=CheckoutIntentState.CREATED,
+        )
+
+        # clean() should not raise ValidationError for duplicate user check
+        # (but may still raise for name/slug conflicts)
+        try:
+            academy_intent.clean()
+        except Exception as e:
+            # If it raises, it should be about name/slug conflict, not duplicate user intent
+            if isinstance(e, ValidationError):
+                error_dict = e.message_dict
+                # Should NOT have 'user' key since different products are allowed
+                self.assertNotIn('user', error_dict)
+
+    def test_clean_validation_ignores_expired_intents(self):
+        """Test that clean() validation ignores intents in expired states."""
+        user1 = UserFactory()
+        user2 = UserFactory()
+        enterprise_name = "Expired Name"
+        enterprise_slug = "expired-slug"
+
+        # User 1 creates an intent that is expired
+        expired_intent = CheckoutIntent.objects.create(
+            user=user1,
+            enterprise_name=enterprise_name,
+            enterprise_slug=enterprise_slug,
+            quantity=5,
+            expires_at=timezone.now() - timedelta(hours=1),
+            state=CheckoutIntentState.EXPIRED,  # Expired state
+        )
+
+        # User 2 should be able to create an intent with same name/slug
+        new_intent = CheckoutIntent(
+            user=user2,
+            enterprise_name=enterprise_name,
+            enterprise_slug=enterprise_slug,
+            quantity=10,
+            expires_at=timezone.now() + timedelta(hours=1),
+            state=CheckoutIntentState.CREATED,
+        )
+
+        # clean() should not raise ValidationError
+        new_intent.clean()  # Should pass without exception
+
+    def test_clean_validation_allows_update_existing_intent(self):
+        """Test that clean() allows updating an existing intent without raising conflicts."""
+        user = UserFactory()
+
+        # Create an intent
+        intent = CheckoutIntent.objects.create(
+            user=user,
+            enterprise_name="Original Name",
+            enterprise_slug="original-slug",
+            quantity=5,
+            expires_at=timezone.now() + timedelta(hours=1),
+            state=CheckoutIntentState.CREATED,
+        )
+
+        # Modify the intent and call clean() - should not raise ValidationError
+        intent.quantity = 10
+        intent.clean()  # Should pass without exception
+
+        # Save and verify
+        intent.save()
+        intent.refresh_from_db()
+        self.assertEqual(intent.quantity, 10)
+
+    def test_clean_validation_update_does_not_conflict_with_self(self):
+        """Test that clean() on update excludes the current record from conflict checks."""
+        user1 = UserFactory()
+        user2 = UserFactory()
+
+        # User 1 creates an intent
+        intent1 = CheckoutIntent.objects.create(
+            user=user1,
+            enterprise_name="Enterprise One",
+            enterprise_slug="enterprise-one",
+            quantity=5,
+            expires_at=timezone.now() + timedelta(hours=1),
+            state=CheckoutIntentState.CREATED,
+        )
+
+        # User 2 creates an intent
+        intent2 = CheckoutIntent.objects.create(
+            user=user2,
+            enterprise_name="Enterprise Two",
+            enterprise_slug="enterprise-two",
+            quantity=10,
+            expires_at=timezone.now() + timedelta(hours=1),
+            state=CheckoutIntentState.CREATED,
+        )
+
+        # Update intent1's quantity (not slug/name) - should work fine
+        intent1.quantity = 15
+        intent1.clean()  # Should pass
+        intent1.save()
+
+        # Try to update intent2 to use intent1's name - should fail
+        intent2.enterprise_name = "Enterprise One"
+        with self.assertRaises(ValidationError) as context:
+            intent2.clean()
+
+        error_dict = context.exception.message_dict
+        self.assertIn('enterprise_name', error_dict)
+
+        # Reset intent2
+        intent2.refresh_from_db()
+
+        # Try to update intent2 to use intent1's slug - should fail
+        intent2.enterprise_slug = "enterprise-one"
+        with self.assertRaises(ValidationError) as context:
+            intent2.clean()
+
+        error_dict = context.exception.message_dict
+        self.assertIn('enterprise_slug', error_dict)
 
 
 class TestStripeEventSummary(TestCase):
