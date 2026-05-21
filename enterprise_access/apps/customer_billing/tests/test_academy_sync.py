@@ -157,6 +157,15 @@ class TestAcademySyncHelpers(TestCase):
     def test_to_slug_uses_fallback_when_slugify_empty(self):
         self.assertEqual(_to_slug('***', 'academy', 123), 'academy-123')
 
+    def test_to_slug_returns_item_slug_when_prefix_is_not_slugifiable(self):
+        self.assertEqual(_to_slug('***', '***', 'My Item'), 'my-item')
+
+    def test_to_slug_returns_prefix_when_item_is_not_slugifiable(self):
+        self.assertEqual(_to_slug('***', 'academy', '***'), 'academy')
+
+    def test_to_slug_returns_item_literal_when_no_slug_parts_available(self):
+        self.assertEqual(_to_slug('***', '***', '***'), 'item')
+
     def test_to_lookup_token_and_default_lookup_key(self):
         self.assertEqual(_to_lookup_token('AI & Data / Intro'), 'ai_and_data_intro')
         self.assertEqual(
@@ -191,6 +200,13 @@ class TestAcademySyncHelpers(TestCase):
         payload = fetch_enterprise_catalog_academies(academy_uuid='abc')
         self.assertEqual(payload, [{'name': 'A'}])
         mock_client_cls.return_value.get_academies.assert_called_once_with(academy_uuid='abc')
+
+    @mock.patch('enterprise_access.apps.customer_billing.academy_sync.EnterpriseCatalogApiClient')
+    def test_fetch_enterprise_catalog_academies_raises_when_client_lacks_method(self, mock_client_cls):
+        mock_client_cls.return_value = object()
+
+        with self.assertRaises(AttributeError):
+            fetch_enterprise_catalog_academies(academy_uuid='abc')
 
 
 class TestSyncEnterpriseAcademies(TestCase):
