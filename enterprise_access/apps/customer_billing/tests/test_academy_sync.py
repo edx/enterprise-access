@@ -424,3 +424,134 @@ class TestSyncEnterpriseAcademies(TestCase):
         result = sync_enterprise_academies_from_enterprise_catalog(deactivate_missing=True)
 
         self.assertEqual(result.deactivated, 0)
+
+    @mock.patch('enterprise_access.apps.customer_billing.academy_sync.fetch_enterprise_catalog_academies')
+    @mock.patch(
+        'enterprise_access.apps.customer_billing.academy_sync._get_enterprise_academy_model',
+        return_value=FakeEnterpriseAcademyModel,
+    )
+    def test_sync_preserves_existing_catalog_query_uuid_when_payload_omits_it(self, _mock_model, mock_fetch):
+        """Verify that existing catalog_query_uuid is preserved when update payload doesn't include one."""
+        original_uuid = '00000000-0000-0000-0000-000000000999'
+        academy = FakeEnterpriseAcademyModel.objects.create(
+            name='Preserve UUID Academy',
+            slug='preserve-uuid-academy',
+            product_key='preserve-uuid-academy',
+            stripe_price_lookup_key='preserve_uuid_lookup',
+            catalog_query_uuid=original_uuid,
+            is_active=True,
+        )
+
+        mock_fetch.return_value = [
+            {
+                'name': 'Preserve UUID Academy',
+                'slug': 'new-slug',  # Change to trigger update
+                'product_key': 'preserve-uuid-academy',
+                'stripe_price_lookup_key': 'preserve_uuid_lookup',
+                'is_active': True,
+            }
+        ]
+
+        result = sync_enterprise_academies_from_enterprise_catalog()
+
+        self.assertEqual(result.updated, 1)
+        self.assertEqual(academy.catalog_query_uuid, original_uuid)
+
+    @mock.patch('enterprise_access.apps.customer_billing.academy_sync.fetch_enterprise_catalog_academies')
+    @mock.patch(
+        'enterprise_access.apps.customer_billing.academy_sync._get_enterprise_academy_model',
+        return_value=FakeEnterpriseAcademyModel,
+    )
+    def test_sync_deactivate_missing_with_dry_run_does_not_persist(self, _mock_model, mock_fetch):
+        """Verify deactivate_missing with dry_run=True counts but doesn't update."""
+        active_academy = FakeEnterpriseAcademyModel.objects.create(
+            name='Stay Active',
+            slug='stay-active',
+            product_key='stay-active',
+            stripe_price_lookup_key='stay_active_lookup',
+            is_active=True,
+        )
+        stale_academy = FakeEnterpriseAcademyModel.objects.create(
+            name='Stale Academy',
+            slug='stale-academy',
+            product_key='stale-academy',
+            stripe_price_lookup_key='stale_lookup',
+            is_active=True,
+        )
+
+        mock_fetch.return_value = [
+            {
+                'name': 'Stay Active',
+                'slug': 'stay-active',
+                'product_key': 'stay-active',
+                'stripe_price_lookup_key': 'stay_active_lookup',
+            }
+        ]
+
+        result = sync_enterprise_academies_from_enterprise_catalog(deactivate_missing=True, dry_run=True)
+
+        self.assertEqual(result.deactivated, 1)
+        self.assertTrue(stale_academy.is_active)  # Still active because dry_run=True
+
+    @mock.patch('enterprise_access.apps.customer_billing.academy_sync.fetch_enterprise_catalog_academies')
+    @mock.patch(
+        'enterprise_access.apps.customer_billing.academy_sync._get_enterprise_academy_model',
+        return_value=FakeEnterpriseAcademyModel,
+    )
+    def test_sync_counts_errors_when_save_raises(self, _mock_model, mock_fetch):
+        """Verify exception during save() is caught and counted."""
+        existing_academy = FakeEnterpriseAcademyModel.objects.create(
+            name='Broken Update',
+            slug='broken-update',
+            product_key='broken-update',
+            stripe_price_lookup_key='broken_lookup',
+        )
+
+        mock_fetch.return_value = [
+            {
+                'name': 'Broken Update',
+                'slug': 'new-slug',  # Change to trigger update path
+                'product_key': 'broken-update',
+                'stripe_price_lookup_key': 'broken_lookup',
+            }
+        ]
+
+        with mock.patch.object(existing_academy, 'save', side_effect=RuntimeError('save failed')):
+            result = sync_enterprise_academies_from_enterprise_catalog()
+
+        self.assertEqual(result.errors, 1)
+
+    def test_first_non_empty_with_dict_rendered_empty_string(self):
+        """Verify _first_non_empty skips dict with empty rendered field."""
+        value = _first_non_empty(None, {'rendered': ''}, 'fallback')
+        self.assertEqual(value, 'fallback')
+
+    def test_first_non_empty_with_multiple_non_string_values(self):
+        """Verify _first_non_empty converts multiple types in order, including 0."""
+        value = _first_non_empty(None, {}, '', 'result')
+        self.assertEqual(value, 'result')
+        
+        # 0 is converted to string '0', which is non-empty
+        value2 = _first_non_empty(None, {}, 0)
+        self.assertEqual(value2, '0')
+
+    def test_to_slug_all_fallback_paths(self):
+        """Verify _to_slug three-part fallback logic exhaustively."""
+        # All parts empty -> 'item'
+        self.assertEqual(_to_slug('***', '***', '***'), 'item')
+        # Prefix + ID but main empty
+        self.assertEqual(_to_slug('***', 'pre', 'id'), 'pre-id')
+        # Only ID works
+        self.assertEqual(_to_slug('***', '***', 'item-id'), 'item-id')
+        # Only prefix works
+        self.assertEqual(_to_slug('***', 'prefix', '***'), 'prefix')
+
+    def test_extract_payload_list_unknown_dict_key(self):
+        """Verify _extract_payload_list returns empty for unknown dict keys."""
+        result = _extract_payload_list({'unknown_key': [1, 2, 3]})
+        self.assertEqual(result, [])
+
+    def test_extract_catalog_query_uuid_bool_and_invalid_string(self):
+        """Verify _extract_catalog_query_uuid skips bool and invalid UUID strings."""
+        result = _extract_catalog_query_uuid(True, False, 'not-a-uuid', 'also-not-valid')
+        self.assertIsNone(result)
