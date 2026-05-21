@@ -259,6 +259,15 @@ class TestAcademySyncHelpers(TestCase):
         self.assertIs(resolved, model)
         mock_get_model.assert_called_once_with('customer_billing', 'EnterpriseAcademy')
 
+    @mock.patch('enterprise_access.apps.customer_billing.academy_sync.apps.get_model')
+    def test_get_enterprise_academy_model_raises_runtime_error_on_lookup_error(self, mock_get_model):
+        mock_get_model.side_effect = LookupError('not found')
+
+        with self.assertRaises(RuntimeError) as ctx:
+            _get_enterprise_academy_model()
+
+        self.assertIn('EnterpriseAcademy', str(ctx.exception))
+
     @mock.patch('enterprise_access.apps.customer_billing.academy_sync.EnterpriseCatalogApiClient')
     def test_fetch_enterprise_catalog_academies(self, mock_client_cls):
         mock_client_cls.return_value.get_academies.return_value = {'results': [{'name': 'A'}]}
@@ -567,6 +576,38 @@ class TestSyncEnterpriseAcademies(TestCase):
         """Verify _first_non_empty converts multiple types in order, including 0."""
         value = _first_non_empty(None, {}, '', 'result')
         self.assertEqual(value, 'result')
+
+    @mock.patch('enterprise_access.apps.customer_billing.academy_sync.fetch_enterprise_catalog_academies')
+    @mock.patch(
+        'enterprise_access.apps.customer_billing.academy_sync._get_enterprise_academy_model',
+        return_value=FakeEnterpriseAcademyModel,
+    )
+    def test_deactivate_missing_uses_db_name_casing_to_avoid_false_deactivation(
+        self, _mock_model, mock_fetch
+    ):
+        """Payload name 'data academy' (lowercase) must not cause 'Data Academy' row to be deactivated."""
+        FakeEnterpriseAcademyModel.objects.create(
+            name='Data Academy',  # DB canonical casing
+            slug='data-academy',
+            product_key='data-academy',
+            stripe_price_lookup_key='data_lookup',
+            is_active=True,
+        )
+        # Payload uses a different casing; iexact match should find and update the row,
+        # and the DB canonical name should be added to seen_names so it is not deactivated.
+        mock_fetch.return_value = [
+            {
+                'name': 'data academy',
+                'slug': 'data-academy',
+                'product_key': 'data-academy',
+                'stripe_price_lookup_key': 'data_lookup_updated',
+            }
+        ]
+
+        result = sync_enterprise_academies_from_enterprise_catalog(deactivate_missing=True)
+
+        self.assertEqual(result.updated, 1)
+        self.assertEqual(result.deactivated, 0)
 
         # 0 is converted to string '0', which is non-empty
         value2 = _first_non_empty(None, {}, 0)

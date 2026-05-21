@@ -17,7 +17,14 @@ logger = logging.getLogger(__name__)
 
 def _get_enterprise_academy_model():
     """Resolve EnterpriseAcademy lazily so this module can import without model migrations."""
-    return apps.get_model('customer_billing', 'EnterpriseAcademy')
+    try:
+        return apps.get_model('customer_billing', 'EnterpriseAcademy')
+    except LookupError as exc:
+        raise RuntimeError(
+            'Academy sync requires the customer_billing.EnterpriseAcademy model to be '
+            'defined and registered before sync_enterprise_academies_from_enterprise_catalog '
+            'can be called.'
+        ) from exc
 
 
 @dataclass
@@ -210,7 +217,6 @@ def fetch_enterprise_catalog_academies(academy_uuid=None) -> list[dict[str, Any]
     return _extract_payload_list(payload)
 
 
-@transaction.atomic
 def sync_enterprise_academies_from_enterprise_catalog(
     academy_uuid=None,
     deactivate_missing: bool = False,
@@ -233,30 +239,34 @@ def sync_enterprise_academies_from_enterprise_catalog(
         seen_names.add(name)
 
         current = enterprise_academy_model.objects.filter(name__iexact=name).first()
+        if current is not None:
+            # Track the DB-canonical casing too; exclude(name__in=...) is case-sensitive on most DBs.
+            seen_names.add(current.name)
         # Preserve existing UUID when payload does not include one.
         if normalized.get('catalog_query_uuid') is None and current and current.catalog_query_uuid is not None:
             normalized['catalog_query_uuid'] = current.catalog_query_uuid
 
         try:
-            if current is None:
+            with transaction.atomic():
+                if current is None:
+                    if not dry_run:
+                        enterprise_academy_model.objects.create(**normalized)
+                    result.created += 1
+                    continue
+
+                has_changes = any(
+                    getattr(current, field_name) != field_value
+                    for field_name, field_value in normalized.items()
+                )
+                if not has_changes:
+                    result.unchanged += 1
+                    continue
+
                 if not dry_run:
-                    enterprise_academy_model.objects.create(**normalized)
-                result.created += 1
-                continue
-
-            has_changes = any(
-                getattr(current, field_name) != field_value
-                for field_name, field_value in normalized.items()
-            )
-            if not has_changes:
-                result.unchanged += 1
-                continue
-
-            if not dry_run:
-                for field_name, field_value in normalized.items():
-                    setattr(current, field_name, field_value)
-                current.save()
-            result.updated += 1
+                    for field_name, field_value in normalized.items():
+                        setattr(current, field_name, field_value)
+                    current.save()
+                result.updated += 1
         except Exception as exc:  # pylint: disable=broad-except
             result.errors += 1
             logger.exception('Failed syncing academy payload (name=%s): %s', name, exc)
