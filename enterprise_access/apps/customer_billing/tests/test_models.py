@@ -33,10 +33,6 @@ from enterprise_access.apps.customer_billing.models import (
 from enterprise_access.apps.customer_billing.stripe_event_handlers import StripeEventHandler
 from enterprise_access.apps.customer_billing.tests.factories import StripeEventDataFactory
 from enterprise_access.apps.customer_billing.tests.utils import AttrDict
-from enterprise_access.apps.provisioning.models import (
-    GetCreateFirstPaidSubscriptionPlanStep,
-    GetCreateTrialSubscriptionPlanStep
-)
 from enterprise_access.apps.provisioning.tests.factories import ProvisionNewCustomerWorkflowFactory
 
 User = get_user_model()
@@ -1525,6 +1521,11 @@ class TestStripeEventSummary(TestCase):
 
     def test_populate_with_summary_data_with_subscription_plan_uuid(self):
         """Test that subscription_plan_uuid is extracted from related workflow."""
+        from enterprise_access.apps.provisioning.models import (
+            GetCreateFirstPaidSubscriptionPlanStep,
+            GetCreateTrialSubscriptionPlanStep
+        )
+
         # Create a workflow
         workflow = ProvisionNewCustomerWorkflowFactory()
 
