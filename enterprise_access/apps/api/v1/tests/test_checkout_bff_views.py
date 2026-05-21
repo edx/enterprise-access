@@ -74,14 +74,14 @@ class CheckoutBFFViewSetTests(APITest):
         # For unauthenticated users, checkout_intent should be None
         self.assertIsNone(response.data['checkout_intent'])
 
-    @mock.patch('enterprise_access.apps.customer_billing.models.CheckoutIntent.objects.filter')
-    def test_context_endpoint_authenticated_access(self, mock_filter):
+    @mock.patch('enterprise_access.apps.customer_billing.models.CheckoutIntent.for_user')
+    def test_context_endpoint_authenticated_access(self, mock_for_user):
         """
         Test that authenticated users can access the context endpoint.
         """
         # Set up a mock checkout intent for the authenticated user
         mock_intent = CheckoutIntent(**self.mock_checkout_intent_data)
-        mock_filter.return_value.first.return_value = mock_intent
+        mock_for_user.return_value = mock_intent
 
         self.set_jwt_cookie([{
             'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE,
@@ -553,8 +553,7 @@ class CheckoutBFFSuccessViewSetTests(APITest):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn("Special Handler error", str(response.json()['errors']))
 
-    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.CheckoutIntent.for_user')
-    def test_success_endpoint_no_checkout_session(self, mock_for_user):
+    def test_success_endpoint_no_checkout_session(self):
         """Test the success endpoint when no checkout session id is present."""
         mock_checkout_intent = CheckoutIntent.objects.create(
             user_id=self.user.id,
@@ -567,7 +566,6 @@ class CheckoutBFFSuccessViewSetTests(APITest):
             last_provisioning_error='',
             expires_at=timezone.now() + timedelta(hours=4),
         )
-        mock_for_user.return_value = mock_checkout_intent
 
         response = self.client.post(self.url, {})
 
@@ -590,9 +588,8 @@ class CheckoutBFFSuccessViewSetTests(APITest):
     @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_stripe_subscription')
     @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_stripe_invoice')
     @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_stripe_customer')
-    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.CheckoutIntent.for_user')
     def test_success_endpoint_full_stripe_data(  # pylint: disable=unused-argument
-        self, mock_for_user, mock_customer, mock_invoice,
+        self, mock_customer, mock_invoice,
         mock_subscription, mock_payment_method,
         mock_payment_intent, mock_session,
         mock_get_customer, mock_get_pricing,
@@ -609,7 +606,6 @@ class CheckoutBFFSuccessViewSetTests(APITest):
             last_provisioning_error='',
             expires_at=timezone.now() + timedelta(hours=4),
         )
-        mock_for_user.return_value = mock_checkout_intent
 
         # Setup mock Stripe API responses
         mock_session.return_value = AttrDict.wrap({

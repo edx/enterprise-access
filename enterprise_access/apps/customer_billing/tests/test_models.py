@@ -55,7 +55,7 @@ class TestEnterpriseAcademyModel(TransactionTestCase):
             'tags': ['ai', 'ml'],
             'stripe_product_id': 'prod_ai_123',
             'stripe_price_lookup_key': 'essentials_ai_annual',
-            'enterprise_catalog_uuid': uuid4(),
+            'catalog_query_id': 1,
             'product_key': 'ai-academy',
             'slug': 'ai-academy',
             'is_active': True,
@@ -66,8 +66,8 @@ class TestEnterpriseAcademyModel(TransactionTestCase):
 
     def test_create_with_all_fields(self):
         """Verify all model fields can be persisted and read correctly."""
-        enterprise_catalog_uuid = uuid4()
-        academy = self._create_academy(enterprise_catalog_uuid=enterprise_catalog_uuid)
+        catalog_query_id = 1
+        academy = self._create_academy(catalog_query_id=catalog_query_id)
 
         self.assertIsNotNone(academy.uuid)
         self.assertEqual(academy.name, 'AI Academy')
@@ -78,7 +78,7 @@ class TestEnterpriseAcademyModel(TransactionTestCase):
         self.assertEqual(academy.tags, ['ai', 'ml'])
         self.assertEqual(academy.stripe_product_id, 'prod_ai_123')
         self.assertEqual(academy.stripe_price_lookup_key, 'essentials_ai_annual')
-        self.assertEqual(academy.enterprise_catalog_uuid, enterprise_catalog_uuid)
+        self.assertEqual(academy.catalog_query_id, catalog_query_id)
         self.assertEqual(academy.product_key, 'ai-academy')
         self.assertEqual(academy.slug, 'ai-academy')
         self.assertTrue(academy.is_active)
@@ -86,7 +86,11 @@ class TestEnterpriseAcademyModel(TransactionTestCase):
 
     def test_defaults(self):
         """Verify default values for optional fields."""
-        academy = EnterpriseAcademy.objects.create(name='Data Academy')
+        catalog_query_id = 2
+        academy = EnterpriseAcademy.objects.create(
+            name='Data Academy',
+            catalog_query_id=catalog_query_id,
+        )
 
         self.assertIsNotNone(academy.uuid)
         self.assertEqual(academy.long_name, '')
@@ -96,7 +100,7 @@ class TestEnterpriseAcademyModel(TransactionTestCase):
         self.assertEqual(academy.tags, [])
         self.assertEqual(academy.stripe_product_id, '')
         self.assertEqual(academy.stripe_price_lookup_key, '')
-        self.assertIsNone(academy.enterprise_catalog_uuid)
+        self.assertEqual(academy.catalog_query_id, catalog_query_id)
         self.assertEqual(academy.product_key, '')
         self.assertEqual(academy.slug, '')
         self.assertTrue(academy.is_active)
@@ -887,6 +891,170 @@ class TestCheckoutIntentModel(TestCase):
             uuid=custom_uuid
         )
         self.assertEqual(intent3.uuid, custom_uuid)
+
+    def test_for_user_with_optional_filters(self):
+        """Test that for_user() returns the most recent non-expired intent with optional filtering."""
+        user = UserFactory()
+
+        # Create multiple intents for the same user with different products
+        intent1 = CheckoutIntent.objects.create(
+            user=user,
+            enterprise_name="Enterprise 1",
+            enterprise_slug="enterprise-1",
+            stripe_product_id="prod_teams",
+            quantity=5,
+            expires_at=timezone.now() + timedelta(hours=1),
+            state=CheckoutIntentState.CREATED,
+        )
+
+        time.sleep(0.01)  # Ensure different creation times
+
+        intent2 = CheckoutIntent.objects.create(
+            user=user,
+            enterprise_name="Enterprise 2",
+            enterprise_slug="enterprise-2",
+            stripe_product_id="prod_academy_ai",
+            quantity=10,
+            expires_at=timezone.now() + timedelta(hours=2),
+            state=CheckoutIntentState.CREATED,
+        )
+
+        # Test without filters - should return most recent
+        result = CheckoutIntent.for_user(user)
+        self.assertEqual(result.id, intent2.id)
+
+        # Test with stripe_product_id filter
+        result = CheckoutIntent.for_user(user, stripe_product_id="prod_teams")
+        self.assertEqual(result.id, intent1.id)
+
+        # Test with enterprise_slug filter
+        result = CheckoutIntent.for_user(user, enterprise_slug="enterprise-1")
+        self.assertEqual(result.id, intent1.id)
+
+        # Test with both filters
+        result = CheckoutIntent.for_user(user, enterprise_slug="enterprise-2", stripe_product_id="prod_academy_ai")
+        self.assertEqual(result.id, intent2.id)
+
+        # Test that expired intents are excluded
+        intent2.state = CheckoutIntentState.EXPIRED
+        intent2.save()
+        result = CheckoutIntent.for_user(user)
+        self.assertEqual(result.id, intent1.id)
+
+    def test_multiple_intents_per_user(self):
+        """Test that a user can have multiple checkout intents (ForeignKey relationship)."""
+        user = UserFactory()
+
+        # Create multiple intents for the same user
+        intent1 = CheckoutIntent.objects.create(
+            user=user,
+            enterprise_name="First Enterprise",
+            enterprise_slug="first-enterprise",
+            stripe_product_id="prod_academy_1",
+            quantity=5,
+            expires_at=timezone.now() + timedelta(hours=1),
+        )
+
+        intent2 = CheckoutIntent.objects.create(
+            user=user,
+            enterprise_name="Second Enterprise",
+            enterprise_slug="second-enterprise",
+            stripe_product_id="prod_academy_2",
+            quantity=10,
+            expires_at=timezone.now() + timedelta(hours=2),
+        )
+
+        # Verify both intents exist for the same user
+        user_intents = CheckoutIntent.objects.filter(user=user)
+        self.assertEqual(user_intents.count(), 2)
+        self.assertIn(intent1, user_intents)
+        self.assertIn(intent2, user_intents)
+
+    def test_unique_constraint_allows_teams_intents_for_different_slugs(self):
+        """Test that the partial unique constraint allows Teams intents for different enterprise slugs."""
+        user = UserFactory()
+
+        # Create first Teams intent with NULL stripe_product_id
+        intent1 = CheckoutIntent.objects.create(
+            user=user,
+            enterprise_name="Teams Intent 1",
+            enterprise_slug="test-enterprise-1",
+            stripe_product_id=None,
+            quantity=5,
+            expires_at=timezone.now() + timedelta(hours=1),
+        )
+
+        # Create second Teams intent with different slug - should succeed
+        intent2 = CheckoutIntent.objects.create(
+            user=user,
+            enterprise_name="Teams Intent 2",
+            enterprise_slug="test-enterprise-2",
+            stripe_product_id=None,
+            quantity=10,
+            expires_at=timezone.now() + timedelta(hours=2),
+        )
+
+        # Both should exist with different slugs
+        self.assertIsNotNone(intent1.id)
+        self.assertIsNotNone(intent2.id)
+        self.assertEqual(CheckoutIntent.objects.filter(user=user, stripe_product_id__isnull=True).count(), 2)
+
+    def test_unique_constraint_prevents_duplicate_teams_intents(self):
+        """Test that the partial unique constraint prevents duplicate Teams intents for same slug."""
+        user = UserFactory()
+        enterprise_slug = "test-enterprise"
+
+        # Create first Teams intent
+        intent1 = CheckoutIntent.objects.create(
+            user=user,
+            enterprise_name="Teams Intent 1",
+            enterprise_slug=enterprise_slug,
+            stripe_product_id=None,
+            quantity=5,
+            expires_at=timezone.now() + timedelta(hours=1),
+        )
+        self.assertIsNotNone(intent1.id)
+
+        # Try to create second Teams intent with same (user, enterprise_slug) - should fail
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                CheckoutIntent.objects.create(
+                    user=user,
+                    enterprise_name="Teams Intent 2",
+                    enterprise_slug=enterprise_slug,
+                    stripe_product_id=None,
+                    quantity=10,
+                    expires_at=timezone.now() + timedelta(hours=2),
+                )
+
+    def test_unique_constraint_enforces_academy_intents(self):
+        """Test that the unique constraint prevents duplicate Academy intents."""
+        user = UserFactory()
+        enterprise_slug = "academy-enterprise"
+        stripe_product_id = "prod_academy_ai"
+
+        # Create first Academy intent
+        intent1 = CheckoutIntent.objects.create(
+            user=user,
+            enterprise_name="Academy Intent 1",
+            enterprise_slug=enterprise_slug,
+            stripe_product_id=stripe_product_id,
+            quantity=5,
+            expires_at=timezone.now() + timedelta(hours=1),
+        )
+        self.assertIsNotNone(intent1.id)
+
+        # Try to create duplicate Academy intent - should fail
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                CheckoutIntent.objects.create(
+                    user=user,
+                    enterprise_name="Academy Intent 2",
+                    enterprise_slug=enterprise_slug,
+                    stripe_product_id=stripe_product_id,
+                    quantity=10,
+                    expires_at=timezone.now() + timedelta(hours=2),
+                )
 
 
 class TestStripeEventSummary(TestCase):

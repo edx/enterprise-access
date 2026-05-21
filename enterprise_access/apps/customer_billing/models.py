@@ -23,10 +23,12 @@ from simple_history.models import HistoricalRecords
 from simple_history.utils import bulk_update_with_history
 
 from enterprise_access.apps.customer_billing import stripe_api
-from enterprise_access.apps.customer_billing.constants import ALLOWED_CHECKOUT_INTENT_STATE_TRANSITIONS
-
-from .constants import INTENT_RESERVATION_DURATION_MINUTES, CheckoutIntentState
-from .utils import datetime_from_timestamp
+from enterprise_access.apps.customer_billing.constants import (
+    ALLOWED_CHECKOUT_INTENT_STATE_TRANSITIONS,
+    INTENT_RESERVATION_DURATION_MINUTES,
+    CheckoutIntentState
+)
+from enterprise_access.apps.customer_billing.utils import datetime_from_timestamp
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -105,11 +107,11 @@ class EnterpriseAcademy(TimeStampedModel):
         default='',
         help_text='Stripe price lookup key used to resolve academy pricing context.',
     )
-    enterprise_catalog_uuid = models.UUIDField(
+    catalog_query_id = models.PositiveIntegerField(
         null=True,
         blank=True,
         db_index=True,
-        help_text='Related edX catalog UUID.',
+        help_text='Related edX catalog query ID.',
     )
     product_key = models.SlugField(
         max_length=255,
@@ -181,6 +183,42 @@ class CheckoutIntent(TimeStampedModel):
     class Meta:
         verbose_name = "Enterprise Checkout Intent"
         verbose_name_plural = "Enterprise Checkout Intents"
+        constraints = [
+            # Partial unique constraint for Academy intents (non-NULL stripe_product_id)
+            # Ensures one active Academy intent per (user, enterprise_slug, stripe_product_id)
+            # Only applies to non-expired states to allow intent reuse after expiration
+            models.UniqueConstraint(
+                fields=['user', 'enterprise_slug', 'stripe_product_id'],
+                condition=models.Q(stripe_product_id__isnull=False) & models.Q(
+                    state__in=[
+                        CheckoutIntentState.CREATED,
+                        CheckoutIntentState.PAID,
+                        CheckoutIntentState.FULFILLED,
+                        CheckoutIntentState.ERRORED_BACKOFFICE,
+                        CheckoutIntentState.ERRORED_FULFILLMENT_STALLED,
+                        CheckoutIntentState.ERRORED_PROVISIONING,
+                    ]
+                ),
+                name='unique_academy_intent_per_user',
+            ),
+            # Partial unique constraint for Teams intents (NULL stripe_product_id)
+            # Ensures one active Teams intent per (user, enterprise_slug)
+            # Only applies to non-expired states to allow intent reuse after expiration
+            models.UniqueConstraint(
+                fields=['user', 'enterprise_slug'],
+                condition=models.Q(stripe_product_id__isnull=True) & models.Q(
+                    state__in=[
+                        CheckoutIntentState.CREATED,
+                        CheckoutIntentState.PAID,
+                        CheckoutIntentState.FULFILLED,
+                        CheckoutIntentState.ERRORED_BACKOFFICE,
+                        CheckoutIntentState.ERRORED_FULFILLMENT_STALLED,
+                        CheckoutIntentState.ERRORED_PROVISIONING,
+                    ]
+                ),
+                name='unique_teams_intent_per_user',
+            ),
+        ]
 
     class StateChoices(models.TextChoices):
         """
@@ -218,9 +256,10 @@ class CheckoutIntent(TimeStampedModel):
         CheckoutIntentState.ERRORED_PROVISIONING,
     }
 
-    user = models.OneToOneField(
+    user = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
+        related_name='checkout_intents',
     )
     uuid = models.UUIDField(
         unique=True,
@@ -272,6 +311,12 @@ class CheckoutIntent(TimeStampedModel):
         blank=True,
         null=True,
         help_text="Associated Stripe checkout session ID"
+    )
+    stripe_product_id = models.CharField(
+        db_index=True,
+        max_length=255,
+        null=True,
+        help_text="Stripe Product ID for Academy-based checkout intents; NULL for Teams intents"
     )
     quantity = models.PositiveIntegerField(
         help_text="How many licenses to create.",
@@ -544,10 +589,10 @@ class CheckoutIntent(TimeStampedModel):
         """
         Validate the CheckoutIntent to prevent conflicts with existing non-expired intents.
 
-        This method enforces several uniqueness constraints:
-        1. A user can only have one active checkout intent at a time
-        2. Enterprise name must be unique across all non-expired intents
-        3. Enterprise slug must be unique across all non-expired intents
+        This method enforces uniqueness constraints:
+        1. Enterprise name must be unique across all non-expired intents
+        2. Enterprise slug must be unique across all non-expired intents
+        3. User can have multiple intents but not duplicate (user, slug, product_id) combinations
 
         The validation considers an intent "active" if it's in any of the NON_EXPIRED_STATES.
         For existing instances being updated, we exclude the current instance from conflict checks.
@@ -560,15 +605,25 @@ class CheckoutIntent(TimeStampedModel):
 
         # Check if this is a new instance
         if not self.pk:
-            # Check if user already has a non-expired intent
-            existing_intent = CheckoutIntent.objects.filter(
+            # Check for duplicate intent with same (user, enterprise_slug, stripe_product_id)
+            duplicate_query = CheckoutIntent.objects.filter(
                 user=self.user,
+                enterprise_slug=self.enterprise_slug,
                 state__in=self.NON_EXPIRED_STATES
-            ).first()
+            )
+            if self.stripe_product_id is not None:
+                duplicate_query = duplicate_query.filter(stripe_product_id=self.stripe_product_id)
+            else:
+                duplicate_query = duplicate_query.filter(stripe_product_id__isnull=True)
 
-            if existing_intent:
+            if duplicate_query.exists():
+                existing_intent = duplicate_query.first()
+                intent_type = "Academy" if self.stripe_product_id else "Teams"
                 raise ValidationError({
-                    'user': f"User {self.user.email} already has an active checkout intent ({existing_intent})."
+                    'user': (
+                        f"User {self.user.email} already has an active {intent_type} checkout intent "
+                        f"for slug '{self.enterprise_slug}' ({existing_intent})."
+                    )
                 })
 
         conflicts = CheckoutIntent.filter_by_name_and_slug(
@@ -666,7 +721,14 @@ class CheckoutIntent(TimeStampedModel):
             if bool(slug) != bool(name):
                 raise ValueError("slug and name must either both be given or neither be given.")
 
-            existing_intent = cls.objects.filter(user=user).first()
+            # Note: This method currently only handles Teams intents (stripe_product_id=NULL).
+            # For multiple intents per user, this finds the first Teams intent for the user.
+            # In a multi-intent world, consider making slug/name/stripe_product_id parameters
+            # to identify which specific intent to update.
+            existing_intent = cls.objects.filter(
+                user=user,
+                stripe_product_id__isnull=True,  # This method handles Teams intents only
+            ).first()
 
             # If an existing intent has already reached a terminal state, exit fast.
             if existing_intent:
@@ -742,16 +804,33 @@ class CheckoutIntent(TimeStampedModel):
             )
 
     @classmethod
-    def for_user(cls, user):
+    def for_user(cls, user, enterprise_slug=None, stripe_product_id=None):
         """
-        Fetch the CheckoutIntent for a user.
+        Fetch the most recent non-expired CheckoutIntent for a user.
+
+        Args:
+            user: The user to fetch the intent for
+            enterprise_slug: Optional slug to filter by (for multi-intent scenarios)
+            stripe_product_id: Optional product ID to filter by (for Academy intents)
 
         Returns:
-          CheckoutIntent: The user's checkout intent, or None if not found
+          CheckoutIntent: The user's most recent non-expired checkout intent, or None if not found
         """
         if not user or not user.is_authenticated:
             return None
-        return cls.objects.filter(user=user).first()
+
+        queryset = cls.objects.filter(
+            user=user,
+            state__in=cls.NON_EXPIRED_STATES,
+        )
+
+        if enterprise_slug is not None:
+            queryset = queryset.filter(enterprise_slug=enterprise_slug)
+
+        if stripe_product_id is not None:
+            queryset = queryset.filter(stripe_product_id=stripe_product_id)
+
+        return queryset.order_by('-created').first()
 
     def update_stripe_session_id(self, session_id):
         """

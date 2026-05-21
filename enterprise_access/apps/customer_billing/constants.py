@@ -149,3 +149,15 @@ STRIPE_CANCELED_STATUSES = [
 
 CHECKOUT_LIFECYCLE_STATE_MONITORING_KEY = 'ssp_ci_lifecycle_change'
 CHECKOUT_LIFECYCLE_IS_ERROR_MONITORING_KEY = 'ssp_ci_lifecycle_is_error'
+
+
+# Stripe metadata keys for cross-service linking
+
+class StripeMetadataKeys(StrEnum):
+    """
+    Metadata keys stored in Stripe objects (subscriptions, products, etc.)
+    for cross-service data linking.
+    """
+    ACADEMY_UUID = 'academy_uuid'
+    ENTERPRISE_SLUG = 'enterprise_slug'
+    CHECKOUT_INTENT_UUID = 'checkout_intent_uuid'

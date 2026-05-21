@@ -285,8 +285,8 @@ class TestCheckoutContextHandler(APITest):
         self.assertTrue(any('pricing' in msg.lower() for msg in error_messages))
 
     @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_ssp_product_pricing')
-    @mock.patch('enterprise_access.apps.customer_billing.models.CheckoutIntent.objects.filter')
-    def test_load_checkout_intent_for_authenticated_user(self, mock_filter, mock_get_pricing):
+    @mock.patch('enterprise_access.apps.customer_billing.models.CheckoutIntent.for_user')
+    def test_load_checkout_intent_for_authenticated_user(self, mock_for_user, mock_get_pricing):
         """
         Test that load_and_process correctly adds checkout intent for authenticated users.
         """
@@ -299,7 +299,7 @@ class TestCheckoutContextHandler(APITest):
             'admin_portal_url': 'https://portal.edx.org/test-slug',
         }
         mock_intent = mock.MagicMock(**mock_intent_data)  # type: ignore
-        mock_filter.return_value.first.return_value = mock_intent
+        mock_for_user.return_value = mock_intent
 
         context = self._create_context()
         handler = CheckoutContextHandler(context)
@@ -309,17 +309,17 @@ class TestCheckoutContextHandler(APITest):
 
         # Assert
         self.assertEqual(context.checkout_intent, context.checkout_intent or {} | mock_intent_data)
-        mock_filter.assert_called_once_with(user=self.user)
+        mock_for_user.assert_called_once_with(self.user)
 
     @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_ssp_product_pricing')
-    @mock.patch('enterprise_access.apps.customer_billing.models.CheckoutIntent.objects.filter')
-    def test_load_checkout_intent_no_intent_exists(self, mock_filter, mock_get_pricing):
+    @mock.patch('enterprise_access.apps.customer_billing.models.CheckoutIntent.for_user')
+    def test_load_checkout_intent_no_intent_exists(self, mock_for_user, mock_get_pricing):
         """
         Test that load_and_process handles case where authenticated user has no checkout intent.
         """
         # Setup
         mock_get_pricing.return_value = {}
-        mock_filter.return_value.first.return_value = None
+        mock_for_user.return_value = None
 
         context = self._create_context()
         handler = CheckoutContextHandler(context)
@@ -329,7 +329,7 @@ class TestCheckoutContextHandler(APITest):
 
         # Assert
         self.assertIsNone(context.checkout_intent)
-        mock_filter.assert_called_once_with(user=self.user)
+        mock_for_user.assert_called_once_with(self.user)
 
     @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_ssp_product_pricing')
     @mock.patch('enterprise_access.apps.customer_billing.models.CheckoutIntent.objects.filter')
