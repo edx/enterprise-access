@@ -69,11 +69,13 @@ class FakeAcademyManager:
         self.records = []
 
     def create(self, **kwargs):
+        """Create and store a fake academy record."""
         record = FakeAcademy(**kwargs)
         self.records.append(record)
         return record
 
     def filter(self, **kwargs):
+        """Filter fake academy records using the subset of lookup keys used in tests."""
         records = self.records
         name_iexact = kwargs.get('name__iexact')
         is_active = kwargs.get('is_active')

@@ -194,7 +194,7 @@ def fetch_enterprise_catalog_academies(academy_uuid=None) -> list[dict[str, Any]
     """Fetch academy payload from Enterprise Catalog."""
     client = EnterpriseCatalogApiClient()
     get_academies = getattr(client, 'get_academies', None)
-    if get_academies is None:
+    if not callable(get_academies):
         raise AttributeError('EnterpriseCatalogApiClient.get_academies is required for academy sync')
     payload = get_academies(academy_uuid=academy_uuid)
     return _extract_payload_list(payload)
