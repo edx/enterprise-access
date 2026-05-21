@@ -10,5 +10,6 @@ DISABLE+=
     django-not-configured,
     consider-using-with,
     useless-option-value,
+    useless-suppression,
     superfluous-parens,
     too-many-positional-arguments,
