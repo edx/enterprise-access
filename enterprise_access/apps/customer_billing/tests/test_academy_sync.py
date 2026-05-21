@@ -151,6 +151,12 @@ class TestNormalizeCatalogAcademy(TestCase):
 class TestAcademySyncHelpers(TestCase):
     """Tests for helper utilities used by academy sync."""
 
+    class _WhitespaceStringable:
+        """Helper object whose string conversion yields only whitespace."""
+
+        def __str__(self):
+            return '   '
+
     def test_first_non_empty_prefers_rendered_dict_and_strips(self):
         value = _first_non_empty(None, {'rendered': '  hello  '}, 'fallback')
         self.assertEqual(value, 'hello')
@@ -179,6 +185,22 @@ class TestAcademySyncHelpers(TestCase):
             _default_stripe_lookup_key('AI Academy', ''),
             'essentials_ai_academy_academy_yearly',
         )
+
+    def test_to_lookup_token_returns_empty_for_blank_input(self):
+        self.assertEqual(_to_lookup_token('   '), '')
+
+    def test_default_stripe_lookup_key_uses_product_key_when_name_token_empty(self):
+        self.assertEqual(
+            _default_stripe_lookup_key('***', 'Data Product'),
+            'essentials_data_product_academy_yearly',
+        )
+
+    def test_default_stripe_lookup_key_returns_empty_when_both_tokens_empty(self):
+        self.assertEqual(_default_stripe_lookup_key('***', '***'), '')
+
+    def test_first_non_empty_skips_stringable_whitespace_and_finds_next_value(self):
+        value = _first_non_empty(None, self._WhitespaceStringable(), 'final-value')
+        self.assertEqual(value, 'final-value')
 
     def test_extract_payload_list_supports_wrappers(self):
         self.assertEqual(_extract_payload_list([{'a': 1}]), [{'a': 1}])
@@ -211,6 +233,21 @@ class TestAcademySyncHelpers(TestCase):
     def test_extract_catalog_query_uuid_from_list_item(self):
         value_uuid = str(uuid4())
         self.assertEqual(_extract_catalog_query_uuid([{'uuid': value_uuid}]), value_uuid)
+
+    def test_extract_catalog_query_uuid_continues_after_list_with_no_match(self):
+        value_uuid = str(uuid4())
+        extracted = _extract_catalog_query_uuid([{'unknown': 'value'}], value_uuid)
+        self.assertEqual(extracted, value_uuid)
+
+    def test_extract_catalog_query_uuid_continues_after_empty_list(self):
+        value_uuid = str(uuid4())
+        extracted = _extract_catalog_query_uuid([], {'id': value_uuid})
+        self.assertEqual(extracted, value_uuid)
+
+    def test_extract_catalog_query_uuid_continues_after_unhandled_type(self):
+        value_uuid = str(uuid4())
+        extracted = _extract_catalog_query_uuid(3.14159, {'id': value_uuid})
+        self.assertEqual(extracted, value_uuid)
 
     @mock.patch('enterprise_access.apps.customer_billing.academy_sync.apps.get_model')
     def test_get_enterprise_academy_model(self, mock_get_model):
