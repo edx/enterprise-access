@@ -464,7 +464,7 @@ class TestSyncEnterpriseAcademies(TestCase):
     )
     def test_sync_deactivate_missing_with_dry_run_does_not_persist(self, _mock_model, mock_fetch):
         """Verify deactivate_missing with dry_run=True counts but doesn't update."""
-        active_academy = FakeEnterpriseAcademyModel.objects.create(
+        FakeEnterpriseAcademyModel.objects.create(
             name='Stay Active',
             slug='stay-active',
             product_key='stay-active',
@@ -530,7 +530,7 @@ class TestSyncEnterpriseAcademies(TestCase):
         """Verify _first_non_empty converts multiple types in order, including 0."""
         value = _first_non_empty(None, {}, '', 'result')
         self.assertEqual(value, 'result')
-        
+
         # 0 is converted to string '0', which is non-empty
         value2 = _first_non_empty(None, {}, 0)
         self.assertEqual(value2, '0')
