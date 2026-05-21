@@ -58,7 +58,17 @@ def _to_slug(raw_value: str, fallback_prefix: str, item_id: Any) -> str:
     slug_value = slugify(raw_value or '')
     if slug_value:
         return slug_value
-    return f'{fallback_prefix}-{item_id}'
+
+    fallback_slug = slugify(fallback_prefix or '')
+    item_slug = slugify(str(item_id or ''))
+
+    if fallback_slug and item_slug:
+        return f'{fallback_slug}-{item_slug}'
+    if item_slug:
+        return item_slug
+    if fallback_slug:
+        return fallback_slug
+    return 'item'
 
 
 def _to_lookup_token(raw_value: str) -> str:
@@ -196,7 +206,7 @@ def fetch_enterprise_catalog_academies(academy_uuid=None) -> list[dict[str, Any]
     get_academies = getattr(client, 'get_academies', None)
     if not callable(get_academies):
         raise AttributeError('EnterpriseCatalogApiClient.get_academies is required for academy sync')
-    payload = get_academies(academy_uuid=academy_uuid)
+    payload = get_academies(academy_uuid=academy_uuid)  # pylint: disable=not-callable
     return _extract_payload_list(payload)
 
 
