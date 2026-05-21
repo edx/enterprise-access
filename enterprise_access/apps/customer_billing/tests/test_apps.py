@@ -15,7 +15,6 @@ class TestCustomerBillingConfig(SimpleTestCase):
         """Calling ready multiple times should import signal handlers only once."""
         app_module = importlib.import_module('enterprise_access.apps.customer_billing')
         config = CustomerBillingConfig('customer_billing', app_module)
-        config._signals_wired = False
 
         with mock.patch('builtins.__import__', wraps=__import__) as mock_import:
             config.ready()
@@ -28,4 +27,3 @@ class TestCustomerBillingConfig(SimpleTestCase):
         ]
 
         self.assertEqual(len(signal_import_calls), 1)
-        self.assertTrue(config._signals_wired)
