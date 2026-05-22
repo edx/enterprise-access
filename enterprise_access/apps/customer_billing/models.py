@@ -105,11 +105,11 @@ class EnterpriseAcademy(TimeStampedModel):
         default='',
         help_text='Stripe price lookup key used to resolve academy pricing context.',
     )
-    enterprise_catalog_uuid = models.UUIDField(
+    catalog_query_id = models.UUIDField(
         null=True,
         blank=True,
         db_index=True,
-        help_text='Related edX catalog UUID.',
+        help_text='Catalog query UUID for this Academy.',
     )
     product_key = models.SlugField(
         max_length=255,
@@ -181,6 +181,24 @@ class CheckoutIntent(TimeStampedModel):
     class Meta:
         verbose_name = "Enterprise Checkout Intent"
         verbose_name_plural = "Enterprise Checkout Intents"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "enterprise_slug", "stripe_product_id"],
+                condition=models.Q(
+                    stripe_product_id__isnull=False,
+                    state__in=["created", "paid"],
+                ),
+                name="unique_active_checkout_intent_with_product",
+            ),
+            models.UniqueConstraint(
+                fields=["user", "enterprise_slug"],
+                condition=models.Q(
+                    stripe_product_id__isnull=True,
+                    state__in=["created", "paid"],
+                ),
+                name="unique_active_checkout_intent_without_product",
+            ),
+        ]
 
     class StateChoices(models.TextChoices):
         """
@@ -217,10 +235,21 @@ class CheckoutIntent(TimeStampedModel):
         CheckoutIntentState.ERRORED_FULFILLMENT_STALLED,
         CheckoutIntentState.ERRORED_PROVISIONING,
     }
+    ACTIVE_STATES = {
+        CheckoutIntentState.CREATED,
+        CheckoutIntentState.PAID,
+    }
 
-    user = models.OneToOneField(
+    user = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
+    )
+    stripe_product_id = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Stripe Product ID for paid/academy intents. NULL for Teams intents.",
     )
     uuid = models.UUIDField(
         unique=True,
@@ -742,16 +771,38 @@ class CheckoutIntent(TimeStampedModel):
             )
 
     @classmethod
-    def for_user(cls, user):
+    def for_user(cls, user, enterprise_slug=None, stripe_product_id=None):
         """
-        Fetch the CheckoutIntent for a user.
+        Fetch the most recent active CheckoutIntent for a user.
+
+        Args:
+            user: The Django User.
+            enterprise_slug: Optional enterprise slug to filter by.
+            stripe_product_id: Optional Stripe product ID. Pass None explicitly
+                to match Teams intents (where stripe_product_id IS NULL).
 
         Returns:
-          CheckoutIntent: The user's checkout intent, or None if not found
+            CheckoutIntent: The user's most recent active checkout intent, or None.
         """
         if not user or not user.is_authenticated:
             return None
-        return cls.objects.filter(user=user).first()
+
+        queryset = cls.objects.filter(
+            user=user,
+            state__in=cls.ACTIVE_STATES,
+        ).filter(
+            models.Q(expires_at__isnull=True) | models.Q(expires_at__gt=timezone.now())
+        )
+
+        if enterprise_slug is not None:
+            queryset = queryset.filter(enterprise_slug=enterprise_slug)
+
+        if stripe_product_id is not None:
+            queryset = queryset.filter(stripe_product_id=stripe_product_id)
+        else:
+            queryset = queryset.filter(stripe_product_id__isnull=True)
+
+        return queryset.order_by("-created").first()
 
     def update_stripe_session_id(self, session_id):
         """
