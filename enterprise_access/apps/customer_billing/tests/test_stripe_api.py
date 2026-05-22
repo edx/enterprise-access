@@ -13,10 +13,13 @@ from enterprise_access.apps.customer_billing.stripe_api import (
     get_academy_stripe_product_by_key,
     get_academy_stripe_products,
     get_stripe_checkout_session,
+    get_stripe_customer,
     get_stripe_invoice,
     get_stripe_payment_intent,
     get_stripe_payment_method,
+    get_stripe_subscription,
     get_stripe_trialing_subscription,
+    get_upcoming_invoice,
     stripe_cache
 )
 
@@ -196,6 +199,98 @@ class TestCreateSubscriptionCheckoutSession(StripeApiFunctionsTests):
         self.assertEqual(metadata['product_type'], 'essential_academy')
         mock_product_retrieve.assert_called_once_with('prod_ai_123')
 
+    def test_subscription_metadata_returns_empty_without_product_id(self):
+        mock_customer_search = mock.MagicMock(
+            return_value=mock.MagicMock(data=[])
+        )
+        mock_session_create = mock.MagicMock(
+            return_value=mock.MagicMock(
+                to_dict=mock.MagicMock(return_value={'id': 'cs_test'})
+            )
+        )
+
+        checkout_intent = mock.MagicMock()
+        checkout_intent.stripe_product_id = None
+
+        with mock.patch(
+            'enterprise_access.apps.customer_billing.stripe_api.stripe.Customer.search',
+            mock_customer_search,
+        ), mock.patch(
+            'enterprise_access.apps.customer_billing.stripe_api.stripe.checkout.Session.create',
+            mock_session_create,
+        ):
+            create_subscription_checkout_session(
+                self._base_input(admin_email='metadata-admin@example.com'),
+                99,
+                checkout_intent,
+            )
+
+        metadata = mock_session_create.call_args.kwargs['subscription_data']['metadata']
+        self.assertNotIn('name', metadata)
+        self.assertNotIn('product_type', metadata)
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Product.retrieve')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.checkout.Session.create')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Customer.search')
+    def test_subscription_metadata_falls_back_to_get_metadata(
+        self,
+        mock_customer_search,
+        mock_session_create,
+        mock_product_retrieve,
+    ):
+        checkout_intent = mock.MagicMock()
+        checkout_intent.stripe_product_id = 'prod_ai_456'
+        checkout_intent.uuid = 'uuid_fallback'
+        mock_product = mock.MagicMock()
+        mock_product.metadata = None
+        mock_product.get.return_value = {
+            'name': 'Fallback Academy',
+            'product_type': 'essential_academy',
+        }
+        mock_product_retrieve.return_value = mock_product
+        mock_customer_search.return_value = mock.MagicMock(data=[])
+        mock_session_create.return_value = mock.MagicMock(
+            to_dict=mock.MagicMock(return_value={'id': 'cs_test'})
+        )
+
+        create_subscription_checkout_session(
+            self._base_input(admin_email='metadata-admin@example.com'),
+            99,
+            checkout_intent,
+        )
+
+        metadata = mock_session_create.call_args.kwargs['subscription_data']['metadata']
+        self.assertEqual(metadata['name'], 'Fallback Academy')
+        self.assertEqual(metadata['product_type'], 'essential_academy')
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Product.retrieve')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.checkout.Session.create')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Customer.search')
+    def test_subscription_metadata_returns_empty_for_non_dict_metadata(
+        self,
+        mock_customer_search,
+        mock_session_create,
+        mock_product_retrieve,
+    ):
+        checkout_intent = mock.MagicMock()
+        checkout_intent.stripe_product_id = 'prod_ai_789'
+        checkout_intent.uuid = 'uuid_non_dict'
+        mock_product_retrieve.return_value = mock.MagicMock(metadata=['bad'])
+        mock_customer_search.return_value = mock.MagicMock(data=[])
+        mock_session_create.return_value = mock.MagicMock(
+            to_dict=mock.MagicMock(return_value={'id': 'cs_test'})
+        )
+
+        create_subscription_checkout_session(
+            self._base_input(admin_email='metadata-admin@example.com'),
+            99,
+            checkout_intent,
+        )
+
+        metadata = mock_session_create.call_args.kwargs['subscription_data']['metadata']
+        self.assertNotIn('name', metadata)
+        self.assertNotIn('product_type', metadata)
+
 
 class TestAcademyStripeHelpers(TestCase):
     """Tests for academy Stripe product helpers."""
@@ -251,7 +346,7 @@ class TestAcademyStripeHelpers(TestCase):
 
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0].id, 'price_ai_year')
-        mock_price_list.assert_called_once_with(product='prod_ai', active=True)
+        mock_price_list.assert_called_once_with(product='prod_ai', active=True, expand=['data.product'])
 
     @mock.patch('enterprise_access.apps.customer_billing.stripe_api.get_academy_stripe_products')
     def test_get_academy_stripe_prices_returns_empty_when_no_products(self, mock_get_products):
@@ -280,6 +375,53 @@ class TestStripeTrialingSubscription(StripeApiFunctionsTests):
 
         self.assertIsNone(result)
         mock_list.assert_called_once_with(customer='cus_123', status='active', limit=1)
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Subscription.list')
+    def test_uses_separate_cache_entries_for_different_statuses(self, mock_list):
+        mock_list.side_effect = [
+            mock.MagicMock(data=[{'id': 'sub_trial'}]),
+            mock.MagicMock(data=[{'id': 'sub_active'}]),
+        ]
+
+        trialing_result = get_stripe_trialing_subscription('cus_123', status='trialing')
+        active_result = get_stripe_trialing_subscription('cus_123', status='active')
+
+        self.assertEqual(trialing_result, {'id': 'sub_trial'})
+        self.assertEqual(active_result, {'id': 'sub_active'})
+        self.assertEqual(mock_list.call_count, 2)
+
+
+class TestStripeRetrievalHelpers(StripeApiFunctionsTests):
+    """Tests for simple Stripe retrieval helpers."""
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Customer.retrieve')
+    def test_get_stripe_customer(self, mock_retrieve):
+        mock_retrieve.return_value = self.payment_method_response
+
+        result = get_stripe_customer('cus_123')
+
+        self.assertEqual(result, self.payment_method_response)
+        mock_retrieve.assert_called_once_with('cus_123')
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Subscription.retrieve')
+    def test_get_stripe_subscription(self, mock_retrieve):
+        subscription = {'id': 'sub_123'}
+        mock_retrieve.return_value = subscription
+
+        result = get_stripe_subscription('sub_123')
+
+        self.assertEqual(result, subscription)
+        mock_retrieve.assert_called_once_with('sub_123')
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Invoice.create_preview')
+    def test_get_upcoming_invoice(self, mock_create_preview):
+        upcoming_invoice = {'id': 'in_upcoming'}
+        mock_create_preview.return_value = upcoming_invoice
+
+        result = get_upcoming_invoice('cus_123', 'sub_123')
+
+        self.assertEqual(result, upcoming_invoice)
+        mock_create_preview.assert_called_once_with(customer='cus_123', subscription='sub_123')
 
 
 class TestStripePaymentIntent(StripeApiFunctionsTests):

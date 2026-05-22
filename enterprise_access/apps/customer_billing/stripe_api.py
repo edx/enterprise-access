@@ -139,6 +139,8 @@ def stripe_cache(timeout=settings.DEFAULT_STRIPE_CACHE_TIMEOUT):
             # Create cache key based on function name and resource ID
             func_name = func.__name__
             cache_key = f"stripe_{func_name}_{resource_id}"
+            if args or kwargs:
+                cache_key = f"{cache_key}_{args}_{tuple(sorted(kwargs.items()))}"
 
             # Try to get from cache first
             cached_response = TieredCache.get_cached_response(cache_key)
@@ -312,36 +314,26 @@ def get_academy_stripe_products() -> list:
     Returns:
         list: Stripe product objects marked as academy products.
     """
-    try:
-        query = (
-            "active:'true' "
-            f"AND metadata['{_ACADEMY_PRODUCT_TYPE_METADATA_KEY}']:'{_ACADEMY_PRODUCT_TYPE_VALUE}'"
-        )
-        search_result = stripe.Product.search(query=query, limit=100)
-        return list(search_result.auto_paging_iter())
-    except stripe.StripeError:
-        raise
-    except Exception:
-        raise
+    query = (
+        "active:'true' "
+        f"AND metadata['{_ACADEMY_PRODUCT_TYPE_METADATA_KEY}']:'{_ACADEMY_PRODUCT_TYPE_VALUE}'"
+    )
+    search_result = stripe.Product.search(query=query, limit=100)
+    return list(search_result.auto_paging_iter())
 
 
 def get_academy_stripe_product_by_key(product_key: str) -> Optional[stripe.Product]:
     """
     Search for one academy Stripe product by the product_key metadata field.
     """
-    try:
-        query = (
-            "active:'true' "
-            f"AND metadata['{_ACADEMY_PRODUCT_TYPE_METADATA_KEY}']:'{_ACADEMY_PRODUCT_TYPE_VALUE}' "
-            f"AND metadata['{_ACADEMY_PRODUCT_KEY_METADATA_KEY}']:'{product_key}'"
-        )
-        search_result = stripe.Product.search(query=query, limit=1)
-        products = list(search_result.auto_paging_iter())
-        return products[0] if products else None
-    except stripe.StripeError:
-        raise
-    except Exception:
-        raise
+    query = (
+        "active:'true' "
+        f"AND metadata['{_ACADEMY_PRODUCT_TYPE_METADATA_KEY}']:'{_ACADEMY_PRODUCT_TYPE_VALUE}' "
+        f"AND metadata['{_ACADEMY_PRODUCT_KEY_METADATA_KEY}']:'{product_key}'"
+    )
+    search_result = stripe.Product.search(query=query, limit=1)
+    products = list(search_result.auto_paging_iter())
+    return products[0] if products else None
 
 
 def get_academy_stripe_prices() -> list:
@@ -351,18 +343,13 @@ def get_academy_stripe_prices() -> list:
     Returns:
         list: List of Stripe price objects associated with academy products.
     """
-    try:
-        academy_products = get_academy_stripe_products()
-        if not academy_products:
-            return []
+    academy_products = get_academy_stripe_products()
+    if not academy_products:
+        return []
 
-        all_prices = []
-        for product in academy_products:
-            prices = stripe.Price.list(product=product.id, active=True)
-            all_prices.extend(list(prices.auto_paging_iter()))
+    all_prices = []
+    for product in academy_products:
+        prices = stripe.Price.list(product=product.id, active=True, expand=['data.product'])
+        all_prices.extend(list(prices.auto_paging_iter()))
 
-        return all_prices
-    except stripe.StripeError:
-        raise
-    except Exception:
-        raise
+    return all_prices
