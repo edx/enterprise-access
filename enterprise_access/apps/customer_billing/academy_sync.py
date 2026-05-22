@@ -1,14 +1,11 @@
 """Sync helpers for importing academy metadata from Enterprise Catalog into EnterpriseAcademy."""
 
 import logging
-import re
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
 from django.apps import apps
-from django.db import transaction
-from django.utils.text import slugify
 
 from enterprise_access.apps.api_client.enterprise_catalog_client import EnterpriseCatalogApiClient
 
@@ -17,14 +14,7 @@ logger = logging.getLogger(__name__)
 
 def _get_enterprise_academy_model():
     """Resolve EnterpriseAcademy lazily so this module can import without model migrations."""
-    try:
-        return apps.get_model('customer_billing', 'EnterpriseAcademy')
-    except LookupError as exc:
-        raise RuntimeError(
-            'Academy sync requires the customer_billing.EnterpriseAcademy model to be '
-            'defined and registered before sync_enterprise_academies_from_enterprise_catalog '
-            'can be called.'
-        ) from exc
+    return apps.get_model('customer_billing', 'EnterpriseAcademy')
 
 
 @dataclass
@@ -39,182 +29,85 @@ class AcademySyncResult:
     errors: int = 0
 
 
-def _first_non_empty(*values: Any) -> str:
-    """Return first non-empty string representation from values."""
-    for value in values:
-        if value is None:
-            continue
-        if isinstance(value, str):
-            normalized = value.strip()
-            if normalized:
-                return normalized
-            continue
-        if isinstance(value, dict):
-            rendered = value.get('rendered')
-            if isinstance(rendered, str) and rendered.strip():
-                return rendered.strip()
-            continue
-        normalized = str(value).strip()
-        if normalized:
-            return normalized
-    return ''
+SYNC_UPDATE_FIELDS = (
+    'long_name',
+    'description',
+    'marketing_url',
+    'thumbnail_url',
+    'tags',
+    'stripe_product_id',
+    'stripe_price_lookup_key',
+    'catalog_query_uuid',
+    'product_key',
+    'slug',
+    'is_active',
+    'display_order',
+)
 
 
-def _to_slug(raw_value: str, fallback_prefix: str, item_id: Any) -> str:
-    """Convert to slug, with deterministic fallback if slugify returns empty."""
-    slug_value = slugify(raw_value or '')
-    if slug_value:
-        return slug_value
+def _normalize_catalog_query_uuid(value: Any) -> str | None:
+    """Normalize catalog query UUID to a canonical string, if valid."""
+    if value is None:
+        return None
+    if isinstance(value, UUID):
+        return str(value)
+    if not isinstance(value, str):
+        return None
 
-    fallback_slug = slugify(fallback_prefix or '')
-    item_slug = slugify(str(item_id or ''))
+    raw_uuid = value.strip()
+    if not raw_uuid:
+        return None
 
-    if fallback_slug and item_slug:
-        return f'{fallback_slug}-{item_slug}'
-    if item_slug:
-        return item_slug
-    if fallback_slug:
-        return fallback_slug
-    return 'item'
-
-
-def _to_lookup_token(raw_value: str) -> str:
-    """Normalize a value into a Stripe lookup-key token format."""
-    value = (raw_value or '').strip().lower()
-    if not value:
-        return ''
-    value = value.replace('&', ' and ')
-    value = re.sub(r'[^a-z0-9]+', '_', value)
-    value = re.sub(r'_+', '_', value).strip('_')
-    return value
-
-
-def _default_stripe_lookup_key(name: str, product_key: str) -> str:
-    """Build deterministic Stripe lookup key when source does not provide one."""
-    name_token = _to_lookup_token(name)
-    if name_token:
-        return f'essentials_{name_token}_academy_yearly'
-
-    product_token = _to_lookup_token(product_key)
-    if product_token:
-        return f'essentials_{product_token}_academy_yearly'
-
-    return ''
-
-
-def _extract_payload_list(payload: Any) -> list[dict[str, Any]]:
-    """Extract list payload from paginated or plain-list wrapper formats."""
-    if isinstance(payload, list):
-        return payload
-    if not isinstance(payload, dict):
-        return []
-
-    for key in ('results', 'items', 'academies', 'catalogs'):
-        value = payload.get(key)
-        if isinstance(value, list):
-            return value
-    return []
-
-
-def _extract_catalog_query_uuid(*sources: Any) -> str | None:
-    """Extract a catalog query UUID from heterogeneous payload fields."""
-    for source in sources:
-        if source is None:
-            continue
-
-        if isinstance(source, bool):
-            continue
-
-        if isinstance(source, UUID):
-            return str(source)
-
-        if isinstance(source, str):
-            value = source.strip()
-            try:
-                return str(UUID(value))
-            except (TypeError, ValueError):
-                continue
-
-        # Ignore legacy integer ids when extracting UUID values.
-        if isinstance(source, int):
-            continue
-
-        if isinstance(source, dict):
-            nested = _extract_catalog_query_uuid(
-                source.get('catalog_query_uuid'),
-                source.get('catalog_query_id'),
-                source.get('id'),
-                source.get('pk'),
-                source.get('uuid'),
-            )
-            if nested is not None:
-                return nested
-            continue
-
-        if isinstance(source, list):
-            for item in source:
-                nested = _extract_catalog_query_uuid(item)
-                if nested is not None:
-                    return nested
-
-    return None
+    try:
+        return str(UUID(raw_uuid))
+    except (TypeError, ValueError):
+        return None
 
 
 def _normalize_catalog_academy(
     item: dict[str, Any],
 ) -> dict[str, Any] | None:
     """Map one Enterprise Catalog academy payload to EnterpriseAcademy model fields."""
-    name = _first_non_empty(item.get('name'), item.get('title'), item.get('short_name'))
+    if not isinstance(item, dict):
+        return None
+
+    name = (item.get('name') or '').strip()
     if not name:
         return None
 
-    product_key_raw = _first_non_empty(item.get('product_key'), item.get('slug'), name)
-    slug_raw = _first_non_empty(item.get('slug'), product_key_raw, name)
+    product_key = (item.get('product_key') or '').strip()
+    slug = (item.get('slug') or '').strip()
+    stripe_price_lookup_key = (item.get('stripe_price_lookup_key') or '').strip()
+    if not product_key or not slug or not stripe_price_lookup_key:
+        return None
 
-    product_key = _to_slug(product_key_raw, 'academy-product', name)
-    slug = _to_slug(slug_raw, 'academy', name)
+    long_name = item.get('long_name')
+    description = item.get('description')
+    marketing_url = item.get('marketing_url')
+    thumbnail_url = item.get('thumbnail_url')
+    stripe_product_id = item.get('stripe_product_id')
 
-    metadata_raw = item.get('metadata')
-    metadata: dict[str, Any] = metadata_raw if isinstance(metadata_raw, dict) else {}
+    display_order = item.get('display_order', 0)
+    display_order = int(display_order or 0)
 
-    stripe_lookup_key = _first_non_empty(
-        item.get('stripe_price_lookup_key'),
-        metadata.get('stripe_price_lookup_key'),
-        _default_stripe_lookup_key(name, product_key),
-    )
+    tags = item.get('tags')
+    normalized_tags = tags if isinstance(tags, list) else []
 
     return {
         'name': name,
-        'long_name': _first_non_empty(item.get('long_name'), item.get('title'), name),
-        'description': _first_non_empty(item.get('description'), item.get('summary')),
-        'marketing_url': _first_non_empty(item.get('marketing_url'), item.get('url')),
-        'thumbnail_url': _first_non_empty(item.get('thumbnail_url'), item.get('image_url')),
-        'tags': item.get('tags') if isinstance(item.get('tags'), list) else [],
-        'stripe_product_id': _first_non_empty(item.get('stripe_product_id'), metadata.get('stripe_product_id')),
-        'stripe_price_lookup_key': stripe_lookup_key,
-        'catalog_query_uuid': _extract_catalog_query_uuid(
-            item.get('catalog_query_uuid'),
-            item.get('catalog_query_id'),
-            metadata.get('catalog_query_uuid'),
-            metadata.get('catalog_query_id'),
-            item.get('catalog_queries'),
-            metadata.get('catalog_queries'),
-        ),
+        'long_name': long_name.strip() if isinstance(long_name, str) else '',
+        'description': description.strip() if isinstance(description, str) else '',
+        'marketing_url': marketing_url.strip() if isinstance(marketing_url, str) else '',
+        'thumbnail_url': thumbnail_url.strip() if isinstance(thumbnail_url, str) else '',
+        'tags': normalized_tags,
+        'stripe_product_id': stripe_product_id.strip() if isinstance(stripe_product_id, str) else '',
+        'stripe_price_lookup_key': stripe_price_lookup_key,
+        'catalog_query_uuid': _normalize_catalog_query_uuid(item.get('catalog_query_uuid')),
         'product_key': product_key,
         'slug': slug,
         'is_active': bool(item.get('is_active', True)),
-        'display_order': int(item.get('display_order', 0) or 0),
+        'display_order': display_order,
     }
-
-
-def fetch_enterprise_catalog_academies(academy_uuid=None) -> list[dict[str, Any]]:
-    """Fetch academy payload from Enterprise Catalog."""
-    client = EnterpriseCatalogApiClient()
-    get_academies = getattr(client, 'get_academies', None)
-    if not callable(get_academies):
-        raise AttributeError('EnterpriseCatalogApiClient.get_academies is required for academy sync')
-    payload = get_academies(academy_uuid=academy_uuid)  # pylint: disable=not-callable
-    return _extract_payload_list(payload)
 
 
 def sync_enterprise_academies_from_enterprise_catalog(
@@ -225,56 +118,62 @@ def sync_enterprise_academies_from_enterprise_catalog(
     """Sync Enterprise Catalog academy entries into EnterpriseAcademy rows."""
     result = AcademySyncResult()
     enterprise_academy_model = _get_enterprise_academy_model()
+    client = EnterpriseCatalogApiClient()
+    get_academies = getattr(client, 'get_academies', None)
+    if not callable(get_academies):
+        raise AttributeError('EnterpriseCatalogApiClient.get_academies is required for academy sync')
+    payload = get_academies(academy_uuid=academy_uuid)  # pylint: disable=not-callable
+    academy_items = payload if isinstance(payload, list) else []
 
-    academy_items = fetch_enterprise_catalog_academies(academy_uuid=academy_uuid)
+    objects_to_upsert = []
     seen_names: set[str] = set()
 
     for item in academy_items:
-        normalized = _normalize_catalog_academy(item)
-        if not normalized:
+        try:
+            normalized = _normalize_catalog_academy(item)
+        except Exception as exc:  # pylint: disable=broad-except
+            result.errors += 1
+            logger.exception('Failed normalizing academy payload: %s', exc)
+            continue
+
+        if normalized is None:
             result.skipped += 1
             continue
 
         name = normalized['name']
         seen_names.add(name)
-
         current = enterprise_academy_model.objects.filter(name__iexact=name).first()
         if current is not None:
-            # Track the DB-canonical casing too; exclude(name__in=...) is case-sensitive on most DBs.
             seen_names.add(current.name)
-        # Preserve existing UUID when payload does not include one.
-        if normalized.get('catalog_query_uuid') is None and current and current.catalog_query_uuid is not None:
+
+        if normalized['catalog_query_uuid'] is None and current and current.catalog_query_uuid is not None:
             normalized['catalog_query_uuid'] = current.catalog_query_uuid
 
+        if current is None:
+            result.created += 1
+        else:
+            has_changes = any(getattr(current, field_name) != normalized[field_name] for field_name in normalized)
+            if not has_changes:
+                result.unchanged += 1
+                continue
+            result.updated += 1
+
+        objects_to_upsert.append(enterprise_academy_model(**normalized))
+
+    if objects_to_upsert and not dry_run:
         try:
-            with transaction.atomic():
-                if current is None:
-                    if not dry_run:
-                        enterprise_academy_model.objects.create(**normalized)
-                    result.created += 1
-                    continue
-
-                has_changes = any(
-                    getattr(current, field_name) != field_value
-                    for field_name, field_value in normalized.items()
-                )
-                if not has_changes:
-                    result.unchanged += 1
-                    continue
-
-                if not dry_run:
-                    for field_name, field_value in normalized.items():
-                        setattr(current, field_name, field_value)
-                    current.save()
-                result.updated += 1
+            enterprise_academy_model.objects.bulk_create(
+                objects_to_upsert,
+                update_conflicts=True,
+                unique_fields=['name'],
+                update_fields=list(SYNC_UPDATE_FIELDS),
+            )
         except Exception as exc:  # pylint: disable=broad-except
-            result.errors += 1
-            logger.exception('Failed syncing academy payload (name=%s): %s', name, exc)
+            result.errors += len(objects_to_upsert)
+            logger.exception('Bulk academy upsert failed: %s', exc)
 
     if deactivate_missing and seen_names:
-        stale_queryset = enterprise_academy_model.objects.filter(
-            is_active=True,
-        ).exclude(name__in=seen_names)
+        stale_queryset = enterprise_academy_model.objects.filter(is_active=True).exclude(name__in=seen_names)
         stale_count = stale_queryset.count()
         if stale_count and not dry_run:
             stale_queryset.update(is_active=False)
