@@ -9,10 +9,14 @@ from edx_django_utils.cache import TieredCache
 
 from enterprise_access.apps.customer_billing.stripe_api import (
     create_subscription_checkout_session,
+    get_academy_stripe_prices,
+    get_academy_stripe_product_by_key,
+    get_academy_stripe_products,
     get_stripe_checkout_session,
     get_stripe_invoice,
     get_stripe_payment_intent,
     get_stripe_payment_method,
+    get_stripe_trialing_subscription,
     stripe_cache
 )
 
@@ -159,6 +163,123 @@ class TestCreateSubscriptionCheckoutSession(StripeApiFunctionsTests):
         self.assertEqual(kwargs.get('customer'), 'cus_12345')
         self.assertNotIn('customer_email', kwargs)
         self.assertEqual(kwargs.get('ui_mode'), 'elements')
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.checkout.Session.create')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Customer.search')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Product.retrieve')
+    def test_includes_product_metadata_when_checkout_intent_has_stripe_product_id(
+        self,
+        mock_product_retrieve,
+        mock_customer_search,
+        mock_session_create,
+    ):
+        """When a checkout intent has a Stripe product, enrich subscription metadata from it."""
+        mock_customer_search.return_value = mock.MagicMock(data=[])
+        mock_product_retrieve.return_value = mock.MagicMock(
+            metadata={'name': 'AI Academy', 'product_type': 'essential_academy'}
+        )
+        mock_stripe_session = mock.Mock()
+        mock_stripe_session.to_dict.return_value = {'id': 'cs_test_metadata'}
+        mock_session_create.return_value = mock_stripe_session
+
+        input_data = self._base_input(admin_email='metadata-admin@example.com')
+        checkout_intent = mock.MagicMock()
+        checkout_intent.id = 'chk_metadata'
+        checkout_intent.uuid = 'uuid_chk_metadata'
+        checkout_intent.stripe_product_id = 'prod_ai_123'
+
+        create_subscription_checkout_session(input_data, lms_user_id=99, checkout_intent=checkout_intent)
+
+        _, kwargs = mock_session_create.call_args
+        metadata = kwargs['subscription_data']['metadata']
+        self.assertEqual(metadata['name'], 'AI Academy')
+        self.assertEqual(metadata['product_type'], 'essential_academy')
+        mock_product_retrieve.assert_called_once_with('prod_ai_123')
+
+
+class TestAcademyStripeHelpers(TestCase):
+    """Tests for academy Stripe product helpers."""
+
+    def setUp(self):
+        TieredCache.dangerous_clear_all_tiers()
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Product.search')
+    def test_get_academy_stripe_products(self, mock_search):
+        mock_product = mock.MagicMock()
+        mock_product.id = 'prod_ai'
+        mock_search.return_value = mock.MagicMock(
+            auto_paging_iter=mock.MagicMock(return_value=iter([mock_product]))
+        )
+
+        result = get_academy_stripe_products()
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].id, 'prod_ai')
+        query = mock_search.call_args.kwargs['query']
+        self.assertIn("edx_product_type", query)
+        self.assertIn("essential_academy", query)
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Product.search')
+    def test_get_academy_stripe_product_by_key(self, mock_search):
+        mock_product = mock.MagicMock()
+        mock_product.id = 'prod_ai'
+        mock_search.return_value = mock.MagicMock(
+            auto_paging_iter=mock.MagicMock(return_value=iter([mock_product]))
+        )
+
+        result = get_academy_stripe_product_by_key('essentials_ai')
+
+        self.assertEqual(result.id, 'prod_ai')
+        query = mock_search.call_args.kwargs['query']
+        self.assertIn("product_key", query)
+        self.assertIn("essentials_ai", query)
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Price.list')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.get_academy_stripe_products')
+    def test_get_academy_stripe_prices(self, mock_get_products, mock_price_list):
+        mock_product = mock.MagicMock()
+        mock_product.id = 'prod_ai'
+        mock_get_products.return_value = [mock_product]
+
+        mock_price = mock.MagicMock()
+        mock_price.id = 'price_ai_year'
+        mock_price_list.return_value = mock.MagicMock(
+            auto_paging_iter=mock.MagicMock(return_value=iter([mock_price]))
+        )
+
+        result = get_academy_stripe_prices()
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].id, 'price_ai_year')
+        mock_price_list.assert_called_once_with(product='prod_ai', active=True)
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.get_academy_stripe_products')
+    def test_get_academy_stripe_prices_returns_empty_when_no_products(self, mock_get_products):
+        mock_get_products.return_value = []
+
+        self.assertEqual(get_academy_stripe_prices(), [])
+
+
+class TestStripeTrialingSubscription(StripeApiFunctionsTests):
+    """Tests for get_stripe_trialing_subscription."""
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Subscription.list')
+    def test_returns_first_subscription_when_found(self, mock_list):
+        mock_list.return_value = mock.MagicMock(data=[{'id': 'sub_trial'}])
+
+        result = get_stripe_trialing_subscription('cus_123')
+
+        self.assertEqual(result, {'id': 'sub_trial'})
+        mock_list.assert_called_once_with(customer='cus_123', status='trialing', limit=1)
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Subscription.list')
+    def test_returns_none_when_no_matching_subscription(self, mock_list):
+        mock_list.return_value = mock.MagicMock(data=[])
+
+        result = get_stripe_trialing_subscription('cus_123', status='active')
+
+        self.assertIsNone(result)
+        mock_list.assert_called_once_with(customer='cus_123', status='active', limit=1)
 
 
 class TestStripePaymentIntent(StripeApiFunctionsTests):
