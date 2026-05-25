@@ -3,9 +3,12 @@ REST API views for the billing provider (Stripe) integration.
 """
 import logging
 import uuid
+from decimal import Decimal
+from urllib.parse import urljoin
 
 import stripe
 from django.conf import settings
+from django.db import connection
 from django.db.models import Q
 from django.http import HttpResponseServerError
 from django.utils import timezone
@@ -17,9 +20,11 @@ from edx_rest_framework_extensions.auth.jwt.authentication import JwtAuthenticat
 from rest_framework import exceptions, mixins, permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 
 from enterprise_access.apps.api import serializers
 from enterprise_access.apps.api.authentication import StripeWebhookAuthentication
+from enterprise_access.apps.api_client.enterprise_catalog_client import EnterpriseCatalogApiV1Client
 from enterprise_access.apps.core.constants import (
     BILLING_MANAGEMENT_ACCESS_PERMISSION,
     CUSTOMER_BILLING_CREATE_PORTAL_SESSION_PERMISSION,
@@ -33,10 +38,15 @@ from enterprise_access.apps.customer_billing.api import (
 )
 from enterprise_access.apps.customer_billing.models import (
     CheckoutIntent,
+    EnterpriseAcademy,
     SelfServiceSubscriptionRenewal,
     StripeEventSummary
 )
-from enterprise_access.apps.customer_billing.pricing_api import get_ssp_product_pricing
+from enterprise_access.apps.customer_billing.pricing_api import (
+    StripePricingError,
+    get_all_stripe_prices,
+    get_ssp_product_pricing
+)
 from enterprise_access.apps.customer_billing.stripe_api import get_stripe_customer
 from enterprise_access.apps.customer_billing.stripe_event_handlers import StripeEventHandler
 
@@ -47,6 +57,391 @@ logger = logging.getLogger(__name__)
 
 CUSTOMER_BILLING_API_TAG = 'Customer Billing'
 STRIPE_EVENT_API_TAG = 'Stripe Event Summary'
+
+
+# pylint: disable=missing-function-docstring
+class AcademyProductsViewSet(viewsets.ViewSet):
+    """Public endpoint for Essential academy products."""
+
+    authentication_classes = ()
+    permission_classes = (permissions.AllowAny,)
+    throttle_classes = (ScopedRateThrottle,)
+    throttle_scope = 'academy_unauthenticated'
+
+    def _to_string_decimal(self, value):
+        if value is None:
+            return None
+        if isinstance(value, Decimal):
+            return f'{value:.2f}'
+        return str(value)
+
+    def _academy_identifier(self, academy):
+        for candidate in (
+            academy.stripe_product_id,
+            academy.product_key,
+            academy.slug,
+            str(academy.uuid),
+        ):
+            if candidate:
+                return candidate
+        return ''
+
+    def _get_catalog_query_id(self, academy):
+        for attr_name in ('catalog_query_id', 'catalog_query_int_id'):
+            value = getattr(academy, attr_name, None)
+            if isinstance(value, bool):
+                continue
+            if isinstance(value, int):
+                return value
+            if isinstance(value, str) and value.strip().isdigit():
+                return int(value.strip())
+        return None
+
+    def _serialize_price(self, price):
+        recurring = price.get('recurring') or {}
+        return {
+            'id': price.get('id'),
+            'product': (price.get('product') or {}).get('id'),
+            'lookup_key': price.get('lookup_key'),
+            'currency': price.get('currency'),
+            'unit_amount': price.get('unit_amount'),
+            'unit_amount_decimal': self._to_string_decimal(price.get('unit_amount_decimal')),
+            'recurring': {
+                'interval': recurring.get('interval'),
+                'interval_count': recurring.get('interval_count'),
+                'usage_type': recurring.get('usage_type'),
+            } if recurring else None,
+        }
+
+    def _serialize_academy(self, academy, all_prices_by_lookup):
+        lookup_key = academy.stripe_price_lookup_key
+        price_payload = all_prices_by_lookup.get(lookup_key)
+        serialized_prices = [self._serialize_price(price_payload)] if price_payload else []
+        catalog_query_id = self._get_catalog_query_id(academy)
+        return {
+            'id': self._academy_identifier(academy),
+            'name': academy.name,
+            'long_name': academy.long_name or academy.name,
+            'description': academy.description or '',
+            'marketing_url': academy.marketing_url or '',
+            'thumbnail_url': self._resolve_thumbnail_url(academy.thumbnail_url or ''),
+            'tags': academy.tags or [],
+            'stripe_product_id': academy.stripe_product_id or '',
+            'catalog_query_id': catalog_query_id,
+            'edx_catalog_id': catalog_query_id,
+            'prices': serialized_prices,
+        }
+
+    def _safe_get_all_stripe_prices(self):
+        """Return Stripe prices, falling back to empty prices when Stripe is unavailable."""
+        try:
+            return get_all_stripe_prices()
+        except (StripePricingError, stripe.StripeError) as exc:
+            logger.warning('Stripe pricing unavailable; returning academy metadata without prices: %s', exc)
+            return {}
+
+    def _resolve_thumbnail_url(self, thumbnail_path):
+        if not thumbnail_path:
+            return ''
+        if thumbnail_path.startswith('http://') or thumbnail_path.startswith('https://'):
+            return thumbnail_path
+
+        base_url = getattr(settings, 'ACADEMY_THUMBNAIL_S3_BASE_URL', '') or ''
+        if not base_url:
+            return thumbnail_path
+
+        return urljoin(f"{base_url.rstrip('/')}/", thumbnail_path.lstrip('/'))
+
+    def _matches_pk(self, academy, pk):
+        candidate_values = {
+            str(academy.uuid),
+            academy.slug,
+            academy.product_key,
+            academy.stripe_product_id,
+            self._academy_identifier(academy),
+        }
+        return pk in {str(value) for value in candidate_values if value}
+
+    def _get_academies_queryset(self):
+        academies = EnterpriseAcademy.objects.all().order_by('display_order', 'name')
+
+        academy_uuid = self.request.query_params.get('academy_uuid')
+        if academy_uuid:
+            try:
+                parsed_uuid = uuid.UUID(academy_uuid)
+            except (ValueError, TypeError, AttributeError) as exc:
+                raise exceptions.ValidationError({'academy_uuid': 'Must be a valid UUID.'}) from exc
+            academies = academies.filter(uuid=parsed_uuid)
+
+        product_key_filter = self.request.query_params.get('product_key')
+        include_inactive = self.request.query_params.get('include_inactive') == 'true'
+        if not include_inactive:
+            academies = academies.filter(is_active=True)
+
+        if product_key_filter:
+            academies = academies.filter(product_key=product_key_filter)
+
+        tags_filter = [tag.strip() for tag in self.request.query_params.getlist('tag') if tag.strip()]
+        if tags_filter:
+            if connection.features.supports_json_field_contains:
+                for tag in tags_filter:
+                    academies = academies.filter(tags__contains=[tag])
+            else:
+                academies = [
+                    academy
+                    for academy in academies
+                    if all(tag in (academy.tags or []) for tag in tags_filter)
+                ]
+
+        return academies
+
+    def _extract_results(self, payload):
+        if isinstance(payload, list):
+            return payload
+        if isinstance(payload, dict):
+            results = payload.get('results')
+            if isinstance(results, list):
+                return results
+        return []
+
+    def _normalize_catalog_query_id(self, value):
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            return value
+        raw = str(value).strip()
+        if not raw:
+            return None
+        if raw.isdigit():
+            return int(raw)
+        return None
+
+    def _build_normalized_academy_payload(self, item, default_catalog_query_id):
+        if not isinstance(item, dict):
+            return None
+
+        academy_uuid = str(item.get('uuid') or '').strip()
+        name = (item.get('name') or item.get('title') or '').strip()
+        if not name:
+            return None
+
+        slug_base = (item.get('slug') or name).strip().lower().replace(' ', '-')
+        product_key = (item.get('product_key') or slug_base).strip()
+        slug = (item.get('slug') or product_key or slug_base).strip()
+        stripe_lookup_key = (item.get('stripe_price_lookup_key') or '').strip()
+        if not stripe_lookup_key:
+            suffix = (academy_uuid[:8] if academy_uuid else slug)
+            stripe_lookup_key = f'{slug}-{suffix}-price'[:255]
+
+        description = next(
+            (
+                candidate
+                for candidate in (
+                    item.get('description'),
+                    item.get('short_description'),
+                    item.get('long_description'),
+                )
+                if candidate
+            ),
+            '',
+        )
+
+        normalized = {
+            'name': name,
+            'long_name': (item.get('long_name') or item.get('title') or name).strip(),
+            'description': description.strip(),
+            'marketing_url': (item.get('marketing_url') or '').strip(),
+            'thumbnail_url': (item.get('thumbnail_url') or item.get('image') or '').strip(),
+            'tags': item.get('tags') if isinstance(item.get('tags'), list) else [],
+            'stripe_product_id': (item.get('stripe_product_id') or '').strip(),
+            'stripe_price_lookup_key': stripe_lookup_key,
+            'catalog_query_id': self._normalize_catalog_query_id(item.get('catalog_query_id')),
+            'product_key': product_key[:255],
+            'slug': slug[:255],
+            'is_active': bool(item.get('is_active', True)),
+            'display_order': int(item.get('display_order') or 0),
+        }
+
+        if normalized['catalog_query_id'] is None:
+            normalized['catalog_query_id'] = default_catalog_query_id
+
+        catalog_query_by_uuid = getattr(settings, 'ESSENTIAL_ACADEMY_CATALOG_QUERY_ID_BY_ACADEMY_UUID', {}) or {}
+        catalog_query_by_name = getattr(settings, 'ESSENTIAL_ACADEMY_CATALOG_QUERY_ID_BY_NAME', {}) or {}
+
+        mapped_catalog_query = catalog_query_by_uuid.get(academy_uuid)
+        if mapped_catalog_query is None:
+            mapped_catalog_query = catalog_query_by_name.get(name)
+        mapped_catalog_query_id = self._normalize_catalog_query_id(mapped_catalog_query)
+        if mapped_catalog_query_id is not None:
+            normalized['catalog_query_id'] = mapped_catalog_query_id
+
+        overrides_by_uuid = getattr(settings, 'ESSENTIAL_ACADEMY_FIELD_OVERRIDES_BY_ACADEMY_UUID', {}) or {}
+        overrides_by_name = getattr(settings, 'ESSENTIAL_ACADEMY_FIELD_OVERRIDES_BY_NAME', {}) or {}
+        raw_override = overrides_by_uuid.get(academy_uuid)
+        if not isinstance(raw_override, dict):
+            raw_override = overrides_by_name.get(name)
+
+        if isinstance(raw_override, dict):
+            for key in (
+                'name', 'long_name', 'description', 'marketing_url', 'thumbnail_url',
+                'stripe_product_id', 'stripe_price_lookup_key', 'product_key', 'slug',
+            ):
+                if key in raw_override and raw_override[key] is not None:
+                    normalized[key] = str(raw_override[key]).strip()
+            if 'display_order' in raw_override:
+                try:
+                    normalized['display_order'] = int(raw_override['display_order'])
+                except (TypeError, ValueError):
+                    pass
+            if 'catalog_query_id' in raw_override:
+                override_catalog_query_id = self._normalize_catalog_query_id(raw_override['catalog_query_id'])
+                if override_catalog_query_id is not None:
+                    normalized['catalog_query_id'] = override_catalog_query_id
+
+        return normalized
+
+    def _sync_essential_academies(self):
+        enterprise_customer_uuid = (getattr(settings, 'ACADEMY_SYNC_ENTERPRISE_CUSTOMER_UUID', '') or '').strip()
+        client = EnterpriseCatalogApiV1Client()
+
+        academy_params = {'enterprise_customer': enterprise_customer_uuid} if enterprise_customer_uuid else None
+        academies_response = client.client.get(urljoin(client.api_base_url, 'academies/'), params=academy_params)
+        academies_response.raise_for_status()
+        academy_items = self._extract_results(academies_response.json())
+
+        allowlist_uuids = {
+            str(value).strip()
+            for value in (getattr(settings, 'ESSENTIAL_ACADEMY_UUID_ALLOWLIST', []) or [])
+            if str(value).strip()
+        }
+        allowlist_names = {
+            str(value).strip().casefold()
+            for value in (getattr(settings, 'ESSENTIAL_ACADEMY_NAME_ALLOWLIST', []) or [])
+            if str(value).strip()
+        }
+        if allowlist_uuids or allowlist_names:
+            filtered_items = []
+            for item in academy_items:
+                academy_uuid = str((item or {}).get('uuid') or '').strip()
+                academy_name = str((item or {}).get('name') or (item or {}).get('title') or '').strip().casefold()
+                if academy_uuid and academy_uuid in allowlist_uuids:
+                    filtered_items.append(item)
+                    continue
+                if academy_name and academy_name in allowlist_names:
+                    filtered_items.append(item)
+            academy_items = filtered_items
+
+        default_catalog_query_id = None
+        if enterprise_customer_uuid:
+            catalogs_response = client.client.get(
+                urljoin(client.api_base_url, 'enterprise-catalogs/'),
+                params={'enterprise_customer': enterprise_customer_uuid},
+            )
+            catalogs_response.raise_for_status()
+            catalog_items = self._extract_results(catalogs_response.json())
+            for catalog_item in catalog_items:
+                default_catalog_query_id = self._normalize_catalog_query_id(catalog_item.get('catalog_query_id'))
+                if default_catalog_query_id is not None:
+                    break
+
+        seen_names = set()
+        for item in academy_items:
+            normalized = self._build_normalized_academy_payload(item, default_catalog_query_id)
+            if normalized is None:
+                continue
+
+            current = EnterpriseAcademy.objects.filter(name__iexact=normalized['name']).first()
+            seen_names.add(normalized['name'])
+
+            if current is None:
+                EnterpriseAcademy.objects.create(**normalized)
+                continue
+
+            has_changes = any(
+                getattr(current, field_name) != field_value
+                for field_name, field_value in normalized.items()
+            )
+            if not has_changes:
+                continue
+
+            for field_name, field_value in normalized.items():
+                setattr(current, field_name, field_value)
+            current.save(update_fields=[*normalized.keys(), 'modified'])
+
+        if seen_names:
+            EnterpriseAcademy.objects.filter(is_active=True).exclude(name__in=seen_names).update(is_active=False)
+
+    def _maybe_sync(self):
+        if self.request.query_params.get('sync') != 'true':
+            return
+        self._sync_essential_academies()
+
+    @extend_schema(
+        tags=[CUSTOMER_BILLING_API_TAG],
+        summary='List academy products for Essentials plan selection.',
+        responses={status.HTTP_200_OK: serializers.AcademyProductListResponseSerializer},
+    )
+    def list(self, request, *args, **kwargs):
+        try:
+            self._maybe_sync()
+            academies = list(self._get_academies_queryset())
+            if not academies:
+                serializer = serializers.AcademyProductListResponseSerializer(
+                    {
+                        'count': 0,
+                        'next': None,
+                        'previous': None,
+                        'results': [],
+                    }
+                )
+                return Response(serializer.data, status=status.HTTP_200_OK)
+            all_prices_by_lookup = self._safe_get_all_stripe_prices()
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.exception('Unable to fetch academy products: %s', exc)
+            return Response(
+                {'error_code': 'academy_service_unavailable', 'detail': 'Retry later.'},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        payload = [self._serialize_academy(academy, all_prices_by_lookup) for academy in academies]
+        response_payload = {
+            'count': len(payload),
+            'next': None,
+            'previous': None,
+            'results': payload,
+        }
+        serializer = serializers.AcademyProductListResponseSerializer(response_payload)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @extend_schema(
+        tags=[CUSTOMER_BILLING_API_TAG],
+        summary='Retrieve a single academy product.',
+        responses={status.HTTP_200_OK: serializers.AcademyProductResponseSerializer},
+    )
+    def retrieve(self, request, *args, **kwargs):
+        pk = kwargs.get('pk')
+        if not pk:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            self._maybe_sync()
+            academies = list(self._get_academies_queryset())
+            selected = next((academy for academy in academies if self._matches_pk(academy, pk)), None)
+            if not selected:
+                return Response(status=status.HTTP_404_NOT_FOUND)
+            all_prices_by_lookup = self._safe_get_all_stripe_prices()
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.exception('Unable to retrieve academy product %s: %s', pk, exc)
+            return Response(
+                {'error_code': 'academy_service_unavailable', 'detail': 'Retry later.'},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        payload = self._serialize_academy(selected, all_prices_by_lookup)
+        serializer = serializers.AcademyProductResponseSerializer(payload)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 class CheckoutIntentPermission(permissions.BasePermission):

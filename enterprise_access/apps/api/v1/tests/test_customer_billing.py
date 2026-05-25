@@ -4,6 +4,8 @@ Tests for customer billing API endpoints.
 import json
 import uuid
 from datetime import timedelta
+from decimal import Decimal
+from types import SimpleNamespace
 from unittest import mock
 
 import ddt
@@ -14,7 +16,11 @@ from django.urls import reverse
 from django.utils import timezone
 from rest_framework import status
 
-from enterprise_access.apps.api.v1.views.customer_billing import BillingManagementViewSet, CheckoutIntentPermission
+from enterprise_access.apps.api.v1.views.customer_billing import (
+    AcademyProductsViewSet,
+    BillingManagementViewSet,
+    CheckoutIntentPermission
+)
 from enterprise_access.apps.core.constants import (
     SYSTEM_ENTERPRISE_ADMIN_ROLE,
     SYSTEM_ENTERPRISE_LEARNER_ROLE,
@@ -22,9 +28,391 @@ from enterprise_access.apps.core.constants import (
 )
 from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.customer_billing.constants import CheckoutIntentState
-from enterprise_access.apps.customer_billing.models import CheckoutIntent, StripeEventData, StripeEventSummary
+from enterprise_access.apps.customer_billing.models import (
+    CheckoutIntent,
+    EnterpriseAcademy,
+    StripeEventData,
+    StripeEventSummary
+)
+from enterprise_access.apps.customer_billing.pricing_api import StripePricingError
 from enterprise_access.apps.customer_billing.tests.utils import AttrDict
 from test_utils import APITest
+
+
+# pylint: disable=protected-access
+class AcademyProductsApiTests(APITest):
+    """Tests for academy-products endpoints."""
+
+    def setUp(self):
+        super().setUp()
+        self.ai_academy = EnterpriseAcademy.objects.create(
+            name='AI Academy',
+            long_name='Artificial Intelligence Academy',
+            description='Learn AI foundations.',
+            marketing_url='https://example.com/ai',
+            thumbnail_url='https://cdn.example.com/ai.png',
+            stripe_product_id='prod_ai',
+            stripe_price_lookup_key='essentials_ai_yearly',
+            enterprise_catalog_uuid=uuid.uuid4(),
+            product_key='academy_ai',
+            slug='ai-academy',
+            tags=['ai', 'ml'],
+            is_active=True,
+            display_order=1,
+        )
+        self.legacy_academy = EnterpriseAcademy.objects.create(
+            name='Legacy Academy',
+            long_name='Legacy Academy',
+            description='Legacy catalog.',
+            marketing_url='https://example.com/legacy',
+            thumbnail_url='https://cdn.example.com/legacy.png',
+            stripe_product_id='prod_legacy',
+            stripe_price_lookup_key='essentials_legacy_yearly',
+            enterprise_catalog_uuid=uuid.uuid4(),
+            product_key='academy_legacy',
+            slug='legacy-academy',
+            tags=['legacy'],
+            is_active=False,
+            display_order=2,
+        )
+        self.prices_by_lookup_key = {
+            'essentials_ai_yearly': {
+                'id': 'price_ai',
+                'lookup_key': 'essentials_ai_yearly',
+                'currency': 'usd',
+                'unit_amount': 9900,
+                'unit_amount_decimal': Decimal('99.00'),
+                'recurring': {
+                    'interval': 'year',
+                    'interval_count': 1,
+                    'usage_type': 'licensed',
+                },
+                'product': {
+                    'id': 'prod_ai',
+                },
+            },
+        }
+
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_all_stripe_prices')
+    def test_list_returns_active_academies(self, mock_all_prices):
+        mock_all_prices.return_value = self.prices_by_lookup_key
+
+        url = reverse('api:v1:academy-products-list')
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['count'], 1)
+        self.assertEqual(response.data['results'][0]['name'], 'AI Academy')
+        self.assertIsNone(response.data['results'][0]['catalog_query_id'])
+        self.assertEqual(response.data['results'][0]['prices'][0]['id'], 'price_ai')
+
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_all_stripe_prices')
+    def test_list_is_public_without_authentication(self, mock_all_prices):
+        mock_all_prices.return_value = self.prices_by_lookup_key
+
+        self.client.logout()
+        self.client.cookies.clear()
+
+        url = reverse('api:v1:academy-products-list')
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['count'], 1)
+
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_all_stripe_prices')
+    def test_retrieve_matches_product_key(self, mock_all_prices):
+        mock_all_prices.return_value = self.prices_by_lookup_key
+
+        url = reverse('api:v1:academy-products-detail', kwargs={'pk': 'academy_ai'})
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['name'], 'AI Academy')
+        self.assertEqual(response.data['stripe_product_id'], 'prod_ai')
+
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_all_stripe_prices')
+    def test_list_returns_academies_without_prices_on_pricing_error(self, mock_all_prices):
+        mock_all_prices.side_effect = StripePricingError('stripe unavailable')
+
+        url = reverse('api:v1:academy-products-list')
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['count'], 1)
+        self.assertEqual(response.data['results'][0]['name'], 'AI Academy')
+        self.assertEqual(response.data['results'][0]['prices'], [])
+
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.AcademyProductsViewSet._sync_essential_academies')
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_all_stripe_prices')
+    def test_list_supports_sync_query_param(self, mock_all_prices, mock_sync):
+        mock_all_prices.return_value = self.prices_by_lookup_key
+
+        url = reverse('api:v1:academy-products-list')
+        response = self.client.get(url, {'sync': 'true'})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        mock_sync.assert_called_once_with()
+
+    def test_helper_identifier_prefers_stripe_product_id(self):
+        view = AcademyProductsViewSet()
+        academy = EnterpriseAcademy(
+            name='Tmp Academy',
+            slug='academy-slug',
+            product_key='academy_key',
+            stripe_price_lookup_key='tmp_lookup_key',
+            stripe_product_id='prod_123',
+        )
+        self.assertEqual(view._academy_identifier(academy), 'prod_123')
+
+    def test_throttle_scope_matches_settings_rate_name(self):
+        self.assertEqual(AcademyProductsViewSet.throttle_scope, 'academy_unauthenticated')
+
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_all_stripe_prices')
+    def test_list_rejects_invalid_academy_uuid(self, mock_all_prices):
+        mock_all_prices.return_value = self.prices_by_lookup_key
+
+        url = reverse('api:v1:academy-products-list')
+        response = self.client.get(url, {'academy_uuid': 'not-a-uuid'})
+
+        self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY)
+        self.assertEqual(response.data['error_code'], 'academy_service_unavailable')
+
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_all_stripe_prices')
+    def test_list_can_include_inactive(self, mock_all_prices):
+        mock_all_prices.return_value = self.prices_by_lookup_key
+
+        url = reverse('api:v1:academy-products-list')
+        response = self.client.get(url, {'include_inactive': 'true'})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['count'], 2)
+
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.AcademyProductsViewSet._sync_essential_academies')
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_all_stripe_prices')
+    def test_list_returns_502_if_sync_fails(self, mock_all_prices, mock_sync):
+        mock_all_prices.return_value = self.prices_by_lookup_key
+        mock_sync.side_effect = RuntimeError('sync failed')
+
+        url = reverse('api:v1:academy-products-list')
+        response = self.client.get(url, {'sync': 'true'})
+
+        self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY)
+        self.assertEqual(response.data['error_code'], 'academy_service_unavailable')
+
+    @override_settings(ACADEMY_THUMBNAIL_S3_BASE_URL='https://assets.example.com/bucket')
+    def test_helper_resolve_thumbnail_url_uses_s3_base(self):
+        view = AcademyProductsViewSet()
+
+        self.assertEqual(
+            view._resolve_thumbnail_url('thumbs/ai.png'),
+            'https://assets.example.com/bucket/thumbs/ai.png',
+        )
+
+    def test_serialize_academy_uses_integer_catalog_query_id(self):
+        view = AcademyProductsViewSet()
+        academy = SimpleNamespace(
+            uuid=uuid.uuid4(),
+            name='Data Academy',
+            long_name='Data Academy',
+            description='Data and analytics.',
+            marketing_url='https://example.com/data',
+            thumbnail_url='thumbs/data.png',
+            tags=['data'],
+            stripe_product_id='prod_data',
+            stripe_price_lookup_key='essentials_data_yearly',
+            product_key='academy_data',
+            slug='data-academy',
+            catalog_query_id=3180,
+        )
+
+        payload = view._serialize_academy(academy, {})
+
+        self.assertEqual(payload['catalog_query_id'], 3180)
+        self.assertEqual(payload['edx_catalog_id'], 3180)
+
+    def test_get_catalog_query_id_supports_legacy_integer_field_name(self):
+        view = AcademyProductsViewSet()
+        academy = SimpleNamespace(catalog_query_id=None, catalog_query_int_id=3363)
+
+        self.assertEqual(view._get_catalog_query_id(academy), 3363)
+
+    def test_normalize_catalog_query_id_helper(self):
+        view = AcademyProductsViewSet()
+
+        self.assertEqual(view._normalize_catalog_query_id(123), 123)
+        self.assertEqual(view._normalize_catalog_query_id(' 456 '), 456)
+        self.assertIsNone(view._normalize_catalog_query_id(True))
+        self.assertIsNone(view._normalize_catalog_query_id('abc'))
+        self.assertIsNone(view._normalize_catalog_query_id(''))
+        self.assertIsNone(view._normalize_catalog_query_id(None))
+
+    def test_build_normalized_academy_payload_non_dict_or_missing_name(self):
+        view = AcademyProductsViewSet()
+
+        self.assertIsNone(view._build_normalized_academy_payload('not-a-dict', 11))
+        self.assertIsNone(view._build_normalized_academy_payload({'uuid': 'abc'}, 11))
+
+    @override_settings(
+        ESSENTIAL_ACADEMY_CATALOG_QUERY_ID_BY_ACADEMY_UUID={'abc': '456'},
+        ESSENTIAL_ACADEMY_CATALOG_QUERY_ID_BY_NAME={'Data Academy': '457'},
+        ESSENTIAL_ACADEMY_FIELD_OVERRIDES_BY_NAME={
+            'Data Academy': {
+                'stripe_product_id': 'prod_override',
+                'display_order': 'invalid',
+                'catalog_query_id': '789',
+            }
+        },
+        ESSENTIAL_ACADEMY_FIELD_OVERRIDES_BY_ACADEMY_UUID={},
+    )
+    def test_build_normalized_academy_payload_applies_mapping_and_overrides(self):
+        view = AcademyProductsViewSet()
+        item = {
+            'uuid': 'abc',
+            'name': 'Data Academy',
+            'description': 'desc',
+            'catalog_query_id': '',
+            'stripe_price_lookup_key': '',
+            'display_order': 7,
+        }
+
+        payload = view._build_normalized_academy_payload(item, 123)
+
+        self.assertEqual(payload['name'], 'Data Academy')
+        self.assertEqual(payload['catalog_query_id'], 789)
+        self.assertEqual(payload['display_order'], 7)
+        self.assertEqual(payload['stripe_product_id'], 'prod_override')
+        self.assertTrue(payload['stripe_price_lookup_key'])
+
+    def test_extract_results_helper_variants(self):
+        view = AcademyProductsViewSet()
+
+        self.assertEqual(view._extract_results([{'name': 'a'}]), [{'name': 'a'}])
+        self.assertEqual(view._extract_results({'results': [{'name': 'b'}]}), [{'name': 'b'}])
+        self.assertEqual(view._extract_results({'results': 'not-a-list'}), [])
+        self.assertEqual(view._extract_results('unexpected'), [])
+
+    @override_settings(
+        ACADEMY_SYNC_ENTERPRISE_CUSTOMER_UUID='customer-uuid',
+        ESSENTIAL_ACADEMY_UUID_ALLOWLIST=[],
+        ESSENTIAL_ACADEMY_NAME_ALLOWLIST=['Data Academy'],
+        ESSENTIAL_ACADEMY_CATALOG_QUERY_ID_BY_ACADEMY_UUID={},
+        ESSENTIAL_ACADEMY_CATALOG_QUERY_ID_BY_NAME={},
+        ESSENTIAL_ACADEMY_FIELD_OVERRIDES_BY_NAME={},
+        ESSENTIAL_ACADEMY_FIELD_OVERRIDES_BY_ACADEMY_UUID={},
+    )
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.EnterpriseCatalogApiV1Client')
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.EnterpriseAcademy.objects')
+    def test_sync_essential_academies_filters_and_updates_records(self, mock_academy_objects, mock_catalog_client_cls):
+        view = AcademyProductsViewSet()
+
+        academies_response = mock.Mock()
+        academies_response.raise_for_status.return_value = None
+        academies_response.json.return_value = {
+            'results': [
+                {'uuid': 'keep-1', 'name': 'Data Academy', 'catalog_query_id': '101'},
+                {'uuid': 'drop-1', 'name': 'Another Academy', 'catalog_query_id': '202'},
+            ]
+        }
+        catalogs_response = mock.Mock()
+        catalogs_response.raise_for_status.return_value = None
+        catalogs_response.json.return_value = {
+            'results': [{'catalog_query_id': '500'}]
+        }
+
+        mock_client_instance = mock.Mock()
+        mock_client_instance.api_base_url = 'http://catalog/'
+        mock_client_instance.client.get.side_effect = [academies_response, catalogs_response]
+        mock_catalog_client_cls.return_value = mock_client_instance
+
+        filtered_by_name_queryset = mock.Mock()
+        filtered_by_name_queryset.first.return_value = None
+        active_queryset = mock.Mock()
+        active_excluded_queryset = mock.Mock()
+        active_queryset.exclude.return_value = active_excluded_queryset
+        active_excluded_queryset.update.return_value = 1
+
+        def filter_side_effect(*args, **kwargs):
+            if kwargs.get('name__iexact'):
+                return filtered_by_name_queryset
+            if kwargs.get('is_active') is True:
+                return active_queryset
+            return mock.Mock()
+
+        mock_academy_objects.filter.side_effect = filter_side_effect
+
+        view._sync_essential_academies()
+
+        mock_academy_objects.create.assert_called_once()
+        created_payload = mock_academy_objects.create.call_args.kwargs
+        self.assertEqual(created_payload['name'], 'Data Academy')
+        self.assertEqual(created_payload['catalog_query_id'], 101)
+        active_queryset.exclude.assert_called_once_with(name__in={'Data Academy'})
+        active_excluded_queryset.update.assert_called_once_with(is_active=False)
+
+    @override_settings(
+        ACADEMY_SYNC_ENTERPRISE_CUSTOMER_UUID='customer-uuid',
+        ESSENTIAL_ACADEMY_UUID_ALLOWLIST=[],
+        ESSENTIAL_ACADEMY_NAME_ALLOWLIST=[],
+        ESSENTIAL_ACADEMY_CATALOG_QUERY_ID_BY_ACADEMY_UUID={},
+        ESSENTIAL_ACADEMY_CATALOG_QUERY_ID_BY_NAME={},
+        ESSENTIAL_ACADEMY_FIELD_OVERRIDES_BY_NAME={},
+        ESSENTIAL_ACADEMY_FIELD_OVERRIDES_BY_ACADEMY_UUID={},
+    )
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.EnterpriseCatalogApiV1Client')
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.EnterpriseAcademy.objects')
+    def test_sync_essential_academies_updates_existing_record(self, mock_academy_objects, mock_catalog_client_cls):
+        view = AcademyProductsViewSet()
+
+        academies_response = mock.Mock()
+        academies_response.raise_for_status.return_value = None
+        academies_response.json.return_value = {
+            'results': [{'uuid': 'u-1', 'name': 'Data Academy', 'catalog_query_id': '200'}]
+        }
+        catalogs_response = mock.Mock()
+        catalogs_response.raise_for_status.return_value = None
+        catalogs_response.json.return_value = {'results': []}
+
+        mock_client_instance = mock.Mock()
+        mock_client_instance.api_base_url = 'http://catalog/'
+        mock_client_instance.client.get.side_effect = [academies_response, catalogs_response]
+        mock_catalog_client_cls.return_value = mock_client_instance
+
+        existing = SimpleNamespace(
+            name='Data Academy',
+            long_name='Old Name',
+            description='old',
+            marketing_url='',
+            thumbnail_url='',
+            tags=[],
+            stripe_product_id='',
+            stripe_price_lookup_key='old-key',
+            catalog_query_id=111,
+            product_key='old-key',
+            slug='old-slug',
+            is_active=True,
+            display_order=0,
+            save=mock.Mock(),
+        )
+
+        filtered_by_name_queryset = mock.Mock()
+        filtered_by_name_queryset.first.return_value = existing
+        active_queryset = mock.Mock()
+        active_queryset.exclude.return_value.update.return_value = 0
+
+        def filter_side_effect(*args, **kwargs):
+            if kwargs.get('name__iexact'):
+                return filtered_by_name_queryset
+            if kwargs.get('is_active') is True:
+                return active_queryset
+            return mock.Mock()
+
+        mock_academy_objects.filter.side_effect = filter_side_effect
+
+        view._sync_essential_academies()
+
+        mock_academy_objects.create.assert_not_called()
+        self.assertEqual(existing.catalog_query_id, 200)
+        existing.save.assert_called_once()
 
 
 @ddt.ddt
