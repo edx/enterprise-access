@@ -1442,6 +1442,7 @@ class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
             result = subsidy_request_api.decline_learner_credit_requests(
                 learner_credit_requests,
                 reviewer=request.user,
+                reason=serializer.validated_data.get('decline_reason'),
             )
             response_data = {
                 'declined': [str(r.uuid) for r in result.get('declined', [])],
