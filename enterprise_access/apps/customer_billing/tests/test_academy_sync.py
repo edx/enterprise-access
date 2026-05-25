@@ -214,6 +214,28 @@ class TestNormalizeCatalogAcademy(TestCase):
         self.assertEqual(result['display_order'], 0)
 
 
+class TestFakeAcademyManager(TestCase):
+    """Sanity checks for the in-memory manager used by sync tests."""
+
+    def test_bulk_create_without_update_conflicts_appends_objects(self):
+        manager = FakeAcademyManager()
+        created = manager.bulk_create([FakeAcademy(name='One')], update_conflicts=False)
+
+        self.assertEqual(len(created), 1)
+        self.assertEqual(len(manager.records), 1)
+        self.assertEqual(manager.records[0].name, 'One')
+
+    def test_bulk_create_raises_when_unique_fields_are_unexpected(self):
+        manager = FakeAcademyManager()
+        with self.assertRaises(AssertionError):
+            manager.bulk_create(
+                [FakeAcademy(name='One')],
+                update_conflicts=True,
+                unique_fields=['slug'],
+                update_fields=['slug'],
+            )
+
+
 class TestSyncEnterpriseAcademies(TestCase):
     """Tests for syncing academy rows."""
 
