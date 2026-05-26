@@ -2,7 +2,7 @@ coverage:
   status:
     project:
       default:
-        enabled: yes
+        enabled: no
         target: auto
     patch:
       default:

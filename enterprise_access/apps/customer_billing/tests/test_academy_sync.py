@@ -1,9 +1,10 @@
 """Tests for academy sync helpers."""
 
+import importlib
 from unittest import mock
 from uuid import uuid4
 
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 
 from enterprise_access.apps.customer_billing.academy_sync import (
     _get_enterprise_academy_model,
@@ -11,6 +12,7 @@ from enterprise_access.apps.customer_billing.academy_sync import (
     _normalize_catalog_query_uuid,
     sync_enterprise_academies_from_enterprise_catalog
 )
+from enterprise_access.apps.customer_billing.apps import CustomerBillingConfig
 
 
 class FakeAcademy:
@@ -87,7 +89,7 @@ class FakeAcademyManager:
             raise AssertionError('Tests expect unique_fields=[\'name\']')
 
         for obj in objs:
-            existing = self.filter(name__iexact=obj.name).first()
+            existing = next((record for record in self.records if record.name == obj.name), None)
             if existing is None:
                 self.records.append(obj)
                 continue
@@ -96,6 +98,26 @@ class FakeAcademyManager:
                 setattr(existing, field_name, getattr(obj, field_name))
 
         return objs
+
+
+class TestCustomerBillingConfig(SimpleTestCase):
+    """Verify app startup wiring behavior."""
+
+    def test_ready_imports_signals(self):
+        """Calling ready should import customer_billing signal handlers."""
+        app_module = importlib.import_module('enterprise_access.apps.customer_billing')
+        config = CustomerBillingConfig(CustomerBillingConfig.name, app_module)
+
+        with mock.patch('builtins.__import__', wraps=__import__) as mock_import:
+            config.ready()
+
+        signal_import_calls = [
+            call
+            for call in mock_import.call_args_list
+            if call.args and call.args[0] == 'enterprise_access.apps.customer_billing.signals'
+        ]
+
+        self.assertEqual(len(signal_import_calls), 1)
 
 
 class FakeEnterpriseAcademyModel:
@@ -133,11 +155,13 @@ class TestAcademySyncHelpers(TestCase):
         mock_get_model.assert_called_once_with('customer_billing', 'EnterpriseAcademy')
 
     @mock.patch('enterprise_access.apps.customer_billing.academy_sync.apps.get_model')
-    def test_get_enterprise_academy_model_raises_lookup_error(self, mock_get_model):
+    def test_get_enterprise_academy_model_raises_runtime_error_for_lookup_error(self, mock_get_model):
         mock_get_model.side_effect = LookupError('not found')
 
-        with self.assertRaises(LookupError):
+        with self.assertRaises(RuntimeError) as exc_info:
             _get_enterprise_academy_model()
+
+        self.assertIn('Unable to resolve customer_billing.EnterpriseAcademy', str(exc_info.exception))
 
     def test_normalize_catalog_query_uuid_accepts_valid_string(self):
         value_uuid = str(uuid4())
@@ -319,6 +343,7 @@ class TestSyncEnterpriseAcademies(TestCase):
         result = sync_enterprise_academies_from_enterprise_catalog()
 
         self.assertEqual(result.updated, 1)
+        self.assertEqual(len(FakeEnterpriseAcademyModel.objects.records), 1)
         self.assertEqual(academy.catalog_query_uuid, '00000000-0000-0000-0000-000000000202')
 
     @mock.patch(
@@ -586,4 +611,5 @@ class TestSyncEnterpriseAcademies(TestCase):
         result = sync_enterprise_academies_from_enterprise_catalog(deactivate_missing=True)
 
         self.assertEqual(result.updated, 1)
+        self.assertEqual(len(FakeEnterpriseAcademyModel.objects.records), 1)
         self.assertEqual(result.deactivated, 0)

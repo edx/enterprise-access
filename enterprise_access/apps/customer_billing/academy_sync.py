@@ -1,6 +1,7 @@
 """Sync helpers for importing academy metadata from Enterprise Catalog into EnterpriseAcademy."""
 
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
@@ -14,7 +15,13 @@ logger = logging.getLogger(__name__)
 
 def _get_enterprise_academy_model():
     """Resolve EnterpriseAcademy lazily so this module can import without model migrations."""
-    return apps.get_model('customer_billing', 'EnterpriseAcademy')
+    try:
+        return apps.get_model('customer_billing', 'EnterpriseAcademy')
+    except LookupError as exc:
+        raise RuntimeError(
+            'Unable to resolve customer_billing.EnterpriseAcademy. '
+            'Ensure customer_billing app and EnterpriseAcademy model are installed before running academy sync.'
+        ) from exc
 
 
 @dataclass
@@ -65,10 +72,10 @@ def _normalize_catalog_query_uuid(value: Any) -> str | None:
 
 
 def _normalize_catalog_academy(
-    item: dict[str, Any],
+    item: object,
 ) -> dict[str, Any] | None:
     """Map one Enterprise Catalog academy payload to EnterpriseAcademy model fields."""
-    if not isinstance(item, dict):
+    if not isinstance(item, Mapping):
         return None
 
     name = (item.get('name') or '').strip()
@@ -144,6 +151,7 @@ def sync_enterprise_academies_from_enterprise_catalog(
         seen_names.add(name)
         current = enterprise_academy_model.objects.filter(name__iexact=name).first()
         if current is not None:
+            normalized['name'] = current.name
             seen_names.add(current.name)
 
         if normalized['catalog_query_uuid'] is None and current and current.catalog_query_uuid is not None:
