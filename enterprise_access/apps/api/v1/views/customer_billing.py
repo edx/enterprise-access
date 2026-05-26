@@ -72,7 +72,7 @@ class AcademyProductsViewSet(viewsets.ViewSet):
         if value is None:
             return None
         if isinstance(value, Decimal):
-            return f'{value:.2f}'
+            return str(value)
         return str(value)
 
     def _academy_identifier(self, academy):
@@ -306,10 +306,7 @@ class AcademyProductsViewSet(viewsets.ViewSet):
         enterprise_customer_uuid = (getattr(settings, 'ACADEMY_SYNC_ENTERPRISE_CUSTOMER_UUID', '') or '').strip()
         client = EnterpriseCatalogApiV1Client()
 
-        academy_params = {'enterprise_customer': enterprise_customer_uuid} if enterprise_customer_uuid else None
-        academies_response = client.client.get(urljoin(client.api_base_url, 'academies/'), params=academy_params)
-        academies_response.raise_for_status()
-        academy_items = self._extract_results(academies_response.json())
+        academy_items = self._extract_results(client.get_academies())
 
         allowlist_uuids = {
             str(value).strip()
@@ -335,40 +332,44 @@ class AcademyProductsViewSet(viewsets.ViewSet):
 
         default_catalog_query_id = None
         if enterprise_customer_uuid:
-            catalogs_response = client.client.get(
-                urljoin(client.api_base_url, 'enterprise-catalogs/'),
-                params={'enterprise_customer': enterprise_customer_uuid},
+            catalog_items = self._extract_results(
+                client.get_catalogs(enterprise_customer_uuid=enterprise_customer_uuid)
             )
-            catalogs_response.raise_for_status()
-            catalog_items = self._extract_results(catalogs_response.json())
             for catalog_item in catalog_items:
                 default_catalog_query_id = self._normalize_catalog_query_id(catalog_item.get('catalog_query_id'))
                 if default_catalog_query_id is not None:
                     break
 
         seen_names = set()
+        academy_model_fields = {field.name for field in EnterpriseAcademy._meta.concrete_fields}
         for item in academy_items:
             normalized = self._build_normalized_academy_payload(item, default_catalog_query_id)
             if normalized is None:
                 continue
 
+            persistable_values = {
+                field_name: field_value
+                for field_name, field_value in normalized.items()
+                if field_name in academy_model_fields
+            }
+
             current = EnterpriseAcademy.objects.filter(name__iexact=normalized['name']).first()
             seen_names.add(normalized['name'])
 
             if current is None:
-                EnterpriseAcademy.objects.create(**normalized)
+                EnterpriseAcademy.objects.create(**persistable_values)
                 continue
 
             has_changes = any(
                 getattr(current, field_name) != field_value
-                for field_name, field_value in normalized.items()
+                for field_name, field_value in persistable_values.items()
             )
             if not has_changes:
                 continue
 
-            for field_name, field_value in normalized.items():
+            for field_name, field_value in persistable_values.items():
                 setattr(current, field_name, field_value)
-            current.save(update_fields=[*normalized.keys(), 'modified'])
+            current.save(update_fields=[*persistable_values.keys(), 'modified'])
 
         if seen_names:
             EnterpriseAcademy.objects.filter(is_active=True).exclude(name__in=seen_names).update(is_active=False)
@@ -376,7 +377,7 @@ class AcademyProductsViewSet(viewsets.ViewSet):
     def _maybe_sync(self):
         if self.request.query_params.get('sync') != 'true':
             return
-        self._sync_essential_academies()
+        raise exceptions.ValidationError({'sync': ['sync=true is not supported on this public endpoint.']})
 
     @extend_schema(
         tags=[CUSTOMER_BILLING_API_TAG],
@@ -398,6 +399,8 @@ class AcademyProductsViewSet(viewsets.ViewSet):
                 )
                 return Response(serializer.data, status=status.HTTP_200_OK)
             all_prices_by_lookup = self._safe_get_all_stripe_prices()
+        except exceptions.APIException:
+            raise
         except Exception as exc:  # pylint: disable=broad-except
             logger.exception('Unable to fetch academy products: %s', exc)
             return Response(
@@ -427,11 +430,18 @@ class AcademyProductsViewSet(viewsets.ViewSet):
 
         try:
             self._maybe_sync()
-            academies = list(self._get_academies_queryset())
-            selected = next((academy for academy in academies if self._matches_pk(academy, pk)), None)
+            lookup_filter = Q(slug=pk) | Q(product_key=pk) | Q(stripe_product_id=pk)
+            try:
+                lookup_filter |= Q(uuid=uuid.UUID(str(pk)))
+            except (ValueError, TypeError, AttributeError):
+                pass
+
+            selected = EnterpriseAcademy.objects.filter(lookup_filter).first()
             if not selected:
                 return Response(status=status.HTTP_404_NOT_FOUND)
             all_prices_by_lookup = self._safe_get_all_stripe_prices()
+        except exceptions.APIException:
+            raise
         except Exception as exc:  # pylint: disable=broad-except
             logger.exception('Unable to retrieve academy product %s: %s', pk, exc)
             return Response(
