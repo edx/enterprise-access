@@ -123,6 +123,118 @@ class TestEnterpriseCatalogApiClient(TestCase):
             f'http://enterprise-catalog.example.com/api/v2/enterprise-catalogs/{catalog_uuid}/get_content_metadata/',
         )
 
+    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient')
+    def test_get_academies(self, mock_oauth_client):
+        mock_response_json = {'count': 1, 'next': None, 'previous': None, 'results': [{'title': 'AI Academy'}]}
+        mock_oauth_client.return_value.get.return_value.json.return_value = mock_response_json
+
+        client = EnterpriseCatalogApiClient()
+        fetched = client.get_academies()
+
+        self.assertEqual(fetched, mock_response_json)
+        mock_oauth_client.return_value.get.assert_called_with(
+            'http://enterprise-catalog.example.com/api/v2/academies/',
+            params=None,
+        )
+
+    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient')
+    def test_get_academies_with_uuid(self, mock_oauth_client):
+        mock_response_json = {'count': 0, 'next': None, 'previous': None, 'results': []}
+        mock_oauth_client.return_value.get.return_value.json.return_value = mock_response_json
+
+        academy_uuid = uuid4()
+        client = EnterpriseCatalogApiClient()
+        fetched = client.get_academies(academy_uuid=str(academy_uuid))
+
+        self.assertEqual(fetched, mock_response_json)
+        mock_oauth_client.return_value.get.assert_called_with(
+            'http://enterprise-catalog.example.com/api/v2/academies/',
+            params={'academy_uuid': str(academy_uuid)},
+        )
+
+    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient')
+    def test_get_catalogs(self, mock_oauth_client):
+        mock_response_json = {'count': 1, 'next': None, 'previous': None, 'results': [{'uuid': str(uuid4())}]}
+        mock_oauth_client.return_value.get.return_value.json.return_value = mock_response_json
+
+        client = EnterpriseCatalogApiClient()
+        fetched = client.get_catalogs()
+
+        self.assertEqual(fetched, mock_response_json)
+        mock_oauth_client.return_value.get.assert_called_with(
+            'http://enterprise-catalog.example.com/api/v2/enterprise-catalogs/',
+            params=None,
+        )
+
+    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient')
+    def test_get_catalogs_with_enterprise_customer(self, mock_oauth_client):
+        mock_response_json = {'count': 1, 'next': None, 'previous': None, 'results': [{'uuid': str(uuid4())}]}
+        mock_oauth_client.return_value.get.return_value.json.return_value = mock_response_json
+
+        customer_uuid = str(uuid4())
+        client = EnterpriseCatalogApiClient()
+        fetched = client.get_catalogs(enterprise_customer_uuid=customer_uuid)
+
+        self.assertEqual(fetched, mock_response_json)
+        mock_oauth_client.return_value.get.assert_called_with(
+            'http://enterprise-catalog.example.com/api/v2/enterprise-catalogs/',
+            params={'enterprise_customer': customer_uuid},
+        )
+
+    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient')
+    def test_get_academies_merges_paginated_results(self, mock_oauth_client):
+        page_1 = {
+            'count': 2,
+            'next': 'http://enterprise-catalog.example.com/api/v2/academies/?page=2',
+            'previous': None,
+            'results': [{'title': 'AI Academy'}],
+        }
+        page_2 = {
+            'count': 2,
+            'next': None,
+            'previous': 'http://enterprise-catalog.example.com/api/v2/academies/?page=1',
+            'results': [{'title': 'Data Academy'}],
+        }
+        mock_oauth_client.return_value.get.side_effect = [
+            mock.Mock(json=mock.Mock(return_value=page_1), raise_for_status=mock.Mock()),
+            mock.Mock(json=mock.Mock(return_value=page_2), raise_for_status=mock.Mock()),
+        ]
+
+        client = EnterpriseCatalogApiClient()
+        fetched = client.get_academies()
+
+        self.assertEqual(fetched['count'], 2)
+        self.assertEqual(len(fetched['results']), 2)
+        self.assertIsNone(fetched['next'])
+        self.assertEqual(mock_oauth_client.return_value.get.call_count, 2)
+
+    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient')
+    def test_get_catalogs_merges_paginated_results(self, mock_oauth_client):
+        page_1 = {
+            'count': 2,
+            'next': 'http://enterprise-catalog.example.com/api/v2/enterprise-catalogs/?page=2',
+            'previous': None,
+            'results': [{'uuid': str(uuid4())}],
+        }
+        page_2 = {
+            'count': 2,
+            'next': None,
+            'previous': 'http://enterprise-catalog.example.com/api/v2/enterprise-catalogs/?page=1',
+            'results': [{'uuid': str(uuid4())}],
+        }
+        mock_oauth_client.return_value.get.side_effect = [
+            mock.Mock(json=mock.Mock(return_value=page_1), raise_for_status=mock.Mock()),
+            mock.Mock(json=mock.Mock(return_value=page_2), raise_for_status=mock.Mock()),
+        ]
+
+        client = EnterpriseCatalogApiClient()
+        fetched = client.get_catalogs()
+
+        self.assertEqual(fetched['count'], 2)
+        self.assertEqual(len(fetched['results']), 2)
+        self.assertIsNone(fetched['next'])
+        self.assertEqual(mock_oauth_client.return_value.get.call_count, 2)
+
 
 @ddt.ddt
 class TestEnterpriseCatalogApiV1Client(TestCase):
