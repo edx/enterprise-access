@@ -20,11 +20,6 @@ class PromptType(models.TextChoices):
     RECOMMENDATIONS_FEEDBACK = 'recommendations_feedback', 'Recommendations Feedback'
 
 
-# Back-compat string aliases. Prefer ``PromptType.<MEMBER>`` in new code.
-PROMPT_TYPE_LEARNER_INTENT = PromptType.LEARNER_INTENT.value
-PROMPT_TYPE_RECOMMENDATIONS_FEEDBACK = PromptType.RECOMMENDATIONS_FEEDBACK.value
-
-
 class BaseSystemPrompt(TimeStampedModel):
     """
     Abstract base model for Xpert system prompt configuration.
@@ -33,6 +28,14 @@ class BaseSystemPrompt(TimeStampedModel):
     Edits overwrite the row in place; every change is captured as a historical
     revision by django-simple-history, so prior wording is always recoverable.
 
+    Important privacy and retention rules:
+     - This model must not be used to persist any personally identifiable information (PII).
+       Do not add fields that store user PII.
+     - This model is intended only to hold non-PII system prompt configuration used to drive Xpert.
+       It must not be used to store end-user messages, user inputs, or other user-provided content.
+     - If you need to persist user-provided data in the future, you MUST integrate that model with
+       the project's user-retirement / data-deletion pipeline so user data can be removed on request.
+       Adding user-linked fields without that integration is not allowed.
     .. no_pii:
     """
     uuid = models.UUIDField(
