@@ -23,8 +23,8 @@ class EnterpriseCatalogApiClient(BaseOAuthClient):
         self.enterprise_catalog_endpoint = urljoin(self.api_base_url, 'enterprise-catalogs/')
         super().__init__()
 
-    def _fetch_all_pages(self, endpoint, params=None):
-        """Fetch and merge paginated enterprise-catalog responses into one payload."""
+    def _fetch_all_pages(self, endpoint, params=None) -> dict:
+        """Fetch and merge paginated enterprise-catalog responses into one paginated dict payload."""
         merged_results = []
         next_url = endpoint
         request_params = params
@@ -36,7 +36,7 @@ class EnterpriseCatalogApiClient(BaseOAuthClient):
             payload = response.json()
 
             if not isinstance(payload, dict):
-                return payload
+                raise ValueError('Expected paginated response payload as dict from enterprise-catalog API.')
 
             if base_payload is None:
                 base_payload = payload.copy()
