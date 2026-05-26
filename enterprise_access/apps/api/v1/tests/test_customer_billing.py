@@ -232,6 +232,40 @@ class AcademyProductsApiTests(APITest):
         )
         self.assertEqual(view._academy_identifier(academy), 'academy_key')
 
+    def test_helper_identifier_falls_back_to_slug(self):
+        view = AcademyProductsViewSet()
+        academy = SimpleNamespace(
+            uuid=uuid.uuid4(),
+            slug='academy-slug',
+            product_key='',
+            stripe_product_id='',
+        )
+
+        self.assertEqual(view._academy_identifier(academy), 'academy-slug')
+
+    def test_helper_identifier_falls_back_to_uuid(self):
+        view = AcademyProductsViewSet()
+        academy_uuid = uuid.uuid4()
+        academy = SimpleNamespace(
+            uuid=academy_uuid,
+            slug='',
+            product_key='',
+            stripe_product_id='',
+        )
+
+        self.assertEqual(view._academy_identifier(academy), str(academy_uuid))
+
+    def test_helper_identifier_returns_empty_when_candidates_missing(self):
+        view = AcademyProductsViewSet()
+        academy = SimpleNamespace(
+            uuid='',
+            slug='',
+            product_key='',
+            stripe_product_id='',
+        )
+
+        self.assertEqual(view._academy_identifier(academy), '')
+
     def test_throttle_scope_matches_settings_rate_name(self):
         self.assertEqual(AcademyProductsViewSet.throttle_scope, 'academy_unauthenticated')
 
@@ -249,6 +283,12 @@ class AcademyProductsApiTests(APITest):
             view._resolve_thumbnail_url('https://cdn.example.com/thumb.png'),
             'https://cdn.example.com/thumb.png',
         )
+
+    @override_settings(ACADEMY_THUMBNAIL_S3_BASE_URL='')
+    def test_helper_resolve_thumbnail_url_returns_path_without_base_url(self):
+        view = AcademyProductsViewSet()
+
+        self.assertEqual(view._resolve_thumbnail_url('thumbs/path.png'), 'thumbs/path.png')
 
     def test_matches_pk_supports_slug_and_uuid(self):
         view = AcademyProductsViewSet()
@@ -269,6 +309,18 @@ class AcademyProductsApiTests(APITest):
 
         self.assertEqual(view._get_catalog_query_id(academy), 987)
 
+    def test_get_catalog_query_id_ignores_boolean_values(self):
+        view = AcademyProductsViewSet()
+        academy = SimpleNamespace(catalog_query_id=True, catalog_query_int_id=False)
+
+        self.assertIsNone(view._get_catalog_query_id(academy))
+
+    def test_get_catalog_query_id_returns_none_for_non_numeric_string(self):
+        view = AcademyProductsViewSet()
+        academy = SimpleNamespace(catalog_query_id='abc-123', catalog_query_int_id=None)
+
+        self.assertIsNone(view._get_catalog_query_id(academy))
+
     def test_serialize_price_without_recurring_returns_none(self):
         view = AcademyProductsViewSet()
         payload = view._serialize_price(
@@ -285,6 +337,31 @@ class AcademyProductsApiTests(APITest):
         self.assertEqual(payload['id'], 'price_no_recurring')
         self.assertEqual(payload['unit_amount_decimal'], '25.00')
         self.assertIsNone(payload['recurring'])
+
+    def test_serialize_academy_defaults_missing_optional_fields(self):
+        view = AcademyProductsViewSet()
+        academy = SimpleNamespace(
+            uuid=uuid.uuid4(),
+            name='Minimal Academy',
+            long_name='',
+            description=None,
+            marketing_url=None,
+            thumbnail_url='',
+            tags=None,
+            stripe_product_id='',
+            stripe_price_lookup_key='missing_lookup',
+            product_key='minimal-academy',
+            slug='minimal-academy',
+            catalog_query_id=None,
+        )
+
+        payload = view._serialize_academy(academy, {})
+
+        self.assertEqual(payload['long_name'], 'Minimal Academy')
+        self.assertEqual(payload['description'], '')
+        self.assertEqual(payload['marketing_url'], '')
+        self.assertEqual(payload['tags'], [])
+        self.assertEqual(payload['prices'], [])
 
     @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_all_stripe_prices')
     def test_list_rejects_invalid_academy_uuid(self, mock_all_prices):
@@ -323,6 +400,58 @@ class AcademyProductsApiTests(APITest):
 
         url = reverse('api:v1:academy-products-list')
         response = self.client.get(url, {'academy_uuid': str(self.ai_academy.uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['count'], 1)
+        self.assertEqual(response.data['results'][0]['name'], 'AI Academy')
+
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_all_stripe_prices')
+    def test_list_filters_by_single_tag(self, mock_all_prices):
+        mock_all_prices.return_value = self.prices_by_lookup_key
+
+        url = reverse('api:v1:academy-products-list')
+        response = self.client.get(url, {'tag': 'ml'})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['count'], 1)
+        self.assertEqual(response.data['results'][0]['name'], 'AI Academy')
+
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_all_stripe_prices')
+    def test_list_filters_by_multiple_tags_requires_all(self, mock_all_prices):
+        mock_all_prices.return_value = self.prices_by_lookup_key
+        EnterpriseAcademy.objects.create(
+            name='AI Basics Academy',
+            long_name='AI Basics Academy',
+            description='Foundational AI only.',
+            marketing_url='https://example.com/ai-basics',
+            thumbnail_url='https://cdn.example.com/ai-basics.png',
+            stripe_product_id='prod_ai_basics',
+            stripe_price_lookup_key='essentials_ai_basics_yearly',
+            enterprise_catalog_uuid=uuid.uuid4(),
+            product_key='academy_ai_basics',
+            slug='ai-basics-academy',
+            tags=['ai'],
+            is_active=True,
+            display_order=3,
+        )
+
+        url = reverse('api:v1:academy-products-list')
+        response = self.client.get(url, [('tag', 'ai'), ('tag', 'ml')])
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['count'], 1)
+        self.assertEqual(response.data['results'][0]['name'], 'AI Academy')
+
+    @mock.patch(
+        'enterprise_access.apps.api.v1.views.customer_billing.connection.features.supports_json_field_contains',
+        False,
+    )
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_all_stripe_prices')
+    def test_list_filters_by_tags_when_json_contains_unsupported(self, mock_all_prices):
+        mock_all_prices.return_value = self.prices_by_lookup_key
+
+        url = reverse('api:v1:academy-products-list')
+        response = self.client.get(url, [('tag', 'ai'), ('tag', 'ml')])
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['count'], 1)
