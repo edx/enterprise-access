@@ -13,7 +13,8 @@ import ddt
 import stripe
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import AbstractUser
-from django.test import TestCase, override_settings
+from django.db import IntegrityError, transaction
+from django.test import TestCase, TransactionTestCase, override_settings
 from django.utils import timezone
 
 from enterprise_access.apps.core.tests.factories import UserFactory
@@ -21,6 +22,7 @@ from enterprise_access.apps.customer_billing import stripe_api
 from enterprise_access.apps.customer_billing.constants import CheckoutIntentState
 from enterprise_access.apps.customer_billing.models import (
     CheckoutIntent,
+    EnterpriseAcademy,
     FailedCheckoutIntentConflict,
     SelfServiceSubscriptionRenewal,
     SlugReservationConflict,
@@ -29,7 +31,7 @@ from enterprise_access.apps.customer_billing.models import (
 )
 from enterprise_access.apps.customer_billing.stripe_event_handlers import StripeEventHandler
 from enterprise_access.apps.customer_billing.tests.factories import StripeEventDataFactory
-from enterprise_access.apps.customer_billing.tests.test_stripe_event_handlers import AttrDict
+from enterprise_access.apps.customer_billing.tests.utils import AttrDict
 from enterprise_access.apps.provisioning.models import (
     GetCreateFirstPaidSubscriptionPlanStep,
     GetCreateTrialSubscriptionPlanStep
@@ -37,6 +39,128 @@ from enterprise_access.apps.provisioning.models import (
 from enterprise_access.apps.provisioning.tests.factories import ProvisionNewCustomerWorkflowFactory
 
 User = get_user_model()
+
+
+class TestEnterpriseAcademyModel(TransactionTestCase):
+    """Tests for the EnterpriseAcademy model."""
+
+    def _create_academy(self, **overrides):
+        """Create an EnterpriseAcademy test instance with default values."""
+        data = {
+            'name': 'AI Academy',
+            'long_name': 'Artificial Intelligence Academy',
+            'description': 'Academy focused on AI fundamentals and applications.',
+            'marketing_url': 'https://example.com/ai-academy',
+            'thumbnail_url': 'academies/ai/thumbnail.png',
+            'tags': ['ai', 'ml'],
+            'stripe_product_id': 'prod_ai_123',
+            'stripe_price_lookup_key': 'essentials_ai_annual',
+            'enterprise_catalog_uuid': uuid4(),
+            'product_key': 'ai-academy',
+            'slug': 'ai-academy',
+            'is_active': True,
+            'display_order': 10,
+        }
+        data.update(overrides)
+        return EnterpriseAcademy.objects.create(**data)
+
+    def test_create_with_all_fields(self):
+        """Verify all model fields can be persisted and read correctly."""
+        enterprise_catalog_uuid = uuid4()
+        academy = self._create_academy(enterprise_catalog_uuid=enterprise_catalog_uuid)
+
+        self.assertIsNotNone(academy.uuid)
+        self.assertEqual(academy.name, 'AI Academy')
+        self.assertEqual(academy.long_name, 'Artificial Intelligence Academy')
+        self.assertEqual(academy.description, 'Academy focused on AI fundamentals and applications.')
+        self.assertEqual(academy.marketing_url, 'https://example.com/ai-academy')
+        self.assertEqual(academy.thumbnail_url, 'academies/ai/thumbnail.png')
+        self.assertEqual(academy.tags, ['ai', 'ml'])
+        self.assertEqual(academy.stripe_product_id, 'prod_ai_123')
+        self.assertEqual(academy.stripe_price_lookup_key, 'essentials_ai_annual')
+        self.assertEqual(academy.enterprise_catalog_uuid, enterprise_catalog_uuid)
+        self.assertEqual(academy.product_key, 'ai-academy')
+        self.assertEqual(academy.slug, 'ai-academy')
+        self.assertTrue(academy.is_active)
+        self.assertEqual(academy.display_order, 10)
+
+    def test_defaults(self):
+        """Verify default values for optional fields."""
+        academy = EnterpriseAcademy.objects.create(name='Data Academy')
+
+        self.assertIsNotNone(academy.uuid)
+        self.assertEqual(academy.long_name, '')
+        self.assertEqual(academy.description, '')
+        self.assertEqual(academy.marketing_url, '')
+        self.assertEqual(academy.thumbnail_url, '')
+        self.assertEqual(academy.tags, [])
+        self.assertEqual(academy.stripe_product_id, '')
+        self.assertEqual(academy.stripe_price_lookup_key, '')
+        self.assertIsNone(academy.enterprise_catalog_uuid)
+        self.assertEqual(academy.product_key, '')
+        self.assertEqual(academy.slug, '')
+        self.assertTrue(academy.is_active)
+        self.assertEqual(academy.display_order, 0)
+
+    def test_unique_constraints(self):
+        """Verify unique constraints are enforced."""
+        self._create_academy()
+
+        with transaction.atomic():
+            with self.assertRaises(IntegrityError):
+                self._create_academy(name='AI Academy', slug='ai-academy-2', product_key='ai-academy-2',
+                                     stripe_price_lookup_key='lookup-2')
+
+        with transaction.atomic():
+            with self.assertRaises(IntegrityError):
+                self._create_academy(name='Cloud Academy', slug='ai-academy', product_key='cloud-academy',
+                                     stripe_price_lookup_key='lookup-3')
+
+        with transaction.atomic():
+            with self.assertRaises(IntegrityError):
+                self._create_academy(name='DevOps Academy', slug='devops-academy', product_key='ai-academy',
+                                     stripe_price_lookup_key='lookup-4')
+
+        with transaction.atomic():
+            with self.assertRaises(IntegrityError):
+                self._create_academy(
+                    name='Security Academy',
+                    slug='security-academy',
+                    product_key='security-academy',
+                    stripe_price_lookup_key='essentials_ai_annual',
+                )
+
+    def test_ordering(self):
+        """Verify model Meta ordering by display_order then name."""
+        self._create_academy(
+            name='Z Academy',
+            slug='z-academy',
+            product_key='z-academy',
+            stripe_price_lookup_key='z-lookup',
+            display_order=2,
+        )
+        self._create_academy(
+            name='A Academy',
+            slug='a-academy',
+            product_key='a-academy',
+            stripe_price_lookup_key='a-lookup',
+            display_order=2,
+        )
+        self._create_academy(
+            name='B Academy',
+            slug='b-academy',
+            product_key='b-academy',
+            stripe_price_lookup_key='b-lookup',
+            display_order=1,
+        )
+
+        names = list(EnterpriseAcademy.objects.values_list('name', flat=True))
+        self.assertEqual(names, ['B Academy', 'A Academy', 'Z Academy'])
+
+    def test_str_representation(self):
+        """Verify __str__ returns the expected format."""
+        academy = self._create_academy()
+        self.assertEqual(str(academy), f'<Academy id={academy.uuid} name={academy.name}>')
 
 
 @ddt.ddt
@@ -788,6 +912,7 @@ class TestStripeEventSummary(TestCase):
         invoice_event_data = {
             'id': 'evt_test_invoice',
             'type': 'invoice.paid',
+            'created': 1700000000,
             'data': {
                 'object': {
                     'object': 'invoice',
@@ -845,6 +970,7 @@ class TestStripeEventSummary(TestCase):
         subscription_event_data = {
             'id': 'evt_test_sub_created',
             'type': 'customer.subscription.created',
+            'created': 1700000000,
             'data': {
                 'object': {
                     'object': 'subscription',
@@ -900,6 +1026,7 @@ class TestStripeEventSummary(TestCase):
         subscription_event_data = {
             'id': 'evt_test_sub_cancel_at',
             'type': 'customer.subscription.updated',
+            'created': 1700000000,
             'data': {
                 'object': {
                     'object': 'subscription',
@@ -1012,6 +1139,7 @@ class TestStripeEventSummary(TestCase):
         subscription_event_data = {
             'id': 'evt_test_with_plan_uuid',
             'type': 'customer.subscription.created',
+            'created': 1700000000,
             'data': {
                 'object': {
                     'object': 'subscription',
@@ -1132,6 +1260,47 @@ class TestStripeEventSummary(TestCase):
         previous = other_checkout_intent.previous_summary(current_event)
         self.assertIsNone(previous)
 
+    def test_populate_with_summary_data_falls_back_to_stripe_event_data_created(self):
+        """
+        When the raw event payload lacks a top-level 'created' key,
+        stripe_event_created_at should fall back to StripeEventData.created
+        so the non-nullable field is always populated.
+        """
+        event_data_without_created = {
+            'id': 'evt_test_no_created',
+            'type': 'customer.subscription.created',
+            # Note: no top-level 'created' key
+            'data': {
+                'object': {
+                    'object': 'subscription',
+                    'id': 'sub_test_no_created',
+                    'status': 'active',
+                    'currency': 'usd',
+                    'items': {
+                        'data': [
+                            {
+                                'current_period_start': 1609459200,
+                                'current_period_end': 1640995200,
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+
+        stripe_event_data = StripeEventData.objects.create(
+            event_id='evt_test_no_created',
+            event_type='customer.subscription.created',
+            checkout_intent=self.checkout_intent,
+            data=event_data_without_created,
+        )
+
+        summary = StripeEventSummary(stripe_event_data=stripe_event_data)
+        summary.populate_with_summary_data()
+
+        self.assertIsNotNone(summary.stripe_event_created_at)
+        self.assertEqual(summary.stripe_event_created_at, stripe_event_data.created)
+
     def _create_mock_stripe_event(self, event_type, event_data):
         """Helper to create a mock Stripe event."""
         mock_event = mock.MagicMock(spec=stripe.Event)
@@ -1174,6 +1343,7 @@ class TestStripeEventSummary(TestCase):
         subscription_event_data = {
             'id': 'evt_test_sub_created',
             'type': 'customer.subscription.created',
+            'created': 1700000000,
             'data': {
                 'object': subscription_data_object
             }
@@ -1291,7 +1461,7 @@ class TestSelfServiceSubscriptionRenewal(TestCase):
             event_id='evt_test_123',
             event_type='customer.subscription.updated',
             checkout_intent=self.checkout_intent,
-            data={'test': 'data'}
+            data={'test': 'data', 'created': 1700000000}
         )
 
         # Create renewal record
@@ -1316,6 +1486,24 @@ class TestSelfServiceSubscriptionRenewal(TestCase):
         self.assertGreaterEqual(renewal.processed_at, before_processing)
         self.assertLessEqual(renewal.processed_at, after_processing)
 
+    def test_self_service_subscription_renewal_is_canceled_default_false(self):
+        """Test that new renewal records default is_canceled to False."""
+        event_data = StripeEventData.objects.create(
+            event_id='evt_test_is_canceled_default',
+            event_type='customer.subscription.updated',
+            checkout_intent=self.checkout_intent,
+            data={'test': 'data', 'created': 1700000000}
+        )
+
+        renewal = SelfServiceSubscriptionRenewal.objects.create(
+            checkout_intent=self.checkout_intent,
+            subscription_plan_renewal_id=999,
+            stripe_subscription_id='sub_test_is_canceled_default',
+            stripe_event_data=event_data,
+        )
+
+        self.assertFalse(renewal.is_canceled)
+
     def test_self_service_subscription_renewal_mark_as_processed_multiple_times(self):
         """Test that calling mark_as_processed multiple times updates the timestamp each time."""
         # Create StripeEventData first
@@ -1323,7 +1511,7 @@ class TestSelfServiceSubscriptionRenewal(TestCase):
             event_id='evt_test_456',
             event_type='customer.subscription.updated',
             checkout_intent=self.checkout_intent,
-            data={'test': 'data'}
+            data={'test': 'data', 'created': 1700000000}
         )
 
         expected_renewal_id = 456

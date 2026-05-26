@@ -6,6 +6,7 @@ import logging
 from rest_framework import serializers
 
 from enterprise_access.apps.content_assignments.models import LearnerContentAssignment
+from enterprise_access.apps.subsidy_access_policy.models import SubsidyAccessPolicy
 from enterprise_access.apps.subsidy_request.constants import SubsidyRequestStates
 from enterprise_access.apps.subsidy_request.models import (
     CouponCodeRequest,
@@ -221,11 +222,28 @@ class LearnerCreditRequestActionsSerializer(serializers.ModelSerializer):
 
 class LearnerCreditRequestDeclineSerializer(serializers.Serializer):
     """
-    Serializer for declining a learner credit request.
+    Serializer for declining one or more learner credit requests.
+
+    Accepts either ``subsidy_request_uuid`` (single UUID, legacy) or
+    ``subsidy_request_uuids`` (list, mirrors the ``approve`` endpoint contract).
+    Exactly one of the two MUST be provided.
     """
 
     subsidy_request_uuid = serializers.UUIDField(
-        required=True, help_text="UUID of the learner credit request to decline"
+        required=False, help_text="UUID of a single learner credit request to decline."
+    )
+    subsidy_request_uuids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        allow_empty=False,
+        help_text="List of LearnerCreditRequest UUIDs to decline.",
+    )
+    policy_uuid = serializers.UUIDField(
+        required=False,
+        help_text=(
+            "The UUID of the SubsidyAccessPolicy associated with the requests. "
+            "Optional; included for symmetry with the approve endpoint contract."
+        ),
     )
     send_notification = serializers.BooleanField(
         default=False, help_text="Whether to send decline notification email to the learner"
@@ -233,55 +251,68 @@ class LearnerCreditRequestDeclineSerializer(serializers.Serializer):
     disassociate_from_org = serializers.BooleanField(
         default=False, help_text="Whether to unlink the user from the enterprise organization"
     )
-    # Add a new optional field 'decline_reason' to capture reason for decline
-    # Default value is None (null) if not provided
     decline_reason = serializers.CharField(
-        required=False,     # makes the field optional
-        allow_blank=True,   # allows empty string ""
-        allow_null=True,    # allows null value
-        help_text="Reason for declining"
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        help_text="Reason for declining",
     )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._learner_credit_request = None
+        self._learner_credit_requests = []
 
-    def validate_subsidy_request_uuid(self, value):
-        """
-        Validate that the subsidy request exists and can be declined.
-        """
-        try:
-            learner_credit_request = LearnerCreditRequest.objects.get(uuid=value)
-        except LearnerCreditRequest.DoesNotExist as exc:
-            raise serializers.ValidationError(f"Learner Credit Request with UUID {value} not found.") from exc
+    def validate(self, attrs):
+        single_uuid = attrs.get('subsidy_request_uuid')
+        many_uuids = attrs.get('subsidy_request_uuids')
 
-        if learner_credit_request.state not in [SubsidyRequestStates.REQUESTED]:
+        if single_uuid and many_uuids:
             raise serializers.ValidationError(
-                f'Learner Credit Request with UUID {value} cannot be declined. '
-                f'Current state: {learner_credit_request.state}'
+                "Provide either subsidy_request_uuid or subsidy_request_uuids, not both."
+            )
+        if not single_uuid and not many_uuids:
+            raise serializers.ValidationError(
+                "Must provide subsidy_request_uuid or subsidy_request_uuids."
             )
 
-        # Store the fetched object for later use
-        self._learner_credit_request = learner_credit_request
+        uuids = [single_uuid] if single_uuid else many_uuids
 
-        return value
+        learner_credit_requests = list(LearnerCreditRequest.objects.filter(uuid__in=uuids))
+        found_uuids = {r.uuid for r in learner_credit_requests}
+        missing = [str(u) for u in uuids if u not in found_uuids]
+        if missing:
+            raise serializers.ValidationError(
+                f"Learner Credit Request(s) with UUID(s) {missing} not found."
+            )
+
+        non_declinable = [
+            f'{r.uuid} (state: {r.state})' for r in learner_credit_requests
+            if r.state != SubsidyRequestStates.REQUESTED
+        ]
+        if non_declinable:
+            raise serializers.ValidationError(
+                f"Learner Credit Request(s) cannot be declined: {non_declinable}"
+            )
+
+        self._learner_credit_requests = learner_credit_requests
+        return attrs
 
     def get_learner_credit_request(self):
         """
-        Return the already-fetched LearnerCreditRequest object
+        Legacy accessor; returns the single (or first) validated request.
         """
-        return self._learner_credit_request
+        return self._learner_credit_requests[0] if self._learner_credit_requests else None
+
+    def get_learner_credit_requests(self):
+        """
+        Return all validated declinable LearnerCreditRequest objects.
+        """
+        return self._learner_credit_requests
 
     def create(self, validated_data):
-        """
-        Not implemented - this serializer is for validation only
-        """
         raise NotImplementedError("This serializer is for validation only")
 
     def update(self, instance, validated_data):
-        """
-        Not implemented - this serializer is for validation only
-        """
         raise NotImplementedError("This serializer is for validation only")
 
 
@@ -337,6 +368,44 @@ class LearnerCreditRequestApproveAllSerializer(serializers.Serializer):
         raise NotImplementedError("This serializer is for validation only")
 
 
+class LearnerCreditRequestApprovalResponseSerializer(serializers.Serializer):  # pylint: disable=abstract-method
+    """
+    Response serializer shared by LearnerCreditRequestViewSet.approve and .approve_all.
+
+    Guarantees a single, stable response contract across every return statement of both
+    endpoints so callers don't branch on shape. Approved / failed UUIDs are split into
+    two lists; ``error_message`` is only populated when the service itself failed
+    (policy missing, lock contention, unhandled exception).
+    """
+    approved = serializers.ListField(
+        child=serializers.UUIDField(),
+        help_text="UUIDs of requests that transitioned to APPROVED.",
+    )
+    failed = serializers.ListField(
+        child=serializers.UUIDField(),
+        help_text=(
+            "UUIDs of requests that did not transition to APPROVED, whether because they "
+            "were in a non-approvable state or were rejected by the policy."
+        ),
+    )
+    error_message = serializers.CharField(
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+        help_text="Human-readable summary of a service-level failure, if any.",
+    )
+
+
+class LearnerCreditRequestDeclineAllSerializer(serializers.Serializer):  # pylint: disable=abstract-method
+    """
+    Request serializer to validate the decline-all action.
+    """
+    policy_uuid = serializers.UUIDField(
+        required=True,
+        help_text="The UUID of the SubsidyAccessPolicy to filter requests by."
+    )
+
+
 # pylint: disable=abstract-method
 class LearnerCreditRequestCancelSerializer(serializers.Serializer):
     """
@@ -368,55 +437,75 @@ class LearnerCreditRequestCancelSerializer(serializers.Serializer):
         return getattr(self, '_learner_credit_request', None)
 
 
+class LearnerCreditRequestCancelAllSerializer(serializers.Serializer):
+    """
+    Request serializer to validate cancel-all endpoint for LearnerCreditRequests.
+
+    For view: LearnerCreditRequestViewSet.cancel_all
+    """
+    enterprise_customer_uuid = serializers.UUIDField(
+        required=True,
+        help_text="The UUID of the enterprise customer."
+    )
+    policy_uuid = serializers.UUIDField(
+        required=True,
+        help_text="The UUID of the SubsidyAccessPolicy to filter requests."
+    )
+    learner_request_state = serializers.CharField(
+        required=False,
+        help_text="Optional learner request state to filter by."
+    )
+
+    def validate(self, attrs):
+        """
+        Validate that the enterprise customer UUID matches the policy's enterprise.
+        Returns attrs silently if validation fails - view will return generic 404 to prevent enumeration.
+        """
+        policy_uuid = attrs['policy_uuid']
+        enterprise_customer_uuid = attrs['enterprise_customer_uuid']
+
+        try:
+            policy = SubsidyAccessPolicy.objects.get(uuid=policy_uuid)
+            if str(policy.enterprise_customer_uuid) != str(enterprise_customer_uuid):
+                # Don't reveal mismatch - let view return generic 404
+                attrs['_validation_failed'] = True
+        except SubsidyAccessPolicy.DoesNotExist:
+            # Don't reveal policy doesn't exist - let view return generic 404
+            attrs['_validation_failed'] = True
+
+        return attrs
+
+
+class LearnerCreditRequestBulkCancelSerializer(serializers.Serializer):
+    """
+    Request serializer to validate bulk cancel endpoint for LearnerCreditRequests.
+
+    For view: LearnerCreditRequestViewSet.bulk_cancel
+    """
+    learner_credit_request_uuids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=True,
+        allow_empty=False,
+        help_text="A list of LearnerCreditRequest UUIDs to be cancelled."
+    )
+    enterprise_customer_uuid = serializers.UUIDField(
+        required=True,
+        help_text="The enterprise customer UUID for permission validation."
+    )
+
+
 class LearnerCreditRequestRemindSerializer(serializers.Serializer):
     """
     Request serializer to validate remind endpoint for LearnerCreditRequests.
 
     For view: LearnerCreditRequestViewSet.remind
-
-    Supports both:
-    - learner_credit_request_uuid: Single UUID (backwards-compatible)
-    - learner_credit_request_uuids: List of UUIDs
-    At least one must be provided.
     """
-    learner_credit_request_uuid = serializers.UUIDField(
-        required=False,
-        allow_null=True,
-        help_text="A single LearnerCreditRequest UUID to be reminded (backwards-compatible)."
-    )
     learner_credit_request_uuids = serializers.ListField(
         child=serializers.UUIDField(),
-        required=False,
-        allow_empty=True,
+        required=True,
+        allow_empty=False,
         help_text="A list of LearnerCreditRequest UUIDs to be reminded."
     )
-
-    def validate(self, attrs):
-        """
-        Validate that at least one of learner_credit_request_uuid or learner_credit_request_uuids is provided.
-        """
-        single_uuid = attrs.get('learner_credit_request_uuid')
-        uuid_list = attrs.get('learner_credit_request_uuids', [])
-
-        if not single_uuid and not uuid_list:
-            raise serializers.ValidationError(
-                "Either 'learner_credit_request_uuid' or 'learner_credit_request_uuids' must be provided."
-            )
-
-        return attrs
-
-    def get_learner_credit_request_uuids(self):
-        """
-        Returns a list of UUIDs to remind, handling both single and list inputs.
-        """
-        single_uuid = self.validated_data.get('learner_credit_request_uuid')
-        uuid_list = self.validated_data.get('learner_credit_request_uuids', [])
-
-        if uuid_list:
-            return uuid_list
-        elif single_uuid:
-            return [single_uuid]
-        return []
 
 
 class LearnerCreditRequestRemindAllSerializer(serializers.Serializer):
@@ -429,97 +518,7 @@ class LearnerCreditRequestRemindAllSerializer(serializers.Serializer):
         required=True,
         help_text="The UUID of the SubsidyAccessPolicy to filter requests."
     )
-
-
-class LearnerCreditRequestBulkApproveRequestSerializer(serializers.Serializer):
-    """
-    Serializer for bulk approving learner credit requests.
-    """
-    policy_uuid = serializers.UUIDField(
-        required=True,
-        help_text='The UUID of the subsidy access policy to use for approval.',
-    )
-    enterprise_customer_uuid = serializers.UUIDField(
-        required=True,
-        help_text='The UUID of the enterprise customer.',
-    )
-    approve_all = serializers.BooleanField(
+    learner_request_state = serializers.CharField(
         required=False,
-        default=False,
-        help_text='If true, approve all pending requests for the enterprise customer.',
+        help_text="Optional learner request state to filter by."
     )
-    subsidy_request_uuids = serializers.ListField(
-        child=serializers.UUIDField(),
-        required=False,
-        help_text='List of subsidy request UUIDs to approve.',
-    )
-
-    def validate(self, attrs):
-        """
-        Validate that either approve_all is True or subsidy_request_uuids is provided, but not both.
-        """
-        approve_all = attrs.get('approve_all', False)
-        subsidy_request_uuids = attrs.get('subsidy_request_uuids', [])
-
-        if approve_all and subsidy_request_uuids:
-            raise serializers.ValidationError(
-                'Cannot specify both approve_all and subsidy_request_uuids. Please choose one.'
-            )
-
-        if not approve_all and not subsidy_request_uuids:
-            raise serializers.ValidationError(
-                'Must specify either approve_all=True or provide subsidy_request_uuids.'
-            )
-
-        return attrs
-
-
-class LearnerCreditRequestBulkDeclineSerializer(serializers.Serializer):
-    """
-    Serializer for bulk declining learner credit requests.
-
-    Request Payload:
-    {
-        "enterprise_customer_uuid": "<uuid>",  # Required for permission checking
-        "subsidy_request_uuids": [],
-        "decline_all": false,
-        "policy_uuid": "<uuid>"
-    }
-    """
-    enterprise_customer_uuid = serializers.UUIDField(
-        required=True,
-        help_text='The UUID of the enterprise customer.',
-    )
-    policy_uuid = serializers.UUIDField(
-        required=True,
-        help_text='The UUID of the subsidy access policy associated with the requests.',
-    )
-    decline_all = serializers.BooleanField(
-        required=False,
-        default=False,
-        help_text='If true, decline all open requests associated with a budget.',
-    )
-    subsidy_request_uuids = serializers.ListField(
-        child=serializers.UUIDField(),
-        required=False,
-        help_text='List of learner credit request UUIDs to decline.',
-    )
-
-    def validate(self, attrs):
-        """
-        Validate that either decline_all is True or subsidy_request_uuids is provided, but not both.
-        """
-        decline_all = attrs.get('decline_all', False)
-        subsidy_request_uuids = attrs.get('subsidy_request_uuids', [])
-
-        if decline_all and subsidy_request_uuids:
-            raise serializers.ValidationError(
-                'Cannot specify both decline_all and subsidy_request_uuids. Please choose one.'
-            )
-
-        if not decline_all and not subsidy_request_uuids:
-            raise serializers.ValidationError(
-                'Must specify either decline_all=True or provide subsidy_request_uuids.'
-            )
-
-        return attrs

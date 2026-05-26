@@ -2,19 +2,19 @@
 Tests for customer billing API endpoints.
 """
 import json
-import time
 import uuid
-from datetime import datetime, timedelta
-from datetime import timezone as dt_timezone
+from datetime import timedelta
 from unittest import mock
 
 import ddt
 import stripe
-from django.test import override_settings
+from django.core.cache import cache
+from django.test import RequestFactory, override_settings
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework import status
 
+from enterprise_access.apps.api.v1.views.customer_billing import BillingManagementViewSet, CheckoutIntentPermission
 from enterprise_access.apps.core.constants import (
     SYSTEM_ENTERPRISE_ADMIN_ROLE,
     SYSTEM_ENTERPRISE_LEARNER_ROLE,
@@ -22,7 +22,8 @@ from enterprise_access.apps.core.constants import (
 )
 from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.customer_billing.constants import CheckoutIntentState
-from enterprise_access.apps.customer_billing.models import CheckoutIntent
+from enterprise_access.apps.customer_billing.models import CheckoutIntent, StripeEventData, StripeEventSummary
+from enterprise_access.apps.customer_billing.tests.utils import AttrDict
 from test_utils import APITest
 
 
@@ -52,7 +53,6 @@ class CustomerBillingPortalSessionTests(APITest):
     def tearDown(self):
         CheckoutIntent.objects.all().delete()
         # Clear Django cache to prevent Stripe API cache pollution between tests
-        from django.core.cache import cache
         cache.clear()
         super().tearDown()
 
@@ -67,14 +67,16 @@ class CustomerBillingPortalSessionTests(APITest):
 
         url = reverse('api:v1:customer-billing-create-enterprise-admin-portal-session')
 
-        mock_session = {
+        mock_session_data = {
             'id': 'bps_test_123',
             'url': 'https://billing.stripe.com/session/test_123',
             'customer': self.stripe_customer_id,
         }
+        mock_stripe_session = mock.Mock()
+        mock_stripe_session.to_dict.return_value = mock_session_data
 
         with mock.patch('stripe.billing_portal.Session.create') as mock_create:
-            mock_create.return_value = mock_session
+            mock_create.return_value = mock_stripe_session
 
             response = self.client.get(
                 url,
@@ -83,7 +85,7 @@ class CustomerBillingPortalSessionTests(APITest):
             )
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data, mock_session)
+        self.assertEqual(response.data, mock_session_data)
 
         # Implementation uses /{enterprise_slug} for Admin portal return URL.
         mock_create.assert_called_once_with(
@@ -98,7 +100,7 @@ class CustomerBillingPortalSessionTests(APITest):
     )
     @ddt.unpack
     def test_create_enterprise_admin_portal_session_rbac(
-        self, scenario, role, uuid_type, include_uuid, expected_status
+        self, _scenario, role, _uuid_type, include_uuid, expected_status
     ):
         """
         Test RBAC scenarios for enterprise admin portal session endpoint.
@@ -221,7 +223,7 @@ class CustomerBillingPortalSessionTests(APITest):
         }
 
         with mock.patch('stripe.billing_portal.Session.create') as mock_create:
-            mock_create.return_value = mock_session
+            mock_create.return_value.to_dict.return_value = mock_session
 
             response = self.client.get(
                 url,
@@ -243,7 +245,7 @@ class CustomerBillingPortalSessionTests(APITest):
     )
     @ddt.unpack
     def test_create_checkout_portal_session_rbac(
-        self, scenario, user_type, intent_pk, expected_status
+        self, _scenario, user_type, intent_pk, expected_status
     ):
         """
         Test RBAC scenarios for checkout portal session endpoint.
@@ -483,7 +485,7 @@ class StripeWebhookTests(APITest):
         }
 
         with mock.patch('stripe.billing_portal.Session.create') as mock_create:
-            mock_create.return_value = mock_session
+            mock_create.return_value.to_dict.return_value = mock_session
 
             response = self.client.get(
                 url,
@@ -633,10 +635,6 @@ class CheckoutIntentPermissionTests(APITest):
         """
         Test CheckoutIntentPermission when pk is invalid for both UUID and int (TypeError).
         """
-        from django.test import RequestFactory
-
-        from enterprise_access.apps.api.v1.views.customer_billing import CheckoutIntentPermission
-
         permission = CheckoutIntentPermission()
         factory = RequestFactory()
 
@@ -659,10 +657,6 @@ class CheckoutIntentPermissionTests(APITest):
         """
         Test CheckoutIntentPermission when pk fails int() conversion (ValueError).
         """
-        from django.test import RequestFactory
-
-        from enterprise_access.apps.api.v1.views.customer_billing import CheckoutIntentPermission
-
         permission = CheckoutIntentPermission()
         factory = RequestFactory()
 
@@ -714,7 +708,6 @@ class BillingManagementBaseTest(APITest):
     def tearDown(self):
         CheckoutIntent.objects.all().delete()
         # Clear Django cache to prevent Stripe API cache pollution between tests
-        from django.core.cache import cache
         cache.clear()
         super().tearDown()
 
@@ -774,7 +767,7 @@ class BillingManagementAddressEndpointTests(BillingManagementBaseTest):
         """
         Test successful retrieval of billing address.
         """
-        mock_stripe_customer = {
+        mock_stripe_customer = AttrDict.wrap({
             'id': self.stripe_customer_id,
             'name': 'John Doe',
             'email': 'john@example.com',
@@ -787,7 +780,7 @@ class BillingManagementAddressEndpointTests(BillingManagementBaseTest):
                 'postal_code': '94105',
                 'country': 'US',
             },
-        }
+        })
         mock_stripe_customer_retrieve.return_value = mock_stripe_customer
 
         url = reverse('api:v1:billing-management-address')
@@ -861,13 +854,13 @@ class BillingManagementAddressEndpointTests(BillingManagementBaseTest):
         """
         Test that endpoint handles Stripe customers with partial address data.
         """
-        mock_stripe_customer = {
+        mock_stripe_customer = AttrDict.wrap({
             'id': self.stripe_customer_id,
             'name': 'Jane Doe',
             'email': 'jane@example.com',
             'phone': None,
             'address': None,
-        }
+        })
         mock_stripe_customer_retrieve.return_value = mock_stripe_customer
 
         url = reverse('api:v1:billing-management-address')
@@ -880,6 +873,45 @@ class BillingManagementAddressEndpointTests(BillingManagementBaseTest):
         self.assertIsNone(response_data['phone'])
         self.assertIsNone(response_data.get('address_line_1'))
         self.assertIsNone(response_data.get('city'))
+
+    @mock.patch('stripe.Customer.retrieve')
+    def test_get_address_with_empty_string_values(self, mock_stripe_customer_retrieve):
+        """
+        Test that endpoint handles Stripe customers with empty string address values.
+
+        Stripe may return empty strings for address fields rather than null values.
+        The response serializer should accept these without validation errors.
+        """
+        mock_stripe_customer = AttrDict.wrap({
+            'id': self.stripe_customer_id,
+            'name': 'Jane Doe',
+            'email': 'jane@example.com',
+            'phone': None,
+            'address': {
+                'line1': '',
+                'line2': '',
+                'city': '',
+                'state': '',
+                'postal_code': '',
+                'country': 'US',
+            },
+        })
+        mock_stripe_customer_retrieve.return_value = mock_stripe_customer
+
+        url = reverse('api:v1:billing-management-address')
+        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response_data = response.json()
+        self.assertEqual(response_data['name'], 'Jane Doe')
+        self.assertEqual(response_data['email'], 'jane@example.com')
+        self.assertIsNone(response_data['phone'])
+        self.assertEqual(response_data['address_line_1'], '')
+        self.assertEqual(response_data['address_line_2'], '')
+        self.assertEqual(response_data['city'], '')
+        self.assertEqual(response_data['state'], '')
+        self.assertEqual(response_data['postal_code'], '')
+        self.assertEqual(response_data['country'], 'US')
 
 
 @ddt.ddt
@@ -896,7 +928,7 @@ class BillingManagementAddressUpdateTests(BillingManagementBaseTest):
         """
         Test successful update of billing address.
         """
-        updated_customer = {
+        updated_customer = AttrDict.wrap({
             'id': self.stripe_customer_id,
             'name': 'Jane Smith',
             'email': 'jane.smith@example.com',
@@ -909,7 +941,7 @@ class BillingManagementAddressUpdateTests(BillingManagementBaseTest):
                 'postal_code': '10001',
                 'country': 'US',
             },
-        }
+        })
         mock_customer_modify.return_value = updated_customer
 
         url = reverse('api:v1:billing-management-address')
@@ -1032,7 +1064,7 @@ class BillingManagementAddressUpdateTests(BillingManagementBaseTest):
         ),
     )
     @ddt.unpack
-    def test_update_address_validation_errors(self, scenario, request_data, expected_error_fields):
+    def test_update_address_validation_errors(self, _scenario, request_data, expected_error_fields):
         """
         Test validation errors for update address endpoint.
         Scenarios: missing_required_fields (400), invalid_country_code (400).
@@ -1080,7 +1112,7 @@ class BillingManagementAddressUpdateTests(BillingManagementBaseTest):
         """
         Test that update works when optional fields are omitted.
         """
-        updated_customer = {
+        updated_customer = AttrDict.wrap({
             'id': self.stripe_customer_id,
             'name': 'John Doe',
             'email': 'john@example.com',
@@ -1093,7 +1125,7 @@ class BillingManagementAddressUpdateTests(BillingManagementBaseTest):
                 'postal_code': '90001',
                 'country': 'US',
             },
-        }
+        })
         mock_customer_modify.return_value = updated_customer
 
         url = reverse('api:v1:billing-management-address')
@@ -1134,11 +1166,11 @@ class BillingManagementPaymentMethodsTests(BillingManagementBaseTest):
         """
         Test successful retrieval of payment methods.
         """
-        mock_customer = {'invoice_settings': {'default_payment_method': 'pm_card_visa'}}
+        mock_customer = AttrDict.wrap({'invoice_settings': {'default_payment_method': 'pm_card_visa'}})
         mock_customer_retrieve.return_value = mock_customer
 
         mock_payment_methods = [
-            {
+            AttrDict.wrap({
                 'id': 'pm_card_visa',
                 'type': 'card',
                 'card': {
@@ -1147,8 +1179,8 @@ class BillingManagementPaymentMethodsTests(BillingManagementBaseTest):
                     'exp_month': 12,
                     'exp_year': 2025,
                 }
-            },
-            {
+            }),
+            AttrDict.wrap({
                 'id': 'pm_card_mastercard',
                 'type': 'card',
                 'card': {
@@ -1157,7 +1189,7 @@ class BillingManagementPaymentMethodsTests(BillingManagementBaseTest):
                     'exp_month': 6,
                     'exp_year': 2026,
                 }
-            }
+            }),
         ]
         mock_payment_method_list.return_value = mock.Mock(data=mock_payment_methods)
 
@@ -1194,7 +1226,7 @@ class BillingManagementPaymentMethodsTests(BillingManagementBaseTest):
         """
         Test that empty payment methods list returns successfully.
         """
-        mock_customer = {'invoice_settings': {}}
+        mock_customer = AttrDict.wrap({'invoice_settings': {}})
         mock_customer_retrieve.return_value = mock_customer
         mock_payment_method_list.return_value = mock.Mock(data=[])
 
@@ -1262,17 +1294,17 @@ class BillingManagementPaymentMethodsTests(BillingManagementBaseTest):
         """
         Test that payment methods include bank account details when present.
         """
-        mock_customer = {'invoice_settings': {'default_payment_method': 'pm_bank_account'}}
+        mock_customer = AttrDict.wrap({'invoice_settings': {'default_payment_method': 'pm_bank_account'}})
         mock_customer_retrieve.return_value = mock_customer
 
         mock_payment_methods = [
-            {
+            AttrDict.wrap({
                 'id': 'pm_bank_account',
                 'type': 'us_bank_account',
                 'us_bank_account': {
                     'last4': '6789',
                 }
-            }
+            }),
         ]
         mock_payment_method_list.return_value = mock.Mock(data=mock_payment_methods)
 
@@ -1306,11 +1338,11 @@ class BillingManagementPaymentMethodsTests(BillingManagementBaseTest):
         """
         Test that bank account payment methods return correct status based on Stripe verification status.
         """
-        mock_customer = {'invoice_settings': {'default_payment_method': 'pm_bank_account'}}
+        mock_customer = AttrDict.wrap({'invoice_settings': {'default_payment_method': 'pm_bank_account'}})
         mock_customer_retrieve.return_value = mock_customer
 
         mock_payment_methods = [
-            {
+            AttrDict.wrap({
                 'id': 'pm_bank_account',
                 'type': 'us_bank_account',
                 'status': stripe_status,
@@ -1320,7 +1352,7 @@ class BillingManagementPaymentMethodsTests(BillingManagementBaseTest):
                         'status': stripe_status,
                     },
                 }
-            }
+            }),
         ]
         mock_payment_method_list.return_value = mock.Mock(data=mock_payment_methods)
 
@@ -1354,9 +1386,7 @@ class BillingManagementAttachPaymentMethodTests(BillingManagementBaseTest):
         """
         # Mock payment method retrieve (verify it exists)
         mock_pm = mock.Mock()
-        mock_pm.id = self.payment_method_id
-        mock_pm.type = 'card'
-        mock_pm.get.return_value = None  # Not attached to any customer yet
+        mock_pm.to_dict.return_value = {'id': self.payment_method_id, 'type': 'card', 'customer': None}
         mock_pm_retrieve.return_value = mock_pm
 
         # Mock payment method attach
@@ -1389,9 +1419,7 @@ class BillingManagementAttachPaymentMethodTests(BillingManagementBaseTest):
         """
         # Mock payment method retrieve
         mock_pm = mock.Mock()
-        mock_pm.id = self.payment_method_id
-        mock_pm.type = 'us_bank_account'
-        mock_pm.get.return_value = None  # Not attached to any customer yet
+        mock_pm.to_dict.return_value = {'id': self.payment_method_id, 'type': 'us_bank_account', 'customer': None}
         mock_pm_retrieve.return_value = mock_pm
         mock_pm_attach.return_value = mock_pm
 
@@ -1415,10 +1443,10 @@ class BillingManagementAttachPaymentMethodTests(BillingManagementBaseTest):
         Stripe.PaymentMethod.attach() is idempotent - returns success if already attached to same customer.
         """
         mock_pm = mock.Mock()
-        mock_pm.id = self.payment_method_id
-        mock_pm.type = 'card'
         # Already attached to THIS customer - should return success without calling attach
-        mock_pm.get.return_value = self.stripe_customer_id
+        mock_pm.to_dict.return_value = {
+            'id': self.payment_method_id, 'type': 'card', 'customer': self.stripe_customer_id,
+        }
         mock_pm_retrieve.return_value = mock_pm
 
         url = reverse('api:v1:billing-management-payment-methods')
@@ -1499,7 +1527,7 @@ class BillingManagementAttachPaymentMethodTests(BillingManagementBaseTest):
         Test Stripe API error returns 422.
         """
         mock_pm = mock.Mock()
-        mock_pm.get.return_value = None  # Not attached to any customer yet
+        mock_pm.to_dict.return_value = {'customer': None}
         mock_pm_retrieve.return_value = mock_pm
         mock_pm_attach.side_effect = stripe.error.StripeError('Stripe error occurred')
 
@@ -1527,8 +1555,7 @@ class BillingManagementAttachPaymentMethodTests(BillingManagementBaseTest):
         }])
 
         mock_pm = mock.Mock()
-        mock_pm.id = self.payment_method_id
-        mock_pm.get.return_value = None  # Not attached to any customer yet
+        mock_pm.to_dict.return_value = {'id': self.payment_method_id, 'customer': None}
         mock_pm_retrieve.return_value = mock_pm
         mock_pm_attach.return_value = mock_pm
 
@@ -1580,9 +1607,7 @@ class BillingManagementSetDefaultPaymentMethodTests(BillingManagementBaseTest):
         """
         Test successfully setting a payment method as default.
         """
-        mock_payment_method = mock.Mock()
-        mock_payment_method.get.return_value = self.stripe_customer_id
-        mock_payment_method_retrieve.return_value = mock_payment_method
+        mock_payment_method_retrieve.return_value = AttrDict.wrap({'customer': self.stripe_customer_id})
 
         url = reverse('api:v1:billing-management-set-default-payment-method', args=[self.payment_method_id])
         response = self.client.post(
@@ -1667,9 +1692,7 @@ class BillingManagementSetDefaultPaymentMethodTests(BillingManagementBaseTest):
         Test that payment method belonging to different customer returns 404.
         """
         # Mock payment method belonging to a different customer
-        mock_payment_method = mock.Mock()
-        mock_payment_method.get.return_value = 'cus_different_customer'
-        mock_payment_method_retrieve.return_value = mock_payment_method
+        mock_payment_method_retrieve.return_value = AttrDict.wrap({'customer': 'cus_different_customer'})
 
         url = reverse('api:v1:billing-management-set-default-payment-method', args=[self.payment_method_id])
         response = self.client.post(
@@ -1688,9 +1711,7 @@ class BillingManagementSetDefaultPaymentMethodTests(BillingManagementBaseTest):
         """
         Test that Stripe API errors are handled gracefully.
         """
-        mock_payment_method = mock.Mock()
-        mock_payment_method.get.return_value = self.stripe_customer_id
-        mock_payment_method_retrieve.return_value = mock_payment_method
+        mock_payment_method_retrieve.return_value = AttrDict.wrap({'customer': self.stripe_customer_id})
         mock_customer_modify.side_effect = stripe.error.StripeError('Stripe API Error')
 
         url = reverse('api:v1:billing-management-set-default-payment-method', args=[self.payment_method_id])
@@ -1732,17 +1753,13 @@ class BillingManagementSetDefaultPaymentMethodTests(BillingManagementBaseTest):
         """
         Test that operator role can also set default payment method.
         """
-        from enterprise_access.apps.core.constants import SYSTEM_ENTERPRISE_OPERATOR_ROLE
-
         # Set JWT cookie with operator role
         self.set_jwt_cookie([{
             'system_wide_role': SYSTEM_ENTERPRISE_OPERATOR_ROLE,
             'context': self.enterprise_uuid,
         }])
 
-        mock_payment_method = mock.Mock()
-        mock_payment_method.get.return_value = self.stripe_customer_id
-        mock_payment_method_retrieve.return_value = mock_payment_method
+        mock_payment_method_retrieve.return_value = AttrDict.wrap({'customer': self.stripe_customer_id})
 
         url = reverse('api:v1:billing-management-set-default-payment-method', args=[self.payment_method_id])
         response = self.client.post(
@@ -1771,27 +1788,19 @@ class BillingManagementDeletePaymentMethodTests(BillingManagementBaseTest):
         """
         Test successfully deleting a non-default payment method when others exist.
         """
-        mock_payment_method = mock.Mock()
-        mock_payment_method.get.side_effect = lambda key, default=None: {
+        mock_retrieve_pm.return_value = AttrDict.wrap({
             'id': 'pm_test123',
             'customer': self.stripe_customer_id,
-        }.get(key, default)
-        mock_retrieve_pm.return_value = mock_payment_method
+        })
 
         # Mock customer with different default
-        mock_customer = mock.Mock()
-        mock_customer.get.side_effect = lambda key, default=None: {
+        mock_retrieve_cust.return_value = AttrDict.wrap({
             'id': self.stripe_customer_id,
             'invoice_settings': {'default_payment_method': 'pm_default'},
-        }.get(key, default)
-        mock_retrieve_cust.return_value = mock_customer
+        })
 
-        # Mock multiple payment methods
-        mock_payment_methods = [
-            mock.Mock(get=lambda key, default=None: {'id': 'pm_default'}.get(key, default)),
-            mock.Mock(get=lambda key, default=None: {'id': 'pm_test123'}.get(key, default)),
-        ]
-        mock_list_pm.return_value = mock.Mock(data=mock_payment_methods)
+        # Mock multiple payment methods (only len() is called, no .to_dict())
+        mock_list_pm.return_value = mock.Mock(data=['pm_default', 'pm_test123'])
 
         url = reverse('api:v1:billing-management-delete-payment-method', kwargs={'payment_method_id': 'pm_test123'})
         response = self.client.delete(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}')
@@ -1809,26 +1818,19 @@ class BillingManagementDeletePaymentMethodTests(BillingManagementBaseTest):
         """
         Test that deleting the only payment method returns 409 conflict.
         """
-        mock_payment_method = mock.Mock()
-        mock_payment_method.get.side_effect = lambda key, default=None: {
+        mock_retrieve_pm.return_value = AttrDict.wrap({
             'id': 'pm_only',
             'customer': self.stripe_customer_id,
-        }.get(key, default)
-        mock_retrieve_pm.return_value = mock_payment_method
+        })
 
         # Mock customer
-        mock_customer = mock.Mock()
-        mock_customer.get.side_effect = lambda key, default=None: {
+        mock_retrieve_cust.return_value = AttrDict.wrap({
             'id': self.stripe_customer_id,
             'invoice_settings': {'default_payment_method': 'pm_only'},
-        }.get(key, default)
-        mock_retrieve_cust.return_value = mock_customer
+        })
 
-        # Mock only one payment method
-        mock_payment_methods = [
-            mock.Mock(get=lambda key, default=None: {'id': 'pm_only'}.get(key, default)),
-        ]
-        mock_list_pm.return_value = mock.Mock(data=mock_payment_methods)
+        # Mock only one payment method (only len() is called)
+        mock_list_pm.return_value = mock.Mock(data=['pm_only'])
 
         url = reverse('api:v1:billing-management-delete-payment-method', kwargs={'payment_method_id': 'pm_only'})
         response = self.client.delete(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}')
@@ -1845,27 +1847,19 @@ class BillingManagementDeletePaymentMethodTests(BillingManagementBaseTest):
         """
         Test that deleting the default payment method when others exist returns 409 conflict.
         """
-        mock_payment_method = mock.Mock()
-        mock_payment_method.get.side_effect = lambda key, default=None: {
+        mock_retrieve_pm.return_value = AttrDict.wrap({
             'id': 'pm_default',
             'customer': self.stripe_customer_id,
-        }.get(key, default)
-        mock_retrieve_pm.return_value = mock_payment_method
+        })
 
         # Mock customer with this method as default
-        mock_customer = mock.Mock()
-        mock_customer.get.side_effect = lambda key, default=None: {
+        mock_retrieve_cust.return_value = AttrDict.wrap({
             'id': self.stripe_customer_id,
             'invoice_settings': {'default_payment_method': 'pm_default'},
-        }.get(key, default)
-        mock_retrieve_cust.return_value = mock_customer
+        })
 
-        # Mock multiple payment methods
-        mock_payment_methods = [
-            mock.Mock(get=lambda key, default=None: {'id': 'pm_default'}.get(key, default)),
-            mock.Mock(get=lambda key, default=None: {'id': 'pm_other'}.get(key, default)),
-        ]
-        mock_list_pm.return_value = mock.Mock(data=mock_payment_methods)
+        # Mock multiple payment methods (only len() is called)
+        mock_list_pm.return_value = mock.Mock(data=['pm_default', 'pm_other'])
 
         url = reverse('api:v1:billing-management-delete-payment-method', kwargs={'payment_method_id': 'pm_default'})
         response = self.client.delete(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}')
@@ -1881,7 +1875,7 @@ class BillingManagementDeletePaymentMethodTests(BillingManagementBaseTest):
         ('wrong_role', SYSTEM_ENTERPRISE_LEARNER_ROLE, 'existing', status.HTTP_403_FORBIDDEN),
     )
     @ddt.unpack
-    def test_delete_payment_method_rbac(self, scenario, role, uuid_type, expected_status):
+    def test_delete_payment_method_rbac(self, _scenario, role, uuid_type, expected_status):
         """
         Test RBAC scenarios for delete payment method endpoint.
         Scenarios: missing_uuid (403), nonexistent_uuid (403), wrong_role (403).
@@ -1925,12 +1919,10 @@ class BillingManagementDeletePaymentMethodTests(BillingManagementBaseTest):
         """
         Test that endpoint returns 404 when payment method belongs to different customer.
         """
-        mock_payment_method = mock.Mock()
-        mock_payment_method.get.side_effect = lambda key, default=None: {
+        mock_retrieve_pm.return_value = AttrDict.wrap({
             'id': 'pm_test123',
             'customer': 'cus_different_customer',
-        }.get(key, default)
-        mock_retrieve_pm.return_value = mock_payment_method
+        })
 
         url = reverse('api:v1:billing-management-delete-payment-method', kwargs={'payment_method_id': 'pm_test123'})
         response = self.client.delete(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}')
@@ -1947,27 +1939,19 @@ class BillingManagementDeletePaymentMethodTests(BillingManagementBaseTest):
         """
         Test that endpoint handles Stripe API errors gracefully.
         """
-        mock_payment_method = mock.Mock()
-        mock_payment_method.get.side_effect = lambda key, default=None: {
+        mock_retrieve_pm.return_value = AttrDict.wrap({
             'id': 'pm_test123',
             'customer': self.stripe_customer_id,
-        }.get(key, default)
-        mock_retrieve_pm.return_value = mock_payment_method
+        })
 
         # Mock customer
-        mock_customer = mock.Mock()
-        mock_customer.get.side_effect = lambda key, default=None: {
+        mock_retrieve_cust.return_value = AttrDict.wrap({
             'id': self.stripe_customer_id,
             'invoice_settings': {'default_payment_method': 'pm_default'},
-        }.get(key, default)
-        mock_retrieve_cust.return_value = mock_customer
+        })
 
-        # Mock multiple payment methods but detach fails
-        mock_payment_methods = [
-            mock.Mock(get=lambda key, default=None: {'id': 'pm_default'}.get(key, default)),
-            mock.Mock(get=lambda key, default=None: {'id': 'pm_test123'}.get(key, default)),
-        ]
-        mock_list_pm.return_value = mock.Mock(data=mock_payment_methods)
+        # Mock multiple payment methods (only len() is called)
+        mock_list_pm.return_value = mock.Mock(data=['pm_default', 'pm_test123'])
 
         # Mock detach to fail
         with mock.patch('stripe.PaymentMethod.detach', side_effect=stripe.error.StripeError('Connection error')):
@@ -1997,7 +1981,7 @@ class BillingManagementTransactionsTests(BillingManagementBaseTest):
         """
         # Mock invoice response
         mock_invoices = [
-            {
+            AttrDict.wrap({
                 'id': 'in_test123',
                 'created': 1640000000,  # Unix timestamp
                 'amount_paid': 9900,
@@ -2006,8 +1990,8 @@ class BillingManagementTransactionsTests(BillingManagementBaseTest):
                 'description': 'Test Invoice 1',
                 'hosted_invoice_url': 'https://stripe.com/invoice/1',
                 'charge': 'ch_test123',
-            },
-            {
+            }),
+            AttrDict.wrap({
                 'id': 'in_test456',
                 'created': 1639900000,  # Unix timestamp
                 'amount_paid': 5000,
@@ -2016,7 +2000,7 @@ class BillingManagementTransactionsTests(BillingManagementBaseTest):
                 'description': 'Test Invoice 2',
                 'hosted_invoice_url': 'https://stripe.com/invoice/2',
                 'charge': None,
-            },
+            }),
         ]
         mock_invoice_list.return_value = mock.Mock(
             data=mock_invoices,
@@ -2024,10 +2008,10 @@ class BillingManagementTransactionsTests(BillingManagementBaseTest):
         )
 
         # Mock charge response
-        mock_charge = {
+        mock_charge = AttrDict.wrap({
             'id': 'ch_test123',
             'receipt_url': 'https://stripe.com/receipt/ch_test123',
-        }
+        })
         mock_charge_retrieve.return_value = mock_charge
 
         url = reverse('api:v1:billing-management-list-transactions')
@@ -2055,7 +2039,7 @@ class BillingManagementTransactionsTests(BillingManagementBaseTest):
         """
         # Mock invoice response with has_more=True
         mock_invoices = [
-            {
+            AttrDict.wrap({
                 'id': 'in_test123',
                 'created': 1640000000,  # Unix timestamp
                 'amount_paid': 9900,
@@ -2064,7 +2048,7 @@ class BillingManagementTransactionsTests(BillingManagementBaseTest):
                 'description': 'Test Invoice 1',
                 'hosted_invoice_url': 'https://stripe.com/invoice/1',
                 'charge': None,
-            },
+            }),
         ]
         mock_invoice_list.return_value = mock.Mock(
             data=mock_invoices,
@@ -2124,7 +2108,7 @@ class BillingManagementTransactionsTests(BillingManagementBaseTest):
         ('wrong_role', SYSTEM_ENTERPRISE_LEARNER_ROLE, 'existing', status.HTTP_403_FORBIDDEN),
     )
     @ddt.unpack
-    def test_list_transactions_rbac(self, scenario, role, uuid_type, expected_status):
+    def test_list_transactions_rbac(self, _scenario, role, uuid_type, expected_status):
         """
         Test RBAC scenarios for list transactions endpoint.
         Scenarios: missing_uuid (403), nonexistent_uuid (403), wrong_role (403).
@@ -2166,7 +2150,7 @@ class BillingManagementTransactionsTests(BillingManagementBaseTest):
 
     @mock.patch('stripe.Charge.retrieve')
     @mock.patch('stripe.Invoice.list')
-    def test_list_transactions_empty_list(self, mock_invoice_list, mock_charge_retrieve):
+    def test_list_transactions_empty_list(self, mock_invoice_list, _mock_charge_retrieve):
         """
         Test returning empty transaction list.
         """
@@ -2184,13 +2168,13 @@ class BillingManagementTransactionsTests(BillingManagementBaseTest):
 
     @mock.patch('stripe.Charge.retrieve')
     @mock.patch('stripe.Invoice.list')
-    def test_list_transactions_normalizes_status(self, mock_invoice_list, mock_charge_retrieve):
+    def test_list_transactions_normalizes_status(self, mock_invoice_list, _mock_charge_retrieve):
         """
         Test that invoice statuses are normalized correctly.
         """
         # Mock invoices with various Stripe statuses
         mock_invoices = [
-            {
+            AttrDict.wrap({
                 'id': 'in_paid',
                 'created': 1640000000,  # Unix timestamp
                 'amount_paid': 1000,
@@ -2199,8 +2183,8 @@ class BillingManagementTransactionsTests(BillingManagementBaseTest):
                 'description': 'Paid invoice',
                 'hosted_invoice_url': 'https://stripe.com/invoice/1',
                 'charge': None,
-            },
-            {
+            }),
+            AttrDict.wrap({
                 'id': 'in_draft',
                 'created': 1640000000,  # Unix timestamp
                 'amount_paid': 0,
@@ -2209,8 +2193,8 @@ class BillingManagementTransactionsTests(BillingManagementBaseTest):
                 'description': 'Draft invoice',
                 'hosted_invoice_url': 'https://stripe.com/invoice/2',
                 'charge': None,
-            },
-            {
+            }),
+            AttrDict.wrap({
                 'id': 'in_void',
                 'created': 1640000000,  # Unix timestamp
                 'amount_paid': 0,
@@ -2219,7 +2203,7 @@ class BillingManagementTransactionsTests(BillingManagementBaseTest):
                 'description': 'Void invoice',
                 'hosted_invoice_url': 'https://stripe.com/invoice/3',
                 'charge': None,
-            },
+            }),
         ]
         mock_invoice_list.return_value = mock.Mock(data=mock_invoices, has_more=False)
 
@@ -2244,39 +2228,52 @@ class BillingManagementSubscriptionTests(BillingManagementBaseTest):
     def _get_stripe_customer_id(self):
         return 'cus_test_subscription_123'
 
-    @mock.patch('stripe.Product.retrieve')
-    @mock.patch('stripe.Price.retrieve')
-    @mock.patch('stripe.Subscription.list')
-    def test_get_subscription_success(self, mock_sub_list, mock_price_retrieve, mock_product_retrieve):
+    def test_get_subscription_success(self):
         """
-        Test successfully retrieving subscription with plan_type from metadata.
+        Test successfully retrieving subscription from StripeEventSummary.
         """
-        # Mock price
-        mock_price = {
-            'id': 'price_test123',
-            'unit_amount': 50000,  # $500/year
-            'recurring': {'interval': 'year'},
-            'product': 'prod_test123',
-            'metadata': {'plan_type': 'Teams'},
-        }
-        mock_price_retrieve.return_value = mock_price
 
-        # Mock subscription
-        mock_subscription = {
-            'id': 'sub_test123',
-            'status': 'active',
-            'cancel_at_period_end': False,
-            'current_period_end': 1640000000,  # Unix timestamp
-            'items': {
-                'data': [
-                    {
-                        'price': {'id': 'price_test123'},
-                        'quantity': 5,
-                    }
-                ]
-            },
-        }
-        mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
+        # Create subscription event data
+        sub_event_data = StripeEventData.objects.create(
+            event_id='evt_sub_test123',
+            event_type='customer.subscription.updated',
+            checkout_intent=self.checkout_intent,
+            data={'data': {'object': {}}},
+        )
+
+        # Create StripeEventSummary for subscription (no invoice fields)
+        StripeEventSummary.objects.create(
+            stripe_event_data=sub_event_data,
+            event_id='evt_sub_test123',
+            event_type='customer.subscription.updated',
+            checkout_intent=self.checkout_intent,
+            stripe_event_created_at=timezone.now(),
+            stripe_subscription_id='sub_test123',
+            subscription_status='active',
+            subscription_period_start=timezone.now() - timedelta(days=30),
+            subscription_period_end=timezone.now() + timedelta(days=335),  # 365 days total
+            currency='usd',
+        )
+
+        # Create invoice event data for pricing information
+        invoice_event_data = StripeEventData.objects.create(
+            event_id='evt_invoice_test123',
+            event_type='invoice.paid',
+            checkout_intent=self.checkout_intent,
+            data={'data': {'object': {}}},
+        )
+
+        # Create StripeEventSummary for invoice with pricing data
+        StripeEventSummary.objects.create(
+            stripe_event_data=invoice_event_data,
+            event_id='evt_invoice_test123',
+            event_type='invoice.paid',
+            checkout_intent=self.checkout_intent,
+            stripe_event_created_at=timezone.now(),
+            stripe_subscription_id='sub_test123',
+            invoice_unit_amount=50000,  # $500 per license
+            invoice_quantity=5,  # 5 licenses
+        )
 
         url = reverse('api:v1:billing-management-get-subscription')
         response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
@@ -2284,22 +2281,19 @@ class BillingManagementSubscriptionTests(BillingManagementBaseTest):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         response_data = response.json()
 
-        self.assertIn('subscription', response_data)
-        sub = response_data['subscription']
+        sub = response_data
         self.assertEqual(sub['id'], 'sub_test123')
         self.assertEqual(sub['status'], 'active')
-        self.assertEqual(sub['plan_type'], 'Teams')
         self.assertFalse(sub['cancel_at_period_end'])
         # Yearly amount: 50000 (unit_amount) * 5 (quantity) = 250000
         self.assertEqual(sub['yearly_amount'], 250000)
         self.assertEqual(sub['license_count'], 5)
 
-    @mock.patch('stripe.Subscription.list')
-    def test_get_subscription_no_active_subscription(self, mock_sub_list):
+    def test_get_subscription_no_active_subscription(self):
         """
-        Test returning null subscription when no active subscription exists.
+        Test returning null subscription when no StripeEventSummary exists.
         """
-        mock_sub_list.return_value = mock.Mock(data=[])
+        # No StripeEventSummary created - should return null
 
         url = reverse('api:v1:billing-management-get-subscription')
         response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
@@ -2307,50 +2301,53 @@ class BillingManagementSubscriptionTests(BillingManagementBaseTest):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         response_data = response.json()
 
-        self.assertIn('subscription', response_data)
-        self.assertIsNone(response_data['subscription'])
+        self.assertEqual(response_data, {})
 
-    @mock.patch('stripe.Product.retrieve')
-    @mock.patch('stripe.Price.retrieve')
-    @mock.patch('stripe.Subscription.list')
-    def test_get_subscription_plan_type_from_product_metadata(
-        self, mock_sub_list, mock_price_retrieve, mock_product_retrieve
-    ):
+    def test_get_subscription_from_event_summary(self):
         """
-        Test deriving plan_type from product metadata when not in price metadata.
+        Test retrieving subscription data during trial period with $0 invoice.
+        Verifies fallback to upcoming_invoice_amount_due from subscription.created event.
         """
-        # Mock price without plan_type
-        mock_price = {
-            'id': 'price_test123',
-            'unit_amount': 50000,
-            'recurring': {'interval': 'year'},
-            'product': 'prod_test123',
-            'metadata': {},
-        }
-        mock_price_retrieve.return_value = mock_price
 
-        # Mock product with plan_type
-        mock_product = {
-            'id': 'prod_test123',
-            'metadata': {'plan_type': 'Essentials'},
-        }
-        mock_product_retrieve.return_value = mock_product
+        # Create subscription.created event with upcoming_invoice_amount_due
+        sub_created_event_data = StripeEventData.objects.create(
+            event_id='evt_sub_created_456',
+            event_type='customer.subscription.created',
+            checkout_intent=self.checkout_intent,
+            data={'data': {'object': {}}},
+        )
 
-        mock_subscription = {
-            'id': 'sub_test123',
-            'status': 'active',
-            'cancel_at_period_end': False,
-            'current_period_end': 1640000000,  # Unix timestamp
-            'items': {
-                'data': [
-                    {
-                        'price': {'id': 'price_test123'},
-                        'quantity': 1,
-                    }
-                ]
-            },
-        }
-        mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
+        StripeEventSummary.objects.create(
+            stripe_event_data=sub_created_event_data,
+            event_id='evt_sub_created_456',
+            event_type='customer.subscription.created',
+            checkout_intent=self.checkout_intent,
+            stripe_event_created_at=timezone.now() - timedelta(hours=1),
+            stripe_subscription_id='sub_test456',
+            subscription_status='trialing',
+            subscription_period_end=timezone.now() + timedelta(days=365),
+            currency='usd',
+            upcoming_invoice_amount_due=250000,  # What they'll be charged after trial
+        )
+
+        # Create $0 trial invoice event
+        invoice_event_data = StripeEventData.objects.create(
+            event_id='evt_invoice_trial_456',
+            event_type='invoice.paid',
+            checkout_intent=self.checkout_intent,
+            data={'data': {'object': {}}},
+        )
+
+        StripeEventSummary.objects.create(
+            stripe_event_data=invoice_event_data,
+            event_id='evt_invoice_trial_456',
+            event_type='invoice.paid',
+            checkout_intent=self.checkout_intent,
+            stripe_event_created_at=timezone.now(),
+            stripe_subscription_id='sub_test456',
+            invoice_unit_amount=0,  # $0 trial invoice
+            invoice_quantity=5,
+        )
 
         url = reverse('api:v1:billing-management-get-subscription')
         response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
@@ -2358,50 +2355,13 @@ class BillingManagementSubscriptionTests(BillingManagementBaseTest):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         response_data = response.json()
 
-        sub = response_data['subscription']
-        self.assertEqual(sub['plan_type'], 'Essentials')
-
-    @mock.patch('stripe.Price.retrieve')
-    @mock.patch('stripe.Subscription.list')
-    def test_get_subscription_plan_type_defaults_to_other(self, mock_sub_list, mock_price_retrieve):
-        """
-        Test that plan_type defaults to 'Other' when no metadata is found.
-        """
-        # Mock price without plan_type
-        mock_price = {
-            'id': 'price_test123',
-            'unit_amount': 50000,
-            'recurring': {'interval': 'year'},
-            'product': 'prod_test123',
-            'metadata': {},
-        }
-        mock_price_retrieve.return_value = mock_price
-
-        mock_subscription = {
-            'id': 'sub_test123',
-            'status': 'active',
-            'cancel_at_period_end': False,
-            'current_period_end': 1640000000,  # Unix timestamp
-            'items': {
-                'data': [
-                    {
-                        'price': {'id': 'price_test123'},
-                        'quantity': 1,
-                    }
-                ]
-            },
-        }
-        mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
-
-        with mock.patch('stripe.Product.retrieve', side_effect=stripe.error.StripeError('Not found')):
-            url = reverse('api:v1:billing-management-get-subscription')
-            response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        response_data = response.json()
-
-        sub = response_data['subscription']
-        self.assertEqual(sub['plan_type'], 'Other')
+        sub = response_data
+        # Verify subscription data is correctly extracted from StripeEventSummary
+        self.assertEqual(sub['id'], 'sub_test456')
+        self.assertEqual(sub['status'], 'trialing')
+        # Yearly amount should fall back to upcoming_invoice_amount_due since invoice is $0
+        self.assertEqual(sub['yearly_amount'], 250000)
+        self.assertEqual(sub['license_count'], 5)
 
     @ddt.data(
         ('missing_uuid', SYSTEM_ENTERPRISE_ADMIN_ROLE, None, status.HTTP_403_FORBIDDEN),
@@ -2409,7 +2369,7 @@ class BillingManagementSubscriptionTests(BillingManagementBaseTest):
         ('wrong_role', SYSTEM_ENTERPRISE_LEARNER_ROLE, 'existing', status.HTTP_403_FORBIDDEN),
     )
     @ddt.unpack
-    def test_get_subscription_rbac(self, scenario, role, uuid_type, expected_status):
+    def test_get_subscription_rbac(self, _scenario, role, uuid_type, expected_status):
         """
         Test RBAC scenarios for get subscription endpoint.
         Scenarios: missing_uuid (403), nonexistent_uuid (403), wrong_role (403).
@@ -2434,52 +2394,52 @@ class BillingManagementSubscriptionTests(BillingManagementBaseTest):
 
         self.assertEqual(response.status_code, expected_status)
 
-    @mock.patch('stripe.Subscription.list')
-    def test_get_subscription_stripe_api_error(self, mock_sub_list):
+    def test_get_subscription_yearly_amount_calculation(self):
         """
-        Test that endpoint handles Stripe API errors gracefully.
+        Test yearly amount calculation from invoice event data.
         """
-        mock_sub_list.side_effect = stripe.error.StripeError('Connection error')
 
-        url = reverse('api:v1:billing-management-get-subscription')
-        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
+        # Create subscription event data
+        sub_event_data = StripeEventData.objects.create(
+            event_id='evt_sub_yearly_test',
+            event_type='customer.subscription.updated',
+            checkout_intent=self.checkout_intent,
+            data={'data': {'object': {}}},
+        )
 
-        self.assertEqual(response.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
-        response_data = response.json()
-        self.assertIn('error', response_data)
-        self.assertIn('Stripe API error', response_data['error'])
+        # Create StripeEventSummary for subscription (no invoice fields)
+        StripeEventSummary.objects.create(
+            stripe_event_data=sub_event_data,
+            event_id='evt_sub_yearly_test',
+            event_type='customer.subscription.updated',
+            checkout_intent=self.checkout_intent,
+            stripe_event_created_at=timezone.now(),
+            stripe_subscription_id='sub_yearly_test',
+            subscription_status='active',
+            subscription_period_end=timezone.now() + timedelta(days=365),
+            currency='usd',
+        )
 
-    @mock.patch('stripe.Price.retrieve')
-    @mock.patch('stripe.Subscription.list')
-    def test_get_subscription_yearly_amount_calculation(self, mock_sub_list, mock_price_retrieve):
-        """
-        Test yearly amount calculation for different billing periods.
-        """
-        # Mock monthly billing
-        mock_price = {
-            'id': 'price_test123',
-            'unit_amount': 5000,  # $50/month
-            'recurring': {'interval': 'month'},
-            'product': 'prod_test123',
-            'metadata': {'plan_type': 'Teams'},
-        }
-        mock_price_retrieve.return_value = mock_price
+        # Create invoice event data for pricing
+        invoice_event_data = StripeEventData.objects.create(
+            event_id='evt_invoice_yearly_test',
+            event_type='invoice.paid',
+            checkout_intent=self.checkout_intent,
+            data={'data': {'object': {}}},
+        )
 
-        mock_subscription = {
-            'id': 'sub_test123',
-            'status': 'active',
-            'cancel_at_period_end': False,
-            'current_period_end': 1640000000,  # Unix timestamp
-            'items': {
-                'data': [
-                    {
-                        'price': {'id': 'price_test123'},
-                        'quantity': 1,
-                    }
-                ]
-            },
-        }
-        mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
+        # Create StripeEventSummary for invoice with pricing data
+        # Yearly amount is calculated as: invoice_unit_amount * invoice_quantity
+        StripeEventSummary.objects.create(
+            stripe_event_data=invoice_event_data,
+            event_id='evt_invoice_yearly_test',
+            event_type='invoice.paid',
+            checkout_intent=self.checkout_intent,
+            stripe_event_created_at=timezone.now(),
+            stripe_subscription_id='sub_yearly_test',
+            invoice_unit_amount=60000,  # $600 per license per year
+            invoice_quantity=10,  # 10 licenses
+        )
 
         url = reverse('api:v1:billing-management-get-subscription')
         response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
@@ -2487,9 +2447,10 @@ class BillingManagementSubscriptionTests(BillingManagementBaseTest):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         response_data = response.json()
 
-        sub = response_data['subscription']
-        # Monthly: 5000 * 12 = 60000
-        self.assertEqual(sub['yearly_amount'], 60000)
+        sub = response_data
+        # Yearly amount: 60000 * 10 = 600000
+        self.assertEqual(sub['yearly_amount'], 600000)
+        self.assertEqual(sub['license_count'], 10)
 
 
 @ddt.ddt
@@ -2501,25 +2462,45 @@ class BillingManagementCancelSubscriptionTests(BillingManagementBaseTest):
     def _get_stripe_customer_id(self):
         return 'cus_test_cancel_123'
 
-    @mock.patch('stripe.Product.retrieve')
-    @mock.patch('stripe.Price.retrieve')
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_ssp_product_pricing')
     @mock.patch('stripe.Subscription.modify')
-    @mock.patch('stripe.Subscription.list')
+    @mock.patch('stripe.Subscription.retrieve')
     def test_cancel_subscription_teams_plan_success(
-        self, mock_sub_list, mock_sub_modify, mock_price_retrieve, mock_product_retrieve
+        self, mock_sub_retrieve, mock_sub_modify, mock_get_ssp_pricing
     ):
         """
         Test successfully cancelling a Teams plan subscription.
         """
-        # Mock price with Teams plan_type
-        mock_price = {
-            'id': 'price_test123',
-            'product': 'prod_test123',
-            'metadata': {'plan_type': 'Teams'},
-        }
-        mock_price_retrieve.return_value = mock_price
 
-        # Mock subscription
+        # Create StripeEventSummary with active subscription (not scheduled for cancellation)
+        event_data = StripeEventData.objects.create(
+            event_id='evt_cancel_teams',
+            event_type='customer.subscription.updated',
+            checkout_intent=self.checkout_intent,
+            data={'data': {'object': {}}},
+        )
+        _event_summary = StripeEventSummary.objects.create(
+            stripe_event_data=event_data,
+            event_id='evt_cancel_teams',
+            event_type='customer.subscription.updated',
+            checkout_intent=self.checkout_intent,
+            stripe_event_created_at=timezone.now(),
+            stripe_subscription_id='sub_test123',
+            subscription_status='active',
+            subscription_cancel_at=None,  # NOT scheduled for cancellation
+            subscription_period_end=timezone.now() + timedelta(days=30),
+            currency='usd',
+        )
+
+        # Mock SSP product pricing to include this price
+        mock_get_ssp_pricing.return_value = {
+            'teams_plan': {
+                'id': 'price_test123',
+                'quantity_range': (5, 30),
+            }
+        }
+
+        # Mock subscription retrieval for eligibility check
         mock_subscription = {
             'id': 'sub_test123',
             'status': 'active',
@@ -2534,12 +2515,12 @@ class BillingManagementCancelSubscriptionTests(BillingManagementBaseTest):
                 ]
             },
         }
-        mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
+        mock_sub_retrieve.return_value = AttrDict.wrap(mock_subscription)
 
         # Mock modified subscription
         mock_modified_subscription = mock_subscription.copy()
         mock_modified_subscription['cancel_at_period_end'] = True
-        mock_sub_modify.return_value = mock_modified_subscription
+        mock_sub_modify.return_value = AttrDict.wrap(mock_modified_subscription)
 
         url = reverse('api:v1:billing-management-cancel-subscription')
         response = self.client.post(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}', format='json')
@@ -2547,29 +2528,48 @@ class BillingManagementCancelSubscriptionTests(BillingManagementBaseTest):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         response_data = response.json()
 
-        self.assertIn('subscription', response_data)
-        sub = response_data['subscription']
+        sub = response_data
         self.assertEqual(sub['id'], 'sub_test123')
         self.assertTrue(sub['cancel_at_period_end'])
         mock_sub_modify.assert_called_once_with('sub_test123', cancel_at_period_end=True)
 
-    @mock.patch('stripe.Product.retrieve')
-    @mock.patch('stripe.Price.retrieve')
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_ssp_product_pricing')
     @mock.patch('stripe.Subscription.modify')
-    @mock.patch('stripe.Subscription.list')
+    @mock.patch('stripe.Subscription.retrieve')
     def test_cancel_subscription_essentials_plan_success(
-        self, mock_sub_list, mock_sub_modify, mock_price_retrieve, mock_product_retrieve
+        self, mock_sub_retrieve, mock_sub_modify, mock_get_ssp_pricing
     ):
         """
         Test successfully cancelling an Essentials plan subscription.
         """
-        # Mock price with Essentials plan_type
-        mock_price = {
-            'id': 'price_test123',
-            'product': 'prod_test123',
-            'metadata': {'plan_type': 'Essentials'},
+
+        # Create StripeEventSummary with active subscription (not scheduled for cancellation)
+        event_data = StripeEventData.objects.create(
+            event_id='evt_cancel_essentials',
+            event_type='customer.subscription.updated',
+            checkout_intent=self.checkout_intent,
+            data={'data': {'object': {}}},
+        )
+        _event_summary = StripeEventSummary.objects.create(
+            stripe_event_data=event_data,
+            event_id='evt_cancel_essentials',
+            event_type='customer.subscription.updated',
+            checkout_intent=self.checkout_intent,
+            stripe_event_created_at=timezone.now(),
+            stripe_subscription_id='sub_test123',
+            subscription_status='active',
+            subscription_cancel_at=None,  # NOT scheduled for cancellation
+            subscription_period_end=timezone.now() + timedelta(days=30),
+            currency='usd',
+        )
+
+        # Mock SSP product pricing to include this price
+        mock_get_ssp_pricing.return_value = {
+            'essentials_plan': {
+                'id': 'price_test123',
+                'quantity_range': (1, 100),
+            }
         }
-        mock_price_retrieve.return_value = mock_price
 
         mock_subscription = {
             'id': 'sub_test123',
@@ -2585,34 +2585,51 @@ class BillingManagementCancelSubscriptionTests(BillingManagementBaseTest):
                 ]
             },
         }
-        mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
+        mock_sub_retrieve.return_value = AttrDict.wrap(mock_subscription)
 
         mock_modified_subscription = mock_subscription.copy()
         mock_modified_subscription['cancel_at_period_end'] = True
-        mock_sub_modify.return_value = mock_modified_subscription
+        mock_sub_modify.return_value = AttrDict.wrap(mock_modified_subscription)
 
         url = reverse('api:v1:billing-management-cancel-subscription')
         response = self.client.post(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}', format='json')
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         response_data = response.json()
-        sub = response_data['subscription']
+        sub = response_data
         self.assertTrue(sub['cancel_at_period_end'])
 
-    @mock.patch('stripe.Price.retrieve')
-    @mock.patch('stripe.Subscription.list')
-    def test_cancel_subscription_learner_credit_plan_fails(self, mock_sub_list, mock_price_retrieve):
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_ssp_product_pricing')
+    @mock.patch('stripe.Subscription.retrieve')
+    def test_cancel_subscription_learner_credit_plan_fails(self, mock_sub_retrieve, mock_get_ssp_pricing):
         """
         Test that cancelling LearnerCredit plan returns 403.
         """
-        # Mock price with LearnerCredit plan_type
-        mock_price = {
-            'id': 'price_test123',
-            'product': 'prod_test123',
-            'metadata': {'plan_type': 'LearnerCredit'},
-        }
-        mock_price_retrieve.return_value = mock_price
 
+        # Create StripeEventSummary with active subscription
+        event_data = StripeEventData.objects.create(
+            event_id='evt_cancel_lc',
+            event_type='customer.subscription.updated',
+            checkout_intent=self.checkout_intent,
+            data={'data': {'object': {}}},
+        )
+        _event_summary = StripeEventSummary.objects.create(
+            stripe_event_data=event_data,
+            event_id='evt_cancel_lc',
+            event_type='customer.subscription.updated',
+            checkout_intent=self.checkout_intent,
+            stripe_event_created_at=timezone.now(),
+            stripe_subscription_id='sub_test123',
+            subscription_status='active',
+            subscription_cancel_at=None,
+            subscription_period_end=timezone.now() + timedelta(days=30),
+            currency='usd',
+        )
+
+        # Mock SSP pricing to return empty dict so no prices match
+        mock_get_ssp_pricing.return_value = {}
+
+        # Mock subscription retrieval - this subscription has a price NOT in SSP pricing
         mock_subscription = {
             'id': 'sub_test123',
             'status': 'active',
@@ -2621,13 +2638,13 @@ class BillingManagementCancelSubscriptionTests(BillingManagementBaseTest):
             'items': {
                 'data': [
                     {
-                        'price': {'id': 'price_test123'},
+                        'price': {'id': 'price_not_in_ssp'},  # Not in SSP pricing
                         'quantity': 1,
                     }
                 ]
             },
         }
-        mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
+        mock_sub_retrieve.return_value = AttrDict.wrap(mock_subscription)
 
         url = reverse('api:v1:billing-management-cancel-subscription')
         response = self.client.post(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}', format='json')
@@ -2637,20 +2654,37 @@ class BillingManagementCancelSubscriptionTests(BillingManagementBaseTest):
         self.assertIn('error', response_data)
         self.assertIn('plan type', response_data['error'])
 
-    @mock.patch('stripe.Price.retrieve')
-    @mock.patch('stripe.Subscription.list')
-    def test_cancel_subscription_other_plan_fails(self, mock_sub_list, mock_price_retrieve):
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_ssp_product_pricing')
+    @mock.patch('stripe.Subscription.retrieve')
+    def test_cancel_subscription_other_plan_fails(self, mock_sub_retrieve, mock_get_ssp_pricing):
         """
         Test that cancelling Other plan returns 403.
         """
-        # Mock price without plan_type metadata
-        mock_price = {
-            'id': 'price_test123',
-            'product': 'prod_test123',
-            'metadata': {},
-        }
-        mock_price_retrieve.return_value = mock_price
 
+        # Create StripeEventSummary with active subscription
+        event_data = StripeEventData.objects.create(
+            event_id='evt_cancel_other',
+            event_type='customer.subscription.updated',
+            checkout_intent=self.checkout_intent,
+            data={'data': {'object': {}}},
+        )
+        _event_summary = StripeEventSummary.objects.create(
+            stripe_event_data=event_data,
+            event_id='evt_cancel_other',
+            event_type='customer.subscription.updated',
+            checkout_intent=self.checkout_intent,
+            stripe_event_created_at=timezone.now(),
+            stripe_subscription_id='sub_test123',
+            subscription_status='active',
+            subscription_cancel_at=None,
+            subscription_period_end=timezone.now() + timedelta(days=30),
+            currency='usd',
+        )
+
+        # Mock SSP pricing to return empty dict so no prices match
+        mock_get_ssp_pricing.return_value = {}
+
+        # Mock subscription retrieval - this subscription has a price NOT in SSP pricing
         mock_subscription = {
             'id': 'sub_test123',
             'status': 'active',
@@ -2659,38 +2693,46 @@ class BillingManagementCancelSubscriptionTests(BillingManagementBaseTest):
             'items': {
                 'data': [
                     {
-                        'price': {'id': 'price_test123'},
+                        'price': {'id': 'price_other_plan'},  # Not in SSP pricing
                         'quantity': 1,
                     }
                 ]
             },
         }
-        mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
+        mock_sub_retrieve.return_value = AttrDict.wrap(mock_subscription)
 
-        with mock.patch('stripe.Product.retrieve', side_effect=stripe.error.StripeError('Not found')):
-            url = reverse('api:v1:billing-management-cancel-subscription')
-            response = self.client.post(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}', format='json')
+        url = reverse('api:v1:billing-management-cancel-subscription')
+        response = self.client.post(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}', format='json')
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
         response_data = response.json()
         self.assertIn('error', response_data)
         self.assertIn('plan type', response_data['error'])
 
-    @mock.patch('stripe.Subscription.list')
-    def test_cancel_subscription_already_cancelling(self, mock_sub_list):
+    def test_cancel_subscription_already_cancelling(self):
         """
         Test that cancelling an already-cancelling subscription returns 409.
         """
-        mock_subscription = {
-            'id': 'sub_test123',
-            'status': 'active',
-            'cancel_at_period_end': True,  # Already cancelling
-            'current_period_end': 1640000000,  # Unix timestamp
-            'items': {
-                'data': []
-            },
-        }
-        mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
+
+        # Create StripeEventSummary with subscription already scheduled for cancellation
+        event_data = StripeEventData.objects.create(
+            event_id='evt_already_cancelling',
+            event_type='customer.subscription.updated',
+            checkout_intent=self.checkout_intent,
+            data={'data': {'object': {}}},
+        )
+        _event_summary = StripeEventSummary.objects.create(
+            stripe_event_data=event_data,
+            event_id='evt_already_cancelling',
+            event_type='customer.subscription.updated',
+            checkout_intent=self.checkout_intent,
+            stripe_event_created_at=timezone.now(),
+            stripe_subscription_id='sub_test123',
+            subscription_status='active',
+            subscription_cancel_at=timezone.now() + timedelta(days=30),  # IS scheduled for cancellation
+            subscription_period_end=timezone.now() + timedelta(days=30),
+            currency='usd',
+        )
 
         url = reverse('api:v1:billing-management-cancel-subscription')
         response = self.client.post(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}', format='json')
@@ -2721,7 +2763,7 @@ class BillingManagementCancelSubscriptionTests(BillingManagementBaseTest):
         ('wrong_role', SYSTEM_ENTERPRISE_LEARNER_ROLE, 'existing', status.HTTP_403_FORBIDDEN),
     )
     @ddt.unpack
-    def test_cancel_subscription_rbac(self, scenario, role, uuid_type, expected_status):
+    def test_cancel_subscription_rbac(self, _scenario, role, uuid_type, expected_status):
         """
         Test RBAC scenarios for cancel subscription endpoint.
         Scenarios: missing_uuid (403), nonexistent_uuid (403), wrong_role (403).
@@ -2750,18 +2792,40 @@ class BillingManagementCancelSubscriptionTests(BillingManagementBaseTest):
 
         self.assertEqual(response.status_code, expected_status)
 
-    @mock.patch('stripe.Price.retrieve')
-    @mock.patch('stripe.Subscription.list')
-    def test_cancel_subscription_stripe_api_error(self, mock_sub_list, mock_price_retrieve):
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_ssp_product_pricing')
+    @mock.patch('stripe.Subscription.retrieve')
+    def test_cancel_subscription_stripe_api_error(self, mock_sub_retrieve, mock_get_ssp_pricing):
         """
         Test that endpoint handles Stripe API errors gracefully.
         """
-        mock_price = {
-            'id': 'price_test123',
-            'product': 'prod_test123',
-            'metadata': {'plan_type': 'Teams'},
+
+        # Create StripeEventSummary with active subscription
+        event_data = StripeEventData.objects.create(
+            event_id='evt_cancel_error',
+            event_type='customer.subscription.updated',
+            checkout_intent=self.checkout_intent,
+            data={'data': {'object': {}}},
+        )
+        _event_summary = StripeEventSummary.objects.create(
+            stripe_event_data=event_data,
+            event_id='evt_cancel_error',
+            event_type='customer.subscription.updated',
+            checkout_intent=self.checkout_intent,
+            stripe_event_created_at=timezone.now(),
+            stripe_subscription_id='sub_test123',
+            subscription_status='active',
+            subscription_cancel_at=None,
+            subscription_period_end=timezone.now() + timedelta(days=30),
+            currency='usd',
+        )
+
+        # Mock SSP product pricing to include this price
+        mock_get_ssp_pricing.return_value = {
+            'teams_plan': {
+                'id': 'price_test123',
+                'quantity_range': (1, 30),
+            }
         }
-        mock_price_retrieve.return_value = mock_price
 
         mock_subscription = {
             'id': 'sub_test123',
@@ -2777,7 +2841,7 @@ class BillingManagementCancelSubscriptionTests(BillingManagementBaseTest):
                 ]
             },
         }
-        mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
+        mock_sub_retrieve.return_value = AttrDict.wrap(mock_subscription)
 
         # Mock modify to fail
         with mock.patch('stripe.Subscription.modify', side_effect=stripe.error.StripeError('Connection error')):
@@ -2799,26 +2863,47 @@ class BillingManagementReinstateSubscriptionTests(BillingManagementBaseTest):
     def _get_stripe_customer_id(self):
         return 'cus_test_reinstate_123'
 
-    @mock.patch('stripe.Product.retrieve')
-    @mock.patch('stripe.Price.retrieve')
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_ssp_product_pricing')
     @mock.patch('stripe.Subscription.modify')
-    @mock.patch('stripe.Subscription.list')
+    @mock.patch('stripe.Subscription.retrieve')
     def test_reinstate_subscription_teams_plan_success(
-        self, mock_sub_list, mock_sub_modify, mock_price_retrieve, mock_product_retrieve
+        self, mock_sub_retrieve, mock_sub_modify, mock_get_ssp_pricing
     ):
         """
         Test successfully reinstating a Teams plan subscription.
         """
-        # Mock price with Teams plan_type
-        mock_price = {
-            'id': 'price_test123',
-            'product': 'prod_test123',
-            'metadata': {'plan_type': 'Teams'},
-        }
-        mock_price_retrieve.return_value = mock_price
 
-        # Mock subscription pending cancellation
-        future_period_end = int(time.time()) + 86400  # 1 day from now
+        # Create StripeEventSummary with subscription scheduled for cancellation
+        future_cancel_at = timezone.now() + timedelta(days=30)
+        event_data = StripeEventData.objects.create(
+            event_id='evt_reinstate_teams',
+            event_type='customer.subscription.updated',
+            checkout_intent=self.checkout_intent,
+            data={'data': {'object': {}}},
+        )
+        _event_summary = StripeEventSummary.objects.create(
+            stripe_event_data=event_data,
+            event_id='evt_reinstate_teams',
+            event_type='customer.subscription.updated',
+            checkout_intent=self.checkout_intent,
+            stripe_event_created_at=timezone.now(),
+            stripe_subscription_id='sub_test123',
+            subscription_status='active',
+            subscription_cancel_at=future_cancel_at,  # IS scheduled for cancellation
+            subscription_period_end=future_cancel_at,
+            currency='usd',
+        )
+
+        # Mock SSP product pricing to include this price
+        mock_get_ssp_pricing.return_value = {
+            'teams_plan': {
+                'id': 'price_test123',
+                'quantity_range': (5, 30),
+            }
+        }
+
+        # Mock subscription retrieval for eligibility check
+        future_period_end = int(timezone.now().timestamp()) + 86400  # 1 day from now
         mock_subscription = {
             'id': 'sub_test123',
             'status': 'active',
@@ -2833,12 +2918,12 @@ class BillingManagementReinstateSubscriptionTests(BillingManagementBaseTest):
                 ]
             },
         }
-        mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
+        mock_sub_retrieve.return_value = AttrDict.wrap(mock_subscription)
 
         # Mock modified subscription
         mock_modified_subscription = mock_subscription.copy()
         mock_modified_subscription['cancel_at_period_end'] = False
-        mock_sub_modify.return_value = mock_modified_subscription
+        mock_sub_modify.return_value = AttrDict.wrap(mock_modified_subscription)
 
         url = reverse('api:v1:billing-management-reinstate-subscription')
         response = self.client.post(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}', format='json')
@@ -2846,31 +2931,51 @@ class BillingManagementReinstateSubscriptionTests(BillingManagementBaseTest):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         response_data = response.json()
 
-        self.assertIn('subscription', response_data)
-        sub = response_data['subscription']
+        sub = response_data
         self.assertEqual(sub['id'], 'sub_test123')
         self.assertFalse(sub['cancel_at_period_end'])
         mock_sub_modify.assert_called_once_with('sub_test123', cancel_at_period_end=False)
 
-    @mock.patch('stripe.Product.retrieve')
-    @mock.patch('stripe.Price.retrieve')
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_ssp_product_pricing')
     @mock.patch('stripe.Subscription.modify')
-    @mock.patch('stripe.Subscription.list')
+    @mock.patch('stripe.Subscription.retrieve')
     def test_reinstate_subscription_essentials_plan_success(
-        self, mock_sub_list, mock_sub_modify, mock_price_retrieve, mock_product_retrieve
+        self, mock_sub_retrieve, mock_sub_modify, mock_get_ssp_pricing
     ):
         """
         Test successfully reinstating an Essentials plan subscription.
         """
-        # Mock price with Essentials plan_type
-        mock_price = {
-            'id': 'price_test123',
-            'product': 'prod_test123',
-            'metadata': {'plan_type': 'Essentials'},
-        }
-        mock_price_retrieve.return_value = mock_price
 
-        future_period_end = int(time.time()) + 86400
+        # Create StripeEventSummary with subscription scheduled for cancellation
+        future_cancel_at = timezone.now() + timedelta(days=30)
+        event_data = StripeEventData.objects.create(
+            event_id='evt_reinstate_essentials',
+            event_type='customer.subscription.updated',
+            checkout_intent=self.checkout_intent,
+            data={'data': {'object': {}}},
+        )
+        _event_summary = StripeEventSummary.objects.create(
+            stripe_event_data=event_data,
+            event_id='evt_reinstate_essentials',
+            event_type='customer.subscription.updated',
+            checkout_intent=self.checkout_intent,
+            stripe_event_created_at=timezone.now(),
+            stripe_subscription_id='sub_test123',
+            subscription_status='active',
+            subscription_cancel_at=future_cancel_at,  # IS scheduled for cancellation
+            subscription_period_end=future_cancel_at,
+            currency='usd',
+        )
+
+        # Mock SSP product pricing to include this price
+        mock_get_ssp_pricing.return_value = {
+            'essentials_plan': {
+                'id': 'price_test123',
+                'quantity_range': (1, 100),
+            }
+        }
+
+        future_period_end = int(timezone.now().timestamp()) + 86400
         mock_subscription = {
             'id': 'sub_test123',
             'status': 'active',
@@ -2885,35 +2990,49 @@ class BillingManagementReinstateSubscriptionTests(BillingManagementBaseTest):
                 ]
             },
         }
-        mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
+        mock_sub_retrieve.return_value = AttrDict.wrap(mock_subscription)
 
         mock_modified_subscription = mock_subscription.copy()
         mock_modified_subscription['cancel_at_period_end'] = False
-        mock_sub_modify.return_value = mock_modified_subscription
+        mock_sub_modify.return_value = AttrDict.wrap(mock_modified_subscription)
 
         url = reverse('api:v1:billing-management-reinstate-subscription')
         response = self.client.post(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}', format='json')
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         response_data = response.json()
-        sub = response_data['subscription']
+        sub = response_data
         self.assertFalse(sub['cancel_at_period_end'])
 
-    @mock.patch('stripe.Price.retrieve')
-    @mock.patch('stripe.Subscription.list')
-    def test_reinstate_subscription_learner_credit_plan_fails(self, mock_sub_list, mock_price_retrieve):
+    @mock.patch('stripe.Subscription.retrieve')
+    def test_reinstate_subscription_learner_credit_plan_fails(self, mock_sub_retrieve):
         """
         Test that reinstating LearnerCredit plan returns 403.
         """
-        # Mock price with LearnerCredit plan_type
-        mock_price = {
-            'id': 'price_test123',
-            'product': 'prod_test123',
-            'metadata': {'plan_type': 'LearnerCredit'},
-        }
-        mock_price_retrieve.return_value = mock_price
 
-        future_period_end = int(time.time()) + 86400
+        # Create StripeEventSummary with subscription scheduled for cancellation
+        future_cancel_at = timezone.now() + timedelta(days=30)
+        event_data = StripeEventData.objects.create(
+            event_id='evt_reinstate_lc',
+            event_type='customer.subscription.updated',
+            checkout_intent=self.checkout_intent,
+            data={'data': {'object': {}}},
+        )
+        _event_summary = StripeEventSummary.objects.create(
+            stripe_event_data=event_data,
+            event_id='evt_reinstate_lc',
+            event_type='customer.subscription.updated',
+            checkout_intent=self.checkout_intent,
+            stripe_event_created_at=timezone.now(),
+            stripe_subscription_id='sub_test123',
+            subscription_status='active',
+            subscription_cancel_at=future_cancel_at,  # IS scheduled for cancellation
+            subscription_period_end=future_cancel_at,
+            currency='usd',
+        )
+
+        # Mock subscription retrieval - price NOT in SSP pricing
+        future_period_end = int(timezone.now().timestamp()) + 86400
         mock_subscription = {
             'id': 'sub_test123',
             'status': 'active',
@@ -2922,13 +3041,13 @@ class BillingManagementReinstateSubscriptionTests(BillingManagementBaseTest):
             'items': {
                 'data': [
                     {
-                        'price': {'id': 'price_test123'},
+                        'price': {'id': 'price_not_in_ssp'},  # Not in SSP pricing
                         'quantity': 1,
                     }
                 ]
             },
         }
-        mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
+        mock_sub_retrieve.return_value = AttrDict.wrap(mock_subscription)
 
         url = reverse('api:v1:billing-management-reinstate-subscription')
         response = self.client.post(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}', format='json')
@@ -2938,21 +3057,30 @@ class BillingManagementReinstateSubscriptionTests(BillingManagementBaseTest):
         self.assertIn('error', response_data)
         self.assertIn('plan type', response_data['error'])
 
-    @mock.patch('stripe.Subscription.list')
-    def test_reinstate_subscription_not_pending_cancellation(self, mock_sub_list):
+    def test_reinstate_subscription_not_pending_cancellation(self):
         """
         Test that reinstating a subscription not pending cancellation returns 409.
         """
-        mock_subscription = {
-            'id': 'sub_test123',
-            'status': 'active',
-            'cancel_at_period_end': False,  # Not scheduled for cancellation
-            'current_period_end': int(time.time()) + 86400,
-            'items': {
-                'data': []
-            },
-        }
-        mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
+
+        # Create StripeEventSummary with subscription NOT scheduled for cancellation
+        event_data = StripeEventData.objects.create(
+            event_id='evt_reinstate_not_pending',
+            event_type='customer.subscription.updated',
+            checkout_intent=self.checkout_intent,
+            data={'data': {'object': {}}},
+        )
+        _event_summary = StripeEventSummary.objects.create(
+            stripe_event_data=event_data,
+            event_id='evt_reinstate_not_pending',
+            event_type='customer.subscription.updated',
+            checkout_intent=self.checkout_intent,
+            stripe_event_created_at=timezone.now(),
+            stripe_subscription_id='sub_test123',
+            subscription_status='active',
+            subscription_cancel_at=None,  # NOT scheduled for cancellation
+            subscription_period_end=timezone.now() + timedelta(days=30),
+            currency='usd',
+        )
 
         url = reverse('api:v1:billing-management-reinstate-subscription')
         response = self.client.post(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}', format='json')
@@ -2962,22 +3090,31 @@ class BillingManagementReinstateSubscriptionTests(BillingManagementBaseTest):
         self.assertIn('error', response_data)
         self.assertIn('not currently scheduled', response_data['error'])
 
-    @mock.patch('stripe.Subscription.list')
-    def test_reinstate_subscription_period_ended(self, mock_sub_list):
+    def test_reinstate_subscription_period_ended(self):
         """
         Test that reinstating when period has ended returns 409.
         """
-        past_period_end = int(time.time()) - 86400  # 1 day ago
-        mock_subscription = {
-            'id': 'sub_test123',
-            'status': 'active',
-            'cancel_at_period_end': True,
-            'current_period_end': past_period_end,
-            'items': {
-                'data': []
-            },
-        }
-        mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
+
+        # Create StripeEventSummary with subscription period already ended
+        past_period_end = timezone.now() - timedelta(days=1)  # 1 day ago
+        event_data = StripeEventData.objects.create(
+            event_id='evt_reinstate_ended',
+            event_type='customer.subscription.updated',
+            checkout_intent=self.checkout_intent,
+            data={'data': {'object': {}}},
+        )
+        _event_summary = StripeEventSummary.objects.create(
+            stripe_event_data=event_data,
+            event_id='evt_reinstate_ended',
+            event_type='customer.subscription.updated',
+            checkout_intent=self.checkout_intent,
+            stripe_event_created_at=timezone.now(),
+            stripe_subscription_id='sub_test123',
+            subscription_status='active',
+            subscription_cancel_at=timezone.now() + timedelta(days=1),  # Scheduled but period ended
+            subscription_period_end=past_period_end,  # Already ended
+            currency='usd',
+        )
 
         url = reverse('api:v1:billing-management-reinstate-subscription')
         response = self.client.post(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}', format='json')
@@ -3008,7 +3145,7 @@ class BillingManagementReinstateSubscriptionTests(BillingManagementBaseTest):
         ('wrong_role', SYSTEM_ENTERPRISE_LEARNER_ROLE, 'existing', status.HTTP_403_FORBIDDEN),
     )
     @ddt.unpack
-    def test_reinstate_subscription_rbac(self, scenario, role, uuid_type, expected_status):
+    def test_reinstate_subscription_rbac(self, _scenario, role, uuid_type, expected_status):
         """
         Test RBAC scenarios for reinstate subscription endpoint.
         Scenarios: missing_uuid (403), nonexistent_uuid (403), wrong_role (403).
@@ -3037,20 +3174,43 @@ class BillingManagementReinstateSubscriptionTests(BillingManagementBaseTest):
 
         self.assertEqual(response.status_code, expected_status)
 
-    @mock.patch('stripe.Price.retrieve')
-    @mock.patch('stripe.Subscription.list')
-    def test_reinstate_subscription_stripe_api_error(self, mock_sub_list, mock_price_retrieve):
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_ssp_product_pricing')
+    @mock.patch('stripe.Subscription.retrieve')
+    def test_reinstate_subscription_stripe_api_error(self, mock_sub_retrieve, mock_get_ssp_pricing):
         """
         Test that endpoint handles Stripe API errors gracefully.
         """
-        mock_price = {
-            'id': 'price_test123',
-            'product': 'prod_test123',
-            'metadata': {'plan_type': 'Teams'},
-        }
-        mock_price_retrieve.return_value = mock_price
 
-        future_period_end = int(time.time()) + 86400
+        # Create StripeEventSummary with subscription scheduled for cancellation
+        future_cancel_at = timezone.now() + timedelta(days=30)
+        event_data = StripeEventData.objects.create(
+            event_id='evt_reinstate_error',
+            event_type='customer.subscription.updated',
+            checkout_intent=self.checkout_intent,
+            data={'data': {'object': {}}},
+        )
+        _event_summary = StripeEventSummary.objects.create(
+            stripe_event_data=event_data,
+            event_id='evt_reinstate_error',
+            event_type='customer.subscription.updated',
+            checkout_intent=self.checkout_intent,
+            stripe_event_created_at=timezone.now(),
+            stripe_subscription_id='sub_test123',
+            subscription_status='active',
+            subscription_cancel_at=future_cancel_at,  # IS scheduled for cancellation
+            subscription_period_end=future_cancel_at,
+            currency='usd',
+        )
+
+        # Mock SSP product pricing to include this price
+        mock_get_ssp_pricing.return_value = {
+            'teams_plan': {
+                'id': 'price_test123',
+                'quantity_range': (1, 30),
+            }
+        }
+
+        future_period_end = int(timezone.now().timestamp()) + 86400
         mock_subscription = {
             'id': 'sub_test123',
             'status': 'active',
@@ -3065,7 +3225,7 @@ class BillingManagementReinstateSubscriptionTests(BillingManagementBaseTest):
                 ]
             },
         }
-        mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
+        mock_sub_retrieve.return_value = AttrDict.wrap(mock_subscription)
 
         # Mock modify to fail
         with mock.patch('stripe.Subscription.modify', side_effect=stripe.error.StripeError('Connection error')):
@@ -3103,7 +3263,7 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
 
     @mock.patch('stripe.Customer.retrieve')
     @mock.patch('enterprise_access.apps.api.serializers.customer_billing.BillingAddressResponseSerializer.is_valid')
-    def test_get_address_general_exception(self, mock_is_valid, mock_get_stripe_customer):
+    def test_get_address_general_exception(self, _mock_is_valid, mock_get_stripe_customer):
         """
         Test get address with general (non-Stripe) exception.
         """
@@ -3117,7 +3277,7 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
 
     @mock.patch('stripe.Customer.modify')
     @mock.patch('enterprise_access.apps.api.serializers.customer_billing.BillingAddressResponseSerializer.is_valid')
-    def test_update_address_general_exception(self, mock_is_valid, mock_customer_modify):
+    def test_update_address_general_exception(self, _mock_is_valid, mock_customer_modify):
         """
         Test update address with general (non-Stripe) exception.
         """
@@ -3149,20 +3309,20 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
         """
         Test list payment methods with us_bank_account type.
         """
-        mock_customer_retrieve.return_value = {
+        mock_customer_retrieve.return_value = AttrDict.wrap({
             'id': self.stripe_customer_id,
             'invoice_settings': {'default_payment_method': 'pm_bank_123'},
-        }
+        })
 
         mock_pm_list.return_value = mock.Mock(data=[
-            {
+            AttrDict.wrap({
                 'id': 'pm_bank_123',
                 'type': 'us_bank_account',
                 'us_bank_account': {
                     'last4': '6789',
                     'status_details': {'status': 'verified'},
                 },
-            }
+            }),
         ])
 
         url = reverse('api:v1:billing-management-payment-methods')
@@ -3178,7 +3338,7 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
     @mock.patch('stripe.PaymentMethod.list')
     @mock.patch('stripe.Customer.retrieve')
     @mock.patch('enterprise_access.apps.api.serializers.customer_billing.PaymentMethodsListResponseSerializer.is_valid')
-    def test_list_payment_methods_general_exception(self, mock_is_valid, mock_customer_retrieve, mock_pm_list):
+    def test_list_payment_methods_general_exception(self, _mock_is_valid, mock_customer_retrieve, _mock_pm_list):
         """
         Test list payment methods with general exception.
         """
@@ -3195,7 +3355,7 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
     @mock.patch(
         'enterprise_access.apps.api.serializers.customer_billing.AttachPaymentMethodResponseSerializer.is_valid'
     )
-    def test_attach_payment_method_general_exception(self, mock_is_valid, mock_pm_retrieve, mock_pm_attach):
+    def test_attach_payment_method_general_exception(self, _mock_is_valid, mock_pm_retrieve, _mock_pm_attach):
         """
         Test attach payment method with general exception.
         """
@@ -3219,7 +3379,7 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
         """
         Test set default payment method with general exception.
         """
-        mock_pm_retrieve.return_value = {'id': 'pm_test_123', 'customer': self.stripe_customer_id}
+        mock_pm_retrieve.return_value = AttrDict.wrap({'id': 'pm_test_123', 'customer': self.stripe_customer_id})
         mock_customer_modify.side_effect = Exception('Unexpected error')
 
         url = reverse(
@@ -3242,15 +3402,12 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
         """
         Test delete payment method with general exception.
         """
-        mock_pm_retrieve.return_value = {'id': 'pm_test_123', 'customer': self.stripe_customer_id}
-        mock_customer_retrieve.return_value = {
+        mock_pm_retrieve.return_value = AttrDict.wrap({'id': 'pm_test_123', 'customer': self.stripe_customer_id})
+        mock_customer_retrieve.return_value = AttrDict.wrap({
             'id': self.stripe_customer_id,
             'invoice_settings': {'default_payment_method': 'pm_default'},
-        }
-        mock_pm_list.return_value = mock.Mock(data=[
-            {'id': 'pm_test_123'},
-            {'id': 'pm_default'},
-        ])
+        })
+        mock_pm_list.return_value = mock.Mock(data=['pm_test_123', 'pm_default'])
         mock_pm_detach.side_effect = Exception('Unexpected error')
 
         url = reverse('api:v1:billing-management-delete-payment-method', kwargs={'payment_method_id': 'pm_test_123'})
@@ -3309,7 +3466,7 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
         Test list transactions when charge retrieval fails (should set receipt_url to None).
         """
         mock_invoice_list.return_value = mock.Mock(
-            data=[{
+            data=[AttrDict.wrap({
                 'id': 'in_test_123',
                 'created': 1234567890,
                 'amount_paid': 10000,
@@ -3318,7 +3475,7 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
                 'description': 'Test invoice',
                 'hosted_invoice_url': 'https://invoice.stripe.com/test',
                 'charge': 'ch_test_123',
-            }],
+            })],
             has_more=False
         )
         mock_charge_retrieve.side_effect = stripe.error.StripeError('Charge not found')
@@ -3360,247 +3517,39 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
         """
         Test _normalize_invoice_status with uncollectible status.
         """
-        from enterprise_access.apps.api.v1.views.customer_billing import BillingManagementViewSet
 
-        result = BillingManagementViewSet._normalize_invoice_status('uncollectible')
+        result = BillingManagementViewSet._normalize_invoice_status('uncollectible')  # pylint: disable=protected-access
         self.assertEqual(result, 'uncollectible')
 
     # Subscription endpoint edge cases
-    @mock.patch('stripe.Subscription.list')
-    def test_get_subscription_invalid_request_error(self, mock_sub_list):
-        """
-        Test get subscription with Stripe InvalidRequestError.
-        """
-        mock_sub_list.side_effect = stripe.error.InvalidRequestError('Invalid customer', 'customer')
-
-        url = reverse('api:v1:billing-management-get-subscription')
-        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
-
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn('Invalid request', response.json()['error'])
-
-    @mock.patch('stripe.Subscription.list')
-    def test_get_subscription_general_exception(self, mock_sub_list):
-        """
-        Test get subscription with general exception.
-        """
-        mock_sub_list.side_effect = Exception('Unexpected error')
-
-        url = reverse('api:v1:billing-management-get-subscription')
-        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
-
-        self.assertEqual(response.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
-        self.assertIn('unexpected error', response.json()['error'])
-
-    @mock.patch('stripe.Product.retrieve')
-    @mock.patch('stripe.Price.retrieve')
-    @mock.patch('stripe.Subscription.list')
-    def test_get_subscription_plan_type_from_product_metadata(
-        self, mock_sub_list, mock_price_retrieve, mock_product_retrieve
-    ):
-        """
-        Test _get_plan_type_from_subscription when plan_type is in product metadata.
-        """
-        mock_subscription = {
-            'id': 'sub_test_123',
-            'status': 'active',
-            'items': {
-                'data': [{
-                    'price': {'id': 'price_test_123'},
-                    'quantity': 10,
-                }]
-            },
-            'cancel_at_period_end': False,
-            'current_period_end': int(time.time()) + 86400,
-        }
-        mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
-        mock_price_retrieve.return_value = {
-            'id': 'price_test_123',
-            'metadata': {},  # No plan_type in price metadata
-            'product': 'prod_test_123',
-            'unit_amount': 10000,
-            'recurring': {'interval': 'year'},
-        }
-        mock_product_retrieve.return_value = {
-            'id': 'prod_test_123',
-            'metadata': {'plan_type': 'Teams'},  # plan_type in product metadata
-        }
-
-        url = reverse('api:v1:billing-management-get-subscription')
-        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        response_data = response.json()
-        self.assertEqual(response_data['subscription']['plan_type'], 'Teams')
-
-    @mock.patch('stripe.Price.retrieve')
-    @mock.patch('stripe.Subscription.list')
-    def test_get_subscription_plan_type_stripe_error(self, mock_sub_list, mock_price_retrieve):
-        """
-        Test _get_plan_type_from_subscription when Stripe error occurs (should return 'Other').
-        """
-        mock_subscription = {
-            'id': 'sub_test_123',
-            'status': 'active',
-            'items': {
-                'data': [{
-                    'price': {'id': 'price_test_123'},
-                    'quantity': 10,
-                }]
-            },
-            'cancel_at_period_end': False,
-            'current_period_end': int(time.time()) + 86400,
-        }
-        mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
-        mock_price_retrieve.side_effect = stripe.error.StripeError('Error retrieving price')
-
-        url = reverse('api:v1:billing-management-get-subscription')
-        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        response_data = response.json()
-        self.assertEqual(response_data['subscription']['plan_type'], 'Other')
-
-    @mock.patch('stripe.Price.retrieve')
-    @mock.patch('stripe.Subscription.list')
-    def test_get_subscription_plan_type_general_exception(self, mock_sub_list, mock_price_retrieve):
-        """
-        Test _get_plan_type_from_subscription when general exception occurs (should return 'Other').
-        """
-        mock_subscription = {
-            'id': 'sub_test_123',
-            'status': 'active',
-            'items': {
-                'data': [{
-                    'price': {'id': 'price_test_123'},
-                    'quantity': 10,
-                }]
-            },
-            'cancel_at_period_end': False,
-            'current_period_end': int(time.time()) + 86400,
-        }
-        mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
-        mock_price_retrieve.side_effect = Exception('Unexpected error')
-
-        url = reverse('api:v1:billing-management-get-subscription')
-        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        response_data = response.json()
-        self.assertEqual(response_data['subscription']['plan_type'], 'Other')
-
-    @mock.patch('stripe.Price.retrieve')
-    @mock.patch('stripe.Subscription.list')
-    def test_get_yearly_amount_with_week_billing_period(self, mock_sub_list, mock_price_retrieve):
-        """
-        Test _get_yearly_amount with weekly billing period.
-        """
-        mock_subscription = {
-            'id': 'sub_test_123',
-            'status': 'active',
-            'items': {
-                'data': [{
-                    'price': {'id': 'price_test_123'},
-                    'quantity': 5,
-                }]
-            },
-            'cancel_at_period_end': False,
-            'current_period_end': int(time.time()) + 86400,
-        }
-        mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
-        mock_price_retrieve.return_value = {
-            'id': 'price_test_123',
-            'unit_amount': 1000,  # $10.00 per week
-            'recurring': {'interval': 'week'},
-            'metadata': {},
-        }
-
-        url = reverse('api:v1:billing-management-get-subscription')
-        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        response_data = response.json()
-        # 1000 * 52 * 5 = 260000 cents = $2,600
-        self.assertEqual(response_data['subscription']['yearly_amount'], 260000)
-
-    @mock.patch('stripe.Price.retrieve')
-    @mock.patch('stripe.Subscription.list')
-    def test_get_yearly_amount_price_retrieval_error(self, mock_sub_list, mock_price_retrieve):
-        """
-        Test _get_yearly_amount when price retrieval fails (should skip that item).
-        """
-        mock_subscription = {
-            'id': 'sub_test_123',
-            'status': 'active',
-            'items': {
-                'data': [{
-                    'price': {'id': 'price_test_123'},
-                    'quantity': 5,
-                }]
-            },
-            'cancel_at_period_end': False,
-            'current_period_end': int(time.time()) + 86400,
-        }
-        mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
-        mock_price_retrieve.side_effect = stripe.error.StripeError('Price not found')
-
-        url = reverse('api:v1:billing-management-get-subscription')
-        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        response_data = response.json()
-        # Should return 0 since price retrieval failed
-        self.assertEqual(response_data['subscription']['yearly_amount'], 0)
-
-    @mock.patch('stripe.Subscription.list')
-    def test_get_yearly_amount_general_exception(self, mock_sub_list):
-        """
-        Test _get_yearly_amount when general exception occurs (should return 0).
-        """
-        mock_subscription = {
-            'id': 'sub_test_123',
-            'status': 'active',
-            'items': {'data': None},  # Will cause exception
-            'cancel_at_period_end': False,
-            'current_period_end': int(time.time()) + 86400,
-        }
-        mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
-
-        url = reverse('api:v1:billing-management-get-subscription')
-        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        response_data = response.json()
-        self.assertEqual(response_data['subscription']['yearly_amount'], 0)
-
-    @mock.patch('stripe.Subscription.list')
-    def test_get_license_count_general_exception(self, mock_sub_list):
-        """
-        Test _get_license_count when general exception occurs (should return 0).
-        """
-        mock_subscription = {
-            'id': 'sub_test_123',
-            'status': 'active',
-            'items': {'data': None},  # Will cause exception
-            'cancel_at_period_end': False,
-            'current_period_end': int(time.time()) + 86400,
-        }
-        mock_sub_list.return_value = mock.Mock(data=[mock_subscription])
-
-        url = reverse('api:v1:billing-management-get-subscription')
-        response = self.client.get(url, {'enterprise_customer_uuid': str(self.enterprise_uuid)})
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        response_data = response.json()
-        self.assertEqual(response_data['subscription']['license_count'], 0)
-
     # Cancel subscription edge cases
-    @mock.patch('stripe.Subscription.list')
-    def test_cancel_subscription_invalid_request_error(self, mock_sub_list):
+    @mock.patch('stripe.Subscription.retrieve')
+    def test_cancel_subscription_invalid_request_error(self, mock_sub_retrieve):
         """
         Test cancel subscription with Stripe InvalidRequestError.
         """
-        mock_sub_list.side_effect = stripe.error.InvalidRequestError('Invalid customer', 'customer')
+
+        # Create StripeEventSummary with active subscription
+        event_data = StripeEventData.objects.create(
+            event_id='evt_cancel_invalid',
+            event_type='customer.subscription.updated',
+            checkout_intent=self.checkout_intent,
+            data={'data': {'object': {}}},
+        )
+        _event_summary = StripeEventSummary.objects.create(
+            stripe_event_data=event_data,
+            event_id='evt_cancel_invalid',
+            event_type='customer.subscription.updated',
+            checkout_intent=self.checkout_intent,
+            stripe_event_created_at=timezone.now(),
+            stripe_subscription_id='sub_test123',
+            subscription_status='active',
+            subscription_cancel_at=None,
+            subscription_period_end=timezone.now() + timedelta(days=30),
+            currency='usd',
+        )
+
+        mock_sub_retrieve.side_effect = stripe.error.InvalidRequestError('Invalid customer', 'customer')
 
         url = reverse('api:v1:billing-management-cancel-subscription')
         response = self.client.post(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}', format='json')
@@ -3608,12 +3557,33 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('Invalid request', response.json()['error'])
 
-    @mock.patch('stripe.Subscription.list')
-    def test_cancel_subscription_general_exception(self, mock_sub_list):
+    @mock.patch('stripe.Subscription.retrieve')
+    def test_cancel_subscription_general_exception(self, mock_sub_retrieve):
         """
         Test cancel subscription with general exception.
         """
-        mock_sub_list.side_effect = Exception('Unexpected error')
+
+        # Create StripeEventSummary with active subscription
+        event_data = StripeEventData.objects.create(
+            event_id='evt_cancel_exception',
+            event_type='customer.subscription.updated',
+            checkout_intent=self.checkout_intent,
+            data={'data': {'object': {}}},
+        )
+        _event_summary = StripeEventSummary.objects.create(
+            stripe_event_data=event_data,
+            event_id='evt_cancel_exception',
+            event_type='customer.subscription.updated',
+            checkout_intent=self.checkout_intent,
+            stripe_event_created_at=timezone.now(),
+            stripe_subscription_id='sub_test123',
+            subscription_status='active',
+            subscription_cancel_at=None,
+            subscription_period_end=timezone.now() + timedelta(days=30),
+            currency='usd',
+        )
+
+        mock_sub_retrieve.side_effect = Exception('Unexpected error')
 
         url = reverse('api:v1:billing-management-cancel-subscription')
         response = self.client.post(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}', format='json')
@@ -3622,12 +3592,34 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
         self.assertIn('unexpected error', response.json()['error'])
 
     # Reinstate subscription edge cases
-    @mock.patch('stripe.Subscription.list')
-    def test_reinstate_subscription_invalid_request_error(self, mock_sub_list):
+    @mock.patch('stripe.Subscription.retrieve')
+    def test_reinstate_subscription_invalid_request_error(self, mock_sub_retrieve):
         """
         Test reinstate subscription with Stripe InvalidRequestError.
         """
-        mock_sub_list.side_effect = stripe.error.InvalidRequestError('Invalid customer', 'customer')
+
+        # Create StripeEventSummary with subscription scheduled for cancellation
+        future_cancel_at = timezone.now() + timedelta(days=30)
+        event_data = StripeEventData.objects.create(
+            event_id='evt_reinstate_invalid',
+            event_type='customer.subscription.updated',
+            checkout_intent=self.checkout_intent,
+            data={'data': {'object': {}}},
+        )
+        _event_summary = StripeEventSummary.objects.create(
+            stripe_event_data=event_data,
+            event_id='evt_reinstate_invalid',
+            event_type='customer.subscription.updated',
+            checkout_intent=self.checkout_intent,
+            stripe_event_created_at=timezone.now(),
+            stripe_subscription_id='sub_test123',
+            subscription_status='active',
+            subscription_cancel_at=future_cancel_at,
+            subscription_period_end=future_cancel_at,
+            currency='usd',
+        )
+
+        mock_sub_retrieve.side_effect = stripe.error.InvalidRequestError('Invalid customer', 'customer')
 
         url = reverse('api:v1:billing-management-reinstate-subscription')
         response = self.client.post(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}', format='json')
@@ -3635,12 +3627,34 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('Invalid request', response.json()['error'])
 
-    @mock.patch('stripe.Subscription.list')
-    def test_reinstate_subscription_general_exception(self, mock_sub_list):
+    @mock.patch('stripe.Subscription.retrieve')
+    def test_reinstate_subscription_general_exception(self, mock_sub_retrieve):
         """
         Test reinstate subscription with general exception.
         """
-        mock_sub_list.side_effect = Exception('Unexpected error')
+
+        # Create StripeEventSummary with subscription scheduled for cancellation
+        future_cancel_at = timezone.now() + timedelta(days=30)
+        event_data = StripeEventData.objects.create(
+            event_id='evt_reinstate_exception',
+            event_type='customer.subscription.updated',
+            checkout_intent=self.checkout_intent,
+            data={'data': {'object': {}}},
+        )
+        _event_summary = StripeEventSummary.objects.create(
+            stripe_event_data=event_data,
+            event_id='evt_reinstate_exception',
+            event_type='customer.subscription.updated',
+            checkout_intent=self.checkout_intent,
+            stripe_event_created_at=timezone.now(),
+            stripe_subscription_id='sub_test123',
+            subscription_status='active',
+            subscription_cancel_at=future_cancel_at,
+            subscription_period_end=future_cancel_at,
+            currency='usd',
+        )
+
+        mock_sub_retrieve.side_effect = Exception('Unexpected error')
 
         url = reverse('api:v1:billing-management-reinstate-subscription')
         response = self.client.post(f'{url}?enterprise_customer_uuid={self.enterprise_uuid}', format='json')
@@ -3653,7 +3667,6 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
         """
         Test _get_payment_method_status with failed bank account verification.
         """
-        from enterprise_access.apps.api.v1.views.customer_billing import BillingManagementViewSet
 
         payment_method = {
             'type': 'us_bank_account',
@@ -3661,10 +3674,245 @@ class BillingManagementAdditionalCoverageTests(BillingManagementBaseTest):
                 'status_details': {'status': 'verification_failed'}
             }
         }
-        result = BillingManagementViewSet._get_payment_method_status(payment_method)
+        result = BillingManagementViewSet._get_payment_method_status(payment_method)  # pylint: disable=protected-access
         self.assertEqual(result, 'failed')
 
         # Test with 'errored' status
         payment_method['us_bank_account']['status_details']['status'] = 'errored'
-        result = BillingManagementViewSet._get_payment_method_status(payment_method)
+        result = BillingManagementViewSet._get_payment_method_status(payment_method)  # pylint: disable=protected-access
         self.assertEqual(result, 'failed')
+
+    # _get_plan_type_from_subscription helper tests
+    @ddt.data(
+        # (subscription_dict, price_return, product_return, price_side_effect, expected)
+        # no items → 'Other', no Stripe calls made
+        ({'items': {'data': []}}, None, None, None, 'Other'),
+        # item present but no price ID → 'Other', no Stripe calls made
+        ({'items': {'data': [{'price': {}}]}}, None, None, None, 'Other'),
+        # plan_type found in price metadata → returned directly
+        (
+            {'items': {'data': [{'price': {'id': 'price_123'}}]}},
+            {'metadata': {'plan_type': 'Teams'}, 'product': None},
+            None, None, 'Teams',
+        ),
+        # plan_type absent in price metadata, found in product metadata → returned from product
+        (
+            {'items': {'data': [{'price': {'id': 'price_123'}}]}},
+            {'metadata': {}, 'product': 'prod_123'},
+            {'metadata': {'plan_type': 'Essentials'}},
+            None, 'Essentials',
+        ),
+        # plan_type absent from both price and product metadata → 'Other'
+        (
+            {'items': {'data': [{'price': {'id': 'price_123'}}]}},
+            {'metadata': {}, 'product': 'prod_123'},
+            {'metadata': {}},
+            None, 'Other',
+        ),
+        # price has no product ID and price metadata lacks plan_type → 'Other'
+        (
+            {'items': {'data': [{'price': {'id': 'price_123'}}]}},
+            {'metadata': {}, 'product': None},
+            None, None, 'Other',
+        ),
+        # StripeError raised → 'Other'
+        (
+            {'items': {'data': [{'price': {'id': 'price_123'}}]}},
+            None, None, stripe.error.StripeError('Stripe unavailable'), 'Other',
+        ),
+        # unexpected Exception raised → 'Other'
+        (
+            {'items': {'data': [{'price': {'id': 'price_123'}}]}},
+            None, None, Exception('Unexpected failure'), 'Other',
+        ),
+    )
+    @ddt.unpack
+    @mock.patch('stripe.Product.retrieve')
+    @mock.patch('stripe.Price.retrieve')
+    def test_get_plan_type_from_subscription(
+        self,
+        subscription_dict,
+        price_return,
+        product_return,
+        price_side_effect,
+        expected,
+        mock_price_retrieve,
+        mock_product_retrieve,
+    ):
+        """
+        Tests all branches of _get_plan_type_from_subscription.
+        """
+        if price_side_effect is not None:
+            mock_price_retrieve.side_effect = price_side_effect
+        elif price_return is not None:
+            mock_price_retrieve.return_value = AttrDict.wrap(price_return)
+
+        if product_return is not None:
+            mock_product_retrieve.return_value = AttrDict.wrap(product_return)
+
+        sub = AttrDict.wrap(subscription_dict)
+        result = BillingManagementViewSet._get_plan_type_from_subscription(sub)  # pylint: disable=protected-access
+        self.assertEqual(result, expected)
+
+    # _get_yearly_amount helper tests
+    @ddt.data(
+        # (subscription_dict, price_retrieve_return, price_side_effect, expected)
+        # no items → 0
+        ({'items': {'data': []}}, None, None, 0),
+        # unit_amount inline, yearly billing, quantity 2
+        (
+            {'items': {'data': [{'price': {'unit_amount': 1000, 'recurring': {'interval': 'year'}}, 'quantity': 2}]}},
+            None, None, 2000,
+        ),
+        # unit_amount inline, monthly billing, quantity 1
+        (
+            {'items': {'data': [{'price': {'unit_amount': 500, 'recurring': {'interval': 'month'}}, 'quantity': 1}]}},
+            None, None, 6000,
+        ),
+        # unit_amount inline, weekly billing, quantity 1
+        (
+            {'items': {'data': [{'price': {'unit_amount': 100, 'recurring': {'interval': 'week'}}, 'quantity': 1}]}},
+            None, None, 5200,
+        ),
+        # unit_amount inline, unknown billing period → 0
+        (
+            {'items': {'data': [{'price': {'unit_amount': 1000, 'recurring': {'interval': 'day'}}, 'quantity': 1}]}},
+            None, None, 0,
+        ),
+        # no unit_amount in price, has price_id → retrieves price and calculates (monthly)
+        (
+            {'items': {'data': [{'price': {'id': 'price_123'}, 'quantity': 3}]}},
+            {'unit_amount': 5000, 'recurring': {'interval': 'month'}},
+            None, 180000,
+        ),
+        # no unit_amount in price, has price_id → StripeError on retrieve → item skipped
+        (
+            {'items': {'data': [{'price': {'id': 'price_123'}, 'quantity': 1}]}},
+            None, stripe.error.StripeError('Stripe error'), 0,
+        ),
+        # no unit_amount in price, no price_id → unit_amount defaults to 0
+        (
+            {'items': {'data': [{'price': {}, 'quantity': 5}]}},
+            None, None, 0,
+        ),
+        # multiple items summed: yearly (1000*1) + monthly (500*2*12) = 13000
+        (
+            {'items': {'data': [
+                {'price': {'unit_amount': 1000, 'recurring': {'interval': 'year'}}, 'quantity': 1},
+                {'price': {'unit_amount': 500, 'recurring': {'interval': 'month'}}, 'quantity': 2},
+            ]}},
+            None, None, 13000,
+        ),
+    )
+    @ddt.unpack
+    @mock.patch('stripe.Price.retrieve')
+    def test_get_yearly_amount(
+        self,
+        subscription_dict,
+        price_retrieve_return,
+        price_side_effect,
+        expected,
+        mock_price_retrieve,
+    ):
+        """
+        Tests all branches of _get_yearly_amount.
+        """
+        if price_side_effect is not None:
+            mock_price_retrieve.side_effect = price_side_effect
+        elif price_retrieve_return is not None:
+            mock_price_retrieve.return_value = AttrDict.wrap(price_retrieve_return)
+
+        sub = AttrDict.wrap(subscription_dict)
+        result = BillingManagementViewSet._get_yearly_amount(sub)  # pylint: disable=protected-access
+        self.assertEqual(result, expected)
+
+    def test_get_yearly_amount_general_exception(self):
+        """
+        Returns 0 when subscription.to_dict() raises an unexpected exception.
+        """
+        sub = mock.Mock()
+        sub.to_dict.side_effect = Exception('Unexpected failure')
+        result = BillingManagementViewSet._get_yearly_amount(sub)  # pylint: disable=protected-access
+        self.assertEqual(result, 0)
+
+    # _get_license_count helper tests
+    @ddt.data(
+        # empty items list → 0
+        ({'items': {'data': []}}, 0),
+        # single item with quantity
+        ({'items': {'data': [{'quantity': 5}]}}, 5),
+        # multiple items summed
+        ({'items': {'data': [{'quantity': 3}, {'quantity': 7}]}}, 10),
+        # item missing quantity key → defaults to 0
+        ({'items': {'data': [{'quantity': 4}, {}]}}, 4),
+    )
+    @ddt.unpack
+    def test_get_license_count(self, subscription_dict, expected):
+        """
+        Tests all branches of _get_license_count.
+        """
+        sub = AttrDict.wrap(subscription_dict)
+        result = BillingManagementViewSet._get_license_count(sub)  # pylint: disable=protected-access
+        self.assertEqual(result, expected)
+
+    def test_get_license_count_general_exception(self):
+        """
+        Returns 0 when subscription.to_dict() raises an unexpected exception.
+        """
+        sub = mock.Mock()
+        sub.to_dict.side_effect = Exception('Unexpected failure')
+        result = BillingManagementViewSet._get_license_count(sub)  # pylint: disable=protected-access
+        self.assertEqual(result, 0)
+
+
+class CreateCheckoutSessionViewTests(APITest):
+    """
+    Tests for the CustomerBillingViewSet.create_checkout_session endpoint.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.url = reverse('api:v1:customer-billing-create-checkout-session')
+
+    def tearDown(self):
+        CheckoutIntent.objects.all().delete()
+        super().tearDown()
+
+    @mock.patch('enterprise_access.apps.customer_billing.api.create_subscription_checkout_session')
+    @mock.patch('enterprise_access.apps.customer_billing.api.CheckoutIntent.create_intent')
+    @mock.patch('enterprise_access.apps.customer_billing.api.CheckoutSessionInputValidator.validate')
+    def test_create_checkout_session_returns_client_secret_from_dict(
+        self, mock_validate, mock_create_intent, mock_create_stripe_session,
+    ):
+        """
+        client_secret is read via dict access from the dict returned by create_subscription_checkout_session,
+        not via attribute access. Regression test for the .to_dict() change in stripe_api.py.
+        """
+        self.set_jwt_cookie()
+        mock_validate.return_value = {}  # no validation errors
+        mock_intent = mock.MagicMock()
+        mock_intent.id = 1
+        mock_create_intent.return_value = mock_intent
+        mock_create_stripe_session.return_value = {
+            'id': 'cs_test_abc',
+            'customer': 'cus_test_123',
+            'client_secret': 'cs_test_abc_secret_xyz',
+        }
+
+        response = self.client.post(
+            self.url,
+            data={
+                'admin_email': self.user.email,
+                'enterprise_slug': 'test-slug',
+                'company_name': 'Test Co',
+                'quantity': 5,
+                'stripe_price_id': 'price_abc123',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(
+            response.data['checkout_session_client_secret'],
+            'cs_test_abc_secret_xyz',
+        )

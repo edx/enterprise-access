@@ -40,6 +40,114 @@ class SlugReservationConflict(Exception):
     pass
 
 
+class EnterpriseAcademy(TimeStampedModel):
+    """
+    Centralized Academy metadata used by checkout and internal service integrations.
+
+    Stripe remains the source of truth for pricing.
+
+    .. no_pii:
+    """
+
+    uuid = models.UUIDField(
+        primary_key=True,
+        serialize=False,
+        default=uuid4,
+        editable=False,
+        help_text='Unique identifier for this Academy record.',
+    )
+
+    name = models.CharField(
+        max_length=255,
+        unique=True,
+        help_text='Short identifier name for the Academy.',
+    )
+    long_name = models.CharField(
+        max_length=512,
+        blank=True,
+        default='',
+        help_text='Full public name of the Academy.',
+    )
+    description = models.TextField(
+        blank=True,
+        default='',
+        help_text='Marketing summary of the Academy.',
+    )
+    marketing_url = models.URLField(
+        max_length=2048,
+        blank=True,
+        default='',
+        help_text='Public-facing marketing URL for the Academy.',
+    )
+    thumbnail_url = models.CharField(
+        max_length=2048,
+        blank=True,
+        default='',
+        help_text='Stored thumbnail path or URL for the Academy image.',
+    )
+    tags = models.JSONField(
+        default=list,
+        blank=True,
+        help_text='List of competency tags associated with the Academy.',
+    )
+    stripe_product_id = models.CharField(
+        max_length=255,
+        blank=True,
+        default='',
+        db_index=True,
+        help_text='Stripe Product ID associated with the Academy.',
+    )
+    stripe_price_lookup_key = models.CharField(
+        max_length=255,
+        unique=True,
+        blank=True,
+        db_index=True,
+        default='',
+        help_text='Stripe price lookup key used to resolve academy pricing context.',
+    )
+    enterprise_catalog_uuid = models.UUIDField(
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text='Related edX catalog UUID.',
+    )
+    product_key = models.SlugField(
+        max_length=255,
+        unique=True,
+        blank=True,
+        default='',
+        help_text='Routing key that maps to ?product_key= checkout entry parameter.',
+    )
+    slug = models.SlugField(
+        max_length=255,
+        unique=True,
+        blank=True,
+        default='',
+        help_text='Stable URL-safe slug for academy routes.',
+    )
+    is_active = models.BooleanField(
+        default=True,
+        db_index=True,
+        help_text='Controls whether this academy is active for API consumers.',
+    )
+    display_order = models.PositiveIntegerField(
+        default=0,
+        db_index=True,
+        help_text='Ascending list sort order for academy responses.',
+    )
+
+    history = HistoricalRecords()
+    # no_pii: HistoricalEnterpriseAcademy model
+
+    class Meta:
+        verbose_name = 'Academy'
+        verbose_name_plural = 'Academies'
+        ordering = ['display_order', 'name']
+
+    def __str__(self):
+        return f'<Academy id={self.uuid} name={self.name}>'
+
+
 class CheckoutIntent(TimeStampedModel):
     """
     Tracks the complete lifecycle of a self-service checkout process:
@@ -718,6 +826,21 @@ class SelfServiceSubscriptionRenewal(TimeStampedModel):
         blank=True,
         help_text='The renewed (or future) subscription plan uuid on this renewal',
     )
+    is_canceled = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text='True if the subscription has been canceled. Can be set back to False if subscription is '
+                  'un-canceled.',
+    )
+    subscription_cancel_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text=(
+            'Timestamp when the subscription is scheduled to be canceled. '
+            'Set from Stripe cancel_at on subscription_updated events; '
+            'cleared on subscription deletion or when cancellation is reversed.'
+        ),
+    )
     stripe_event_data = models.OneToOneField(
         'StripeEventData',
         on_delete=models.CASCADE,
@@ -728,6 +851,24 @@ class SelfServiceSubscriptionRenewal(TimeStampedModel):
         max_length=255,
         db_index=True,
         help_text="The Stripe subscription ID for this renewal",
+    )
+    stripe_invoice_id = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="The Stripe invoice ID that this renewal corresponds to.",
+    )
+    effective_date = models.DateTimeField(
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text=(
+            "The datetime at which this renewal is expected to take effect, "
+            "derived from the period end of the previous subscription cycle. "
+            "This is a local cache of the like-named column on the "
+            "license-manager SubscriptionPlanRenewal model."
+        ),
     )
     processed_at = models.DateTimeField(
         null=True,
@@ -823,8 +964,6 @@ class StripeEventSummary(TimeStampedModel):
         help_text='The Stripe event type'
     )
     stripe_event_created_at = models.DateTimeField(
-        null=True,
-        blank=True,
         db_index=True,
         help_text='Timestamp when the Stripe event was created'
     )
@@ -974,7 +1113,11 @@ class StripeEventSummary(TimeStampedModel):
         if 'created' in event_data:
             self.stripe_event_created_at = self._timestamp_to_datetime(event_data['created'])
         else:
-            logger.warning(f"No 'created' timestamp found in event {stripe_event_data.event_id}")
+            logger.warning(
+                "No 'created' timestamp found in event %s, falling back to StripeEventData.created",
+                stripe_event_data.event_id,
+            )
+            self.stripe_event_created_at = stripe_event_data.created
 
         # Get subscription plan UUID from related workflow
         if checkout_intent and checkout_intent.workflow:
@@ -1001,13 +1144,13 @@ class StripeEventSummary(TimeStampedModel):
         stripe_object_data = event_data.get('data', {}).get('object', {})
         self.stripe_object_type = stripe_object_data['object']
         # pylint: disable=protected-access
-        stripe_object = stripe._util.convert_to_stripe_object(event_data['data']['object'])
+        stripe_object = stripe._util.convert_to_stripe_object(event_data['data']['object']).to_dict()
 
         # Extract subscription-specific fields
         if self.stripe_object_type == 'subscription' or self.event_type.startswith('customer.subscription'):
             subscription_obj = stripe_object
 
-            self.stripe_subscription_id = subscription_obj.id
+            self.stripe_subscription_id = subscription_obj['id']
             self.subscription_status = subscription_obj.get('status')
             self.currency = subscription_obj.get('currency')
             self.subscription_cancel_at = self._timestamp_to_datetime(
@@ -1027,10 +1170,10 @@ class StripeEventSummary(TimeStampedModel):
         # Extract invoice-specific fields
         elif self.stripe_object_type == 'invoice' or self.event_type.startswith('invoice'):
             invoice_obj = stripe_object
-            self.stripe_invoice_id = invoice_obj.id
+            self.stripe_invoice_id = invoice_obj['id']
             try:
-                self.stripe_subscription_id = invoice_obj.parent.subscription_details.subscription
-            except AttributeError:
+                self.stripe_subscription_id = invoice_obj['parent']['subscription_details']['subscription']
+            except (KeyError, TypeError):
                 pass
             self.invoice_amount_paid = invoice_obj.get('amount_paid')
             self.invoice_currency = invoice_obj.get('currency')
@@ -1040,11 +1183,13 @@ class StripeEventSummary(TimeStampedModel):
             if lines:
                 primary_line = lines[0]
                 if 'pricing' in primary_line:
-                    self.invoice_unit_amount = getattr(primary_line.pricing, 'unit_amount', None)
-                    self.invoice_unit_amount_decimal = Decimal(primary_line.pricing.unit_amount_decimal)
+                    pricing = primary_line.get('pricing', {})
+                    self.invoice_unit_amount = pricing.get('unit_amount')
+                    unit_amount_decimal = pricing.get('unit_amount_decimal')
+                    self.invoice_unit_amount_decimal = Decimal(unit_amount_decimal) if unit_amount_decimal else None
                     if 'quantity' in primary_line:
-                        self.invoice_quantity = primary_line.quantity
-                    if self.invoice_unit_amount is None:
+                        self.invoice_quantity = primary_line.get('quantity')
+                    if self.invoice_unit_amount is None and self.invoice_unit_amount_decimal is not None:
                         self.invoice_unit_amount = int(self.invoice_unit_amount_decimal)
 
     def update_upcoming_invoice_amount_due(self):

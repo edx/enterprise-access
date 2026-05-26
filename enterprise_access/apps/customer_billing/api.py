@@ -410,7 +410,7 @@ class CreateCheckoutSessionFailedConflict(Exception):
 
 def create_free_trial_checkout_session(
     **input_data: Unpack[CheckoutSessionInputData],
-) -> stripe.checkout.Session:
+) -> dict:
     """
     Create a Stripe "Checkout Session" for a free trial subscription plan.
     """
@@ -445,7 +445,7 @@ def create_free_trial_checkout_session(
 
     intent.update_stripe_identifiers(
         session_id=checkout_session['id'],
-        customer_id=checkout_session.get('customer'),
+        customer_id=checkout_session['customer'],
     )
     logger.info(f'Updated checkout intent {intent.id} with Stripe session {checkout_session["id"]}')
 

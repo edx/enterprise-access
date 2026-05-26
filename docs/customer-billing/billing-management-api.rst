@@ -261,7 +261,7 @@ All endpoints have comprehensive test coverage in ``enterprise_access/apps/api/v
 
 .. code-block:: bash
 
-    docker exec enterprise-access.app bash -c \
+    docker compose exec app bash -c \
       "DJANGO_SETTINGS_MODULE=enterprise_access.settings.test \
        pytest -c pytest.local.ini \
        enterprise_access/apps/api/v1/tests/test_customer_billing.py::BillingManagement*Tests -v"

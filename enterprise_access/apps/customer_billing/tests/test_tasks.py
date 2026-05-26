@@ -3,6 +3,7 @@ Tests for customer_billing tasks.
 """
 import json
 from datetime import datetime
+from datetime import timezone as dt_timezone
 from unittest import mock
 
 import stripe
@@ -16,11 +17,14 @@ from enterprise_access.apps.customer_billing.models import CheckoutIntent, Strip
 from enterprise_access.apps.customer_billing.tasks import (
     send_enterprise_provision_signup_confirmation_email,
     send_finalized_cancelation_email_task,
+    send_paid_cancellation_email_task,
     send_payment_receipt_email,
+    send_reinstatement_email_task,
     send_trial_cancellation_email_task,
     send_trial_end_and_subscription_started_email_task,
     send_trial_ending_reminder_email_task
 )
+from enterprise_access.apps.customer_billing.tests.utils import AttrDict
 from enterprise_access.utils import format_datetime_obj
 
 
@@ -91,6 +95,7 @@ class TestSendTrialCancellationEmailTask(TestCase):
         # Check trigger properties
         trigger_props = call_args[1]["trigger_properties"]
         self.assertIn("trial_end_date", trigger_props)
+        self.assertIn("period_end_date", trigger_props)
         self.assertIn("restart_subscription_url", trigger_props)
 
     @mock.patch(
@@ -126,6 +131,84 @@ class TestSendTrialCancellationEmailTask(TestCase):
             )
 
         # Verify the exception message
+        self.assertIn("Braze API error", str(context.exception))
+
+
+class TestSendPaidCancellationEmailTask(TestCase):
+    """Tests for send_paid_cancellation_email_task."""
+
+    def setUp(self):
+        """Set up test data."""
+        self.user = UserFactory()
+        self.checkout_intent = CheckoutIntent.create_intent(
+            user=self.user,
+            slug="test-enterprise",
+            name="Test Enterprise",
+            quantity=10,
+        )
+        self.checkout_intent.stripe_customer_id = "cus_test_123"
+        self.checkout_intent.save()
+
+        self.cancel_at_datetime = datetime(2025, 6, 1)
+        self.cancel_at_timestamp = int(self.cancel_at_datetime.timestamp())
+
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
+    def test_send_paid_cancellation_email_success(self, mock_lms_client, mock_braze_client):
+        """Test successful paid cancellation email send."""
+        mock_lms_instance = mock_lms_client.return_value
+        mock_lms_instance.get_enterprise_customer_data.return_value = {
+            "admin_users": [
+                {"email": "admin1@example.com", "lms_user_id": 123},
+                {"email": "admin2@example.com", "lms_user_id": 456},
+            ]
+        }
+
+        mock_braze_instance = mock_braze_client.return_value
+        mock_braze_instance.create_braze_recipient.side_effect = [
+            {"external_user_id": "123"},
+            {"external_user_id": "456"},
+        ]
+
+        send_paid_cancellation_email_task(
+            checkout_intent_id=self.checkout_intent.id,
+            cancel_at_timestamp=self.cancel_at_timestamp,
+        )
+
+        mock_braze_instance.send_campaign_message.assert_called_once()
+        call_args = mock_braze_instance.send_campaign_message.call_args
+
+        # Correct campaign
+        self.assertEqual(call_args[0][0], settings.BRAZE_PAID_CANCELLATION_CAMPAIGN)
+
+        # Two recipients
+        self.assertEqual(len(call_args[1]["recipients"]), 2)
+
+        # Correct trigger properties
+        trigger_props = call_args[1]["trigger_properties"]
+        self.assertIn("trial_end_date", trigger_props)
+        self.assertIn("period_end_date", trigger_props)
+        self.assertIn("restart_subscription_url", trigger_props)
+
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
+    def test_send_paid_cancellation_email_braze_exception(self, mock_lms_client, mock_braze_client):
+        """Test that a Braze API exception propagates."""
+        mock_lms_instance = mock_lms_client.return_value
+        mock_lms_instance.get_enterprise_customer_data.return_value = {
+            "admin_users": [{"email": "admin1@example.com", "lms_user_id": 123}]
+        }
+
+        mock_braze_instance = mock_braze_client.return_value
+        mock_braze_instance.create_braze_recipient.return_value = {"external_user_id": "123"}
+        mock_braze_instance.send_campaign_message.side_effect = Exception("Braze API error")
+
+        with self.assertRaises(Exception) as context:
+            send_paid_cancellation_email_task(
+                checkout_intent_id=self.checkout_intent.id,
+                cancel_at_timestamp=self.cancel_at_timestamp,
+            )
+
         self.assertIn("Braze API error", str(context.exception))
 
 
@@ -193,6 +276,7 @@ class TestSendFinalizedCancelationEmailTask(TestCase):
         # Check trigger properties
         trigger_props = call_args[1]["trigger_properties"]
         self.assertIn("trial_end_date", trigger_props)
+        self.assertIn("period_end_date", trigger_props)
         self.assertIn("restart_subscription_url", trigger_props)
 
     @mock.patch(
@@ -203,7 +287,6 @@ class TestSendFinalizedCancelationEmailTask(TestCase):
         self, mock_lms_client, mock_braze_client
     ):
         """Test that Braze API exception is raised and logged."""
-        # Mock LMS response with admin users
         mock_lms_instance = mock_lms_client.return_value
         mock_lms_instance.get_enterprise_customer_data.return_value = {
             "admin_users": [
@@ -211,7 +294,6 @@ class TestSendFinalizedCancelationEmailTask(TestCase):
             ]
         }
 
-        # Mock Braze client to raise exception when sending campaign
         mock_braze_instance = mock_braze_client.return_value
         mock_braze_instance.create_braze_recipient.return_value = {
             "external_user_id": "123"
@@ -220,7 +302,6 @@ class TestSendFinalizedCancelationEmailTask(TestCase):
             "Braze API error"
         )
 
-        # Run the task and expect exception to be raised
         with self.assertRaises(Exception) as context:
             send_finalized_cancelation_email_task(
                 checkout_intent_id=self.checkout_intent.id,
@@ -229,6 +310,114 @@ class TestSendFinalizedCancelationEmailTask(TestCase):
 
         # Verify the exception message
         self.assertIn("Braze API error", str(context.exception))
+
+
+class TestSendReinstatementEmailTask(TestCase):
+    """Tests for send_reinstatement_email_task."""
+
+    def setUp(self):
+        """Set up test data."""
+        self.user = UserFactory()
+        self.checkout_intent = CheckoutIntent.create_intent(
+            user=self.user,
+            slug="test-enterprise",
+            name="Test Enterprise",
+            quantity=10,
+        )
+        self.checkout_intent.stripe_customer_id = "cus_test_123"
+        self.checkout_intent.save()
+
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.tasks.BrazeApiClient"
+    )
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
+    def test_send_reinstatement_email_success(
+        self, mock_lms_client, mock_braze_client
+    ):
+        """Test successful reinstatement email send."""
+        mock_lms_instance = mock_lms_client.return_value
+        mock_lms_instance.get_enterprise_customer_data.return_value = {
+            "admin_users": [
+                {"email": "admin1@example.com", "lms_user_id": 123},
+                {"email": "admin2@example.com", "lms_user_id": 456},
+            ]
+        }
+
+        mock_braze_instance = mock_braze_client.return_value
+        mock_braze_instance.create_braze_recipient.side_effect = [
+            {"external_user_id": "123"},
+            {"external_user_id": "456"},
+        ]
+
+        send_reinstatement_email_task(
+            checkout_intent_id=self.checkout_intent.id,
+        )
+
+        mock_braze_instance.send_campaign_message.assert_called_once()
+        call_args = mock_braze_instance.send_campaign_message.call_args
+        self.assertEqual(
+            call_args[0][0], settings.BRAZE_SSP_SUBSCRIPTION_REINSTATED_CAMPAIGN
+        )
+
+        recipients = call_args[1]["recipients"]
+        self.assertEqual(len(recipients), 2)
+
+        trigger_props = call_args[1]["trigger_properties"]
+        self.assertIn("enterprise_admin_portal_url", trigger_props)
+        self.assertEqual(
+            trigger_props["enterprise_admin_portal_url"],
+            f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/test-enterprise'
+        )
+
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.tasks.BrazeApiClient"
+    )
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
+    def test_send_reinstatement_email_braze_exception(
+        self, mock_lms_client, mock_braze_client
+    ):
+        """Test that Braze API exception is raised and logged."""
+        mock_lms_instance = mock_lms_client.return_value
+        mock_lms_instance.get_enterprise_customer_data.return_value = {
+            "admin_users": [
+                {"email": "admin1@example.com", "lms_user_id": 123},
+            ]
+        }
+
+        mock_braze_instance = mock_braze_client.return_value
+        mock_braze_instance.create_braze_recipient.return_value = {
+            "external_user_id": "123"
+        }
+        mock_braze_instance.send_campaign_message.side_effect = Exception(
+            "Braze API error"
+        )
+
+        with self.assertRaises(Exception) as context:
+            send_reinstatement_email_task(
+                checkout_intent_id=self.checkout_intent.id,
+            )
+
+        self.assertIn("Braze API error", str(context.exception))
+
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.tasks.BrazeApiClient"
+    )
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
+    def test_send_reinstatement_email_no_admin_users(
+        self, mock_lms_client, mock_braze_client
+    ):
+        """Test that exception is raised when no admin users are found."""
+        mock_lms_instance = mock_lms_client.return_value
+        mock_lms_instance.get_enterprise_customer_data.return_value = {
+            "admin_users": []
+        }
+
+        with self.assertRaisesRegex(Exception, 'No admin users'):
+            send_reinstatement_email_task(
+                checkout_intent_id=self.checkout_intent.id,
+            )
+
+        mock_braze_client.return_value.send_campaign_message.assert_not_called()
 
 
 class TestSendEnterpriseProvisionSignupConfirmationEmail(TestCase):
@@ -393,11 +582,11 @@ class TestSendPaymentReceiptEmail(TestCase):
             'created': 1761829387,
             'payment_intent': self.payment_intent_id,  # This is a string ID, not an object
         }
-        self.mock_payment_intent = {
+        self.mock_payment_intent = AttrDict.wrap({
             'id': self.payment_intent_id,
             'payment_method': self.payment_method_id,
-        }
-        self.mock_payment_method = {
+        })
+        self.mock_payment_method = AttrDict.wrap({
             'id': self.payment_method_id,
             'card': {
                 'brand': 'visa',
@@ -414,7 +603,7 @@ class TestSendPaymentReceiptEmail(TestCase):
                     'country': 'US'
                 }
             }
-        }
+        })
         self.mock_admin_users = [
             {
                 'email': 'admin1@test.com',
@@ -433,15 +622,23 @@ class TestSendPaymentReceiptEmail(TestCase):
             event_id="evt_test_payment_receipt",
             event_type="invoice.paid",
             checkout_intent=self.checkout_intent,
+            data={'created': 1700000000},
         )
-        self.invoice_summary = StripeEventSummary.objects.create(
+        # The post_save signal tries to auto-create StripeEventSummary but fails silently
+        # when the event data lacks a Stripe object payload. Create it directly here.
+        self.invoice_summary, _ = StripeEventSummary.objects.get_or_create(
             stripe_event_data=self.stripe_event_data,
-            event_type="invoice.paid",
-            stripe_invoice_id=self.invoice_id,
-            invoice_amount_paid=198000,  # $1,980.00 (5 licenses * $396.00)
-            invoice_unit_amount=39600,   # $396.00 per license
-            invoice_quantity=5,
-            invoice_currency='usd',
+            defaults={
+                'event_id': self.stripe_event_data.event_id,
+                'event_type': self.stripe_event_data.event_type,
+                'stripe_event_created_at': datetime.fromtimestamp(1700000000, tz=dt_timezone.utc),
+                'checkout_intent': self.checkout_intent,
+                'stripe_invoice_id': self.invoice_id,
+                'invoice_amount_paid': 198000,  # $1,980.00 (5 licenses * $396.00)
+                'invoice_unit_amount': 39600,   # $396.00 per license
+                'invoice_quantity': 5,
+                'invoice_currency': 'usd',
+            },
         )
 
     @mock.patch('enterprise_access.apps.customer_billing.tasks.get_stripe_payment_method')
@@ -731,12 +928,18 @@ class TestSendTrialEndingReminderEmailTask(TestCase):
             event_id="evt_test_123",
             event_type="customer.subscription.created",
             checkout_intent=self.checkout_intent,
+            data={'created': 1700000000},
         )
-        StripeEventSummary.objects.create(
+        StripeEventSummary.objects.get_or_create(
             stripe_event_data=stripe_event_data,
-            event_type="customer.subscription.created",
-            stripe_subscription_id="sub_test_123",
-            upcoming_invoice_amount_due=633600,
+            defaults={
+                'event_id': stripe_event_data.event_id,
+                'event_type': stripe_event_data.event_type,
+                'stripe_event_created_at': datetime.fromtimestamp(1700000000, tz=dt_timezone.utc),
+                'checkout_intent': self.checkout_intent,
+                'stripe_subscription_id': "sub_test_123",
+                'upcoming_invoice_amount_due': 633600,
+            },
         )
 
         mock_braze_instance = mock_braze_client.return_value
@@ -952,12 +1155,18 @@ class TestSendTrialEndingReminderEmailTask(TestCase):
             event_id="evt_test_456",
             event_type="invoice.paid",
             checkout_intent=self.checkout_intent,
+            data={'created': 1700000000},
         )
-        StripeEventSummary.objects.create(
+        StripeEventSummary.objects.get_or_create(
             stripe_event_data=stripe_event_data,
-            event_type="invoice.paid",
-            stripe_invoice_id="in_test_789",
-            invoice_amount_paid=100000,
+            defaults={
+                'event_id': stripe_event_data.event_id,
+                'event_type': stripe_event_data.event_type,
+                'stripe_event_created_at': datetime.fromtimestamp(1700000000, tz=dt_timezone.utc),
+                'checkout_intent': self.checkout_intent,
+                'stripe_invoice_id': "in_test_789",
+                'invoice_amount_paid': 100000,
+            },
         )
 
         mock_braze_instance = mock_braze_client.return_value
@@ -1026,7 +1235,7 @@ class TestSendTrialEndAndSubscriptionStartedEmailTask(TestCase):
         mock_checkout_intent,
         mock_get_stripe_subscription
     ):
-        subscription = {
+        subscription = AttrDict.wrap({
             'id': 'sub_123',
             'quantity': 5,
             'plan': {'amount': 10000},
@@ -1039,7 +1248,7 @@ class TestSendTrialEndAndSubscriptionStartedEmailTask(TestCase):
                 ]
             },
             'latest_invoice': {'hosted_invoice_url': 'https://invoice.url'},
-        }
+        })
         checkout_intent_obj = mock.Mock()
         checkout_intent_obj.enterprise_name = 'Test Org'
         checkout_intent_obj.enterprise_slug = 'test-org'
@@ -1082,7 +1291,7 @@ class TestSendTrialEndAndSubscriptionStartedEmailTask(TestCase):
         mock_checkout_intent,
         mock_get_stripe_subscription
     ):
-        subscription = {
+        subscription = AttrDict.wrap({
             'id': 'sub_123',
             'quantity': 5,
             'plan': {'amount': 10000},
@@ -1095,7 +1304,7 @@ class TestSendTrialEndAndSubscriptionStartedEmailTask(TestCase):
                 ]
             },
             'latest_invoice': {'hosted_invoice_url': 'https://invoice.url'},
-        }
+        })
         checkout_intent_obj = mock.Mock()
         checkout_intent_obj.enterprise_name = 'Test Org'
         checkout_intent_obj.enterprise_slug = 'test-org'

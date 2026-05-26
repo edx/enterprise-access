@@ -12,8 +12,9 @@ from enterprise_access.apps.content_assignments.constants import (
     AssignmentRecentActionTypes,
     LearnerContentAssignmentStateChoices
 )
+from enterprise_access.apps.content_assignments.content_metadata_api import get_normalized_metadata_for_assignment
 from enterprise_access.apps.content_assignments.models import LearnerContentAssignment, LearnerContentAssignmentAction
-from enterprise_access.utils import get_automatic_expiration_date_and_reason, get_normalized_metadata_for_assignment
+from enterprise_access.utils import get_automatic_expiration_date_and_reason
 
 logger = logging.getLogger(__name__)
 

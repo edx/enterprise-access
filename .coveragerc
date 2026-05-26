@@ -3,31 +3,14 @@ branch = True
 data_file = .coverage
 source=enterprise_access
 omit =
-    enterprise_access/**/tests/*
-    enterprise_access/**/test_*.py
-
-[report]
-omit =
     enterprise_access/settings/*
     enterprise_access/conf/*
-    enterprise_access/apps/subsidy_access_policy/mocks.py
-    enterprise_access/apps/api_client/*
-    enterprise_access/apps/*/management/commands/*
-    enterprise_access/apps/content_assignments/models.py
-    enterprise_access/apps/content_assignments/exceptions.py
-    enterprise_access/apps/customer_billing/api.py
-    enterprise_access/apps/events/utils.py
-    enterprise_access/apps/enterprise_groups/tasks.py
-    enterprise_access/apps/content_metadata/api.py
-    enterprise_access/apps/subsidy_access_policy/subsidy_api.py
-    enterprise_access/apps/subsidy_access_policy/content_metadata_api.py
-    enterprise_access/apps/subsidy_request/tasks.py
-    enterprise_access/apps/admin_portal_learner_profile/apps.py
-    enterprise_access/docker_gunicorn_configuration.py
+    */mocks.py
     */wsgi.py
+    */urls.py
     */migrations/*
-    */admin/*
-    */templates/*
+    */admin.py
     */static/*
+    */templates/*
     */tests/*
-    */test_*.py
+    test_*

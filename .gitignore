@@ -161,15 +161,10 @@ enterprise_access/settings/private.py
 enterprise_access/assets
 
 # claude code personalization
-.claude/
-package-lock.json
-package.json
+.claude/settings.local.json
 
-# Ralph
-.ralph/.*
-.ralph/status.json
-.ralph/progress.json
-.ralph/specs/
-.ralph/logs
-.ralph/live.log
-.ralph/fix_plan.md
+# personal notes
+.notes/
+
+# Ralph (deprecated, can be removed once no one has local .ralph/ dirs)
+.ralph/

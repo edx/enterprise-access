@@ -71,7 +71,6 @@ THIRD_PARTY_APPS = (
     'django_filters',
     'django_object_actions',
     'rest_framework',
-    'rest_framework_swagger',
     'rules.apps.AutodiscoverRulesConfig',
     'simple_history',
     'social_django',
@@ -347,6 +346,7 @@ SYSTEM_TO_FEATURE_ROLE_MAPPING = {
         PROVISIONING_ADMIN_ROLE,
         CUSTOMER_BILLING_OPERATOR_ROLE,
         ADMIN_LEARNER_PROFILE_ADMIN_ROLE,
+        STRIPE_EVENT_SUMMARY_ADMIN_ROLE,
     ],
     SYSTEM_ENTERPRISE_ADMIN_ROLE: [
         # enterprise admins only need learner-level access to Subsidy Access Policy APIs since they aren't responsible
@@ -535,9 +535,11 @@ BRAZE_ASSIGNMENT_AUTOMATIC_CANCELLATION_NOTIFICATION_CAMPAIGN = ''
 
 # Braze campaigns for customer billing (apps.customer_billing)
 BRAZE_TRIAL_CANCELLATION_CAMPAIGN = ''
+BRAZE_PAID_CANCELLATION_CAMPAIGN = ''
 BRAZE_ENTERPRISE_PROVISION_TRIAL_ENDING_SOON_CAMPAIGN = ''
 BRAZE_BILLING_ERROR_CAMPAIGN = ''
 BRAZE_SSP_CANCELATION_FINALIZATION_CAMPAIGN = ''
+BRAZE_SSP_SUBSCRIPTION_REINSTATED_CAMPAIGN = ''
 
 # Braze configuration
 BRAZE_API_URL = ''
