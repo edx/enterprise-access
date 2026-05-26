@@ -32,6 +32,25 @@ logger = logging.getLogger(__name__)
 User = get_user_model()
 
 
+# CREATED and PAID are the non-terminal checkout states that should still block
+# a duplicate checkout while fulfillment is in progress.
+ACTIVE_CHECKOUT_INTENT_STATES = (
+    CheckoutIntentState.CREATED,
+    CheckoutIntentState.PAID,
+)
+
+# For Teams trials (stripe_product_id=''), FULFILLED must also block a new trial
+# so that a user cannot start a second trial after the first is provisioned.
+# Error and expired states do not block — the user may retry.
+TEAMS_BLOCKING_STATES = (
+    CheckoutIntentState.CREATED,
+    CheckoutIntentState.PAID,
+    CheckoutIntentState.FULFILLED,
+)
+
+UNSET = object()
+
+
 class FailedCheckoutIntentConflict(Exception):
     pass
 
@@ -105,11 +124,11 @@ class EnterpriseAcademy(TimeStampedModel):
         default='',
         help_text='Stripe price lookup key used to resolve academy pricing context.',
     )
-    catalog_query_id = models.UUIDField(
+    catalog_query_id = models.IntegerField(
         null=True,
         blank=True,
         db_index=True,
-        help_text='Catalog query UUID for this Academy.',
+        help_text='Catalog query integer ID for this Academy.',
     )
     product_key = models.SlugField(
         max_length=255,
@@ -182,21 +201,19 @@ class CheckoutIntent(TimeStampedModel):
         verbose_name = "Enterprise Checkout Intent"
         verbose_name_plural = "Enterprise Checkout Intents"
         constraints = [
+            # Essentials (non-empty stripe_product_id): one active intent per
+            # (user, slug, product) while payment/fulfillment is still in-flight.
             models.UniqueConstraint(
                 fields=["user", "enterprise_slug", "stripe_product_id"],
-                condition=models.Q(
-                    stripe_product_id__isnull=False,
-                    state__in=["created", "paid"],
-                ),
+                condition=~models.Q(stripe_product_id='') & models.Q(state__in=ACTIVE_CHECKOUT_INTENT_STATES),
                 name="unique_active_checkout_intent_with_product",
             ),
+            # Teams (stripe_product_id=''): one trial per user regardless of slug.
+            # Includes FULFILLED so a provisioned trial blocks a second attempt.
             models.UniqueConstraint(
-                fields=["user", "enterprise_slug"],
-                condition=models.Q(
-                    stripe_product_id__isnull=True,
-                    state__in=["created", "paid"],
-                ),
-                name="unique_active_checkout_intent_without_product",
+                fields=["user"],
+                condition=models.Q(stripe_product_id='', state__in=TEAMS_BLOCKING_STATES),
+                name="unique_teams_checkout_intent_per_user",
             ),
         ]
 
@@ -235,21 +252,16 @@ class CheckoutIntent(TimeStampedModel):
         CheckoutIntentState.ERRORED_FULFILLMENT_STALLED,
         CheckoutIntentState.ERRORED_PROVISIONING,
     }
-    ACTIVE_STATES = {
-        CheckoutIntentState.CREATED,
-        CheckoutIntentState.PAID,
-    }
-
     user = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
     )
     stripe_product_id = models.CharField(
         max_length=255,
-        null=True,
+        null=False,
         blank=True,
         db_index=True,
-        help_text="Stripe Product ID for paid/academy intents. NULL for Teams intents.",
+        help_text="Stripe Product ID for the checkout intent.",
     )
     uuid = models.UUIDField(
         unique=True,
@@ -771,15 +783,15 @@ class CheckoutIntent(TimeStampedModel):
             )
 
     @classmethod
-    def for_user(cls, user, enterprise_slug=None, stripe_product_id=None):
+    def for_user(cls, user, enterprise_slug=None, stripe_product_id=UNSET):
         """
         Fetch the most recent active CheckoutIntent for a user.
 
         Args:
             user: The Django User.
             enterprise_slug: Optional enterprise slug to filter by.
-            stripe_product_id: Optional Stripe product ID. Pass None explicitly
-                to match Teams intents (where stripe_product_id IS NULL).
+            stripe_product_id: Optional Stripe product ID. Omit this argument to
+                search across all products.
 
         Returns:
             CheckoutIntent: The user's most recent active checkout intent, or None.
@@ -789,7 +801,7 @@ class CheckoutIntent(TimeStampedModel):
 
         queryset = cls.objects.filter(
             user=user,
-            state__in=cls.ACTIVE_STATES,
+            state__in=ACTIVE_CHECKOUT_INTENT_STATES,
         ).filter(
             models.Q(expires_at__isnull=True) | models.Q(expires_at__gt=timezone.now())
         )
@@ -797,10 +809,8 @@ class CheckoutIntent(TimeStampedModel):
         if enterprise_slug is not None:
             queryset = queryset.filter(enterprise_slug=enterprise_slug)
 
-        if stripe_product_id is not None:
+        if stripe_product_id is not UNSET:
             queryset = queryset.filter(stripe_product_id=stripe_product_id)
-        else:
-            queryset = queryset.filter(stripe_product_id__isnull=True)
 
         return queryset.order_by("-created").first()
 

@@ -55,7 +55,7 @@ class TestEnterpriseAcademyModel(TransactionTestCase):
             'tags': ['ai', 'ml'],
             'stripe_product_id': 'prod_ai_123',
             'stripe_price_lookup_key': 'essentials_ai_annual',
-            'catalog_query_id': uuid4(),
+            'catalog_query_id': 42,
             'product_key': 'ai-academy',
             'slug': 'ai-academy',
             'is_active': True,
@@ -66,7 +66,7 @@ class TestEnterpriseAcademyModel(TransactionTestCase):
 
     def test_create_with_all_fields(self):
         """Verify all model fields can be persisted and read correctly."""
-        catalog_query_id = uuid4()
+        catalog_query_id = 42
         academy = self._create_academy(catalog_query_id=catalog_query_id)
 
         self.assertIsNotNone(academy.uuid)
@@ -169,13 +169,13 @@ class TestCheckoutIntentUniqueConstraints(TransactionTestCase):
     def setUp(self):
         self.user = UserFactory()
 
-    def test_unique_active_for_null_stripe_product_id(self):
-        """Two active intents with the same user+enterprise_slug and NULL stripe_product_id should conflict."""
+    def test_unique_active_for_blank_stripe_product_id(self):
+        """Two active intents with the same user+enterprise_slug and blank stripe_product_id should conflict."""
         CheckoutIntent.objects.create(
             user=self.user,
             enterprise_slug='test-enterprise',
             enterprise_name='Test Enterprise',
-            stripe_product_id=None,
+            stripe_product_id='',
             state=CheckoutIntentState.CREATED,
             quantity=10,
             expires_at=timezone.now() + timedelta(hours=1),
@@ -185,7 +185,7 @@ class TestCheckoutIntentUniqueConstraints(TransactionTestCase):
                 user=self.user,
                 enterprise_slug='test-enterprise',
                 enterprise_name='Test Enterprise 2',
-                stripe_product_id=None,
+                stripe_product_id='',
                 state=CheckoutIntentState.CREATED,
                 quantity=5,
                 expires_at=timezone.now() + timedelta(hours=1),
@@ -241,7 +241,7 @@ class TestCheckoutIntentUniqueConstraints(TransactionTestCase):
             user=self.user,
             enterprise_slug='test-enterprise',
             enterprise_name='Test Enterprise',
-            stripe_product_id=None,
+            stripe_product_id='prod_123',
             state=CheckoutIntentState.EXPIRED,
             quantity=10,
             expires_at=timezone.now() - timedelta(hours=1),
@@ -250,7 +250,7 @@ class TestCheckoutIntentUniqueConstraints(TransactionTestCase):
             user=self.user,
             enterprise_slug='test-enterprise',
             enterprise_name='Test Enterprise',
-            stripe_product_id=None,
+            stripe_product_id='prod_123',
             state=CheckoutIntentState.CREATED,
             quantity=5,
             expires_at=timezone.now() + timedelta(hours=1),
@@ -301,13 +301,13 @@ class TestCheckoutIntentUniqueConstraints(TransactionTestCase):
         )
         self.assertIsNotNone(intent2.pk)
 
-    def test_null_product_and_non_null_product_allowed(self):
-        """A NULL and a non-NULL stripe_product_id for the same user+slug are allowed."""
+    def test_blank_product_and_non_blank_product_allowed(self):
+        """A blank and a non-blank stripe_product_id for the same user+slug are allowed."""
         CheckoutIntent.objects.create(
             user=self.user,
             enterprise_slug='test-enterprise',
             enterprise_name='Test Enterprise',
-            stripe_product_id=None,
+            stripe_product_id='',
             state=CheckoutIntentState.CREATED,
             quantity=10,
             expires_at=timezone.now() + timedelta(hours=1),
@@ -1084,7 +1084,7 @@ class TestCheckoutIntentModel(TestCase):
             user=user,
             enterprise_slug='test-enterprise',
             enterprise_name='Test Enterprise',
-            stripe_product_id=None,
+            stripe_product_id='prod_123',
             state=CheckoutIntentState.CREATED,
             quantity=10,
             expires_at=timezone.now() - timedelta(hours=1),
@@ -1099,7 +1099,7 @@ class TestCheckoutIntentModel(TestCase):
             user=user,
             enterprise_slug='test-enterprise',
             enterprise_name='Test Enterprise',
-            stripe_product_id=None,
+            stripe_product_id='prod_123',
             state=CheckoutIntentState.FULFILLED,
             quantity=10,
             expires_at=timezone.now() + timedelta(hours=1),
@@ -1107,20 +1107,18 @@ class TestCheckoutIntentModel(TestCase):
         result = CheckoutIntent.for_user(user=user, enterprise_slug='test-enterprise')
         self.assertIsNone(result)
 
-    def test_for_user_null_product_matches_teams(self):
-        """Test that for_user with stripe_product_id=None matches Teams intents."""
+    def test_for_user_without_product_filter_returns_latest_active_intent(self):
+        """Test that omitting stripe_product_id does not filter out product intents."""
         user = UserFactory()
-        teams_intent = CheckoutIntent.objects.create(
+        CheckoutIntent.objects.create(
             user=user,
             enterprise_slug='test-enterprise',
             enterprise_name='Test Enterprise',
-            stripe_product_id=None,
             state=CheckoutIntentState.CREATED,
             quantity=10,
             expires_at=timezone.now() + timedelta(hours=1),
         )
-        # Create a product intent too
-        CheckoutIntent.objects.create(
+        latest_intent = CheckoutIntent.objects.create(
             user=user,
             enterprise_slug='test-enterprise',
             enterprise_name='Test Enterprise',
@@ -1129,12 +1127,8 @@ class TestCheckoutIntentModel(TestCase):
             quantity=5,
             expires_at=timezone.now() + timedelta(hours=1),
         )
-        result = CheckoutIntent.for_user(
-            user=user,
-            enterprise_slug='test-enterprise',
-            stripe_product_id=None,
-        )
-        self.assertEqual(result, teams_intent)
+        result = CheckoutIntent.for_user(user=user, enterprise_slug='test-enterprise')
+        self.assertEqual(result, latest_intent)
 
     def test_for_user_unauthenticated_returns_none(self):
         """Test that for_user returns None for unauthenticated/null users."""
