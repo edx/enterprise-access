@@ -1,18 +1,16 @@
 """Tests for prompts admin."""
 from django.contrib import admin
 from django.contrib.admin.sites import AdminSite
-from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.http import HttpRequest
 from django.test import TestCase
 from djangoql.admin import DjangoQLSearchMixin
 from simple_history.admin import SimpleHistoryAdmin
 
-from enterprise_access.apps.prompts.admin import XpertLearnerPathwaysSystemPromptAdmin
+from enterprise_access.apps.core.tests.factories import UserFactory
+from enterprise_access.apps.prompts.admin import PrettyJSONWidget, XpertLearnerPathwaysSystemPromptAdmin
 from enterprise_access.apps.prompts.models import PromptType, XpertLearnerPathwaysSystemPrompt
 from enterprise_access.apps.prompts.tests.factories import XpertLearnerPathwaysSystemPromptFactory
-
-User = get_user_model()
 
 
 class XpertLearnerPathwaysSystemPromptAdminTests(TestCase):
@@ -23,7 +21,7 @@ class XpertLearnerPathwaysSystemPromptAdminTests(TestCase):
         self.admin_site = AdminSite()
         self.admin = XpertLearnerPathwaysSystemPromptAdmin(XpertLearnerPathwaysSystemPrompt, self.admin_site)
         self.request = HttpRequest()
-        self.user = User.objects.create_superuser(username='admin', email='admin@example.com', password='pass')
+        self.user = UserFactory(is_staff=True, is_superuser=True)
         self.request.user = self.user
 
     def test_admin_is_registered(self):
@@ -149,3 +147,50 @@ class XpertLearnerPathwaysSystemPromptAdminTests(TestCase):
         self.assertIsNotNone(prompt2.uuid)
         self.assertNotEqual(prompt1.uuid, prompt2.uuid)
         self.assertEqual(XpertLearnerPathwaysSystemPrompt.objects.count(), 2)
+
+    def test_form_uses_pretty_json_widget(self):
+        """Test that the form uses PrettyJSONWidget for output_schema field."""
+        form_class = self.admin.get_form(self.request)
+        form = form_class()
+
+        # Verify output_schema field uses PrettyJSONWidget
+        self.assertIsInstance(form.fields['output_schema'].widget, PrettyJSONWidget)
+
+    def test_pretty_json_widget_formats_dict_with_indentation(self):
+        """Test that PrettyJSONWidget renders dict values as indented JSON."""
+        widget = PrettyJSONWidget()
+        test_schema = {
+            "type": "object",
+            "properties": {
+                "intent": {"type": "string"},
+                "confidence": {"type": "number"}
+            }
+        }
+
+        formatted_value = widget.format_value(test_schema)
+
+        # Should be formatted with indentation
+        self.assertIn('\n', formatted_value)
+        self.assertIn('  "type":', formatted_value)
+        self.assertIn('  "properties":', formatted_value)
+
+    def test_pretty_json_widget_handles_none_value(self):
+        """Test that PrettyJSONWidget handles None values gracefully."""
+        widget = PrettyJSONWidget()
+        self.assertIsNone(widget.format_value(None))
+
+    def test_pretty_json_widget_handles_empty_string(self):
+        """Test that PrettyJSONWidget handles empty strings gracefully."""
+        widget = PrettyJSONWidget()
+        self.assertEqual(widget.format_value(''), '')
+
+    def test_pretty_json_widget_reformats_json_string(self):
+        """Test that PrettyJSONWidget reformats valid JSON strings."""
+        widget = PrettyJSONWidget()
+        json_string = '{"type":"object","properties":{"name":{"type":"string"}}}'
+
+        formatted_value = widget.format_value(json_string)
+
+        # Should be reformatted with indentation
+        self.assertIn('\n', formatted_value)
+        self.assertIn('  "type":', formatted_value)
