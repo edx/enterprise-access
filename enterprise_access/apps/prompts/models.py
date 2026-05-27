@@ -114,3 +114,44 @@ class XpertLearnerPathwaysSystemPrompt(BaseSystemPrompt):
     def get_current(cls, prompt_type: str) -> Self | None:
         """Return the configured prompt row for ``prompt_type``, or ``None``."""
         return cls.objects.filter(prompt_type=prompt_type).first()
+
+
+"""
+Example output_schema JSON structure (JSON Schema format):
+
+{
+  "type": "object",
+  "properties": {
+    "intent": {
+      "type": "string",
+      "description": "The identified learner intent"
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Confidence score for the classification"
+    },
+    "recommendations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          }
+        },
+        "required": ["title", "description"]
+      }
+    }
+  },
+  "required": ["intent", "confidence"]
+}
+"""

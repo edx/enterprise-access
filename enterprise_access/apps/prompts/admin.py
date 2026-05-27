@@ -1,9 +1,47 @@
 """Django admin for prompts. Full admin implementation tracked in ENT-11857."""
+import json
+
+from django import forms
 from django.contrib import admin
 from djangoql.admin import DjangoQLSearchMixin
 from simple_history.admin import SimpleHistoryAdmin
 
 from enterprise_access.apps.prompts.models import XpertLearnerPathwaysSystemPrompt
+
+
+class PrettyJSONWidget(forms.Textarea):
+    """Custom widget that formats JSON with proper indentation."""
+    
+    def format_value(self, value):
+        """Format the JSON value with indentation for display."""
+        if value is None or value == '':
+            return value
+        try:
+            # If value is already a dict/list, format it
+            if isinstance(value, (dict, list)):
+                return json.dumps(value, indent=2, ensure_ascii=False)
+            # If value is a string, try to parse and reformat it
+            if isinstance(value, str):
+                obj = json.loads(value)
+                return json.dumps(obj, indent=2, ensure_ascii=False)
+            return value
+        except (json.JSONDecodeError, TypeError):
+            return value
+
+
+class XpertLearnerPathwaysSystemPromptForm(forms.ModelForm):
+    """Custom form with pretty JSON formatting."""
+    
+    class Meta:
+        model = XpertLearnerPathwaysSystemPrompt
+        fields = '__all__'
+        widgets = {
+            'output_schema': PrettyJSONWidget(attrs={
+                'rows': 20,
+                'cols': 80,
+                'style': 'font-family: monospace;'
+            }),
+        }
 
 
 @admin.register(XpertLearnerPathwaysSystemPrompt)
@@ -15,10 +53,13 @@ class XpertLearnerPathwaysSystemPromptAdmin(DjangoQLSearchMixin, SimpleHistoryAd
     Each prompt_type has exactly one configured prompt (enforced by unique constraint).
     """
 
+    form = XpertLearnerPathwaysSystemPromptForm
+
     list_display = (
-        'notes',
         'prompt_type',
+        'notes',
         'modified',
+        'created',
     )
 
     list_filter = (
