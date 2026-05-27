@@ -67,16 +67,16 @@ class XpertLearnerPathwaysSystemPromptAdminTests(TestCase):
     def test_editable_fields(self):
         """Test that the correct fields are editable in the admin form."""
         prompt = XpertLearnerPathwaysSystemPromptFactory()
-        
+
         # Get the form for this object
         form_class = self.admin.get_form(self.request, prompt)
         form = form_class(instance=prompt)
-        
+
         # These fields should be editable (present in form and not disabled)
         editable_fields = ['system_prompt', 'notes', 'output_schema', 'prompt_type']
         for field_name in editable_fields:
             self.assertIn(field_name, form.fields, f'{field_name} should be in form')
-        
+
         # created and modified should be readonly
         readonly_fields = self.admin.get_readonly_fields(self.request, prompt)
         self.assertIn('created', readonly_fields)
@@ -85,7 +85,7 @@ class XpertLearnerPathwaysSystemPromptAdminTests(TestCase):
     def test_save_model_calls_full_clean(self):
         """Test that save_model calls obj.full_clean() before saving."""
         prompt = XpertLearnerPathwaysSystemPromptFactory.build()
-        
+
         with mock.patch.object(prompt, 'full_clean', wraps=prompt.full_clean) as mock_full_clean:
             with mock.patch.object(prompt, 'save'):
                 self.admin.save_model(self.request, prompt, form=None, change=False)
@@ -95,17 +95,17 @@ class XpertLearnerPathwaysSystemPromptAdminTests(TestCase):
         """Test that validation errors from full_clean surface correctly."""
         # Create a prompt with invalid data (blank system_prompt)
         prompt = XpertLearnerPathwaysSystemPromptFactory.build(system_prompt='')
-        
+
         with self.assertRaises(ValidationError) as context:
             self.admin.save_model(self.request, prompt, form=None, change=False)
-        
+
         # Verify the validation error is about system_prompt
         self.assertIn('system_prompt', str(context.exception))
 
     def test_single_object_delete_blocked(self):
         """Test that single-object deletion is blocked."""
         prompt = XpertLearnerPathwaysSystemPromptFactory()
-        
+
         # has_delete_permission should return False
         self.assertFalse(self.admin.has_delete_permission(self.request, prompt))
 
@@ -121,11 +121,11 @@ class XpertLearnerPathwaysSystemPromptAdminTests(TestCase):
             prompt_type=PromptType.LEARNER_INTENT,
             system_prompt='Original prompt'
         )
-        
+
         # Modify the prompt
         prompt.system_prompt = 'Updated prompt'
         prompt.save()
-        
+
         # Verify history exists
         history = prompt.history.all()
         self.assertEqual(history.count(), 2)  # Original + update
@@ -136,7 +136,7 @@ class XpertLearnerPathwaysSystemPromptAdminTests(TestCase):
         """Test that the unique constraint on prompt_type is enforced."""
         # Create first prompt
         XpertLearnerPathwaysSystemPromptFactory(prompt_type=PromptType.LEARNER_INTENT)
-        
+
         # Try to create another with same prompt_type
         with self.assertRaises(Exception):  # Could be IntegrityError or ValidationError
             XpertLearnerPathwaysSystemPromptFactory(prompt_type=PromptType.LEARNER_INTENT)
@@ -145,9 +145,8 @@ class XpertLearnerPathwaysSystemPromptAdminTests(TestCase):
         """Test that multiple prompts with different types can coexist."""
         prompt1 = XpertLearnerPathwaysSystemPromptFactory(prompt_type=PromptType.LEARNER_INTENT)
         prompt2 = XpertLearnerPathwaysSystemPromptFactory(prompt_type=PromptType.RECOMMENDATIONS_FEEDBACK)
-        
+
         self.assertIsNotNone(prompt1.uuid)
         self.assertIsNotNone(prompt2.uuid)
         self.assertNotEqual(prompt1.uuid, prompt2.uuid)
         self.assertEqual(XpertLearnerPathwaysSystemPrompt.objects.count(), 2)
-
