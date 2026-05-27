@@ -1,6 +1,5 @@
 """Tests for prompts admin."""
-from unittest import mock
-
+from django.contrib import admin
 from django.contrib.admin.sites import AdminSite
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
@@ -29,7 +28,12 @@ class XpertLearnerPathwaysSystemPromptAdminTests(TestCase):
 
     def test_admin_is_registered(self):
         """Test that XpertLearnerPathwaysSystemPrompt is registered in admin."""
-        self.assertIsInstance(self.admin, XpertLearnerPathwaysSystemPromptAdmin)
+        # pylint: disable=protected-access
+        self.assertIn(XpertLearnerPathwaysSystemPrompt, admin.site._registry)
+        self.assertIsInstance(
+            admin.site._registry[XpertLearnerPathwaysSystemPrompt],
+            XpertLearnerPathwaysSystemPromptAdmin
+        )
 
     def test_admin_uses_djangoql_search_mixin(self):
         """Test that admin uses DjangoQLSearchMixin."""
@@ -41,7 +45,7 @@ class XpertLearnerPathwaysSystemPromptAdminTests(TestCase):
 
     def test_list_display_configuration(self):
         """Test that list_display is configured correctly."""
-        expected = ('notes', 'prompt_type', 'modified')
+        expected = ('prompt_type', 'notes', 'modified', 'created')
         self.assertEqual(self.admin.list_display, expected)
 
     def test_list_filter_configuration(self):
@@ -82,25 +86,20 @@ class XpertLearnerPathwaysSystemPromptAdminTests(TestCase):
         self.assertIn('created', readonly_fields)
         self.assertIn('modified', readonly_fields)
 
-    def test_save_model_calls_full_clean(self):
-        """Test that save_model calls obj.full_clean() before saving."""
-        prompt = XpertLearnerPathwaysSystemPromptFactory.build()
+    def test_save_model_validation_rejected(self):
+        """Test that invalid data is rejected through form/model validation."""
+        # Create a form with invalid data (blank system_prompt)
+        form_class = self.admin.get_form(self.request)
+        form_data = {
+            'prompt_type': PromptType.LEARNER_INTENT,
+            'system_prompt': '',  # Invalid: blank
+            'notes': 'Test notes',
+        }
+        form = form_class(data=form_data)
 
-        with mock.patch.object(prompt, 'full_clean', wraps=prompt.full_clean) as mock_full_clean:
-            with mock.patch.object(prompt, 'save'):
-                self.admin.save_model(self.request, prompt, form=None, change=False)
-                mock_full_clean.assert_called_once()
-
-    def test_save_model_validation_errors_surface(self):
-        """Test that validation errors from full_clean surface correctly."""
-        # Create a prompt with invalid data (blank system_prompt)
-        prompt = XpertLearnerPathwaysSystemPromptFactory.build(system_prompt='')
-
-        with self.assertRaises(ValidationError) as context:
-            self.admin.save_model(self.request, prompt, form=None, change=False)
-
-        # Verify the validation error is about system_prompt
-        self.assertIn('system_prompt', str(context.exception))
+        # Form validation should catch this
+        self.assertFalse(form.is_valid())
+        self.assertIn('system_prompt', form.errors)
 
     def test_single_object_delete_blocked(self):
         """Test that single-object deletion is blocked."""
@@ -137,8 +136,8 @@ class XpertLearnerPathwaysSystemPromptAdminTests(TestCase):
         # Create first prompt
         XpertLearnerPathwaysSystemPromptFactory(prompt_type=PromptType.LEARNER_INTENT)
 
-        # Try to create another with same prompt_type
-        with self.assertRaises(Exception):  # Could be IntegrityError or ValidationError
+        # Try to create another with same prompt_type - should raise ValidationError
+        with self.assertRaises(ValidationError):
             XpertLearnerPathwaysSystemPromptFactory(prompt_type=PromptType.LEARNER_INTENT)
 
     def test_multiple_prompt_types_allowed(self):

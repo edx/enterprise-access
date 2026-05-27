@@ -1,4 +1,4 @@
-"""Django admin for prompts. Full admin implementation tracked in ENT-11857."""
+"""Django admin for prompts."""
 import json
 
 from django import forms
@@ -11,7 +11,7 @@ from enterprise_access.apps.prompts.models import XpertLearnerPathwaysSystemProm
 
 class PrettyJSONWidget(forms.Textarea):
     """Custom widget that formats JSON with proper indentation."""
-    
+
     def format_value(self, value):
         """Format the JSON value with indentation for display."""
         if value is None or value == '':
@@ -31,7 +31,7 @@ class PrettyJSONWidget(forms.Textarea):
 
 class XpertLearnerPathwaysSystemPromptForm(forms.ModelForm):
     """Custom form with pretty JSON formatting."""
-    
+
     class Meta:
         model = XpertLearnerPathwaysSystemPrompt
         fields = '__all__'
@@ -78,14 +78,6 @@ class XpertLearnerPathwaysSystemPromptAdmin(DjangoQLSearchMixin, SimpleHistoryAd
     )
 
     ordering = ('-modified',)
-
-    def save_model(self, request, obj, form, change):
-        """
-        Override to call full_clean() before saving to ensure model validation.
-        Validation errors are automatically handled by Django's admin form.
-        """
-        obj.full_clean()
-        super().save_model(request, obj, form, change)
 
     def has_delete_permission(self, request, obj=None):
         """
