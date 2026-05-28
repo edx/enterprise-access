@@ -80,20 +80,49 @@ class XpertLearnerPathwaysSystemPromptAdminTests(TestCase):
         self.assertIn('created', readonly_fields)
         self.assertIn('modified', readonly_fields)
 
-    def test_save_model_validation_rejected(self):
-        """Test that invalid data is rejected through form/model validation."""
-        # Create a form with invalid data (blank system_prompt)
+    def test_form_validates_required_fields(self):
+        """Test that the admin form validates required fields and data types."""
         form_class = self.admin.get_form(self.request)
-        form_data = {
-            'prompt_type': PromptType.LEARNER_INTENT,
-            'system_prompt': '',  # Invalid: blank
-            'notes': 'Test notes',
-        }
-        form = form_class(data=form_data)
 
-        # Form validation should catch this
-        self.assertFalse(form.is_valid())
-        self.assertIn('system_prompt', form.errors)
+        # Test blank system_prompt
+        with self.subTest('blank system_prompt'):
+            form = form_class(data={
+                'prompt_type': PromptType.LEARNER_INTENT,
+                'system_prompt': '',
+                'notes': 'Test notes',
+            })
+            self.assertFalse(form.is_valid())
+            self.assertIn('system_prompt', form.errors)
+
+        # Test whitespace-only system_prompt
+        with self.subTest('whitespace-only system_prompt'):
+            form = form_class(data={
+                'prompt_type': PromptType.LEARNER_INTENT,
+                'system_prompt': '   \n\t   ',
+                'notes': 'Test notes',
+            })
+            self.assertFalse(form.is_valid())
+            self.assertIn('system_prompt', form.errors)
+
+        # Test invalid output_schema (non-dict JSON)
+        with self.subTest('non-dict output_schema'):
+            form = form_class(data={
+                'prompt_type': PromptType.LEARNER_INTENT,
+                'system_prompt': 'You are a helpful assistant.',
+                'output_schema': '["not", "a", "dict"]',  # JSON array string
+            })
+            self.assertFalse(form.is_valid())
+            self.assertIn('output_schema', form.errors)
+
+        # Test valid data passes
+        with self.subTest('valid data'):
+            form = form_class(data={
+                'prompt_type': PromptType.LEARNER_INTENT,
+                'system_prompt': 'You are a helpful assistant.',
+                'notes': 'Test notes',
+                'output_schema': '{"type": "object"}',
+            })
+            self.assertTrue(form.is_valid(), f'Form errors: {form.errors}')
 
     def test_single_object_delete_blocked(self):
         """Test that single-object deletion is blocked."""
