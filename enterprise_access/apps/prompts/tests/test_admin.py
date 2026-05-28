@@ -41,46 +41,42 @@ class XpertLearnerPathwaysSystemPromptAdminTests(TestCase):
         """Test that admin uses SimpleHistoryAdmin."""
         self.assertIsInstance(self.admin, SimpleHistoryAdmin)
 
-    def test_list_display_configuration(self):
-        """Test that list_display is configured correctly."""
-        expected = ('prompt_type', 'notes', 'modified', 'created')
-        self.assertEqual(self.admin.list_display, expected)
+    def test_admin_configuration(self):
+        """Test that admin list/filter/search/ordering configuration is correct."""
+        # List display configuration
+        self.assertEqual(
+            self.admin.list_display,
+            ('prompt_type', 'notes', 'modified', 'created')
+        )
 
-    def test_list_filter_configuration(self):
-        """Test that list_filter is configured correctly."""
-        expected = ('prompt_type',)
-        self.assertEqual(self.admin.list_filter, expected)
+        # List filter configuration
+        self.assertEqual(self.admin.list_filter, ('prompt_type',))
 
-    def test_search_fields_configuration(self):
-        """Test that search_fields is configured correctly."""
-        expected = ('notes', 'system_prompt', 'output_schema')
-        self.assertEqual(self.admin.search_fields, expected)
+        # Search fields configuration
+        # Note: output_schema (JSONField) is intentionally excluded because Django admin's
+        # default __icontains lookup is not supported for JSONField. Users can search JSON
+        # content via DjangoQL instead.
+        self.assertEqual(self.admin.search_fields, ('notes', 'system_prompt'))
 
-    def test_readonly_fields_configuration(self):
-        """Test that readonly_fields is configured correctly."""
-        expected = ('created', 'modified')
-        self.assertEqual(self.admin.readonly_fields, expected)
+        # Ordering configuration
+        self.assertEqual(self.admin.ordering, ('-modified',))
 
-    def test_ordering_configuration(self):
-        """Test that ordering is configured correctly."""
-        expected = ('-modified',)
-        self.assertEqual(self.admin.ordering, expected)
-
-    def test_editable_fields(self):
-        """Test that the correct fields are editable in the admin form."""
+    def test_form_field_configuration(self):
+        """Test that editable and readonly fields are configured correctly in the form."""
         prompt = XpertLearnerPathwaysSystemPromptFactory()
 
         # Get the form for this object
         form_class = self.admin.get_form(self.request, prompt)
         form = form_class(instance=prompt)
 
-        # These fields should be editable (present in form and not disabled)
+        # Verify editable fields are present in the form
         editable_fields = ['system_prompt', 'notes', 'output_schema', 'prompt_type']
         for field_name in editable_fields:
             self.assertIn(field_name, form.fields, f'{field_name} should be in form')
 
-        # created and modified should be readonly
+        # Verify readonly fields configuration
         readonly_fields = self.admin.get_readonly_fields(self.request, prompt)
+        self.assertEqual(readonly_fields, ('created', 'modified'))
         self.assertIn('created', readonly_fields)
         self.assertIn('modified', readonly_fields)
 

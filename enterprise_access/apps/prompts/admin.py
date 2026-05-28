@@ -69,7 +69,6 @@ class XpertLearnerPathwaysSystemPromptAdmin(DjangoQLSearchMixin, SimpleHistoryAd
     search_fields = (
         'notes',
         'system_prompt',
-        'output_schema',
     )
 
     readonly_fields = (
