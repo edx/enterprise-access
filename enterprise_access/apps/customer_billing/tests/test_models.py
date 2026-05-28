@@ -26,6 +26,7 @@ from enterprise_access.apps.customer_billing.models import (
     FailedCheckoutIntentConflict,
     SelfServiceSubscriptionRenewal,
     SlugReservationConflict,
+    SspProduct,
     StripeEventData,
     StripeEventSummary
 )
@@ -1580,3 +1581,57 @@ class TestSelfServiceSubscriptionRenewal(TestCase):
             stripe_event_data__event_type='customer.subscription.updated'
         )
         self.assertIn(renewal, renewals_by_event)
+
+
+class TestSspProduct(TestCase):
+    """Tests for the SspProduct model."""
+
+    def _make_product(self, **kwargs):
+        """Build an unsaved SspProduct with sensible defaults."""
+        defaults = {
+            'slug': 'ai-academy-yearly',
+            'stripe_price_lookup_key': 'ai_academy_yearly_price',
+            'catalog_query_uuid': uuid4(),
+            'academy_uuid': uuid4(),
+        }
+        defaults.update(kwargs)
+        return SspProduct(**defaults)
+
+    def test_str(self):
+        """SspProduct string representation includes slug."""
+        product = self._make_product(slug='teams-yearly')
+        self.assertEqual(str(product), '<SspProduct slug=teams-yearly>')
+
+    @mock.patch('enterprise_access.apps.customer_billing.models.get_cached_academy_data')
+    def test_academy_properties_return_fields(self, mock_get_data):
+        mock_get_data.return_value = {
+            'title': 'AI Academy',
+            'description': 'Learn AI',
+            'marketing_url': 'https://example.com/ai',
+            'thumbnail_url': 'https://example.com/ai.png',
+            'tags': ['ai', 'ml'],
+        }
+        product = self._make_product()
+        self.assertEqual(product.academy_title, 'AI Academy')
+        self.assertEqual(product.academy_description, 'Learn AI')
+        self.assertEqual(product.academy_marketing_url, 'https://example.com/ai')
+        self.assertEqual(product.academy_thumbnail_url, 'https://example.com/ai.png')
+        self.assertEqual(product.academy_tags, ['ai', 'ml'])
+
+    @mock.patch('enterprise_access.apps.customer_billing.models.get_cached_academy_data')
+    def test_academy_properties_return_none_when_no_academy_uuid(self, mock_get_data):
+        mock_get_data.return_value = None
+        product = self._make_product(academy_uuid=None)
+        self.assertIsNone(product.academy_title)
+        self.assertIsNone(product.academy_description)
+        self.assertIsNone(product.academy_marketing_url)
+        self.assertIsNone(product.academy_thumbnail_url)
+        self.assertIsNone(product.academy_tags)
+        mock_get_data.assert_called_with(None)
+
+    @mock.patch('enterprise_access.apps.customer_billing.models.get_cached_academy_data')
+    def test_academy_properties_return_none_on_missing_key(self, mock_get_data):
+        mock_get_data.return_value = {}  # empty dict — keys missing
+        product = self._make_product()
+        self.assertIsNone(product.academy_title)
+        self.assertIsNone(product.academy_tags)

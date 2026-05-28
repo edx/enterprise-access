@@ -23,6 +23,7 @@ from simple_history.models import HistoricalRecords
 from simple_history.utils import bulk_update_with_history
 
 from enterprise_access.apps.customer_billing import stripe_api
+from enterprise_access.apps.customer_billing.academy_api import get_cached_academy_data
 from enterprise_access.apps.customer_billing.constants import ALLOWED_CHECKOUT_INTENT_STATE_TRANSITIONS
 
 from .constants import INTENT_RESERVATION_DURATION_MINUTES, CheckoutIntentState
@@ -42,6 +43,9 @@ class SlugReservationConflict(Exception):
 
 class EnterpriseAcademy(TimeStampedModel):
     """
+    DEPRECATED — replaced by SspProduct. Do not add new consumers.
+    See docs/essentials-temp/essentials-realignment.md.
+
     Centralized Academy metadata used by checkout and internal service integrations.
 
     Stripe remains the source of truth for pricing.
@@ -146,6 +150,96 @@ class EnterpriseAcademy(TimeStampedModel):
 
     def __str__(self):
         return f'<Academy id={self.uuid} name={self.name}>'
+
+
+class SspProduct(TimeStampedModel):
+    """
+    Universal product record for all SSP subscription offerings (Teams and each Essentials Academy).
+
+    This is the cross-service interoperability key. ``slug`` is stored in:
+      - Stripe Price metadata (as ``ssp_product_slug``, set via Terraform)
+      - Salesforce provisioning API calls (passed through from Stripe invoice)
+
+    Academy display metadata (title, description, etc.) is NOT stored here —
+    use the ``academy_*`` properties which fetch and cache from enterprise-catalog.
+
+    .. no_pii:
+    """
+    slug = models.SlugField(
+        primary_key=True,
+        max_length=255,
+        help_text='Universal cross-service identifier, e.g. "teams-yearly", "ai-academy-yearly".',
+    )
+    stripe_price_lookup_key = models.CharField(
+        max_length=255,
+        unique=True,
+        help_text='Stripe Price lookup_key for this product.',
+    )
+    academy_uuid = models.UUIDField(
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text='enterprise-catalog Academy UUID. Null for non-Academy products (e.g. Teams).',
+    )
+    catalog_query_uuid = models.UUIDField(
+        help_text='enterprise-catalog CatalogQuery UUID used for provisioning.',
+    )
+    license_manager_product_id_trial = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text='license-manager product ID for the trial subscription period.',
+    )
+    license_manager_product_id_paid = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text='license-manager product ID for the paid subscription period.',
+    )
+    is_active = models.BooleanField(
+        default=True,
+        db_index=True,
+    )
+
+    history = HistoricalRecords()
+    # no_pii: HistoricalSspProduct model
+
+    class Meta:
+        verbose_name = 'SSP Product'
+        verbose_name_plural = 'SSP Products'
+
+    def __str__(self):
+        return f'<SspProduct slug={self.slug}>'
+
+    @property
+    def _academy_data(self):
+        """Fetch and instance-cache the academy payload. None for non-Academy products."""
+        if not getattr(self, '_academy_data_cache', None):
+            self._academy_data_cache = get_cached_academy_data(self.academy_uuid)
+        return self._academy_data_cache
+
+    @property
+    def academy_title(self):
+        """Academy display name. None for non-Academy products."""
+        return self._academy_data.get('title') if self._academy_data else None
+
+    @property
+    def academy_description(self):
+        """Academy description. None for non-Academy products."""
+        return self._academy_data.get('description') if self._academy_data else None
+
+    @property
+    def academy_marketing_url(self):
+        """Academy marketing URL. None for non-Academy products."""
+        return self._academy_data.get('marketing_url') if self._academy_data else None
+
+    @property
+    def academy_thumbnail_url(self):
+        """Academy thumbnail URL. None for non-Academy products."""
+        return self._academy_data.get('thumbnail_url') if self._academy_data else None
+
+    @property
+    def academy_tags(self):
+        """Academy competency tags. None for non-Academy products."""
+        return self._academy_data.get('tags') if self._academy_data else None
 
 
 class CheckoutIntent(TimeStampedModel):

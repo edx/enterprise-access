@@ -9,9 +9,10 @@ from django.core.management import call_command
 from django.utils import timezone
 from django.utils.html import format_html
 from djangoql.admin import DjangoQLSearchMixin
+from simple_history.admin import SimpleHistoryAdmin
 
 from .constants import CheckoutIntentState
-from .models import CheckoutIntent, SelfServiceSubscriptionRenewal, StripeEventData, StripeEventSummary
+from .models import CheckoutIntent, SelfServiceSubscriptionRenewal, SspProduct, StripeEventData, StripeEventSummary
 from .stripe_event_handlers import StripeEventHandler
 
 
@@ -49,6 +50,22 @@ class CheckoutIntentAdminForm(forms.ModelForm):
                 self.add_error(None, e)
 
         return cleaned_data
+
+
+@admin.register(SspProduct)
+class SspProductAdmin(DjangoQLSearchMixin, SimpleHistoryAdmin):
+    """
+    Admin interface for managing SSP products (Teams and Essentials Academies).
+    """
+    list_display = ('slug', 'stripe_price_lookup_key', 'academy_uuid', 'catalog_query_uuid', 'is_active')
+    list_filter = ('is_active',)
+    search_fields = ('slug', 'stripe_price_lookup_key')
+
+    def get_readonly_fields(self, request, obj=None):
+        """Slug is editable on creation; read-only thereafter (it's the cross-service PK)."""
+        if obj:
+            return ('slug',)
+        return ()
 
 
 @admin.register(CheckoutIntent)

@@ -168,3 +168,6 @@ enterprise_access/assets
 
 # Ralph (deprecated, can be removed once no one has local .ralph/ dirs)
 .ralph/
+
+# Temporary docs, useful for pluggable AI context
+docs/essentials-temp/
