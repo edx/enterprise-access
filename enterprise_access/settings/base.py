@@ -182,8 +182,12 @@ REST_FRAMEWORK = {
     'TEST_REQUEST_DEFAULT_FORMAT': 'json',
     'DEFAULT_THROTTLE_RATES': {
         'bff_unauthenticated': '100/hour',
+        'academy_unauthenticated': '120/hour',
     },
 }
+
+# Base URL used to compose absolute academy thumbnail URLs when catalog returns relative paths.
+ACADEMY_THUMBNAIL_S3_BASE_URL = os.environ.get('ACADEMY_THUMBNAIL_S3_BASE_URL', '')
 
 # DRF Spectacular settings
 SPECTACULAR_SETTINGS = {
@@ -671,6 +675,28 @@ DEFAULT_STRIPE_CACHE_TIMEOUT = 60
 
 # How long we consider Stripe prices valid for
 STRIPE_PRICE_DATA_CACHE_TIMEOUT = 300
+
+# Enterprise UUID used to scope academy sync to a single enterprise customer's academies.
+ACADEMY_SYNC_ENTERPRISE_CUSTOMER_UUID = ''
+
+# Optional academy UUID allowlist for Essentials-only sync behavior.
+ESSENTIAL_ACADEMY_UUID_ALLOWLIST = []
+
+# Optional academy name allowlist for Essentials-only sync behavior.
+ESSENTIAL_ACADEMY_NAME_ALLOWLIST = []
+
+# Optional explicit mappings used when enterprise-catalog API does not expose integer catalog_query_id.
+ESSENTIAL_ACADEMY_CATALOG_QUERY_ID_BY_ACADEMY_UUID = {}
+ESSENTIAL_ACADEMY_CATALOG_QUERY_ID_BY_NAME = {}
+
+# Optional per-academy field overrides keyed by academy name.
+# Supported keys: name, long_name, description, marketing_url, thumbnail_url,
+# stripe_product_id, stripe_price_lookup_key, product_key, slug, display_order,
+# catalog_query_id, catalog_query_int_id.
+ESSENTIAL_ACADEMY_FIELD_OVERRIDES_BY_NAME = {}
+
+# Optional per-academy field overrides keyed by academy UUID.
+ESSENTIAL_ACADEMY_FIELD_OVERRIDES_BY_ACADEMY_UUID = {}
 
 ENABLE_STRIPE_EVENT_SUMMARIES = False
 
