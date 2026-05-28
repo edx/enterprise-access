@@ -10,10 +10,23 @@ from enterprise_access.apps.prompts.models import XpertLearnerPathwaysSystemProm
 
 
 class PrettyJSONWidget(forms.Textarea):
-    """Custom widget that formats JSON with proper indentation."""
+    """
+    Custom widget that formats JSON with proper indentation for admin usability.
+
+    This widget exists primarily to improve Django admin UX for human operators.
+    JSON is normalized with 2-space indentation to make schema editing, debugging,
+    and operational review easier in the admin interface. Downstream consumers
+    (runtime code, APIs) do not depend on this formatting; they receive the data
+    as standard Python dicts/lists from Django's JSONField.
+    """
 
     def format_value(self, value):
-        """Format the JSON value with indentation for display."""
+        """
+        Format the JSON value with indentation for display in the admin textarea.
+
+        This formatting is purely cosmetic for admin editing convenience and does
+        not affect how the data is stored or consumed by application code.
+        """
         if value is None or value == '':
             return value
         try:
@@ -30,7 +43,12 @@ class PrettyJSONWidget(forms.Textarea):
 
 
 class XpertLearnerPathwaysSystemPromptForm(forms.ModelForm):
-    """Custom form with pretty JSON formatting."""
+    """
+    Custom form with pretty JSON formatting for the admin interface.
+
+    Applies PrettyJSONWidget to output_schema field to improve readability
+    and editing experience for administrators managing prompt configurations.
+    """
 
     class Meta:
         model = XpertLearnerPathwaysSystemPrompt
