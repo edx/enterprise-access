@@ -19,8 +19,42 @@ class EnterpriseCatalogApiClient(BaseOAuthClient):
 
     def __init__(self):
         self.api_base_url = urljoin(settings.ENTERPRISE_CATALOG_URL, f'api/{self.api_version}/')
+        self.academies_endpoint = urljoin(self.api_base_url, 'academies/')
         self.enterprise_catalog_endpoint = urljoin(self.api_base_url, 'enterprise-catalogs/')
         super().__init__()
+
+    def _fetch_all_pages(self, endpoint, params=None) -> dict:
+        """Fetch and merge paginated enterprise-catalog responses into one paginated dict payload."""
+        merged_results = []
+        next_url = endpoint
+        request_params = params
+        base_payload = None
+
+        while next_url:
+            response = self.client.get(next_url, params=request_params)
+            response.raise_for_status()
+            payload = response.json()
+
+            if not isinstance(payload, dict):
+                raise ValueError('Expected paginated response payload as dict from enterprise-catalog API.')
+
+            if base_payload is None:
+                base_payload = payload.copy()
+
+            page_results = payload.get('results')
+            if isinstance(page_results, list):
+                merged_results.extend(page_results)
+
+            next_url = payload.get('next')
+            request_params = None
+
+        if base_payload is None:
+            return {'count': 0, 'next': None, 'previous': None, 'results': []}
+
+        base_payload['results'] = merged_results
+        base_payload['count'] = len(merged_results)
+        base_payload['next'] = None
+        return base_payload
 
     @backoff.on_exception(wait_gen=backoff.expo, exception=autoretry_for_exceptions)
     def contains_content_items(self, catalog_uuid, content_ids):
@@ -91,6 +125,30 @@ class EnterpriseCatalogApiClient(BaseOAuthClient):
         response = self.client.get(endpoint)
         response.raise_for_status()
         return response.json()['count']
+
+    @backoff.on_exception(wait_gen=backoff.expo, exception=autoretry_for_exceptions)
+    def get_academies(self, academy_uuid: str | None = None) -> dict:
+        """
+        Fetch academies for Essentials flows from enterprise-catalog.
+
+        Returns:
+            dict: Paginated response shape with keys including count/next/previous/results.
+            If the endpoint paginates, all pages are merged into a single response payload.
+        """
+        params = {'academy_uuid': str(academy_uuid)} if academy_uuid else None
+        return self._fetch_all_pages(self.academies_endpoint, params=params)
+
+    @backoff.on_exception(wait_gen=backoff.expo, exception=autoretry_for_exceptions)
+    def get_catalogs(self, enterprise_customer_uuid: str | None = None) -> dict:
+        """
+        Fetch enterprise catalogs, optionally scoped to an enterprise customer UUID.
+
+        Returns:
+            dict: Paginated response shape with keys including count/next/previous/results.
+            If the endpoint paginates, all pages are merged into a single response payload.
+        """
+        params = {'enterprise_customer': str(enterprise_customer_uuid)} if enterprise_customer_uuid else None
+        return self._fetch_all_pages(self.enterprise_catalog_endpoint, params=params)
 
     def content_metadata(self, content_id):
         raise NotImplementedError('There is currently no v2 API implementation for this endpoint.')
