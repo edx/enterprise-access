@@ -15,12 +15,65 @@ logger = logging.getLogger(__name__)
 ## Don't remove.
 stripe.api_key = settings.STRIPE_API_KEY
 
+_ACADEMY_PRODUCT_TYPE_METADATA_KEY = 'edx_product_type'
+_ACADEMY_PRODUCT_TYPE_VALUE = 'essential_academy'
+_ACADEMY_PRODUCT_KEY_METADATA_KEY = 'product_key'
+
+
+def _get_subscription_product_metadata(checkout_intent) -> dict:
+    """
+    Retrieve optional metadata from the Stripe product linked to a checkout intent.
+
+    This keeps checkout session metadata aligned with the selected academy product
+    when one is present, without failing the checkout flow if Stripe metadata is
+    unavailable.
+    """
+    stripe_product_id = getattr(checkout_intent, 'stripe_product_id', None)
+    if not stripe_product_id:
+        return {}
+
+    try:
+        stripe_product = stripe.Product.retrieve(stripe_product_id)
+    except stripe.StripeError as exc:
+        logger.warning(
+            'Unable to retrieve Stripe product metadata for product=%s, intent_uuid=%s: %s',
+            stripe_product_id,
+            getattr(checkout_intent, 'uuid', None),
+            exc,
+        )
+        return {}
+
+    product_metadata = getattr(stripe_product, 'metadata', None)
+    if product_metadata is None and hasattr(stripe_product, 'get'):
+        product_metadata = stripe_product.get('metadata')
+    if not isinstance(product_metadata, dict):
+        product_metadata = {}
+
+    metadata = {}
+    if product_metadata.get('name'):
+        metadata['name'] = product_metadata['name']
+    if product_metadata.get('product_type'):
+        metadata['product_type'] = product_metadata['product_type']
+    return metadata
+
 
 def create_subscription_checkout_session(input_data, lms_user_id, checkout_intent) -> dict:
     """
     Creates a free trial subscription checkout session.
     """
     stripe.api_key = settings.STRIPE_API_KEY
+    subscription_metadata = {
+        # Downstream services need to know the intended enterprise customer name & slug.
+        'enterprise_customer_name': input_data['company_name'],
+        'enterprise_customer_slug': input_data['enterprise_slug'],
+        # Store the lms_user_id for improved debugging experience.
+        'lms_user_id': str(lms_user_id),
+        # Store the checkout_intent ID for cross-service reference.
+        'checkout_intent_id': str(checkout_intent.id),
+        'checkout_intent_uuid': str(checkout_intent.uuid),
+    }
+    subscription_metadata.update(_get_subscription_product_metadata(checkout_intent))
+
     create_kwargs: stripe.checkout.Session.CreateParams = {
         'mode': 'subscription',
         # Intended UI will be a custom react component, referred to as 'elements' on stripe's end.
@@ -40,16 +93,7 @@ def create_subscription_checkout_session(input_data, lms_user_id, checkout_inten
                 # after it ends.
                 'end_behavior': {'missing_payment_method': 'cancel'},
             },
-            'metadata': {
-                # Downstream services need to know the intended enterprise customer name & slug.
-                'enterprise_customer_name': input_data['company_name'],
-                'enterprise_customer_slug': input_data['enterprise_slug'],
-                # Store the lms_user_id for improved debugging experience.
-                'lms_user_id': str(lms_user_id),
-                # Store the checkout_intent ID for cross-service reference
-                'checkout_intent_id': str(checkout_intent.id),
-                'checkout_intent_uuid': str(checkout_intent.uuid),
-            }
+            'metadata': subscription_metadata,
         },
         # Always collect payment method, not just when the amount is greater than zero.  This is influential for
         # creating a free trial plan because the amount is always zero.
@@ -95,6 +139,8 @@ def stripe_cache(timeout=settings.DEFAULT_STRIPE_CACHE_TIMEOUT):
             # Create cache key based on function name and resource ID
             func_name = func.__name__
             cache_key = f"stripe_{func_name}_{resource_id}"
+            if args or kwargs:
+                cache_key = f"{cache_key}_{args}_{tuple(sorted(kwargs.items()))}"
 
             # Try to get from cache first
             cached_response = TieredCache.get_cached_response(cache_key)
@@ -259,3 +305,51 @@ def get_upcoming_invoice(stripe_customer_id: str, stripe_subscription_id: str):
         customer=stripe_customer_id,
         subscription=stripe_subscription_id,
     )
+
+
+def get_academy_stripe_products() -> list:
+    """
+    Search for active academy Stripe products using metadata filtering.
+
+    Returns:
+        list: Stripe product objects marked as academy products.
+    """
+    query = (
+        "active:'true' "
+        f"AND metadata['{_ACADEMY_PRODUCT_TYPE_METADATA_KEY}']:'{_ACADEMY_PRODUCT_TYPE_VALUE}'"
+    )
+    search_result = stripe.Product.search(query=query, limit=100)
+    return list(search_result.auto_paging_iter())
+
+
+def get_academy_stripe_product_by_key(product_key: str) -> Optional[stripe.Product]:
+    """
+    Search for one academy Stripe product by the product_key metadata field.
+    """
+    query = (
+        "active:'true' "
+        f"AND metadata['{_ACADEMY_PRODUCT_TYPE_METADATA_KEY}']:'{_ACADEMY_PRODUCT_TYPE_VALUE}' "
+        f"AND metadata['{_ACADEMY_PRODUCT_KEY_METADATA_KEY}']:'{product_key}'"
+    )
+    search_result = stripe.Product.search(query=query, limit=1)
+    products = list(search_result.auto_paging_iter())
+    return products[0] if products else None
+
+
+def get_academy_stripe_prices() -> list:
+    """
+    Get all prices associated with academy Stripe products.
+
+    Returns:
+        list: List of Stripe price objects associated with academy products.
+    """
+    academy_products = get_academy_stripe_products()
+    if not academy_products:
+        return []
+
+    all_prices = []
+    for product in academy_products:
+        prices = stripe.Price.list(product=product.id, active=True, expand=['data.product'])
+        all_prices.extend(list(prices.auto_paging_iter()))
+
+    return all_prices
