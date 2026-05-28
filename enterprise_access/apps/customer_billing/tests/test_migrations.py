@@ -6,6 +6,7 @@ create test data with historical (frozen) model classes, then apply the
 migration under test and verify results.
 """
 from datetime import datetime, timedelta, timezone
+from unittest import skip
 from uuid import uuid4
 
 import ddt
@@ -51,6 +52,7 @@ def _make_invoice_event_data(event_id, invoice_id, amount_paid=0, period_end=Non
     }
 
 
+@skip("Already executed and these tests take a long time to execute")
 class TestBackfillRenewalInvoiceAndEffectiveDate(TransactionTestCase):
     """
     Tests for the backfill data migration 0028.
@@ -268,6 +270,7 @@ class TestBackfillRenewalInvoiceAndEffectiveDate(TransactionTestCase):
         self.assertEqual(Renewal.objects.count(), 0)
 
 
+@skip("Already executed and these tests take a long time to execute")
 @ddt.ddt
 class TestBackfillSubscriptionRenewalCancellations(TransactionTestCase):
     """

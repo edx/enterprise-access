@@ -19,8 +19,25 @@ class EnterpriseCatalogApiClient(BaseOAuthClient):
 
     def __init__(self):
         self.api_base_url = urljoin(settings.ENTERPRISE_CATALOG_URL, f'api/{self.api_version}/')
+        self.academies_endpoint = urljoin(self.api_base_url, 'academies/')
         self.enterprise_catalog_endpoint = urljoin(self.api_base_url, 'enterprise-catalogs/')
         super().__init__()
+
+    @backoff.on_exception(wait_gen=backoff.expo, exception=autoretry_for_exceptions)
+    def get_academy(self, academy_uuid):
+        """
+        Fetch a single Academy record from enterprise-catalog by UUID.
+
+        Arguments:
+            academy_uuid (str|UUID): UUID of the academy to fetch.
+
+        Returns:
+            dict: Academy data, or raises an exception on 404/error.
+        """
+        endpoint = urljoin(self.academies_endpoint, f'{academy_uuid}/')
+        response = self.client.get(endpoint)
+        response.raise_for_status()
+        return response.json()
 
     @backoff.on_exception(wait_gen=backoff.expo, exception=autoretry_for_exceptions)
     def contains_content_items(self, catalog_uuid, content_ids):
