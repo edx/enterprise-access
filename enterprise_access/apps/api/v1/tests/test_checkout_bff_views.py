@@ -74,14 +74,14 @@ class CheckoutBFFViewSetTests(APITest):
         # For unauthenticated users, checkout_intent should be None
         self.assertIsNone(response.data['checkout_intent'])
 
-    @mock.patch('enterprise_access.apps.customer_billing.models.CheckoutIntent.objects.filter')
-    def test_context_endpoint_authenticated_access(self, mock_filter):
+    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.CheckoutIntent.for_user')
+    def test_context_endpoint_authenticated_access(self, mock_for_user):
         """
         Test that authenticated users can access the context endpoint.
         """
         # Set up a mock checkout intent for the authenticated user
         mock_intent = CheckoutIntent(**self.mock_checkout_intent_data)
-        mock_filter.return_value.first.return_value = mock_intent
+        mock_for_user.return_value = mock_intent
 
         self.set_jwt_cookie([{
             'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE,
