@@ -673,6 +673,27 @@ class TestAssignmentAllocationAndCancellation(TestCase):
                 100,
             )
 
+    @mock.patch('enterprise_access.apps.content_assignments.api.get_and_cache_content_metadata')
+    def test_allocate_assignments_requires_exact_course_run_when_requested(self, mock_get_and_cache_content_metadata):
+        """
+        Late enrollment allocations should reject parent course keys even when metadata advertises a future run.
+        """
+        mock_get_and_cache_content_metadata.return_value = {
+            'content_title': 'edx: Demo 101',
+            'content_key': 'edX+DemoX',
+            'course_run_key': 'course-v1:edX+DemoX+Demo_Course',
+            'content_price': 100,
+        }
+
+        with self.assertRaisesRegex(AllocationException, 'exact course run key'):
+            allocate_assignments(
+                self.assignment_configuration,
+                ['alice@example.com'],
+                'edX+DemoX',
+                100,
+                require_exact_course_run=True,
+            )
+
     @mock.patch('enterprise_access.apps.content_assignments.api.send_email_for_new_assignment')
     @mock.patch(
         'enterprise_access.apps.content_assignments.api.create_pending_enterprise_learner_for_assignment_task'
@@ -1198,11 +1219,15 @@ class AllocateAssignmentForRequestsTests(TestCase):
             'results': [{
                 'key': self.course_id,
                 'title': 'Demo Course',
-                'course_run_key': 'course-v1:edX+DemoX+Demo_Course',
-                'parent_content_key': None,
+                'advertised_course_run_uuid': 'mock-course-run-uuid',
+                'course_runs': [{
+                    'key': 'course-v1:edX+DemoX+Demo_Course',
+                    'uuid': 'mock-course-run-uuid',
+                    'first_enrollable_paid_seat_price': self.course_price / 100,
+                }],
                 'content_price': self.course_price,
                 'uuid': 'mock-uuid',
-                'content_type': 'courserun',
+                'content_type': 'course',
             }]
         }
         request = LearnerCreditRequestFactory(
@@ -1224,8 +1249,39 @@ class AllocateAssignmentForRequestsTests(TestCase):
         self.assertEqual(assignment.content_quantity, -self.course_price)
         self.assertEqual(assignment.state, LearnerContentAssignmentStateChoices.ALLOCATED)
         self.assertEqual(assignment.content_title, 'Demo Course')
+        self.assertEqual(assignment.preferred_course_run_key, 'course-v1:edX+DemoX+Demo_Course')
         self.assertEqual(assignment.assignment_configuration, self.assignment_config)
         self.assertIsNotNone(assignment.allocation_batch_id)
+
+    @mock.patch(
+        'enterprise_access.apps.api_client.enterprise_catalog_client.'
+        'EnterpriseCatalogApiClient.catalog_content_metadata'
+    )
+    def test_allocate_assignment_for_requests_requires_resolved_course_run(self, mock_catalog_content_metadata):
+        """
+        Request approval should not create assignments without the preferred run used by reminders/redemption.
+        """
+        mock_catalog_content_metadata.return_value = {
+            'results': [{
+                'key': self.course_id,
+                'title': 'Demo Course',
+                'content_price': self.course_price,
+                'uuid': 'mock-uuid',
+                'content_type': 'course',
+            }]
+        }
+        request = LearnerCreditRequestFactory(
+            learner_credit_request_config=self.learner_credit_config,
+            user=self.user,
+            course_id=self.course_id,
+            course_price=self.course_price,
+            assignment=None,
+            state=SubsidyRequestStates.REQUESTED,
+            enterprise_customer_uuid=self.enterprise_customer_uuid,
+        )
+
+        with self.assertRaisesRegex(AllocationException, 'exact course run key'):
+            allocate_assignment_for_requests(self.assignment_config, [request])
 
     @mock.patch(
         'enterprise_access.apps.api_client.enterprise_catalog_client.'
