@@ -95,6 +95,35 @@ class EnterpriseCatalogApiClient(BaseOAuthClient):
     def content_metadata(self, content_id):
         raise NotImplementedError('There is currently no v2 API implementation for this endpoint.')
 
+    @backoff.on_exception(wait_gen=backoff.expo, exception=autoretry_for_exceptions)
+    def get_academies(self, academy_uuid=None):
+        """Fetch academies from enterprise-catalog."""
+        path_template = getattr(
+            settings,
+            'ACADEMY_ENTERPRISE_CATALOG_ACADEMIES_PATH',
+            'academies/',
+        )
+        endpoint = urljoin(self.api_base_url, path_template)
+        params = {}
+        if academy_uuid:
+            params['academy_uuid'] = str(academy_uuid)
+        response = self.client.get(endpoint, params=params or None)
+        response.raise_for_status()
+        return response.json()
+
+    @backoff.on_exception(wait_gen=backoff.expo, exception=autoretry_for_exceptions)
+    def get_catalogs(self):
+        """Fetch enterprise catalogs from enterprise-catalog."""
+        path_template = getattr(
+            settings,
+            'ACADEMY_ENTERPRISE_CATALOG_CATALOGS_PATH',
+            'enterprise-catalogs/',
+        )
+        endpoint = urljoin(self.api_base_url, path_template)
+        response = self.client.get(endpoint)
+        response.raise_for_status()
+        return response.json()
+
 
 class EnterpriseCatalogApiV1Client(EnterpriseCatalogApiClient):
     """

@@ -16,6 +16,7 @@ from enterprise_access.apps.api import serializers
 from enterprise_access.apps.api_client.license_manager_client import LicenseManagerApiClient
 from enterprise_access.apps.core import constants
 from enterprise_access.apps.customer_billing.models import CheckoutIntent
+from enterprise_access.apps.provisioning.api import resolve_academy_catalog_query_id
 from enterprise_access.apps.provisioning.models import (
     GetCreateFirstPaidSubscriptionPlanStep,
     ProvisionNewCustomerWorkflow
@@ -109,15 +110,77 @@ class ProvisioningCreateView(PermissionRequiredMixin, generics.CreateAPIView):
         request_serializer = serializers.ProvisioningRequestSerializer(data=transformed_data)
         request_serializer.is_valid(raise_exception=True)
 
-        customer_request_data = request_serializer.validated_data['enterprise_customer']
+        customer_request_data = dict(request_serializer.validated_data['enterprise_customer'])
         admin_emails = [
             record.get('user_email')
             for record in request_serializer.validated_data['pending_admins']
         ]
-        catalog_request_data = request_serializer.validated_data.get('enterprise_catalog')
-        customer_agreement_data = request_serializer.validated_data.get('customer_agreement')
-        trial_subscription_plan_data = request_serializer.validated_data['trial_subscription_plan']
-        first_paid_subscription_plan_data = request_serializer.validated_data['first_paid_subscription_plan']
+        raw_catalog_request_data = request_serializer.validated_data.get('enterprise_catalog')
+        catalog_request_data = dict(raw_catalog_request_data) if raw_catalog_request_data is not None else None
+        raw_customer_agreement_data = request_serializer.validated_data.get('customer_agreement')
+        customer_agreement_data = (
+            dict(raw_customer_agreement_data) if raw_customer_agreement_data is not None else None
+        )
+        trial_subscription_plan_data = dict(request_serializer.validated_data['trial_subscription_plan'])
+        first_paid_subscription_plan_data = dict(request_serializer.validated_data['first_paid_subscription_plan'])
+
+        # Essentials flow: academy-specific catalog resolution now lives on subscription plan objects.
+        catalog_request_was_supplied = catalog_request_data is not None
+        if catalog_request_data is None:
+            catalog_request_data = {}
+
+        trial_catalog_query_uuid = (
+            trial_subscription_plan_data.get('catalog_query_uuid') or
+            trial_subscription_plan_data.get('catalog_query_id')
+        )
+        paid_catalog_query_uuid = (
+            first_paid_subscription_plan_data.get('catalog_query_uuid') or
+            first_paid_subscription_plan_data.get('catalog_query_id')
+        )
+        # Backward-compatible fallback to the older top-level catalog_query_id field if present.
+        catalog_catalog_query_uuid = (
+            catalog_request_data.get('catalog_query_uuid') or
+            catalog_request_data.get('catalog_query_id')
+        )
+
+        # Use catalog_query_uuid as the unique identifier for provisioning.
+        resolved_catalog_query_uuid = (
+            trial_catalog_query_uuid or
+            paid_catalog_query_uuid or
+            catalog_catalog_query_uuid
+        )
+        if not resolved_catalog_query_uuid:
+            # Fallback to old academy_name logic only if catalog_query_uuid is missing.
+            trial_academy_name = trial_subscription_plan_data.get('academy_name')
+            paid_academy_name = first_paid_subscription_plan_data.get('academy_name')
+            catalog_academy_name = catalog_request_data.get('academy_name')
+            stripe_product_id = (
+                trial_subscription_plan_data.get('stripe_product_id') or
+                first_paid_subscription_plan_data.get('stripe_product_id')
+            )
+            try:
+                resolved_catalog_query_uuid = resolve_academy_catalog_query_id(
+                    academy_name=trial_academy_name or paid_academy_name or catalog_academy_name,
+                    stripe_product_id=stripe_product_id,
+                )
+            except exceptions.APIException:
+                raise
+            except Exception as exc:
+                raise ProvisioningException(
+                    detail=f'Error looking up academy: {exc}',
+                    code='academy_lookup_error',
+                ) from exc
+        if resolved_catalog_query_uuid is not None:
+            catalog_request_data['catalog_query_uuid'] = str(resolved_catalog_query_uuid)
+            catalog_request_data['catalog_query_id'] = str(resolved_catalog_query_uuid)
+        elif catalog_request_was_supplied and not (
+            catalog_request_data.get('catalog_query_uuid') or catalog_request_data.get('catalog_query_id')
+        ):
+            default_catalog_query_uuid = str(
+                settings.PROVISIONING_DEFAULTS['catalog']['catalog_query_id']
+            )
+            catalog_request_data['catalog_query_uuid'] = default_catalog_query_uuid
+            catalog_request_data['catalog_query_id'] = default_catalog_query_uuid
 
         workflow_input_dict = ProvisionNewCustomerWorkflow.generate_input_dict(
             customer_request_data,

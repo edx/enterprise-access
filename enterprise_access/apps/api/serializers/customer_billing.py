@@ -129,11 +129,18 @@ class CheckoutIntentReadOnlySerializer(CountryFieldMixin, serializers.ModelSeria
     Serializer for reading and updating CheckoutIntent model instances.
     """
     workflow = serializers.UUIDField(source='workflow.uuid', read_only=True, allow_null=True)
+    stripeProductId = serializers.CharField(source='stripe_product_id', read_only=True, allow_null=True)
+    catalog_query_id = serializers.CharField(source='catalog_query_uuid', read_only=True, allow_null=True)
 
     class Meta:
         model = CheckoutIntent
         fields = '__all__'
         read_only_fields = [field.name for field in CheckoutIntent._meta.get_fields()]
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data['catalog_query_id'] = data.get('catalog_query_uuid')
+        return data
 
 
 class CheckoutIntentUpdateRequestSerializer(CountryFieldMixin, serializers.ModelSerializer):
@@ -146,7 +153,7 @@ class CheckoutIntentUpdateRequestSerializer(CountryFieldMixin, serializers.Model
         fields = '__all__'
         read_only_fields = [
             field.name for field in CheckoutIntent._meta.get_fields()
-            if field.name not in ('state', 'country', 'terms_metadata')
+            if field.name not in ('state', 'country', 'terms_metadata', 'stripe_product_id', 'catalog_query_uuid')
         ]
 
     def validate_state(self, value):
@@ -163,6 +170,14 @@ class CheckoutIntentUpdateRequestSerializer(CountryFieldMixin, serializers.Model
                 )
 
         return value
+
+    def to_internal_value(self, data):
+        payload = data.copy()
+        if 'stripeProductId' in payload and 'stripe_product_id' not in payload:
+            payload['stripe_product_id'] = payload.get('stripeProductId')
+        if 'catalog_query_id' in payload and 'catalog_query_uuid' not in payload:
+            payload['catalog_query_uuid'] = payload.get('catalog_query_id')
+        return super().to_internal_value(payload)
 
     def validate_country(self, value):
         """
@@ -185,6 +200,11 @@ class CheckoutIntentUpdateRequestSerializer(CountryFieldMixin, serializers.Model
             )
         return value
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data['catalog_query_id'] = data.get('catalog_query_uuid')
+        return data
+
 
 class CheckoutIntentCreateRequestSerializer(CountryFieldMixin, serializers.ModelSerializer):
     """
@@ -201,12 +221,22 @@ class CheckoutIntentCreateRequestSerializer(CountryFieldMixin, serializers.Model
                 'quantity',
                 'country',
                 'terms_metadata',
+                'catalog_query_uuid',
+                'stripe_product_id',
             ]
         ]
 
     # Put some reasonable validation bounds at this layer, and let
     # the customer_billing.api business logic handle more detailed validation
     quantity = serializers.IntegerField(min_value=1, max_value=1000)
+
+    def to_internal_value(self, data):
+        payload = data.copy()
+        if 'stripeProductId' in payload and 'stripe_product_id' not in payload:
+            payload['stripe_product_id'] = payload.get('stripeProductId')
+        if 'catalog_query_id' in payload and 'catalog_query_uuid' not in payload:
+            payload['catalog_query_uuid'] = payload.get('catalog_query_id')
+        return super().to_internal_value(payload)
 
     def validate_terms_metadata(self, value):
         """
@@ -232,6 +262,11 @@ class CheckoutIntentCreateRequestSerializer(CountryFieldMixin, serializers.Model
             )
         return attrs
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data['catalog_query_id'] = data.get('catalog_query_uuid')
+        return data
+
     def create(self, validated_data):
         """
         Creates a new CheckoutIntent.
@@ -244,6 +279,8 @@ class CheckoutIntentCreateRequestSerializer(CountryFieldMixin, serializers.Model
                 name=validated_data.get('enterprise_name'),
                 country=validated_data.get('country'),
                 terms_metadata=validated_data.get('terms_metadata'),
+                catalog_query_uuid=validated_data.get('catalog_query_uuid'),
+                stripe_product_id=validated_data.get('stripe_product_id'),
             )
 
         # Catch exceptions that should return 422:
@@ -373,6 +410,43 @@ class BillingAddressResponseSerializer(serializers.Serializer):
         allow_null=True,
         help_text='Phone number associated with the billing account',
     )
+
+
+class AcademyProductPriceRecurringSerializer(serializers.Serializer):
+    """Recurring details for a Stripe price object."""
+
+    interval = serializers.CharField(required=False, allow_null=True)
+    interval_count = serializers.IntegerField(required=False, allow_null=True)
+    usage_type = serializers.CharField(required=False, allow_null=True)
+
+
+class AcademyProductPriceSerializer(serializers.Serializer):
+    """Stripe price data returned for an academy product."""
+
+    id = serializers.CharField()
+    product = serializers.CharField()
+    lookup_key = serializers.CharField(required=False, allow_null=True)
+    recurring = AcademyProductPriceRecurringSerializer(required=False, allow_null=True)
+    currency = serializers.CharField(required=False, allow_null=True)
+    unit_amount = serializers.IntegerField(required=False, allow_null=True)
+    unit_amount_decimal = serializers.CharField(required=False, allow_null=True)
+
+
+class AcademyProductResponseSerializer(serializers.Serializer):
+    """Public response serializer for academy products endpoint."""
+
+    id = serializers.CharField()
+    name = serializers.CharField()
+    long_name = serializers.CharField(allow_blank=True)
+    description = serializers.CharField(allow_blank=True)
+    marketing_url = serializers.CharField(allow_blank=True)
+    thumbnail_url = serializers.CharField(allow_blank=True)
+    prices = AcademyProductPriceSerializer(many=True)
+    tags = serializers.ListField(child=serializers.CharField(), required=False)
+    stripe_product_id = serializers.CharField(allow_blank=True)
+    catalog_query_uuid = serializers.CharField(required=False, allow_null=True)
+    catalog_query_id = serializers.CharField(required=False, allow_null=True)
+    edx_catalog_id = serializers.CharField(required=False, allow_null=True)
 
 
 # pylint: disable=abstract-method

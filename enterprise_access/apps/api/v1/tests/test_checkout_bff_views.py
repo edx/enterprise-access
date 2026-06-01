@@ -25,7 +25,7 @@ from enterprise_access.apps.bffs.checkout.serializers import (
 from enterprise_access.apps.bffs.tests.utils import default_field_constraints
 from enterprise_access.apps.core.constants import SYSTEM_ENTERPRISE_LEARNER_ROLE
 from enterprise_access.apps.customer_billing.constants import CheckoutIntentState
-from enterprise_access.apps.customer_billing.models import CheckoutIntent
+from enterprise_access.apps.customer_billing.models import CheckoutIntent, EnterpriseAcademy
 from enterprise_access.apps.customer_billing.tests.utils import AttrDict
 from test_utils import APITest
 
@@ -74,14 +74,14 @@ class CheckoutBFFViewSetTests(APITest):
         # For unauthenticated users, checkout_intent should be None
         self.assertIsNone(response.data['checkout_intent'])
 
-    @mock.patch('enterprise_access.apps.customer_billing.models.CheckoutIntent.objects.filter')
-    def test_context_endpoint_authenticated_access(self, mock_filter):
+    @mock.patch('enterprise_access.apps.customer_billing.models.CheckoutIntent.for_user')
+    def test_context_endpoint_authenticated_access(self, mock_for_user):
         """
         Test that authenticated users can access the context endpoint.
         """
         # Set up a mock checkout intent for the authenticated user
         mock_intent = CheckoutIntent(**self.mock_checkout_intent_data)
-        mock_filter.return_value.first.return_value = mock_intent
+        mock_for_user.return_value = mock_intent
 
         self.set_jwt_cookie([{
             'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE,
@@ -556,12 +556,20 @@ class CheckoutBFFSuccessViewSetTests(APITest):
     @mock.patch('enterprise_access.apps.bffs.checkout.handlers.CheckoutIntent.for_user')
     def test_success_endpoint_no_checkout_session(self, mock_for_user):
         """Test the success endpoint when no checkout session id is present."""
+        academy = EnterpriseAcademy.objects.create(
+            name='Essentials AI',
+            stripe_product_id='prod_essentials_ai',
+            stripe_price_lookup_key='essentials_ai',
+            product_key='essentials_ai',
+            slug='essentials-ai',
+        )
         mock_checkout_intent = CheckoutIntent.objects.create(
             user_id=self.user.id,
             state=CheckoutIntentState.CREATED,
             quantity=10,
             enterprise_name='Test Enterprise',
             enterprise_slug='test-enterprise',
+            stripe_product_id=academy.stripe_product_id,
             stripe_checkout_session_id=None,
             last_checkout_error='',
             last_provisioning_error='',
@@ -578,6 +586,7 @@ class CheckoutBFFSuccessViewSetTests(APITest):
         self.assertEqual(response_data['id'], mock_checkout_intent.id)
         self.assertEqual(response_data['state'], mock_checkout_intent.state)
         self.assertEqual(response_data['enterprise_name'], mock_checkout_intent.enterprise_name)
+        self.assertEqual(response_data['academy_name'], academy.name)
 
         # first_billable_invoice key should be present but valued with null
         self.assertIsNone(response_data['first_billable_invoice'])

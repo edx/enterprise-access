@@ -258,7 +258,8 @@ class GetCreateCatalogStepInput(BaseInputOutput):
     KEY = 'create_catalog_input'
 
     title: Optional[str] = field(default=None, validator=validators.optional(is_str))
-    catalog_query_id: Optional[int] = field(default=None, validator=validators.optional(is_int))
+    academy_name: Optional[str] = field(default=None, validator=validators.optional(is_str))
+    catalog_query_id: Optional[str] = field(default=None, validator=validators.optional(is_str))
 
 
 @define
@@ -272,7 +273,7 @@ class GetCreateCatalogStepOutput(BaseInputOutput):
     uuid: UUID = field(validator=is_uuid)
     enterprise_customer_uuid: UUID = field(validator=is_uuid)
     title: str = field(validator=is_str)
-    catalog_query_id: int = field(validator=is_int)
+    catalog_query_id: str = field(validator=is_str)
 
 
 class CreateCatalogStepException(UnitOfWorkException):
@@ -335,13 +336,13 @@ class GetCreateCatalogStep(AbstractWorkflowStep):
         """
         # Determine catalog_query_id
         if (catalog_query_id_input := self.input_object.catalog_query_id):
-            return catalog_query_id_input
+            return str(catalog_query_id_input)
 
         # Need to get product_id from subscription plan input to infer catalog_query_id
         product_id = str(workflow_input.create_trial_subscription_plan_input.product_id)
 
         if product_id and product_id in settings.PRODUCT_ID_TO_CATALOG_QUERY_ID_MAPPING:
-            return settings.PRODUCT_ID_TO_CATALOG_QUERY_ID_MAPPING[product_id]
+            return str(settings.PRODUCT_ID_TO_CATALOG_QUERY_ID_MAPPING[product_id])
         else:
             raise CreateCatalogStepException(
                 f"Cannot infer catalog_query_id: product_id {product_id} "
@@ -453,6 +454,8 @@ class GetCreateTrialSubscriptionPlanStepInput(BaseInputOutput):
     expiration_date: datetime = field(validator=is_datetime)
     desired_num_licenses: int = field(validator=is_int)
     product_id: int = field(validator=is_int)
+    academy_name: Optional[str] = field(default=None, validator=validators.optional(is_str))
+    stripe_product_id: Optional[str] = field(default=None, validator=validators.optional(is_str))
     enterprise_catalog_uuid: Optional[UUID] = field(default=None, validator=validators.optional(is_uuid))
 
 
@@ -560,6 +563,8 @@ class GetCreateFirstPaidSubscriptionPlanStepInput(BaseInputOutput):
     start_date: Optional[datetime] = field(default=None, validator=validators.optional(is_datetime))
     expiration_date: Optional[datetime] = field(default=None, validator=validators.optional(is_datetime))
     salesforce_opportunity_line_item: Optional[str] = field(default=None, validator=validators.optional(is_str))
+    academy_name: Optional[str] = field(default=None, validator=validators.optional(is_str))
+    stripe_product_id: Optional[str] = field(default=None, validator=validators.optional(is_str))
     enterprise_catalog_uuid: Optional[UUID] = field(default=None, validator=validators.optional(is_uuid))
 
 
@@ -1001,6 +1006,67 @@ class ProvisionNewCustomerWorkflow(AbstractWorkflow):
 
     def notification_output_dict(self):
         return self.output_data[NotificationStepOutput.KEY]
+
+    @classmethod
+    def create_and_execute_for_checkout_intent(
+        cls,
+        checkout_intent: CheckoutIntent,
+        trial_start: datetime,
+        trial_end: datetime,
+    ) -> 'ProvisionNewCustomerWorkflow':
+        """
+        Create and execute the provisioning workflow for a paid CheckoutIntent.
+
+        This is intended for self-service checkout flows where payment confirmation
+        should progress directly into provisioning.
+        """
+        country_code = str(checkout_intent.country or 'US')
+        enterprise_name = checkout_intent.enterprise_name or f'Enterprise-{checkout_intent.id}'
+        enterprise_slug = checkout_intent.enterprise_slug or f'enterprise-{checkout_intent.id}'
+
+        trial_product_id = settings.PROVISIONING_TRIAL_SUBSCRIPTION_PRODUCT_ID
+        paid_product_id = settings.PROVISIONING_PAID_SUBSCRIPTION_PRODUCT_ID
+        default_catalog_query_id = settings.PROVISIONING_DEFAULTS['catalog']['catalog_query_id']
+        catalog_query_id = settings.PRODUCT_ID_TO_CATALOG_QUERY_ID_MAPPING.get(
+            str(trial_product_id),
+            default_catalog_query_id,
+        )
+
+        workflow_input_dict = cls.generate_input_dict(
+            {
+                'name': enterprise_name,
+                'slug': enterprise_slug,
+                'country': country_code,
+            },
+            [checkout_intent.user.email],
+            {
+                'title': f'{enterprise_name} Catalog',
+                'catalog_query_id': str(catalog_query_id),
+            },
+            {
+                'default_catalog_uuid': None,
+            },
+            {
+                'title': f'{enterprise_name} Trial Subscription',
+                'salesforce_opportunity_line_item': '',
+                'start_date': trial_start,
+                'expiration_date': trial_end,
+                'desired_num_licenses': checkout_intent.quantity,
+                'product_id': trial_product_id,
+                'enterprise_catalog_uuid': None,
+            },
+            {
+                'title': f'{enterprise_name} First Paid Subscription',
+                'product_id': paid_product_id,
+                'salesforce_opportunity_line_item': None,
+            },
+        )
+
+        workflow = cls.objects.create(input_data=workflow_input_dict)
+        checkout_intent.workflow = workflow
+        checkout_intent.save(update_fields=['workflow', 'modified'])
+        workflow.execute()
+        return workflow
 
 
 class TriggerProvisionSubscriptionTrialCustomerWorkflow(ProvisionNewCustomerWorkflow):

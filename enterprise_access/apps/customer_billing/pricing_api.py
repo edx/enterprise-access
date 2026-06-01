@@ -29,6 +29,7 @@ import stripe
 from django.conf import settings
 from edx_django_utils.cache import TieredCache
 
+from enterprise_access.apps.customer_billing.stripe_api import get_academy_stripe_prices
 from enterprise_access.cache_utils import versioned_cache_key
 
 logger = logging.getLogger(__name__)
@@ -210,26 +211,12 @@ def get_all_stripe_prices(
         return cached_response.value
 
     try:
-        # Fetch all active prices from Stripe
-        stripe_prices = stripe.Price.list(active=True, expand=['data.product'])
-
-        # See https://docs.stripe.com/api/pagination/auto?lang=python
+        all_prices = get_all_active_stripe_prices(timeout=timeout)
         prices_by_lookup_key = {}
-        for stripe_price in stripe_prices.auto_paging_iter():
-            if stripe_price.type != 'recurring':
-                continue
-
-            # Validate schema
-            _validate_stripe_price_schema(stripe_price)
-
-            # Skip prices without lookup_keys
-            lookup_key = getattr(stripe_price, 'lookup_key', None)
+        for serialized_data in all_prices:
+            lookup_key = serialized_data.get('lookup_key')
             if not lookup_key:
-                logger.warning(f'Skipping Stripe price {stripe_price.id} - no lookup_key')
                 continue
-
-            # Serialize and store by lookup_key
-            serialized_data = _serialize_basic_format(stripe_price)
             prices_by_lookup_key[lookup_key] = serialized_data
 
         # Cache the results
@@ -248,6 +235,51 @@ def get_all_stripe_prices(
     except Exception as exc:
         logger.error(f'Unexpected error fetching all prices: {exc}')
         raise StripePricingError(f'Unexpected error fetching all prices: {exc}') from exc
+
+
+def get_all_active_stripe_prices(
+    timeout: int = settings.STRIPE_PRICE_DATA_CACHE_TIMEOUT,
+) -> list[Dict]:
+    """
+    Fetch all active recurring Stripe prices, including product expansion.
+
+    Returns:
+        List of serialized price payloads in basic format.
+
+    Raises:
+        StripePricingError: If there's an error fetching from Stripe.
+    """
+    cache_key = versioned_cache_key('all_active_stripe_prices')
+
+    cached_response = TieredCache.get_cached_response(cache_key)
+    if cached_response.is_found:
+        logger.info('Cache hit for all active Stripe prices')
+        return cached_response.value
+
+    try:
+        stripe_prices = stripe.Price.list(active=True, expand=['data.product'])
+        serialized_prices = []
+        for stripe_price in stripe_prices.auto_paging_iter():
+            if stripe_price.type != 'recurring':
+                continue
+
+            _validate_stripe_price_schema(stripe_price)
+            serialized_prices.append(_serialize_basic_format(stripe_price))
+
+        TieredCache.set_all_tiers(
+            cache_key,
+            serialized_prices,
+            django_cache_timeout=timeout,
+        )
+        logger.info(f'Cached {len(serialized_prices)} active Stripe prices')
+        return serialized_prices
+
+    except stripe.StripeError as exc:
+        logger.error(f'Stripe API error fetching all active prices: {exc}')
+        raise StripePricingError(f'Failed to fetch all active prices: {exc}') from exc
+    except Exception as exc:
+        logger.error(f'Unexpected error fetching all active prices: {exc}')
+        raise StripePricingError(f'Unexpected error fetching all active prices: {exc}') from exc
 
 
 def get_ssp_product_pricing() -> Dict[str, Dict]:
@@ -424,3 +456,58 @@ def _serialize_basic_format(stripe_price: stripe.Price) -> SerializedPriceData:
         }
 
     return base_data
+
+
+def get_all_active_academy_stripe_prices(
+    timeout: int = settings.STRIPE_PRICE_DATA_CACHE_TIMEOUT,
+) -> list[Dict]:
+    """
+    Fetch all active recurring Stripe prices for essential academy products.
+
+    Uses efficient Stripe metadata filtering via the search endpoint to fetch
+    only academy products and their associated prices, without iterating through
+    all Stripe products.
+
+    Returns:
+        List of serialized price payloads in basic format.
+
+    Raises:
+        StripePricingError: If there's an error fetching from Stripe.
+
+    See Also:
+        get_all_active_stripe_prices(): Fetches all active prices (non-academy filtered)
+        get_academy_stripe_products(): Stripe product search with metadata filtering
+        get_academy_stripe_prices(): Fetches prices for academy products only
+    """
+    cache_key = versioned_cache_key('all_active_academy_stripe_prices')
+
+    cached_response = TieredCache.get_cached_response(cache_key)
+    if cached_response.is_found:
+        logger.info('Cache hit for all active academy Stripe prices')
+        return cached_response.value
+
+    try:
+        academy_prices = get_academy_stripe_prices()
+        serialized_prices = []
+
+        for stripe_price in academy_prices:
+            if stripe_price.type != 'recurring':
+                continue
+
+            _validate_stripe_price_schema(stripe_price)
+            serialized_prices.append(_serialize_basic_format(stripe_price))
+
+        TieredCache.set_all_tiers(
+            cache_key,
+            serialized_prices,
+            django_cache_timeout=timeout,
+        )
+        logger.info(f'Cached {len(serialized_prices)} active academy Stripe prices')
+        return serialized_prices
+
+    except stripe.StripeError as exc:
+        logger.error(f'Stripe API error fetching academy prices: {exc}')
+        raise StripePricingError(f'Failed to fetch academy prices: {exc}') from exc
+    except Exception as exc:
+        logger.error(f'Unexpected error fetching academy prices: {exc}')
+        raise StripePricingError(f'Unexpected error fetching academy prices: {exc}') from exc
