@@ -654,6 +654,25 @@ class TestAssignmentAllocationAndCancellation(TestCase):
             )
         ], any_order=True)
 
+    @mock.patch('enterprise_access.apps.content_assignments.api.get_and_cache_content_metadata')
+    def test_allocate_assignments_requires_resolved_course_run(self, mock_get_and_cache_content_metadata):
+        """
+        Allocation should fail clearly when a course-level key does not resolve to a concrete course run.
+        """
+        mock_get_and_cache_content_metadata.return_value = {
+            'content_title': 'edx: Demo 101',
+            'content_key': 'edX+DemoX',
+            'content_price': 100,
+        }
+
+        with self.assertRaisesRegex(AllocationException, 'exact course run key'):
+            allocate_assignments(
+                self.assignment_configuration,
+                ['alice@example.com'],
+                'edX+DemoX',
+                100,
+            )
+
     @mock.patch('enterprise_access.apps.content_assignments.api.send_email_for_new_assignment')
     @mock.patch(
         'enterprise_access.apps.content_assignments.api.create_pending_enterprise_learner_for_assignment_task'

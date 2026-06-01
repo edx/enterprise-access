@@ -794,7 +794,10 @@ class SubsidyAccessPolicyAllocateRequestSerializer(serializers.Serializer):
     )
     content_key = serializers.CharField(
         required=True,
-        help_text='Course content_key to which these learners are assigned.',
+        help_text=(
+            'Course or course run content_key to which these learners are assigned. Use the exact course run key '
+            'for late/custom one-off presentations.'
+        ),
     )
     content_price_cents = serializers.IntegerField(
         required=True,

@@ -66,6 +66,12 @@ class AllocationException(Exception):
     user_message = 'An error occurred during allocation'
 
 
+MISSING_COURSE_RUN_KEY_MESSAGE = (
+    'Could not resolve a course run for {content_key}. Late/custom one-off presentations must be allocated '
+    'with the exact course run key, not the parent course key.'
+)
+
+
 def _inexact_email_filter(emails, field_name='email'):
     """
     Helper that produces a Django Queryset filter
@@ -786,7 +792,13 @@ def _get_preferred_course_run_key(assignment_configuration, content_key):
       The preferred course run key (from cache) of a content_key'ed content_metadata
     """
     course_content_metadata = _get_content_summary(assignment_configuration, content_key)
-    return course_content_metadata.get('course_run_key')
+    preferred_course_run_key = course_content_metadata.get('course_run_key')
+    if not preferred_course_run_key:
+        message = MISSING_COURSE_RUN_KEY_MESSAGE.format(content_key=content_key)
+        exception = AllocationException(message)
+        exception.user_message = message
+        raise exception
+    return preferred_course_run_key
 
 
 def _create_new_assignments(
