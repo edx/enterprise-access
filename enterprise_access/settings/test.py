@@ -87,6 +87,17 @@ KAFKA_TOPICS = [
 PRODUCT_ID_TO_CATALOG_QUERY_ID_MAPPING = {
     '1': 42,
 }
+SSP_PRODUCT_BACKFILL_DATA = [
+    {
+        'slug': 'teams-yearly',
+        'stripe_price_lookup_key': 'teams_subscription_license_yearly',
+        'academy_uuid': None,
+        'catalog_query_uuid': 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+        'license_manager_product_id_trial': 2,
+        'license_manager_product_id_paid': 1,
+        'is_active': True,
+    }
+]
 ENABLE_CUSTOMER_BILLING_API = True
 ENABLE_BILLING_MANAGEMENT_API = True
 

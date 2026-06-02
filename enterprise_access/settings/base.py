@@ -630,6 +630,13 @@ PRODUCT_ID_TO_CATALOG_QUERY_ID_MAPPING = {
 PROVISIONING_PAID_SUBSCRIPTION_PRODUCT_ID = 1
 PROVISIONING_TRIAL_SUBSCRIPTION_PRODUCT_ID = 2
 
+# SSP Product backfill data for data migrations.
+# Each environment should define this with its own product rows.
+# Format: list of dicts with keys: slug, stripe_price_lookup_key, catalog_query_uuid,
+# license_manager_product_id_trial, license_manager_product_id_paid,
+# academy_uuid (optional), is_active (optional, defaults to True)
+SSP_PRODUCT_BACKFILL_DATA = []
+
 CRISPY_ALLOWED_TEMPLATE_PACKS = "bootstrap5"
 CRISPY_TEMPLATE_PACK = "bootstrap5"
 
