@@ -677,6 +677,9 @@ ENABLE_STRIPE_EVENT_SUMMARIES = False
 # Allows us to do per-environment exception raising vs. returning in our event handlers
 STRIPE_GRACEFUL_EXCEPTION_MODE = False
 
+# Django cache layer TTL for enterprise-catalog Academy record metadata
+ACADEMY_DATA_CACHE_TIMEOUT = 60 * 30
+
 ################# End Self-Service Purchasing (SSP) settings #################
 
 
