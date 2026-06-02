@@ -14,7 +14,7 @@ from enterprise_access.cache_utils import versioned_cache_key
 
 logger = logging.getLogger(__name__)
 
-ACADEMY_DATA_CACHE_TIMEOUT = getattr(settings, 'ACADEMY_DATA_CACHE_TIMEOUT', 300)
+ACADEMY_CACHE_KEY_PREFIX = 'academy_data'
 
 
 def get_cached_academy_data(academy_uuid, timeout=None):
@@ -31,17 +31,18 @@ def get_cached_academy_data(academy_uuid, timeout=None):
     if not academy_uuid:
         return None
 
-    cache_key = versioned_cache_key('academy_data', str(academy_uuid))
+    cache_key = versioned_cache_key(ACADEMY_CACHE_KEY_PREFIX, str(academy_uuid))
     cached = TieredCache.get_cached_response(cache_key)
     if cached.is_found:
         logger.info('Cache hit for academy %s', academy_uuid)
         return cached.value
 
+    logger.info('Cache miss for academy %s', academy_uuid)
+
     data = EnterpriseCatalogApiClient().get_academy(academy_uuid)
-    TieredCache.set_all_tiers(
-        cache_key,
-        data,
-        django_cache_timeout=timeout if timeout is not None else ACADEMY_DATA_CACHE_TIMEOUT,
-    )
+
+    cache_timeout_value = timeout if timeout is not None else settings.ACADEMY_DATA_CACHE_TIMEOUT
+    TieredCache.set_all_tiers(cache_key, data, django_cache_timeout=cache_timeout_value)
     logger.info('Cached academy data for %s', academy_uuid)
+
     return data
