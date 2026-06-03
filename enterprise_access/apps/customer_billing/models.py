@@ -272,6 +272,13 @@ class CheckoutIntent(TimeStampedModel):
         null=True,
         blank=True,
     )
+    ssp_product = models.ForeignKey(
+        'SspProduct',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        help_text='The SSP product associated with this checkout intent.',
+    )
     terms_metadata = models.JSONField(
         null=True,
         blank=True,

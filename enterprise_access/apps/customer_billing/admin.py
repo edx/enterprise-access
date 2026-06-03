@@ -150,6 +150,7 @@ class CheckoutIntentAdmin(DjangoQLSearchMixin, admin.ModelAdmin):
                 'stripe_checkout_session_id',
                 'stripe_session_link',
                 'workflow',
+                'ssp_product',
             ),
             'classes': ('collapse',),
         }),

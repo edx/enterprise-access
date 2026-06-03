@@ -198,6 +198,58 @@ class TestCheckoutIntentModel(TestCase):
         # Should still only have one intent for this user
         self.assertEqual(CheckoutIntent.objects.filter(user=self.user1).count(), 1)
 
+    def test_ssp_product_nullable_fk_accepts_none_and_instance(self):
+        """The SSP product relation should allow nulls and valid product instances.
+
+        Create one CheckoutIntent without a product and then verify multiple
+        SSP products (teams and the provided academy slugs) can be linked.
+        """
+        slugs = [
+            'teams-yearly',
+            'ai-academy-yearly',
+            'sustainability-academy-yearly',
+            'tech-digital-transformation-academy-yearly',
+            'data-academy-yearly',
+            'management-academy-yearly',
+            'leadership-academy-yearly',
+            'supply-chain-academy-yearly',
+            'communication-academy-yearly',
+        ]
+
+        products = []
+        for slug in slugs:
+            product, _ = SspProduct.objects.get_or_create(
+                slug=slug,
+                defaults={
+                    'stripe_price_lookup_key': f"{slug.replace('-', '_')}_price",
+                    'catalog_query_uuid': uuid4(),
+                },
+            )
+            products.append(product)
+
+        intent_without_product = CheckoutIntent.objects.create(
+            user=cast(AbstractUser, self.user1),
+            enterprise_slug='nullable-product-enterprise',
+            enterprise_name='Nullable Product Enterprise',
+            quantity=3,
+            expires_at=timezone.now() + timedelta(hours=1),
+            country='US',
+            ssp_product=None,
+        )
+        self.assertIsNone(intent_without_product.ssp_product)
+
+        for product in products:
+            intent = CheckoutIntent.objects.create(
+                user=UserFactory(),
+                enterprise_slug=f'linked-product-{product.slug}-enterprise',
+                enterprise_name=f'Linked {product.slug} Enterprise',
+                quantity=1,
+                expires_at=timezone.now() + timedelta(hours=1),
+                country='US',
+                ssp_product=product,
+            )
+            self.assertEqual(intent.ssp_product, product)
+
     def test_create_intent_with_existing_failed_intent(self):
         """
         Test that trying to update an intent that's in a failure state raises an exception.
