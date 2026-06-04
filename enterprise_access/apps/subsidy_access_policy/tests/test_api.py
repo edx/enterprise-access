@@ -1,5 +1,5 @@
 """
-Tests for the ``api.py`` module of the content_assignments app.
+Tests for the ``api.py`` module of the subsidy_access_policy app.
 """
 from unittest import mock
 from uuid import uuid4
@@ -14,121 +14,144 @@ from rest_framework import status
 from enterprise_access.apps.content_assignments.api import AllocationException
 from enterprise_access.apps.content_assignments.tests.factories import LearnerContentAssignmentFactory
 from enterprise_access.apps.core.tests.factories import UserFactory
-from enterprise_access.apps.subsidy_access_policy.api import approve_learner_credit_requests_via_policy
+from enterprise_access.apps.subsidy_access_policy.api import get_policy_for_approval, validate_and_allocate
 from enterprise_access.apps.subsidy_access_policy.exceptions import (
     ContentPriceNullException,
     PriceValidationError,
-    SubisidyAccessPolicyRequestApprovalError,
-    SubsidyAccessPolicyLockAttemptFailed
+    SubisidyAccessPolicyRequestApprovalError
 )
 from enterprise_access.apps.subsidy_access_policy.tests.factories import (
     PerLearnerSpendCapLearnerCreditAccessPolicyFactory
 )
 from enterprise_access.apps.subsidy_request.models import LearnerCreditRequest
 
+POLICY_PATH = 'enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy'
+
+
+class TestGetPolicyForApproval(TestCase):
+    """Tests for get_policy_for_approval."""
+
+    def setUp(self):
+        super().setUp()
+        self.policy = PerLearnerSpendCapLearnerCreditAccessPolicyFactory(
+            active=True, retired=False,
+        )
+
+    def test_returns_existing_policy(self):
+        result = get_policy_for_approval(self.policy.uuid)
+        self.assertEqual(result.uuid, self.policy.uuid)
+
+    def test_raises_for_nonexistent_policy(self):
+        nonexistent_uuid = str(uuid4())
+        with self.assertRaises(SubisidyAccessPolicyRequestApprovalError) as ctx:
+            get_policy_for_approval(nonexistent_uuid)
+        self.assertEqual(ctx.exception.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertIn(nonexistent_uuid, str(ctx.exception))
+
 
 @ddt.ddt
-class SubsidyAccessPolicyApiTests(TestCase):
-    """
-    Tests for the APIs in the subsidy_access_policy app.
-    """
+class TestValidateAndAllocate(TestCase):
+    """Tests for validate_and_allocate."""
+
     def setUp(self):
         super().setUp()
         self.user = UserFactory()
-        self.enterprise_customer_uuid_1 = "12345678-1234-5678-1234-567812345678"
         self.policy = PerLearnerSpendCapLearnerCreditAccessPolicyFactory(
-            enterprise_customer_uuid=self.enterprise_customer_uuid_1,
             active=True,
             retired=False,
-            per_learner_spend_limit=0,  # For B&R budget, limit should be set to 0.
+            per_learner_spend_limit=0,
             spend_limit=4000,
         )
 
-    @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.approve')
-    @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.can_approve')
-    def test_approve_learner_credit_request_via_policy_success(self, mock_can_approve, mock_approve):
-        """
-        Test that if a learner credit request is approved, the correct
-        assignment is returned.
-        """
+    @mock.patch.multiple(POLICY_PATH, approve=mock.DEFAULT, can_approve=mock.DEFAULT)
+    def test_success(self, can_approve, approve):
+        """Valid requests are approved and mapped to their assignments."""
         request = mock.MagicMock(spec=LearnerCreditRequest)
         assignment = LearnerContentAssignmentFactory()
 
-        mock_can_approve.return_value = {
+        can_approve.return_value = {
             "valid_requests": [request],
             "failed_requests_by_reason": {},
         }
+        approve.return_value = {request.uuid: assignment}
 
-        mock_approve.return_value = {request.uuid: assignment}
+        approved_map, failed_by_reason = validate_and_allocate(self.policy, [request])
 
-        result = approve_learner_credit_requests_via_policy(
-            policy_uuid=self.policy.uuid,
-            learner_credit_requests=[request],
-        )
+        self.assertIn(request.uuid, approved_map)
+        self.assertEqual(approved_map[request.uuid]["assignment"], assignment)
+        self.assertEqual(approved_map[request.uuid]["request"], request)
+        self.assertEqual(failed_by_reason, {})
 
-        self.assertIn("approved_requests", result)
-        self.assertIn(request.uuid, result["approved_requests"])
-        self.assertEqual(result["approved_requests"][request.uuid]["assignment"], assignment)
-        self.assertEqual(result["approved_requests"][request.uuid]["request"], request)
-        self.assertEqual(result["failed_requests_by_reason"], {})
-
-    @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.approve')
-    @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.can_approve')
-    def test_approve_learner_credit_requests_via_policy_partial_failure(self, mock_can_approve, mock_approve):
-        """
-        Test that failed requests are returned in failed_requests_by_reason.
-        """
+    @mock.patch.multiple(POLICY_PATH, approve=mock.DEFAULT, can_approve=mock.DEFAULT)
+    def test_partial_failure(self, can_approve, approve):
+        """Failed requests appear in failed_requests_by_reason alongside approved ones."""
         valid_request = mock.MagicMock(spec=LearnerCreditRequest)
         failed_request = mock.MagicMock(spec=LearnerCreditRequest)
         assignment = LearnerContentAssignmentFactory()
-        reason = "Some failure reason"
-        mock_can_approve.return_value = {
+        reason = "content_not_in_catalog"
+
+        can_approve.return_value = {
             "valid_requests": [valid_request],
             "failed_requests_by_reason": {reason: [failed_request]},
         }
-        mock_approve.return_value = {valid_request.uuid: assignment}
+        approve.return_value = {valid_request.uuid: assignment}
 
-        result = approve_learner_credit_requests_via_policy(
-            policy_uuid=self.policy.uuid,
-            learner_credit_requests=[valid_request, failed_request],
+        approved_map, failed_by_reason = validate_and_allocate(
+            self.policy, [valid_request, failed_request],
         )
 
-        self.assertIn(valid_request.uuid, result["approved_requests"])
-        self.assertIn(reason, result["failed_requests_by_reason"])
-        self.assertIn(failed_request, result["failed_requests_by_reason"][reason])
+        self.assertIn(valid_request.uuid, approved_map)
+        self.assertIn(reason, failed_by_reason)
+        self.assertIn(failed_request, failed_by_reason[reason])
 
-    def test_approve_learner_credit_request_via_policy_nonexistent_policy(self):
+    @mock.patch.multiple(POLICY_PATH, approve=mock.DEFAULT, can_approve=mock.DEFAULT)
+    def test_all_requests_fail_validation(self, can_approve, approve):
         """
-        Test that if a policy does not exist, the correct exception is raised.
+        All requests failing validation (without a global error_reason) returns an empty
+        approved map and skips the allocation call entirely.
         """
-        nonexistent_policy_uuid = str(uuid4())
+        failed_request = mock.MagicMock(spec=LearnerCreditRequest)
+        reason = "content_not_in_catalog"
 
-        with self.assertRaises(SubisidyAccessPolicyRequestApprovalError) as context:
-            approve_learner_credit_requests_via_policy(
-                policy_uuid=nonexistent_policy_uuid,
-                learner_credit_requests=[],
-            )
+        can_approve.return_value = {
+            "valid_requests": [],
+            "failed_requests_by_reason": {reason: [failed_request]},
+        }
 
-        self.assertEqual(context.exception.status_code, status.HTTP_404_NOT_FOUND)
-        self.assertIn(f"Policy with UUID {nonexistent_policy_uuid} does not exist", str(context.exception))
+        approved_map, failed_by_reason = validate_and_allocate(self.policy, [failed_request])
 
-    @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.lock')
-    def test_approve_learner_credit_request_via_policy_lock_failed(self, mock_lock):
-        """
-        Test that if acquiring the policy lock fails, the correct exception is raised.
-        """
-        mock_lock.side_effect = SubsidyAccessPolicyLockAttemptFailed("Lock acquisition failed")
+        self.assertEqual(approved_map, {})
+        self.assertEqual(failed_by_reason, {reason: [failed_request]})
+        approve.assert_not_called()
 
-        with self.assertRaises(SubisidyAccessPolicyRequestApprovalError) as context:
-            approve_learner_credit_requests_via_policy(
-                policy_uuid=self.policy.uuid,
-                learner_credit_requests=[],
-            )
+    @mock.patch(f'{POLICY_PATH}.can_approve')
+    def test_global_validation_error_raises(self, mock_can_approve):
+        """A global error_reason from can_approve raises SubisidyAccessPolicyRequestApprovalError."""
+        mock_can_approve.return_value = {
+            "error_reason": "subsidy_expired",
+            "valid_requests": [],
+            "failed_requests_by_reason": {},
+        }
 
-        self.assertEqual(context.exception.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
-        self.assertIn(f"Failed to acquire lock for policy UUID {self.policy.uuid}", str(context.exception))
+        with self.assertRaises(SubisidyAccessPolicyRequestApprovalError):
+            validate_and_allocate(self.policy, [])
 
-    @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.can_approve')
+    @mock.patch.multiple(POLICY_PATH, approve=mock.DEFAULT, can_approve=mock.DEFAULT)
+    def test_consistency_error_on_missing_assignment(self, can_approve, approve):
+        """Raises if approve() does not return an assignment for a validated request."""
+        request = mock.MagicMock(spec=LearnerCreditRequest)
+
+        can_approve.return_value = {
+            "valid_requests": [request],
+            "failed_requests_by_reason": {},
+        }
+        approve.return_value = {}  # "forgot" the assignment
+
+        with self.assertRaises(SubisidyAccessPolicyRequestApprovalError) as ctx:
+            validate_and_allocate(self.policy, [request])
+        self.assertIn("Consistency Error", str(ctx.exception))
+
+    @mock.patch(f'{POLICY_PATH}.can_approve')
     @ddt.data(
         AllocationException("Allocation failed"),
         PriceValidationError("Price validation failed"),
@@ -138,65 +161,25 @@ class SubsidyAccessPolicyApiTests(TestCase):
         ConnectionError("Connection error"),
         ContentPriceNullException("Content price is null"),
     )
-    def test_approve_learner_credit_request_via_policy_exceptions(self, exception, mock_can_approve):
-        """
-        Test that various exceptions are properly caught and re-raised as SubsidyAccessPolicyRequestApprovalError.
-        """
+    def test_known_exceptions_wrapped(self, exception, mock_can_approve):
+        """Known exception types are re-raised as SubisidyAccessPolicyRequestApprovalError."""
         mock_can_approve.side_effect = exception
 
-        with self.assertRaises(SubisidyAccessPolicyRequestApprovalError) as context:
-            approve_learner_credit_requests_via_policy(
-                policy_uuid=self.policy.uuid,
-                learner_credit_requests=[],
-            )
+        with self.assertRaises(SubisidyAccessPolicyRequestApprovalError) as ctx:
+            validate_and_allocate(self.policy, [])
+        self.assertEqual(ctx.exception.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
+        self.assertEqual(str(ctx.exception), str(exception))
 
-        self.assertEqual(context.exception.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
-        self.assertEqual(str(context.exception), str(exception))
-
-    @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.approve')
-    @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.can_approve')
-    def test_approve_learner_credit_request_via_policy_approve_exception(self, mock_can_approve, mock_approve):
-        """
-        Test that exceptions raised during policy.approve() are properly handled.
-        """
+    @mock.patch.multiple(POLICY_PATH, approve=mock.DEFAULT, can_approve=mock.DEFAULT)
+    def test_approve_exception_wrapped(self, can_approve, approve):
+        """Exceptions from policy.approve() are also wrapped."""
         request = mock.MagicMock(spec=LearnerCreditRequest)
-        mock_can_approve.return_value = {
+        can_approve.return_value = {
             "valid_requests": [request],
             "failed_requests_by_reason": {},
         }
-        mock_approve.side_effect = AllocationException("Allocation failed during approval")
+        approve.side_effect = AllocationException("Allocation failed during approval")
 
-        with self.assertRaises(SubisidyAccessPolicyRequestApprovalError) as context:
-            approve_learner_credit_requests_via_policy(
-                policy_uuid=self.policy.uuid,
-                learner_credit_requests=[],
-            )
-
-        self.assertEqual(context.exception.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
-        self.assertEqual(str(context.exception), "Allocation failed during approval")
-
-    @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.approve')
-    @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.can_approve')
-    def test_approve_learner_credit_request_via_policy_consistency_error(self, mock_can_approve, mock_approve):
-        """
-        Test that a consistency error is raised if approve() does not return
-        an assignment for a request that was deemed valid by can_approve().
-        """
-        request = mock.MagicMock(spec=LearnerCreditRequest)
-
-        # can_approve says this request is valid
-        mock_can_approve.return_value = {
-            "valid_requests": [request],
-            "failed_requests_by_reason": {},
-        }
-
-        # But approve() returns an empty map, "forgetting" the assignment
-        mock_approve.return_value = {}
-
-        with self.assertRaises(SubisidyAccessPolicyRequestApprovalError) as context:
-            approve_learner_credit_requests_via_policy(
-                policy_uuid=self.policy.uuid,
-                learner_credit_requests=[request],
-            )
-
-        self.assertIn("Consistency Error: Missing assignment for approved request", str(context.exception))
+        with self.assertRaises(SubisidyAccessPolicyRequestApprovalError) as ctx:
+            validate_and_allocate(self.policy, [])
+        self.assertEqual(str(ctx.exception), "Allocation failed during approval")

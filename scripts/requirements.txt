@@ -1,0 +1,9 @@
+# Requirements for Billing Management API Integration Tests
+#
+# Install with: pip install -r scripts/requirements.txt
+
+# Core dependencies
+requests>=2.28.0
+
+# Optional but recommended for .env file support
+python-dotenv>=0.20.0

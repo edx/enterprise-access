@@ -4,7 +4,6 @@ Tests for the ``enterprise_access.apps.customer_billing.utils`` module.
 
 import datetime
 
-import pytz
 from django.test import TestCase
 from django.utils import timezone
 
@@ -24,27 +23,24 @@ class TestCustomerBillingUtils(TestCase):
 
         self.assertTrue(timezone.is_aware(dt))
 
-    def test_datetime_from_timestamp_uses_current_timezone(self):
+    def test_datetime_from_timestamp_returns_utc(self):
         """
-        datetime_from_timestamp should attach the current Django timezone
-        (make_aware default behavior).
+        datetime_from_timestamp should always return a UTC-aware datetime.
         """
         ts = 1767285545
 
         dt = datetime_from_timestamp(ts)
 
-        self.assertEqual(dt.tzinfo, pytz.UTC)
+        self.assertEqual(dt.tzinfo, datetime.timezone.utc)
 
     def test_datetime_from_timestamp_has_expected_components(self):
         """
-        Validate that datetime_from_timestamp returns the correct *local-date*
+        Validate that datetime_from_timestamp returns the correct UTC
         representation for the given timestamp.
         """
         ts = 1767285545
 
-        # Expected value computed the same way as the function
-        expected_naive = datetime.datetime.fromtimestamp(ts)
-        expected = timezone.make_aware(expected_naive)
+        expected = datetime.datetime.fromtimestamp(ts, tz=datetime.timezone.utc)
 
         dt = datetime_from_timestamp(ts)
 

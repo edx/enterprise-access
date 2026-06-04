@@ -108,12 +108,19 @@ celerybeat.pid
 
 # Environments
 .env
+.env.*
+!.env.example
 .venv
 env/
 venv/
 ENV/
 env.bak/
 venv.bak/
+
+# Integration test credentials
+scripts/.env
+scripts/.env.*
+!scripts/.env.example
 
 # Spyder project settings
 .spyderproject
@@ -153,17 +160,14 @@ enterprise_access/settings/private.py
 .dev/
 enterprise_access/assets
 
-# claude code
-CLAUDE.md
-.claude/
-package-lock.json
-package.json
+# claude code personalization
+.claude/settings.local.json
 
-# Ralph
-.ralph/.*
-.ralph/status.json
-.ralph/progress.json
-.ralph/specs/
-.ralph/logs
-.ralph/live.log
-.ralph/fix_plan.md
+# personal notes
+.notes/
+
+# Ralph (deprecated, can be removed once no one has local .ralph/ dirs)
+.ralph/
+
+# Temporary docs, useful for pluggable AI context
+docs/essentials-temp/

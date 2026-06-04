@@ -74,6 +74,7 @@ def _get_subsidy_expiration(assignment):
     Returns the datetime at which the subsidy for this assignment expires.
     """
     # Import here to avoid circular import
+    # pylint: disable=import-outside-toplevel
     from enterprise_access.apps.content_assignments.content_metadata_api import parse_datetime_string
 
     subsidy_expiration_datetime = (
@@ -94,6 +95,7 @@ def _get_enrollment_deadline_date(assignment, content_metadata):
     - Other assignments: Use existing normalized_metadata behavior
     """
     # Import here to avoid circular import
+    # pylint: disable=import-outside-toplevel
     from enterprise_access.apps.content_assignments.enrollment_deadline_strategies import (
         EnrollmentDeadlineStrategyFactory
     )
@@ -121,6 +123,7 @@ def get_automatic_expiration_date_and_reason(
             fetched and subsequently cached from the content metadata API.
     """
     # Import here to avoid circular import
+    # pylint: disable=import-outside-toplevel
     from enterprise_access.apps.content_assignments.content_metadata_api import get_content_metadata_for_assignments
 
     assignment_configuration = assignment.assignment_configuration
@@ -209,28 +212,6 @@ def should_send_email_to_pecu(recent_action):
         is_65_days_since_invited or
         is_85_days_since_invited
     )
-
-
-def get_normalized_metadata_for_assignment(assignment, content_metadata):
-    """
-    Retrieve normalized metadata for a given object. If the object is associated
-    with a specific course run or a preferred course run key, return the metadata for that run.
-    If metadata for the run is missing, return the normalized metadata for the advertised run.
-
-    Args:
-        assignment (dict): The assignment object.
-        content_metadata (dict): The content metadata object
-
-    Returns:
-        dict: Normalized metadata, either for a specific course run or the advertised course run, if any.
-    """
-    normalized_metadata_by_run = content_metadata.get('normalized_metadata_by_run', {})
-    # Return the content metadata for a specific course run based on the preferred_course_run_key
-    if preferred_course_run_key := assignment.preferred_course_run_key:
-        return normalized_metadata_by_run.get(preferred_course_run_key, {})
-    # Return current advertised course run metadata if preferred_course_run_key is NULL (i.e.,
-    # impacting legacy course-based assignments created pre-May 2024).
-    return content_metadata.get('normalized_metadata', {})
 
 
 def _curr_date(date_format=None):

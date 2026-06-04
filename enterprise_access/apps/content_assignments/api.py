@@ -26,14 +26,10 @@ from enterprise_access.apps.content_metadata.api import get_and_cache_catalog_co
 from enterprise_access.apps.core.models import User
 from enterprise_access.apps.subsidy_access_policy.content_metadata_api import get_and_cache_content_metadata
 from enterprise_access.apps.subsidy_request.constants import SubsidyRequestStates
-from enterprise_access.utils import (
-    chunks,
-    get_automatic_expiration_date_and_reason,
-    get_normalized_metadata_for_assignment,
-    localized_utcnow
-)
+from enterprise_access.utils import chunks, get_automatic_expiration_date_and_reason, localized_utcnow
 
 from .constants import LearnerContentAssignmentStateChoices
+from .content_metadata_api import get_normalized_metadata_for_assignment
 from .models import AssignmentConfiguration, LearnerContentAssignment
 from .tasks import (
     create_pending_enterprise_learner_for_assignment_task,

@@ -1,0 +1,221 @@
+"""Tests for prompts admin."""
+from django.contrib import admin
+from django.contrib.admin.sites import AdminSite
+from django.core.exceptions import ValidationError
+from django.http import HttpRequest
+from django.test import TestCase
+from djangoql.admin import DjangoQLSearchMixin
+from simple_history.admin import SimpleHistoryAdmin
+
+from enterprise_access.apps.core.tests.factories import UserFactory
+from enterprise_access.apps.prompts.admin import PrettyJSONWidget, XpertLearnerPathwaysSystemPromptAdmin
+from enterprise_access.apps.prompts.models import PromptType, XpertLearnerPathwaysSystemPrompt
+from enterprise_access.apps.prompts.tests.factories import XpertLearnerPathwaysSystemPromptFactory
+
+
+class XpertLearnerPathwaysSystemPromptAdminTests(TestCase):
+    """Tests for XpertLearnerPathwaysSystemPromptAdmin."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        self.admin_site = AdminSite()
+        self.admin = XpertLearnerPathwaysSystemPromptAdmin(XpertLearnerPathwaysSystemPrompt, self.admin_site)
+        self.request = HttpRequest()
+        self.user = UserFactory(is_staff=True, is_superuser=True)
+        self.request.user = self.user
+
+    def test_admin_is_registered(self):
+        """Test that XpertLearnerPathwaysSystemPrompt is registered in admin."""
+        # pylint: disable=protected-access
+        self.assertIn(XpertLearnerPathwaysSystemPrompt, admin.site._registry)
+        self.assertIsInstance(
+            admin.site._registry[XpertLearnerPathwaysSystemPrompt],
+            XpertLearnerPathwaysSystemPromptAdmin
+        )
+
+    def test_admin_uses_djangoql_search_mixin(self):
+        """Test that admin uses DjangoQLSearchMixin."""
+        self.assertIsInstance(self.admin, DjangoQLSearchMixin)
+
+    def test_admin_uses_simple_history_admin(self):
+        """Test that admin uses SimpleHistoryAdmin."""
+        self.assertIsInstance(self.admin, SimpleHistoryAdmin)
+
+    def test_admin_configuration(self):
+        """Test that admin list/filter/search/ordering configuration is correct."""
+        # List display configuration
+        self.assertEqual(
+            self.admin.list_display,
+            ('prompt_type', 'notes', 'modified', 'created')
+        )
+
+        # List filter configuration
+        self.assertEqual(self.admin.list_filter, ('prompt_type',))
+
+        # Search fields configuration
+        # Note: output_schema (JSONField) is intentionally excluded because Django admin's
+        # default __icontains lookup is not supported for JSONField. Users can search JSON
+        # content via DjangoQL instead.
+        self.assertEqual(self.admin.search_fields, ('notes', 'system_prompt'))
+
+        # Ordering configuration
+        self.assertEqual(self.admin.ordering, ('-modified',))
+
+    def test_form_field_configuration(self):
+        """Test that editable and readonly fields are configured correctly in the form."""
+        prompt = XpertLearnerPathwaysSystemPromptFactory()
+
+        # Get the form for this object
+        form_class = self.admin.get_form(self.request, prompt)
+        form = form_class(instance=prompt)
+
+        # Verify editable fields are present in the form
+        editable_fields = ['system_prompt', 'notes', 'output_schema', 'prompt_type']
+        for field_name in editable_fields:
+            self.assertIn(field_name, form.fields, f'{field_name} should be in form')
+
+        # Verify readonly fields configuration
+        readonly_fields = self.admin.get_readonly_fields(self.request, prompt)
+        self.assertEqual(readonly_fields, ('created', 'modified'))
+        self.assertIn('created', readonly_fields)
+        self.assertIn('modified', readonly_fields)
+
+    def test_form_validates_required_fields(self):
+        """Test that the admin form validates required fields and data types."""
+        form_class = self.admin.get_form(self.request)
+
+        # Test blank system_prompt
+        with self.subTest('blank system_prompt'):
+            form = form_class(data={
+                'prompt_type': PromptType.LEARNER_INTENT,
+                'system_prompt': '',
+                'notes': 'Test notes',
+            })
+            self.assertFalse(form.is_valid())
+            self.assertIn('system_prompt', form.errors)
+
+        # Test whitespace-only system_prompt
+        with self.subTest('whitespace-only system_prompt'):
+            form = form_class(data={
+                'prompt_type': PromptType.LEARNER_INTENT,
+                'system_prompt': '   \n\t   ',
+                'notes': 'Test notes',
+            })
+            self.assertFalse(form.is_valid())
+            self.assertIn('system_prompt', form.errors)
+
+        # Test invalid output_schema (non-dict JSON)
+        with self.subTest('non-dict output_schema'):
+            form = form_class(data={
+                'prompt_type': PromptType.LEARNER_INTENT,
+                'system_prompt': 'You are a helpful assistant.',
+                'output_schema': '["not", "a", "dict"]',  # JSON array string
+            })
+            self.assertFalse(form.is_valid())
+            self.assertIn('output_schema', form.errors)
+
+        # Test valid data passes
+        with self.subTest('valid data'):
+            form = form_class(data={
+                'prompt_type': PromptType.LEARNER_INTENT,
+                'system_prompt': 'You are a helpful assistant.',
+                'notes': 'Test notes',
+                'output_schema': '{"type": "object"}',
+            })
+            self.assertTrue(form.is_valid(), f'Form errors: {form.errors}')
+
+    def test_single_object_delete_blocked(self):
+        """Test that single-object deletion is blocked."""
+        prompt = XpertLearnerPathwaysSystemPromptFactory()
+
+        # has_delete_permission should return False
+        self.assertFalse(self.admin.has_delete_permission(self.request, prompt))
+
+    def test_delete_permission_blocked_without_object(self):
+        """Test that delete permission is blocked even without a specific object."""
+        # has_delete_permission should return False even when obj=None
+        self.assertFalse(self.admin.has_delete_permission(self.request, obj=None))
+
+    def test_history_tracking_enabled(self):
+        """Test that history tracking is available through SimpleHistoryAdmin."""
+        # Create a prompt and modify it
+        prompt = XpertLearnerPathwaysSystemPromptFactory(
+            prompt_type=PromptType.LEARNER_INTENT,
+            system_prompt='Original prompt'
+        )
+
+        # Modify the prompt
+        prompt.system_prompt = 'Updated prompt'
+        prompt.save()
+
+        # Verify history exists
+        history = prompt.history.all()
+        self.assertEqual(history.count(), 2)  # Original + update
+        self.assertEqual(history[0].system_prompt, 'Updated prompt')
+        self.assertEqual(history[1].system_prompt, 'Original prompt')
+
+    def test_unique_constraint_enforced(self):
+        """Test that the unique constraint on prompt_type is enforced."""
+        # Create first prompt
+        XpertLearnerPathwaysSystemPromptFactory(prompt_type=PromptType.LEARNER_INTENT)
+
+        # Try to create another with same prompt_type - should raise ValidationError
+        with self.assertRaises(ValidationError):
+            XpertLearnerPathwaysSystemPromptFactory(prompt_type=PromptType.LEARNER_INTENT)
+
+    def test_multiple_prompt_types_allowed(self):
+        """Test that multiple prompts with different types can coexist."""
+        prompt1 = XpertLearnerPathwaysSystemPromptFactory(prompt_type=PromptType.LEARNER_INTENT)
+        prompt2 = XpertLearnerPathwaysSystemPromptFactory(prompt_type=PromptType.RECOMMENDATIONS_FEEDBACK)
+
+        self.assertIsNotNone(prompt1.uuid)
+        self.assertIsNotNone(prompt2.uuid)
+        self.assertNotEqual(prompt1.uuid, prompt2.uuid)
+        self.assertEqual(XpertLearnerPathwaysSystemPrompt.objects.count(), 2)
+
+    def test_form_uses_pretty_json_widget(self):
+        """Test that the form uses PrettyJSONWidget for output_schema field."""
+        form_class = self.admin.get_form(self.request)
+        form = form_class()
+
+        # Verify output_schema field uses PrettyJSONWidget
+        self.assertIsInstance(form.fields['output_schema'].widget, PrettyJSONWidget)
+
+    def test_pretty_json_widget_formats_dict_with_indentation(self):
+        """Test that PrettyJSONWidget renders dict values as indented JSON."""
+        widget = PrettyJSONWidget()
+        test_schema = {
+            "type": "object",
+            "properties": {
+                "intent": {"type": "string"},
+                "confidence": {"type": "number"}
+            }
+        }
+
+        formatted_value = widget.format_value(test_schema)
+
+        # Should be formatted with indentation
+        self.assertIn('\n', formatted_value)
+        self.assertIn('  "type":', formatted_value)
+        self.assertIn('  "properties":', formatted_value)
+
+    def test_pretty_json_widget_handles_none_value(self):
+        """Test that PrettyJSONWidget handles None values gracefully."""
+        widget = PrettyJSONWidget()
+        self.assertIsNone(widget.format_value(None))
+
+    def test_pretty_json_widget_handles_empty_string(self):
+        """Test that PrettyJSONWidget handles empty strings gracefully."""
+        widget = PrettyJSONWidget()
+        self.assertEqual(widget.format_value(''), '')
+
+    def test_pretty_json_widget_reformats_json_string(self):
+        """Test that PrettyJSONWidget reformats valid JSON strings."""
+        widget = PrettyJSONWidget()
+        json_string = '{"type":"object","properties":{"name":{"type":"string"}}}'
+
+        formatted_value = widget.format_value(json_string)
+
+        # Should be reformatted with indentation
+        self.assertIn('\n', formatted_value)
+        self.assertIn('  "type":', formatted_value)

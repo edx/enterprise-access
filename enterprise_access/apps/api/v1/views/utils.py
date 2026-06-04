@@ -62,3 +62,37 @@ class PaginationWithPageCount(DefaultPagination):
                 'results': schema,
             },
         }
+
+
+class PaginationWithPageCountAndLearnerRequestStateCounts(PaginationWithPageCount):
+    """
+    Custom paginator class that adds a ``learner_request_state_counts`` field to the response schema
+    such that it shows in the DRF Spectacular generated docs.
+    """
+
+    def get_paginated_response_schema(self, schema):
+        """
+        Annotate the paginated response schema with the extra fields provided by edx_rest_framework_extensions'
+        DefaultPagination class (e.g., ``page_count``).
+        """
+        response_schema = super().get_paginated_response_schema(schema)
+        response_schema['properties']['learner_request_state_counts'] = {
+            'type': 'array',
+            'items': {
+                'type': 'object',
+                'properties': {
+                    'learner_request_state': {
+                        'type': 'string',
+                        'description': 'The computed learner request state',
+                        'example': 'requested',
+                    },
+                    'count': {
+                        'type': 'integer',
+                        'description': 'The number of requests in this state',
+                        'example': 123,
+                    },
+                },
+            },
+
+        }
+        return response_schema

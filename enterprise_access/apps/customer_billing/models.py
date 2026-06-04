@@ -23,6 +23,7 @@ from simple_history.models import HistoricalRecords
 from simple_history.utils import bulk_update_with_history
 
 from enterprise_access.apps.customer_billing import stripe_api
+from enterprise_access.apps.customer_billing.academy_api import get_cached_academy_data
 from enterprise_access.apps.customer_billing.constants import ALLOWED_CHECKOUT_INTENT_STATE_TRANSITIONS
 
 from .constants import INTENT_RESERVATION_DURATION_MINUTES, CheckoutIntentState
@@ -38,6 +39,96 @@ class FailedCheckoutIntentConflict(Exception):
 
 class SlugReservationConflict(Exception):
     pass
+
+
+class SspProduct(TimeStampedModel):
+    """
+    Universal product record for all SSP subscription offerings (Teams and each Essentials Academy).
+
+    This is the cross-service interoperability key. ``slug`` is stored in:
+      - Stripe Price metadata (as ``ssp_product_slug``, set via Terraform)
+      - Salesforce provisioning API calls (passed through from Stripe invoice)
+
+    Academy display metadata (title, description, etc.) is NOT stored here —
+    use the ``academy_*`` properties which fetch and cache from enterprise-catalog.
+
+    .. no_pii:
+    """
+    slug = models.SlugField(
+        primary_key=True,
+        max_length=255,
+        help_text='Universal cross-service identifier, e.g. "teams-yearly", "ai-academy-yearly".',
+    )
+    stripe_price_lookup_key = models.CharField(
+        max_length=255,
+        unique=True,
+        help_text='Stripe Price lookup_key for this product.',
+    )
+    academy_uuid = models.UUIDField(
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text='enterprise-catalog Academy UUID. Null for non-Academy products (e.g. Teams).',
+    )
+    catalog_query_uuid = models.UUIDField(
+        help_text='enterprise-catalog CatalogQuery UUID used for provisioning.',
+    )
+    license_manager_product_id_trial = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text='license-manager product ID for the trial subscription period.',
+    )
+    license_manager_product_id_paid = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text='license-manager product ID for the paid subscription period.',
+    )
+    is_active = models.BooleanField(
+        default=True,
+        db_index=True,
+    )
+
+    history = HistoricalRecords()
+
+    class Meta:
+        verbose_name = 'SSP Product'
+        verbose_name_plural = 'SSP Products'
+
+    def __str__(self):
+        return f'<SspProduct slug={self.slug}>'
+
+    @property
+    def _academy_data(self):
+        """Fetch and instance-cache the academy payload. None for non-Academy products."""
+        if not getattr(self, '_academy_data_cache', None):
+            # pylint: disable=attribute-defined-outside-init
+            self._academy_data_cache = get_cached_academy_data(self.academy_uuid)
+        return self._academy_data_cache
+
+    @property
+    def academy_title(self):
+        """Academy display name. None for non-Academy products."""
+        return self._academy_data.get('title') if self._academy_data else None
+
+    @property
+    def academy_description(self):
+        """Academy description. None for non-Academy products."""
+        return self._academy_data.get('description') if self._academy_data else None
+
+    @property
+    def academy_marketing_url(self):
+        """Academy marketing URL. None for non-Academy products."""
+        return self._academy_data.get('marketing_url') if self._academy_data else None
+
+    @property
+    def academy_thumbnail_url(self):
+        """Academy thumbnail URL. None for non-Academy products."""
+        return self._academy_data.get('thumbnail_url') if self._academy_data else None
+
+    @property
+    def academy_tags(self):
+        """Academy competency tags. None for non-Academy products."""
+        return self._academy_data.get('tags') if self._academy_data else None
 
 
 class CheckoutIntent(TimeStampedModel):
@@ -718,6 +809,21 @@ class SelfServiceSubscriptionRenewal(TimeStampedModel):
         blank=True,
         help_text='The renewed (or future) subscription plan uuid on this renewal',
     )
+    is_canceled = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text='True if the subscription has been canceled. Can be set back to False if subscription is '
+                  'un-canceled.',
+    )
+    subscription_cancel_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text=(
+            'Timestamp when the subscription is scheduled to be canceled. '
+            'Set from Stripe cancel_at on subscription_updated events; '
+            'cleared on subscription deletion or when cancellation is reversed.'
+        ),
+    )
     stripe_event_data = models.OneToOneField(
         'StripeEventData',
         on_delete=models.CASCADE,
@@ -728,6 +834,24 @@ class SelfServiceSubscriptionRenewal(TimeStampedModel):
         max_length=255,
         db_index=True,
         help_text="The Stripe subscription ID for this renewal",
+    )
+    stripe_invoice_id = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="The Stripe invoice ID that this renewal corresponds to.",
+    )
+    effective_date = models.DateTimeField(
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text=(
+            "The datetime at which this renewal is expected to take effect, "
+            "derived from the period end of the previous subscription cycle. "
+            "This is a local cache of the like-named column on the "
+            "license-manager SubscriptionPlanRenewal model."
+        ),
     )
     processed_at = models.DateTimeField(
         null=True,
@@ -823,8 +947,6 @@ class StripeEventSummary(TimeStampedModel):
         help_text='The Stripe event type'
     )
     stripe_event_created_at = models.DateTimeField(
-        null=True,
-        blank=True,
         db_index=True,
         help_text='Timestamp when the Stripe event was created'
     )
@@ -974,7 +1096,11 @@ class StripeEventSummary(TimeStampedModel):
         if 'created' in event_data:
             self.stripe_event_created_at = self._timestamp_to_datetime(event_data['created'])
         else:
-            logger.warning(f"No 'created' timestamp found in event {stripe_event_data.event_id}")
+            logger.warning(
+                "No 'created' timestamp found in event %s, falling back to StripeEventData.created",
+                stripe_event_data.event_id,
+            )
+            self.stripe_event_created_at = stripe_event_data.created
 
         # Get subscription plan UUID from related workflow
         if checkout_intent and checkout_intent.workflow:
@@ -1001,13 +1127,13 @@ class StripeEventSummary(TimeStampedModel):
         stripe_object_data = event_data.get('data', {}).get('object', {})
         self.stripe_object_type = stripe_object_data['object']
         # pylint: disable=protected-access
-        stripe_object = stripe._util.convert_to_stripe_object(event_data['data']['object'])
+        stripe_object = stripe._util.convert_to_stripe_object(event_data['data']['object']).to_dict()
 
         # Extract subscription-specific fields
         if self.stripe_object_type == 'subscription' or self.event_type.startswith('customer.subscription'):
             subscription_obj = stripe_object
 
-            self.stripe_subscription_id = subscription_obj.id
+            self.stripe_subscription_id = subscription_obj['id']
             self.subscription_status = subscription_obj.get('status')
             self.currency = subscription_obj.get('currency')
             self.subscription_cancel_at = self._timestamp_to_datetime(
@@ -1027,10 +1153,10 @@ class StripeEventSummary(TimeStampedModel):
         # Extract invoice-specific fields
         elif self.stripe_object_type == 'invoice' or self.event_type.startswith('invoice'):
             invoice_obj = stripe_object
-            self.stripe_invoice_id = invoice_obj.id
+            self.stripe_invoice_id = invoice_obj['id']
             try:
-                self.stripe_subscription_id = invoice_obj.parent.subscription_details.subscription
-            except AttributeError:
+                self.stripe_subscription_id = invoice_obj['parent']['subscription_details']['subscription']
+            except (KeyError, TypeError):
                 pass
             self.invoice_amount_paid = invoice_obj.get('amount_paid')
             self.invoice_currency = invoice_obj.get('currency')
@@ -1040,11 +1166,13 @@ class StripeEventSummary(TimeStampedModel):
             if lines:
                 primary_line = lines[0]
                 if 'pricing' in primary_line:
-                    self.invoice_unit_amount = getattr(primary_line.pricing, 'unit_amount', None)
-                    self.invoice_unit_amount_decimal = Decimal(primary_line.pricing.unit_amount_decimal)
+                    pricing = primary_line.get('pricing', {})
+                    self.invoice_unit_amount = pricing.get('unit_amount')
+                    unit_amount_decimal = pricing.get('unit_amount_decimal')
+                    self.invoice_unit_amount_decimal = Decimal(unit_amount_decimal) if unit_amount_decimal else None
                     if 'quantity' in primary_line:
-                        self.invoice_quantity = primary_line.quantity
-                    if self.invoice_unit_amount is None:
+                        self.invoice_quantity = primary_line.get('quantity')
+                    if self.invoice_unit_amount is None and self.invoice_unit_amount_decimal is not None:
                         self.invoice_unit_amount = int(self.invoice_unit_amount_decimal)
 
     def update_upcoming_invoice_amount_due(self):

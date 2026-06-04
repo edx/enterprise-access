@@ -71,7 +71,6 @@ THIRD_PARTY_APPS = (
     'django_filters',
     'django_object_actions',
     'rest_framework',
-    'rest_framework_swagger',
     'rules.apps.AutodiscoverRulesConfig',
     'simple_history',
     'social_django',
@@ -91,6 +90,7 @@ PROJECT_APPS = (
     'enterprise_access.apps.provisioning',
     'enterprise_access.apps.customer_billing',
     'enterprise_access.apps.testimonials',
+    'enterprise_access.apps.prompts',
 )
 
 INSTALLED_APPS += THIRD_PARTY_APPS
@@ -347,6 +347,7 @@ SYSTEM_TO_FEATURE_ROLE_MAPPING = {
         PROVISIONING_ADMIN_ROLE,
         CUSTOMER_BILLING_OPERATOR_ROLE,
         ADMIN_LEARNER_PROFILE_ADMIN_ROLE,
+        STRIPE_EVENT_SUMMARY_ADMIN_ROLE,
     ],
     SYSTEM_ENTERPRISE_ADMIN_ROLE: [
         # enterprise admins only need learner-level access to Subsidy Access Policy APIs since they aren't responsible
@@ -535,9 +536,11 @@ BRAZE_ASSIGNMENT_AUTOMATIC_CANCELLATION_NOTIFICATION_CAMPAIGN = ''
 
 # Braze campaigns for customer billing (apps.customer_billing)
 BRAZE_TRIAL_CANCELLATION_CAMPAIGN = ''
+BRAZE_PAID_CANCELLATION_CAMPAIGN = ''
 BRAZE_ENTERPRISE_PROVISION_TRIAL_ENDING_SOON_CAMPAIGN = ''
 BRAZE_BILLING_ERROR_CAMPAIGN = ''
 BRAZE_SSP_CANCELATION_FINALIZATION_CAMPAIGN = ''
+BRAZE_SSP_SUBSCRIPTION_REINSTATED_CAMPAIGN = ''
 
 # Braze configuration
 BRAZE_API_URL = ''
@@ -627,6 +630,13 @@ PRODUCT_ID_TO_CATALOG_QUERY_ID_MAPPING = {
 PROVISIONING_PAID_SUBSCRIPTION_PRODUCT_ID = 1
 PROVISIONING_TRIAL_SUBSCRIPTION_PRODUCT_ID = 2
 
+# SSP Product backfill data for data migrations.
+# Each environment should define this with its own product rows.
+# Format: list of dicts with keys: slug, stripe_price_lookup_key, catalog_query_uuid,
+# license_manager_product_id_trial, license_manager_product_id_paid,
+# academy_uuid (optional), is_active (optional, defaults to True)
+SSP_PRODUCT_BACKFILL_DATA = []
+
 CRISPY_ALLOWED_TEMPLATE_PACKS = "bootstrap5"
 CRISPY_TEMPLATE_PACK = "bootstrap5"
 
@@ -659,6 +669,9 @@ SSP_PRODUCTS = {
 # Enable the customer billing API endpoints under /api/v1/customer-billing/*
 ENABLE_CUSTOMER_BILLING_API = True
 
+# Enable the billing management API endpoints under /api/v1/billing-management/*
+ENABLE_BILLING_MANAGEMENT_API = False
+
 DEFAULT_SSP_PRICE_LOOKUP_KEY = 'teams_subscription_license_yearly'
 
 DEFAULT_STRIPE_CACHE_TIMEOUT = 60
@@ -670,6 +683,9 @@ ENABLE_STRIPE_EVENT_SUMMARIES = False
 
 # Allows us to do per-environment exception raising vs. returning in our event handlers
 STRIPE_GRACEFUL_EXCEPTION_MODE = False
+
+# Django cache layer TTL for enterprise-catalog Academy record metadata
+ACADEMY_DATA_CACHE_TIMEOUT = 60 * 30
 
 ################# End Self-Service Purchasing (SSP) settings #################
 

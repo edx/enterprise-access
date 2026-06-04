@@ -8,11 +8,17 @@ from urllib.parse import urlencode
 
 from django.urls import reverse
 from django.utils import timezone
+from rest_framework.exceptions import ErrorDetail
 
-from enterprise_access.apps.core.constants import SYSTEM_ENTERPRISE_ADMIN_ROLE
+from enterprise_access.apps.core.constants import SYSTEM_ENTERPRISE_ADMIN_ROLE, SYSTEM_ENTERPRISE_OPERATOR_ROLE
 from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.customer_billing.constants import CheckoutIntentState
-from enterprise_access.apps.customer_billing.models import CheckoutIntent, StripeEventData, StripeEventSummary
+from enterprise_access.apps.customer_billing.models import (
+    CheckoutIntent,
+    SelfServiceSubscriptionRenewal,
+    StripeEventData,
+    StripeEventSummary
+)
 from test_utils import APITest
 
 
@@ -30,10 +36,12 @@ class StripeEventSummaryTests(APITest):
         self.stripe_customer_id_2 = 'cus_test_321'
         self.subscription_plan_uuid = str(uuid.uuid4())
         self.subscription_plan_uuid_2 = str(uuid.uuid4())
+        self.renewed_subscription_plan_uuid = uuid.uuid4()
 
         invoice_event_data = {
             'id': 'evt_test_invoice',
             'type': 'invoice.paid',
+            'created': 1700000000,
             'data': {
                 'object': {
                     'object': 'invoice',
@@ -63,6 +71,7 @@ class StripeEventSummaryTests(APITest):
         invoice_event_data_2 = {
             'id': 'evt_test_invoice',
             'type': 'invoice.paid',
+            'created': 1700000000,
             'data': {
                 'object': {
                     'object': 'invoice',
@@ -192,12 +201,15 @@ class StripeSubscriptionPlanInfoTests(APITest):
         self.enterprise_uuid = str(uuid.uuid4())
         self.stripe_customer_id = 'cus_test_123'
         self.subscription_plan_uuid = str(uuid.uuid4())
+        self.renewed_subscription_plan_uuid = str(uuid.uuid4())
+        self.subscription_plan_uuid_no_checkout = str(uuid.uuid4())
 
         self.checkout_intent = CheckoutIntent.objects.create(
             user=self.user,
             enterprise_uuid=self.enterprise_uuid,
             enterprise_name='Test Enterprise',
             enterprise_slug='test-enterprise',
+            uuid=uuid.uuid4(),
             stripe_customer_id=self.stripe_customer_id,
             state=CheckoutIntentState.PAID,
             quantity=10,
@@ -207,6 +219,7 @@ class StripeSubscriptionPlanInfoTests(APITest):
         self.subscription_created_event_data = {
             'id': 'evt_test_sub_created',
             'type': 'customer.subscription.created',
+            'created': 1700000000,
             'data': {
                 'object': {
                     'object': 'subscription',
@@ -234,6 +247,7 @@ class StripeSubscriptionPlanInfoTests(APITest):
         self.subscription_updated_event_data = {
             'id': 'evt_test_sub_updated',
             'type': 'customer.subscription.updated',
+            'created': 1700000000,
             'data': {
                 'object': {
                     'object': 'subscription',
@@ -274,6 +288,41 @@ class StripeSubscriptionPlanInfoTests(APITest):
         test_summary.subscription_plan_uuid = self.subscription_plan_uuid
         test_summary.save(update_fields=['subscription_cancel_at', 'subscription_plan_uuid'])
 
+        self.stripe_event_data_no_checkout_created = StripeEventData.objects.create(
+            event_id='evt_test_subscription_no_checkout_created',
+            event_type='customer.subscription.created',
+            data=self.subscription_created_event_data,
+        )
+
+        self.stripe_event_data_no_checkout_updated = StripeEventData.objects.create(
+            event_id='evt_test_subscription_no_checkout_updated',
+            event_type='customer.subscription.updated',
+            data=self.subscription_created_event_data,
+        )
+
+        test_summary_no_checkout_created = StripeEventSummary.objects.filter(
+            event_id='evt_test_subscription_no_checkout_created'
+        ).first()
+        test_summary_no_checkout_created.upcoming_invoice_amount_due = 200
+        test_summary_no_checkout_created.subscription_plan_uuid = self.subscription_plan_uuid_no_checkout
+        test_summary_no_checkout_created.save(update_fields=['upcoming_invoice_amount_due', 'subscription_plan_uuid'])
+
+        test_summary_no_checkout_updated = StripeEventSummary.objects.filter(
+            event_id='evt_test_subscription_no_checkout_updated'
+        ).first()
+        test_summary_no_checkout_updated.upcoming_invoice_amount_due = 200
+        test_summary_no_checkout_updated.subscription_plan_uuid = self.subscription_plan_uuid_no_checkout
+        test_summary_no_checkout_updated.save(update_fields=['upcoming_invoice_amount_due', 'subscription_plan_uuid'])
+
+        self.self_service_renewal = SelfServiceSubscriptionRenewal.objects.create(
+            checkout_intent=self.checkout_intent,
+            subscription_plan_renewal_id=1,
+            stripe_event_data=self.stripe_event_data,
+            stripe_subscription_id='sub_test_789',
+            prior_subscription_plan_uuid=self.subscription_plan_uuid,
+            renewed_subscription_plan_uuid=self.renewed_subscription_plan_uuid,
+        )
+
     def test_get_stripe_subscription_plan_info(self):
         self.set_jwt_cookie([{
             'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
@@ -290,7 +339,65 @@ class StripeSubscriptionPlanInfoTests(APITest):
         assert response.data == {
             'canceled_date': '2021-09-15T00:00:00Z',
             'currency': 'usd',
-            'upcoming_invoice_amount_due': '200',
+            'upcoming_invoice_amount_due': 200,
+            'checkout_intent_uuid': str(self.checkout_intent.uuid),
+            'is_canceled': False,
+            'renewed_subscription_plan_uuid': str(self.renewed_subscription_plan_uuid),
+        }
+
+    def test_get_stripe_subscription_plan_info_with_cancellation(self):
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': self.enterprise_uuid,
+        }])
+        self.self_service_renewal.is_canceled = True
+        self.self_service_renewal.save(update_fields=['is_canceled'])
+
+        query_params = {
+            'subscription_plan_uuid': self.subscription_plan_uuid,
+        }
+        url = reverse('api:v1:stripe-event-summary-get-stripe-subscription-plan-info')
+        url += f"?{urlencode(query_params)}"
+        response = self.client.get(url)
+
+        assert response.status_code == 200
+        assert response.data['is_canceled'] is True
+        assert response.data['renewed_subscription_plan_uuid'] == str(self.renewed_subscription_plan_uuid)
+
+    def test_get_stripe_subscription_plan_info_with_uncanceled_subscription(self):
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': self.enterprise_uuid,
+        }])
+        self.self_service_renewal.is_canceled = False
+        self.self_service_renewal.save(update_fields=['is_canceled'])
+
+        query_params = {
+            'subscription_plan_uuid': self.subscription_plan_uuid,
+        }
+        url = reverse('api:v1:stripe-event-summary-get-stripe-subscription-plan-info')
+        url += f"?{urlencode(query_params)}"
+        response = self.client.get(url)
+
+        assert response.status_code == 200
+        assert response.data['is_canceled'] is False
+        assert response.data['renewed_subscription_plan_uuid'] == str(self.renewed_subscription_plan_uuid)
+
+    def test_get_stripe_subscription_plan_info_no_checkout(self):
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': self.enterprise_uuid,  # implicit access to this enterprise
+        }])
+        query_params = {
+            'subscription_plan_uuid': self.subscription_plan_uuid_no_checkout,
+        }
+
+        url = reverse('api:v1:stripe-event-summary-get-stripe-subscription-plan-info')
+        url += f"?{urlencode(query_params)}"
+        response = self.client.get(url)
+        assert response.status_code == 403
+        assert response.data == {
+            'detail': ErrorDetail(string='Missing: stripe_event_summary.has_read_access', code='permission_denied'),
         }
 
     def test_get_stripe_subscription_plan_info_missing_subscription_plan_uuid(self):
@@ -321,5 +428,49 @@ class StripeSubscriptionPlanInfoTests(APITest):
         assert response.data == {
             'canceled_date': '2021-09-15T00:00:00Z',
             'currency': 'usd',
-            'upcoming_invoice_amount_due': '200',
+            'upcoming_invoice_amount_due': 200,
+            'checkout_intent_uuid': str(self.checkout_intent.uuid),
+            'is_canceled': False,
+            'renewed_subscription_plan_uuid': str(self.renewed_subscription_plan_uuid),
         }
+
+    def test_get_stripe_subscription_plan_info_renewal_cancel_at_takes_precedence(self):
+        """
+        When subscription_cancel_at is set on the renewal, it should be returned as canceled_date
+        instead of the value from StripeEventSummary.
+        """
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': self.enterprise_uuid,
+        }])
+        renewal_cancel_at = datetime(2022, 3, 1, 0, 0, 0, tzinfo=tz.utc)
+        self.self_service_renewal.subscription_cancel_at = renewal_cancel_at
+        self.self_service_renewal.save(update_fields=['subscription_cancel_at'])
+
+        query_params = {'subscription_plan_uuid': self.subscription_plan_uuid}
+        url = reverse('api:v1:stripe-event-summary-get-stripe-subscription-plan-info')
+        url += f"?{urlencode(query_params)}"
+        response = self.client.get(url)
+
+        assert response.status_code == 200
+        # Renewal's cancel_at (2022-03-01) should take precedence over the event summary's (2021-09-15)
+        assert response.data['canceled_date'] == '2022-03-01T00:00:00Z'
+        assert response.data['is_canceled'] is False
+
+    def test_get_stripe_subscription_plan_info_operator_role(self):
+        """
+        Users with SYSTEM_ENTERPRISE_OPERATOR_ROLE should have access to get-stripe-subscription-plan-info.
+        """
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_OPERATOR_ROLE,
+            'context': self.enterprise_uuid,
+        }])
+        query_params = {
+            'subscription_plan_uuid': self.subscription_plan_uuid,
+        }
+
+        url = reverse('api:v1:stripe-event-summary-get-stripe-subscription-plan-info')
+        url += f"?{urlencode(query_params)}"
+        response = self.client.get(url)
+        assert response.status_code == 200
+        assert response.data['upcoming_invoice_amount_due'] == 200

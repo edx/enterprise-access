@@ -422,11 +422,14 @@ class TestLearnerPortalBFFViewSet(TestHandlerContextMixin, MockLicenseManagerMet
         mock_get_enterprise_course_enrollments,
         mock_get_enterprise_customer_data,
         mock_auto_apply_license,
+        mock_activate_license,
         identity_provider,
         is_staff_request_user,
         has_plan_for_auto_apply,
         has_existing_activated_license,
         has_existing_revoked_license,
+        has_existing_assigned_license,
+        has_existing_non_current_plan_license,
         auto_apply_with_universal_link,
     ):
         """
@@ -501,6 +504,27 @@ class TestLearnerPortalBFFViewSet(TestHandlerContextMixin, MockLicenseManagerMet
                 **self.mock_subscription_license,
                 'status': 'revoked',
             })
+        if has_existing_assigned_license:
+            mock_subscription_licenses_data['results'].append({
+                **self.mock_subscription_license,
+                'status': 'assigned',
+                'activation_date': None,
+            })
+            mock_activate_license.return_value = {
+                **self.mock_subscription_license,
+                'status': 'activated',
+                'activation_date': '2024-01-01T00:00:00Z',
+            }
+        if has_existing_non_current_plan_license:
+            mock_subscription_licenses_data['results'].append({
+                **self.mock_subscription_license,
+                'status': 'activated',
+                'activation_date': '2024-01-01T00:00:00Z',
+                'subscription_plan': {
+                    **self.mock_subscription_plan,
+                    'is_current': False,
+                },
+            })
         mock_get_subscription_licenses_for_learner.return_value = mock_subscription_licenses_data
         mock_auto_apply_license.return_value = mock_auto_applied_subscription_license
         mock_get_default_enrollment_intentions_learner_status.return_value = \
@@ -520,6 +544,8 @@ class TestLearnerPortalBFFViewSet(TestHandlerContextMixin, MockLicenseManagerMet
         {
             'has_existing_activated_license': False,
             'has_existing_revoked_license': False,
+            'has_existing_assigned_license': False,
+            'has_existing_non_current_plan_license': False,
             'is_staff_request_user': False,
             'identity_provider': False,
             'auto_apply_with_universal_link': False,
@@ -532,6 +558,8 @@ class TestLearnerPortalBFFViewSet(TestHandlerContextMixin, MockLicenseManagerMet
         {
             'has_existing_activated_license': False,
             'has_existing_revoked_license': False,
+            'has_existing_assigned_license': False,
+            'has_existing_non_current_plan_license': False,
             'is_staff_request_user': False,
             'identity_provider': True,
             'auto_apply_with_universal_link': False,
@@ -544,6 +572,8 @@ class TestLearnerPortalBFFViewSet(TestHandlerContextMixin, MockLicenseManagerMet
         {
             'has_existing_activated_license': False,
             'has_existing_revoked_license': False,
+            'has_existing_assigned_license': False,
+            'has_existing_non_current_plan_license': False,
             'is_staff_request_user': False,
             'identity_provider': False,
             'auto_apply_with_universal_link': True,
@@ -556,6 +586,8 @@ class TestLearnerPortalBFFViewSet(TestHandlerContextMixin, MockLicenseManagerMet
         {
             'has_existing_activated_license': False,
             'has_existing_revoked_license': False,
+            'has_existing_assigned_license': False,
+            'has_existing_non_current_plan_license': False,
             'is_staff_request_user': False,
             'identity_provider': True,
             'auto_apply_with_universal_link': True,
@@ -568,6 +600,8 @@ class TestLearnerPortalBFFViewSet(TestHandlerContextMixin, MockLicenseManagerMet
         {
             'has_existing_activated_license': False,
             'has_existing_revoked_license': False,
+            'has_existing_assigned_license': False,
+            'has_existing_non_current_plan_license': False,
             'is_staff_request_user': False,
             'identity_provider': False,
             'auto_apply_with_universal_link': False,
@@ -580,6 +614,8 @@ class TestLearnerPortalBFFViewSet(TestHandlerContextMixin, MockLicenseManagerMet
         {
             'has_existing_activated_license': False,
             'has_existing_revoked_license': False,
+            'has_existing_assigned_license': False,
+            'has_existing_non_current_plan_license': False,
             'is_staff_request_user': False,
             'identity_provider': True,
             'auto_apply_with_universal_link': False,
@@ -592,6 +628,8 @@ class TestLearnerPortalBFFViewSet(TestHandlerContextMixin, MockLicenseManagerMet
         {
             'has_existing_activated_license': False,
             'has_existing_revoked_license': False,
+            'has_existing_assigned_license': False,
+            'has_existing_non_current_plan_license': False,
             'is_staff_request_user': False,
             'identity_provider': False,
             'auto_apply_with_universal_link': True,
@@ -604,6 +642,8 @@ class TestLearnerPortalBFFViewSet(TestHandlerContextMixin, MockLicenseManagerMet
         {
             'has_existing_activated_license': False,
             'has_existing_revoked_license': False,
+            'has_existing_assigned_license': False,
+            'has_existing_non_current_plan_license': False,
             'is_staff_request_user': False,
             'identity_provider': True,
             'auto_apply_with_universal_link': True,
@@ -616,6 +656,8 @@ class TestLearnerPortalBFFViewSet(TestHandlerContextMixin, MockLicenseManagerMet
         {
             'has_existing_activated_license': True,
             'has_existing_revoked_license': False,
+            'has_existing_assigned_license': False,
+            'has_existing_non_current_plan_license': False,
             'is_staff_request_user': False,
             'identity_provider': True,
             'auto_apply_with_universal_link': True,
@@ -628,11 +670,44 @@ class TestLearnerPortalBFFViewSet(TestHandlerContextMixin, MockLicenseManagerMet
         {
             'has_existing_activated_license': False,
             'has_existing_revoked_license': True,
+            'has_existing_assigned_license': False,
+            'has_existing_non_current_plan_license': False,
             'is_staff_request_user': False,
             'identity_provider': True,
             'auto_apply_with_universal_link': True,
             'has_plan_for_auto_apply': True,
             'should_auto_apply': False,
+        },
+        # Existing assigned license (gets activated by check_and_activate_assigned_license),
+        # identity provider exists, universal link auto-apply is enabled, a plan for auto-apply exists,
+        # and not a staff request user.
+        # Expected: Should not auto-apply (the now-activated license blocks auto-apply).
+        {
+            'has_existing_activated_license': False,
+            'has_existing_revoked_license': False,
+            'has_existing_assigned_license': True,
+            'has_existing_non_current_plan_license': False,
+            'is_staff_request_user': False,
+            'identity_provider': True,
+            'auto_apply_with_universal_link': True,
+            'has_plan_for_auto_apply': True,
+            'should_auto_apply': False,
+        },
+        # Existing activated license tied to a non-current subscription plan (does not block
+        # auto-apply because current_* properties only consider current plans),
+        # identity provider exists, universal link auto-apply is enabled, a plan for auto-apply exists,
+        # and not a staff request user.
+        # Expected: Should auto-apply.
+        {
+            'has_existing_activated_license': False,
+            'has_existing_revoked_license': False,
+            'has_existing_assigned_license': False,
+            'has_existing_non_current_plan_license': True,
+            'is_staff_request_user': False,
+            'identity_provider': True,
+            'auto_apply_with_universal_link': True,
+            'has_plan_for_auto_apply': True,
+            'should_auto_apply': True,
         },
         # No existing licenses, identity provider exists, universal link auto-apply is enabled,
         # a plan for auto-apply exists, and is a staff request user.
@@ -640,6 +715,8 @@ class TestLearnerPortalBFFViewSet(TestHandlerContextMixin, MockLicenseManagerMet
         {
             'has_existing_activated_license': False,
             'has_existing_revoked_license': False,
+            'has_existing_assigned_license': False,
+            'has_existing_non_current_plan_license': False,
             'is_staff_request_user': True,
             'identity_provider': True,
             'auto_apply_with_universal_link': True,
@@ -651,6 +728,9 @@ class TestLearnerPortalBFFViewSet(TestHandlerContextMixin, MockLicenseManagerMet
     @mock_dashboard_dependencies
     @mock.patch('enterprise_access.apps.api_client.lms_client.LmsApiClient.get_enterprise_customer_data')
     @mock.patch(
+        'enterprise_access.apps.api_client.license_manager_client.LicenseManagerUserApiClient.activate_license'
+    )
+    @mock.patch(
         'enterprise_access.apps.api_client.license_manager_client.LicenseManagerUserApiClient.auto_apply_license'
     )
     def test_dashboard_with_subscriptions_license_auto_apply(
@@ -661,9 +741,12 @@ class TestLearnerPortalBFFViewSet(TestHandlerContextMixin, MockLicenseManagerMet
         mock_get_subscription_licenses_for_learner,
         mock_get_enterprise_course_enrollments,
         mock_auto_apply_license,
+        mock_activate_license,
         mock_get_enterprise_customer_data,
         has_existing_activated_license,
         has_existing_revoked_license,
+        has_existing_assigned_license,
+        has_existing_non_current_plan_license,
         is_staff_request_user,
         identity_provider,
         auto_apply_with_universal_link,
@@ -690,11 +773,14 @@ class TestLearnerPortalBFFViewSet(TestHandlerContextMixin, MockLicenseManagerMet
             mock_get_enterprise_course_enrollments=mock_get_enterprise_course_enrollments,
             mock_get_enterprise_customer_data=mock_get_enterprise_customer_data,
             mock_auto_apply_license=mock_auto_apply_license,
+            mock_activate_license=mock_activate_license,
             identity_provider=identity_provider,
             is_staff_request_user=is_staff_request_user,
             has_plan_for_auto_apply=has_plan_for_auto_apply,
             has_existing_activated_license=has_existing_activated_license,
             has_existing_revoked_license=has_existing_revoked_license,
+            has_existing_assigned_license=has_existing_assigned_license,
+            has_existing_non_current_plan_license=has_existing_non_current_plan_license,
             auto_apply_with_universal_link=auto_apply_with_universal_link,
         )
         query_params = {
@@ -718,11 +804,27 @@ class TestLearnerPortalBFFViewSet(TestHandlerContextMixin, MockLicenseManagerMet
             'status': 'activated',
             'activation_date': '2024-01-01T00:00:00Z',
         }
-        expected_activated_licenses = (
-            [expected_activated_subscription_license]
-            if should_auto_apply or has_existing_activated_license
-            else []
+        expected_non_current_plan_activated_license = {
+            **expected_activated_subscription_license,
+            'subscription_plan': {
+                **expected_activated_subscription_license['subscription_plan'],
+                'is_current': False,
+            },
+        }
+        # An existing assigned license is activated by check_and_activate_assigned_license
+        # before auto-apply runs, so it ends up in the activated bucket.
+        has_resulting_current_activated_license = (
+            should_auto_apply or
+            has_existing_activated_license or
+            has_existing_assigned_license
         )
+        # `subscription_licenses_by_status.activated` is built from a current-plans-first
+        # sort over the licenses, so the current-plan license precedes any non-current one.
+        expected_activated_licenses_by_status = []
+        if has_resulting_current_activated_license:
+            expected_activated_licenses_by_status.append(expected_activated_subscription_license)
+        if has_existing_non_current_plan_license:
+            expected_activated_licenses_by_status.append(expected_non_current_plan_activated_license)
         expected_revoked_subscription_license = {
             **self.expected_subscription_license,
             'status': 'revoked',
@@ -734,15 +836,23 @@ class TestLearnerPortalBFFViewSet(TestHandlerContextMixin, MockLicenseManagerMet
         )
         expected_subscription_license = None
         expected_subscription_plan = None
-        if should_auto_apply or has_existing_activated_license:
+        if has_resulting_current_activated_license:
             expected_subscription_license = expected_activated_subscription_license
+        elif has_existing_non_current_plan_license:
+            expected_subscription_license = expected_non_current_plan_activated_license
         elif has_existing_revoked_license:
             expected_subscription_license = expected_revoked_subscription_license
         if expected_subscription_license:
             expected_subscription_plan = expected_subscription_license['subscription_plan']
 
+        # The flat `subscription_licenses` list preserves the order of licenses as they
+        # were loaded/refreshed: any pre-existing licenses come first, then any
+        # auto-applied license appended at the end.
         expected_licenses = []
-        expected_licenses.extend(expected_activated_licenses)
+        if has_existing_non_current_plan_license:
+            expected_licenses.append(expected_non_current_plan_activated_license)
+        if has_resulting_current_activated_license:
+            expected_licenses.append(expected_activated_subscription_license)
         expected_licenses.extend(expected_revoked_licenses)
         expected_response_data = self.mock_dashboard_route_response_data.copy()
         expected_response_data.update({
@@ -756,7 +866,7 @@ class TestLearnerPortalBFFViewSet(TestHandlerContextMixin, MockLicenseManagerMet
                     'customer_agreement': expected_customer_agreement,
                     'subscription_licenses': expected_licenses,
                     'subscription_licenses_by_status': {
-                        'activated': expected_activated_licenses,
+                        'activated': expected_activated_licenses_by_status,
                         'assigned': [],
                         'revoked': expected_revoked_licenses,
                     },

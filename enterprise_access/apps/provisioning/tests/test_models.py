@@ -1,7 +1,7 @@
 """
 Tests for the provisioning.models module.
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest import mock
 from uuid import uuid4
 
@@ -85,8 +85,10 @@ class TestGetCreateSubscriptionPlanRenewalStep(TestCase):
 
         # Create mock accumulated_output with the required structure
         mock_accumulated_output = mock.Mock()
+        trial_expiration = datetime(2026, 1, 1, tzinfo=timezone.utc)
         mock_accumulated_output.create_trial_subscription_plan_output = mock.Mock(
-            uuid=mock_renewal_response['prior_subscription_plan']
+            uuid=mock_renewal_response['prior_subscription_plan'],
+            expiration_date=trial_expiration,
         )
         mock_accumulated_output.create_first_paid_subscription_plan_output = mock.Mock(
             uuid=mock_renewal_response['renewed_subscription_plan'],
@@ -114,6 +116,7 @@ class TestGetCreateSubscriptionPlanRenewalStep(TestCase):
         self.assertEqual(renewal_record.stripe_subscription_id, stripe_subscription_id)
         self.assertIsNone(renewal_record.processed_at)
         self.assertEqual(renewal_record.stripe_event_data, summary.stripe_event_data)
+        self.assertEqual(renewal_record.effective_date, trial_expiration)
 
     @mock.patch.object(LicenseManagerApiClient, 'create_subscription_plan_renewal')
     def test_process_input_with_existing_renewal_record(self, mock_create_renewal):

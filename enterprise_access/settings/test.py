@@ -27,6 +27,10 @@ results_dir = tempfile.TemporaryDirectory()
 CELERY_RESULT_BACKEND = f'file://{results_dir.name}'
 # END CELERY
 
+# A faster (but less secure) password hasher like MD5 makes UserFactory faster, shaving ~80% off
+# test runtimes compared with the more secure PBKDF2-based hasher used in production.
+PASSWORD_HASHERS = ['django.contrib.auth.hashers.MD5PasswordHasher']
+
 ECOMMERCE_URL = 'http://ecommerce.example.com'
 LICENSE_MANAGER_URL = 'http://license-manager.example.com'
 LMS_URL = 'http://edx-platform.example.com'
@@ -53,8 +57,10 @@ BRAZE_GROUPS_EMAIL_AUTO_REMINDER_DAY_50_CAMPAIGN = 'test-day-50-reminder-campaig
 BRAZE_GROUPS_EMAIL_AUTO_REMINDER_DAY_65_CAMPAIGN = 'test-day-65-reminder-campaign'
 BRAZE_GROUPS_EMAIL_AUTO_REMINDER_DAY_85_CAMPAIGN = 'test-day-85-reminder-campaign'
 BRAZE_TRIAL_CANCELLATION_CAMPAIGN = 'test-trial-cancellation-campaign'
+BRAZE_PAID_CANCELLATION_CAMPAIGN = 'test-paid-cancellation-campaign'
 BRAZE_ENTERPRISE_PROVISION_TRIAL_ENDING_SOON_CAMPAIGN = 'test-trial-ending-reminder-campaign'
 BRAZE_BILLING_ERROR_CAMPAIGN = 'test-billing-error-campaign'
+BRAZE_SSP_SUBSCRIPTION_REINSTATED_CAMPAIGN = 'test-subscription-reinstated-campaign'
 
 ################### Kafka Related Settings ##############################
 KAFKA_ENABLED = False
@@ -81,7 +87,19 @@ KAFKA_TOPICS = [
 PRODUCT_ID_TO_CATALOG_QUERY_ID_MAPPING = {
     '1': 42,
 }
+SSP_PRODUCT_BACKFILL_DATA = [
+    {
+        'slug': 'teams-yearly',
+        'stripe_price_lookup_key': 'teams_subscription_license_yearly',
+        'academy_uuid': None,
+        'catalog_query_uuid': 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+        'license_manager_product_id_trial': 2,
+        'license_manager_product_id_paid': 1,
+        'is_active': True,
+    }
+]
 ENABLE_CUSTOMER_BILLING_API = True
+ENABLE_BILLING_MANAGEMENT_API = True
 
 ENABLE_STRIPE_EVENT_SUMMARIES = True
 ### End SSP Tests ###

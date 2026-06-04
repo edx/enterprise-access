@@ -121,7 +121,7 @@ BRAZE_TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 BRAZE_DATE_FORMAT_1 = "%d %B %Y"
 BRAZE_DATE_FORMAT_2 = "%b %d, %Y"
 
-INVOICE_PAID_PARENT_TYPE_IDENTIFIER = "subscription_item_details"
+SUBSCRIPTION_ITEM_TYPE = "subscription_item_details"
 
 
 class StripeSubscriptionStatus(StrEnum):
