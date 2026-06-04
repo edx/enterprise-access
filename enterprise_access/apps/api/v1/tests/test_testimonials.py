@@ -1,3 +1,5 @@
+"""Tests for testimonials API endpoints."""
+
 from rest_framework import status
 from rest_framework.test import APITestCase
 
@@ -5,6 +7,7 @@ from enterprise_access.apps.testimonials.models import Testimonial
 
 
 class TestimonialAPITestCase(APITestCase):
+    """Tests for the testimonials API endpoint."""
 
     def setUp(self):
         # Create active testimonial
