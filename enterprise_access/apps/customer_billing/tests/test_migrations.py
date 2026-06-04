@@ -561,3 +561,121 @@ class TestBackfillSubscriptionRenewalCancellations(TransactionTestCase):
         Renewal = new_state.apps.get_model('customer_billing', 'SelfServiceSubscriptionRenewal')
         self.assertTrue(Renewal.objects.get(pk=renewal_canceled.pk).is_canceled)
         self.assertFalse(Renewal.objects.get(pk=renewal_restored.pk).is_canceled)
+
+
+class TestSeedEssentialsAcademyProducts(TransactionTestCase):
+    """Tests for the Essentials Academy SspProduct seed migration 0035."""
+
+    migrate_from = [('customer_billing', '0034_drop_ent_academy_table')]
+    migrate_to = [('customer_billing', '0035_seed_essentials_academy_products')]
+    seeded_at = datetime(2026, 6, 4, tzinfo=timezone.utc)
+
+    def setUp(self):
+        super().setUp()
+        self.migrator = Migrator(database='default')
+        self.old_state = self.migrator.apply_initial_migration(self.migrate_from)
+
+    def tearDown(self):
+        connections['default'].close()
+        self.migrator.reset()
+        super().tearDown()
+
+    def _get_model(self, state, app_label, model_name):
+        return state.apps.get_model(app_label, model_name)
+
+    def test_forward_seeds_and_updates_expected_products(self):
+        """Migration seeds all academy products and updates existing matching slugs."""
+        SspProduct = self._get_model(self.old_state, 'customer_billing', 'SspProduct')
+
+        existing = SspProduct.objects.create(
+            slug='ai-academy-yearly',
+            stripe_price_lookup_key='stale_lookup_key',
+            academy_uuid=None,
+            catalog_query_uuid='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+            license_manager_product_id_trial=7,
+            license_manager_product_id_paid=8,
+            is_active=False,
+        )
+        original_created = existing.created
+
+        SspProduct.objects.create(
+            slug='custom-unrelated-product',
+            stripe_price_lookup_key='custom_lookup_key',
+            academy_uuid=None,
+            catalog_query_uuid='bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+            license_manager_product_id_trial=None,
+            license_manager_product_id_paid=None,
+            is_active=True,
+        )
+
+        new_state = self.migrator.apply_tested_migration(self.migrate_to)
+        NewSspProduct = self._get_model(new_state, 'customer_billing', 'SspProduct')
+
+        self.assertEqual(NewSspProduct.objects.filter(slug__endswith='-academy-yearly').count(), 8)
+
+        updated = NewSspProduct.objects.get(pk='ai-academy-yearly')
+        self.assertEqual(
+            updated.stripe_price_lookup_key,
+            'essentials_artificial_intelligence_subscription_license_yearly',
+        )
+        self.assertEqual(str(updated.academy_uuid), '3307f1bb-8b2d-43af-a5d5-030e2f8c81bd')
+        self.assertEqual(str(updated.catalog_query_uuid), 'e50133c8-b65c-4472-8026-4ed9963b3b26')
+        self.assertEqual(updated.created, original_created)
+        self.assertNotEqual(updated.modified, self.seeded_at)
+
+        created = NewSspProduct.objects.get(pk='communication-academy-yearly')
+        self.assertEqual(created.created, self.seeded_at)
+        self.assertEqual(created.modified, self.seeded_at)
+        self.assertTrue(NewSspProduct.objects.filter(pk='custom-unrelated-product').exists())
+
+
+class TestReverseSeedEssentialsAcademyProducts(TransactionTestCase):
+    """Tests for reversing the Essentials Academy SspProduct seed migration 0035."""
+
+    migrate_from = [('customer_billing', '0035_seed_essentials_academy_products')]
+    migrate_to = [('customer_billing', '0034_drop_ent_academy_table')]
+    seeded_at = datetime(2026, 6, 4, tzinfo=timezone.utc)
+
+    def setUp(self):
+        super().setUp()
+        self.migrator = Migrator(database='default')
+        self.old_state = self.migrator.apply_initial_migration(self.migrate_from)
+
+    def tearDown(self):
+        connections['default'].close()
+        self.migrator.reset()
+        super().tearDown()
+
+    def _get_model(self, state, app_label, model_name):
+        return state.apps.get_model(app_label, model_name)
+
+    def test_reverse_deletes_only_rows_marked_as_created_by_migration(self):
+        """Reverse migration removes created rows but preserves updated or unrelated rows."""
+        SspProduct = self._get_model(self.old_state, 'customer_billing', 'SspProduct')
+
+        SspProduct.objects.filter(pk='communication-academy-yearly').update(
+            created=self.seeded_at,
+            modified=self.seeded_at,
+        )
+
+        SspProduct.objects.filter(pk='ai-academy-yearly').update(
+            created=self.seeded_at - timedelta(days=1),
+            modified=django_tz.now(),
+        )
+
+        SspProduct.objects.create(
+            slug='custom-unrelated-product',
+            stripe_price_lookup_key='custom_lookup_key',
+            academy_uuid=None,
+            catalog_query_uuid='bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+            license_manager_product_id_trial=None,
+            license_manager_product_id_paid=None,
+            is_active=True,
+        )
+
+        new_state = self.migrator.apply_tested_migration(self.migrate_to)
+        NewSspProduct = self._get_model(new_state, 'customer_billing', 'SspProduct')
+
+        self.assertFalse(NewSspProduct.objects.filter(pk='communication-academy-yearly').exists())
+        self.assertTrue(NewSspProduct.objects.filter(pk='ai-academy-yearly').exists())
+        self.assertTrue(NewSspProduct.objects.filter(pk='custom-unrelated-product').exists())

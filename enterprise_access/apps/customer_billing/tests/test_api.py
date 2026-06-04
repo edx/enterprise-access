@@ -72,8 +72,8 @@ class TestCreateFreeTrialCheckoutSession(TestCase):
     Tests for the ``create_free_trial_checkout_session()`` function.
     """
     def setUp(self):
-        self.user = UserFactory()
-        self.other_user = UserFactory()
+        self.user = UserFactory(lms_user_id=12345)
+        self.other_user = UserFactory(lms_user_id=23456)
 
     def tearDown(self):
         # Clean up any intents created during tests
