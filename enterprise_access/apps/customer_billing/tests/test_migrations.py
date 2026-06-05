@@ -6,6 +6,7 @@ create test data with historical (frozen) model classes, then apply the
 migration under test and verify results.
 """
 from datetime import datetime, timedelta, timezone
+from importlib import import_module
 from unittest import skip
 from uuid import uuid4
 
@@ -561,3 +562,97 @@ class TestBackfillSubscriptionRenewalCancellations(TransactionTestCase):
         Renewal = new_state.apps.get_model('customer_billing', 'SelfServiceSubscriptionRenewal')
         self.assertTrue(Renewal.objects.get(pk=renewal_canceled.pk).is_canceled)
         self.assertFalse(Renewal.objects.get(pk=renewal_restored.pk).is_canceled)
+
+
+class TestBackfillCheckoutIntentSspProduct(TransactionTestCase):
+    """Tests for migration 0036 that backfills CheckoutIntent.ssp_product."""
+
+    migrate_from = [('customer_billing', '0035_checkoutintent_ssp_product')]
+    migrate_to = [('customer_billing', '0036_backfill_checkoutintent_ssp_product_teams_yearly')]
+
+    def setUp(self):
+        super().setUp()
+        self.migrator = Migrator(database='default')
+        self.old_state = self.migrator.apply_initial_migration(self.migrate_from)
+
+    def tearDown(self):
+        connections['default'].close()
+        self.migrator.reset()
+        super().tearDown()
+
+    def _get_model(self, app_label, model_name):
+        return self.old_state.apps.get_model(app_label, model_name)
+
+    def _create_user(self):
+        User = self._get_model('core', 'User')
+        return User.objects.create(
+            username=f'user_{uuid4().hex[:8]}',
+            email=f'{uuid4().hex}@example.com',
+        )
+
+    def _create_checkout_intent(self, ssp_product=None):
+        CheckoutIntent = self._get_model('customer_billing', 'CheckoutIntent')
+        return CheckoutIntent.objects.create(
+            user=self._create_user(),
+            quantity=5,
+            expires_at=django_tz.now() + timedelta(hours=1),
+            country='US',
+            ssp_product=ssp_product,
+        )
+
+    def test_backfill_sets_teams_yearly_for_null_rows(self):
+        """Rows with NULL ssp_product are set to teams-yearly; non-NULL rows are preserved."""
+        SspProduct = self._get_model('customer_billing', 'SspProduct')
+
+        teams_yearly = SspProduct.objects.get(slug='teams-yearly')
+        other_product = SspProduct.objects.create(
+            slug='test-other-product',
+            stripe_price_lookup_key='test_other_lookup_key',
+            catalog_query_uuid='bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+            license_manager_product_id_trial=22,
+            license_manager_product_id_paid=11,
+            is_active=True,
+        )
+
+        null_intent = self._create_checkout_intent(ssp_product=None)
+        preset_other_intent = self._create_checkout_intent(ssp_product=other_product)
+        preset_teams_intent = self._create_checkout_intent(ssp_product=teams_yearly)
+
+        new_state = self.migrator.apply_tested_migration(self.migrate_to)
+        CheckoutIntent = new_state.apps.get_model('customer_billing', 'CheckoutIntent')
+
+        self.assertEqual(
+            CheckoutIntent.objects.get(pk=null_intent.pk).ssp_product_id,
+            'teams-yearly',
+        )
+        self.assertEqual(
+            CheckoutIntent.objects.get(pk=preset_other_intent.pk).ssp_product_id,
+            'test-other-product',
+        )
+        self.assertEqual(
+            CheckoutIntent.objects.get(pk=preset_teams_intent.pk).ssp_product_id,
+            'teams-yearly',
+        )
+
+    def test_reverse_sets_teams_yearly_rows_back_to_null(self):
+        """Reverse migration helper sets teams-yearly rows to NULL for rollback safety."""
+        SspProduct = self._get_model('customer_billing', 'SspProduct')
+        teams_yearly = SspProduct.objects.get(slug='teams-yearly')
+
+        new_state = self.migrator.apply_tested_migration(self.migrate_to)
+        CheckoutIntent = new_state.apps.get_model('customer_billing', 'CheckoutIntent')
+        user_id = self._create_user().id
+        intent = CheckoutIntent.objects.create(
+            user_id=user_id,
+            quantity=5,
+            expires_at=django_tz.now() + timedelta(hours=1),
+            country='US',
+            ssp_product_id=teams_yearly.slug,
+        )
+
+        migration_module = import_module(
+            'enterprise_access.apps.customer_billing.migrations.0036_backfill_checkoutintent_ssp_product_teams_yearly'
+        )
+        migration_module.reverse_backfill_checkoutintent_ssp_product(new_state.apps, schema_editor=None)
+
+        self.assertIsNone(CheckoutIntent.objects.get(pk=intent.pk).ssp_product_id)
