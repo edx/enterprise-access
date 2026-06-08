@@ -839,48 +839,66 @@ class SubsidyAccessPolicyRedeemViewset(UserDetailsFromJwtMixin, PermissionRequir
             if redeemable_policies:
                 resolved_policy = redeemable_policies[0]
 
-            try:
-                if resolved_policy:
+            if resolved_policy:
+                try:
                     list_price_dict = resolved_policy.get_list_price(lms_user_id, content_key)
-                elif successful_redemptions:
-                    # Get the policy used for redemption and use that to compute the price. If the redemption was the
-                    # result of assignment, the historical assignment price might differ from the canonical price. We
-                    # prefer to display the redeemed price to avoid confusion.
-                    successfully_redeemed_policy = policy_by_redemption_uuid[successful_redemptions[0]['uuid']]
+                except ContentPriceNullException as exc:
+                    raise RedemptionRequestException(
+                        detail=(
+                            f'Could not determine list price for content_key {content_key}'
+                            f' with enterprise customer {enterprise_customer_uuid}')
+                    ) from exc
+            elif successful_redemptions:
+                # Get the policy used for redemption and use that to compute the price. If the redemption was the
+                # result of assignment, the historical assignment price might differ from the canonical price. We
+                # prefer to display the redeemed price to avoid confusion.
+                successfully_redeemed_policy = policy_by_redemption_uuid[successful_redemptions[0]['uuid']]
+                try:
                     list_price_dict = successfully_redeemed_policy.get_list_price(lms_user_id, content_key)
+                except ContentPriceNullException:
+                    # The content may have been removed from the catalog after the learner already redeemed it.
+                    # This is a catalog/metadata mismatch; we should not fail the entire request for a learner
+                    # who has already successfully enrolled.  Log a warning and return a null list price.
+                    logger.warning(
+                        'Failed to obtain list price for already-redeemed content_key %s '
+                        'with enterprise customer %s. Content may no longer exist in the catalog.',
+                        content_key,
+                        enterprise_customer_uuid,
+                    )
+            else:
+                # In the case where the learner cannot redeem and has never redeemed this content, bypass the
+                # subsidy metadata endpoint and go straight to the source (enterprise-catalog) to find normalized
+                # price data. In this case, the list price returned rarely actually drives the display price in the
+                # learner portal frontend, but we still need to maintain a non-null list price for a few reasons:
+                # * Enterprise customers that leverage the API directly always expect a non-null price.
+                # * On rare occasion, this price actually does drive the price display in learner-portal.  We think
+                #   this can happen when courses are searchable and there is an assignment-based policy, but nothing
+                #   has been assigned.
+                # * Long-term, we will use can_redeem for all subsidy types, at which point we will also rely on
+                #   this list_price for price display 100% of the time.
+                try:
+                    course_metadata = get_and_cache_content_metadata(content_key, coerce_to_parent_course=True)
+                except HTTPError:
+                    # We might normally re-raise the exception here (and have in the past), but this would cause
+                    # can-redeem requests to fail for courses which contain restricted runs where the customer does
+                    # not have restricted access.  The desired behavior is for the request to NOT fail, and the
+                    # frontend is already coded to discard the restricted runs.
+                    logger.warning(
+                        (
+                            'Failed to obtain content metadata from enterprise-catalog with enterprise customer '
+                            '%s. This can happen if the run is restricted.'
+                        ),
+                        enterprise_customer_uuid
+                    )
                 else:
-                    # In the case where the learner cannot redeem and has never redeemed this content, bypass the
-                    # subsidy metadata endpoint and go straight to the source (enterprise-catalog) to find normalized
-                    # price data. In this case, the list price returned rarely actually drives the display price in the
-                    # learner portal frontend, but we still need to maintain a non-null list price for a few reasons:
-                    # * Enterprise customers that leverage the API directly always expect a non-null price.
-                    # * On rare occasion, this price actually does drive the price display in learner-portal.  We think
-                    #   this can happen when courses are searchable and there is an assignment-based policy, but nothing
-                    #   has been assigned.
-                    # * Long-term, we will use can_redeem for all subsidy types, at which point we will also rely on
-                    #   this list_price for price display 100% of the time.
                     try:
-                        course_metadata = get_and_cache_content_metadata(content_key, coerce_to_parent_course=True)
-                    except HTTPError:
-                        # We might normally re-raise the exception here (and have in the past), but this would cause
-                        # can-redeem requests to fail for courses which contain restricted runs where the customer does
-                        # not have restricted access.  The desired behavior is for the request to NOT fail, and the
-                        # frontend is already coded to discard the restricted runs.
-                        logger.warning(
-                            (
-                                'Failed to obtain content metadata from enterprise-catalog with enterprise customer '
-                                '%s. This can happen if the run is restricted.'
-                            ),
-                            enterprise_customer_uuid
-                        )
-                    else:
                         list_price_dict = self._get_list_price_for_catalog_course_metadata(course_metadata, content_key)
-            except ContentPriceNullException as exc:
-                raise RedemptionRequestException(
-                    detail=(
-                        f'Could not determine list price for content_key {content_key}'
-                        f' with enterprise customer {enterprise_customer_uuid}')
-                ) from exc
+                    except ContentPriceNullException as exc:
+                        raise RedemptionRequestException(
+                            detail=(
+                                f'Could not determine list price for content_key {content_key}'
+                                f' with enterprise customer {enterprise_customer_uuid}')
+                        ) from exc
 
             element_response = {
                 "content_key": content_key,
