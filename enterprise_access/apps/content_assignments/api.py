@@ -66,6 +66,16 @@ class AllocationException(Exception):
     user_message = 'An error occurred during allocation'
 
 
+MISSING_COURSE_RUN_KEY_MESSAGE = (
+    'Could not resolve a course run for {content_key}. Late/custom one-off presentations must be allocated '
+    'with the exact course run key, not the parent course key.'
+)
+INEXACT_COURSE_RUN_KEY_MESSAGE = (
+    'Late/custom one-off presentations must be allocated with the exact course run key. '
+    'Received {content_key}, but catalog metadata resolved course run {course_run_key}.'
+)
+
+
 def _inexact_email_filter(emails, field_name='email'):
     """
     Helper that produces a Django Queryset filter
@@ -264,6 +274,7 @@ def get_allocated_quantity_for_configuration(assignment_configuration):
 def allocate_assignments(
     assignment_configuration, learner_emails, content_key,
     content_price_cents, admin_lms_user_id=None, known_lms_user_ids=None, suppress_email=False,
+    require_exact_course_run=False,
 ):
     """
     Creates or updates an allocated assignment record
@@ -285,6 +296,9 @@ def allocate_assignments(
         If present, it's assumed to be *all* lms user ids for the provided emails, and that no duplicate
         user emails are provided.
       - ``admin_lms_user_id``: ID of the admin LMS user who initiated the Learner Credit assignment.
+      - ``require_exact_course_run``: When true, the provided ``content_key`` must be the concrete course run key
+        resolved from catalog metadata. This is used for late/custom enrollments where redeeming the parent course key
+        would target the wrong LMS enrollment path.
 
     Returns: A dictionary of updated, created, and unchanged assignment records. e.g.
       ```
@@ -346,7 +360,11 @@ def allocate_assignments(
     # This step to find and update the preferred_course_run_key is required in order
     # for nudge emails to target the start date of the new run. For run-based assignments,
     # the preferred_course_run_key is the same as the assignment's content_key.
-    preferred_course_run_key = _get_preferred_course_run_key(assignment_configuration, content_key)
+    preferred_course_run_key = _get_preferred_course_run_key(
+        assignment_configuration,
+        content_key,
+        require_exact_course_run=require_exact_course_run,
+    )
 
     # Determine if the assignment's content_key is a course run or a course key based
     # on an associated parent content key. If the parent content key is None, then the
@@ -418,6 +436,7 @@ def allocate_assignments(
             lms_user_ids_by_email,
             allocation_batch_id,
             admin_lms_user_id,
+            require_exact_course_run=require_exact_course_run,
         )
 
     # Enqueue an asynchronous task to link assigned learners to the customer
@@ -507,7 +526,7 @@ def allocate_assignment_for_requests(
                 assignment=existing_assignment,
                 content_quantity=request.course_price * -1,
                 allocation_batch_id=allocation_batch_id,
-                preferred_course_run_key=metadata.get('course_run_key'),
+                preferred_course_run_key=_get_preferred_course_run_key_from_metadata(request.course_id, metadata),
                 parent_content_key=metadata.get('parent_content_key'),
                 is_assigned_course_run=bool(metadata.get('parent_content_key')),
             )
@@ -776,7 +795,33 @@ def _get_parent_content_key(assignment_configuration, content_key):
     return metadata_content_key
 
 
-def _get_preferred_course_run_key(assignment_configuration, content_key):
+def _raise_allocation_exception(message):
+    """
+    Raises an AllocationException with the same user-safe message exposed to API consumers.
+    """
+    exception = AllocationException(message)
+    exception.user_message = message
+    raise exception
+
+
+def _get_preferred_course_run_key_from_metadata(content_key, content_metadata, require_exact_course_run=False):
+    """
+    Resolve the preferred course run from already-fetched catalog metadata.
+    """
+    preferred_course_run_key = content_metadata.get('course_run_key')
+    if not preferred_course_run_key:
+        _raise_allocation_exception(MISSING_COURSE_RUN_KEY_MESSAGE.format(content_key=content_key))
+
+    if require_exact_course_run and content_key != preferred_course_run_key:
+        _raise_allocation_exception(INEXACT_COURSE_RUN_KEY_MESSAGE.format(
+            content_key=content_key,
+            course_run_key=preferred_course_run_key,
+        ))
+
+    return preferred_course_run_key
+
+
+def _get_preferred_course_run_key(assignment_configuration, content_key, require_exact_course_run=False):
     """
     During assignment allocation, time has passed since the last time an assignment
     was allocated/re-allocated. Therefore, it's entirely possible a new course run has been published.
@@ -786,7 +831,11 @@ def _get_preferred_course_run_key(assignment_configuration, content_key):
       The preferred course run key (from cache) of a content_key'ed content_metadata
     """
     course_content_metadata = _get_content_summary(assignment_configuration, content_key)
-    return course_content_metadata.get('course_run_key')
+    return _get_preferred_course_run_key_from_metadata(
+        content_key,
+        course_content_metadata,
+        require_exact_course_run=require_exact_course_run,
+    )
 
 
 def _create_new_assignments(
@@ -797,6 +846,7 @@ def _create_new_assignments(
     lms_user_ids_by_email,
     allocation_batch_id,
     admin_lms_user_id=None,
+    require_exact_course_run=False,
 ):
     """
     Helper to bulk save new LearnerContentAssignment instances.
@@ -813,7 +863,11 @@ def _create_new_assignments(
     # First, prepare assignment objects using data available in-memory only.
     content_title = _get_content_title(assignment_configuration, content_key)
     parent_content_key = _get_parent_content_key(assignment_configuration, content_key)
-    preferred_course_run_key = _get_preferred_course_run_key(assignment_configuration, content_key)
+    preferred_course_run_key = _get_preferred_course_run_key(
+        assignment_configuration,
+        content_key,
+        require_exact_course_run=require_exact_course_run,
+    )
     is_assigned_course_run = bool(parent_content_key)
 
     assignments_to_create = []
@@ -875,7 +929,7 @@ def _create_new_assignments_for_requests(
             content_quantity=request.course_price * -1,
             content_title=metadata.get('content_title'),
             parent_content_key=metadata.get('parent_content_key'),
-            preferred_course_run_key=metadata.get('course_run_key'),
+            preferred_course_run_key=_get_preferred_course_run_key_from_metadata(request.course_id, metadata),
             is_assigned_course_run=bool(metadata.get('parent_content_key')),
             state=LearnerContentAssignmentStateChoices.ALLOCATED,
             allocation_batch_id=allocation_batch_id,
