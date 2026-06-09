@@ -7,7 +7,7 @@ import uuid
 import stripe
 from django.conf import settings
 from django.db.models import Q
-from django.http import HttpResponseServerError
+from django.http import Http404, HttpResponseServerError
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, OpenApiTypes, extend_schema, extend_schema_view
@@ -17,6 +17,7 @@ from edx_rest_framework_extensions.auth.jwt.authentication import JwtAuthenticat
 from rest_framework import exceptions, mixins, permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 
 from enterprise_access.apps.api import serializers
 from enterprise_access.apps.api.authentication import StripeWebhookAuthentication
@@ -34,9 +35,14 @@ from enterprise_access.apps.customer_billing.api import (
 from enterprise_access.apps.customer_billing.models import (
     CheckoutIntent,
     SelfServiceSubscriptionRenewal,
+    SspProduct,
     StripeEventSummary
 )
-from enterprise_access.apps.customer_billing.pricing_api import get_ssp_product_pricing
+from enterprise_access.apps.customer_billing.pricing_api import (
+    StripePricingError,
+    get_all_stripe_prices,
+    get_ssp_product_pricing
+)
 from enterprise_access.apps.customer_billing.stripe_api import get_stripe_customer
 from enterprise_access.apps.customer_billing.stripe_event_handlers import StripeEventHandler
 
@@ -47,6 +53,113 @@ logger = logging.getLogger(__name__)
 
 CUSTOMER_BILLING_API_TAG = 'Customer Billing'
 STRIPE_EVENT_API_TAG = 'Stripe Event Summary'
+
+
+class SspProductViewSet(viewsets.ReadOnlyModelViewSet):
+    """Public read-only API endpoint for academy-backed SSP products."""
+
+    authentication_classes = ()
+    permission_classes = (permissions.AllowAny,)
+    throttle_classes = (ScopedRateThrottle,)
+    throttle_scope = 'ssp_product'
+    lookup_field = 'slug'
+    serializer_class = serializers.SspEssentialsProductResponseSerializer
+
+    def get_queryset(self):
+        return SspProduct.objects.filter(is_active=True, academy_uuid__isnull=False).order_by('slug')
+
+    def get_object(self):
+        queryset = self.get_queryset()
+        lookup_value = self.kwargs[self.lookup_field]
+        product = queryset.filter(
+            Q(slug=lookup_value) | Q(stripe_price_lookup_key=lookup_value)
+        ).first()
+        if not product:
+            raise Http404
+        self.check_object_permissions(self.request, product)
+        return product
+
+    def _include_pricing(self):
+        include_pricing = self.request.query_params.get('include_pricing', 'true').strip().lower()
+        return include_pricing not in {'false', '0', 'no'}
+
+    # Helper methods for pricing orchestration were removed; pricing is fetched
+    # via `pricing_api.get_all_stripe_prices()` and serialization is handled by
+    # the serializer.
+
+    @staticmethod
+    def _metadata_value(metadata, key):
+        """Safely read a metadata key from dict-like Stripe metadata payloads."""
+        if isinstance(metadata, dict):
+            return metadata.get(key)
+        try:
+            return metadata[key]
+        except (KeyError, TypeError):  # pragma: no cover - metadata type varies by Stripe SDK object wrappers
+            return None
+
+    # pricing orchestration and serialization responsibilities have been moved
+    # into `pricing_api.get_all_stripe_prices()` and the serializer respectively.
+
+    @extend_schema(
+        tags=[CUSTOMER_BILLING_API_TAG],
+        summary='List SSP products',
+        description='Public list of active SSP products and optional Stripe-backed pricing.',
+        parameters=[
+            OpenApiParameter(
+                name='include_pricing',
+                type=OpenApiTypes.BOOL,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description='Set false to skip Stripe pricing lookup and return metadata only.',
+            ),
+        ],
+        responses={
+            status.HTTP_200_OK: serializers.SspEssentialsProductResponseSerializer(many=True),
+        },
+    )
+    def list(self, request, *args, **kwargs):
+        products = list(self.get_queryset())
+        pricing_by_lookup_key = {}
+        if self._include_pricing():
+            try:
+                all_prices = get_all_stripe_prices()
+                pricing_by_lookup_key = {
+                    p.stripe_price_lookup_key: all_prices.get(p.stripe_price_lookup_key)
+                    for p in products
+                }
+            except StripePricingError:
+                pricing_by_lookup_key = {}
+
+        serializer = self.get_serializer(
+            products,
+            many=True,
+            context={"pricing": pricing_by_lookup_key, 'request': request},
+        )
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @extend_schema(
+        tags=[CUSTOMER_BILLING_API_TAG],
+        summary='Retrieve SSP product',
+        description='Public retrieve of one SSP product by slug and optional Stripe-backed pricing.',
+        parameters=[
+            OpenApiParameter(
+                name='include_pricing',
+                type=OpenApiTypes.BOOL,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description='Set false to skip Stripe pricing lookup and return metadata only.',
+            ),
+        ],
+        responses={
+            status.HTTP_200_OK: serializers.SspEssentialsProductResponseSerializer,
+            status.HTTP_404_NOT_FOUND: OpenApiResponse(description='SSP product not found'),
+        },
+    )
+    def retrieve(self, request, *args, **kwargs):
+        product = self.get_object()
+        pricing_by_slug = {}
+        serializer = self.get_serializer(product, context={"pricing": pricing_by_slug, 'request': request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 class CheckoutIntentPermission(permissions.BasePermission):

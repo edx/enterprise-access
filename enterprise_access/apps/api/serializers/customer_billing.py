@@ -1,6 +1,10 @@
 """
 customer billing serializers
 """
+from decimal import Decimal, InvalidOperation
+from urllib.parse import urljoin
+
+from django.conf import settings
 from django_countries.serializers import CountryFieldMixin
 from rest_framework import serializers
 from rest_framework.exceptions import APIException
@@ -662,3 +666,91 @@ class StripeSubscriptionResponseSerializer(serializers.Serializer):
         allow_null=True,
         help_text='Total number of licenses/seats in the subscription',
     )
+
+
+# pylint: disable=abstract-method
+class SspEssentialsProductResponseSerializer(serializers.Serializer):
+    """Serialized SSP Essentials product — field logic lives here, not in the view."""
+
+    name = serializers.SerializerMethodField()
+    long_name = serializers.SerializerMethodField()
+    description = serializers.SerializerMethodField()
+    marketing_url = serializers.SerializerMethodField()
+    thumbnail_url = serializers.SerializerMethodField()
+    price = serializers.SerializerMethodField()
+    lookup_key = serializers.SerializerMethodField()
+    slug = serializers.SlugField(read_only=True)
+
+    # ── helpers ──────────────────────────────────────────────
+
+    def _price_data(self, obj):
+        """Return the cached Stripe price dict for this product (or {})."""
+        return self.context.get('pricing', {}).get(obj.stripe_price_lookup_key) or {}
+
+    def _academy_field(self, obj, field):
+        """Safely read an academy metadata field from the SspProduct."""
+        try:
+            return getattr(obj, field, None)
+        except Exception:   # pylint: disable=broad-exception-caught
+            return None
+
+    @staticmethod
+    def _build_public_thumbnail_url(thumbnail_url):
+        """Convert relative thumbnail paths to fully-qualified public URLs."""
+        if not thumbnail_url or not isinstance(thumbnail_url, str):
+            return None
+        if thumbnail_url.startswith(('http://', 'https://')):
+            return thumbnail_url
+        base_url = getattr(settings, 'SSP_ESSENTIALS_THUMBNAIL_S3_BASE_URL', None)
+        if not base_url:
+            return thumbnail_url
+        return urljoin(f'{base_url.rstrip("/")}/', thumbnail_url.lstrip('/'))
+
+    # ── field methods ────────────────────────────────────────
+
+    def get_name(self, obj):
+        return (
+            self._academy_field(obj, 'academy_title') or
+            self._price_data(obj).get('stripe_name')
+        )
+
+    def get_long_name(self, obj):
+        title = self._academy_field(obj, 'academy_title')
+        return (
+            self._academy_field(obj, 'academy_long_name') or
+            title or
+            self._price_data(obj).get('stripe_name')
+        )
+
+    def get_description(self, obj):
+        return (
+            self._academy_field(obj, 'academy_description') or
+            self._price_data(obj).get('stripe_description')
+        )
+
+    def get_marketing_url(self, obj):
+        return (
+            self._academy_field(obj, 'academy_marketing_url') or
+            self._price_data(obj).get('stripe_marketing_url')
+        )
+
+    def get_thumbnail_url(self, obj):
+        """Get and format the public thumbnail URL for the product."""
+        raw = (
+            self._academy_field(obj, 'academy_thumbnail_url') or
+            self._price_data(obj).get('stripe_thumbnail_url')
+        )
+        return self._build_public_thumbnail_url(raw)
+
+    def get_price(self, obj):
+        """Get and format the product price as a string."""
+        raw = self._price_data(obj).get('unit_amount_decimal')
+        if raw is None:
+            return None
+        try:
+            return f'{Decimal(str(raw)):.2f}'
+        except (InvalidOperation, TypeError, ValueError):
+            return None
+
+    def get_lookup_key(self, obj):
+        return obj.stripe_price_lookup_key
