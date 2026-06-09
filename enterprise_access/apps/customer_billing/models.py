@@ -112,8 +112,25 @@ class SspProduct(TimeStampedModel):
 
     @property
     def academy_description(self):
-        """Academy description. None for non-Academy products."""
-        return self._academy_data.get('description') if self._academy_data else None
+        """Academy description. Prefers long_description, then short_description, then description."""
+        if not self._academy_data:
+            return None
+        for key in ('long_description', 'short_description', 'description'):
+            value = self._academy_data.get(key)
+            if value:
+                return value
+        return None
+
+    @property
+    def academy_long_name(self):
+        """Academy long public name. Uses long_name when present, else falls back to title."""
+        if not self._academy_data:
+            return None
+        long_name = self._academy_data.get('long_name')
+        if long_name:
+            return long_name
+
+        return self._academy_data.get('long_name') or self.academy_title
 
     @property
     def academy_marketing_url(self):
@@ -122,8 +139,10 @@ class SspProduct(TimeStampedModel):
 
     @property
     def academy_thumbnail_url(self):
-        """Academy thumbnail URL. None for non-Academy products."""
-        return self._academy_data.get('thumbnail_url') if self._academy_data else None
+        """Academy thumbnail image URL. Prefers image field, falls back to thumbnail_url."""
+        if not self._academy_data:
+            return None
+        return self._academy_data.get('image') or self._academy_data.get('thumbnail_url')
 
     @property
     def academy_tags(self):
