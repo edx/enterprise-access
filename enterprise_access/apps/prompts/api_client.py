@@ -26,7 +26,7 @@ class XpertAPIError(Exception):
 class XpertAPIConfigurationError(XpertAPIError):
     """
     Raised when required Django settings for the Xpert client are missing
-    or falsy (``XPERT_AI_CLIENT_ID``, ``XPERT_API_BASE_URL``).
+    or falsy (``XPERT_API_CLIENT_ID``, ``XPERT_API_BASE_URL``).
 
     Callers should treat this as a deployment misconfiguration, not a
     recoverable runtime error. The service must be redeployed with the
@@ -69,7 +69,7 @@ class XpertAPIClient:
 
     Required settings
     -----------------
-    ``XPERT_AI_CLIENT_ID``
+    ``XPERT_API_CLIENT_ID``
         Xpert client identifier. Sent as ``client_id`` in every request payload.
     ``XPERT_API_BASE_URL``
         Base URL of the Xpert service, without a trailing ``/v1/message`` path.
@@ -96,13 +96,13 @@ class XpertAPIClient:
                 is the fully resolved URL for the Xpert ``/v1/message`` path.
 
         Raises:
-            XpertAPIConfigurationError: If ``XPERT_AI_CLIENT_ID`` or
+            XpertAPIConfigurationError: If ``XPERT_API_CLIENT_ID`` or
                 ``XPERT_API_BASE_URL`` are missing or falsy in Django settings.
         """
-        client_id = getattr(settings, 'XPERT_AI_CLIENT_ID', None)
+        client_id = getattr(settings, 'XPERT_API_CLIENT_ID', None)
         if not client_id:
             raise XpertAPIConfigurationError(
-                'Missing XPERT_AI_CLIENT_ID in settings required for XpertAPIClient.'
+                'Missing XPERT_API_CLIENT_ID in settings required for XpertAPIClient.'
             )
         base_url = getattr(settings, 'XPERT_API_BASE_URL', None)
         if not base_url:

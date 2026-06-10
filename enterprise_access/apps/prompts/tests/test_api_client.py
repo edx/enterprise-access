@@ -15,7 +15,7 @@ from enterprise_access.apps.prompts.api_client import (
 )
 
 MOCK_SETTINGS = {
-    'XPERT_AI_CLIENT_ID': 'test-client-id',
+    'XPERT_API_CLIENT_ID': 'test-client-id',
     'XPERT_API_BASE_URL': 'https://xpert.example.com',
     'XPERT_REQUEST_TIMEOUT': 30,
 }
@@ -51,7 +51,7 @@ class XpertAPIClientConfigurationTests(TestCase):
         'conversation_id': 'conv-cfg',
     }
 
-    @override_settings(XPERT_AI_CLIENT_ID='')
+    @override_settings(XPERT_API_CLIENT_ID='')
     @mock.patch(PATCH_REQUESTS_POST)
     def test_missing_client_id_raises_configuration_error(self, mock_post):
         client = XpertAPIClient()
@@ -59,7 +59,7 @@ class XpertAPIClientConfigurationTests(TestCase):
             client.send_message(**self._SEND_KWARGS)
         mock_post.assert_not_called()
 
-    @override_settings(XPERT_AI_CLIENT_ID=None)
+    @override_settings(XPERT_API_CLIENT_ID=None)
     @mock.patch(PATCH_REQUESTS_POST)
     def test_none_client_id_raises_configuration_error(self, mock_post):
         client = XpertAPIClient()
