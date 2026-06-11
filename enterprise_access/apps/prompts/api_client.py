@@ -129,10 +129,10 @@ class XpertAPIClient:
             XpertAPIRequestError: If any required argument is missing, blank,
                 or of the wrong type.
         """
-        if not system_prompt or not str(system_prompt).strip():
-            raise XpertAPIRequestError('system_prompt is required and must not be blank.')
-        if not conversation_id or not str(conversation_id).strip():
-            raise XpertAPIRequestError('conversation_id is required and must not be blank.')
+        if not isinstance(system_prompt, str) or not system_prompt.strip():
+            raise XpertAPIRequestError('system_prompt is required and must be a non-blank string.')
+        if not isinstance(conversation_id, str) or not conversation_id.strip():
+            raise XpertAPIRequestError('conversation_id is required and must be a non-blank string.')
         if messages is None:
             raise XpertAPIRequestError('messages is required.')
         if not isinstance(messages, list):
