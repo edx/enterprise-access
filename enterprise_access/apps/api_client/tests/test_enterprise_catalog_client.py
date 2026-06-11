@@ -251,6 +251,66 @@ class TestEnterpriseCatalogApiClient(TestCase):
             json={'enterprise_catalog_uuid': str(catalog_uuid)},
         )
 
+    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient', autospec=True)
+    def test_associate_academy_with_catalog_empty_response_body(self, mock_oauth_client):
+        academy_uuid = uuid4()
+        catalog_uuid = uuid4()
+        mock_post = mock_oauth_client.return_value.post
+        mock_post.return_value.json.side_effect = ValueError()
+
+        client = EnterpriseCatalogApiClient()
+        result = client.associate_academy_with_catalog(academy_uuid, catalog_uuid)
+
+        self.assertEqual(result, {})
+
+    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient', autospec=True)
+    def test_get_academies_returns_non_dict_payload(self, mock_oauth_client):
+        payload = ['not-a-dict']
+        mock_oauth_client.return_value.get.return_value = mock.Mock(
+            json=mock.Mock(return_value=payload),
+            raise_for_status=mock.Mock(),
+        )
+
+        client = EnterpriseCatalogApiClient()
+        result = client.get_academies()
+
+        self.assertEqual(result, payload)
+
+    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient', autospec=True)
+    def test_get_academies_with_empty_endpoint_returns_empty_payload(self, mock_oauth_client):
+        client = EnterpriseCatalogApiClient()
+        client.academies_endpoint = ''
+
+        result = client.get_academies()
+
+        self.assertEqual(result, {'count': 0, 'next': None, 'previous': None, 'results': []})
+        mock_oauth_client.return_value.get.assert_not_called()
+
+    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient', autospec=True)
+    def test_get_academies_ignores_non_list_results(self, mock_oauth_client):
+        payload = {'count': 1, 'next': None, 'previous': None, 'results': {'title': 'not-a-list'}}
+        mock_oauth_client.return_value.get.return_value = mock.Mock(
+            json=mock.Mock(return_value=payload),
+            raise_for_status=mock.Mock(),
+        )
+
+        client = EnterpriseCatalogApiClient()
+        result = client.get_academies()
+
+        self.assertEqual(result['results'], [])
+
+    def test_catalog_content_metadata_raises_for_empty_content_keys_with_traversal(self):
+        client = EnterpriseCatalogApiClient()
+
+        with self.assertRaisesRegex(Exception, 'Cannot request all metadata for a catalog'):
+            client.catalog_content_metadata(uuid4(), content_keys=[], traverse_pagination=True)
+
+    def test_content_metadata_not_implemented_for_v2_client(self):
+        client = EnterpriseCatalogApiClient()
+
+        with self.assertRaises(NotImplementedError):
+            client.content_metadata('some-content-key')
+
 
 @ddt.ddt
 class TestEnterpriseCatalogApiV1Client(TestCase):

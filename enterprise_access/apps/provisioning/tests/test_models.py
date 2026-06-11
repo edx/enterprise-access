@@ -100,6 +100,39 @@ class TestProvisionNewCustomerWorkflow(TestCase):
 
         self.assertEqual(agreement_step.get_preceding_step_record(), associate_step)
 
+    def test_customer_agreement_preceding_step_falls_back_to_catalog(self):
+        workflow = ProvisionNewCustomerWorkflowFactory()
+        catalog_step = GetCreateCatalogStep.objects.create(
+            workflow_record_uuid=workflow.uuid,
+            input_data={},
+            output_data={},
+        )
+        agreement_step = GetCreateCustomerAgreementStep.objects.create(
+            workflow_record_uuid=workflow.uuid,
+            preceding_step_uuid=catalog_step.uuid,
+            input_data={},
+            output_data={},
+        )
+
+        self.assertEqual(agreement_step.get_preceding_step_record(), catalog_step)
+
+    def test_workflow_get_associate_academy_step_and_output_dict(self):
+        workflow = ProvisionNewCustomerWorkflowFactory.create_complete_workflow()
+        associate_step = AssociateAcademyStep.objects.create(
+            workflow_record_uuid=workflow.uuid,
+            input_data={},
+            output_data={
+                'academy_uuid': None,
+                'enterprise_catalog_uuid': str(uuid4()),
+            },
+        )
+
+        self.assertEqual(workflow.get_associate_academy_step(), associate_step)
+        self.assertEqual(
+            workflow.associate_academy_output_dict(),
+            workflow.output_data['associate_academy_output'],
+        )
+
 
 class TestGetCreateSubscriptionPlanRenewalStep(TestCase):
     """
