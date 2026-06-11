@@ -149,6 +149,16 @@ class XpertAPIClientInputValidationTests(TestCase):
             )
         mock_post.assert_not_called()
 
+    @ddt.data(123, ['not', 'a', 'string'])
+    @mock.patch(PATCH_REQUESTS_POST)
+    def test_non_string_conversation_id_raises_request_error(self, value, mock_post):
+        with self.assertRaises(XpertAPIRequestError):
+            self.client.send_message(
+                system_prompt=self.valid_kwargs['system_prompt'],
+                messages=self.valid_kwargs['messages'],
+                conversation_id=value,
+            )
+        mock_post.assert_not_called()
     @mock.patch(PATCH_REQUESTS_POST)
     def test_none_messages_raises_request_error(self, mock_post):
         with self.assertRaises(XpertAPIRequestError):
