@@ -662,3 +662,44 @@ class StripeSubscriptionResponseSerializer(serializers.Serializer):
         allow_null=True,
         help_text='Total number of licenses/seats in the subscription',
     )
+
+
+class AcademyProductPriceRecurringSerializer(serializers.Serializer):
+    """Recurring billing details for an academy Stripe price."""
+    interval = serializers.CharField(required=False, allow_null=True)
+    interval_count = serializers.IntegerField(required=False, allow_null=True)
+    usage_type = serializers.CharField(required=False, allow_null=True)
+
+
+class AcademyProductPriceSerializer(serializers.Serializer):
+    """Serialized Stripe price payload for academy products."""
+    id = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    product = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    lookup_key = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    currency = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    unit_amount = serializers.IntegerField(required=False, allow_null=True)
+    unit_amount_decimal = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    recurring = AcademyProductPriceRecurringSerializer(required=False, allow_null=True)
+
+
+class AcademyProductResponseSerializer(serializers.Serializer):
+    """Academy product payload returned by academy-products endpoints."""
+    id = serializers.CharField()
+    name = serializers.CharField()
+    long_name = serializers.CharField(required=False, allow_blank=True)
+    description = serializers.CharField(required=False, allow_blank=True)
+    marketing_url = serializers.CharField(required=False, allow_blank=True)
+    thumbnail_url = serializers.CharField(required=False, allow_blank=True)
+    tags = serializers.ListField(child=serializers.CharField(), required=False)
+    stripe_product_id = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    catalog_query_id = serializers.IntegerField(required=False, allow_null=True)
+    edx_catalog_id = serializers.IntegerField(required=False, allow_null=True)
+    prices = AcademyProductPriceSerializer(many=True, required=False)
+
+
+class AcademyProductListResponseSerializer(serializers.Serializer):
+    """Paginated list response for academy products."""
+    count = serializers.IntegerField()
+    next = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    previous = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    results = AcademyProductResponseSerializer(many=True)
