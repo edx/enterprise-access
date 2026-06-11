@@ -235,9 +235,9 @@ class XpertAPIClient:
                 keys.
             conversation_id (str): Xpert conversation identifier. Required by
                 Xpert for session continuity.
-            # Tags constrain Xpert retrieval to the relevant RAG content collections.
-            tags (list | None): Optional RAG control tags. Included in the
-                payload only when the list is non-empty; omitted otherwise.
+            tags (list | None): Optional RAG control tags that constrain Xpert retrieval
+                to the relevant RAG content collections. Included in the payload only when
+                the list is non-empty; omitted otherwise.
 
         Returns:
             dict: The first response object from the Xpert response envelope,
