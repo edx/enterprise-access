@@ -128,6 +128,7 @@ class XpertAPIClientInputValidationTests(TestCase):
                 conversation_id=self.valid_kwargs['conversation_id'],
             )
         mock_post.assert_not_called()
+
     @ddt.data('', '   ', '\n\n', '\t')
     @mock.patch(PATCH_REQUESTS_POST)
     def test_blank_conversation_id_raises_request_error(self, blank_value, mock_post):
@@ -159,6 +160,7 @@ class XpertAPIClientInputValidationTests(TestCase):
                 conversation_id=value,
             )
         mock_post.assert_not_called()
+
     @mock.patch(PATCH_REQUESTS_POST)
     def test_none_messages_raises_request_error(self, mock_post):
         with self.assertRaises(XpertAPIRequestError):
