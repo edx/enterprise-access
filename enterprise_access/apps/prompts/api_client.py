@@ -73,7 +73,7 @@ class XpertAPIClient:
     ``XPERT_API_BASE_URL``
         Base URL of the Xpert service, without a trailing ``/v1/message`` path.
     ``XPERT_REQUEST_TIMEOUT``
-        Seconds to wait before timing out. Defaults to 30.
+        Seconds to wait before timing out. Defaults to 45.
 
     Response envelope
     -----------------
