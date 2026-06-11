@@ -492,7 +492,9 @@ class GetCreateCustomerAgreementStep(AbstractWorkflowStep):
         ).first()
 
     def get_preceding_step_record(self):
-        return GetCreateCatalogStep.objects.filter(
+        return AssociateAcademyStep.objects.filter(
+            uuid=self.preceding_step_uuid,
+        ).first() or GetCreateCatalogStep.objects.filter(
             uuid=self.preceding_step_uuid,
         ).first()
 
