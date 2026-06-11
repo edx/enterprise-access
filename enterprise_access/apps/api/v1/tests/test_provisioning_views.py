@@ -29,6 +29,9 @@ from enterprise_access.apps.customer_billing.models import (
 )
 from enterprise_access.apps.customer_billing.tests.factories import StripeEventDataFactory, StripeEventSummaryFactory
 from enterprise_access.apps.provisioning.models import (
+    AssociateAcademyStep,
+    GetCreateCatalogStep,
+    GetCreateCustomerAgreementStep,
     GetCreateCustomerStep,
     GetCreateEnterpriseAdminUsersStep,
     GetCreateFirstPaidSubscriptionPlanStep,
@@ -305,6 +308,52 @@ class TestProvisioningEndToEnd(APITest):
             user=UserFactory(),
             **DEFAULT_CHECKOUT_INTENT_RECORD,
         )
+
+    @mock.patch('enterprise_access.apps.provisioning.models.associate_academy_with_catalog')
+    @mock.patch('enterprise_access.apps.provisioning.models.get_or_create_customer_agreement')
+    @mock.patch('enterprise_access.apps.provisioning.models.get_or_create_subscription_plan_renewal')
+    @mock.patch('enterprise_access.apps.provisioning.api.LmsApiClient')
+    def test_provisioning_with_academy_request_plumbing(
+        self,
+        mock_lms_api_client,
+        mock_create_renewal,
+        mock_create_agreement,
+        mock_associate_academy,
+    ):
+        """
+        Academy request data is threaded into workflow and returned in provisioning response.
+        """
+        mock_client = mock_lms_api_client.return_value
+        mock_client.get_enterprise_customer_data.return_value = DEFAULT_CUSTOMER_RECORD
+        mock_client.get_enterprise_admin_users.return_value = []
+        mock_client.get_enterprise_catalogs.return_value = [DEFAULT_CATALOG_RECORD]
+
+        mock_create_agreement.return_value = DEFAULT_AGREEMENT_RECORD
+        mock_create_renewal.return_value = EXPECTED_SUBSCRIPTION_PLAN_RENEWAL_RESPONSE
+
+        event_data = StripeEventDataFactory.create(checkout_intent=self.checkout_intent)
+        StripeEventSummaryFactory.create(stripe_event_data=event_data)
+
+        academy_uuid = str(uuid.uuid4())
+        request_payload = {**DEFAULT_REQUEST_PAYLOAD}
+        request_payload['academy'] = {'academy_uuid': academy_uuid}
+
+        response = self.client.post(PROVISIONING_CREATE_ENDPOINT, data=request_payload)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+        payload = response.json()
+        self.assertEqual(payload['academy']['academy_uuid'], academy_uuid)
+        self.assertEqual(payload['academy']['enterprise_catalog_uuid'], str(TEST_CATALOG_UUID))
+
+        mock_associate_academy.assert_called_once_with(
+            academy_uuid=academy_uuid,
+            enterprise_catalog_uuid=str(TEST_CATALOG_UUID),
+        )
+
+        workflow = ProvisionNewCustomerWorkflow.objects.first()
+        step_order = list(workflow.steps)
+        self.assertLess(step_order.index(GetCreateCatalogStep), step_order.index(AssociateAcademyStep))
+        self.assertLess(step_order.index(AssociateAcademyStep), step_order.index(GetCreateCustomerAgreementStep))
 
     @ddt.data(
         # Data representing the state where a net-new customer is created.

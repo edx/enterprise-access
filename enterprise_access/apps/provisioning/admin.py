@@ -248,6 +248,30 @@ class GetCreateCatalogStepAdmin(DjangoQLSearchMixin, ProvisionWorkflowStepAdminB
         ))
 
 
+@admin.register(models.AssociateAcademyStep)
+class AssociateAcademyStepAdmin(DjangoQLSearchMixin, ProvisionWorkflowStepAdminBase):
+    """
+    Admin model for the academy association step.
+    """
+    fields = ProvisionWorkflowStepAdminBase.fields + ('preceding_step_link',)
+    readonly_fields = ProvisionWorkflowStepAdminBase.readonly_fields + ('preceding_step_link',)
+
+    @admin.display(
+        description='Preceding catalog creation step'
+    )
+    def preceding_step_link(self, obj):
+        """
+        Returns a link to the preceding catalog step for this academy association step.
+        """
+        step_record = obj.get_preceding_step_record()
+        if not step_record:
+            return None
+        return mark_safe('<a href="{}">{}</a>'.format(
+            reverse("admin:provisioning_getcreatecatalogstep_change", args=(step_record.pk,)),
+            step_record.pk,
+        ))
+
+
 @admin.register(models.GetCreateCustomerAgreementStep)
 class GetCreateCustomerAgreementStepAdmin(DjangoQLSearchMixin, ProvisionWorkflowStepAdminBase):
     """
@@ -385,6 +409,7 @@ class AdminTriggerProvisioningSubscriptionTrialWorkflowAdmin(admin.ModelAdmin):
                 customer_step_input_data,
                 admin_users_step_input_data,
                 catalog_step_input,
+                {},
                 agreement_step_input,
                 plan_step_input,
                 {},  # TODO: pass a real first paid dict argument

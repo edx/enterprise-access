@@ -19,7 +19,9 @@ class EnterpriseCatalogApiClient(BaseOAuthClient):
 
     def __init__(self):
         self.api_base_url = urljoin(settings.ENTERPRISE_CATALOG_URL, f'api/{self.api_version}/')
+        self.api_v1_base_url = urljoin(settings.ENTERPRISE_CATALOG_URL, 'api/v1/')
         self.academies_endpoint = urljoin(self.api_base_url, 'academies/')
+        self.academies_v1_endpoint = urljoin(self.api_v1_base_url, 'academies/')
         self.enterprise_catalog_endpoint = urljoin(self.api_base_url, 'enterprise-catalogs/')
         super().__init__()
 
@@ -71,6 +73,29 @@ class EnterpriseCatalogApiClient(BaseOAuthClient):
         response = self.client.get(endpoint)
         response.raise_for_status()
         return response.json()
+
+    @backoff.on_exception(wait_gen=backoff.expo, exception=autoretry_for_exceptions)
+    def associate_academy_with_catalog(self, academy_uuid, enterprise_catalog_uuid):
+        """
+        Associate an academy with an enterprise catalog in enterprise-catalog.
+
+        Arguments:
+            academy_uuid (str|UUID): UUID of the academy to update.
+            enterprise_catalog_uuid (str|UUID): UUID of the enterprise catalog to associate.
+
+        Returns:
+            dict: Response payload, or an empty dict when the endpoint returns no body.
+        """
+        endpoint = urljoin(self.academies_v1_endpoint, f'{academy_uuid}/associate-catalog/')
+        response = self.client.post(
+            endpoint,
+            json={'enterprise_catalog_uuid': str(enterprise_catalog_uuid)},
+        )
+        response.raise_for_status()
+        try:
+            return response.json()
+        except ValueError:
+            return {}
 
     @backoff.on_exception(wait_gen=backoff.expo, exception=autoretry_for_exceptions)
     def contains_content_items(self, catalog_uuid, content_ids):
