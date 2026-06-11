@@ -60,8 +60,7 @@ class XpertAPIResponseError(XpertAPIError):
 class XpertAPIClient:
     """
     Low-level HTTP transport client for the Xpert AI ``/v1/message`` endpoint.
-    - Validates required Django settings before issuing any HTTP request.
-    - Validates required call arguments before issuing an HTTP request.
+    - Validates required Django settings and call arguments before issuing an HTTP request
     - Constructs the Xpert request payload.
     - POSTs to ``{XPERT_API_BASE_URL}/v1/message`` with a configurable timeout.
     - Wraps transport failures and non-2xx responses in typed exceptions.
@@ -206,11 +205,12 @@ class XpertAPIClient:
             )
         if not data:
             raise XpertAPIResponseError('Xpert response envelope is an empty list.')
-        if not isinstance(data[0], dict):
+        first_item = data[0]
+        if not isinstance(first_item, dict):
             raise XpertAPIResponseError(
-                f'First item in Xpert response envelope is not a dict: got {type(data[0]).__name__}.'
+                f'First item in Xpert response envelope is not a dict: got {type(first_item).__name__}.'
             )
-        return data[0]
+        return first_item
 
     def send_message(
         self,
@@ -235,6 +235,7 @@ class XpertAPIClient:
                 keys.
             conversation_id (str): Xpert conversation identifier. Required by
                 Xpert for session continuity.
+            # Tags constrain Xpert retrieval to the relevant RAG content collections.
             tags (list | None): Optional RAG control tags. Included in the
                 payload only when the list is non-empty; omitted otherwise.
 
