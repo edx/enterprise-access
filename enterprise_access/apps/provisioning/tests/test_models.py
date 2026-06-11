@@ -84,6 +84,22 @@ class TestProvisionNewCustomerWorkflow(TestCase):
         self.assertLess(steps.index(GetCreateCatalogStep), steps.index(AssociateAcademyStep))
         self.assertLess(steps.index(AssociateAcademyStep), steps.index(GetCreateCustomerAgreementStep))
 
+    def test_customer_agreement_preceding_step_resolves_to_associate_academy(self):
+        workflow = ProvisionNewCustomerWorkflowFactory()
+        associate_step = AssociateAcademyStep.objects.create(
+            workflow_record_uuid=workflow.uuid,
+            input_data={},
+            output_data={},
+        )
+        agreement_step = GetCreateCustomerAgreementStep.objects.create(
+            workflow_record_uuid=workflow.uuid,
+            preceding_step_uuid=associate_step.uuid,
+            input_data={},
+            output_data={},
+        )
+
+        self.assertEqual(agreement_step.get_preceding_step_record(), associate_step)
+
 
 class TestGetCreateSubscriptionPlanRenewalStep(TestCase):
     """
