@@ -115,6 +115,7 @@ class ProvisioningCreateView(PermissionRequiredMixin, generics.CreateAPIView):
             for record in request_serializer.validated_data['pending_admins']
         ]
         catalog_request_data = request_serializer.validated_data.get('enterprise_catalog')
+        academy_request_data = request_serializer.validated_data.get('academy')
         customer_agreement_data = request_serializer.validated_data.get('customer_agreement')
         trial_subscription_plan_data = request_serializer.validated_data['trial_subscription_plan']
         first_paid_subscription_plan_data = request_serializer.validated_data['first_paid_subscription_plan']
@@ -123,6 +124,7 @@ class ProvisioningCreateView(PermissionRequiredMixin, generics.CreateAPIView):
             customer_request_data,
             admin_emails,
             catalog_request_data,
+            academy_request_data,
             customer_agreement_data,
             trial_subscription_plan_data,
             first_paid_subscription_plan_data,
@@ -141,6 +143,7 @@ class ProvisioningCreateView(PermissionRequiredMixin, generics.CreateAPIView):
             'enterprise_customer': workflow.customer_output_dict(),
             'customer_admins': workflow.admin_users_output_dict(),
             'enterprise_catalog': workflow.catalog_output_dict(),
+            'academy': workflow.associate_academy_output_dict(),
             'customer_agreement': workflow.customer_agreement_output_dict(),
             'trial_subscription_plan': workflow.trial_subscription_plan_output_dict(),
             'first_paid_subscription_plan': workflow.first_paid_subscription_plan_output_dict(),

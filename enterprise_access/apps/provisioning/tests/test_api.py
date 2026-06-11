@@ -77,6 +77,33 @@ class TestGetCreateCatalog(TestCase):
             catalog_query_id=123,
         )
 
+
+class TestAssociateAcademyWithCatalog(TestCase):
+    """
+    Tests for the ``associate_academy_with_catalog()`` function.
+    """
+
+    @mock.patch.object(provisioning_api, 'EnterpriseCatalogApiClient', autospec=True)
+    def test_associate_academy_with_catalog(self, mock_client_class):
+        academy_uuid = 'academy-uuid'
+        catalog_uuid = 'catalog-uuid'
+        mock_client_class.return_value.associate_academy_with_catalog.return_value = {'detail': 'ok'}
+
+        result = provisioning_api.associate_academy_with_catalog(academy_uuid, catalog_uuid)
+
+        self.assertEqual(result, {'detail': 'ok'})
+        mock_client_class.return_value.associate_academy_with_catalog.assert_called_once_with(
+            academy_uuid=academy_uuid,
+            enterprise_catalog_uuid=catalog_uuid,
+        )
+
+    @mock.patch.object(provisioning_api, 'EnterpriseCatalogApiClient', autospec=True)
+    def test_associate_academy_with_catalog_raises(self, mock_client_class):
+        mock_client_class.return_value.associate_academy_with_catalog.side_effect = Exception('api error')
+
+        with self.assertRaisesRegex(Exception, 'api error'):
+            provisioning_api.associate_academy_with_catalog('academy-uuid', 'catalog-uuid')
+
     @mock.patch.object(provisioning_api, 'LmsApiClient', autospec=True)
     def test_fetch_error_is_raised(self, mock_client_class):
         mock_client = mock_client_class.return_value

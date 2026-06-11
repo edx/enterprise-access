@@ -20,8 +20,69 @@ from enterprise_access.apps.customer_billing.tests.factories import (
     StripeEventDataFactory,
     StripeEventSummaryFactory
 )
-from enterprise_access.apps.provisioning.models import GetCreateSubscriptionPlanRenewalStep, NotificationStep
+from enterprise_access.apps.provisioning.models import (
+    AssociateAcademyStep,
+    GetCreateCatalogStep,
+    GetCreateCustomerAgreementStep,
+    GetCreateSubscriptionPlanRenewalStep,
+    NotificationStep,
+    ProvisionNewCustomerWorkflow
+)
 from enterprise_access.apps.provisioning.tests.factories import ProvisionNewCustomerWorkflowFactory
+
+
+class TestAssociateAcademyStep(TestCase):
+    """
+    Tests for the AssociateAcademyStep model.
+    """
+
+    def setUp(self):
+        self.workflow = ProvisionNewCustomerWorkflowFactory()
+        self.step = AssociateAcademyStep.objects.create(
+            workflow_record_uuid=self.workflow.uuid,
+            input_data={},
+        )
+
+    @mock.patch('enterprise_access.apps.provisioning.models.associate_academy_with_catalog')
+    def test_process_input_skips_when_no_academy_uuid(self, mock_associate):
+        accumulated_output = mock.Mock()
+        accumulated_output.create_catalog_output = mock.Mock(uuid=uuid4())
+
+        result = self.step.process_input(accumulated_output)
+
+        self.assertIsNone(result.academy_uuid)
+        self.assertEqual(result.enterprise_catalog_uuid, accumulated_output.create_catalog_output.uuid)
+        mock_associate.assert_not_called()
+
+    @mock.patch('enterprise_access.apps.provisioning.models.associate_academy_with_catalog')
+    def test_process_input_associates_when_academy_uuid_present(self, mock_associate):
+        academy_uuid = uuid4()
+        catalog_uuid = uuid4()
+        self.step.input_data = {'academy_uuid': str(academy_uuid)}
+
+        accumulated_output = mock.Mock()
+        accumulated_output.create_catalog_output = mock.Mock(uuid=catalog_uuid)
+
+        result = self.step.process_input(accumulated_output)
+
+        self.assertEqual(result.academy_uuid, academy_uuid)
+        self.assertEqual(result.enterprise_catalog_uuid, catalog_uuid)
+        mock_associate.assert_called_once_with(
+            academy_uuid=str(academy_uuid),
+            enterprise_catalog_uuid=str(catalog_uuid),
+        )
+
+
+class TestProvisionNewCustomerWorkflow(TestCase):
+    """
+    Tests for workflow step ordering.
+    """
+
+    def test_step_order_includes_associate_academy_after_catalog(self):
+        steps = list(ProvisionNewCustomerWorkflow.steps)
+
+        self.assertLess(steps.index(GetCreateCatalogStep), steps.index(AssociateAcademyStep))
+        self.assertLess(steps.index(AssociateAcademyStep), steps.index(GetCreateCustomerAgreementStep))
 
 
 class TestGetCreateSubscriptionPlanRenewalStep(TestCase):

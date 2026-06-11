@@ -19,7 +19,9 @@ class EnterpriseCatalogApiClient(BaseOAuthClient):
 
     def __init__(self):
         self.api_base_url = urljoin(settings.ENTERPRISE_CATALOG_URL, f'api/{self.api_version}/')
+        self.api_v1_base_url = urljoin(settings.ENTERPRISE_CATALOG_URL, 'api/v1/')
         self.academies_endpoint = urljoin(self.api_base_url, 'academies/')
+        self.academies_v1_endpoint = urljoin(self.api_v1_base_url, 'academies/')
         self.enterprise_catalog_endpoint = urljoin(self.api_base_url, 'enterprise-catalogs/')
         super().__init__()
 
@@ -38,6 +40,55 @@ class EnterpriseCatalogApiClient(BaseOAuthClient):
         response = self.client.get(endpoint)
         response.raise_for_status()
         return response.json()
+
+    @backoff.on_exception(wait_gen=backoff.expo, exception=autoretry_for_exceptions)
+    def get_academies(self, academy_uuid: str = None):
+        """
+        Fetch a list of academies, optionally filtered by academy_uuid.
+
+        Returns a paginated-style dict. If the response contains a `next`
+        link, subsequent pages will be fetched and merged into a single
+        results list.
+        """
+        params = {'academy_uuid': academy_uuid} if academy_uuid else None
+        response = self.client.get(self.academies_endpoint, params=params)
+        response.raise_for_status()
+        data = response.json()
+
+        # Merge paginated results if necessary
+        next_url = data.get('next')
+        while next_url:
+            next_resp = self.client.get(next_url)
+            next_resp.raise_for_status()
+            next_data = next_resp.json()
+            data['results'].extend(next_data.get('results', []))
+            data['next'] = next_data.get('next')
+            next_url = data['next']
+
+        return data
+
+    @backoff.on_exception(wait_gen=backoff.expo, exception=autoretry_for_exceptions)
+    def associate_academy_with_catalog(self, academy_uuid, enterprise_catalog_uuid):
+        """
+        Associate an academy with an enterprise catalog in enterprise-catalog.
+
+        Arguments:
+            academy_uuid (str|UUID): UUID of the academy to update.
+            enterprise_catalog_uuid (str|UUID): UUID of the enterprise catalog to associate.
+
+        Returns:
+            dict: Response payload, or an empty dict when the endpoint returns no body.
+        """
+        endpoint = urljoin(self.academies_v1_endpoint, f'{academy_uuid}/associate-catalog/')
+        response = self.client.post(
+            endpoint,
+            json={'enterprise_catalog_uuid': str(enterprise_catalog_uuid)},
+        )
+        response.raise_for_status()
+        try:
+            return response.json()
+        except ValueError:
+            return {}
 
     @backoff.on_exception(wait_gen=backoff.expo, exception=autoretry_for_exceptions)
     def contains_content_items(self, catalog_uuid, content_ids):
@@ -108,6 +159,32 @@ class EnterpriseCatalogApiClient(BaseOAuthClient):
         response = self.client.get(endpoint)
         response.raise_for_status()
         return response.json()['count']
+
+    @backoff.on_exception(wait_gen=backoff.expo, exception=autoretry_for_exceptions)
+    def get_catalogs(self, enterprise_customer_uuid: str = None):
+        """
+        Fetch a list of enterprise catalogs, optionally filtered by enterprise_customer_uuid.
+
+        Returns a paginated-style dict. If the response contains a `next`
+        link, subsequent pages will be fetched and merged into a single
+        results list.
+        """
+        params = {'enterprise_customer': enterprise_customer_uuid} if enterprise_customer_uuid else None
+        response = self.client.get(self.enterprise_catalog_endpoint, params=params)
+        response.raise_for_status()
+        data = response.json()
+
+        # Merge paginated results if necessary
+        next_url = data.get('next')
+        while next_url:
+            next_resp = self.client.get(next_url)
+            next_resp.raise_for_status()
+            next_data = next_resp.json()
+            data['results'].extend(next_data.get('results', []))
+            data['next'] = next_data.get('next')
+            next_url = data['next']
+
+        return data
 
     def content_metadata(self, content_id):
         raise NotImplementedError('There is currently no v2 API implementation for this endpoint.')
