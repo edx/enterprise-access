@@ -153,6 +153,24 @@ class TestEnterpriseCatalogApiClient(TestCase):
         )
 
     @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient')
+    def test_get_academy_fetches_single_record_from_v2(self, mock_oauth_client):
+        """Ensure `get_academy` calls the v2 academies endpoint and returns the academy JSON."""
+        academy_uuid = uuid4()
+        mock_resp = mock.Mock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {'uuid': str(academy_uuid), 'title': 'Test Academy'}
+        mock_resp.raise_for_status = mock.Mock()
+        mock_oauth_client.return_value.get.return_value = mock_resp
+
+        client = EnterpriseCatalogApiClient()
+        result = client.get_academy(academy_uuid)
+
+        self.assertEqual(result, {'uuid': str(academy_uuid), 'title': 'Test Academy'})
+        mock_oauth_client.return_value.get.assert_called_with(
+            f'http://enterprise-catalog.example.com/api/v2/academies/{academy_uuid}/'
+        )
+
+    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient')
     def test_get_catalogs(self, mock_oauth_client):
         mock_response_json = {'count': 1, 'next': None, 'previous': None, 'results': [{'uuid': str(uuid4())}]}
         mock_oauth_client.return_value.get.return_value.json.return_value = mock_response_json
@@ -247,7 +265,7 @@ class TestEnterpriseCatalogApiClient(TestCase):
 
         self.assertEqual(result, {'detail': 'ok'})
         mock_post.assert_called_once_with(
-            f'http://enterprise-catalog.example.com/api/v1/academies/{academy_uuid}/associate-catalog/',
+            f'http://enterprise-catalog.example.com/api/v2/academies/{academy_uuid}/associate-catalog/',
             json={'enterprise_catalog_uuid': str(catalog_uuid)},
         )
 

@@ -19,9 +19,7 @@ class EnterpriseCatalogApiClient(BaseOAuthClient):
 
     def __init__(self):
         self.api_base_url = urljoin(settings.ENTERPRISE_CATALOG_URL, f'api/{self.api_version}/')
-        self.api_v1_base_url = urljoin(settings.ENTERPRISE_CATALOG_URL, 'api/v1/')
         self.academies_endpoint = urljoin(self.api_base_url, 'academies/')
-        self.academies_v1_endpoint = urljoin(self.api_v1_base_url, 'academies/')
         self.enterprise_catalog_endpoint = urljoin(self.api_base_url, 'enterprise-catalogs/')
         super().__init__()
 
@@ -86,7 +84,7 @@ class EnterpriseCatalogApiClient(BaseOAuthClient):
         Returns:
             dict: Response payload, or an empty dict when the endpoint returns no body.
         """
-        endpoint = urljoin(self.academies_v1_endpoint, f'{academy_uuid}/associate-catalog/')
+        endpoint = urljoin(self.academies_endpoint, f'{academy_uuid}/associate-catalog/')
         response = self.client.post(
             endpoint,
             json={'enterprise_catalog_uuid': str(enterprise_catalog_uuid)},
