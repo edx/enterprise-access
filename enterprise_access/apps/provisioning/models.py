@@ -23,6 +23,7 @@ from enterprise_access.apps.workflow.serialization import BaseInputOutput
 
 from ..api_client import LmsApiClient
 from .api import (
+    associate_academy_with_catalog,
     get_or_create_customer_agreement,
     get_or_create_enterprise_admin_users,
     get_or_create_enterprise_catalog,
@@ -359,6 +360,70 @@ class GetCreateCatalogStep(AbstractWorkflowStep):
         ).first()
 
 
+@define
+class AssociateAcademyStepInput(BaseInputOutput):
+    """
+    The input object to optionally associate an academy to the created catalog.
+    """
+    KEY = 'associate_academy_input'
+
+    academy_uuid: Optional[UUID] = field(default=None, validator=validators.optional(is_uuid))
+
+
+@define
+class AssociateAcademyStepOutput(BaseInputOutput):
+    """
+    The output object for academy association.
+    """
+    KEY = 'associate_academy_output'
+
+    enterprise_catalog_uuid: UUID = field(validator=is_uuid)
+    academy_uuid: Optional[UUID] = field(default=None, validator=validators.optional(is_uuid))
+
+
+class AssociateAcademyStepException(UnitOfWorkException):
+    """
+    Exception raised when academy association fails.
+    """
+
+
+class AssociateAcademyStep(AbstractWorkflowStep):
+    """
+    Workflow step for associating an academy to the created enterprise catalog.
+    """
+    exception_class = AssociateAcademyStepException
+    input_class = AssociateAcademyStepInput
+    output_class = AssociateAcademyStepOutput
+
+    def process_input(self, accumulated_output=None, **kwargs):
+        """
+        Associates an academy to the created enterprise catalog when requested.
+        """
+        academy_uuid = self.input_object.academy_uuid
+        enterprise_catalog_uuid = accumulated_output.create_catalog_output.uuid
+
+        if academy_uuid is not None:
+            associate_academy_with_catalog(
+                academy_uuid=str(academy_uuid),
+                enterprise_catalog_uuid=str(enterprise_catalog_uuid),
+            )
+
+        return self.output_class.from_dict({
+            'academy_uuid': academy_uuid,
+            'enterprise_catalog_uuid': enterprise_catalog_uuid,
+        })
+
+    def get_workflow_record(self):
+        return ProvisionNewCustomerWorkflow.objects.filter(
+            uuid=self.workflow_record_uuid,
+        ).first()
+
+    def get_preceding_step_record(self):
+        return GetCreateCatalogStep.objects.filter(
+            uuid=self.preceding_step_uuid,
+        ).first()
+
+
 class CreateCustomerAgreementStepException(UnitOfWorkException):
     """
     Exception raised when a Customer Agreement could not be created or fetched.
@@ -427,7 +492,9 @@ class GetCreateCustomerAgreementStep(AbstractWorkflowStep):
         ).first()
 
     def get_preceding_step_record(self):
-        return GetCreateCatalogStep.objects.filter(
+        return AssociateAcademyStep.objects.filter(
+            uuid=self.preceding_step_uuid,
+        ).first() or GetCreateCatalogStep.objects.filter(
             uuid=self.preceding_step_uuid,
         ).first()
 
@@ -905,6 +972,7 @@ class ProvisionNewCustomerWorkflow(AbstractWorkflow):
         GetCreateCustomerStep,
         GetCreateEnterpriseAdminUsersStep,
         GetCreateCatalogStep,
+        AssociateAcademyStep,
         GetCreateCustomerAgreementStep,
         GetCreateTrialSubscriptionPlanStep,
         GetCreateFirstPaidSubscriptionPlanStep,
@@ -918,6 +986,7 @@ class ProvisionNewCustomerWorkflow(AbstractWorkflow):
         customer_request_dict,
         admin_email_list,
         catalog_request_dict,
+        academy_request_dict,
         customer_agreement_request_dict,
         trial_subscription_plan_request_dict,
         first_paid_subscription_plan_request_dict,
@@ -931,6 +1000,7 @@ class ProvisionNewCustomerWorkflow(AbstractWorkflow):
                 'user_emails': admin_email_list,
             },
             GetCreateCatalogStepInput.KEY: catalog_request_dict or {},
+            AssociateAcademyStepInput.KEY: academy_request_dict or {},
             GetCreateCustomerAgreementStepInput.KEY: customer_agreement_request_dict or {},
             GetCreateTrialSubscriptionPlanStepInput.KEY: trial_subscription_plan_request_dict,
             GetCreateFirstPaidSubscriptionPlanStepInput.KEY: first_paid_subscription_plan_request_dict,
@@ -950,6 +1020,11 @@ class ProvisionNewCustomerWorkflow(AbstractWorkflow):
 
     def get_create_catalog_step(self):
         return GetCreateCatalogStep.objects.filter(
+            workflow_record_uuid=self.uuid,
+        ).first()
+
+    def get_associate_academy_step(self):
+        return AssociateAcademyStep.objects.filter(
             workflow_record_uuid=self.uuid,
         ).first()
 
@@ -986,6 +1061,9 @@ class ProvisionNewCustomerWorkflow(AbstractWorkflow):
 
     def catalog_output_dict(self):
         return self.output_data[GetCreateCatalogStepOutput.KEY]
+
+    def associate_academy_output_dict(self):
+        return self.output_data[AssociateAcademyStepOutput.KEY]
 
     def customer_agreement_output_dict(self):
         return self.output_data[GetCreateCustomerAgreementStepOutput.KEY]

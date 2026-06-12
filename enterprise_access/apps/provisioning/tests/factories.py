@@ -35,6 +35,7 @@ class ProvisionNewCustomerWorkflowFactory(DjangoModelFactory):
                 'user_emails': [fake.email(), fake.email()],
             },
             'create_catalog_input': {},
+            'associate_academy_input': {},
             'create_customer_agreement_input': {},
             'create_trial_subscription_plan_input': {
                 'title': 'Test Trial Subscription Plan',
@@ -79,6 +80,10 @@ class ProvisionNewCustomerWorkflowFactory(DjangoModelFactory):
                 'enterprise_customer_uuid': str(uuid.uuid4()),
                 'title': 'Test Catalog',
                 'catalog_query_id': 123,
+            },
+            'associate_academy_output': {
+                'academy_uuid': None,
+                'enterprise_catalog_uuid': str(uuid.uuid4()),
             },
             'create_customer_agreement_output': {
                 'uuid': str(uuid.uuid4()),
