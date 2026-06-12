@@ -57,7 +57,7 @@ class TestCheckoutContextHandler(APITest):
         context = CheckoutContext(self.request)
         return context
 
-    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_ssp_product_pricing')
+    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_ssp_product_pricing_by_slug')
     def test_load_and_process_unauthenticated_user(self, mock_get_pricing):
         """
         Test that load_and_process works for unauthenticated users.
@@ -72,11 +72,10 @@ class TestCheckoutContextHandler(APITest):
 
         # Assert
         self.assertEqual(context.existing_customers_for_authenticated_user, [])
-        self.assertIn('default_by_lookup_key', context.pricing)
-        self.assertIn('prices', context.pricing)
+        self.assertEqual(context.pricing, {})
         self.assertIn('quantity', context.field_constraints)
 
-    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_ssp_product_pricing')
+    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_ssp_product_pricing_by_slug')
     @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_and_cache_enterprise_customer_users')
     @mock.patch('enterprise_access.apps.bffs.checkout.handlers.transform_enterprise_customer_users_data')
     def test_load_enterprise_customers_success(self, mock_transform, mock_get_customers, mock_get_pricing):
@@ -114,7 +113,7 @@ class TestCheckoutContextHandler(APITest):
             f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/test-enterprise',
         )
 
-    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_ssp_product_pricing')
+    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_ssp_product_pricing_by_slug')
     @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_and_cache_enterprise_customer_users')
     def test_load_enterprise_customers_no_results(self, mock_get_customers, mock_get_pricing):
         """
@@ -133,7 +132,7 @@ class TestCheckoutContextHandler(APITest):
         # Assert
         self.assertEqual(context.existing_customers_for_authenticated_user, [])
 
-    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_ssp_product_pricing')
+    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_ssp_product_pricing_by_slug')
     @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_and_cache_enterprise_customer_users')
     def test_load_enterprise_customers_api_error(self, mock_get_customers, mock_get_pricing):
         """
@@ -155,7 +154,7 @@ class TestCheckoutContextHandler(APITest):
         error_messages = [error.get('developer_message', '') for error in context.errors]
         self.assertTrue(any('customer data' in msg.lower() for msg in error_messages))
 
-    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_ssp_product_pricing')
+    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_ssp_product_pricing_by_slug')
     def test_get_pricing_data_with_multiple_products(self, mock_get_pricing):
         """
         Test that _get_pricing_data correctly filters and formats multiple products.
@@ -190,9 +189,9 @@ class TestCheckoutContextHandler(APITest):
 
         pricing = handler._get_pricing_data()
 
-        self.assertIn('default_by_lookup_key', pricing)
-        self.assertIn('prices', pricing)
-        self.assertEqual(len(pricing['prices']), 2)
+        self.assertIn('valid_product', pricing)
+        self.assertIn('other_valid_product', pricing)
+        self.assertEqual(len(pricing), 2)
 
     def test_get_field_constraints_default_values(self):
         """
@@ -263,7 +262,7 @@ class TestCheckoutContextHandler(APITest):
         for str in should_not_match:
             self.assertFalse(re.match(pattern, str))
 
-    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_ssp_product_pricing')
+    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_ssp_product_pricing_by_slug')
     def test_handler_adds_error_on_pricing_failure(self, mock_get_pricing):
         """
         Test that the handler adds an error to the context when pricing data fetch fails.
@@ -284,7 +283,7 @@ class TestCheckoutContextHandler(APITest):
         error_messages = [error.get('developer_message', '') for error in context.errors]
         self.assertTrue(any('pricing' in msg.lower() for msg in error_messages))
 
-    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_ssp_product_pricing')
+    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_ssp_product_pricing_by_slug')
     @mock.patch('enterprise_access.apps.customer_billing.models.CheckoutIntent.objects.filter')
     def test_load_checkout_intent_for_authenticated_user(self, mock_filter, mock_get_pricing):
         """
@@ -311,7 +310,7 @@ class TestCheckoutContextHandler(APITest):
         self.assertEqual(context.checkout_intent, context.checkout_intent or {} | mock_intent_data)
         mock_filter.assert_called_once_with(user=self.user)
 
-    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_ssp_product_pricing')
+    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_ssp_product_pricing_by_slug')
     @mock.patch('enterprise_access.apps.customer_billing.models.CheckoutIntent.objects.filter')
     def test_load_checkout_intent_no_intent_exists(self, mock_filter, mock_get_pricing):
         """
@@ -331,7 +330,7 @@ class TestCheckoutContextHandler(APITest):
         self.assertIsNone(context.checkout_intent)
         mock_filter.assert_called_once_with(user=self.user)
 
-    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_ssp_product_pricing')
+    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_ssp_product_pricing_by_slug')
     @mock.patch('enterprise_access.apps.customer_billing.models.CheckoutIntent.objects.filter')
     def test_load_checkout_intent_for_unauthenticated_user(self, mock_filter, mock_get_pricing):
         """
@@ -349,7 +348,7 @@ class TestCheckoutContextHandler(APITest):
         self.assertIsNone(context.checkout_intent)
         mock_filter.assert_not_called()
 
-    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_ssp_product_pricing')
+    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_ssp_product_pricing_by_slug')
     @mock.patch('enterprise_access.apps.customer_billing.models.CheckoutIntent.objects.filter')
     def test_load_checkout_intent_error_handling(self, mock_filter, mock_get_pricing):
         """
@@ -692,7 +691,7 @@ class TestCheckoutSuccessHandler(APITest):
         self.handler = CheckoutSuccessHandler(self.context)
 
     @mock.patch(
-        'enterprise_access.apps.bffs.checkout.handlers.get_ssp_product_pricing',
+        'enterprise_access.apps.bffs.checkout.handlers.get_ssp_product_pricing_by_slug',
         return_value={},
         autospec=True,
     )

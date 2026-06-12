@@ -53,6 +53,10 @@ CHECKOUT_SESSION_ERROR_CODES = {
         'INVALID_FORMAT': ('invalid_format', 'Must be a non-empty string.'),
         'DOES_NOT_EXIST': ('does_not_exist', 'This stripe_price_id has not been configured.'),
     },
+    'ssp_product_slug': {
+        'INVALID_FORMAT': ('invalid_format', 'Must be a non-empty slug string.'),
+        'DOES_NOT_EXIST': ('does_not_exist', 'No active SspProduct exists for this slug.'),
+    },
 }
 
 # According to stripe's AI assistant: "When a Checkout Session is created,

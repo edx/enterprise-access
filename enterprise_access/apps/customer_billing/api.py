@@ -17,9 +17,14 @@ from enterprise_access.apps.customer_billing.constants import CHECKOUT_SESSION_E
 from enterprise_access.apps.customer_billing.models import (
     CheckoutIntent,
     FailedCheckoutIntentConflict,
+    SspProduct,
     SlugReservationConflict
 )
-from enterprise_access.apps.customer_billing.pricing_api import get_ssp_product_pricing
+from enterprise_access.apps.customer_billing.pricing_api import (
+    StripePricingError,
+    get_ssp_product_pricing,
+    get_stripe_price_for_slug,
+)
 from enterprise_access.apps.customer_billing.stripe_api import create_subscription_checkout_session
 
 User = get_user_model()
@@ -36,9 +41,10 @@ class CheckoutSessionInputValidatorData(TypedDict, total=False):
     enterprise_slug: str
     quantity: int
     stripe_price_id: str
+    ssp_product_slug: str
 
 
-class CheckoutSessionInputData(TypedDict, total=True):
+class CheckoutSessionInputData(TypedDict, total=False):
     """
     Input parameters for checkout session creation.
     """
@@ -48,6 +54,7 @@ class CheckoutSessionInputData(TypedDict, total=True):
     company_name: str
     quantity: int
     stripe_price_id: str
+    ssp_product_slug: str
 
 
 class FieldValidationResult(TypedDict):
@@ -72,6 +79,23 @@ def _get_lms_user_id(email: str | None) -> int | None:
 
 
 class CheckoutSessionInputValidator():
+        def _resolve_stripe_price_id(self, input_data: CheckoutSessionInputValidatorData) -> str | None:
+            """
+            Resolve a Stripe price id from either direct input or SspProduct slug.
+            """
+            stripe_price_id = input_data.get('stripe_price_id')
+            if stripe_price_id:
+                return stripe_price_id
+
+            ssp_product_slug = input_data.get('ssp_product_slug')
+            if not ssp_product_slug:
+                return None
+
+            try:
+                return get_stripe_price_for_slug(ssp_product_slug).get('id')
+            except (SspProduct.DoesNotExist, StripePricingError):
+                return None
+
     """
     Loosely modeled after RegistrationValidationView:
     https://github.com/openedx/edx-platform/blob/f90e59e5/openedx/core/djangoapps/user_authn/views/register.py#L727
@@ -194,7 +218,7 @@ class CheckoutSessionInputValidator():
         Validate the `quantity` field using Stripe price data.
         """
         quantity = input_data.get('quantity')
-        stripe_price_id = input_data.get('stripe_price_id')
+        stripe_price_id = self._resolve_stripe_price_id(input_data)
 
         # We need multiple form fields to validate quantity.
         if not all([quantity, stripe_price_id]):
@@ -244,6 +268,9 @@ class CheckoutSessionInputValidator():
         """
         stripe_price_id = input_data.get('stripe_price_id')
 
+        if not stripe_price_id and input_data.get('ssp_product_slug'):
+            return {'error_code': None, 'developer_message': None}
+
         # "Invalid format" if empty, missing, or not a str.
         if not isinstance(stripe_price_id, str) or not stripe_price_id:
             error_code, developer_message = CHECKOUT_SESSION_ERROR_CODES['stripe_price_id']['INVALID_FORMAT']
@@ -266,6 +293,21 @@ class CheckoutSessionInputValidator():
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.error(f'Error validating stripe_price_id {stripe_price_id}: {exc}')
             error_code, developer_message = CHECKOUT_SESSION_ERROR_CODES['stripe_price_id']['DOES_NOT_EXIST']
+            return {'error_code': error_code, 'developer_message': developer_message}
+
+        return {'error_code': None, 'developer_message': None}
+
+    def handle_ssp_product_slug(self, input_data: CheckoutSessionInputValidatorData) -> FieldValidationResult:
+        """
+        Validate an optional SspProduct slug.
+        """
+        ssp_product_slug = input_data.get('ssp_product_slug')
+        if not isinstance(ssp_product_slug, str) or not ssp_product_slug:
+            error_code, developer_message = CHECKOUT_SESSION_ERROR_CODES['ssp_product_slug']['INVALID_FORMAT']
+            return {'error_code': error_code, 'developer_message': developer_message}
+
+        if not SspProduct.objects.filter(slug=ssp_product_slug, is_active=True).exists():
+            error_code, developer_message = CHECKOUT_SESSION_ERROR_CODES['ssp_product_slug']['DOES_NOT_EXIST']
             return {'error_code': error_code, 'developer_message': developer_message}
 
         return {'error_code': None, 'developer_message': None}
@@ -351,6 +393,7 @@ class CheckoutSessionInputValidator():
         'enterprise_slug': handle_enterprise_slug,
         'quantity': handle_quantity,
         'stripe_price_id': handle_stripe_price_id,
+        'ssp_product_slug': handle_ssp_product_slug,
         'user': handle_user,
     }
 
@@ -435,6 +478,10 @@ def create_free_trial_checkout_session(
         raise CreateCheckoutSessionSlugReservationConflict() from exc
     except FailedCheckoutIntentConflict as exc:
         raise CreateCheckoutSessionFailedConflict() from exc
+
+    if ssp_product_slug := input_data.get('ssp_product_slug'):
+        intent.ssp_product = SspProduct.objects.get(slug=ssp_product_slug, is_active=True)
+        intent.save(update_fields=['ssp_product', 'modified'])
 
     lms_user_id = user.lms_user_id
     checkout_session = create_subscription_checkout_session(

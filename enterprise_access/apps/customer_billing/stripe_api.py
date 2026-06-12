@@ -9,6 +9,8 @@ import stripe
 from django.conf import settings
 from edx_django_utils.cache import TieredCache
 
+from enterprise_access.apps.customer_billing.pricing_api import get_stripe_price_for_slug
+
 logger = logging.getLogger(__name__)
 
 ## This is where the Stripe API key is set on the client.
@@ -21,6 +23,10 @@ def create_subscription_checkout_session(input_data, lms_user_id, checkout_inten
     Creates a free trial subscription checkout session.
     """
     stripe.api_key = settings.STRIPE_API_KEY
+    stripe_price_id = input_data.get('stripe_price_id')
+    if input_data.get('ssp_product_slug'):
+        stripe_price_id = get_stripe_price_for_slug(input_data['ssp_product_slug'])['id']
+
     create_kwargs: stripe.checkout.Session.CreateParams = {
         'mode': 'subscription',
         # Intended UI will be a custom react component, referred to as 'elements' on stripe's end.
@@ -28,7 +34,7 @@ def create_subscription_checkout_session(input_data, lms_user_id, checkout_inten
         # Specify the type and quantity of what is being purchased.  Units for `quantity` depends on
         # the price specified, and the product associated with the price.
         'line_items': [{
-            'price': input_data['stripe_price_id'],
+            'price': stripe_price_id,
             'quantity': input_data['quantity'],
         }],
         # Defer payment collection until the last moment, then cancel

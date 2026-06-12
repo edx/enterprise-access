@@ -3,6 +3,7 @@ Unit tests for the ``enterprise_access.apps.customer_billing.api`` module.
 """
 from datetime import timedelta
 from unittest import mock
+from uuid import uuid4
 
 import ddt
 import requests
@@ -14,7 +15,7 @@ from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.customer_billing import api as customer_billing_api
 from enterprise_access.apps.customer_billing import stripe_api
 from enterprise_access.apps.customer_billing.constants import CheckoutIntentState
-from enterprise_access.apps.customer_billing.models import CheckoutIntent
+from enterprise_access.apps.customer_billing.models import CheckoutIntent, SspProduct
 
 User = get_user_model()
 
@@ -83,10 +84,17 @@ class TestCreateFreeTrialCheckoutSession(TestCase):
         'enterprise_access.apps.customer_billing.api.get_ssp_product_pricing',
         return_value=MOCK_SSP_PRICING_DATA,
     )
+    @mock.patch('enterprise_access.apps.customer_billing.api.get_stripe_price_for_slug')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.get_stripe_price_for_slug')
     @mock.patch.object(customer_billing_api, 'LmsApiClient', autospec=True)
     @mock.patch.object(stripe_api, 'stripe')
     def test_create_free_trial_checkout_session_success(
-        self, mock_stripe, mock_lms_client_class, mock_get_ssp_pricing,  # pylint: disable=unused-argument
+        self,
+        mock_stripe,
+        mock_lms_client_class,
+        mock_stripe_price_from_slug_for_stripe_api,
+        mock_stripe_price_from_slug,
+        mock_get_ssp_pricing,
     ):
         """
         Happy path for ``create_free_trial_checkout_session()`` with checkout intent creation.
@@ -95,6 +103,8 @@ class TestCreateFreeTrialCheckoutSession(TestCase):
         mock_lms_client = mock_lms_client_class.return_value
         mock_lms_client.get_lms_user_account.return_value = [{'id': self.user.lms_user_id}]
         mock_lms_client.get_enterprise_customer_data.side_effect = raise_404_error
+        mock_stripe_price_from_slug.return_value = {'id': QUARTERLY_PRICE_ID}
+        mock_stripe_price_from_slug_for_stripe_api.return_value = {'id': QUARTERLY_PRICE_ID}
         mock_stripe_session = mock.Mock()
         mock_stripe_session.to_dict.return_value = {
             'id': 'test-stripe-checkout-session',
@@ -142,6 +152,60 @@ class TestCreateFreeTrialCheckoutSession(TestCase):
         metadata = call_args[1]['subscription_data']['metadata']
         self.assertEqual(metadata['enterprise_customer_slug'], 'my-sluggy')
         self.assertEqual(metadata['lms_user_id'], str(self.user.lms_user_id))
+
+    @mock.patch(
+        'enterprise_access.apps.customer_billing.api.get_ssp_product_pricing',
+        return_value=MOCK_SSP_PRICING_DATA,
+    )
+    @mock.patch('enterprise_access.apps.customer_billing.api.get_stripe_price_for_slug')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.get_stripe_price_for_slug')
+    @mock.patch.object(customer_billing_api, 'LmsApiClient', autospec=True)
+    @mock.patch.object(stripe_api, 'stripe')
+    def test_create_free_trial_checkout_session_with_ssp_product_slug(
+        self,
+        mock_stripe,
+        mock_lms_client_class,
+        mock_stripe_price_from_slug_for_stripe_api,
+        mock_stripe_price_from_slug,
+        mock_get_ssp_pricing,
+    ):
+        """Slug-driven checkout sets CheckoutIntent.ssp_product and resolves Stripe price by slug."""
+        ssp_product = SspProduct.objects.create(
+            slug='teams-yearly',
+            stripe_price_lookup_key='teams_yearly_lookup_key',
+            catalog_query_uuid=uuid4(),
+            is_active=True,
+        )
+
+        mock_lms_client = mock_lms_client_class.return_value
+        mock_lms_client.get_lms_user_account.return_value = [{'id': self.user.lms_user_id}]
+        mock_lms_client.get_enterprise_customer_data.side_effect = raise_404_error
+        mock_stripe_price_from_slug.return_value = {'id': QUARTERLY_PRICE_ID}
+        mock_stripe_price_from_slug_for_stripe_api.return_value = {'id': QUARTERLY_PRICE_ID}
+
+        mock_stripe_session = mock.Mock()
+        mock_stripe_session.to_dict.return_value = {
+            'id': 'test-stripe-checkout-session',
+            'customer': 'cust-123',
+        }
+        mock_stripe.checkout.Session.create.return_value = mock_stripe_session
+        mock_stripe.Customer.search.return_value.data = []
+
+        result = customer_billing_api.create_free_trial_checkout_session(
+            user=self.user,
+            admin_email=self.user.email,
+            enterprise_slug='my-sluggy',
+            company_name='My Cool Company',
+            quantity=20,
+            ssp_product_slug='teams-yearly',
+        )
+
+        self.assertEqual(result, {'id': 'test-stripe-checkout-session', 'customer': 'cust-123'})
+
+        intent = CheckoutIntent.objects.get(user=self.user)
+        self.assertEqual(intent.ssp_product_id, ssp_product.slug)
+        mock_stripe_price_from_slug.assert_called_with('teams-yearly')
+        mock_stripe_price_from_slug_for_stripe_api.assert_called_with('teams-yearly')
 
     @mock.patch(
         'enterprise_access.apps.customer_billing.api.get_ssp_product_pricing',

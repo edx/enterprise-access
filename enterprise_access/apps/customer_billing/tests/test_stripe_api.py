@@ -139,6 +139,34 @@ class TestCreateSubscriptionCheckoutSession(StripeApiFunctionsTests):
         self.assertNotIn('customer', kwargs)
         self.assertEqual(kwargs.get('ui_mode'), 'elements')
 
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.get_stripe_price_for_slug')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.checkout.Session.create')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Customer.search')
+    def test_resolves_price_by_ssp_product_slug(
+        self,
+        mock_customer_search,
+        mock_session_create,
+        mock_get_stripe_price_for_slug,
+    ):
+        """When ssp_product_slug is provided, resolve Stripe price id from slug."""
+        mock_customer_search.return_value = mock.MagicMock(data=[])
+        mock_get_stripe_price_for_slug.return_value = {'id': 'price_from_slug'}
+        mock_stripe_session = mock.Mock()
+        mock_stripe_session.to_dict.return_value = {'id': 'cs_test_from_slug'}
+        mock_session_create.return_value = mock_stripe_session
+
+        input_data = self._base_input(admin_email='new-admin@example.com')
+        input_data.pop('stripe_price_id')
+        input_data['ssp_product_slug'] = 'teams-yearly'
+        checkout_intent = mock.MagicMock()
+        checkout_intent.id = 'chk_123'
+
+        create_subscription_checkout_session(input_data, lms_user_id=1, checkout_intent=checkout_intent)
+
+        _, kwargs = mock_session_create.call_args
+        self.assertEqual(kwargs['line_items'][0]['price'], 'price_from_slug')
+        mock_get_stripe_price_for_slug.assert_called_once_with('teams-yearly')
+
     @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.checkout.Session.create')
     @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Customer.search')
     def test_sets_customer_when_existing_customer_found(self, mock_customer_search, mock_session_create):

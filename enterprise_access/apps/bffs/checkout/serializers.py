@@ -46,10 +46,10 @@ class PricingDataSerializer(serializers.Serializer):
     """
     Serializer for pricing data in checkout context.
     """
-    default_by_lookup_key = serializers.CharField(
-        help_text="Lookup key for the default price option"
+    pricing_by_slug = serializers.DictField(
+        child=PriceSerializer(),
+        help_text="Available price options keyed by SspProduct slug"
     )
-    prices = PriceSerializer(many=True, help_text="Available price options")
 
 
 class QuantityConstraintSerializer(serializers.Serializer):

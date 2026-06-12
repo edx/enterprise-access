@@ -22,7 +22,7 @@ from enterprise_access.apps.core.constants import (
 )
 from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.customer_billing.constants import CheckoutIntentState
-from enterprise_access.apps.customer_billing.models import CheckoutIntent, StripeEventData, StripeEventSummary
+from enterprise_access.apps.customer_billing.models import CheckoutIntent, SspProduct, StripeEventData, StripeEventSummary
 from enterprise_access.apps.customer_billing.tests.utils import AttrDict
 from test_utils import APITest
 
@@ -3915,4 +3915,43 @@ class CreateCheckoutSessionViewTests(APITest):
         self.assertEqual(
             response.data['checkout_session_client_secret'],
             'cs_test_abc_secret_xyz',
+        )
+
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.create_free_trial_checkout_session')
+    def test_create_checkout_session_accepts_ssp_product_slug(self, mock_create_free_trial_checkout_session):
+        """The endpoint accepts ssp_product_slug as an alternative to stripe_price_id."""
+        self.set_jwt_cookie()
+        SspProduct.objects.create(
+            slug='teams-yearly',
+            stripe_price_lookup_key='teams_yearly_lookup_key',
+            catalog_query_uuid=uuid.uuid4(),
+            is_active=True,
+        )
+        mock_create_free_trial_checkout_session.return_value = {
+            'id': 'cs_test_slug',
+            'customer': 'cus_test_slug',
+            'client_secret': 'cs_test_slug_secret',
+        }
+
+        response = self.client.post(
+            self.url,
+            data={
+                'admin_email': self.user.email,
+                'enterprise_slug': 'test-slug',
+                'company_name': 'Test Co',
+                'quantity': 5,
+                'ssp_product_slug': 'teams-yearly',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['checkout_session_client_secret'], 'cs_test_slug_secret')
+        mock_create_free_trial_checkout_session.assert_called_once_with(
+            user=self.user,
+            admin_email=self.user.email,
+            enterprise_slug='test-slug',
+            company_name='Test Co',
+            quantity=5,
+            ssp_product_slug='teams-yearly',
         )

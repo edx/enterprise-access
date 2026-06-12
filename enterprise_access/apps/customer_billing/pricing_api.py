@@ -285,6 +285,65 @@ def get_ssp_product_pricing() -> Dict[str, Dict]:
     return ssp_pricing
 
 
+def get_ssp_product_pricing_by_slug(active_only: bool = True) -> Dict[str, Dict]:
+        from enterprise_access.apps.customer_billing.models import SspProduct
+
+    """
+    Get SSP pricing keyed by ``SspProduct.slug``.
+
+    Args:
+        active_only: If true, only include active SspProduct records.
+
+    Returns:
+        Dict mapping SSP product slug to serialized Stripe price data.
+
+    Raises:
+        StripePricingError: If the SspProduct lookup key has no active Stripe price.
+    """
+    all_stripe_prices = get_all_stripe_prices()
+
+    queryset = SspProduct.objects.all()
+    if active_only:
+        queryset = queryset.filter(is_active=True)
+
+    pricing_by_slug = {}
+    for ssp_product in queryset:
+        lookup_key = ssp_product.stripe_price_lookup_key
+        if lookup_key not in all_stripe_prices:
+            logger.error(
+                'lookup_key %s for SspProduct %s not found in active Stripe prices',
+                lookup_key,
+                ssp_product.slug,
+            )
+            raise StripePricingError(
+                f'lookup_key {lookup_key} for SspProduct {ssp_product.slug} not found in active Stripe prices'
+            )
+
+        pricing_by_slug[ssp_product.slug] = all_stripe_prices[lookup_key].copy()
+
+    return pricing_by_slug
+
+
+def get_stripe_price_for_slug(slug: str) -> SerializedPriceData:
+        from enterprise_access.apps.customer_billing.models import SspProduct
+
+    """
+    Resolve an active ``SspProduct.slug`` to the corresponding active Stripe price.
+
+    Raises:
+        SspProduct.DoesNotExist: If slug is missing/inactive.
+        StripePricingError: If lookup key is missing from active Stripe prices.
+    """
+    ssp_product = SspProduct.objects.get(slug=slug, is_active=True)
+    all_prices = get_all_stripe_prices()
+    lookup_key = ssp_product.stripe_price_lookup_key
+    if lookup_key not in all_prices:
+        raise StripePricingError(
+            f'lookup_key {lookup_key} for slug {slug} not found in active Stripe prices'
+        )
+    return all_prices[lookup_key]
+
+
 def calculate_subtotal(
     price_data: Dict,
     quantity: int,

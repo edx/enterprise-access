@@ -1,8 +1,6 @@
 """
 Context classes for the Checkout BFF endpoints.
 """
-from django.conf import settings
-
 from enterprise_access.apps.bffs.context import BaseHandlerContext
 
 
@@ -24,10 +22,7 @@ class CheckoutContext(BaseHandlerContext):
 
     @property
     def pricing(self):
-        return self.data.get('pricing', {
-            'default_by_lookup_key': settings.DEFAULT_SSP_PRICE_LOOKUP_KEY,
-            'prices': []
-        })
+        return self.data.get('pricing', {})
 
     @pricing.setter
     def pricing(self, value):

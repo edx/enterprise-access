@@ -7,7 +7,6 @@ from unittest import mock
 from uuid import uuid4
 
 import ddt
-from django.conf import settings
 from django.test import RequestFactory
 from django.utils import timezone
 from rest_framework import status
@@ -65,10 +64,7 @@ class TestCheckoutContextResponseBuilder(APITest):
         Helper to create a minimally-valid context.
         """
         context = CheckoutContext(self.request)
-        context.pricing = {
-            'default_by_lookup_key': 'subscription_licenses_yearly',
-            'prices': []
-        }
+        context.pricing = {}
         context.field_constraints = default_field_constraints
         return context
 
@@ -89,18 +85,15 @@ class TestCheckoutContextResponseBuilder(APITest):
             }
         ]
         context.pricing = {
-            'default_by_lookup_key': 'subscription_licenses_yearly',
-            'prices': [
-                {
-                    'id': 'price_123',
-                    'product': 'prod_123',
-                    'lookup_key': 'subscription_licenses_yearly',
-                    'recurring': {'interval': 'year', 'interval_count': 1},
-                    'currency': 'usd',
-                    'unit_amount': 10000,
-                    'unit_amount_decimal': Decimal('100.00'),
-                }
-            ]
+            'teams-yearly': {
+                'id': 'price_123',
+                'product': 'prod_123',
+                'lookup_key': 'subscription_licenses_yearly',
+                'recurring': {'interval': 'year', 'interval_count': 1},
+                'currency': 'usd',
+                'unit_amount': 10000,
+                'unit_amount_decimal': Decimal('100.00'),
+            }
         }
         context.field_constraints = default_field_constraints
         # Create and build response
@@ -124,10 +117,9 @@ class TestCheckoutContextResponseBuilder(APITest):
         self.assertEqual(customers[0]['admin_portal_url'], '/enterprise/test-enterprise/admin')
 
         # Check exact pricing data
-        pricing = data['pricing']
-        self.assertEqual(pricing['default_by_lookup_key'], 'subscription_licenses_yearly')
-        self.assertEqual(len(pricing['prices']), 1)
-        price = pricing['prices'][0]
+        pricing = data['pricing']['pricing_by_slug']
+        self.assertEqual(len(pricing), 1)
+        price = pricing['teams-yearly']
         self.assertEqual(price['id'], 'price_123')
         self.assertEqual(price['product'], 'prod_123')
         self.assertEqual(price['lookup_key'], 'subscription_licenses_yearly')
@@ -175,10 +167,7 @@ class TestCheckoutContextResponseBuilder(APITest):
         # Check that missing fields are populated with defaults from settings
         self.assertEqual(data['existing_customers_for_authenticated_user'], [])
         self.assertIn('pricing', data)
-        self.assertIn('default_by_lookup_key', data['pricing'])
-        # This should match whatever is in settings.DEFAULT_SSP_PRICE_LOOKUP_KEY
-        self.assertIsNotNone(data['pricing']['default_by_lookup_key'])
-        self.assertEqual(data['pricing']['prices'], [])
+        self.assertEqual(data['pricing']['pricing_by_slug'], {})
         self.assertIn('quantity', data['field_constraints'])
         self.assertIn('enterprise_slug', data['field_constraints'])
 
@@ -199,18 +188,15 @@ class TestCheckoutContextResponseBuilder(APITest):
             }
         ]
         context.pricing = {
-            'default_by_lookup_key': 'subscription_licenses_yearly',
-            'prices': [
-                {
-                    'id': 'price_123abc',
-                    'product': 'prod_456def',
-                    'lookup_key': 'subscription_licenses_yearly',
-                    'recurring': {'interval': 'year', 'interval_count': 1},
-                    'currency': 'usd',
-                    'unit_amount': 15000,
-                    'unit_amount_decimal': Decimal('150.00'),
-                }
-            ]
+            'teams-yearly': {
+                'id': 'price_123abc',
+                'product': 'prod_456def',
+                'lookup_key': 'subscription_licenses_yearly',
+                'recurring': {'interval': 'year', 'interval_count': 1},
+                'currency': 'usd',
+                'unit_amount': 15000,
+                'unit_amount_decimal': Decimal('150.00'),
+            }
         }
         context.field_constraints = default_field_constraints
 
@@ -235,10 +221,9 @@ class TestCheckoutContextResponseBuilder(APITest):
         self.assertEqual(customers[0]['admin_portal_url'], '/enterprise/test-corp/admin')
 
         # Check exact pricing data
-        pricing = data['pricing']
-        self.assertEqual(pricing['default_by_lookup_key'], 'subscription_licenses_yearly')
-        self.assertEqual(len(pricing['prices']), 1)
-        price = pricing['prices'][0]
+        pricing = data['pricing']['pricing_by_slug']
+        self.assertEqual(len(pricing), 1)
+        price = pricing['teams-yearly']
         self.assertEqual(price['id'], 'price_123abc')
         self.assertEqual(price['product'], 'prod_456def')
         self.assertEqual(price['lookup_key'], 'subscription_licenses_yearly')
@@ -275,8 +260,15 @@ class TestCheckoutContextResponseBuilder(APITest):
 
         # Make pricing valid
         context.pricing = {
-            'default_by_lookup_key': 'something',
-            'prices': []
+            'teams-yearly': {
+                'id': 'price_123',
+                'product': 'prod_123',
+                'lookup_key': 'subscription_licenses_yearly',
+                'recurring': {'interval': 'year', 'interval_count': 1},
+                'currency': 'usd',
+                'unit_amount': 10000,
+                'unit_amount_decimal': Decimal('100.00'),
+            }
         }
 
         # But provide invalid field constraints - missing required fields
@@ -313,18 +305,15 @@ class TestCheckoutContextResponseBuilder(APITest):
             }
         ]
         context.pricing = {
-            'default_by_lookup_key': 'subscription_licenses_yearly',
-            'prices': [
-                {
-                    'id': 'price_123',
-                    'product': 'prod_123',
-                    'lookup_key': 'subscription_licenses_yearly',
-                    'recurring': {'interval': 'year', 'interval_count': 1},
-                    'currency': 'usd',
-                    'unit_amount': 10000,
-                    'unit_amount_decimal': Decimal('100.00'),
-                }
-            ]
+            'teams-yearly': {
+                'id': 'price_123',
+                'product': 'prod_123',
+                'lookup_key': 'subscription_licenses_yearly',
+                'recurring': {'interval': 'year', 'interval_count': 1},
+                'currency': 'usd',
+                'unit_amount': 10000,
+                'unit_amount_decimal': Decimal('100.00'),
+            }
         }
         context.field_constraints = {
             'quantity': {'min': 5, 'max': 30},
@@ -675,7 +664,7 @@ class TestCheckoutSuccessResponseBuilder(APITest):
 
         self.expected_sample_response_data = {
             'existing_customers_for_authenticated_user': self.context.existing_customers_for_authenticated_user,
-            'pricing': self.context.pricing,
+            'pricing': {'pricing_by_slug': self.context.pricing},
             'field_constraints': self.context.field_constraints,
             'checkout_intent': self.checkout_intent_data,
         }

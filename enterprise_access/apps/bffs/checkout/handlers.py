@@ -24,7 +24,7 @@ from enterprise_access.apps.bffs.handlers import BaseHandler
 from enterprise_access.apps.customer_billing.api import validate_free_trial_checkout_session
 from enterprise_access.apps.customer_billing.embargo import get_embargoed_countries
 from enterprise_access.apps.customer_billing.models import CheckoutIntent
-from enterprise_access.apps.customer_billing.pricing_api import get_ssp_product_pricing
+from enterprise_access.apps.customer_billing.pricing_api import get_ssp_product_pricing_by_slug
 from enterprise_access.apps.customer_billing.stripe_api import (
     get_stripe_checkout_session,
     get_stripe_customer,
@@ -158,29 +158,24 @@ class CheckoutContextHandler(CheckoutIntentAwareHandlerMixin, BaseHandler):
         Get pricing data from Stripe for self-service subscription plans.
 
         Returns:
-            Dict containing default lookup key and list of price objects
+            Dict keyed by SspProduct slug.
         """
         try:
             # remember that this function eventually invokes price schema
             # validation, it may raise a StripePricingError
-            pricing_data = get_ssp_product_pricing()
+            pricing_data = get_ssp_product_pricing_by_slug()
 
-            # Format the pricing data according to our API response schema
-            prices = []
-            for _, price_data in pricing_data.items():
-                prices.append({
+            return {
+                slug: {
                     'id': price_data.get('id'),
                     'product': price_data.get('product', {}).get('id'),
                     'lookup_key': price_data.get('lookup_key'),
                     'recurring': price_data.get('recurring', {}),
                     'currency': price_data.get('currency'),
                     'unit_amount': price_data.get('unit_amount'),
-                    'unit_amount_decimal': str(price_data.get('unit_amount_decimal'))
-                })
-
-            return {
-                'default_by_lookup_key': settings.DEFAULT_SSP_PRICE_LOOKUP_KEY,
-                'prices': prices
+                    'unit_amount_decimal': str(price_data.get('unit_amount_decimal')),
+                }
+                for slug, price_data in pricing_data.items()
             }
         except Exception as exc:  # pylint: disable=broad-except
             logger.exception("Error fetching pricing data: %s", exc)
@@ -188,10 +183,7 @@ class CheckoutContextHandler(CheckoutIntentAwareHandlerMixin, BaseHandler):
                 user_message="Could not load pricing data.",
                 developer_message=f"Could not load pricing data: {exc}",
             )
-            return {
-                'default_by_lookup_key': settings.DEFAULT_SSP_PRICE_LOOKUP_KEY,
-                'prices': []
-            }
+            return {}
 
     def _get_field_constraints(self) -> Dict:
         """

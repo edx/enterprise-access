@@ -22,7 +22,9 @@ class CheckoutContextResponseBuilder(BaseResponseBuilder):
         """
         response_data = {
             'existing_customers_for_authenticated_user': self.context.existing_customers_for_authenticated_user,
-            'pricing': self.context.pricing,
+            'pricing': {
+                'pricing_by_slug': self.context.pricing,
+            },
             'field_constraints': self.context.field_constraints,
             'checkout_intent': self.context.checkout_intent,
         }

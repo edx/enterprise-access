@@ -109,8 +109,7 @@ class CheckoutBFFViewSetTests(APITest):
         sample_data = {
             'existing_customers_for_authenticated_user': [],
             'pricing': {
-                'default_by_lookup_key': 'b2b_enterprise_self_service_yearly',
-                'prices': []
+                'pricing_by_slug': {}
             },
             'field_constraints': default_field_constraints
         }
@@ -127,8 +126,7 @@ class CheckoutBFFViewSetTests(APITest):
         sample_data = {
             'existing_customers_for_authenticated_user': [],
             'pricing': {
-                'default_by_lookup_key': 'b2b_enterprise_self_service_yearly',
-                'prices': []
+                'pricing_by_slug': {}
             },
             'field_constraints': default_field_constraints,
             'checkout_intent': self.mock_checkout_intent_data
@@ -145,8 +143,7 @@ class CheckoutBFFViewSetTests(APITest):
         sample_data = {
             'existing_customers_for_authenticated_user': [],
             'pricing': {
-                'default_by_lookup_key': 'b2b_enterprise_self_service_yearly',
-                'prices': []
+                'pricing_by_slug': {}
             },
             'field_constraints': default_field_constraints,
             'checkout_intent': None
@@ -271,7 +268,7 @@ class CheckoutBFFViewSetTests(APITest):
         self.assertIn('existing_customers_for_authenticated_user', response.data)
         self.assertEqual(len(response.data['existing_customers_for_authenticated_user']), 0)
 
-    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_ssp_product_pricing')
+    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_ssp_product_pricing_by_slug')
     def test_pricing_api_error_handling(self, mock_get_pricing):
         """
         Test that the API handles errors from pricing APIs gracefully.
@@ -282,18 +279,17 @@ class CheckoutBFFViewSetTests(APITest):
         response = self.client.post(self.url, {}, format='json')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
-        # Verify that the response still has pricing with empty prices
+        # Verify that the response still has pricing with empty slug map
         self.assertIn('pricing', response.data)
-        self.assertIn('default_by_lookup_key', response.data['pricing'])
-        self.assertEqual(len(response.data['pricing']['prices']), 0)
+        self.assertEqual(response.data['pricing']['pricing_by_slug'], {})
 
-    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_ssp_product_pricing')
+    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_ssp_product_pricing_by_slug')
     def test_pricing_data_content(self, mock_get_pricing):
         """
         Test that pricing data is correctly formatted in the response.
         """
         mock_get_pricing.return_value = {
-            'product1': {
+            'teams-yearly': {
                 'id': 'price_123',
                 'product': {'id': 'prod_123', 'active': True},
                 'billing_scheme': 'per_unit',
@@ -310,10 +306,10 @@ class CheckoutBFFViewSetTests(APITest):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
         pricing = response.data['pricing']
-        self.assertIn('prices', pricing)
-        self.assertEqual(len(pricing['prices']), 1)
+    self.assertIn('pricing_by_slug', pricing)
+    self.assertEqual(len(pricing['pricing_by_slug']), 1)
 
-        price = pricing['prices'][0]
+    price = pricing['pricing_by_slug']['teams-yearly']
         self.assertEqual(price['id'], 'price_123')
         self.assertEqual(price['product'], 'prod_123')
         self.assertEqual(price['lookup_key'], 'test_key')
@@ -516,7 +512,7 @@ class CheckoutBFFSuccessViewSetTests(APITest):
 
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
-    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_ssp_product_pricing')
+    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_ssp_product_pricing_by_slug')
     @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_and_cache_enterprise_customer_users')
     @mock.patch('enterprise_access.apps.bffs.checkout.handlers.CheckoutSuccessHandler')
     @mock.patch('enterprise_access.apps.bffs.checkout.context.CheckoutSuccessContext')
@@ -537,7 +533,7 @@ class CheckoutBFFSuccessViewSetTests(APITest):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIsNone(response.json()['checkout_intent'])
 
-    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_ssp_product_pricing')
+    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_ssp_product_pricing_by_slug')
     @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_and_cache_enterprise_customer_users')
     @mock.patch('enterprise_access.apps.bffs.checkout.handlers.CheckoutSuccessHandler._get_checkout_intent')
     @mock.patch('enterprise_access.apps.bffs.checkout.handlers.CheckoutSuccessHandler.enhance_with_stripe_data')
@@ -582,7 +578,7 @@ class CheckoutBFFSuccessViewSetTests(APITest):
         # first_billable_invoice key should be present but valued with null
         self.assertIsNone(response_data['first_billable_invoice'])
 
-    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_ssp_product_pricing')
+    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_ssp_product_pricing_by_slug')
     @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_and_cache_enterprise_customer_users')
     @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_stripe_checkout_session')
     @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_stripe_payment_intent')

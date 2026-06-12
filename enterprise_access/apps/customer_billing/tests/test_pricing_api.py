@@ -3,6 +3,7 @@ Unit tests for the pricing_api module.
 """
 from decimal import Decimal
 from unittest import mock
+from uuid import uuid4
 
 import ddt
 from django.test import TestCase, override_settings
@@ -10,6 +11,7 @@ from edx_django_utils.cache import TieredCache
 from stripe import InvalidRequestError
 
 from enterprise_access.apps.customer_billing import pricing_api
+from enterprise_access.apps.customer_billing.models import SspProduct
 
 MOCK_SSP_PRODUCTS = {
     'quarterly_license_plan': {
@@ -162,6 +164,55 @@ class TestStripePricingAPI(TestCase):
         quarterly_data = result['quarterly_license_plan']
         self.assertEqual(quarterly_data['ssp_product_key'], 'quarterly_license_plan')
         self.assertEqual(quarterly_data['quantity_range'], (5, 30))
+
+    @mock.patch('enterprise_access.apps.customer_billing.pricing_api.get_all_stripe_prices')
+    def test_get_ssp_product_pricing_by_slug(self, mock_get_all_prices):
+        """Test SspProduct-driven slug-keyed pricing lookup."""
+        mock_get_all_prices.return_value = {
+            'teams_yearly_lookup_key': {
+                'id': 'price_teams',
+                'currency': 'usd',
+                'unit_amount': 10000,
+                'unit_amount_decimal': Decimal('100.00'),
+                'lookup_key': 'teams_yearly_lookup_key',
+                'product': {'id': 'prod_teams'},
+            },
+        }
+
+        SspProduct.objects.create(
+            slug='teams-yearly',
+            stripe_price_lookup_key='teams_yearly_lookup_key',
+            catalog_query_uuid=uuid4(),
+            is_active=True,
+        )
+
+        result = pricing_api.get_ssp_product_pricing_by_slug()
+        self.assertIn('teams-yearly', result)
+        self.assertEqual(result['teams-yearly']['id'], 'price_teams')
+
+    @mock.patch('enterprise_access.apps.customer_billing.pricing_api.get_all_stripe_prices')
+    def test_get_stripe_price_for_slug(self, mock_get_all_prices):
+        """Test resolving a single active SspProduct slug to Stripe price data."""
+        mock_get_all_prices.return_value = {
+            'teams_yearly_lookup_key': {
+                'id': 'price_teams',
+                'currency': 'usd',
+                'unit_amount': 10000,
+                'unit_amount_decimal': Decimal('100.00'),
+                'lookup_key': 'teams_yearly_lookup_key',
+                'product': {'id': 'prod_teams'},
+            },
+        }
+
+        SspProduct.objects.create(
+            slug='teams-yearly',
+            stripe_price_lookup_key='teams_yearly_lookup_key',
+            catalog_query_uuid=uuid4(),
+            is_active=True,
+        )
+
+        result = pricing_api.get_stripe_price_for_slug('teams-yearly')
+        self.assertEqual(result['id'], 'price_teams')
 
     def test_calculate_subtotal_basic_format(self):
         """Test subtotal calculation with basic format."""
