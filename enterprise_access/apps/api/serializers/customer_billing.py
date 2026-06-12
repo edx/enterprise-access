@@ -662,3 +662,52 @@ class StripeSubscriptionResponseSerializer(serializers.Serializer):
         allow_null=True,
         help_text='Total number of licenses/seats in the subscription',
     )
+
+
+# pylint: disable=abstract-method
+class SspEssentialsProductResponseSerializer(serializers.Serializer):
+    """Serialized SSP Essentials product metadata for API responses."""
+
+    name = serializers.CharField(
+        required=False,
+        allow_null=True,
+        help_text='Short name.',
+    )
+    long_name = serializers.CharField(
+        required=False,
+        allow_null=True,
+        help_text='Full public name.',
+    )
+    description = serializers.CharField(
+        required=False,
+        allow_null=True,
+        help_text='Marketing summary.',
+    )
+    marketing_url = serializers.URLField(
+        required=False,
+        allow_null=True,
+        help_text='Link to learn more.',
+    )
+    thumbnail_url = serializers.URLField(
+        required=False,
+        allow_null=True,
+        help_text='Public thumbnail URL (absolute when available/configured).',
+    )
+    price = serializers.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        required=False,
+        allow_null=True,
+        help_text='Current yearly price.',
+    )
+    lookup_key = serializers.CharField(
+        required=True,
+        help_text='Stripe price lookup key for the product.',
+    )
+    slug = serializers.SlugField(
+        required=True,
+        help_text='Local SSP product slug.',
+    )
+
+
+# envelope serializer removed — views return a bare list, not an envelope
