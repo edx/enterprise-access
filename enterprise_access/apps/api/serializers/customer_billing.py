@@ -193,6 +193,12 @@ class CheckoutIntentCreateRequestSerializer(CountryFieldMixin, serializers.Model
     class Meta:
         model = CheckoutIntent
         fields = '__all__'
+        extra_kwargs = {
+            'ssp_product': {
+                'required': False,
+                'allow_null': False,
+            },
+        }
         read_only_fields = [
             field.name for field in CheckoutIntent._meta.get_fields()
             if field.name not in [
@@ -201,6 +207,7 @@ class CheckoutIntentCreateRequestSerializer(CountryFieldMixin, serializers.Model
                 'quantity',
                 'country',
                 'terms_metadata',
+                'ssp_product',
             ]
         ]
 
@@ -237,6 +244,10 @@ class CheckoutIntentCreateRequestSerializer(CountryFieldMixin, serializers.Model
         Creates a new CheckoutIntent.
         """
         try:
+            # Pass through any provided `ssp_product`; model-level creation
+            # resolves a default when omitted for backwards compatibility.
+            ssp_product = validated_data.get('ssp_product')
+
             return CheckoutIntent.create_intent(
                 user=self.context['request'].user,
                 quantity=validated_data['quantity'],
@@ -244,6 +255,7 @@ class CheckoutIntentCreateRequestSerializer(CountryFieldMixin, serializers.Model
                 name=validated_data.get('enterprise_name'),
                 country=validated_data.get('country'),
                 terms_metadata=validated_data.get('terms_metadata'),
+                ssp_product=ssp_product,
             )
 
         # Catch exceptions that should return 422:

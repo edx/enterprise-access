@@ -11,7 +11,7 @@ from unittest import skip
 from uuid import uuid4
 
 import ddt
-from django.db import connections
+from django.db import IntegrityError, connections
 from django.test import TransactionTestCase
 from django.utils import timezone as django_tz
 from django_test_migrations.migrator import Migrator
@@ -656,3 +656,82 @@ class TestBackfillCheckoutIntentSspProduct(TransactionTestCase):
         migration_module.reverse_backfill_checkoutintent_ssp_product(new_state.apps, schema_editor=None)
 
         self.assertIsNone(CheckoutIntent.objects.get(pk=intent.pk).ssp_product_id)
+        # Restore teams-yearly so migrator.reset() can migrate forward without guard failures.
+        CheckoutIntent.objects.filter(pk=intent.pk).update(ssp_product_id=teams_yearly.slug)
+
+
+class TestCheckoutIntentSspProductNonNullableAndUnique(TransactionTestCase):
+    """Tests for migration 0037 making CheckoutIntent.ssp_product non-null + unique(user, ssp_product)."""
+
+    migrate_from = [('customer_billing', '0036_backfill_checkoutintent_ssp_product_teams_yearly')]
+    migrate_to = [('customer_billing', '0037_make_ssp_product_non_nullable_and_user_fk')]
+
+    def setUp(self):
+        super().setUp()
+        self.migrator = Migrator(database='default')
+        self.old_state = self.migrator.apply_initial_migration(self.migrate_from)
+
+    def tearDown(self):
+        connections['default'].close()
+        self.migrator.reset()
+        super().tearDown()
+
+    def _get_model(self, app_label, model_name):
+        return self.old_state.apps.get_model(app_label, model_name)
+
+    def _create_user(self):
+        User = self._get_model('core', 'User')
+        return User.objects.create(
+            username=f'user_{uuid4().hex[:8]}',
+            email=f'{uuid4().hex}@example.com',
+        )
+
+    def _get_teams_product(self):
+        SspProduct = self._get_model('customer_billing', 'SspProduct')
+        return SspProduct.objects.get(slug='teams-yearly')
+
+    def test_migration_fails_with_clear_error_if_null_ssp_product_exists(self):
+        """Guard raises a clear error when NULL ssp_product rows still exist."""
+        CheckoutIntent = self._get_model('customer_billing', 'CheckoutIntent')
+        user = self._create_user()
+        teams_yearly = self._get_teams_product()
+
+        null_intent = CheckoutIntent.objects.create(
+            user=user,
+            quantity=5,
+            expires_at=django_tz.now() + timedelta(hours=1),
+            country='US',
+            ssp_product=None,
+        )
+
+        with self.assertRaisesMessage(Exception, 'Run the backfill migration'):
+            self.migrator.apply_tested_migration(self.migrate_to)
+
+        # Restore data to allow migrator.reset() to migrate forward cleanly in tearDown.
+        CheckoutIntent.objects.filter(pk=null_intent.pk).update(ssp_product_id=teams_yearly.slug)
+
+    def test_migration_enforces_unique_user_ssp_product_constraint(self):
+        """After migration, duplicate (user, ssp_product) pairs are rejected."""
+        CheckoutIntentOld = self._get_model('customer_billing', 'CheckoutIntent')
+        teams_yearly = self._get_teams_product()
+        user = self._create_user()
+
+        CheckoutIntentOld.objects.create(
+            user=user,
+            quantity=5,
+            expires_at=django_tz.now() + timedelta(hours=1),
+            country='US',
+            ssp_product=teams_yearly,
+        )
+
+        new_state = self.migrator.apply_tested_migration(self.migrate_to)
+        CheckoutIntent = new_state.apps.get_model('customer_billing', 'CheckoutIntent')
+
+        with self.assertRaises(IntegrityError):
+            CheckoutIntent.objects.create(
+                user_id=user.id,
+                quantity=10,
+                expires_at=django_tz.now() + timedelta(hours=1),
+                country='US',
+                ssp_product_id='teams-yearly',
+            )

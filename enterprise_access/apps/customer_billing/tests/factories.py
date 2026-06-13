@@ -14,6 +14,7 @@ from enterprise_access.apps.customer_billing.constants import SUBSCRIPTION_ITEM_
 from enterprise_access.apps.customer_billing.models import (
     CheckoutIntent,
     SelfServiceSubscriptionRenewal,
+    SspProduct,
     StripeEventData,
     StripeEventSummary
 )
@@ -113,6 +114,19 @@ class CheckoutIntentFactory(DjangoModelFactory):
             'version': '1.0'
         }
     )
+
+    @factory.lazy_attribute
+    def ssp_product(self):
+        """Return or create the default `SspProduct` used in tests (teams-yearly)."""
+        prod, _ = SspProduct.objects.get_or_create(
+            slug='teams-yearly',
+            defaults={
+                'stripe_price_lookup_key': 'teams_yearly_price',
+                'catalog_query_uuid': '00000000-0000-0000-0000-000000000000',
+                'is_active': True,
+            }
+        )
+        return prod
 
 
 class StripeEventDataFactory(DjangoModelFactory):

@@ -6,6 +6,7 @@ from unittest import mock
 
 import ddt
 import requests
+import stripe
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 from django.utils import timezone
@@ -14,7 +15,7 @@ from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.customer_billing import api as customer_billing_api
 from enterprise_access.apps.customer_billing import stripe_api
 from enterprise_access.apps.customer_billing.constants import CheckoutIntentState
-from enterprise_access.apps.customer_billing.models import CheckoutIntent
+from enterprise_access.apps.customer_billing.models import CheckoutIntent, SspProduct
 
 User = get_user_model()
 
@@ -78,6 +79,17 @@ class TestCreateFreeTrialCheckoutSession(TestCase):
     def tearDown(self):
         # Clean up any intents created during tests
         CheckoutIntent.objects.all().delete()
+
+    @staticmethod
+    def _create_teams_yearly_product():
+        return SspProduct.objects.get_or_create(
+            slug='teams-yearly',
+            defaults={
+                'stripe_price_lookup_key': 'teams_yearly_price',
+                'catalog_query_uuid': '00000000-0000-0000-0000-000000000000',
+                'is_active': True,
+            },
+        )[0]
 
     @mock.patch(
         'enterprise_access.apps.customer_billing.api.get_ssp_product_pricing',
@@ -500,3 +512,203 @@ class TestCreateFreeTrialCheckoutSession(TestCase):
 
         actual_validation_errors = cm.exception.validation_errors_by_field
         assert actual_validation_errors == expected_validation_errors
+
+    @mock.patch.object(customer_billing_api.CheckoutSessionInputValidator, 'validate', return_value={})
+    @mock.patch(
+        'enterprise_access.apps.customer_billing.api.get_ssp_product_pricing',
+        side_effect=Exception('Pricing API unavailable'),
+    )
+    @mock.patch.object(customer_billing_api, 'LmsApiClient', autospec=True)
+    @mock.patch.object(stripe_api, 'stripe')
+    def test_create_free_trial_checkout_session_pricing_error_uses_fallback(
+        self, mock_stripe, _mock_lms_client_class, _mock_get_pricing, _mock_validate,
+    ):
+        """
+        When pricing API fails during SSP product lookup, should fall back to teams-yearly.
+        """
+        self._create_teams_yearly_product()
+        mock_session = mock.Mock()
+        mock_session.to_dict.return_value = {'id': 'test-session-id', 'customer': 'cus_test'}
+        mock_stripe.checkout.Session.create.return_value = mock_session
+        mock_stripe.Customer.search.return_value.data = []
+
+        result = customer_billing_api.create_free_trial_checkout_session(
+            user=self.user,
+            admin_email='test@example.com',
+            enterprise_slug='test-slug',
+            company_name='Test Company',
+            quantity=10,
+            stripe_price_id='price_any',
+        )
+
+        assert result['id'] == 'test-session-id'
+        intent = CheckoutIntent.objects.get(user=self.user)
+        assert intent.ssp_product.slug == 'teams-yearly'
+
+    @mock.patch.object(customer_billing_api.CheckoutSessionInputValidator, 'validate', return_value={})
+    @mock.patch(
+        'enterprise_access.apps.customer_billing.api.get_ssp_product_pricing',
+        return_value={'product': {'id': 'price_test', 'lookup_key': 'lookup_unmapped'}},
+    )
+    @mock.patch.object(customer_billing_api, 'LmsApiClient', autospec=True)
+    @mock.patch.object(stripe_api, 'stripe')
+    def test_create_free_trial_checkout_session_lookup_not_in_db_uses_fallback(
+        self, mock_stripe, _mock_lms_client_class, _mock_get_pricing, _mock_validate,
+    ):
+        """
+        When lookup_key doesn't map to an SspProduct, should fall back to teams-yearly.
+        """
+        self._create_teams_yearly_product()
+        mock_session = mock.Mock()
+        mock_session.to_dict.return_value = {'id': 'test-session-id', 'customer': 'cus_test'}
+        mock_stripe.checkout.Session.create.return_value = mock_session
+        mock_stripe.Customer.search.return_value.data = []
+
+        result = customer_billing_api.create_free_trial_checkout_session(
+            user=self.user,
+            admin_email='test@example.com',
+            enterprise_slug='test-slug',
+            company_name='Test Company',
+            quantity=10,
+            stripe_price_id='price_test',
+        )
+
+        assert result['id'] == 'test-session-id'
+        intent = CheckoutIntent.objects.get(user=self.user)
+        assert intent.ssp_product.slug == 'teams-yearly'
+
+    @mock.patch.object(customer_billing_api.CheckoutSessionInputValidator, 'validate', return_value={})
+    @mock.patch(
+        'enterprise_access.apps.customer_billing.api.get_ssp_product_pricing',
+        return_value={
+            'product': {
+                'id': QUARTERLY_PRICE_ID,
+                # Missing lookup_key - should trigger fallback
+            }
+        },
+    )
+    @mock.patch.object(customer_billing_api, 'LmsApiClient', autospec=True)
+    @mock.patch.object(stripe_api, 'stripe')
+    def test_create_free_trial_checkout_session_missing_lookup_key_uses_fallback(
+        self, mock_stripe, _mock_lms_client_class, _mock_get_pricing, _mock_validate,
+    ):
+        """
+        When matching_price has no lookup_key, should fall back to teams-yearly.
+        """
+        self._create_teams_yearly_product()
+        mock_session = mock.Mock()
+        mock_session.to_dict.return_value = {'id': 'test-session-id', 'customer': 'cus_test'}
+        mock_stripe.checkout.Session.create.return_value = mock_session
+        mock_stripe.Customer.search.return_value.data = []
+
+        result = customer_billing_api.create_free_trial_checkout_session(
+            user=self.user,
+            admin_email='test@example.com',
+            enterprise_slug='test-slug',
+            company_name='Test Company',
+            quantity=10,
+            stripe_price_id=QUARTERLY_PRICE_ID,
+        )
+
+        assert result['id'] == 'test-session-id'
+        intent = CheckoutIntent.objects.get(user=self.user)
+        assert intent.ssp_product.slug == 'teams-yearly'
+
+    @mock.patch.object(customer_billing_api.CheckoutSessionInputValidator, 'validate', return_value={})
+    @mock.patch(
+        'enterprise_access.apps.customer_billing.api.get_ssp_product_pricing',
+        return_value=MOCK_SSP_PRICING_DATA,
+    )
+    @mock.patch.object(customer_billing_api, 'LmsApiClient', autospec=True)
+    @mock.patch.object(stripe_api, 'stripe')
+    def test_create_free_trial_checkout_session_matching_product_resolved(
+        self, mock_stripe, _mock_lms_client_class, _mock_get_pricing, _mock_validate,
+    ):
+        """
+        When lookup_key maps to an SspProduct in DB, use that product directly.
+        """
+        # Create product with the lookup_key from MOCK_SSP_PRICING_DATA
+        quarterly_product = SspProduct.objects.get_or_create(
+            slug='quarterly-plan',
+            defaults={
+                'stripe_price_lookup_key': 'price_quarterly_0002',
+                'catalog_query_uuid': '00000000-0000-0000-0000-000000000001',
+                'is_active': True,
+            },
+        )[0]
+        mock_session = mock.Mock()
+        mock_session.to_dict.return_value = {'id': 'test-session-id', 'customer': 'cus_test'}
+        mock_stripe.checkout.Session.create.return_value = mock_session
+        mock_stripe.Customer.search.return_value.data = []
+
+        result = customer_billing_api.create_free_trial_checkout_session(
+            user=self.user,
+            admin_email='test@example.com',
+            enterprise_slug='test-slug',
+            company_name='Test Company',
+            quantity=10,
+            stripe_price_id=QUARTERLY_PRICE_ID,
+        )
+
+        assert result['id'] == 'test-session-id'
+        intent = CheckoutIntent.objects.get(user=self.user)
+        assert intent.ssp_product == quarterly_product
+
+    @mock.patch.object(customer_billing_api.CheckoutSessionInputValidator, 'validate', return_value={})
+    @mock.patch(
+        'enterprise_access.apps.customer_billing.api.get_ssp_product_pricing',
+        side_effect=Exception('Pricing API unavailable'),
+    )
+    def test_create_free_trial_checkout_session_pricing_error_no_fallback_raises(
+        self, _mock_get_pricing, _mock_validate,
+    ):
+        """
+        If pricing lookup fails and no teams-yearly fallback exists, raise validation error.
+        """
+        # Ensure no teams-yearly product exists
+        SspProduct.objects.filter(slug='teams-yearly').delete()
+
+        with self.assertRaises(customer_billing_api.CreateCheckoutSessionValidationError) as cm:
+            customer_billing_api.create_free_trial_checkout_session(
+                user=self.user,
+                admin_email='test@example.com',
+                enterprise_slug='test-slug',
+                company_name='Test Company',
+                quantity=10,
+                stripe_price_id='price_any',
+            )
+
+        # Check the validation error mentions missing SspProduct mapping
+        msg = str(cm.exception.validation_errors_by_field)
+        self.assertIn('No SspProduct configured', msg)
+
+    def test_create_stripe_billing_portal_session_missing_customer_raises(self):
+        """create_stripe_billing_portal_session should raise ValueError without stripe_customer_id."""
+        intent = CheckoutIntent.create_intent(
+            user=self.user,
+            slug='portal-slug',
+            name='Portal Company',
+            quantity=1,
+        )
+
+        with self.assertRaises(ValueError):
+            customer_billing_api.create_stripe_billing_portal_session(intent, return_url='https://example.com')
+
+    @mock.patch('enterprise_access.apps.customer_billing.api.stripe.billing_portal.Session.create')
+    def test_create_stripe_billing_portal_session_stripeerror_propagates(self, mock_create):
+        """If Stripe raises StripeError, it should propagate from billing portal creation."""
+        # Create intent and set a stripe_customer_id
+        intent = CheckoutIntent.create_intent(
+            user=self.user,
+            slug='portal-slug-2',
+            name='Portal Company 2',
+            quantity=1,
+        )
+        intent.stripe_customer_id = 'cus_test_123'
+        intent.save()
+
+        # Make Stripe raise a StripeError
+        mock_create.side_effect = stripe.error.StripeError('boom')
+
+        with self.assertRaises(stripe.error.StripeError):
+            customer_billing_api.create_stripe_billing_portal_session(intent, return_url='https://example.com')
