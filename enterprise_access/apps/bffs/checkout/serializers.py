@@ -40,6 +40,13 @@ class PriceSerializer(serializers.Serializer):
         decimal_places=2,
         help_text="Price amount as decimal",
     )
+    ssp_product_slug = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="SSP Product slug for this price"
+    )
+    # Optional fields for model-driven SSP products (academy metadata)
+    # Academy-specific metadata intentionally omitted from the primary Price object
 
 
 class PricingDataSerializer(serializers.Serializer):

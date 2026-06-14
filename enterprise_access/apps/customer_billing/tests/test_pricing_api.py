@@ -142,15 +142,17 @@ class TestStripePricingAPI(TestCase):
         with self.assertRaises(pricing_api.StripePricingError):
             pricing_api.get_stripe_price_data('price_123')
 
-    @mock.patch('enterprise_access.apps.customer_billing.pricing_api.stripe')
-    def test_get_ssp_product_pricing(self, mock_stripe):
+    @mock.patch('enterprise_access.apps.customer_billing.pricing_api.get_all_stripe_prices')
+    def test_get_ssp_product_pricing(self, mock_get_all_stripe_prices):
         """Test fetching SSP product pricing."""
-        quarterly_price = self._create_mock_stripe_price()
-        yearly_price = self._create_mock_stripe_price(
-            price_id=MOCK_SSP_PRODUCTS['yearly_license_plan']['stripe_price_id'],
-            lookup_key=MOCK_SSP_PRODUCTS['yearly_license_plan']['lookup_key'],
-        )
-        mock_stripe.Price.list().auto_paging_iter.return_value = [quarterly_price, yearly_price]
+        mock_get_all_stripe_prices.return_value = {
+            MOCK_SSP_PRODUCTS['quarterly_license_plan']['lookup_key']: {
+                'id': MOCK_SSP_PRODUCTS['quarterly_license_plan']['stripe_price_id'],
+            },
+            MOCK_SSP_PRODUCTS['yearly_license_plan']['lookup_key']: {
+                'id': MOCK_SSP_PRODUCTS['yearly_license_plan']['stripe_price_id'],
+            },
+        }
 
         result = pricing_api.get_ssp_product_pricing()
 
@@ -409,3 +411,89 @@ class TestStripePricingAPI(TestCase):
             with self.assertRaises(pricing_api.StripePricingError) as cm:
                 pricing_api._validate_stripe_price_schema(mock_price)
             self.assertIn(expect_error, str(cm.exception))
+
+
+@mock.patch('enterprise_access.apps.customer_billing.pricing_api.SspProduct.objects.all')
+@mock.patch('enterprise_access.apps.customer_billing.pricing_api.get_all_stripe_prices')
+class TestSspPricingBySlug(TestCase):
+    """Tests for get_ssp_pricing_by_slug."""
+
+    def test_get_ssp_pricing_by_slug(self, mock_get_all_stripe_prices, mock_ssp_product_all):
+        """Test that get_ssp_pricing_by_slug returns correct data."""
+        mock_get_all_stripe_prices.return_value = {
+            'lookup_key_1': {'id': 'price_1', 'unit_amount': 100},
+        }
+        mock_ssp_product_all.return_value.filter.return_value = [
+            mock.Mock(slug='slug_1', stripe_price_lookup_key='lookup_key_1'),
+        ]
+
+        result = pricing_api.get_ssp_pricing_by_slug()
+
+        self.assertIn('slug_1', result)
+        self.assertEqual(result['slug_1']['id'], 'price_1')
+
+    @mock.patch('enterprise_access.apps.customer_billing.pricing_api.stripe')
+    def test_get_ssp_pricing_by_slug_missing_lookup_key_fallback(
+        self, mock_stripe, mock_get_all_stripe_prices, mock_ssp_product_all
+    ):
+        """Test fallback to metadata search when lookup_key is missing."""
+        mock_get_all_stripe_prices.return_value = {}
+        mock_ssp_product_all.return_value.filter.return_value = [
+            mock.Mock(slug='slug_1', stripe_price_lookup_key='missing_key'),
+        ]
+        mock_stripe.Price.list.return_value.auto_paging_iter.return_value = [
+            mock.Mock(metadata={'ssp_product_slug': 'slug_1'}, product=mock.Mock(metadata={}), id='price_1'),
+        ]
+
+        result = pricing_api.get_ssp_pricing_by_slug()
+
+        self.assertIn('slug_1', result)
+        self.assertEqual(result['slug_1']['id'], 'price_1')
+
+    def test_get_ssp_pricing_by_slug_raise_on_missing(self, mock_get_all_stripe_prices, mock_ssp_product_all):
+        """Test that raise_on_missing raises StripePricingError."""
+        mock_get_all_stripe_prices.return_value = {}
+        mock_ssp_product_all.return_value.filter.return_value = [
+            mock.Mock(slug='slug_1', stripe_price_lookup_key='missing_key'),
+        ]
+
+        with self.assertRaises(pricing_api.StripePricingError):
+            pricing_api.get_ssp_pricing_by_slug(raise_on_missing=True)
+
+
+@mock.patch('enterprise_access.apps.customer_billing.pricing_api.SspProduct.objects.get')
+@mock.patch('enterprise_access.apps.customer_billing.pricing_api.get_all_stripe_prices')
+class TestGetStripePriceForSlug(TestCase):
+    """Tests for get_stripe_price_for_slug."""
+
+    def test_get_stripe_price_for_slug(self, mock_get_all_stripe_prices, mock_ssp_product_get):
+        """Test that get_stripe_price_for_slug returns correct data."""
+        mock_get_all_stripe_prices.return_value = {
+            'lookup_key_1': {'id': 'price_1', 'unit_amount': 100},
+        }
+        mock_ssp_product_get.return_value = mock.Mock(slug='slug_1', stripe_price_lookup_key='lookup_key_1')
+
+        result = pricing_api.get_stripe_price_for_slug('slug_1')
+
+        self.assertEqual(result['id'], 'price_1')
+
+    @mock.patch('enterprise_access.apps.customer_billing.pricing_api.stripe')
+    def test_get_stripe_price_for_slug_fallback(self, mock_stripe, mock_get_all_stripe_prices, mock_ssp_product_get):
+        """Test fallback to metadata search for get_stripe_price_for_slug."""
+        mock_get_all_stripe_prices.return_value = {}
+        mock_ssp_product_get.return_value = mock.Mock(slug='slug_1', stripe_price_lookup_key='missing_key')
+        mock_stripe.Price.list.return_value.auto_paging_iter.return_value = [
+            mock.Mock(metadata={'ssp_product_slug': 'slug_1'}, product=mock.Mock(metadata={}), id='price_1'),
+        ]
+
+        result = pricing_api.get_stripe_price_for_slug('slug_1')
+
+        self.assertEqual(result['id'], 'price_1')
+
+    def test_get_stripe_price_for_slug_not_found(self, mock_get_all_stripe_prices, mock_ssp_product_get):
+        """Test that StripePricingError is raised when price is not found."""
+        mock_get_all_stripe_prices.return_value = {}
+        mock_ssp_product_get.return_value = mock.Mock(slug='slug_1', stripe_price_lookup_key='missing_key')
+
+        with self.assertRaises(pricing_api.StripePricingError):
+            pricing_api.get_stripe_price_for_slug('slug_1')

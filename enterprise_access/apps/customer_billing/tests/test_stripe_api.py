@@ -7,6 +7,7 @@ import stripe
 from django.test import TestCase
 from edx_django_utils.cache import TieredCache
 
+from enterprise_access.apps.customer_billing import stripe_api
 from enterprise_access.apps.customer_billing.stripe_api import (
     create_subscription_checkout_session,
     get_stripe_checkout_session,
@@ -422,3 +423,47 @@ class TestStripeCacheDecorator(TestCase):
         # Third argument to set_all_tiers should be the timeout
         call_kwargs = mock_set.call_args[1]
         self.assertEqual(call_kwargs, {'django_cache_timeout': 120})
+
+
+class TestStripeApiMiscFunctions(TestCase):
+    """Tests for miscellaneous Stripe API functions."""
+
+    def setUp(self):
+        super().setUp()
+        TieredCache.dangerous_clear_all_tiers()
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Subscription.list')
+    def test_get_stripe_trialing_subscription(self, mock_subscription_list):
+        """Test get_stripe_trialing_subscription."""
+        mock_subscription_list.return_value.data = [{'id': 'sub_123'}]
+
+        result = stripe_api.get_stripe_trialing_subscription('cus_123')
+
+        self.assertEqual(result['id'], 'sub_123')
+        mock_subscription_list.assert_called_once_with(
+            customer='cus_123',
+            status='trialing',
+            limit=1,
+        )
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Subscription.list')
+    def test_get_stripe_trialing_subscription_not_found(self, mock_subscription_list):
+        """Test get_stripe_trialing_subscription when no subscription is found."""
+        mock_subscription_list.return_value.data = []
+
+        result = stripe_api.get_stripe_trialing_subscription('cus_123')
+
+        self.assertIsNone(result)
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Invoice.create_preview')
+    def test_get_upcoming_invoice(self, mock_invoice_create_preview):
+        """Test get_upcoming_invoice."""
+        mock_invoice_create_preview.return_value = {'id': 'in_prev_123'}
+
+        result = stripe_api.get_upcoming_invoice('cus_123', 'sub_123')
+
+        self.assertEqual(result['id'], 'in_prev_123')
+        mock_invoice_create_preview.assert_called_once_with(
+            customer='cus_123',
+            subscription='sub_123',
+        )

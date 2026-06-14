@@ -194,9 +194,10 @@ class CustomerBillingViewSet(viewsets.ViewSet):
         # Simplify tracking create_plan requests using k="v" machine-readable formatting.
         logger.info(
             'Handling request to create free trial plan. '
-            f'enterprise_slug="{validated_data["enterprise_slug"]}" '
-            f'quantity="{validated_data["quantity"]}" '
-            f'stripe_price_id="{validated_data["stripe_price_id"]}"'
+            f'enterprise_slug="{validated_data.get("enterprise_slug")}" '
+            f'quantity="{validated_data.get("quantity")}" '
+            f'stripe_price_id="{validated_data.get("stripe_price_id")}" '
+            f'ssp_product_slug="{validated_data.get("ssp_product_slug")}"'
         )
         try:
             session = create_free_trial_checkout_session(

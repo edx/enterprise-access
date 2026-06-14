@@ -21,6 +21,23 @@ def create_subscription_checkout_session(input_data, lms_user_id, checkout_inten
     Creates a free trial subscription checkout session.
     """
     stripe.api_key = settings.STRIPE_API_KEY
+    # Resolve Stripe price id either from legacy `stripe_price_id` or new `ssp_product_slug`.
+    ssp_product_slug = input_data.get('ssp_product_slug')
+    if ssp_product_slug:
+        from enterprise_access.apps.customer_billing.models import SspProduct
+        from enterprise_access.apps.customer_billing.pricing_api import get_all_stripe_prices
+
+        ssp_product = SspProduct.objects.get(slug=ssp_product_slug, is_active=True)
+        all_prices = get_all_stripe_prices()
+        price_data = all_prices.get(ssp_product.stripe_price_lookup_key)
+        if not price_data:
+            raise ValueError(
+                f'No active Stripe price for lookup_key {ssp_product.stripe_price_lookup_key}'
+            )
+        stripe_price_id = price_data['id']
+    else:
+        stripe_price_id = input_data['stripe_price_id']
+
     create_kwargs: stripe.checkout.Session.CreateParams = {
         'mode': 'subscription',
         # Intended UI will be a custom react component, referred to as 'elements' on stripe's end.
@@ -28,7 +45,7 @@ def create_subscription_checkout_session(input_data, lms_user_id, checkout_inten
         # Specify the type and quantity of what is being purchased.  Units for `quantity` depends on
         # the price specified, and the product associated with the price.
         'line_items': [{
-            'price': input_data['stripe_price_id'],
+            'price': stripe_price_id,
             'quantity': input_data['quantity'],
         }],
         # Defer payment collection until the last moment, then cancel

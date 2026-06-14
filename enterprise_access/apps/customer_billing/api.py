@@ -19,7 +19,11 @@ from enterprise_access.apps.customer_billing.models import (
     FailedCheckoutIntentConflict,
     SlugReservationConflict
 )
-from enterprise_access.apps.customer_billing.pricing_api import get_ssp_product_pricing
+from enterprise_access.apps.customer_billing.pricing_api import (
+    get_ssp_product_pricing,
+    get_ssp_pricing_by_slug,
+    get_stripe_price_for_slug,
+)
 from enterprise_access.apps.customer_billing.stripe_api import create_subscription_checkout_session
 
 User = get_user_model()
@@ -36,11 +40,16 @@ class CheckoutSessionInputValidatorData(TypedDict, total=False):
     enterprise_slug: str
     quantity: int
     stripe_price_id: str
+    ssp_product_slug: str
 
 
-class CheckoutSessionInputData(TypedDict, total=True):
+class CheckoutSessionInputData(TypedDict, total=False):
     """
     Input parameters for checkout session creation.
+
+    Fields are optional at the typing level because the endpoint may accept
+    either a legacy `stripe_price_id` or a new `ssp_product_slug` to resolve
+    a Stripe price. Runtime validation enforces that one of them is provided.
     """
     user: AbstractUser | None
     admin_email: str
@@ -48,6 +57,7 @@ class CheckoutSessionInputData(TypedDict, total=True):
     company_name: str
     quantity: int
     stripe_price_id: str
+    ssp_product_slug: str
 
 
 class FieldValidationResult(TypedDict):
@@ -195,9 +205,10 @@ class CheckoutSessionInputValidator():
         """
         quantity = input_data.get('quantity')
         stripe_price_id = input_data.get('stripe_price_id')
+        ssp_product_slug = input_data.get('ssp_product_slug')
 
-        # We need multiple form fields to validate quantity.
-        if not all([quantity, stripe_price_id]):
+        # We need at minimum quantity + (stripe_price_id or ssp_product_slug)
+        if not quantity or (not stripe_price_id and not ssp_product_slug):
             error_code, developer_message = CHECKOUT_SESSION_ERROR_CODES['common']['INCOMPLETE_DATA']
             return {'error_code': error_code, 'developer_message': developer_message}
 
@@ -207,15 +218,18 @@ class CheckoutSessionInputValidator():
             return {'error_code': error_code, 'developer_message': developer_message}
 
         try:
-            # Get the SSP product pricing data (includes quantity ranges)
-            ssp_pricing = get_ssp_product_pricing()
-
-            # Find the SSP product that matches this stripe_price_id
             matching_product = None
-            for _, price_data in ssp_pricing.items():
-                if price_data.get('id') == stripe_price_id:
-                    matching_product = price_data
-                    break
+            # If stripe_price_id provided, prefer legacy settings-driven pricing
+            if stripe_price_id:
+                ssp_pricing = get_ssp_product_pricing()
+                for _, price_data in ssp_pricing.items():
+                    if price_data.get('id') == stripe_price_id:
+                        matching_product = price_data
+                        break
+            else:
+                # ssp_product_slug path: use model-driven pricing_by_slug
+                pricing_by_slug = get_ssp_pricing_by_slug()
+                matching_product = pricing_by_slug.get(ssp_product_slug)
 
             if not matching_product:
                 error_code, developer_message = CHECKOUT_SESSION_ERROR_CODES['common']['INCOMPLETE_DATA']
@@ -232,7 +246,7 @@ class CheckoutSessionInputValidator():
                 return {'error_code': error_code, 'developer_message': developer_message}
 
         except Exception as exc:  # pylint: disable=broad-exception-caught
-            logger.error(f'Error validating quantity for stripe_price_id {stripe_price_id}: {exc}')
+            logger.error(f'Error validating quantity for input: {exc}')
             error_code, developer_message = CHECKOUT_SESSION_ERROR_CODES['common']['INCOMPLETE_DATA']
             return {'error_code': error_code, 'developer_message': developer_message}
 
@@ -243,32 +257,45 @@ class CheckoutSessionInputValidator():
         Validate the `stripe_price_id` field against active Stripe prices.
         """
         stripe_price_id = input_data.get('stripe_price_id')
+        ssp_product_slug = input_data.get('ssp_product_slug')
 
-        # "Invalid format" if empty, missing, or not a str.
-        if not isinstance(stripe_price_id, str) or not stripe_price_id:
-            error_code, developer_message = CHECKOUT_SESSION_ERROR_CODES['stripe_price_id']['INVALID_FORMAT']
-            return {'error_code': error_code, 'developer_message': developer_message}
+        # If stripe_price_id provided, validate it as before.
+        if stripe_price_id:
+            if not isinstance(stripe_price_id, str) or not stripe_price_id:
+                error_code, developer_message = CHECKOUT_SESSION_ERROR_CODES['stripe_price_id']['INVALID_FORMAT']
+                return {'error_code': error_code, 'developer_message': developer_message}
 
-        try:
-            # Get SSP product pricing data (validates lookup_keys against Stripe)
-            ssp_pricing = get_ssp_product_pricing()
+            try:
+                ssp_pricing = get_ssp_product_pricing()
+                price_exists = any(
+                    price_data.get('id') == stripe_price_id
+                    for price_data in ssp_pricing.values()
+                )
+                if not price_exists:
+                    error_code, developer_message = CHECKOUT_SESSION_ERROR_CODES['stripe_price_id']['DOES_NOT_EXIST']
+                    return {'error_code': error_code, 'developer_message': developer_message}
 
-            # Check if the price_id exists in any of the configured SSP products
-            price_exists = any(
-                price_data.get('id') == stripe_price_id
-                for price_data in ssp_pricing.values()
-            )
-
-            if not price_exists:
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                logger.error(f'Error validating stripe_price_id {stripe_price_id}: {exc}')
                 error_code, developer_message = CHECKOUT_SESSION_ERROR_CODES['stripe_price_id']['DOES_NOT_EXIST']
                 return {'error_code': error_code, 'developer_message': developer_message}
 
-        except Exception as exc:  # pylint: disable=broad-exception-caught
-            logger.error(f'Error validating stripe_price_id {stripe_price_id}: {exc}')
-            error_code, developer_message = CHECKOUT_SESSION_ERROR_CODES['stripe_price_id']['DOES_NOT_EXIST']
-            return {'error_code': error_code, 'developer_message': developer_message}
+            return {'error_code': None, 'developer_message': None}
 
-        return {'error_code': None, 'developer_message': None}
+        # If ssp_product_slug provided, validate it resolves to an active Stripe price
+        if ssp_product_slug:
+            try:
+                # get_stripe_price_for_slug will raise if slug invalid or price missing
+                get_stripe_price_for_slug(ssp_product_slug)
+                return {'error_code': None, 'developer_message': None}
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                logger.error(f'Error validating ssp_product_slug {ssp_product_slug}: {exc}')
+                error_code, developer_message = CHECKOUT_SESSION_ERROR_CODES['stripe_price_id']['DOES_NOT_EXIST']
+                return {'error_code': error_code, 'developer_message': developer_message}
+
+        # Neither provided
+        error_code, developer_message = CHECKOUT_SESSION_ERROR_CODES['stripe_price_id']['INVALID_FORMAT']
+        return {'error_code': error_code, 'developer_message': developer_message}
 
     def handle_user(self, input_data: CheckoutSessionInputValidatorData) -> FieldValidationResult:
         """
@@ -351,6 +378,7 @@ class CheckoutSessionInputValidator():
         'enterprise_slug': handle_enterprise_slug,
         'quantity': handle_quantity,
         'stripe_price_id': handle_stripe_price_id,
+        'ssp_product_slug': handle_stripe_price_id,
         'user': handle_user,
     }
 

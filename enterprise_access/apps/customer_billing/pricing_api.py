@@ -26,10 +26,12 @@ from decimal import Decimal
 from typing import Dict, Optional, TypedDict
 
 import stripe
+from stripe import StripeError
 from django.conf import settings
 from edx_django_utils.cache import TieredCache
 
 from enterprise_access.cache_utils import versioned_cache_key
+from enterprise_access.apps.customer_billing.models import SspProduct
 
 logger = logging.getLogger(__name__)
 
@@ -132,7 +134,7 @@ def get_stripe_price_data(
 
         return serialized_data
 
-    except stripe.StripeError as exc:
+    except StripeError as exc:
         logger.error(f'Stripe API error fetching price {price_id}: {exc}')
         raise StripePricingError(f'Failed to fetch price {price_id}: {exc}') from exc
     except Exception as exc:
@@ -242,7 +244,7 @@ def get_all_stripe_prices(
 
         return prices_by_lookup_key
 
-    except stripe.StripeError as exc:
+    except StripeError as exc:
         logger.error(f'Stripe API error fetching all prices: {exc}')
         raise StripePricingError(f'Failed to fetch all prices: {exc}') from exc
     except Exception as exc:
@@ -283,6 +285,125 @@ def get_ssp_product_pricing() -> Dict[str, Dict]:
         ssp_pricing[product_key] = price_data
 
     return ssp_pricing
+
+
+def get_ssp_pricing_by_slug(active_only: bool = True, raise_on_missing: bool = False) -> Dict[str, Dict]:
+    """
+    Get pricing data for all SspProduct records, keyed by slug.
+
+    Uses SspProduct.stripe_price_lookup_key to match against active Stripe
+    prices fetched via :func:`get_all_stripe_prices`.
+
+    This function is additive to the existing settings-driven
+    `get_ssp_product_pricing()` and is intended to allow a gradual
+    migration to model-driven product records.
+    """
+    all_stripe_prices = get_all_stripe_prices()
+    qs = SspProduct.objects.all()
+    if active_only:
+        qs = qs.filter(is_active=True)
+
+    pricing_by_slug: Dict[str, Dict] = {}
+    missing = []
+    for ssp_product in qs:
+        lookup_key = ssp_product.stripe_price_lookup_key
+        # First, try to find by configured lookup_key
+        if lookup_key not in all_stripe_prices:
+            msg = (
+                'stripe_price_lookup_key %s for SspProduct %s not found in active Stripe prices'
+            )
+            if raise_on_missing:
+                logger.error(msg, lookup_key, ssp_product.slug)
+                raise StripePricingError(
+                    f'lookup_key {lookup_key} for SspProduct {ssp_product.slug} '
+                    'not found in active Stripe prices'
+                )
+            # Try to find a matching price via Stripe Price/product metadata (ssp_product_slug)
+            try:
+                stripe_prices = stripe.Price.list(active=True, expand=['data.product'])
+                matched_price = None
+                for sp in stripe_prices.auto_paging_iter():
+                    # Check price-level metadata and product metadata
+                    price_meta = getattr(sp, 'metadata', {}) or {}
+                    product_meta = getattr(getattr(sp, 'product', None), 'metadata', {}) or {}
+                    if price_meta.get('ssp_product_slug') == ssp_product.slug or product_meta.get('ssp_product_slug') == ssp_product.slug:
+                        matched_price = _serialize_basic_format(sp)
+                        break
+                if not matched_price:
+                    logger.warning(msg, lookup_key, ssp_product.slug)
+                    missing.append({'slug': ssp_product.slug, 'lookup_key': lookup_key})
+                    continue
+
+                price_data = matched_price
+            except StripeError as exc:
+                logger.error('Stripe API error while searching by metadata: %s', exc)
+                missing.append({'slug': ssp_product.slug, 'lookup_key': lookup_key})
+                continue
+
+        else:
+            price_data = all_stripe_prices[lookup_key].copy()
+        # Attach SSP product metadata
+        price_data['ssp_product_slug'] = ssp_product.slug
+        price_data['academy_uuid'] = str(ssp_product.academy_uuid) if ssp_product.academy_uuid else None
+        price_data['academy_title'] = ssp_product.academy_title
+        price_data['academy_description'] = ssp_product.academy_description
+
+        # Preserve quantity_range if present in the legacy settings mapping by matching lookup_key
+        for product_cfg in settings.SSP_PRODUCTS.values():
+            if product_cfg.get('lookup_key') == lookup_key and 'quantity_range' in product_cfg:
+                price_data['quantity_range'] = product_cfg.get('quantity_range')
+                break
+
+        pricing_by_slug[ssp_product.slug] = price_data
+
+    if missing:
+        logger.info('Missing Stripe lookup_keys for %d SspProducts: %s', len(missing), missing)
+    return pricing_by_slug
+
+
+def get_stripe_price_for_slug(slug: str) -> Dict:
+    """
+    Resolve a single SspProduct slug to its serialized Stripe price data.
+
+    Raises SspProduct.DoesNotExist if the slug is unknown/inactive, or
+    StripePricingError if the lookup_key does not map to an active Stripe price.
+    """
+    ssp_product = SspProduct.objects.get(slug=slug, is_active=True)
+    all_prices = get_all_stripe_prices()
+    lookup_key = ssp_product.stripe_price_lookup_key
+
+    if lookup_key in all_prices:
+        price = all_prices[lookup_key].copy()
+    else:
+        # Try to match by price or product metadata that includes ssp_product_slug
+        # Call Stripe to search prices (this includes prices without lookup_key)
+        price = None
+        try:
+            stripe_prices = stripe.Price.list(active=True, expand=['data.product'])
+            for sp in stripe_prices.auto_paging_iter():
+                price_meta = getattr(sp, 'metadata', {}) or {}
+                product_meta = getattr(getattr(sp, 'product', None), 'metadata', {}) or {}
+                if price_meta.get('ssp_product_slug') == slug or product_meta.get('ssp_product_slug') == slug:
+                    price = _serialize_basic_format(sp)
+                    break
+            if not price:
+                raise StripePricingError(
+                    f'lookup_key {lookup_key} for slug {slug} not found in active Stripe prices'
+                )
+        except StripeError as exc:
+            logger.error('Stripe API error while searching by metadata: %s', exc)
+            raise StripePricingError(f'Failed to fetch prices from Stripe: {exc}') from exc
+    # Attach minimal metadata
+    price['ssp_product_slug'] = ssp_product.slug
+    price['academy_uuid'] = str(ssp_product.academy_uuid) if ssp_product.academy_uuid else None
+    price['academy_title'] = ssp_product.academy_title
+    # Attach quantity_range from legacy settings if available
+    for product_cfg in settings.SSP_PRODUCTS.values():
+        if product_cfg.get('lookup_key') == lookup_key and 'quantity_range' in product_cfg:
+            price['quantity_range'] = product_cfg.get('quantity_range')
+            break
+
+    return price
 
 
 def calculate_subtotal(
@@ -420,7 +541,7 @@ def _serialize_basic_format(stripe_price: stripe.Price) -> SerializedPriceData:
             'id': product.id,
             'name': product.name,
             'description': product.description,
-            'metadata': product.metadata,
+            'metadata': dict(product.metadata) if getattr(product, 'metadata', None) else {},
         }
 
     return base_data

@@ -53,8 +53,14 @@ class CustomerBillingCreateCheckoutSessionRequestSerializer(serializers.Serializ
         )
     )
     stripe_price_id = serializers.CharField(
-        required=True,
-        help_text='The ID of the Stripe Price object representing the plan selection.',
+        required=False,
+        allow_blank=True,
+        help_text='The ID of the Stripe Price object representing the plan selection (optional when using ssp_product_slug).',
+    )
+    ssp_product_slug = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text='Optional SspProduct slug to identify the product instead of a stripe_price_id.',
     )
 
 

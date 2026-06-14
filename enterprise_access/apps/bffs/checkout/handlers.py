@@ -24,7 +24,12 @@ from enterprise_access.apps.bffs.handlers import BaseHandler
 from enterprise_access.apps.customer_billing.api import validate_free_trial_checkout_session
 from enterprise_access.apps.customer_billing.embargo import get_embargoed_countries
 from enterprise_access.apps.customer_billing.models import CheckoutIntent
-from enterprise_access.apps.customer_billing.pricing_api import get_ssp_product_pricing
+from enterprise_access.apps.customer_billing.pricing_api import (
+    get_ssp_product_pricing,
+    get_ssp_pricing_by_slug,
+    get_all_stripe_prices,
+)
+from enterprise_access.apps.customer_billing.models import SspProduct
 from enterprise_access.apps.customer_billing.stripe_api import (
     get_stripe_checkout_session,
     get_stripe_customer,
@@ -36,6 +41,30 @@ from enterprise_access.apps.customer_billing.stripe_api import (
 from enterprise_access.utils import cents_to_dollars
 
 logger = logging.getLogger(__name__)
+
+
+def _to_plain_dict(maybe_mapping):
+    """Convert mapping-like objects (including StripeObject) to plain dicts."""
+    if not maybe_mapping:
+        return {}
+    if isinstance(maybe_mapping, dict):
+        return maybe_mapping
+    try:
+        return dict(maybe_mapping)
+    except Exception:
+        out = {}
+        try:
+            keys = maybe_mapping.keys()
+            for key in keys:
+                try:
+                    out[key] = maybe_mapping[key]
+                except Exception:
+                    value = getattr(maybe_mapping, key, None)
+                    if value is not None:
+                        out[key] = value
+        except Exception:
+            return {}
+        return out
 
 
 class CheckoutIntentAwareHandlerMixin:
@@ -160,38 +189,129 @@ class CheckoutContextHandler(CheckoutIntentAwareHandlerMixin, BaseHandler):
         Returns:
             Dict containing default lookup key and list of price objects
         """
-        try:
-            # remember that this function eventually invokes price schema
-            # validation, it may raise a StripePricingError
-            pricing_data = get_ssp_product_pricing()
+        # Attempt to get settings-driven pricing; don't bail out if it fails.
+        pricing_data = {}
+        prices = []
+        seen_lookup_keys = set()
+        pricing_by_slug = {}
 
-            # Format the pricing data according to our API response schema
-            prices = []
+        try:
+            pricing_data = get_ssp_product_pricing()
             for _, price_data in pricing_data.items():
+                lk = price_data.get('lookup_key')
+                seen_lookup_keys.add(lk)
                 prices.append({
                     'id': price_data.get('id'),
                     'product': price_data.get('product', {}).get('id'),
-                    'lookup_key': price_data.get('lookup_key'),
-                    'recurring': price_data.get('recurring', {}),
+                    'lookup_key': lk,
+                    'recurring': _to_plain_dict(price_data.get('recurring', {})),
                     'currency': price_data.get('currency'),
                     'unit_amount': price_data.get('unit_amount'),
-                    'unit_amount_decimal': str(price_data.get('unit_amount_decimal'))
+                    'unit_amount_decimal': str(price_data.get('unit_amount_decimal')),
+                    'ssp_product_slug': price_data.get('ssp_product_slug'),
                 })
-
-            return {
-                'default_by_lookup_key': settings.DEFAULT_SSP_PRICE_LOOKUP_KEY,
-                'prices': prices
-            }
         except Exception as exc:  # pylint: disable=broad-except
-            logger.exception("Error fetching pricing data: %s", exc)
-            self.add_error(
-                user_message="Could not load pricing data.",
-                developer_message=f"Could not load pricing data: {exc}",
-            )
-            return {
-                'default_by_lookup_key': settings.DEFAULT_SSP_PRICE_LOOKUP_KEY,
-                'prices': []
-            }
+            logger.warning("Settings-driven pricing failed: %s", exc)
+            # continue to attempt model-driven pricing
+
+        # Always attempt model-driven pricing so academies can surface if available
+        try:
+            pricing_by_slug = get_ssp_pricing_by_slug()
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.warning("Model-driven pricing failed: %s", exc)
+            pricing_by_slug = {}
+
+        for slug, price_data in pricing_by_slug.items():
+            lk = price_data.get('lookup_key')
+            # Avoid duplicating prices already returned via settings-driven mapping
+            if lk in seen_lookup_keys:
+                continue
+            prices.append({
+                'id': price_data.get('id'),
+                'product': price_data.get('product', {}).get('id'),
+                'lookup_key': lk,
+                'recurring': _to_plain_dict(price_data.get('recurring', {})),
+                'currency': price_data.get('currency'),
+                'unit_amount': price_data.get('unit_amount'),
+                'unit_amount_decimal': str(price_data.get('unit_amount_decimal')),
+                'ssp_product_slug': slug,
+            })
+
+        # Prefer a direct Stripe API scan for prices with `ssp_product_slug`
+        # in their metadata, rather than relying solely on cached serialized
+        # structures. This is resilient to cache contents and SDK object types.
+        def _safe_get_meta_value(meta_obj, key):
+            """Defensively extract a key from a metadata-like object.
+
+            Handles plain dicts and StripeObjects which behave like mappings
+            but may not implement `.get()`.
+            """
+            if not meta_obj:
+                return None
+            try:
+                if isinstance(meta_obj, dict):
+                    return meta_obj.get(key)
+                # try dict-style access
+                try:
+                    return meta_obj[key]
+                except Exception:
+                    pass
+                # try attribute access as a last resort
+                return getattr(meta_obj, key)
+            except Exception:
+                return None
+
+        try:
+            stripe_prices = stripe.Price.list(active=True, expand=['data.product'])
+            for sp in stripe_prices.auto_paging_iter():
+                try:
+                    price_meta = getattr(sp, 'metadata', {}) or {}
+                    product = getattr(sp, 'product', {}) or {}
+                    product_meta = getattr(product, 'metadata', {}) or {}
+                    slug = _safe_get_meta_value(price_meta, 'ssp_product_slug') or _safe_get_meta_value(product_meta, 'ssp_product_slug')
+                    lk = getattr(sp, 'lookup_key', None)
+                    if not slug:
+                        continue
+                    if slug in pricing_by_slug:
+                        continue
+                    if lk in seen_lookup_keys:
+                        continue
+
+                    prices.append({
+                        'id': getattr(sp, 'id', None),
+                        'product': getattr(product, 'id', None),
+                        'lookup_key': lk,
+                        'recurring': _to_plain_dict(getattr(sp, 'recurring', {}) or {}),
+                        'currency': getattr(sp, 'currency', None),
+                        'unit_amount': getattr(sp, 'unit_amount', None),
+                        'unit_amount_decimal': str(getattr(sp, 'unit_amount_decimal', '') or ''),
+                        'ssp_product_slug': slug,
+                    })
+                    # store a plain-serializable dict for frontend use
+                    pricing_by_slug[slug] = _serialize_price_for_bff(sp)
+                    # ensure product metadata in the serialized dict is a plain dict
+                    if pricing_by_slug[slug].get('product'):
+                        pricing_by_slug[slug]['product']['metadata'] = _to_plain_dict(pricing_by_slug[slug]['product'].get('metadata'))
+                except Exception:
+                    # Ignore per-price failures and continue scanning
+                    logger.debug('Failed to inspect Stripe price during fallback', exc_info=True)
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.warning('Stripe-driven fallback (direct API) failed: %s', exc)
+        # Determine which active SspProduct slugs were not resolved to Stripe prices
+        try:
+            active_slugs = list(SspProduct.objects.filter(is_active=True).values_list('slug', flat=True))
+            missing_pricing = [s for s in active_slugs if s not in pricing_by_slug]
+        except Exception:
+            missing_pricing = []
+
+        return {
+            'default_by_lookup_key': settings.DEFAULT_SSP_PRICE_LOOKUP_KEY,
+            'prices': prices,
+            # Include raw model-driven map for frontend migration/debug
+            'pricing_by_slug': pricing_by_slug,
+            # List of active SspProduct slugs that couldn't be resolved to Stripe prices
+            'missing_pricing': missing_pricing,
+        }
 
     def _get_field_constraints(self) -> Dict:
         """
@@ -234,6 +354,30 @@ class CheckoutContextHandler(CheckoutIntentAwareHandlerMixin, BaseHandler):
                 'max_length': 255,
             }
         }
+
+
+def _serialize_price_for_bff(stripe_price):
+    """Helper to serialize a Stripe price (StripeObject) into the same
+    minimal dict structure used by the handler's merging logic.
+    """
+    product = getattr(stripe_price, 'product', {}) or {}
+
+    return {
+        'id': getattr(stripe_price, 'id', None),
+        'product': {
+            'id': getattr(product, 'id', None),
+            'name': getattr(product, 'name', None),
+            'description': getattr(product, 'description', None),
+            'metadata': _to_plain_dict(getattr(product, 'metadata', {}) or {}),
+        },
+        'lookup_key': getattr(stripe_price, 'lookup_key', None),
+        'recurring': _to_plain_dict(getattr(stripe_price, 'recurring', {}) or {}),
+        'currency': getattr(stripe_price, 'currency', None),
+        'unit_amount': getattr(stripe_price, 'unit_amount', None),
+        'unit_amount_decimal': str(getattr(stripe_price, 'unit_amount_decimal', '') or ''),
+        'metadata': _to_plain_dict(getattr(stripe_price, 'metadata', {}) or {}),
+    }
+    # _serialize_price_for_bff ends here (module-level helper follows)
 
 
 class CheckoutValidationHandler(BaseHandler):
@@ -423,7 +567,8 @@ class CheckoutSuccessHandler(CheckoutContextHandler):
         """ Helper to fetch card last 4 and billing address. """
         result = {}
         if (card_metadata := payment_method.get('card', {})):
-            result['last4'] = card_metadata.get('last4')
+            last4 = card_metadata.get('last4')
+            result['last4'] = int(last4) if isinstance(last4, str) and last4.isdigit() else last4
             result['card_brand'] = card_metadata.get('brand')
         if (billing_details := payment_method.get('billing_details', {})):
             result['billing_address'] = billing_details.get('address')
@@ -500,3 +645,4 @@ class CheckoutSuccessHandler(CheckoutContextHandler):
             result['billing_address'] = customer_address
 
         return result
+ 
