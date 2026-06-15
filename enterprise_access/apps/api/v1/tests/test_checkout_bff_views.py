@@ -26,6 +26,7 @@ from enterprise_access.apps.bffs.tests.utils import default_field_constraints
 from enterprise_access.apps.core.constants import SYSTEM_ENTERPRISE_LEARNER_ROLE
 from enterprise_access.apps.customer_billing.constants import CheckoutIntentState
 from enterprise_access.apps.customer_billing.models import CheckoutIntent
+from enterprise_access.apps.customer_billing.tests.factories import CheckoutIntentFactory
 from enterprise_access.apps.customer_billing.tests.utils import AttrDict
 from test_utils import APITest
 
@@ -74,14 +75,27 @@ class CheckoutBFFViewSetTests(APITest):
         # For unauthenticated users, checkout_intent should be None
         self.assertIsNone(response.data['checkout_intent'])
 
-    @mock.patch('enterprise_access.apps.customer_billing.models.CheckoutIntent.objects.filter')
-    def test_context_endpoint_authenticated_access(self, mock_filter):
+    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_ssp_product_pricing')
+    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.transform_enterprise_customer_users_data')
+    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_and_cache_enterprise_customer_users')
+    @mock.patch('enterprise_access.apps.customer_billing.models.CheckoutIntent.for_user')
+    def test_context_endpoint_authenticated_access(
+        self,
+        mock_for_user,
+        mock_get_customers,
+        mock_transform,
+        mock_get_pricing,
+    ):
         """
         Test that authenticated users can access the context endpoint.
         """
+        mock_get_pricing.return_value = {}
+        mock_get_customers.return_value = {'results': []}
+        mock_transform.return_value = {'all_linked_enterprise_customer_users': []}
+
         # Set up a mock checkout intent for the authenticated user
         mock_intent = CheckoutIntent(**self.mock_checkout_intent_data)
-        mock_filter.return_value.first.return_value = mock_intent
+        mock_for_user.return_value = mock_intent
 
         self.set_jwt_cookie([{
             'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE,
@@ -556,8 +570,8 @@ class CheckoutBFFSuccessViewSetTests(APITest):
     @mock.patch('enterprise_access.apps.bffs.checkout.handlers.CheckoutIntent.for_user')
     def test_success_endpoint_no_checkout_session(self, mock_for_user):
         """Test the success endpoint when no checkout session id is present."""
-        mock_checkout_intent = CheckoutIntent.objects.create(
-            user_id=self.user.id,
+        mock_checkout_intent = CheckoutIntentFactory(
+            user=self.user,
             state=CheckoutIntentState.CREATED,
             quantity=10,
             enterprise_name='Test Enterprise',
@@ -598,8 +612,8 @@ class CheckoutBFFSuccessViewSetTests(APITest):
         mock_get_customer, mock_get_pricing,
     ):
         """Test the success endpoint with full Stripe data integration."""
-        mock_checkout_intent = CheckoutIntent.objects.create(
-            user_id=self.user.id,
+        mock_checkout_intent = CheckoutIntentFactory(
+            user=self.user,
             state=CheckoutIntentState.CREATED,
             quantity=10,
             enterprise_name='Test Enterprise',

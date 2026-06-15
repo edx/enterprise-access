@@ -11,6 +11,10 @@ from django.conf import settings
 from django.test import TestCase
 from freezegun import freeze_time
 
+from enterprise_access.apps.api.serializers.customer_billing import (
+    CheckoutIntentCreateRequestSerializer,
+    RecordConflictError
+)
 from enterprise_access.apps.api.serializers.subsidy_access_policy import (
     SubsidyAccessPolicyAggregatesSerializer,
     SubsidyAccessPolicyCreditsAvailableResponseSerializer,
@@ -24,6 +28,7 @@ from enterprise_access.apps.content_assignments.tests.factories import (
     AssignmentConfigurationFactory,
     LearnerContentAssignmentFactory
 )
+from enterprise_access.apps.customer_billing.models import FailedCheckoutIntentConflict, SlugReservationConflict
 from enterprise_access.apps.subsidy_access_policy.tests.factories import (
     AssignedLearnerCreditAccessPolicyFactory,
     PerLearnerEnrollmentCapLearnerCreditAccessPolicyFactory
@@ -574,3 +579,95 @@ class TestLearnerCreditRequestBulkCancelSerializer(TestCase):
         serializer = LearnerCreditRequestBulkCancelSerializer(data=data)
         self.assertFalse(serializer.is_valid())
         self.assertIn('learner_credit_request_uuids', serializer.errors)
+
+
+class TestCheckoutIntentCreateRequestSerializer(TestCase):
+    """Tests for CheckoutIntentCreateRequestSerializer behavior."""
+
+    def setUp(self):
+        self.user = mock.Mock()
+        self.request = mock.Mock(user=self.user)
+
+    def _make_serializer(self):
+        return CheckoutIntentCreateRequestSerializer(context={'request': self.request})
+
+    @mock.patch('enterprise_access.apps.api.serializers.customer_billing.CheckoutIntent.create_intent')
+    def test_create_passes_none_ssp_product_when_omitted(self, mock_create_intent):
+        """Serializer create should pass ssp_product=None when not supplied."""
+        serializer = self._make_serializer()
+        mock_create_intent.return_value = mock.Mock()
+
+        serializer.create({
+            'quantity': 10,
+            'enterprise_slug': 'acme-enterprise',
+            'enterprise_name': 'Acme Enterprise',
+        })
+
+        mock_create_intent.assert_called_once_with(
+            user=self.user,
+            quantity=10,
+            slug='acme-enterprise',
+            name='Acme Enterprise',
+            country=None,
+            terms_metadata=None,
+            ssp_product=None,
+        )
+
+    @mock.patch('enterprise_access.apps.api.serializers.customer_billing.CheckoutIntent.create_intent')
+    def test_create_passes_explicit_ssp_product(self, mock_create_intent):
+        """Serializer create should pass through explicitly provided ssp_product."""
+        serializer = self._make_serializer()
+        mock_create_intent.return_value = mock.Mock()
+        product = mock.Mock()
+
+        serializer.create({
+            'quantity': 10,
+            'enterprise_slug': 'acme-enterprise',
+            'enterprise_name': 'Acme Enterprise',
+            'ssp_product': product,
+        })
+
+        mock_create_intent.assert_called_once()
+        self.assertEqual(mock_create_intent.call_args.kwargs['ssp_product'], product)
+
+    @mock.patch('enterprise_access.apps.api.serializers.customer_billing.CheckoutIntent.create_intent')
+    def test_create_translates_slug_conflict(self, mock_create_intent):
+        """SlugReservationConflict should be translated to RecordConflictError."""
+        serializer = self._make_serializer()
+        mock_create_intent.side_effect = SlugReservationConflict()
+
+        with self.assertRaises(RecordConflictError) as exc:
+            serializer.create({
+                'quantity': 10,
+                'enterprise_slug': 'acme-enterprise',
+                'enterprise_name': 'Acme Enterprise',
+            })
+
+        self.assertIn('already been reserved', str(exc.exception.detail))
+
+    @mock.patch('enterprise_access.apps.api.serializers.customer_billing.CheckoutIntent.create_intent')
+    def test_create_translates_failed_conflict(self, mock_create_intent):
+        """FailedCheckoutIntentConflict should be translated to RecordConflictError."""
+        serializer = self._make_serializer()
+        mock_create_intent.side_effect = FailedCheckoutIntentConflict()
+
+        with self.assertRaises(RecordConflictError) as exc:
+            serializer.create({
+                'quantity': 10,
+                'enterprise_slug': 'acme-enterprise',
+                'enterprise_name': 'Acme Enterprise',
+            })
+
+        self.assertIn('failed CheckoutIntent', str(exc.exception.detail))
+
+    def test_validate_terms_metadata_rejects_list(self):
+        """Serializer validation should reject terms_metadata when it is not an object."""
+        serializer = CheckoutIntentCreateRequestSerializer(data={
+            'quantity': 10,
+            'enterprise_slug': 'acme-enterprise',
+            'enterprise_name': 'Acme Enterprise',
+            'terms_metadata': ['not', 'a', 'dict'],
+        })
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn('terms_metadata', serializer.errors)
