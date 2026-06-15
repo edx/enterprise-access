@@ -1,0 +1,24 @@
+enterprise_access/apps/core/snowflake.py
+  s_9a63baec1e4c86::t_a3e6d2044c6906 12-40,48-52,54,57-59
+  s_9a63baec1e4c86::t_cbf4edfc9ce0a3 42-47,53,55-56,64
+enterprise_access/apps/core/tests/test_snowflake.py
+  s_9a63baec1e4c86::t_1c3de23c29aed7 136-155,157-162,164-168,170
+  s_9a63baec1e4c86::t_ea5fff791ba714 25-28,30,65,102,108,115-116,124-130
+  s_9a63baec1e4c86::t_cafd33ea63540b 7-8,15-24,29,33-34,36,38-58,60-62,68,74-75,78-79,85,87-90,94,100-101,103-107,109-114,117-123,131-135,156,163,169,171-174
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "e32c00e2c9242f7e8a487707c1018c50425cf754",
+  "prompts": {},
+  "sessions": {
+    "s_9a63baec1e4c86": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3dc53752-accb-47ee-8253-d4a1d3ebf635",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "rgopalrao-sonata-png <rgopalrao-sonata@2u.com>"
+    }
+  }
+}
