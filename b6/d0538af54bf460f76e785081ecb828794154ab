@@ -1,0 +1,32 @@
+enterprise_access/apps/api/v1/tests/test_bff_views.py
+  s_8fcbd340805ddd::t_2a75b2c83a765b 432
+  s_8fcbd340805ddd::t_84612e630ef2a5 869
+  s_8fcbd340805ddd::t_ff114d882e8164 548,562,576,590,604,618,632,646,660,674,689,719
+  s_8fcbd340805ddd::t_31eec3e77dbe67 807-813,816,824,826,839,841-842
+  s_8fcbd340805ddd::t_2e275f1cb8f27b 696-697,705
+  s_8fcbd340805ddd::t_e78fd0139e6678 507-517,519-520,527
+  s_8fcbd340805ddd::t_ab977d5d3a0fcd 814-815,817-819
+  s_8fcbd340805ddd::t_9afffccb80b57c 425,431
+  s_8fcbd340805ddd::t_02538d9585fd28 821-823,825,827,848-850,852-855
+  s_8fcbd340805ddd::t_45e9004d76b392 783
+  s_8fcbd340805ddd::t_8d2e077930a29e 518,521-526
+  s_8fcbd340805ddd::t_881ca552dbef0d 547,561,575,589,603,617,631,645,659,673,681-688,698-704,706-711,718,730-732,744,748
+  s_8fcbd340805ddd::t_ecd57c34dfc570 776,782
+  s_8fcbd340805ddd::t_b6716111785aae 749
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.1",
+  "base_commit_sha": "b6d0538af54bf460f76e785081ecb828794154ab",
+  "prompts": {},
+  "sessions": {
+    "s_8fcbd340805ddd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "520ba0fd-16b0-41df-9b9c-7e52119a8fcd",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Alexander Dusenbery <adusenbery@2u.com>"
+    }
+  }
+}
