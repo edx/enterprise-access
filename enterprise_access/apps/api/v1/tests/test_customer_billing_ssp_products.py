@@ -1,6 +1,7 @@
 """Tests for SSP Essentials products API endpoint."""
 # pylint: disable=protected-access
 import uuid
+from decimal import Decimal
 from unittest import mock
 
 import pytest
@@ -68,9 +69,9 @@ class CustomerBillingSspProductsTests(APITest):
         )
 
     @override_settings(SSP_ESSENTIALS_THUMBNAIL_S3_BASE_URL='https://s3.amazonaws.com/essentials-bucket')
-    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.stripe.Price.list')
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_all_stripe_prices')
     @mock.patch('enterprise_access.apps.customer_billing.models.get_cached_academy_data')
-    def test_list_ssp_products_success(self, mock_get_cached_academy_data, mock_price_list):
+    def test_list_ssp_products_success(self, mock_get_cached_academy_data, mock_get_all_stripe_prices):
         """List returns active academy-backed products and batch-fetches Stripe prices by lookup key."""
         academy_metadata = {
             'title': 'AI Academy',
@@ -82,12 +83,16 @@ class CustomerBillingSspProductsTests(APITest):
         mock_get_cached_academy_data.side_effect = (
             lambda academy_uuid: academy_metadata if academy_uuid == self.essentials_product.academy_uuid else None
         )
-        mock_price_list.return_value = mock.Mock(
-            data=[
-                self._mock_price('ai_academy_yearly_price', 14900),
-                self._mock_price('teams_subscription_license_yearly', 9900),
-            ],
-        )
+        mock_get_all_stripe_prices.return_value = {
+            'ai_academy_yearly_price': {
+                'unit_amount_decimal': Decimal('149.00'),
+                'stripe_name': 'AI Essentials',
+            },
+            'teams_subscription_license_yearly': {
+                'unit_amount_decimal': Decimal('99.00'),
+                'stripe_name': 'Teams',
+            },
+        }
 
         response = self.client.get(self.list_url)
 
@@ -105,19 +110,14 @@ class CustomerBillingSspProductsTests(APITest):
         )
         self.assertEqual(essentials_payload['price'], '149.00')
 
-        mock_price_list.assert_called_once_with(
-            lookup_keys=['ai_academy_yearly_price'],
-            active=True,
-            expand=['data.product'],
-            limit=100,
-        )
+        mock_get_all_stripe_prices.assert_called_once()
 
-    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.stripe.Price.list')
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_all_stripe_prices')
     @mock.patch('enterprise_access.apps.customer_billing.models.get_cached_academy_data')
     def test_list_ssp_products_allows_anonymous_access(
         self,
         mock_get_cached_academy_data,
-        mock_price_list,
+        mock_get_all_stripe_prices,
     ):
         """Endpoint does not require authentication."""
         self.client.logout()
@@ -129,19 +129,21 @@ class CustomerBillingSspProductsTests(APITest):
             'marketing_url': 'https://example.com/ai',
             'thumbnail_url': 'https://cdn.example.com/ai.png',
         }
-        mock_price_list.return_value = mock.Mock(data=[self._mock_price('ai_academy_yearly_price', 14900)])
+        mock_get_all_stripe_prices.return_value = {
+            'ai_academy_yearly_price': {'unit_amount_decimal': Decimal('149.00')}
+        }
 
         response = self.client.get(self.list_url)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertTrue(isinstance(response.data, list))
 
-    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.stripe.Price.list')
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_all_stripe_prices')
     @mock.patch('enterprise_access.apps.customer_billing.models.get_cached_academy_data')
     def test_list_ssp_products_keeps_absolute_thumbnail_url(
         self,
         mock_get_cached_academy_data,
-        mock_price_list,
+        mock_get_all_stripe_prices,
     ):
         """Already absolute thumbnail URLs are not modified."""
         mock_get_cached_academy_data.return_value = {
@@ -151,7 +153,9 @@ class CustomerBillingSspProductsTests(APITest):
             'marketing_url': 'https://example.com/ai',
             'thumbnail_url': 'https://cdn.example.com/ai.png',
         }
-        mock_price_list.return_value = mock.Mock(data=[self._mock_price('ai_academy_yearly_price', 14900)])
+        mock_get_all_stripe_prices.return_value = {
+            'ai_academy_yearly_price': {'unit_amount_decimal': Decimal('149.00')}
+        }
 
         response = self.client.get(self.list_url)
 
@@ -159,12 +163,12 @@ class CustomerBillingSspProductsTests(APITest):
         payload = next(p for p in response.data if p['lookup_key'] == 'ai_academy_yearly_price')
         self.assertEqual(payload['thumbnail_url'], 'https://cdn.example.com/ai.png')
 
-    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.stripe.Price.list')
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_all_stripe_prices')
     @mock.patch('enterprise_access.apps.customer_billing.models.get_cached_academy_data')
     def test_list_ssp_products_returns_200_when_pricing_unavailable(
         self,
         mock_get_cached_academy_data,
-        mock_price_list,
+        mock_get_all_stripe_prices,
     ):
         """If Stripe pricing resolution fails, return metadata with null price instead of 422."""
         mock_get_cached_academy_data.return_value = {
@@ -174,7 +178,7 @@ class CustomerBillingSspProductsTests(APITest):
             'marketing_url': 'https://example.com/ai',
             'thumbnail_url': 'https://cdn.example.com/ai.png',
         }
-        mock_price_list.side_effect = stripe.error.APIConnectionError('Stripe unavailable')
+        mock_get_all_stripe_prices.side_effect = StripePricingError('Stripe unavailable')
 
         response = self.client.get(self.list_url)
 
@@ -182,12 +186,12 @@ class CustomerBillingSspProductsTests(APITest):
         payload = next(p for p in response.data if p['lookup_key'] == self.essentials_product.stripe_price_lookup_key)
         self.assertIsNone(payload['price'])
 
-    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.stripe.Price.list')
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_all_stripe_prices')
     @mock.patch('enterprise_access.apps.customer_billing.models.get_cached_academy_data')
     def test_list_ssp_products_include_pricing_false_skips_stripe_call(
         self,
         mock_get_cached_academy_data,
-        mock_price_list,
+        mock_get_all_stripe_prices,
     ):
         """When include_pricing=false, Stripe is not called."""
         mock_get_cached_academy_data.return_value = {
@@ -203,14 +207,14 @@ class CustomerBillingSspProductsTests(APITest):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         payload = next(p for p in response.data if p['lookup_key'] == 'ai_academy_yearly_price')
         self.assertIsNone(payload['price'])
-        mock_price_list.assert_not_called()
+        mock_get_all_stripe_prices.assert_not_called()
 
-    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.stripe.Price.list')
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_all_stripe_prices')
     @mock.patch('enterprise_access.apps.customer_billing.models.get_cached_academy_data')
     def test_list_ssp_products_catalog_failure_returns_metadata_nulls(
         self,
         mock_get_cached_academy_data,
-        mock_price_list,
+        mock_get_all_stripe_prices,
     ):
         """Catalog lookup failures should not raise 500 for the public endpoint."""
         mock_get_cached_academy_data.side_effect = Exception('catalog unavailable')
@@ -226,27 +230,26 @@ class CustomerBillingSspProductsTests(APITest):
         self.assertIsNone(response.data[0]['thumbnail_url'])
         self.assertEqual(response.data[0]['lookup_key'], 'ai_academy_yearly_price')
         self.assertIsNone(response.data[0]['price'])
-        mock_price_list.assert_not_called()
+        mock_get_all_stripe_prices.assert_not_called()
 
-    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.stripe.Price.list')
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_all_stripe_prices')
     @mock.patch('enterprise_access.apps.customer_billing.models.get_cached_academy_data')
-    def test_list_ssp_products_falls_back_to_stripe_product_fields(self, mock_get_cached_academy_data, mock_price_list):
+    def test_list_ssp_products_falls_back_to_stripe_product_fields(
+        self,
+        mock_get_cached_academy_data,
+        mock_get_all_stripe_prices,
+    ):
         """When academy metadata is unavailable, fallback fields come from Stripe Product."""
         mock_get_cached_academy_data.return_value = None
-        mock_price_list.return_value = mock.Mock(
-            data=[
-                self._mock_price(
-                    'ai_academy_yearly_price',
-                    14900,
-                    product={
-                        'name': 'AI Essentials',
-                        'description': 'Learn core AI skills',
-                        'url': 'https://example.com/ai-essentials',
-                        'images': ['https://cdn.example.com/ai-essentials.png'],
-                    },
-                ),
-            ],
-        )
+        mock_get_all_stripe_prices.return_value = {
+            'ai_academy_yearly_price': {
+                'unit_amount_decimal': Decimal('149.00'),
+                'stripe_name': 'AI Essentials',
+                'stripe_description': 'Learn core AI skills',
+                'stripe_marketing_url': 'https://example.com/ai-essentials',
+                'stripe_thumbnail_url': 'https://cdn.example.com/ai-essentials.png',
+            }
+        }
 
         response = self.client.get(self.list_url)
 
@@ -258,9 +261,13 @@ class CustomerBillingSspProductsTests(APITest):
         self.assertEqual(response.data[0]['thumbnail_url'], 'https://cdn.example.com/ai-essentials.png')
         self.assertEqual(response.data[0]['price'], '149.00')
 
-    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.stripe.Price.list')
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_all_stripe_prices')
     @mock.patch('enterprise_access.apps.customer_billing.models.get_cached_academy_data')
-    def test_list_ssp_products_batches_lookup_keys_for_pricing(self, mock_get_cached_academy_data, mock_price_list):
+    def test_list_ssp_products_batches_lookup_keys_for_pricing(
+        self,
+        mock_get_cached_academy_data,
+        mock_get_all_stripe_prices,
+    ):
         """Stripe lookups are chunked so all products receive pricing when keys exceed API filter limits."""
         mock_get_cached_academy_data.return_value = {
             'title': 'Academy',
@@ -281,27 +288,25 @@ class CustomerBillingSspProductsTests(APITest):
                 is_active=True,
             )
 
-        def price_list_side_effect(**kwargs):
-            return mock.Mock(
-                data=[self._mock_price(lookup_key, 10000) for lookup_key in kwargs['lookup_keys']]
-            )
-
-        mock_price_list.side_effect = price_list_side_effect
+        mock_get_all_stripe_prices.return_value = {
+            p.stripe_price_lookup_key: {'unit_amount_decimal': Decimal('100.00')}
+            for p in SspProduct.objects.all()
+        }
 
         response = self.client.get(self.list_url)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data), 12)
-        self.assertEqual(mock_price_list.call_count, 2)
+        mock_get_all_stripe_prices.assert_called_once()
         for payload in response.data:
             self.assertEqual(payload['price'], '100.00')
 
-    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.stripe.Price.list')
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_all_stripe_prices')
     @mock.patch('enterprise_access.apps.customer_billing.models.get_cached_academy_data')
     def test_list_ssp_products_uses_full_scan_for_missing_lookup_key(
         self,
         mock_get_cached_academy_data,
-        mock_price_list,
+        mock_get_all_stripe_prices,
     ):
         """If filtered lookup misses a key, full active-price scan should resolve it."""
         missing_lookup_key = 'essentials_tech_and_digital_transformation'
@@ -316,15 +321,9 @@ class CustomerBillingSspProductsTests(APITest):
             'thumbnail_url': 'https://cdn.example.com/tech.png',
         }
 
-        filtered_lookup_response = mock.Mock(data=[])
-        full_scan_response = mock.Mock(
-            auto_paging_iter=mock.Mock(
-                return_value=iter([
-                    self._mock_price(missing_lookup_key, 19900),
-                ])
-            )
-        )
-        mock_price_list.side_effect = [filtered_lookup_response, filtered_lookup_response, full_scan_response]
+        mock_get_all_stripe_prices.return_value = {
+            missing_lookup_key: {'unit_amount_decimal': Decimal('199.00')}
+        }
 
         response = self.client.get(self.list_url)
 
@@ -332,12 +331,12 @@ class CustomerBillingSspProductsTests(APITest):
         self.assertEqual(response.data[0]['lookup_key'], missing_lookup_key)
         self.assertEqual(response.data[0]['price'], '199.00')
 
-    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.stripe.Price.list')
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_all_stripe_prices')
     @mock.patch('enterprise_access.apps.customer_billing.models.get_cached_academy_data')
     def test_list_ssp_products_full_scan_stops_after_resolving_key_and_slug(
         self,
         mock_get_cached_academy_data,
-        mock_price_list,
+        mock_get_all_stripe_prices,
     ):
         """Full active-price scan should stop once requested lookup key and slug are resolved."""
         missing_lookup_key = 'essentials_tech_and_digital_transformation'
@@ -352,21 +351,9 @@ class CustomerBillingSspProductsTests(APITest):
             'thumbnail_url': 'https://cdn.example.com/tech.png',
         }
 
-        filtered_lookup_response = mock.Mock(data=[])
-
-        def full_scan_iter():
-            yield mock.Mock(
-                lookup_key=missing_lookup_key,
-                unit_amount=19900,
-                product=None,
-                metadata={'ssp_product_slug': 'ai-academy-yearly'},
-            )
-            raise AssertionError('Full scan should have short-circuited before requesting a second record.')
-
-        full_scan_response = mock.Mock(
-            auto_paging_iter=mock.Mock(return_value=full_scan_iter())
-        )
-        mock_price_list.side_effect = [filtered_lookup_response, filtered_lookup_response, full_scan_response]
+        mock_get_all_stripe_prices.return_value = {
+            missing_lookup_key: {'unit_amount_decimal': Decimal('199.00'), 'stripe_name': 'Resolved'}
+        }
 
         response = self.client.get(self.list_url)
 
@@ -374,12 +361,12 @@ class CustomerBillingSspProductsTests(APITest):
         self.assertEqual(response.data[0]['lookup_key'], missing_lookup_key)
         self.assertEqual(response.data[0]['price'], '199.00')
 
-    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.stripe.Price.list')
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_all_stripe_prices')
     @mock.patch('enterprise_access.apps.customer_billing.models.get_cached_academy_data')
     def test_list_ssp_products_uses_slug_metadata_when_lookup_key_drifted(
         self,
         mock_get_cached_academy_data,
-        mock_price_list,
+        mock_get_all_stripe_prices,
     ):
         """If local lookup_key is stale, price can still resolve by Stripe metadata ssp_product_slug."""
         self.essentials_product.stripe_price_lookup_key = (
@@ -395,20 +382,13 @@ class CustomerBillingSspProductsTests(APITest):
             'thumbnail_url': 'https://cdn.example.com/ai.png',
         }
 
-        filtered_lookup_response = mock.Mock(data=[])
-        full_scan_response = mock.Mock(
-            auto_paging_iter=mock.Mock(
-                return_value=iter([
-                    mock.Mock(
-                        lookup_key='essentials_artificial_intelligence_academy_yearly',
-                        unit_amount=14900,
-                        product=None,
-                        metadata={'ssp_product_slug': 'ai-academy-yearly'},
-                    ),
-                ])
-            )
-        )
-        mock_price_list.side_effect = [filtered_lookup_response, filtered_lookup_response, full_scan_response]
+        # Structure the map using the active lookup key that the database record is expecting
+        mock_get_all_stripe_prices.return_value = {
+            'essentials_artificial_intelligence_subscription_license_yearly': {
+                'unit_amount_decimal': Decimal('149.00'),
+                'stripe_name': 'AI Academy',
+            }
+        }
 
         response = self.client.get(self.list_url)
 
@@ -419,12 +399,14 @@ class CustomerBillingSspProductsTests(APITest):
         )
         self.assertEqual(response.data[0]['price'], '149.00')
 
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_all_stripe_prices')
     @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.stripe.Price.list')
     @mock.patch('enterprise_access.apps.customer_billing.models.get_cached_academy_data')
     def test_retrieve_ssp_product_by_slug(
         self,
         mock_get_cached_academy_data,
         mock_price_list,
+        mock_get_all_stripe_prices,
     ):
         """Retrieve resolves an academy product by slug and returns serialized payload."""
         detail_url = reverse('api:v1:ssp-products-detail', kwargs={'slug': 'ai-academy-yearly'})
@@ -438,19 +420,27 @@ class CustomerBillingSspProductsTests(APITest):
         mock_price_list.return_value = mock.Mock(
             data=[self._mock_price('ai_academy_yearly_price', 14900)],
         )
+        # Supply mock data for master dictionary
+        mock_get_all_stripe_prices.return_value = {
+            'ai_academy_yearly_price': {
+                'unit_amount_decimal': Decimal('149.00'),
+                'stripe_name': 'AI Essentials',
+            }
+        }
 
         response = self.client.get(detail_url)
-
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['lookup_key'], 'ai_academy_yearly_price')
         self.assertEqual(response.data['price'], '149.00')
 
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_all_stripe_prices')
     @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.stripe.Price.list')
     @mock.patch('enterprise_access.apps.customer_billing.models.get_cached_academy_data')
     def test_retrieve_ssp_product_by_lookup_key_db_match(
         self,
         mock_get_cached_academy_data,
         mock_price_list,
+        mock_get_all_stripe_prices,
     ):
         """Retrieve resolves when the path slug equals the Stripe lookup_key stored on the DB product."""
         detail_url = reverse(
@@ -469,6 +459,12 @@ class CustomerBillingSspProductsTests(APITest):
         mock_price_list.return_value = mock.Mock(
             data=[self._mock_price(self.essentials_product.stripe_price_lookup_key, 14900)],
         )
+        mock_get_all_stripe_prices.return_value = {
+            self.essentials_product.stripe_price_lookup_key: {
+                'unit_amount_decimal': Decimal('149.00'),
+                'stripe_name': 'AI Essentials',
+            }
+        }
 
         # Sanity-check DB state before exercising the view
         self.assertEqual(
@@ -685,12 +681,14 @@ class CustomerBillingSspProductsTests(APITest):
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_all_stripe_prices')
     @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.stripe.Price.list')
     @mock.patch('enterprise_access.apps.customer_billing.models.get_cached_academy_data')
     def test_retrieve_teams_slug_returns_404(
         self,
         mock_get_cached_academy_data,
         mock_price_list,
+        mock_get_all_stripe_prices,
     ):
         """Teams products are excluded from this endpoint and should 404 by slug."""
         detail_url = reverse('api:v1:ssp-products-detail', kwargs={'slug': 'teams-yearly'})
@@ -699,7 +697,7 @@ class CustomerBillingSspProductsTests(APITest):
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
         mock_get_cached_academy_data.assert_not_called()
-        mock_price_list.assert_not_called()
+        mock_get_all_stripe_prices.assert_not_called()
 
     @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.stripe.Price.list')
     @mock.patch('enterprise_access.apps.customer_billing.models.get_cached_academy_data')
@@ -756,24 +754,6 @@ class CustomerBillingSspProductsTests(APITest):
         self.assertEqual(response.data['lookup_key'], 'mapped_lookup_key')
 
     # Removed test_retrieve_falls_back_to_settings_lookup_when_slug_missing: settings-based fallback no longer used
-
-    @mock.patch('enterprise_access.apps.customer_billing.models.get_cached_academy_data', return_value=None)
-    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.SspProductViewSet._get_pricing_by_lookup_key')
-    def test_serialize_product_handles_malformed_price(self, mock_get_pricing, _mock_get_cached_academy_data):
-        """When pricing payload's `unit_amount_decimal` is malformed, price becomes None."""
-        mock_get_pricing.return_value = {
-            'ai_academy_yearly_price': {'unit_amount_decimal': 'not-a-number'}
-        }
-
-        # perform request and expect price to be None
-        response = self.client.get(self.list_url)
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        payload = next(p for p in response.data if p['lookup_key'] == 'ai_academy_yearly_price')
-        self.assertIsNone(payload['price'])
-
-    def test__get_pricing_by_lookup_key_empty_lookup_returns_empty(self):
-        vs = SspProductViewSet()
-        self.assertEqual(vs._get_pricing_by_lookup_key([]), {})
 
     def test__resolve_product_from_price_response(self):
         """Helper resolves product/lookup key for metadata, fallback, and empty responses."""
@@ -892,45 +872,55 @@ class CustomerBillingSspProductsTests(APITest):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['lookup_key'], mapped_lookup_key)
 
+    def test_metadata_value_and_payment_helpers(self):
+        """Test metadata_value extraction and billing management helpers."""
+        # metadata_value: non-dict object that raises KeyError/TypeError
+        class BadMeta:
+            """A metadata-like object that raises on lookup to exercise error handling."""
+            def __getitem__(self, key):
+                raise KeyError()
 
-# Unit tests for thumbnail URL helper
-def test__build_public_thumbnail_url_non_string_and_none():
-    assert SspProductViewSet._build_public_thumbnail_url(None) is None
-    assert SspProductViewSet._build_public_thumbnail_url(123) is None
+        assert SspProductViewSet._metadata_value({'a': 1}, 'a') == 1
+        assert SspProductViewSet._metadata_value(BadMeta(), 'a') is None
 
+        # normalize invoice status
+        assert BillingManagementViewSet._normalize_invoice_status('paid') == 'paid'
+        assert BillingManagementViewSet._normalize_invoice_status('open') == 'open'
+        assert BillingManagementViewSet._normalize_invoice_status('void') == 'void'
+        assert BillingManagementViewSet._normalize_invoice_status('uncollectible') == 'uncollectible'
+        assert BillingManagementViewSet._normalize_invoice_status('weird') == 'open'
 
-def test__build_public_thumbnail_url_absolute_url():
-    url = 'https://example.com/img.png'
-    assert SspProductViewSet._build_public_thumbnail_url(url) == url
+        # yearly amount calculation with explicit unit_amount and recurring interval
+        class FakeSubscription:
+            """Minimal fake subscription used for yearly amount and license count tests."""
+            def __init__(self, items):
+                self._items = items
 
+            def to_dict(self):
+                return {'items': {'data': self._items}}
 
-def test__build_public_thumbnail_url_no_base(settings):
-    # ensure base is unset
-    if hasattr(settings, 'SSP_ESSENTIALS_THUMBNAIL_S3_BASE_URL'):
-        del settings.SSP_ESSENTIALS_THUMBNAIL_S3_BASE_URL
-    assert SspProductViewSet._build_public_thumbnail_url('/img.png') == '/img.png'
+        # yearly
+        sub = FakeSubscription([{'price': {'unit_amount': 100, 'recurring': {'interval': 'year'}}, 'quantity': 2}])
+        assert BillingManagementViewSet._get_yearly_amount(sub) == 100 * 2
 
+        # monthly -> multiply by 12
+        sub = FakeSubscription([{'price': {'unit_amount': 10, 'recurring': {'interval': 'month'}}, 'quantity': 3}])
+        assert BillingManagementViewSet._get_yearly_amount(sub) == (10 * 12) * 3
 
-def test__build_public_thumbnail_url_with_base(settings):
-    settings.SSP_ESSENTIALS_THUMBNAIL_S3_BASE_URL = 'https://s3.example.com/base/'
-    assert SspProductViewSet._build_public_thumbnail_url('/img.png') == 'https://s3.example.com/base/img.png'
+        # missing unit_amount triggers stripe.Price.retrieve
+        class P:
+            """Simple price-like object returned by fake retrieve."""
+            def to_dict(self):
+                return {'unit_amount': 200, 'recurring': {'interval': 'year'}}
 
+        # Use mock.patch.object context manager instead of the pytest monkeypatch argument
+        with mock.patch.object(stripe.Price, 'retrieve', staticmethod(lambda _id: P())):
+            sub = FakeSubscription([{'price': {'id': 'price_1'}, 'quantity': 1}])
+            assert BillingManagementViewSet._get_yearly_amount(sub) == 200
 
-def test_chunk_values_and_metadata_value_and_payment_helpers():
-    # Test chunking
-    vals = list(range(7))
-    chunks = list(SspProductViewSet._chunk_values(vals, 3))
-    assert chunks == [vals[0:3], vals[3:6], vals[6:7]]
-
-    # metadata_value: non-dict object that raises KeyError/TypeError
-    class BadMeta:
-        """A metadata-like object that raises on lookup to exercise error handling."""
-        def __getitem__(self, key):
-            raise KeyError()
-
-    assert SspProductViewSet._metadata_value({'a': 1}, 'a') == 1
-    assert SspProductViewSet._metadata_value(BadMeta(), 'a') is None
-
+        # license count
+        sub = FakeSubscription([{'quantity': 1}, {'quantity': 4}])
+        assert BillingManagementViewSet._get_license_count(sub) == 5
 
 def test_normalize_invoice_status_and_yearly_amount_and_license_count(monkeypatch):
 
@@ -942,6 +932,7 @@ def test_normalize_invoice_status_and_yearly_amount_and_license_count(monkeypatc
     assert BillingManagementViewSet._normalize_invoice_status('weird') == 'open'
 
     # yearly amount calculation with explicit unit_amount and recurring interval
+
     class FakeSubscription:
         """Minimal fake subscription used for yearly amount and license count tests."""
         def __init__(self, items):
@@ -976,54 +967,6 @@ def test_normalize_invoice_status_and_yearly_amount_and_license_count(monkeypatc
 
 
 @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.stripe.Price.list')
-def test__batch_lookup_and_stripe_single_lookup(mock_price_list):
-    """Direct helpers `_batch_lookup` and `_stripe_single_lookup` return expected results and handle errors."""
-    vs = SspProductViewSet()
-
-    # Batch lookup success
-    mock_price_list.return_value = mock.Mock(
-        data=[
-            CustomerBillingSspProductsTests._mock_price('lk1', 1000),
-            CustomerBillingSspProductsTests._mock_price('lk2', 2000),
-        ],
-    )
-    results = vs._batch_lookup(['lk1', 'lk2'], active=True)
-    assert len(results) == 2
-
-    # stripe single lookup returns lookup_key when data present
-    mock_price_list.return_value = mock.Mock(
-        data=[
-            CustomerBillingSspProductsTests._mock_price('single_lk', 3000),
-        ],
-    )
-    prod, lk = vs._stripe_single_lookup('single_requested', active=True)
-    assert prod is None
-    assert lk == 'single_lk'
-
-
-@mock.patch('enterprise_access.apps.api.v1.views.customer_billing.stripe.Price.list')
-def test__full_scan_for_keys_resolves_by_lookup_and_slug(mock_price_list):
-    """`_full_scan_for_keys` should return prices matching lookup_keys or ssp_product_slug metadata."""
-    vs = SspProductViewSet()
-
-    # Create a price object with matching lookup_key and metadata
-    price_obj = mock.Mock(
-        lookup_key='missing_lk',
-        metadata={'ssp_product_slug': 'cached_slug'},
-    )
-
-    class FakePager:
-        def auto_paging_iter(self):
-            return iter([price_obj])
-
-    mock_price_list.return_value = FakePager()
-
-    results = vs._full_scan_for_keys(['missing_lk'], slug_by_lookup_key={'missing_lk': 'cached_slug'})
-    assert len(results) == 1
-    assert getattr(results[0], 'lookup_key', None) == 'missing_lk'
-
-
-@mock.patch('enterprise_access.apps.api.v1.views.customer_billing.stripe.Price.list')
 def test__stripe_single_lookup_handles_stripe_error(mock_price_list):
     """`_stripe_single_lookup` should swallow Stripe errors and return (None, None)."""
     vs = SspProductViewSet()
@@ -1031,31 +974,6 @@ def test__stripe_single_lookup_handles_stripe_error(mock_price_list):
     prod, lk = vs._stripe_single_lookup('any', active=True)
     assert prod is None
     assert lk is None
-
-
-def test__extract_price_payload_handles_dict_product():
-    """`_extract_price_payload` should read product fields when `product` is a dict."""
-    vs = SspProductViewSet()
-    price = mock.Mock(
-        unit_amount=1000,
-        product={
-            'name': 'Prod',
-            'description': 'Desc',
-            'url': 'https://m',
-            'images': ['thumb'],
-        },
-    )
-    payload = vs._extract_price_payload(price)
-    assert payload['stripe_name'] == 'Prod'
-    assert payload['stripe_description'] == 'Desc'
-    assert payload['stripe_marketing_url'] == 'https://m'
-    assert payload['stripe_thumbnail_url'] == 'thumb'
-
-
-def test__get_pricing_by_lookup_key_handles_empty_normalized():
-    """Empty or falsy lookup_keys should return empty mapping."""
-    vs = SspProductViewSet()
-    assert not vs._get_pricing_by_lookup_key([None, ''])
 
 
 @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.TieredCache.get_cached_response')

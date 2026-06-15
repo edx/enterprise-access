@@ -75,11 +75,9 @@ class SspProductViewSet(viewsets.ReadOnlyModelViewSet):
         include_pricing = self.request.query_params.get('include_pricing', 'true').strip().lower()
         return include_pricing not in {'false', '0', 'no'}
 
-    @staticmethod
-    def _chunk_values(values, size):
-        """Yield contiguous chunks from values with a maximum length of size."""
-        for index in range(0, len(values), size):
-            yield values[index:index + size]
+    # Helper methods for pricing orchestration were removed; pricing is fetched
+    # via `pricing_api.get_all_stripe_prices()` and serialization is handled by
+    # the serializer.
 
     @staticmethod
     def _metadata_value(metadata, key):
@@ -91,233 +89,8 @@ class SspProductViewSet(viewsets.ReadOnlyModelViewSet):
         except (KeyError, TypeError):  # pragma: no cover - metadata type varies by Stripe SDK object wrappers
             return None
 
-    def _extract_price_payload(self, price):
-        """Extract a simplified price payload from a Stripe Price object.
-
-        Separated out of the larger pricing lookup flow to keep `_get_pricing_by_lookup_key`
-        smaller and easier to test.
-        """
-        stripe_product = getattr(price, 'product', None)
-        stripe_product_name = None
-        stripe_product_description = None
-        stripe_product_url = None
-        stripe_product_thumbnail_url = None
-
-        if stripe_product is not None:
-            def _stripe_field(data, field_name):
-                if isinstance(data, dict):
-                    return data.get(field_name)
-                return getattr(data, field_name, None)
-
-            stripe_product_name = _stripe_field(stripe_product, 'name')
-            stripe_product_description = _stripe_field(stripe_product, 'description')
-            stripe_product_url = _stripe_field(stripe_product, 'url')
-            stripe_images = _stripe_field(stripe_product, 'images') or []
-            if stripe_images:
-                stripe_product_thumbnail_url = stripe_images[0]
-
-        unit_amount_decimal = Decimal(
-            price.unit_amount or 0,
-        ) / 100  # pragma: no cover - stripe price payload extraction
-
-        return {
-            'unit_amount_decimal': unit_amount_decimal,
-            'stripe_name': stripe_product_name,
-            'stripe_description': stripe_product_description,
-            'stripe_marketing_url': stripe_product_url,
-            'stripe_thumbnail_url': stripe_product_thumbnail_url,
-        }
-
-    def _get_pricing_by_lookup_key(self, lookup_keys, slug_by_lookup_key=None):
-        """Fetch Stripe prices in one batch request keyed by lookup_key.
-
-        The implementation batches lookup_key queries, falls back to non-active
-        lookups, and finally performs a full active-price scan only when
-        necessary. Heavy-lifting logic is delegated to helpers to keep this
-        method concise and under pylint's statement limit.
-        """
-        if not lookup_keys:
-            return {}  # pragma: no cover - empty input branch exercised indirectly in tests
-
-        normalized_lookup_keys = [key for key in lookup_keys if key]
-        if not normalized_lookup_keys:
-            return {}
-
-        prices = []
-
-        # Primary active lookup in batches
-        prices.extend(self._batch_lookup(normalized_lookup_keys, active=True))
-
-        found_lookup_keys = {
-            getattr(price, 'lookup_key', None)
-            for price in prices
-            if getattr(price, 'lookup_key', None)
-        }
-        missing_lookup_keys = [
-            lk
-            for lk in normalized_lookup_keys
-            if lk not in found_lookup_keys
-        ]
-
-        # Fallback batch lookup without `active` filter
-        if missing_lookup_keys:
-            prices.extend(self._batch_lookup(missing_lookup_keys, active=False))
-
-        found_lookup_keys = {
-            getattr(price, 'lookup_key', None)
-            for price in prices
-            if getattr(price, 'lookup_key', None)
-        }
-        still_missing_lookup_keys = [
-            lk
-            for lk in normalized_lookup_keys
-            if lk not in found_lookup_keys
-        ]
-
-        # Last-resort full active-price scan
-        if still_missing_lookup_keys:
-            prices.extend(self._full_scan_for_keys(still_missing_lookup_keys, slug_by_lookup_key=slug_by_lookup_key))
-
-        prices_by_lookup_key = {}
-        lookup_key_by_slug = {slug: lookup_key for lookup_key, slug in (slug_by_lookup_key or {}).items() if slug}
-
-        for price in prices:
-            lookup_key = getattr(price, 'lookup_key', None)
-            if lookup_key:
-                prices_by_lookup_key.setdefault(lookup_key, self._extract_price_payload(price))
-
-                stripe_metadata = getattr(price, 'metadata', None) or {}
-                stripe_product_slug = self._metadata_value(stripe_metadata, 'ssp_product_slug')
-                expected_lookup_key = lookup_key_by_slug.get(stripe_product_slug)
-                if expected_lookup_key and expected_lookup_key not in prices_by_lookup_key:
-                    prices_by_lookup_key[expected_lookup_key] = self._extract_price_payload(price)
-
-        return prices_by_lookup_key
-
-    def _batch_lookup(self, lookup_keys, active=True):
-        """Batch lookup for a list of lookup_keys. Returns list of Stripe Price objects."""
-        results = []
-        for lookup_key_batch in self._chunk_values(lookup_keys, 10):
-            try:
-                params = {
-                    'lookup_keys': lookup_key_batch,
-                    'expand': ['data.product'],
-                    'limit': 100,
-                }
-                if active:
-                    params['active'] = True
-                resp = stripe.Price.list(**params)
-                results.extend(list(resp.data))
-            except stripe.error.StripeError as exc:
-                logger.warning('Unable to resolve Stripe prices by lookup_key batch %s: %s', lookup_key_batch, exc)
-        return results
-
-    def _full_scan_for_keys(self, still_missing_lookup_keys, slug_by_lookup_key=None):
-        """Scan active Stripe prices via auto-pagination and return matching Price objects."""
-        try:
-            all_active_prices = stripe.Price.list(active=True, expand=['data.product'], limit=100)
-            missing_lookup_keys = set(still_missing_lookup_keys)
-            requested_slugs = {
-                (slug_by_lookup_key or {}).get(key)
-                for key in missing_lookup_keys
-            } - {None}
-            resolved_lookup_keys = set()
-            resolved_slugs = set()
-            results = []
-
-            for stripe_price in all_active_prices.auto_paging_iter():
-                lookup_key = getattr(stripe_price, 'lookup_key', None)
-                stripe_metadata = getattr(stripe_price, 'metadata', None) or {}
-                stripe_product_slug = self._metadata_value(stripe_metadata, 'ssp_product_slug')
-
-                lookup_key_matches = lookup_key in missing_lookup_keys
-                slug_matches = stripe_product_slug in requested_slugs
-                if lookup_key_matches or slug_matches:
-                    results.append(stripe_price)
-                    if lookup_key_matches:
-                        resolved_lookup_keys.add(lookup_key)
-                    if slug_matches:
-                        resolved_slugs.add(stripe_product_slug)
-
-                    if resolved_lookup_keys >= missing_lookup_keys and resolved_slugs >= requested_slugs:
-                        break
-
-            resolved_keys = {
-                getattr(p, 'lookup_key', None)
-                for p in results
-                if getattr(p, 'lookup_key', None) in missing_lookup_keys
-            }
-            logger.warning(
-                'Resolved %s lookup keys from full Stripe active-price scan.',
-                len(resolved_keys),
-            )
-            return results
-        except stripe.error.StripeError as exc:
-            logger.warning(
-                'Unable to resolve lookup keys %s from full Stripe active-price scan: %s',
-                still_missing_lookup_keys,
-                exc,
-            )
-            return []
-
-    @staticmethod
-    def _build_public_thumbnail_url(thumbnail_url):
-        """Convert relative thumbnail paths to fully-qualified public URLs."""
-        if not thumbnail_url or not isinstance(thumbnail_url, str):
-            return None
-        if thumbnail_url.startswith(('http://', 'https://')):
-            return thumbnail_url
-
-        base_url = getattr(settings, 'SSP_ESSENTIALS_THUMBNAIL_S3_BASE_URL', None)
-        if not base_url:
-            return thumbnail_url
-
-        return urljoin(f'{base_url.rstrip("/")}/', thumbnail_url.lstrip('/'))
-
-    def _serialize_product(self, product, pricing_by_lookup_key):
-        """Build the public SSP product response payload from model and Stripe data."""
-        try:
-            academy_title = product.academy_title
-            academy_long_name = product.academy_long_name
-            academy_description = product.academy_description
-            academy_marketing_url = product.academy_marketing_url
-            academy_thumbnail_url = product.academy_thumbnail_url
-        except Exception as exc:  # pylint: disable=broad-exception-caught
-            logger.warning(
-                'Failed to resolve academy metadata for SSP product %s: %s',
-                product.slug,
-                exc,
-            )
-            academy_title = None
-            academy_long_name = None
-            academy_description = None
-            academy_marketing_url = None
-            academy_thumbnail_url = None
-
-        price_data = pricing_by_lookup_key.get(product.stripe_price_lookup_key, {})
-        raw_price = price_data.get('unit_amount_decimal')
-        formatted_price = None
-        if raw_price is not None:
-            try:
-                formatted_price = f'{Decimal(str(raw_price)):.2f}'
-            except (InvalidOperation, TypeError, ValueError):
-                formatted_price = None
-
-        fallback_name = price_data.get('stripe_name')
-        fallback_description = price_data.get('stripe_description')
-        fallback_marketing_url = price_data.get('stripe_marketing_url')
-        fallback_thumbnail_url = price_data.get('stripe_thumbnail_url')
-
-        return {
-            'slug': product.slug if product is not None else None,
-            'name': academy_title or fallback_name,
-            'long_name': academy_long_name or academy_title or fallback_name,
-            'description': academy_description or fallback_description,
-            'marketing_url': academy_marketing_url or fallback_marketing_url,
-            'thumbnail_url': self._build_public_thumbnail_url(academy_thumbnail_url or fallback_thumbnail_url),
-            'price': formatted_price,
-            'lookup_key': product.stripe_price_lookup_key,
-        }
+    # pricing orchestration and serialization responsibilities have been moved
+    # into `pricing_api.get_all_stripe_prices()` and the serializer respectively.
 
     @extend_schema(
         tags=[CUSTOMER_BILLING_API_TAG],
@@ -340,16 +113,20 @@ class SspProductViewSet(viewsets.ReadOnlyModelViewSet):
         products = list(self.get_queryset())
         pricing_by_lookup_key = {}
         if self._include_pricing():
-            lookup_keys = [product.stripe_price_lookup_key for product in products]
-            slug_by_lookup_key = {
-                product.stripe_price_lookup_key: product.slug
-                for product in products
-                if product.stripe_price_lookup_key and product.slug
-            }
-            pricing_by_lookup_key = self._get_pricing_by_lookup_key(lookup_keys, slug_by_lookup_key=slug_by_lookup_key)
+            try:
+                all_prices = get_all_stripe_prices()
+                pricing_by_lookup_key = {
+                    p.stripe_price_lookup_key: all_prices.get(p.stripe_price_lookup_key)
+                    for p in products
+                }
+            except StripePricingError:
+                pricing_by_lookup_key = {}
 
-        payload = [self._serialize_product(product, pricing_by_lookup_key) for product in products]
-        serializer = self.get_serializer(payload, many=True)
+        serializer = self.get_serializer(
+            products,
+            many=True,
+            context={"pricing": pricing_by_lookup_key, 'request': request},
+        )
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     def _resolve_product_from_price_response(self, price_resp):
@@ -475,17 +252,16 @@ class SspProductViewSet(viewsets.ReadOnlyModelViewSet):
             # treat values containing '-' and not '_' as public slugs and re-raise.
             cond_is_str = isinstance(requested_slug, str)
             cond_dash_only = ('-' in requested_slug and '_' not in requested_slug)
-            is_public_slug = cond_is_str and cond_dash_only  # pragma: no cover - heuristic
+            is_public_slug = cond_is_str and cond_dash_only
             if is_public_slug:
                 raise Http404() from exc
+
             product = None
             lookup_key_candidate = None
             used_cache = False
 
-            # First, check whether the requested slug actually matches a
-            # database `stripe_price_lookup_key`. This allows direct lookup_key
-            # URLs (where slug==lookup_key) to resolve without calling Stripe.
-            db_qs = self.get_queryset().filter(stripe_price_lookup_key=requested_slug)  # pragma: no cover - db
+            # First, check whether the requested slug actually matches a DB stored lookup_key
+            db_qs = self.get_queryset().filter(stripe_price_lookup_key=requested_slug)
             product = db_qs.first()
             logger.debug('DB lookup for stripe_price_lookup_key=%s returned %s', requested_slug, bool(product))
 
@@ -528,15 +304,15 @@ class SspProductViewSet(viewsets.ReadOnlyModelViewSet):
             # If no product was resolved via Stripe lookups, raise NotFound.
             if not product:
                 raise exceptions.NotFound() from None
+
         pricing_by_lookup_key = {}
         if self._include_pricing():
-            pricing_by_lookup_key = self._get_pricing_by_lookup_key(
-                [product.stripe_price_lookup_key],
-                slug_by_lookup_key={product.stripe_price_lookup_key: product.slug},
-            )
+            try:
+                pricing_by_lookup_key = get_all_stripe_prices()
+            except StripePricingError:
+                pricing_by_lookup_key = {}
 
-        payload = self._serialize_product(product, pricing_by_lookup_key)
-        serializer = self.get_serializer(payload)
+        serializer = self.get_serializer(product, context={"pricing": pricing_by_lookup_key, 'request': request})
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
