@@ -15,7 +15,7 @@ from enterprise_access.apps.customer_billing.models import (
     CheckoutIntent,
     FailedCheckoutIntentConflict,
     SlugReservationConflict,
-    StripeEventSummary,
+    StripeEventSummary
 )
 
 

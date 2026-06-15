@@ -682,7 +682,6 @@ class CustomerBillingSspProductsTests(APITest):
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_all_stripe_prices')
-    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.stripe.Price.list')
     @mock.patch('enterprise_access.apps.customer_billing.models.get_cached_academy_data')
     def test_retrieve_teams_slug_returns_404(
         self,
