@@ -3,8 +3,6 @@ REST API views for the billing provider (Stripe) integration.
 """
 import logging
 import uuid
-from decimal import Decimal, InvalidOperation
-from urllib.parse import urljoin
 
 import stripe
 from django.conf import settings

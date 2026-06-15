@@ -16,7 +16,6 @@ from enterprise_access.apps.customer_billing.models import (
     FailedCheckoutIntentConflict,
     SlugReservationConflict,
     StripeEventSummary,
-    get_cached_academy_data
 )
 
 
@@ -692,7 +691,7 @@ class SspEssentialsProductResponseSerializer(serializers.Serializer):
         """Safely read an academy metadata field from the SspProduct."""
         try:
             return getattr(obj, field, None)
-        except Exception:
+        except Exception:   # pylint: disable=broad-exception-caught
             return None
 
     @staticmethod
@@ -736,6 +735,7 @@ class SspEssentialsProductResponseSerializer(serializers.Serializer):
         )
 
     def get_thumbnail_url(self, obj):
+        """Get and format the public thumbnail URL for the product."""
         raw = (
             self._academy_field(obj, 'academy_thumbnail_url') or
             self._price_data(obj).get('stripe_thumbnail_url')
@@ -743,6 +743,7 @@ class SspEssentialsProductResponseSerializer(serializers.Serializer):
         return self._build_public_thumbnail_url(raw)
 
     def get_price(self, obj):
+        """Get and format the product price as a string."""
         raw = self._price_data(obj).get('unit_amount_decimal')
         if raw is None:
             return None

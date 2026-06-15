@@ -687,7 +687,6 @@ class CustomerBillingSspProductsTests(APITest):
     def test_retrieve_teams_slug_returns_404(
         self,
         mock_get_cached_academy_data,
-        mock_price_list,
         mock_get_all_stripe_prices,
     ):
         """Teams products are excluded from this endpoint and should 404 by slug."""
@@ -921,6 +920,7 @@ class CustomerBillingSspProductsTests(APITest):
         # license count
         sub = FakeSubscription([{'quantity': 1}, {'quantity': 4}])
         assert BillingManagementViewSet._get_license_count(sub) == 5
+
 
 def test_normalize_invoice_status_and_yearly_amount_and_license_count(monkeypatch):
 
