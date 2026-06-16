@@ -452,4 +452,25 @@ def _serialize_basic_format(stripe_price: stripe.Price) -> SerializedPriceData:
             'metadata': product.metadata,
         }
 
+        # Prefer explicit metadata set on the Stripe Product (Terraform sets this).
+        ssp_slug = None
+        try:
+            ssp_slug = product.metadata.get('ssp_product_slug') if getattr(product, 'metadata', None) else None
+        except Exception:  # pragma: no cover - defensive
+            ssp_slug = None
+
+        # Fallback: try to resolve from our SspProduct model using lookup_key
+        if not ssp_slug:
+            lookup_key = getattr(stripe_price, 'lookup_key', None)
+            if lookup_key:
+                try:
+                    ssp = SspProduct.objects.filter(stripe_price_lookup_key=lookup_key).only('slug').first()
+                    if ssp:
+                        ssp_slug = ssp.slug
+                except Exception:  # pragma: no cover - defensive DB issues
+                    logger.exception('Error looking up SspProduct for lookup_key %s', lookup_key)
+
+        if ssp_slug:
+            base_data['ssp_product_slug'] = ssp_slug
+
     return base_data
