@@ -12,6 +12,7 @@ from rest_framework import status
 from rest_framework.request import Request
 from rest_framework.test import APIRequestFactory
 
+from enterprise_access.apps.api.serializers.customer_billing import SspEssentialsProductResponseSerializer
 from enterprise_access.apps.api.v1.views.customer_billing import BillingManagementViewSet, SspProductViewSet
 from enterprise_access.apps.core.constants import SYSTEM_ENTERPRISE_LEARNER_ROLE
 from enterprise_access.apps.customer_billing.models import SspProduct
@@ -480,6 +481,30 @@ class CustomerBillingSspProductsTests(APITest):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['lookup_key'], self.essentials_product.stripe_price_lookup_key)
         self.assertEqual(response.data['price'], '149.00')
+
+    @override_settings(SSP_ESSENTIALS_THUMBNAIL_S3_BASE_URL=None)
+    def test_build_public_thumbnail_url_no_base_setting(self):
+        """Test relative thumbnail path returns as-is when base URL setting is missing."""
+
+        serializer = SspEssentialsProductResponseSerializer()
+        relative_path = "academies/ai/thumbnail.png"
+        result = serializer._build_public_thumbnail_url(relative_path)
+        self.assertEqual(result, relative_path)
+
+    def test_get_price_handles_malformed_decimal_exception(self):
+        """Test get_price handles formatting exceptions gracefully by returning None."""
+
+        class FakeProduct:
+            """Fake product wrapper for pricing structure validation."""
+
+        product = FakeProduct()
+        serializer = SspEssentialsProductResponseSerializer()
+
+        with mock.patch.object(serializer, '_price_data', return_value={'unit_amount_decimal': 'garbage_string'}):
+            self.assertIsNone(serializer.get_price(product))
+
+        with mock.patch.object(serializer, '_price_data', return_value={'unit_amount_decimal': {'invalid': 'type'}}):
+            self.assertIsNone(serializer.get_price(product))
 
     @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.stripe.Price.list')
     @mock.patch('enterprise_access.apps.customer_billing.models.get_cached_academy_data')
