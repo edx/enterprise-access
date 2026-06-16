@@ -261,8 +261,11 @@ def get_ssp_product_pricing() -> Dict[str, Dict]:
     Raises:
         StripePricingError: If lookup_key doesn't match any active Stripe price
     """
-    # Fetch all Stripe prices by lookup_key
+    # Fetch all Stripe prices by lookup_key. If none are available, return empty mapping.
     all_stripe_prices = get_all_stripe_prices()
+    if not all_stripe_prices:
+        logger.warning('No active Stripe prices available; returning empty SSP pricing')
+        return {}
 
     ssp_pricing = {}
     active_products = list(SspProduct.objects.filter(is_active=True))
@@ -287,17 +290,16 @@ def get_ssp_product_pricing() -> Dict[str, Dict]:
 
     for product_slug, lookup_key, quantity_range in product_configs:
         if not lookup_key:
-            logger.error(f'SSP product {product_slug} missing lookup_key')
-            raise StripePricingError(f'SSP product {product_slug} missing lookup_key')
+            logger.warning(f'Skipping SSP product {product_slug} missing lookup_key')
+            # skip products without a configured lookup_key rather than failing all pricing
+            continue
 
         if lookup_key not in all_stripe_prices:
-            logger.error(
-                f'lookup_key {lookup_key} for SSP product {product_slug} '
-                'not found in active Stripe prices'
+            logger.warning(
+                f'lookup_key {lookup_key} for SSP product {product_slug} not found in active Stripe prices; skipping'
             )
-            raise StripePricingError(
-                f'lookup_key {lookup_key} for SSP product {product_slug} not found in active Stripe prices'
-            )
+            # skip products that don't have a matching active Stripe price
+            continue
 
         price_data = all_stripe_prices[lookup_key].copy()
         if quantity_range:
