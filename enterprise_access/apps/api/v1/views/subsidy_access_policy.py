@@ -747,7 +747,7 @@ class SubsidyAccessPolicyRedeemViewset(UserDetailsFromJwtMixin, PermissionRequir
         url_path='enterprise-customer/(?P<enterprise_customer_uuid>[^/.]+)/can-redeem',
         pagination_class=None,
     )
-    def can_redeem(self, request, enterprise_customer_uuid):
+    def can_redeem(self, request, enterprise_customer_uuid):  # pylint: disable=too-many-statements
         """
         Within a specified enterprise customer, retrieves a single, redeemable access policy (or null)
         for each ``content_key`` in a provided list of content keys.
