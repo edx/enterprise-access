@@ -85,11 +85,11 @@ class CustomerBillingSspProductsTests(APITest):
             lambda academy_uuid: academy_metadata if academy_uuid == self.essentials_product.academy_uuid else None
         )
         mock_get_all_stripe_prices.return_value = {
-            self.essentials_product.slug: {
+            self.essentials_product.stripe_price_lookup_key: {
                 'unit_amount_decimal': Decimal('149.00'),
                 'stripe_name': 'AI Essentials',
             },
-            self.teams_product.slug: {
+            self.teams_product.stripe_price_lookup_key: {
                 'unit_amount_decimal': Decimal('99.00'),
                 'stripe_name': 'Teams',
             },
@@ -131,7 +131,7 @@ class CustomerBillingSspProductsTests(APITest):
             'thumbnail_url': 'https://cdn.example.com/ai.png',
         }
         mock_get_all_stripe_prices.return_value = {
-            self.essentials_product.slug: {'unit_amount_decimal': Decimal('149.00')}
+            self.essentials_product.stripe_price_lookup_key: {'unit_amount_decimal': Decimal('149.00')}
         }
 
         response = self.client.get(self.list_url)
@@ -155,7 +155,7 @@ class CustomerBillingSspProductsTests(APITest):
             'thumbnail_url': 'https://cdn.example.com/ai.png',
         }
         mock_get_all_stripe_prices.return_value = {
-            self.essentials_product.slug: {'unit_amount_decimal': Decimal('149.00')}
+            self.essentials_product.stripe_price_lookup_key: {'unit_amount_decimal': Decimal('149.00')}
         }
 
         response = self.client.get(self.list_url)
@@ -243,7 +243,7 @@ class CustomerBillingSspProductsTests(APITest):
         """When academy metadata is unavailable, fallback fields come from Stripe Product."""
         mock_get_cached_academy_data.return_value = None
         mock_get_all_stripe_prices.return_value = {
-            self.essentials_product.slug: {
+            self.essentials_product.stripe_price_lookup_key: {
                 'unit_amount_decimal': Decimal('149.00'),
                 'stripe_name': 'AI Essentials',
                 'stripe_description': 'Learn core AI skills',
@@ -290,7 +290,7 @@ class CustomerBillingSspProductsTests(APITest):
             )
 
         mock_get_all_stripe_prices.return_value = {
-            p.slug: {'unit_amount_decimal': Decimal('100.00')}
+            p.stripe_price_lookup_key: {'unit_amount_decimal': Decimal('100.00')}
             for p in SspProduct.objects.all()
         }
 
@@ -423,7 +423,7 @@ class CustomerBillingSspProductsTests(APITest):
         )
         # Supply mock data for master dictionary
         mock_get_all_stripe_prices.return_value = {
-            self.essentials_product.slug: {
+            self.essentials_product.stripe_price_lookup_key: {
                 'unit_amount_decimal': Decimal('149.00'),
                 'stripe_name': 'AI Essentials',
             }
@@ -461,7 +461,7 @@ class CustomerBillingSspProductsTests(APITest):
             data=[self._mock_price(self.essentials_product.stripe_price_lookup_key, 14900)],
         )
         mock_get_all_stripe_prices.return_value = {
-            self.essentials_product.slug: {
+            self.essentials_product.stripe_price_lookup_key: {
                 'unit_amount_decimal': Decimal('149.00'),
                 'stripe_name': 'AI Essentials',
             }

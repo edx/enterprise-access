@@ -456,7 +456,7 @@ def _serialize_basic_format(stripe_price: stripe.Price) -> SerializedPriceData:
         ssp_slug = None
         try:
             ssp_slug = product.metadata.get('ssp_product_slug') if getattr(product, 'metadata', None) else None
-        except Exception:  # pragma: no cover - defensive
+        except Exception:  # pylint: disable=broad-exception-caught
             ssp_slug = None
 
         # Fallback: try to resolve from our SspProduct model using lookup_key
@@ -467,7 +467,7 @@ def _serialize_basic_format(stripe_price: stripe.Price) -> SerializedPriceData:
                     ssp = SspProduct.objects.filter(stripe_price_lookup_key=lookup_key).only('slug').first()
                     if ssp:
                         ssp_slug = ssp.slug
-                except Exception:  # pragma: no cover - defensive DB issues
+                except Exception:  # pylint: disable=broad-exception-caught
                     logger.exception('Error looking up SspProduct for lookup_key %s', lookup_key)
 
         if ssp_slug:

@@ -170,6 +170,7 @@ class TestCheckoutContextHandler(APITest):
                 'currency': 'usd',
                 'unit_amount': 10000,
                 'unit_amount_decimal': Decimal('100.00'),
+                'ssp_product_slug': 'valid_product',
                 'lookup_key': 'valid_key',
             },
             'other_valid_product': {
@@ -181,6 +182,7 @@ class TestCheckoutContextHandler(APITest):
                 'currency': 'usd',
                 'unit_amount': 20000,
                 'unit_amount_decimal': Decimal('200.00'),
+                'ssp_product_slug': 'other_valid_product',
                 'lookup_key': 'other_key',
             },
         }
@@ -193,6 +195,9 @@ class TestCheckoutContextHandler(APITest):
         self.assertIn('default_by_lookup_key', pricing)
         self.assertIn('prices', pricing)
         self.assertEqual(len(pricing['prices']), 2)
+        # Ensure slug is propagated into price objects
+        slugs = {p.get('ssp_product_slug') for p in pricing['prices']}
+        self.assertEqual(slugs, {'valid_product', 'other_valid_product'})
 
     def test_get_field_constraints_default_values(self):
         """
