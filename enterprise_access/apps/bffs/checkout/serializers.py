@@ -28,6 +28,7 @@ class PriceSerializer(serializers.Serializer):
     Serializer for Stripe price objects in checkout context.
     """
     id = serializers.CharField(help_text="Stripe Price ID")
+    stripe_price_id = serializers.CharField(required=False, help_text="Stripe Price ID")
     product = serializers.CharField(help_text="Stripe Product ID")
     lookup_key = serializers.CharField(help_text="Lookup key for this price")
     recurring = serializers.DictField(

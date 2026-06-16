@@ -170,6 +170,7 @@ class CheckoutContextHandler(CheckoutIntentAwareHandlerMixin, BaseHandler):
             for _, price_data in pricing_data.items():
                 prices.append({
                     'id': price_data.get('id'),
+                    'stripe_price_id': price_data.get('stripe_price_id') or price_data.get('id'),
                     'product': price_data.get('product', {}).get('id'),
                     'lookup_key': price_data.get('lookup_key'),
                     'recurring': price_data.get('recurring', {}),

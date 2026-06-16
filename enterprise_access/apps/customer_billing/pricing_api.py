@@ -265,35 +265,49 @@ def get_ssp_product_pricing() -> Dict[str, Dict]:
     all_stripe_prices = get_all_stripe_prices()
 
     ssp_pricing = {}
-    for ssp_product in SspProduct.objects.filter(is_active=True):
-        lookup_key = ssp_product.stripe_price_lookup_key
+    active_products = list(SspProduct.objects.filter(is_active=True))
+    if active_products:
+        product_configs = [
+            (
+                ssp_product.slug,
+                ssp_product.stripe_price_lookup_key,
+                None,
+            )
+            for ssp_product in active_products
+        ]
+    else:
+        product_configs = [
+            (
+                product_slug,
+                product_config.get('lookup_key'),
+                product_config.get('quantity_range'),
+            )
+            for product_slug, product_config in settings.SSP_PRODUCTS.items()
+        ]
+
+    for product_slug, lookup_key, quantity_range in product_configs:
         if not lookup_key:
-            logger.error(f'SSP product {ssp_product.slug} missing lookup_key')
-            raise StripePricingError(f'SSP product {ssp_product.slug} missing lookup_key')
+            logger.error(f'SSP product {product_slug} missing lookup_key')
+            raise StripePricingError(f'SSP product {product_slug} missing lookup_key')
 
         if lookup_key not in all_stripe_prices:
             logger.error(
-                f'lookup_key {lookup_key} for SSP product {ssp_product.slug} '
+                f'lookup_key {lookup_key} for SSP product {product_slug} '
                 'not found in active Stripe prices'
             )
             raise StripePricingError(
-                f'lookup_key {lookup_key} for SSP product {ssp_product.slug} not found in active Stripe prices'
+                f'lookup_key {lookup_key} for SSP product {product_slug} not found in active Stripe prices'
             )
 
         price_data = all_stripe_prices[lookup_key].copy()
-        # Add SSP-specific metadata
-        price_data['ssp_product_slug'] = ssp_product.slug
-        price_data['ssp_product_key'] = ssp_product.slug
-
-        quantity_range = None
-        for product_config in settings.SSP_PRODUCTS.values():
-            if product_config.get('lookup_key') == lookup_key:
-                quantity_range = product_config.get('quantity_range')
-                break
         if quantity_range:
             price_data['quantity_range'] = quantity_range
 
-        ssp_pricing[ssp_product.slug] = price_data
+        price_data['ssp_product_slug'] = product_slug
+        price_data['ssp_product_key'] = product_slug
+        price_data['stripe_price_id'] = price_data.get('id')
+
+        ssp_pricing[product_slug] = price_data
 
     return ssp_pricing
 
