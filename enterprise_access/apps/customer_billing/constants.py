@@ -47,7 +47,11 @@ CHECKOUT_SESSION_ERROR_CODES = {
     },
     'quantity': {
         'INVALID_FORMAT': ('invalid_format', 'Must be a positive integer.'),
-        'RANGE_EXCEEDED': ('range_exceeded', 'Exceeded allowed range for given stripe_price_id.'),
+        'RANGE_EXCEEDED': ('range_exceeded', 'Exceeded allowed range for given ssp_product_slug.'),
+    },
+    'ssp_product_slug': {
+        'INVALID_FORMAT': ('invalid_format', 'Must be a non-empty string.'),
+        'DOES_NOT_EXIST': ('does_not_exist', 'This ssp_product_slug has not been configured.'),
     },
     'stripe_price_id': {
         'INVALID_FORMAT': ('invalid_format', 'Must be a non-empty string.'),

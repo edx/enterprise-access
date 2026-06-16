@@ -407,7 +407,7 @@ class TestCheckoutValidationHandler(APITest):
             'company_name': 'Test Company',
             'enterprise_slug': 'test-slug',
             'quantity': 10,
-            'stripe_price_id': 'price_123'
+            'ssp_product_slug': 'quarterly_license_plan'
         }
 
         # Create and process handler
@@ -422,7 +422,7 @@ class TestCheckoutValidationHandler(APITest):
             company_name='Test Company',
             enterprise_slug='test-slug',
             quantity=10,
-            stripe_price_id='price_123'
+            ssp_product_slug='quarterly_license_plan'
         )
 
         # Check context was updated
@@ -445,7 +445,7 @@ class TestCheckoutValidationHandler(APITest):
             'company_name': 'Test Company',
             'enterprise_slug': 'test-slug',  # This should be excluded for unauthenticated users
             'quantity': 10,
-            'stripe_price_id': 'price_123'
+            'ssp_product_slug': 'quarterly_license_plan'
         }
 
         # Create and process handler
@@ -459,7 +459,7 @@ class TestCheckoutValidationHandler(APITest):
             full_name='Test User',
             company_name='Test Company',
             quantity=10,
-            stripe_price_id='price_123'
+            ssp_product_slug='quarterly_license_plan'
         )
 
         # Check context was updated with authentication_required error for enterprise_slug

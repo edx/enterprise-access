@@ -3906,7 +3906,7 @@ class CreateCheckoutSessionViewTests(APITest):
                 'enterprise_slug': 'test-slug',
                 'company_name': 'Test Co',
                 'quantity': 5,
-                'stripe_price_id': 'price_abc123',
+                'ssp_product_slug': 'quarterly_license_plan',
             },
             format='json',
         )

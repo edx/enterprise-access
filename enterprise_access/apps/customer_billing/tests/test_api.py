@@ -110,7 +110,7 @@ class TestCreateFreeTrialCheckoutSession(TestCase):
             enterprise_slug='my-sluggy',
             company_name='My Cool Company',
             quantity=20,
-            stripe_price_id=QUARTERLY_PRICE_ID,
+            ssp_product_slug='quarterly_license_plan',
         )
 
         # Assert API response.
@@ -170,7 +170,7 @@ class TestCreateFreeTrialCheckoutSession(TestCase):
                 enterprise_slug='my-sluggy',
                 company_name='My Cool Company',
                 quantity=20,
-                stripe_price_id=QUARTERLY_PRICE_ID,
+                ssp_product_slug='quarterly_license_plan',
             )
             # Should get slug reserved error
             validation_errors = cm.exception.validation_errors_by_field
@@ -212,7 +212,7 @@ class TestCreateFreeTrialCheckoutSession(TestCase):
             enterprise_slug='new-sluggy',
             company_name='New Company',
             quantity=20,
-            stripe_price_id=QUARTERLY_PRICE_ID,
+            ssp_product_slug='quarterly_license_plan',
         )
 
         # Should succeed and replace the old intent
@@ -260,7 +260,7 @@ class TestCreateFreeTrialCheckoutSession(TestCase):
                 enterprise_slug='conflicting-slug',
                 company_name='doesnt matter',
                 quantity=20,
-                stripe_price_id=QUARTERLY_PRICE_ID,
+                ssp_product_slug='quarterly_license_plan',
             )
 
             # Should get slug reserved error
@@ -302,7 +302,7 @@ class TestCreateFreeTrialCheckoutSession(TestCase):
                 enterprise_slug='different-slug',
                 company_name='Conflicting company',
                 quantity=20,
-                stripe_price_id=QUARTERLY_PRICE_ID,
+                ssp_product_slug='quarterly_license_plan',
             )
 
             # Should get slug reserved error
@@ -351,7 +351,7 @@ class TestCreateFreeTrialCheckoutSession(TestCase):
             enterprise_slug='expired-slug',
             company_name='anything',
             quantity=20,
-            stripe_price_id=QUARTERLY_PRICE_ID,
+            ssp_product_slug='quarterly_license_plan',
         )
 
         # Should succeed
@@ -427,16 +427,16 @@ class TestCreateFreeTrialCheckoutSession(TestCase):
             'expected_validation_errors': {
                 'quantity': {
                     'error_code': 'range_exceeded',
-                    'developer_message': 'Exceeded allowed range for given stripe_price_id.',
+                    'developer_message': 'Exceeded allowed range for given ssp_product_slug.',
                 }
             }
         },
         {
-            'request_stripe_price_id': 'price_not-configured',
+            'request_ssp_product_slug': 'not-configured',
             'expected_validation_errors': {
-                'stripe_price_id': {
+                'ssp_product_slug': {
                     'error_code': 'does_not_exist',
-                    'developer_message': 'This stripe_price_id has not been configured.',
+                    'developer_message': 'This ssp_product_slug has not been configured.',
                 },
                 'quantity': {
                     'developer_message': 'Not enough parameters were given.',
@@ -462,7 +462,7 @@ class TestCreateFreeTrialCheckoutSession(TestCase):
         is_admin_for_existing_customer=False,
         request_enterprise_slug='my-sluggy',
         request_quantity=15,
-        request_stripe_price_id=QUARTERLY_PRICE_ID,
+        request_ssp_product_slug='quarterly_license_plan',
         expected_validation_errors=None,
     ):
         """
@@ -495,7 +495,7 @@ class TestCreateFreeTrialCheckoutSession(TestCase):
                 admin_email='test@example.com',
                 enterprise_slug=request_enterprise_slug,
                 quantity=request_quantity,
-                stripe_price_id=request_stripe_price_id,
+                ssp_product_slug=request_ssp_product_slug,
             )
 
         actual_validation_errors = cm.exception.validation_errors_by_field

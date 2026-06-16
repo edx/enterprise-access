@@ -29,6 +29,7 @@ import stripe
 from django.conf import settings
 from edx_django_utils.cache import TieredCache
 
+from enterprise_access.apps.customer_billing.models import SspProduct
 from enterprise_access.cache_utils import versioned_cache_key
 
 logger = logging.getLogger(__name__)
@@ -252,10 +253,10 @@ def get_all_stripe_prices(
 
 def get_ssp_product_pricing() -> Dict[str, Dict]:
     """
-    Get pricing data for all configured SSP products using lookup_key.
+    Get pricing data for all active SSP products using Stripe lookup_key.
 
     Returns:
-        Dict mapping SSP product keys to price data
+        Dict mapping SSP product slugs to price data
 
     Raises:
         StripePricingError: If lookup_key doesn't match any active Stripe price
@@ -264,23 +265,35 @@ def get_ssp_product_pricing() -> Dict[str, Dict]:
     all_stripe_prices = get_all_stripe_prices()
 
     ssp_pricing = {}
-    for product_key, product_config in settings.SSP_PRODUCTS.items():
-        lookup_key = product_config.get('lookup_key')
+    for ssp_product in SspProduct.objects.filter(is_active=True):
+        lookup_key = ssp_product.stripe_price_lookup_key
         if not lookup_key:
-            logger.error(f'SSP product {product_key} missing lookup_key')
-            raise StripePricingError(f'SSP product {product_key} missing lookup_key')
+            logger.error(f'SSP product {ssp_product.slug} missing lookup_key')
+            raise StripePricingError(f'SSP product {ssp_product.slug} missing lookup_key')
 
         if lookup_key not in all_stripe_prices:
-            logger.error(f'lookup_key {lookup_key} for SSP product {product_key} not found in active Stripe prices')
+            logger.error(
+                f'lookup_key {lookup_key} for SSP product {ssp_product.slug} '
+                'not found in active Stripe prices'
+            )
             raise StripePricingError(
-                f'lookup_key {lookup_key} for SSP product {product_key} not found in active Stripe prices'
+                f'lookup_key {lookup_key} for SSP product {ssp_product.slug} not found in active Stripe prices'
             )
 
         price_data = all_stripe_prices[lookup_key].copy()
         # Add SSP-specific metadata
-        price_data['ssp_product_key'] = product_key
-        price_data['quantity_range'] = product_config.get('quantity_range')
-        ssp_pricing[product_key] = price_data
+        price_data['ssp_product_slug'] = ssp_product.slug
+        price_data['ssp_product_key'] = ssp_product.slug
+
+        quantity_range = None
+        for product_config in settings.SSP_PRODUCTS.values():
+            if product_config.get('lookup_key') == lookup_key:
+                quantity_range = product_config.get('quantity_range')
+                break
+        if quantity_range:
+            price_data['quantity_range'] = quantity_range
+
+        ssp_pricing[ssp_product.slug] = price_data
 
     return ssp_pricing
 

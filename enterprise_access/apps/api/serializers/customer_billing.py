@@ -52,13 +52,13 @@ class CustomerBillingCreateCheckoutSessionRequestSerializer(serializers.Serializ
         required=True,
         min_value=1,
         help_text=(
-            'Unit depends on the Stripe Price object. '
+            'Unit depends on the SSP product. '
             'This could be count of subscription licenses, but could also be USD of Learner Credit.'
         )
     )
-    stripe_price_id = serializers.CharField(
+    ssp_product_slug = serializers.SlugField(
         required=True,
-        help_text='The ID of the Stripe Price object representing the plan selection.',
+        help_text='The slug of the SSP product representing the plan selection.',
     )
 
 
@@ -113,9 +113,9 @@ class CustomerBillingCreateCheckoutSessionValidationFailedResponseSerializer(ser
         required=False,
         help_text='Validation results for quantity if validation failed. Absent otherwise.',
     )
-    stripe_price_id = ErrorDetailSerializer(
+    ssp_product_slug = ErrorDetailSerializer(
         required=False,
-        help_text='Validation results for stripe_price_id if validation failed. Absent otherwise.',
+        help_text='Validation results for ssp_product_slug if validation failed. Absent otherwise.',
     )
     company_name = ErrorDetailSerializer(
         required=False,
@@ -685,7 +685,7 @@ class SspEssentialsProductResponseSerializer(serializers.Serializer):
 
     def _price_data(self, obj):
         """Return the cached Stripe price dict for this product (or {})."""
-        return self.context.get('pricing', {}).get(obj.stripe_price_lookup_key) or {}
+        return self.context.get('pricing', {}).get(obj.slug) or {}
 
     def _academy_field(self, obj, field):
         """Safely read an academy metadata field from the SspProduct."""

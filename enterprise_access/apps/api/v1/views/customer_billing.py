@@ -109,21 +109,21 @@ class SspProductViewSet(viewsets.ReadOnlyModelViewSet):
     )
     def list(self, request, *args, **kwargs):
         products = list(self.get_queryset())
-        pricing_by_lookup_key = {}
+        pricing_by_slug = {}
         if self._include_pricing():
             try:
                 all_prices = get_all_stripe_prices()
-                pricing_by_lookup_key = {
-                    p.stripe_price_lookup_key: all_prices.get(p.stripe_price_lookup_key)
+                pricing_by_slug = {
+                    p.slug: all_prices.get(p.stripe_price_lookup_key)
                     for p in products
                 }
             except StripePricingError:
-                pricing_by_lookup_key = {}
+                pricing_by_slug = {}
 
         serializer = self.get_serializer(
             products,
             many=True,
-            context={"pricing": pricing_by_lookup_key, 'request': request},
+            context={"pricing": pricing_by_slug, 'request': request},
         )
         return Response(serializer.data, status=status.HTTP_200_OK)
 
@@ -303,14 +303,17 @@ class SspProductViewSet(viewsets.ReadOnlyModelViewSet):
             if not product:
                 raise exceptions.NotFound() from None
 
-        pricing_by_lookup_key = {}
+        pricing_by_slug = {}
         if self._include_pricing():
             try:
-                pricing_by_lookup_key = get_all_stripe_prices()
+                all_prices = get_all_stripe_prices()
+                pricing_by_slug = {
+                    product.slug: all_prices.get(product.stripe_price_lookup_key)
+                }
             except StripePricingError:
-                pricing_by_lookup_key = {}
+                pricing_by_slug = {}
 
-        serializer = self.get_serializer(product, context={"pricing": pricing_by_lookup_key, 'request': request})
+        serializer = self.get_serializer(product, context={"pricing": pricing_by_slug, 'request': request})
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
@@ -461,7 +464,7 @@ class CustomerBillingViewSet(viewsets.ViewSet):
             'Handling request to create free trial plan. '
             f'enterprise_slug="{validated_data["enterprise_slug"]}" '
             f'quantity="{validated_data["quantity"]}" '
-            f'stripe_price_id="{validated_data["stripe_price_id"]}"'
+            f'ssp_product_slug="{validated_data["ssp_product_slug"]}"'
         )
         try:
             session = create_free_trial_checkout_session(

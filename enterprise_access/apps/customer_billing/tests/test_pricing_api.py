@@ -10,6 +10,7 @@ from edx_django_utils.cache import TieredCache
 from stripe import InvalidRequestError
 
 from enterprise_access.apps.customer_billing import pricing_api
+from enterprise_access.apps.customer_billing.models import SspProduct
 
 MOCK_SSP_PRODUCTS = {
     'quarterly_license_plan': {
@@ -37,6 +38,24 @@ class TestStripePricingAPI(TestCase):
     def setUp(self):
         # Clear cache before each test
         TieredCache.dangerous_clear_all_tiers()
+        SspProduct.objects.create(
+            slug='quarterly_license_plan',
+            stripe_price_lookup_key=MOCK_SSP_PRODUCTS['quarterly_license_plan']['lookup_key'],
+            academy_uuid=None,
+            catalog_query_uuid='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+            license_manager_product_id_trial=2,
+            license_manager_product_id_paid=1,
+            is_active=True,
+        )
+        SspProduct.objects.create(
+            slug='yearly_license_plan',
+            stripe_price_lookup_key=MOCK_SSP_PRODUCTS['yearly_license_plan']['lookup_key'],
+            academy_uuid=None,
+            catalog_query_uuid='bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+            license_manager_product_id_trial=2,
+            license_manager_product_id_paid=1,
+            is_active=True,
+        )
 
     def tearDown(self):
         # Clear cache after each test
