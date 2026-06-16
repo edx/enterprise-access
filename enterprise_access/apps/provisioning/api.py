@@ -6,7 +6,7 @@ from operator import itemgetter
 
 from rest_framework import status
 
-from ..api_client.enterprise_catalog_client import EnterpriseCatalogApiClient
+from ..api_client.enterprise_catalog_client import EnterpriseCatalogApiV1Client
 from ..api_client.exceptions import APIClientException
 from ..api_client.license_manager_client import LicenseManagerApiClient
 from ..api_client.lms_client import LmsApiClient
@@ -140,7 +140,8 @@ def associate_academy_with_catalog(academy_uuid: str, enterprise_catalog_uuid: s
     """
     Associates an Academy with an EnterpriseCatalog in the enterprise-catalog service.
     """
-    client = EnterpriseCatalogApiClient()
+    # Use the v1 client to ensure we POST to the v1 academies associate endpoint
+    client = EnterpriseCatalogApiV1Client()
     result = client.associate_academy_with_catalog(
         academy_uuid=academy_uuid,
         enterprise_catalog_uuid=enterprise_catalog_uuid,

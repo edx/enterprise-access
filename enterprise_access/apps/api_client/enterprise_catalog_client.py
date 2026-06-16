@@ -40,7 +40,7 @@ class EnterpriseCatalogApiClient(BaseOAuthClient):
         return response.json()
 
     @backoff.on_exception(wait_gen=backoff.expo, exception=autoretry_for_exceptions)
-    def get_academies(self, academy_uuid: str = None):
+    def get_academies(self, academy_uuid: str = None, is_active: bool | None = None):
         """
         Fetch a list of academies, optionally filtered by academy_uuid.
 
@@ -48,20 +48,77 @@ class EnterpriseCatalogApiClient(BaseOAuthClient):
         link, subsequent pages will be fetched and merged into a single
         results list.
         """
-        params = {'academy_uuid': academy_uuid} if academy_uuid else None
+        # Defensive: if no endpoint configured, return empty paginated shape
+        if not self.academies_endpoint:
+            return {'count': 0, 'next': None, 'previous': None, 'results': []}
+
+        params = {}
+        if academy_uuid:
+            params['academy_uuid'] = academy_uuid
+        if is_active is not None:
+            params['is_active'] = bool(is_active)
+        if not params:
+            params = None
         response = self.client.get(self.academies_endpoint, params=params)
         response.raise_for_status()
-        data = response.json()
+        raw_payload = response.json()
 
-        # Merge paginated results if necessary
+        def normalize_page(payload):
+            """Normalize a response payload into a paginated dict.
+
+            Behavior is intentionally conservative to match historical expectations:
+            - If the service returned a non-dict (e.g. a list), return it unchanged.
+            - If the service returned a dict without a list-valued `results`, treat
+              `results` as empty (do not coerce non-list into a single-item list).
+            - Preserve the incoming `count` value when present; only fall back to
+              computed lengths when absent.
+            """
+            if payload is None:
+                return {'count': 0, 'results': [], 'next': None, 'previous': None}
+            # If upstream returned a raw list, preserve that shape
+            if isinstance(payload, list):
+                return payload
+            if isinstance(payload, dict):
+                results = payload.get('results')
+                # If results is missing or not a list, treat as empty list
+                if not isinstance(results, list):
+                    results = []
+                return {
+                    'count': payload.get('count', len(results)),
+                    'results': results,
+                    'next': payload.get('next'),
+                    'previous': payload.get('previous'),
+                }
+            # Fallback: for unexpected types, wrap as single-item paginated dict
+            return {'count': 1, 'results': [payload], 'next': None, 'previous': None}
+
+        # If upstream returned a raw list, preserve that shape
+        if isinstance(raw_payload, list):
+            return raw_payload
+
+        data = normalize_page(raw_payload)
+
+        # Merge paginated results if necessary; be defensive about types
+
         next_url = data.get('next')
         while next_url:
             next_resp = self.client.get(next_url)
             next_resp.raise_for_status()
-            next_data = next_resp.json()
-            data['results'].extend(next_data.get('results', []))
+            next_payload = next_resp.json()
+            next_data = normalize_page(next_payload)
+            # Only extend if both are lists
+            if isinstance(data.get('results'), list) and isinstance(next_data.get('results'), list):
+                data['results'].extend(next_data.get('results', []))
+            # update pagination markers
             data['next'] = next_data.get('next')
-            next_url = data['next']
+            data['previous'] = data.get('previous') or next_data.get('previous')
+            # Preserve original count value when present; otherwise recompute
+            if data.get('count') is None:
+                try:
+                    data['count'] = int(next_data.get('count', 0)) + int(len(data.get('results', [])))
+                except (ValueError, TypeError):
+                    data['count'] = len(data.get('results', []))
+            next_url = data.get('next')
 
         return data
 
