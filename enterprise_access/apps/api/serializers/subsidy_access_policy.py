@@ -725,7 +725,7 @@ class SubsidyAccessPolicyCanRedeemElementResponseSerializer(serializers.Serializ
     Response serializer representing a single element of the response list for the can_redeem endpoint.
     """
     content_key = ContentKeyField(help_text="Requested content_key to which the rest of this element pertains.")
-    list_price = ListPriceResponseSerializer(help_text="List price for content.")
+    list_price = ListPriceResponseSerializer(help_text="List price for content.", allow_null=True)
     redemptions = serializers.ListField(
         # TODO: figure out a way to import TransactionSerializer from enterprise-subsidy.  Until then, the output docs
         # will not describe the redemption fields.
