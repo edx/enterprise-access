@@ -257,11 +257,11 @@ class AssociateAcademyStepAdmin(DjangoQLSearchMixin, ProvisionWorkflowStepAdminB
     readonly_fields = ProvisionWorkflowStepAdminBase.readonly_fields + ('preceding_step_link',)
 
     @admin.display(
-        description='Preceding catalog creation step'
+        description='Preceding step'
     )
     def preceding_step_link(self, obj):
         """
-        Returns a link to the preceding catalog step for this academy association step.
+        Returns a link to the preceding workflow step for this academy association step.
         """
         step_record = obj.get_preceding_step_record()
         if not step_record:
@@ -281,11 +281,11 @@ class GetCreateCustomerAgreementStepAdmin(DjangoQLSearchMixin, ProvisionWorkflow
     readonly_fields = ProvisionWorkflowStepAdminBase.readonly_fields + ('preceding_step_link',)
 
     @admin.display(
-        description='Preceding academy association step'
+        description='Preceding step'
     )
     def preceding_step_link(self, obj):
         """
-        Returns a link to the preceding academy association step for this customer agreement step.
+        Returns a link to the preceding workflow step (academy association or catalog) for this customer agreement step.
         """
         step_record = obj.get_preceding_step_record()
         if not step_record:

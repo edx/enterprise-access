@@ -40,12 +40,12 @@ class EnterpriseCatalogApiClient(BaseOAuthClient):
         return response.json()
 
     @backoff.on_exception(wait_gen=backoff.expo, exception=autoretry_for_exceptions)
-    def get_academies(self, academy_uuid: str = None, is_active: bool | None = None):
+    def get_academies(self, academy_uuid: str = None, is_active: bool | None = None) -> dict | list:
         """
         Fetch a list of academies, optionally filtered by academy_uuid.
 
-        Returns a paginated-style dict. If the response contains a `next`
-        link, subsequent pages will be fetched and merged into a single
+        Returns a paginated-style dict or a raw list depending on the upstream service.
+        If the response contains a `next` link, subsequent pages will be fetched and merged into a single
         results list.
         """
         # Defensive: if no endpoint configured, return empty paginated shape
@@ -77,26 +77,36 @@ class EnterpriseCatalogApiClient(BaseOAuthClient):
                 return {'count': 0, 'results': [], 'next': None, 'previous': None}
             # If upstream returned a raw list, preserve that shape
             if isinstance(payload, list):
-                return payload
+                return payload, False
             if isinstance(payload, dict):
                 results = payload.get('results')
                 # If results is missing or not a list, treat as empty list
                 if not isinstance(results, list):
                     results = []
-                return {
-                    'count': payload.get('count', len(results)),
+                raw_count = payload.get('count', None)
+                # Try to coerce incoming count to an int; if that fails, treat
+                # it as absent so we fall back to the computed length.
+                try:
+                    count = int(raw_count) if raw_count is not None else None
+                except (ValueError, TypeError):
+                    count = None
+                explicit_count = count is not None
+                if count is None:
+                    count = len(results)
+                return ({
+                    'count': count,
                     'results': results,
                     'next': payload.get('next'),
                     'previous': payload.get('previous'),
-                }
+                }, explicit_count)
             # Fallback: for unexpected types, wrap as single-item paginated dict
-            return {'count': 1, 'results': [payload], 'next': None, 'previous': None}
+            return ({'count': 1, 'results': [payload], 'next': None, 'previous': None}, False)
 
         # If upstream returned a raw list, preserve that shape
         if isinstance(raw_payload, list):
             return raw_payload
 
-        data = normalize_page(raw_payload)
+        data, explicit = normalize_page(raw_payload)
 
         # Merge paginated results if necessary; be defensive about types
 
@@ -105,21 +115,20 @@ class EnterpriseCatalogApiClient(BaseOAuthClient):
             next_resp = self.client.get(next_url)
             next_resp.raise_for_status()
             next_payload = next_resp.json()
-            next_data = normalize_page(next_payload)
+            next_data, next_explicit = normalize_page(next_payload)
             # Only extend if both are lists
             if isinstance(data.get('results'), list) and isinstance(next_data.get('results'), list):
                 data['results'].extend(next_data.get('results', []))
             # update pagination markers
             data['next'] = next_data.get('next')
             data['previous'] = data.get('previous') or next_data.get('previous')
-            # Preserve original count value when present; otherwise recompute
-            if data.get('count') is None:
-                try:
-                    data['count'] = int(next_data.get('count', 0)) + int(len(data.get('results', [])))
-                except (ValueError, TypeError):
-                    data['count'] = len(data.get('results', []))
+            # If the upstream provided an explicit numeric count, preserve it.
+            # Otherwise recompute the total as the length of the merged results.
+            # If either page did not provide an explicit numeric count, recompute
+            explicit = explicit and next_explicit
+            if not explicit:
+                data['count'] = len(data.get('results', []))
             next_url = data.get('next')
-
         return data
 
     @backoff.on_exception(wait_gen=backoff.expo, exception=autoretry_for_exceptions)
@@ -216,12 +225,12 @@ class EnterpriseCatalogApiClient(BaseOAuthClient):
         return response.json()['count']
 
     @backoff.on_exception(wait_gen=backoff.expo, exception=autoretry_for_exceptions)
-    def get_catalogs(self, enterprise_customer_uuid: str = None):
+    def get_catalogs(self, enterprise_customer_uuid: str = None) -> dict | list:
         """
         Fetch a list of enterprise catalogs, optionally filtered by enterprise_customer_uuid.
 
-        Returns a paginated-style dict. If the response contains a `next`
-        link, subsequent pages will be fetched and merged into a single
+        Returns a paginated-style dict or a raw list depending on the upstream service.
+        If the response contains a `next` link, subsequent pages will be fetched and merged into a single
         results list.
         """
         params = {'enterprise_customer': enterprise_customer_uuid} if enterprise_customer_uuid else None

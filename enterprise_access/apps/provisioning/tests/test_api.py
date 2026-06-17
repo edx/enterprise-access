@@ -80,7 +80,11 @@ class TestGetCreateCatalog(TestCase):
 
 class TestAssociateAcademyWithCatalog(TestCase):
     """
-    Tests for the ``associate_academy_with_catalog()`` function.
+    Tests for provisioning API helpers related to enterprise-catalog and catalog creation.
+
+    This class includes tests for `associate_academy_with_catalog()` as well as
+    related catalog fetch/create error propagation scenarios exercised by
+    `get_or_create_enterprise_catalog()`.
     """
 
     @mock.patch.object(provisioning_api, 'EnterpriseCatalogApiV1Client', autospec=True)
