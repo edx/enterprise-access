@@ -707,6 +707,31 @@ class TestEnterpriseCatalogUserV1ApiClient(TestCase):
         # Assert the response is as expected
         self.assertEqual(result, expected_result)
 
+    @mock.patch('requests.Session.send')
+    @mock.patch('crum.get_current_request')
+    def test_secured_algolia_api_key_raises_on_http_error(self, mock_crum_get_current_request, mock_send):
+        """Ensure HTTP errors from the backend are propagated."""
+        expected_url = (
+            f'http://enterprise-catalog.example.com/api/v1'
+            f'/enterprise-customer/{self.mock_enterprise_customer_uuid}/secured-algolia-api-key/'
+        )
+        request = self.factory.get(expected_url)
+        request.headers = {
+            "Authorization": 'test-auth',
+            self.request_id_key: 'test-request-id'
+        }
+        request.user = self.user
+        mock_crum_get_current_request.return_value = request
+
+        mock_response = mock.Mock()
+        mock_response.status_code = 400
+        mock_response.raise_for_status.side_effect = HTTPError('bad')
+        mock_send.return_value = mock_response
+
+        client = EnterpriseCatalogUserV1ApiClient(request)
+        with self.assertRaises(HTTPError):
+            client.get_secured_algolia_api_key(enterprise_customer_uuid=self.mock_enterprise_customer_uuid)
+
 
 class TestEnterpriseCatalogApiClientGetAcademy(TestCase):
     """Tests for EnterpriseCatalogApiClient.get_academy()."""

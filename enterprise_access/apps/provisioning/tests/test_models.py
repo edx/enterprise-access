@@ -20,6 +20,7 @@ from enterprise_access.apps.customer_billing.tests.factories import (
     StripeEventDataFactory,
     StripeEventSummaryFactory
 )
+from enterprise_access.apps.provisioning import models as prov_models
 from enterprise_access.apps.provisioning.models import (
     AssociateAcademyStep,
     GetCreateCatalogStep,
@@ -463,3 +464,48 @@ class TestNotificationStep(TestCase):
         self.assertEqual(delay_args[4], 'Test Customer')
         self.assertEqual(delay_args[5], 'test-customer')
         self.assertEqual(delay_kwargs, {})
+
+
+class TestCheckoutIntentStepMixinUnit(TestCase):
+    """Unit tests for CheckoutIntentStepMixin helper behavior."""
+
+    @mock.patch('enterprise_access.apps.provisioning.models.CheckoutIntent')
+    def test_get_fulfillable_checkout_intent_via_slug_not_found_raises(self, mock_checkout_intent):
+        mock_checkout_intent.filter_by_name_and_slug.return_value.filter.return_value.first.return_value = None
+        mock_checkout_intent.DoesNotExist = Exception
+
+        class DummyStep(prov_models.CheckoutIntentStepMixin):
+            """Dummy step exposing workflow input for slug lookup."""
+
+            def get_workflow_record(self):
+                # workflow.input_object.create_customer_input.slug is read
+                wf = mock.Mock()
+                wf.input_object = mock.Mock()
+                wf.input_object.create_customer_input = mock.Mock(slug='acme')
+                return wf
+
+        step = DummyStep()
+        with self.assertRaises(Exception):
+            step.get_fulfillable_checkout_intent_via_slug()
+
+    @mock.patch('enterprise_access.apps.provisioning.models.CheckoutIntent')
+    def test_link_checkout_intent_sets_workflow_and_saves(self, mock_checkout_intent):
+        mock_ci = mock.Mock()
+        mock_checkout_intent.filter_by_name_and_slug.return_value.filter.return_value.first.return_value = mock_ci
+
+        class DummyStep(prov_models.CheckoutIntentStepMixin):
+            """Dummy step that provides a workflow record for linking."""
+
+            def __init__(self):
+                self._workflow = mock.Mock()
+
+            def get_workflow_record(self):
+                return self._workflow
+
+        step = DummyStep()
+        enterprise_uuid = uuid4()
+        step.link_checkout_intent(enterprise_uuid)
+        # Avoid accessing protected attribute directly; use public accessor
+        self.assertEqual(mock_ci.workflow, step.get_workflow_record())
+        self.assertEqual(mock_ci.enterprise_uuid, enterprise_uuid)
+        mock_ci.save.assert_called_once_with(update_fields=['workflow', 'enterprise_uuid'])
