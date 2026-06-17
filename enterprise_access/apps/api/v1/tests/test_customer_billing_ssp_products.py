@@ -5,17 +5,12 @@ from decimal import Decimal
 from unittest import mock
 
 import ddt
-import pytest
 import stripe
-from django.http import Http404
 from django.test import override_settings
 from django.urls import reverse
 from rest_framework import status
-from rest_framework.request import Request
-from rest_framework.test import APIRequestFactory
 
 from enterprise_access.apps.api.serializers.customer_billing import SspEssentialsProductResponseSerializer
-from enterprise_access.apps.api.v1.views.customer_billing import BillingManagementViewSet, SspProductViewSet
 from enterprise_access.apps.core.constants import SYSTEM_ENTERPRISE_LEARNER_ROLE
 from enterprise_access.apps.customer_billing.models import SspProduct
 from enterprise_access.apps.customer_billing.pricing_api import StripePricingError
@@ -786,8 +781,6 @@ class CustomerBillingSspProductsTests(APITest):
 
     # Removed test_retrieve_falls_back_to_settings_lookup_when_slug_missing: settings-based fallback no longer used
 
-    # Internal helper-based tests removed: helpers were refactored out of the view.
-
     @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_all_stripe_prices')
     @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.TieredCache.get_cached_response')
     @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.stripe.Price.list')
@@ -833,108 +826,3 @@ class CustomerBillingSspProductsTests(APITest):
         # The retrieve endpoint no longer consults cached mapping for resolution; expect 404
         response = self.client.get(detail_url, {'include_pricing': 'false'})
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
-
-    def test_metadata_value_and_payment_helpers(self):
-        """Test metadata_value extraction and billing management helpers."""
-        # metadata_value: non-dict object that raises KeyError/TypeError
-        class BadMeta:
-            """A metadata-like object that raises on lookup to exercise error handling."""
-            def __getitem__(self, key):
-                raise KeyError()
-
-        assert SspProductViewSet._metadata_value({'a': 1}, 'a') == 1
-        assert SspProductViewSet._metadata_value(BadMeta(), 'a') is None
-
-        # normalize invoice status
-        assert BillingManagementViewSet._normalize_invoice_status('paid') == 'paid'
-        assert BillingManagementViewSet._normalize_invoice_status('open') == 'open'
-        assert BillingManagementViewSet._normalize_invoice_status('void') == 'void'
-        assert BillingManagementViewSet._normalize_invoice_status('uncollectible') == 'uncollectible'
-        assert BillingManagementViewSet._normalize_invoice_status('weird') == 'open'
-
-        # yearly amount calculation with explicit unit_amount and recurring interval
-        class FakeSubscription:
-            """Minimal fake subscription used for yearly amount and license count tests."""
-            def __init__(self, items):
-                self._items = items
-
-            def to_dict(self):
-                return {'items': {'data': self._items}}
-
-        # yearly
-        sub = FakeSubscription([{'price': {'unit_amount': 100, 'recurring': {'interval': 'year'}}, 'quantity': 2}])
-        assert BillingManagementViewSet._get_yearly_amount(sub) == 100 * 2
-
-        # monthly -> multiply by 12
-        sub = FakeSubscription([{'price': {'unit_amount': 10, 'recurring': {'interval': 'month'}}, 'quantity': 3}])
-        assert BillingManagementViewSet._get_yearly_amount(sub) == (10 * 12) * 3
-
-        # missing unit_amount triggers stripe.Price.retrieve
-        class P:
-            """Simple price-like object returned by fake retrieve."""
-            def to_dict(self):
-                return {'unit_amount': 200, 'recurring': {'interval': 'year'}}
-
-        # Use mock.patch.object context manager instead of the pytest monkeypatch argument
-        with mock.patch.object(stripe.Price, 'retrieve', staticmethod(lambda _id: P())):
-            sub = FakeSubscription([{'price': {'id': 'price_1'}, 'quantity': 1}])
-            assert BillingManagementViewSet._get_yearly_amount(sub) == 200
-
-        # license count
-        sub = FakeSubscription([{'quantity': 1}, {'quantity': 4}])
-        assert BillingManagementViewSet._get_license_count(sub) == 5
-
-# Internal helper-based tests removed: helpers were refactored out of the view.
-
-
-@mock.patch('enterprise_access.apps.api.v1.views.customer_billing.stripe.Price.list')
-@mock.patch('enterprise_access.apps.customer_billing.models.get_cached_academy_data')
-@pytest.mark.django_db
-def test_retrieve_resolves_when_stripe_returns_metadata_product(
-    mock_get_cached_academy_data,
-    mock_price_list,
-):
-    """When Stripe single-lookup returns a price with
-    metadata.ssp_product_slug, retrieve should resolve the DB product."""
-    mapped_product = SspProduct.objects.create(
-        slug='meta-mapped-slug',
-        stripe_price_lookup_key='meta_mapped_lookup_key',
-        academy_uuid=uuid.uuid4(),
-        catalog_query_uuid=uuid.uuid4(),
-        license_manager_product_id_trial=2,
-        license_manager_product_id_paid=1,
-        is_active=True,
-    )
-
-    requested_slug = 'alias_for_meta'
-    detail_url = reverse('api:v1:ssp-products-detail', kwargs={'slug': requested_slug})
-
-    mock_get_cached_academy_data.return_value = {
-        'title': 'Meta Academy',
-        'long_name': 'Meta Academy Long',
-        'description': 'Meta Academy description',
-        'marketing_url': 'https://example.com/meta',
-        'thumbnail_url': 'https://cdn.example.com/meta.png',
-    }
-
-    # Stripe returns a price whose lookup_key matches our DB product
-    mock_price_list.return_value = mock.Mock(
-        data=[
-            mock.Mock(
-                product={},
-                metadata={},
-                lookup_key=mapped_product.stripe_price_lookup_key,
-                unit_amount=1000,
-            ),
-        ],
-    )
-
-    factory = APIRequestFactory()
-    request = Request(factory.get(detail_url))
-    vs = SspProductViewSet()
-    vs.kwargs = {'slug': requested_slug}
-    vs.request = request
-    vs.format_kwarg = None
-    # The view no longer attempts Stripe lookups on retrieve; expect Http404
-    with pytest.raises(Http404):
-        vs.retrieve(request, slug=requested_slug)

@@ -83,20 +83,6 @@ class SspProductViewSet(viewsets.ReadOnlyModelViewSet):
         include_pricing = self.request.query_params.get('include_pricing', 'true').strip().lower()
         return include_pricing not in {'false', '0', 'no'}
 
-    # Helper methods for pricing orchestration were removed; pricing is fetched
-    # via `pricing_api.get_all_stripe_prices()` and serialization is handled by
-    # the serializer.
-
-    @staticmethod
-    def _metadata_value(metadata, key):
-        """Safely read a metadata key from dict-like Stripe metadata payloads."""
-        if isinstance(metadata, dict):
-            return metadata.get(key)
-        try:
-            return metadata[key]
-        except (KeyError, TypeError):  # pragma: no cover - metadata type varies by Stripe SDK object wrappers
-            return None
-
     # pricing orchestration and serialization responsibilities have been moved
     # into `pricing_api.get_all_stripe_prices()` and the serializer respectively.
 
@@ -128,6 +114,7 @@ class SspProductViewSet(viewsets.ReadOnlyModelViewSet):
                     for p in products
                 }
             except StripePricingError:
+                logger.exception("Failed to fetch Stripe prices for SSP products.")
                 pricing_by_lookup_key = {}
 
         serializer = self.get_serializer(
@@ -140,16 +127,7 @@ class SspProductViewSet(viewsets.ReadOnlyModelViewSet):
     @extend_schema(
         tags=[CUSTOMER_BILLING_API_TAG],
         summary='Retrieve SSP product',
-        description='Public retrieve of one SSP product by slug and optional Stripe-backed pricing.',
-        parameters=[
-            OpenApiParameter(
-                name='include_pricing',
-                type=OpenApiTypes.BOOL,
-                location=OpenApiParameter.QUERY,
-                required=False,
-                description='Set false to skip Stripe pricing lookup and return metadata only.',
-            ),
-        ],
+        description='Public retrieve of one SSP product by slug. Returns metadata only.',
         responses={
             status.HTTP_200_OK: serializers.SspEssentialsProductResponseSerializer,
             status.HTTP_404_NOT_FOUND: OpenApiResponse(description='SSP product not found'),

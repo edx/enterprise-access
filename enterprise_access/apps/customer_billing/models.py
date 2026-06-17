@@ -126,10 +126,6 @@ class SspProduct(TimeStampedModel):
         """Academy long public name. Uses long_name when present, else falls back to title."""
         if not self._academy_data:
             return None
-        long_name = self._academy_data.get('long_name')
-        if long_name:
-            return long_name
-
         return self._academy_data.get('long_name') or self.academy_title
 
     @property
