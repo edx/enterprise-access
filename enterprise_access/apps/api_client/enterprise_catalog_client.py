@@ -236,17 +236,63 @@ class EnterpriseCatalogApiClient(BaseOAuthClient):
         params = {'enterprise_customer': enterprise_customer_uuid} if enterprise_customer_uuid else None
         response = self.client.get(self.enterprise_catalog_endpoint, params=params)
         response.raise_for_status()
-        data = response.json()
+        raw_payload = response.json()
 
-        # Merge paginated results if necessary
+        def normalize_page(payload):
+            """Normalize a response payload into a paginated dict.
+
+            This mirrors `get_academies()` defensive behavior so callers can
+            safely handle dict or list payloads from upstream services.
+            Returns a tuple of (paginated_dict, explicit_count_flag) when
+            payload is dict-like, or (list_payload, False) when payload is
+            a raw list. When payload is None, return an empty paginated shape
+            and False for explicit flag.
+            """
+            if payload is None:
+                return ({'count': 0, 'results': [], 'next': None, 'previous': None}, False)
+            if isinstance(payload, list):
+                return payload, False
+            if isinstance(payload, dict):
+                results = payload.get('results')
+                if not isinstance(results, list):
+                    results = []
+                raw_count = payload.get('count', None)
+                try:
+                    count = int(raw_count) if raw_count is not None else None
+                except (ValueError, TypeError):
+                    count = None
+                explicit_count = count is not None
+                if count is None:
+                    count = len(results)
+                return ({
+                    'count': count,
+                    'results': results,
+                    'next': payload.get('next'),
+                    'previous': payload.get('previous'),
+                }, explicit_count)
+            return ({'count': 1, 'results': [payload], 'next': None, 'previous': None}, False)
+
+        # Preserve raw list payloads
+        if isinstance(raw_payload, list):
+            return raw_payload
+
+        data, explicit = normalize_page(raw_payload)
+
+        # Merge paginated results if necessary; be defensive about types
         next_url = data.get('next')
         while next_url:
             next_resp = self.client.get(next_url)
             next_resp.raise_for_status()
-            next_data = next_resp.json()
-            data['results'].extend(next_data.get('results', []))
+            next_payload = next_resp.json()
+            next_data, next_explicit = normalize_page(next_payload)
+            if isinstance(data.get('results'), list) and isinstance(next_data.get('results'), list):
+                data['results'].extend(next_data.get('results', []))
             data['next'] = next_data.get('next')
-            next_url = data['next']
+            data['previous'] = data.get('previous') or next_data.get('previous')
+            explicit = explicit and next_explicit
+            if not explicit:
+                data['count'] = len(data.get('results', []))
+            next_url = data.get('next')
 
         return data
 
