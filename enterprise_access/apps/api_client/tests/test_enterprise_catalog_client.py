@@ -199,6 +199,66 @@ class TestEnterpriseCatalogApiClient(TestCase):
             params={'enterprise_customer': customer_uuid},
         )
 
+    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient', autospec=True)
+    def test_get_catalogs_handles_none_payload(self, mock_oauth_client):
+        mock_oauth_client.return_value.get.return_value = mock.Mock(
+            json=mock.Mock(return_value=None),
+            raise_for_status=mock.Mock(),
+        )
+
+        client = EnterpriseCatalogApiClient()
+        result = client.get_catalogs()
+
+        self.assertEqual(result, {'count': 0, 'results': [], 'next': None, 'previous': None})
+
+    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient', autospec=True)
+    def test_get_catalogs_preserves_raw_list_payload(self, mock_oauth_client):
+        payload = [{'uuid': str(uuid4())}, {'uuid': str(uuid4())}]
+        mock_oauth_client.return_value.get.return_value = mock.Mock(
+            json=mock.Mock(return_value=payload),
+            raise_for_status=mock.Mock(),
+        )
+
+        client = EnterpriseCatalogApiClient()
+        result = client.get_catalogs()
+
+        self.assertEqual(result, payload)
+
+    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient', autospec=True)
+    def test_get_catalogs_ignores_non_list_results_and_invalid_count(self, mock_oauth_client):
+        payload = {
+            'count': 'not-an-int',
+            'next': None,
+            'previous': None,
+            'results': {'uuid': str(uuid4())},
+        }
+        mock_oauth_client.return_value.get.return_value = mock.Mock(
+            json=mock.Mock(return_value=payload),
+            raise_for_status=mock.Mock(),
+        )
+
+        client = EnterpriseCatalogApiClient()
+        result = client.get_catalogs()
+
+        self.assertEqual(result, {'count': 0, 'results': [], 'next': None, 'previous': None})
+
+    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient', autospec=True)
+    def test_get_catalogs_wraps_unexpected_payload_type(self, mock_oauth_client):
+        mock_oauth_client.return_value.get.return_value = mock.Mock(
+            json=mock.Mock(return_value='catalog-value'),
+            raise_for_status=mock.Mock(),
+        )
+
+        client = EnterpriseCatalogApiClient()
+        result = client.get_catalogs()
+
+        self.assertEqual(result, {
+            'count': 1,
+            'results': ['catalog-value'],
+            'next': None,
+            'previous': None,
+        })
+
     @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient')
     def test_get_academies_merges_paginated_results(self, mock_oauth_client):
         page_1 = {

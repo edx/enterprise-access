@@ -73,6 +73,19 @@ class TestAssociateAcademyStep(TestCase):
             enterprise_catalog_uuid=str(catalog_uuid),
         )
 
+    def test_get_workflow_record(self):
+        self.assertEqual(self.step.get_workflow_record(), self.workflow)
+
+    def test_get_preceding_step_record(self):
+        catalog_step = GetCreateCatalogStep.objects.create(
+            workflow_record_uuid=self.workflow.uuid,
+            input_data={},
+            output_data={},
+        )
+        self.step.preceding_step_uuid = catalog_step.uuid
+
+        self.assertEqual(self.step.get_preceding_step_record(), catalog_step)
+
 
 class TestProvisionNewCustomerWorkflow(TestCase):
     """
