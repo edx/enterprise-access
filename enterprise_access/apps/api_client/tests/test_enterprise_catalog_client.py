@@ -521,6 +521,45 @@ class TestEnterpriseCatalogApiClient(TestCase):
         result = client.get_academies()
         self.assertEqual(result, payload)
 
+    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient', autospec=True)
+    def test_get_academies_handles_none_payload(self, mock_oauth_client):
+        """If upstream returns None, client should return an empty paginated dict."""
+        mock_oauth_client.return_value.get.return_value = mock.Mock(
+            json=mock.Mock(return_value=None),
+            raise_for_status=mock.Mock(),
+        )
+
+        client = EnterpriseCatalogApiClient()
+        result = client.get_academies()
+
+        self.assertEqual(result, {'count': 0, 'results': [], 'next': None, 'previous': None})
+
+    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient', autospec=True)
+    def test_get_academies_merges_when_both_results_are_lists(self, mock_oauth_client):
+        """Ensure results are merged when both pages return list 'results'."""
+        page_1 = {
+            'count': None,
+            'next': 'http://example.com/?page=2',
+            'previous': None,
+            'results': [{'id': 1}, {'id': 2}],
+        }
+        page_2 = {
+            'count': None,
+            'next': None,
+            'previous': 'http://example.com/?page=1',
+            'results': [{'id': 3}],
+        }
+        mock_oauth_client.return_value.get.side_effect = [
+            mock.Mock(json=mock.Mock(return_value=page_1), raise_for_status=mock.Mock()),
+            mock.Mock(json=mock.Mock(return_value=page_2), raise_for_status=mock.Mock()),
+        ]
+
+        client = EnterpriseCatalogApiClient()
+        res = client.get_academies()
+
+        self.assertEqual(len(res['results']), 3)
+        self.assertIsNone(res['next'])
+
     @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient')
     def test_get_academies_preserves_explicit_count_across_pages(self, mock_oauth_client):
         # First page reports an explicit larger count; second page has fewer results

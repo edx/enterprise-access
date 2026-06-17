@@ -74,7 +74,7 @@ class EnterpriseCatalogApiClient(BaseOAuthClient):
               computed lengths when absent.
             """
             if payload is None:
-                return {'count': 0, 'results': [], 'next': None, 'previous': None}
+                return ({'count': 0, 'results': [], 'next': None, 'previous': None}, False)
             # If upstream returned a raw list, preserve that shape
             if isinstance(payload, list):
                 return payload, False
