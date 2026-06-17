@@ -8,6 +8,7 @@ from uuid import UUID
 
 import stripe
 from django.utils import timezone
+from simple_history.utils import bulk_update_with_history
 
 from enterprise_access.apps.api_client.license_manager_client import LicenseManagerApiClient
 from enterprise_access.apps.customer_billing.constants import (
@@ -25,7 +26,9 @@ from enterprise_access.apps.customer_billing.stripe_event_types import StripeEve
 from enterprise_access.apps.customer_billing.tasks import (
     send_billing_error_email_task,
     send_finalized_cancelation_email_task,
+    send_paid_cancellation_email_task,
     send_payment_receipt_email,
+    send_reinstatement_email_task,
     send_trial_cancellation_email_task,
     send_trial_end_and_subscription_started_email_task,
     send_trial_ending_reminder_email_task
@@ -34,6 +37,11 @@ from enterprise_access.apps.customer_billing.utils import datetime_from_timestam
 from enterprise_access.apps.track.segment import track_event
 
 logger = logging.getLogger(__name__)
+
+
+class CheckoutIntentLookupError(Exception):
+    """Raised when CheckoutIntent cannot be found by UUID or ID."""
+
 
 # Central registry for event handlers.
 #
@@ -51,24 +59,46 @@ def get_invoice_and_subscription(event: stripe.Event):
     return invoice, subscription_details
 
 
-def get_checkout_intent_id_from_subscription(stripe_subscription):
+def get_checkout_intent_identifier_from_subscription(stripe_subscription) -> tuple[str | None, int | None]:
     """
-    Returns the CheckoutIntent identifier stored in the given
-    stripe subscription's metadata, or None if no such value is present.
+    Returns the CheckoutIntent identifiers stored in the given
+    stripe subscription's metadata.
+
+    Returns:
+        tuple: (uuid_str, id_int) - Either may be None. UUID is preferred if both present.
     """
-    if 'checkout_intent_id' in stripe_subscription.metadata:
-        # The stripe subscription object may actually be a SubscriptionDetails
-        # record from an invoice.
-        stripe_subscription_id = (
-            getattr(stripe_subscription, 'id', None) or getattr(stripe_subscription, 'subscription', None)
-        )
-        checkout_intent_id = int(stripe_subscription.metadata['checkout_intent_id'])
+    metadata = stripe_subscription.metadata.to_dict()
+    # The stripe subscription object may actually be a SubscriptionDetails
+    # record from an invoice.
+    stripe_subscription_id = (
+        getattr(stripe_subscription, 'id', None) or getattr(stripe_subscription, 'subscription', None)
+    )
+
+    uuid_str = metadata.get('checkout_intent_uuid')
+    id_str = metadata.get('checkout_intent_id')
+    id_int = None
+
+    if id_str:
+        try:
+            id_int = int(id_str)
+        except (ValueError, TypeError):
+            logger.warning(
+                'Invalid checkout_intent_id format in metadata: %s for subscription=%s',
+                id_str, stripe_subscription_id,
+            )
+
+    if uuid_str:
         logger.info(
-            'Found checkout_intent_id=%s from subscription=%s',
-            checkout_intent_id, stripe_subscription_id,
+            'Found checkout_intent_uuid=%s from subscription=%s',
+            uuid_str, stripe_subscription_id,
         )
-        return checkout_intent_id
-    return None
+    elif id_int is not None:
+        logger.info(
+            'Found checkout_intent_id=%s from subscription=%s (UUID not present - legacy record)',
+            id_int, stripe_subscription_id,
+        )
+
+    return uuid_str, id_int
 
 
 def persist_stripe_event(event: stripe.Event) -> StripeEventData | None:
@@ -90,37 +120,93 @@ def persist_stripe_event(event: stripe.Event) -> StripeEventData | None:
         )
         return None
 
-    checkout_intent_id = get_checkout_intent_id_from_subscription(stripe_subscription)
-    checkout_intent = CheckoutIntent.objects.filter(
-        id=checkout_intent_id,
-        stripe_customer_id=event.data.object.get('customer'),
-    ).first()
+    uuid_str, id_int = get_checkout_intent_identifier_from_subscription(stripe_subscription)
+    checkout_intent = None
+    stripe_customer_id = event.data.object.to_dict().get('customer')
+
+    # Prefer UUID lookup, fall back to ID for legacy records
+    if uuid_str:
+        try:
+            uuid_value = UUID(uuid_str)
+            checkout_intent = CheckoutIntent.objects.filter(
+                uuid=uuid_value,
+                stripe_customer_id=stripe_customer_id,
+            ).first()
+        except (ValueError, TypeError) as exc:
+            logger.warning('Invalid UUID format in metadata: %s, error: %s', uuid_str, exc)
+
+    if not checkout_intent and id_int is not None:
+        checkout_intent = CheckoutIntent.objects.filter(
+            id=id_int,
+            stripe_customer_id=stripe_customer_id,
+        ).first()
 
     record, _ = StripeEventData.objects.get_or_create(
         event_id=event.id,
         defaults={
             'event_type': event.type,
             'checkout_intent': checkout_intent,
-            'data': dict(event),
+            'data': event.to_dict(),
         },
     )
     logger.info('Persisted StripeEventData %s', record)
     return record
 
 
-def get_checkout_intent_or_raise(checkout_intent_id, event_id) -> CheckoutIntent:
+def get_checkout_intent_or_raise(
+    uuid_str: str | None,
+    id_int: int | None,
+    event_id: str,
+) -> CheckoutIntent:
     """
-    Returns a CheckoutIntent with the given id, or logs and raises an exception.
+    Returns a CheckoutIntent by UUID (preferred) or ID (fallback).
+
+    Args:
+        uuid_str: The UUID string from metadata, may be None
+        id_int: The integer ID from metadata, may be None
+        event_id: The Stripe event ID for logging
+
+    Returns:
+        CheckoutIntent: The found record
+
+    Raises:
+        CheckoutIntentLookupError: If no matching record found
     """
-    try:
-        checkout_intent = CheckoutIntent.objects.get(id=checkout_intent_id)
-        return checkout_intent
-    except CheckoutIntent.DoesNotExist:
-        logger.warning(
-            'Could not find CheckoutIntent record with id %s for event %s',
-            checkout_intent_id, event_id,
-        )
-        raise
+    root_cause = None
+
+    # Prefer UUID lookup
+    if uuid_str:
+        try:
+            uuid_value = UUID(uuid_str)
+            return CheckoutIntent.objects.get(uuid=uuid_value)
+        except (ValueError, TypeError) as exc:
+            logger.warning(
+                'Invalid UUID format %s for event %s: %s',
+                uuid_str, event_id, exc,
+            )
+            root_cause = exc
+        except CheckoutIntent.DoesNotExist as exc:
+            logger.warning(
+                'CheckoutIntent with uuid=%s not found for event %s',
+                uuid_str, event_id,
+            )
+            root_cause = exc
+
+    # Fall back to ID lookup
+    if id_int is not None:
+        try:
+            return CheckoutIntent.objects.get(id=id_int)
+        except CheckoutIntent.DoesNotExist as exc:
+            logger.warning(
+                'CheckoutIntent with id=%s not found for event %s',
+                id_int, event_id,
+            )
+            root_cause = exc
+
+    # Both lookups failed
+    raise CheckoutIntentLookupError(
+        f'No CheckoutIntent found for uuid={uuid_str} or id={id_int} (event {event_id})'
+    ) from root_cause
 
 
 def handle_pending_update(subscription_id: str, checkout_intent_id: int, pending_update):
@@ -171,6 +257,30 @@ def cancel_all_future_plans(checkout_intent):
         logger.info('Future plan %s de-activated for Checkout Intent %s', deactivated_plan_uuid, checkout_intent.uuid)
 
     return deactivated
+
+
+def _update_renewal_cancellation_state(
+    checkout_intent: CheckoutIntent,
+    is_canceled: bool,
+    subscription_cancel_at=None,
+) -> None:
+    """Set cancellation state on all renewals for a checkout intent."""
+    renewals = list(checkout_intent.renewals.all())
+    for renewal in renewals:
+        renewal.is_canceled = is_canceled
+        renewal.subscription_cancel_at = subscription_cancel_at
+        renewal.modified = timezone.now()
+
+    updated = bulk_update_with_history(
+        renewals,
+        SelfServiceSubscriptionRenewal,
+        ['is_canceled', 'subscription_cancel_at', 'modified'],
+        batch_size=100,
+    )
+    logger.info(
+        'Updated %d renewal(s) for CheckoutIntent %s: is_canceled=%s, subscription_cancel_at=%s',
+        updated, checkout_intent.id, is_canceled, subscription_cancel_at,
+    )
 
 
 def _try_enable_pending_updates(stripe_subscription_id):
@@ -294,6 +404,7 @@ def _handle_invoice_paid_status_updated(
     """
 
     invoice, subscription_details = get_invoice_and_subscription(event)
+    subscription_details = subscription_details.to_dict()
     stripe_subscription_id = subscription_details.get('subscription')
     stripe_invoice_id = invoice['id']
 
@@ -455,13 +566,14 @@ class StripeEventHandler:
         invoice, subscription_details = get_invoice_and_subscription(event)
         stripe_customer_id = invoice['customer']
 
-        checkout_intent_id = get_checkout_intent_id_from_subscription(subscription_details)
+        uuid_str, id_int = get_checkout_intent_identifier_from_subscription(subscription_details)
         try:
-            checkout_intent = get_checkout_intent_or_raise(checkout_intent_id, event.id)
-        except CheckoutIntent.DoesNotExist:
+            checkout_intent = get_checkout_intent_or_raise(uuid_str, id_int, event.id)
+        except CheckoutIntentLookupError:
             logger.error(
-                '[StripeEventHandler] invoice.paid event %s could not find Checkout Intent id=%s to mark as paid',
-                event.id, checkout_intent_id,
+                '[StripeEventHandler] invoice.paid event %s could not find Checkout Intent '
+                'uuid=%s id=%s to mark as paid',
+                event.id, uuid_str, id_int,
             )
             return
 
@@ -473,7 +585,7 @@ class StripeEventHandler:
             # day period.
             send_payment_receipt_email.delay(
                 invoice_id=invoice.id,
-                invoice_data=invoice,
+                invoice_data=invoice.to_dict(),
                 enterprise_customer_name=checkout_intent.enterprise_name,
                 enterprise_slug=checkout_intent.enterprise_slug,
             )
@@ -484,13 +596,13 @@ class StripeEventHandler:
         try:
             checkout_intent.mark_as_paid(stripe_customer_id=stripe_customer_id)
             logger.info(
-                'Marked checkout_intent_id=%s as paid via invoice=%s',
-                checkout_intent_id, invoice.id,
+                'Marked checkout_intent uuid=%s as paid via invoice=%s',
+                checkout_intent.uuid, invoice.id,
             )
         except ValueError as exc:
             logger.warning(
                 'Could not mark checkout intent %s as paid via invoice %s, because %s',
-                checkout_intent_id, invoice.id, exc,
+                checkout_intent.uuid, invoice.id, exc,
             )
 
     @on_stripe_event('invoice.created')
@@ -504,15 +616,15 @@ class StripeEventHandler:
         the invoice.paid handler to perform a direct lookup by stripe_invoice_id.
         """
         invoice, subscription_details = get_invoice_and_subscription(event)
+        uuid_str, id_int = get_checkout_intent_identifier_from_subscription(subscription_details)
+        subscription_details = subscription_details.to_dict()
         stripe_subscription_id = subscription_details.get('subscription')
-
-        checkout_intent_id = get_checkout_intent_id_from_subscription(subscription_details)
         try:
-            checkout_intent = get_checkout_intent_or_raise(checkout_intent_id, event.id)
-        except CheckoutIntent.DoesNotExist:
+            checkout_intent = get_checkout_intent_or_raise(uuid_str, id_int, event.id)
+        except CheckoutIntentLookupError:
             logger.error(
-                '[StripeEventHandler] invoice.created event %s could not find Checkout Intent id=%s',
-                event.id, checkout_intent_id,
+                '[StripeEventHandler] invoice.created event %s could not find Checkout Intent uuid=%s id=%s',
+                event.id, uuid_str, id_int,
             )
             return
 
@@ -577,30 +689,25 @@ class StripeEventHandler:
         Send reminder email 72 hours before trial ends.
         """
         subscription = event.data.object
-        checkout_intent_id = get_checkout_intent_id_from_subscription(
-            subscription
-        )
+        uuid_str, id_int = get_checkout_intent_identifier_from_subscription(subscription)
         try:
-            checkout_intent = get_checkout_intent_or_raise(
-                checkout_intent_id, event.id
-            )
-        except CheckoutIntent.DoesNotExist:
+            checkout_intent = get_checkout_intent_or_raise(uuid_str, id_int, event.id)
+        except CheckoutIntentLookupError:
             logger.error(
-                "[StripeEventHandler] trial_will_end event %s could not find CheckoutIntent id=%s",
+                "[StripeEventHandler] trial_will_end event %s could not find CheckoutIntent uuid=%s id=%s",
                 event.id,
-                checkout_intent_id,
+                uuid_str,
+                id_int,
             )
             return
 
         link_event_data_to_checkout_intent(event, checkout_intent)
 
         logger.info(
-            (
-                "Subscription %s trial ending in 72 hours. "
-                "Queuing trial ending reminder email for checkout_intent_id=%s"
-            ),
+            "Subscription %s trial ending in 72 hours. "
+            "Queuing trial ending reminder email for checkout_intent uuid=%s",
             subscription.id,
-            checkout_intent_id,
+            checkout_intent.uuid,
         )
 
         # Queue the trial ending reminder email task
@@ -621,18 +728,18 @@ class StripeEventHandler:
         Enable pending updates to prevent license count drift on failed payments.
         """
         subscription = event.data.object
-        checkout_intent_id = get_checkout_intent_id_from_subscription(
-            subscription
-        )
-        checkout_intent = get_checkout_intent_or_raise(
-            checkout_intent_id, event.id
-        )
+        uuid_str, id_int = get_checkout_intent_identifier_from_subscription(subscription)
+        checkout_intent = get_checkout_intent_or_raise(uuid_str, id_int, event.id)
         link_event_data_to_checkout_intent(event, checkout_intent)
+        # Explicitly mark as not canceled on subscription creation rather than relying on the model default.
+        # This ensures consistency since cancellations can be triggered by both updates and deletions.
+        _update_renewal_cancellation_state(checkout_intent, is_canceled=False)
 
+        subscription = subscription.to_dict()
         checkout_intent.stripe_customer_id = subscription.get('customer', None)
         checkout_intent.save()
 
-        _try_enable_pending_updates(subscription.id)
+        _try_enable_pending_updates(subscription['id'])
 
         summary = StripeEventSummary.objects.get(event_id=event.id)
         try:
@@ -646,27 +753,51 @@ class StripeEventHandler:
         """
         Handle customer.subscription.updated events.
         Track when subscriptions have pending updates and update related CheckoutIntent state.
-        Send cancellation notification email when a trial subscription is canceled.
+        Send cancellation notification email when a subscription cancellation is scheduled.
 
         See https://docs.stripe.com/api/subscriptions/object#subscription_object-status for
         important information about allowed state transitions.
         """
         subscription = event.data.object
-        checkout_intent_id = get_checkout_intent_id_from_subscription(subscription)
-        checkout_intent = get_checkout_intent_or_raise(checkout_intent_id, event.id)
+        uuid_str, id_int = get_checkout_intent_identifier_from_subscription(subscription)
+        checkout_intent = get_checkout_intent_or_raise(uuid_str, id_int, event.id)
         link_event_data_to_checkout_intent(event, checkout_intent)
 
+        subscription = subscription.to_dict()
+
         # Pending update
-        pending_update = getattr(subscription, "pending_update", None)
+        pending_update = subscription.get("pending_update")
         if pending_update:
-            handle_pending_update(subscription.id, checkout_intent_id, pending_update)
+            handle_pending_update(subscription['id'], checkout_intent.id, pending_update)
 
         current_status = subscription.get("status")
+        current_cancel_at = subscription.get('cancel_at')
+        current_cancel_at_datetime = datetime_from_timestamp(current_cancel_at) if current_cancel_at else None
+
+        if current_status in [StripeSubscriptionStatus.ACTIVE, StripeSubscriptionStatus.TRIALING]:
+            # Proactively mark as not canceled whenever the subscription is active/trialing.
+            # This guards against edge cases where cancellation state is not cleared on creation
+            # and ensures correctness when a previously-canceled subscription is re-activated.
+            # Also keeps subscription_cancel_at in sync: set it when cancel_at is present,
+            # clear it when the subscription is active with no scheduled cancellation.
+            # Note that this also handles the reinstatement of a stripe subscription (that is,
+            # when a user clears the `cancel_at` time of a subscription record.
+            # 1. User reinstates (to either active or trialing) ->
+            #    Stripe sends customer.subscription.updated with cancel_at=null
+            # 2. Handler extracts cancel_at -> gets None
+            # 3. We call _update_renewal_cancellation_state(is_canceled=False, subscription_cancel_at=None)
+            # 4. Renewal record's subscription_cancel_at is cleared to None
+            _update_renewal_cancellation_state(
+                checkout_intent,
+                is_canceled=False,
+                subscription_cancel_at=current_cancel_at_datetime,
+            )
+
         previous_summary = checkout_intent.previous_summary(event, stripe_object_type='subscription')
         if not previous_summary:
             logger.warning(
                 'No previous subscription summary for stripe subscription %s, event %s',
-                subscription.id, event.id,
+                subscription['id'], event.id,
             )
             return
 
@@ -679,32 +810,42 @@ class StripeEventHandler:
         if new_default_payment_method != prior_default_payment_method:
             logger.warning(
                 'The default_payment_method for subscription %s has changed from %s to %s',
-                subscription.id, prior_default_payment_method, new_default_payment_method,
+                subscription['id'], prior_default_payment_method, new_default_payment_method,
             )
-            _try_enable_pending_updates(subscription.id)
+            _try_enable_pending_updates(subscription['id'])
 
         prior_status = previous_summary.subscription_status
 
         # Handle subscription cancellation scheduling (when user clicks cancel in Stripe)
         # This triggers before the subscription status actually changes
         prior_cancel_at = previous_summary.subscription_cancel_at
-        current_cancel_at = subscription.get('cancel_at')
-        current_cancel_at_datetime = None
-        if current_cancel_at:
-            current_cancel_at_datetime = datetime_from_timestamp(current_cancel_at)
 
         # Detect when cancellation is newly scheduled (was None, now has value)
         if prior_cancel_at is None and current_cancel_at_datetime is not None:
             logger.info(
-                f"Subscription {subscription.id} was scheduled for cancellation at {current_cancel_at_datetime}. "
-                f"Processing cancellation notification for checkout_intent_id={checkout_intent_id}"
+                f"Subscription {subscription['id']} was scheduled for cancellation at {current_cancel_at_datetime}. "
+                f"Processing cancellation notification for checkout_intent uuid={checkout_intent.uuid}"
             )
             if current_status == StripeSubscriptionStatus.TRIALING:
-                logger.info(f"Queuing trial cancellation email for checkout_intent_id={checkout_intent_id}")
+                logger.info(f"Queuing trial cancellation email for checkout_intent uuid={checkout_intent.uuid}")
                 send_trial_cancellation_email_task.delay(
                     checkout_intent_id=checkout_intent.id,
                     cancel_at_timestamp=current_cancel_at,
                 )
+            elif current_status == StripeSubscriptionStatus.ACTIVE:
+                logger.info(f"Queuing paid cancellation email for checkout_intent.id={checkout_intent.id}")
+                send_paid_cancellation_email_task.delay(
+                    checkout_intent_id=checkout_intent.id,
+                    cancel_at_timestamp=current_cancel_at,
+                )
+
+        # Detect when cancellation is reversed/reinstated (had value, now None)
+        if prior_cancel_at is not None and current_cancel_at_datetime is None:
+            logger.info(
+                f"Subscription {subscription['id']} was reinstated (cancellation reversed). "
+                f"Processing reinstatement notification for checkout_intent uuid={checkout_intent.uuid}"
+            )
+            send_reinstatement_email_task.delay(checkout_intent_id=checkout_intent.id)
 
         # Everything belows handles a subscription state change. If the status
         # hasn't changed, we're all done.
@@ -720,12 +861,14 @@ class StripeEventHandler:
         Handle customer.subscription.deleted events.
         """
         subscription = event.data.object
-        checkout_intent_id = get_checkout_intent_id_from_subscription(subscription)
-        checkout_intent = get_checkout_intent_or_raise(checkout_intent_id, event.id)
+        uuid_str, id_int = get_checkout_intent_identifier_from_subscription(subscription)
+        checkout_intent = get_checkout_intent_or_raise(uuid_str, id_int, event.id)
         link_event_data_to_checkout_intent(event, checkout_intent)
 
+        subscription = subscription.to_dict()
+
         logger.info(
-            "Subscription %s status was deleted via event %s", subscription.id, event.id,
+            "Subscription %s status was deleted via event %s", subscription['id'], event.id,
         )
 
         cancellation_details = subscription.get('cancellation_details')
@@ -742,17 +885,18 @@ class StripeEventHandler:
                     "Cannot deactivate future plans for subscription %s: "
                     "missing enterprise_uuid on CheckoutIntent %s"
                 ),
-                subscription.id,
+                subscription['id'],
                 checkout_intent.id,
             )
+        _update_renewal_cancellation_state(checkout_intent, is_canceled=True, subscription_cancel_at=None)
 
         previous_summary = checkout_intent.previous_summary(event, stripe_object_type='subscription')
         if previous_summary.subscription_status == StripeSubscriptionStatus.ACTIVE:
             # https://docs.stripe.com/api/subscriptions/object#subscription_object-ended_at
             ended_at = subscription.get("ended_at") or timezone.now().timestamp()
             logger.info(
-                "Queuing cancelation finalization email for checkout_intent_id=%s",
-                checkout_intent_id,
+                "Queuing cancelation finalization email for checkout_intent uuid=%s",
+                checkout_intent.uuid,
             )
             send_finalized_cancelation_email_task.delay(
                 checkout_intent_id=checkout_intent.id,

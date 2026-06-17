@@ -11,16 +11,28 @@ evaluation, subsidy redemptions, provisioning workflows, and integrations with r
 - To run unit tests or generate coverage reports invoke the unit-tests skill.
 - To run quality tests, invoke the quality-tests skill.
 
+## Code Navigation
+
+- Prefer using the LSP tool over grep/glob when navigating Python code (definitions, references, type info)
+
 ## Key Principles
+
 - Search the codebase before assuming something isn't implemented
 - Write comprehensive tests with clear documentation
 - Follow Test-Driven Development when refactoring or modifying existing functionality
-- Provide concise documentation for new functionality in the `docs/references` folder.
 - Always write tests for new functionality you implement
-- Make a note of when tests for some functionality have been completed. If you
-  cannot run the tests, ask me to run them manually, then confirm whether they succeeded or failed.
 - Keep changes focused and minimal
-- Follow existing code patterns.
+- Follow existing code patterns
+- Prefer the `ddt` package for parameterized tests to reduce code duplication
+
+## Documentation & Institutional Memory
+
+- Document new functionality in `docs/references/`
+- When you learn something important about how this codebase works (gotchas, non-obvious
+  patterns, integration quirks), capture it in the relevant `docs/references/` file or
+  in `docs/architecture-patterns.md`
+- These docs are institutional memory - future sessions (yours or others) will benefit
+  from what you record here
 
 ## Architecture Overview
 
@@ -29,9 +41,6 @@ The `docs` folder contains documentation on a few specific features. `docs/archi
 can be read when you need to understand the entire service beyond what's written below.
 
 Always read `docs/architecture-patterns.md` before starting.
-
-Check if a reusable code pattern exists in `.ralph/specs/stdlib` before executing code changes (ignore if this
-directory does not exist).
 
 ### Core Applications
 
@@ -62,16 +71,15 @@ directory does not exist).
 
 ### Docker Development
 
-- Server runs on `localhost:18270`
-- Uses MySQL 8.0, Memcache, Redis, and Celery worker
-- Event bus via Kafka (Confluent Control Center at localhost:9021)
+- Full devstack (app, worker, DB, Kafka, etc.) is managed in the devstack repository
+- The container name is typically `edx.devstack.enterprise-access`,
+  you can also do `docker ps | grep enterprise-access` to search for the container name.
 
 ## Testing Notes
 
 - Uses pytest with Django integration
 - Coverage reporting enabled by default
 - PII annotation checks required for Django models
-- Separate test environments via tox for different Django versions
 
 ## Consolidate Patterns
 
@@ -81,3 +89,11 @@ pattern in the `docs/architecture-patterns.md` file.
 **Do NOT add:**
 - Story-specific implementation details
 - Temporary debugging notes
+
+## Before opening a PR or pushing a branch
+
+Run a self-check on the diff before creating a PR or pushing:
+1. Compute effective LoC — exclude lockfiles, generated files, snapshots, and vendor code.
+2. Count effective touched files — exclude the above plus one-to-one test pairs.
+3. If effective LoC > 400 or effective files > 10, stop and propose a split before proceeding.
+4. Report the result inline before continuing.

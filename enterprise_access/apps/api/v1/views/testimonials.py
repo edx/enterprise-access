@@ -1,5 +1,8 @@
+"""
+REST API views for testimonials.
+"""
 from django.db.models.functions import Random
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny
 from rest_framework.viewsets import ReadOnlyModelViewSet
 
 from enterprise_access.apps.api.serializers.testimonials import TestimonialSerializer
@@ -14,7 +17,8 @@ class TestimonialViewSet(ReadOnlyModelViewSet):
     Used by the frontend checkout sidebar to display rotating testimonials.
     """
     serializer_class = TestimonialSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [AllowAny]
+    authentication_classes = []
 
     def get_queryset(self):
         return (

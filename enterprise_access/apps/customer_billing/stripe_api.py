@@ -16,15 +16,15 @@ logger = logging.getLogger(__name__)
 stripe.api_key = settings.STRIPE_API_KEY
 
 
-def create_subscription_checkout_session(input_data, lms_user_id, checkout_intent) -> stripe.checkout.Session:
+def create_subscription_checkout_session(input_data, lms_user_id, checkout_intent) -> dict:
     """
     Creates a free trial subscription checkout session.
     """
     stripe.api_key = settings.STRIPE_API_KEY
     create_kwargs: stripe.checkout.Session.CreateParams = {
         'mode': 'subscription',
-        # Intended UI will be a custom react component.
-        'ui_mode': 'custom',
+        # Intended UI will be a custom react component, referred to as 'elements' on stripe's end.
+        'ui_mode': 'elements',
         # Specify the type and quantity of what is being purchased.  Units for `quantity` depends on
         # the price specified, and the product associated with the price.
         'line_items': [{
@@ -76,7 +76,7 @@ def create_subscription_checkout_session(input_data, lms_user_id, checkout_inten
     else:
         create_kwargs['customer_email'] = input_data['admin_email']
 
-    return stripe.checkout.Session.create(**create_kwargs)
+    return stripe.checkout.Session.create(**create_kwargs).to_dict()
 
 
 def stripe_cache(timeout=settings.DEFAULT_STRIPE_CACHE_TIMEOUT):

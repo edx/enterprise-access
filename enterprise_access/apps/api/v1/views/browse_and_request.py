@@ -2,6 +2,7 @@
 Rest API views for the browse and request app.
 """
 import logging
+from collections import Counter
 
 from celery import chain
 from django.conf import settings
@@ -38,7 +39,6 @@ from enterprise_access.apps.api.tasks import (
     update_license_requests_after_assignments_task
 )
 from enterprise_access.apps.api.utils import (
-    add_bulk_approve_operation_result,
     get_enterprise_uuid_from_query_params,
     get_enterprise_uuid_from_request_data,
     validate_uuid
@@ -50,14 +50,16 @@ from enterprise_access.apps.core import constants
 from enterprise_access.apps.subsidy_access_policy.models import SubsidyAccessPolicy
 from enterprise_access.apps.subsidy_request import api as subsidy_request_api
 from enterprise_access.apps.subsidy_request.constants import (
+    APPROVABLE_STATES,
+    CANCELABLE_STATES,
+    DECLINABLE_STATES,
+    REMINDABLE_STATES,
     REUSABLE_REQUEST_STATES,
-    LearnerCreditAdditionalActionStates,
     LearnerCreditRequestActionErrorReasons,
     SegmentEvents,
     SubsidyRequestStates,
     SubsidyTypeChoices
 )
-from enterprise_access.apps.subsidy_request.exceptions import SubsidyRequestBulkUpdateException
 from enterprise_access.apps.subsidy_request.models import (
     CouponCodeRequest,
     LearnerCreditRequest,
@@ -67,10 +69,7 @@ from enterprise_access.apps.subsidy_request.models import (
 )
 from enterprise_access.apps.subsidy_request.tasks import (
     send_learner_credit_bnr_admins_email_with_new_requests_task,
-    send_learner_credit_bnr_cancel_notification_task,
-    send_learner_credit_bnr_decline_notification_task,
-    send_learner_credit_bnr_request_approve_task,
-    send_reminder_email_for_pending_learner_credit_request
+    send_learner_credit_bnr_cancel_notification_task
 )
 from enterprise_access.apps.subsidy_request.utils import (
     get_action_choice,
@@ -80,7 +79,7 @@ from enterprise_access.apps.subsidy_request.utils import (
 from enterprise_access.apps.track.segment import track_event
 from enterprise_access.utils import format_traceback, get_subsidy_model
 
-from .utils import PaginationWithPageCount
+from .utils import PaginationWithPageCount, PaginationWithPageCountAndLearnerRequestStateCounts
 
 logger = logging.getLogger(__name__)
 
@@ -763,15 +762,10 @@ class CouponCodeRequestViewSet(SubsidyRequestViewSet):
         summary='Cancel all approved learner credit requests for a policy.',
         request=serializers.LearnerCreditRequestCancelAllSerializer,
     ),
-    bulk_approve=extend_schema(
+    decline_all=extend_schema(
         tags=['Learner Credit Requests'],
-        summary='Bulk approve learner credit requests.',
-        request=serializers.LearnerCreditRequestBulkApproveRequestSerializer,
-    ),
-    bulk_decline=extend_schema(
-        tags=['Learner Credit Requests'],
-        summary='Bulk decline learner credit requests.',
-        request=serializers.LearnerCreditRequestBulkDeclineSerializer,
+        summary='Decline all learner credit requests for a policy.',
+        request=serializers.LearnerCreditRequestDeclineAllSerializer,
     )
 )
 class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
@@ -782,6 +776,7 @@ class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
     queryset = LearnerCreditRequest.objects.order_by("-created")
     serializer_class = serializers.LearnerCreditRequestSerializer
     filterset_class = LearnerCreditRequestFilterSet
+    pagination_class = PaginationWithPageCountAndLearnerRequestStateCounts
 
     # Add ordering fields including simple action-based sorting
     ordering_fields = [
@@ -824,6 +819,28 @@ class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
             )
 
         return queryset
+
+    def list(self, request, *args, **kwargs):
+        """
+        Lists LearnerCreditRequest records with aggregate learner_request_state_counts
+        computed across the entire filtered queryset (not just the current page).
+        """
+        response = super().list(request, *args, **kwargs)
+
+        # Compute learner_request_state_counts across the full filtered queryset (all pages).
+        queryset = self.filter_queryset(self.get_queryset())
+        state_counter = Counter(
+            queryset.exclude(
+                learner_request_state__isnull=True
+            ).values_list('learner_request_state', flat=True)
+        )
+        learner_request_state_counts = [
+            {'learner_request_state': state, 'count': count}
+            for state, count in state_counter.most_common()
+        ]
+
+        response.data['learner_request_state_counts'] = learner_request_state_counts
+        return response
 
     def _reuse_existing_request(self, request, course_price):
         """
@@ -982,6 +999,29 @@ class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
 
         return response
 
+    @staticmethod
+    def _build_approval_response(service_result, success_status):
+        """
+        Turn the service-layer result dict into a serialized HTTP response.
+
+        Any populated failure list or error_message produces 422; otherwise ``success_status``.
+        Shape is declared by LearnerCreditRequestApprovalResponseSerializer so both
+        ``approve`` and ``approve_all`` emit identical payloads.
+        """
+        failed_requests = (
+            list(service_result.get('failed_approval', [])) +
+            list(service_result.get('failed', []))
+        )
+        payload = {
+            'approved': [r.uuid for r in service_result.get('approved', [])],
+            'failed': [r.uuid for r in failed_requests],
+            'error_message': service_result.get('error_message'),
+        }
+        response_serializer = serializers.LearnerCreditRequestApprovalResponseSerializer(payload)
+        if failed_requests or service_result.get('error_message'):
+            return Response(response_serializer.data, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+        return Response(response_serializer.data, status=success_status)
+
     @permission_required(
         constants.REQUESTS_ADMIN_ACCESS_PERMISSION,
         fn=get_enterprise_uuid_from_request_data,
@@ -991,9 +1031,10 @@ class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
         """
         Approve a list of learner credit requests against a single policy.
 
-        - On success, returns a `200 OK` with a list of the approved request objects.
+        - On success, returns a `200 OK` with the approved/failed UUID breakdown.
         - If any of the specified requests fail to be approved, returns a
-          `422 Unprocessable Entity`. The successful approvals will still be committed.
+          `422 Unprocessable Entity` with the same body shape. Successful approvals
+          are still committed.
         """
         serializer = serializers.LearnerCreditRequestApproveRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -1007,36 +1048,14 @@ class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
         )
 
         if len(learner_credit_requests) != len(set(learner_credit_request_uuids)):
-            return Response(
-                status=status.HTTP_404_NOT_FOUND
-            )
+            return Response(status=status.HTTP_404_NOT_FOUND)
 
-        try:
-            response = subsidy_request_api.approve_learner_credit_requests(
-                learner_credit_requests=learner_credit_requests,
-                policy_uuid=policy_uuid,
-                reviewer=request.user
-            )
-            if response.get("error_message"):
-                error_msg = (
-                    f"[LC REQUEST APPROVAL] Failed to approve learner credit requests. "
-                    f"Reason: {response['error_message']}."
-                )
-                logger.exception(error_msg)
-
-                return Response({"detail": error_msg}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
-            if response.get("failed_approval"):
-                return Response(
-                    {"detail": "[LC REQUEST APPROVAL] Failed to approve some learner credit requests."},
-                    status=status.HTTP_422_UNPROCESSABLE_ENTITY
-                )
-            return Response(status=status.HTTP_200_OK)
-        except Exception as e:  # pylint: disable=broad-except
-            logger.exception(e)
-            return Response(
-                {"detail": "Unexpected error during bulk approval."},
-                status=status.HTTP_422_UNPROCESSABLE_ENTITY
-            )
+        result = subsidy_request_api.approve_learner_credit_requests(
+            learner_credit_requests=learner_credit_requests,
+            policy_uuid=policy_uuid,
+            reviewer=request.user,
+        )
+        return self._build_approval_response(result, success_status=status.HTTP_200_OK)
 
     @permission_required(
         constants.REQUESTS_ADMIN_ACCESS_PERMISSION,
@@ -1047,50 +1066,30 @@ class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
         """
         Approve all filtered learner credit requests against a single policy.
 
-        - On success, returns a `202 Accepted` status, indicating that the
-          bulk approval process has been initiated.
+        - On success, returns a `202 Accepted` with the approved/failed UUID breakdown.
         - If no approvable requests are found for the given policy and filters,
           returns a `404 Not Found`.
         - If any requests fail during the bulk approval, returns a
-          `422 Unprocessable Entity` to indicate a partial failure.
+          `422 Unprocessable Entity` with the same body shape.
         """
         serializer = serializers.LearnerCreditRequestApproveAllSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         policy_uuid = serializer.validated_data['policy_uuid']
 
         learner_credit_requests = self.get_queryset().filter(
-            state__in=[SubsidyRequestStates.REQUESTED, SubsidyRequestStates.ERROR],
+            state__in=APPROVABLE_STATES,
             learner_credit_request_config__learner_credit_config__uuid=policy_uuid
         )
 
         if not learner_credit_requests.exists():
-            return Response(
-                status=status.HTTP_404_NOT_FOUND
-            )
+            return Response(status=status.HTTP_404_NOT_FOUND)
 
-        try:
-            response = subsidy_request_api.approve_learner_credit_requests(
-                learner_credit_requests=learner_credit_requests,
-                policy_uuid=policy_uuid,
-                reviewer=request.user
-            )
-            if response.get("error_message"):
-                error_msg = (
-                    f"[LC REQUEST APPROVAL] Failed to approve learner credit requests. "
-                    f"Reason: {response['error_message']}."
-                )
-                return Response({"detail": error_msg}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
-            if response.get('failed_approval'):
-                return Response(
-                    {"detail": "[LC REQUEST APPROVAL] Failed to approve some learner credit requests."},
-                    status=status.HTTP_422_UNPROCESSABLE_ENTITY
-                )
-            return Response(status=status.HTTP_202_ACCEPTED)
-        except Exception:  # pylint: disable=broad-except
-            return Response(
-                {"detail": "Unexpected error during bulk approval."},
-                status=status.HTTP_422_UNPROCESSABLE_ENTITY
-            )
+        result = subsidy_request_api.approve_learner_credit_requests(
+            learner_credit_requests=learner_credit_requests,
+            policy_uuid=policy_uuid,
+            reviewer=request.user,
+        )
+        return self._build_approval_response(result, success_status=status.HTTP_202_ACCEPTED)
 
     @permission_required(
         constants.REQUESTS_ADMIN_ACCESS_PERMISSION,
@@ -1171,7 +1170,7 @@ class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
         serializer = serializers.LearnerCreditRequestRemindSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        learner_credit_request_uuids = serializer.get_learner_credit_request_uuids()
+        learner_credit_request_uuids = serializer.validated_data['learner_credit_request_uuids']
 
         # Validate all UUIDs exist
         learner_credit_requests = self.get_queryset().select_related('assignment').filter(
@@ -1214,12 +1213,18 @@ class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
         serializer.is_valid(raise_exception=True)
 
         policy_uuid = serializer.validated_data['policy_uuid']
+        learner_request_state = serializer.validated_data.get('learner_request_state')
 
-        # Filter to APPROVED requests for this policy
-        learner_credit_requests = self.get_queryset().select_related('assignment').filter(
-            state=SubsidyRequestStates.APPROVED,
-            learner_credit_request_config__learner_credit_config__uuid=policy_uuid
-        )
+        # Filter to remindable requests for this policy
+        filter_kwargs = {
+            'state__in': REMINDABLE_STATES,
+            'learner_credit_request_config__learner_credit_config__uuid': policy_uuid,
+        }
+        queryset = self.get_queryset()
+        if learner_request_state:
+            queryset = LearnerCreditRequest.annotate_dynamic_fields_onto_queryset(queryset)
+            filter_kwargs['learner_request_state'] = learner_request_state
+        learner_credit_requests = queryset.select_related('assignment').filter(**filter_kwargs)
 
         if not learner_credit_requests.exists():
             return Response(
@@ -1266,13 +1271,19 @@ class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
 
         policy_uuid = serializer.validated_data['policy_uuid']
         enterprise_customer_uuid = serializer.validated_data['enterprise_customer_uuid']
+        learner_request_state = serializer.validated_data.get('learner_request_state')
 
         # Filter to APPROVED requests for this policy AND enterprise customer
-        learner_credit_requests = self.get_queryset().select_related('assignment').filter(
-            state=SubsidyRequestStates.APPROVED,
-            enterprise_customer_uuid=enterprise_customer_uuid,
-            learner_credit_request_config__learner_credit_config__uuid=policy_uuid
-        )
+        filter_kwargs = {
+            'state__in': CANCELABLE_STATES,
+            'enterprise_customer_uuid': enterprise_customer_uuid,
+            'learner_credit_request_config__learner_credit_config__uuid': policy_uuid,
+        }
+        queryset = self.get_queryset()
+        if learner_request_state:
+            queryset = LearnerCreditRequest.annotate_dynamic_fields_onto_queryset(queryset)
+            filter_kwargs['learner_request_state'] = learner_request_state
+        learner_credit_requests = queryset.select_related('assignment').filter(**filter_kwargs)
 
         if not learner_credit_requests.exists():
             return Response(
@@ -1300,289 +1311,150 @@ class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
         constants.REQUESTS_ADMIN_ACCESS_PERMISSION,
         fn=get_enterprise_uuid_from_request_data,
     )
-    @action(detail=False, url_path="decline", methods=["post"])
-    def decline(self, *args, **kwargs):
+    @action(detail=False, url_path='bulk-cancel', methods=['post'])
+    def bulk_cancel(self, request, *args, **kwargs):
         """
-        Action of declining a Learner Credit Subsidy Request
+        Cancel multiple LearnerCreditRequests by UUID list.
+
+        Accepts a list of learner_credit_request_uuids and enterprise_customer_uuid.
+        Returns 404 if any UUIDs not found.
+        Returns 422 if some requests cannot be cancelled.
+        Returns 202 if all requests were successfully cancelled.
         """
-        # Validate input using serializer
-        serializer = serializers.LearnerCreditRequestDeclineSerializer(data=self.request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer = serializers.LearnerCreditRequestBulkCancelSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
 
-        # Extract validated data and the already-fetched object
-        validated_data = serializer.validated_data
-        learner_credit_request = serializer.get_learner_credit_request()  # No DB query!
-        learner_credit_request_uuid = validated_data["subsidy_request_uuid"]
-        send_notification = validated_data["send_notification"]
-        disassociate_from_org = validated_data["disassociate_from_org"]
+        learner_credit_request_uuids = serializer.validated_data['learner_credit_request_uuids']
 
-        enterprise_customer_uuid = get_enterprise_uuid_from_request_data(self.request)
-
-        # Create the action instance before attempting the decline operation
-        action_instance = LearnerCreditRequestActions.create_action(
-            learner_credit_request=learner_credit_request,
-            recent_action=get_action_choice(SubsidyRequestStates.DECLINED),
-            status=get_user_message_choice(SubsidyRequestStates.DECLINED),
+        learner_credit_requests = self.get_queryset().select_related('assignment').filter(
+            uuid__in=learner_credit_request_uuids
         )
 
-        try:
-            with transaction.atomic():
-                # Extract decline_reason from validated data
-                # If not present, reason will be None
-                learner_credit_request.decline(self.user, reason=validated_data.get("decline_reason"))
-        except (ValidationError, IntegrityError, DatabaseError) as exc:
-            action_instance.status = get_user_message_choice(SubsidyRequestStates.REQUESTED)
-            action_instance.error_reason = get_error_reason_choice(
-                LearnerCreditRequestActionErrorReasons.FAILED_DECLINE
-            )
-            action_instance.traceback = str(exc)
-            action_instance.save()
-
-            logger.exception(f"Error declining learner credit request {learner_credit_request_uuid}: {exc}")
+        if len(learner_credit_requests) != len(set(learner_credit_request_uuids)):
             return Response(
-                "An error occurred while declining the request. Please try again.",
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-
-        # Handle post-decline operations
-        serialized_request = serializers.LearnerCreditRequestSerializer(learner_credit_request).data
-        lms_user_id = serialized_request["lms_user_id"]
-
-        if send_notification:
-            send_learner_credit_bnr_decline_notification_task.delay(
-                learner_credit_request_uuid
-            )
-            logger.info(
-                f"Sent decline notification email for learner credit request {learner_credit_request_uuid}"
-            )
-        if disassociate_from_org:
-            try:
-                unlink_users_from_enterprise_task.delay(enterprise_customer_uuid, [lms_user_id])
-            except (ConnectionError, TimeoutError, OSError) as exc:
-                action_instance.status = get_user_message_choice(SubsidyRequestStates.REQUESTED)
-                action_instance.error_reason = get_error_reason_choice(
-                    LearnerCreditRequestActionErrorReasons.FAILED_DECLINE
-                )
-                action_instance.traceback = str(exc)
-                action_instance.save()
-
-                logger.exception(
-                    f"Error unlinking user from enterprise for request {learner_credit_request_uuid}: {exc}"
-                )
-
-        return Response(serialized_request, status=status.HTTP_200_OK)
-
-    @action(detail=False, methods=['post'], url_path='bulk-approve')
-    @permission_required(
-        constants.REQUESTS_ADMIN_ACCESS_PERMISSION,
-        fn=lambda request: get_enterprise_uuid_from_request_data(request),
-    )
-    def bulk_approve(self, request, *args, **kwargs):
-        """
-        Bulk approve learner credit requests.
-        """
-        serializer = serializers.LearnerCreditRequestBulkApproveRequestSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
-        policy_uuid = serializer.validated_data['policy_uuid']
-        enterprise_customer_uuid = serializer.validated_data['enterprise_customer_uuid']
-        approve_all = serializer.validated_data.get('approve_all', False)
-        subsidy_request_uuids = serializer.validated_data.get('subsidy_request_uuids', [])
-
-        try:
-            policy = SubsidyAccessPolicy.objects.get(uuid=policy_uuid)
-        except SubsidyAccessPolicy.DoesNotExist:
-            return Response(
-                {'error': f'Policy with uuid {policy_uuid} not found.'},
+                {"detail": "One or more learner credit request UUIDs not found."},
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        results = {'approved': [], 'failed': []}
+        result = subsidy_request_api.cancel_learner_credit_requests(
+            learner_credit_requests, request.user
+        )
 
-        if approve_all:
-            pending_requests = LearnerCreditRequest.objects.filter(
-                enterprise_customer_uuid=enterprise_customer_uuid,
-                state=SubsidyRequestStates.REQUESTED
+        if result.get('non_cancelable'):
+            return Response(
+                {
+                    "detail": "Some requests could not be cancelled.",
+                    "non_cancelable": [str(r.uuid) for r in result['non_cancelable']],
+                },
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
             )
-        else:
-            pending_requests = LearnerCreditRequest.objects.filter(
-                uuid__in=subsidy_request_uuids,
-                enterprise_customer_uuid=enterprise_customer_uuid
-            )
 
-        # Filter to only REQUESTED state
-        valid_requests = []
-        for learner_credit_request in pending_requests:
-            if learner_credit_request.state != SubsidyRequestStates.REQUESTED:
-                add_bulk_approve_operation_result(
-                    results,
-                    'failed',
-                    learner_credit_request.uuid,
-                    learner_credit_request.state,
-                    error=f'Request is not in a requestable state: {learner_credit_request.state}'
-                )
-            else:
-                valid_requests.append(learner_credit_request)
+        return Response(status=status.HTTP_202_ACCEPTED)
 
-        if not valid_requests:
-            return Response(results, status=status.HTTP_200_OK)
-
-        # Allocate assignments in bulk
-        try:
-            assignment_map = assignments_api.allocate_assignment_for_requests(
-                policy.assignment_configuration,
-                valid_requests,
-            )
-        except Exception as exc:  # pylint: disable=broad-except
-            for learner_credit_request in valid_requests:
-                add_bulk_approve_operation_result(
-                    results,
-                    'failed',
-                    learner_credit_request.uuid,
-                    learner_credit_request.state,
-                    error=str(exc)
-                )
-            return Response(results, status=status.HTTP_200_OK)
-
-        # Process results
-        requests_to_approve = []
-        for learner_credit_request in valid_requests:
-            assignment = assignment_map.get(learner_credit_request.uuid)
-            if assignment:
-                learner_credit_request.assignment = assignment
-                requests_to_approve.append(learner_credit_request)
-            else:
-                add_bulk_approve_operation_result(
-                    results,
-                    'failed',
-                    learner_credit_request.uuid,
-                    learner_credit_request.state,
-                    error='Failed to allocate assignment'
-                )
-
-        if requests_to_approve:
-            LearnerCreditRequest.bulk_approve_requests(requests_to_approve, request.user)
-
-            for learner_credit_request in requests_to_approve:
-                add_bulk_approve_operation_result(
-                    results,
-                    'approved',
-                    learner_credit_request.uuid,
-                    SubsidyRequestStates.APPROVED
-                )
-                send_learner_credit_bnr_request_approve_task.delay(
-                    learner_credit_request.uuid
-                )
-
-        return Response(results, status=status.HTTP_200_OK)
-
-    @action(detail=False, methods=['post'], url_path='bulk-decline')
     @permission_required(
         constants.REQUESTS_ADMIN_ACCESS_PERMISSION,
-        fn=lambda request: get_enterprise_uuid_from_request_data(request),
+        fn=get_enterprise_uuid_from_request_data,
     )
-    def bulk_decline(self, request, *args, **kwargs):
+    @action(detail=False, url_path="decline", methods=["post"])
+    def decline(self, request, *args, **kwargs):
         """
-        Bulk decline learner credit requests.
+        Decline one or more learner credit requests.
 
-        Request Payload:
-        {
-            "enterprise_customer_uuid": "<uuid>",
-            "subsidy_request_uuids": ["<uuid>", ...],  # Optional if decline_all is True
-            "decline_all": false,  # Optional, defaults to False
-            "policy_uuid": "<uuid>"
-        }
+        Accepts either a single ``subsidy_request_uuid`` or a list of UUIDs
+        ``subsidy_request_uuids``, mirroring the ``approve`` endpoint contract.
 
-        Returns:
-            Response with declined and failed request UUIDs.
+        ```
+        Raises:
+            400 if input validation fails (including when any request is not in a declinable state)
+            422 if the backend service reports any request as non-declinable or another processing
+                error occurs
+        ```
         """
-        serializer = serializers.LearnerCreditRequestBulkDeclineSerializer(data=request.data)
+        serializer = serializers.LearnerCreditRequestDeclineSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        enterprise_customer_uuid = serializer.validated_data['enterprise_customer_uuid']
-        policy_uuid = serializer.validated_data['policy_uuid']
-        decline_all = serializer.validated_data.get('decline_all', False)
-        subsidy_request_uuids = serializer.validated_data.get('subsidy_request_uuids', [])
+        learner_credit_requests = serializer.get_learner_credit_requests()
 
-        # Validate policy exists
         try:
-            SubsidyAccessPolicy.objects.get(uuid=policy_uuid)
-        except SubsidyAccessPolicy.DoesNotExist:
+            result = subsidy_request_api.decline_learner_credit_requests(
+                learner_credit_requests,
+                reviewer=request.user,
+                reason=serializer.validated_data.get('decline_reason'),
+            )
+            declined_requests = result.get('declined', [])
+            response_data = {
+                'declined': [str(r.uuid) for r in declined_requests],
+                'non_declinable': [str(r.uuid) for r in result.get('non_declinable', [])],
+            }
+            if result.get('non_declinable'):
+                return Response(response_data, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+
+            # Handle optional post-decline side effects
+            if serializer.validated_data.get('send_notification') and declined_requests:
+                for declined_request in declined_requests:
+                    logger.info(
+                        "Decline notification already queued by api layer for request %s",
+                        declined_request.uuid,
+                    )
+            if serializer.validated_data.get('disassociate_from_org') and declined_requests:
+                enterprise_customer_uuid = get_enterprise_uuid_from_request_data(request)
+                lms_user_ids = [declined_request.user.lms_user_id for declined_request in declined_requests]
+                unlink_users_from_enterprise_task.delay(enterprise_customer_uuid, lms_user_ids)
+
+            return Response(response_data, status=status.HTTP_200_OK)
+        except Exception:  # pylint: disable=broad-except
             return Response(
-                {'error': f'Policy with uuid {policy_uuid} not found.'},
+                {"detail": "Unexpected error during decline."},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+
+    @permission_required(
+        constants.REQUESTS_ADMIN_ACCESS_PERMISSION,
+        fn=get_enterprise_uuid_from_request_data,
+    )
+    @action(detail=False, url_path="decline-all", methods=["post"], pagination_class=None)
+    def decline_all(self, request, *args, **kwargs):
+        """
+        Decline all learner credit requests for a given policy.
+
+        ```
+        Raises:
+            404 if no declinable requests are found
+            422 if any requests are discovered to be non-declinable
+        ```
+        """
+        serializer = serializers.LearnerCreditRequestDeclineAllSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        policy_uuid = serializer.validated_data['policy_uuid']
+
+        learner_credit_requests = self.get_queryset().filter(
+            state__in=DECLINABLE_STATES,
+            learner_credit_request_config__learner_credit_config__uuid=policy_uuid
+        )
+
+        if not learner_credit_requests.exists():
+            return Response(
+                {"detail": "No declinable requests found for the given policy."},
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        results = {'declined': [], 'failed': []}
-
-        # Get the requests to decline based on decline_all flag or specific UUIDs
-        if decline_all:
-            pending_requests = LearnerCreditRequest.objects.filter(
-                enterprise_customer_uuid=enterprise_customer_uuid,
-                learner_credit_request_config__learner_credit_config__uuid=policy_uuid,
-                state=SubsidyRequestStates.REQUESTED
-            )
-        else:
-            pending_requests = LearnerCreditRequest.objects.filter(
-                uuid__in=subsidy_request_uuids,
-                enterprise_customer_uuid=enterprise_customer_uuid,
-            )
-
-        # Filter to only REQUESTED state and collect valid requests
-        valid_requests = []
-        for learner_credit_request in pending_requests:
-            if learner_credit_request.state != SubsidyRequestStates.REQUESTED:
-                add_bulk_approve_operation_result(
-                    results,
-                    'failed',
-                    learner_credit_request.uuid,
-                    learner_credit_request.state,
-                    error=f'Request is not in a declinable state: {learner_credit_request.state}'
-                )
-            else:
-                valid_requests.append(learner_credit_request)
-
-        if not valid_requests and results['failed']:
-            return Response(results, status=status.HTTP_200_OK)
-
-        # Bulk decline the valid requests
         try:
-            LearnerCreditRequest.bulk_decline_requests(valid_requests, request.user)
-
-            # Create action records and enqueue notification tasks
-            for learner_credit_request in valid_requests:
-                # Create action record for audit trail
-                LearnerCreditRequestActions.create_action(
-                    learner_credit_request=learner_credit_request,
-                    recent_action=get_action_choice(SubsidyRequestStates.DECLINED),
-                    status=get_user_message_choice(SubsidyRequestStates.DECLINED),
-                )
-
-                add_bulk_approve_operation_result(
-                    results,
-                    'declined',
-                    learner_credit_request.uuid,
-                    SubsidyRequestStates.DECLINED
-                )
-
-                # Trigger decline email for all declined requests (per ticket requirement)
-                send_learner_credit_bnr_decline_notification_task.delay(
-                    str(learner_credit_request.uuid)
-                )
-
-        except SubsidyRequestBulkUpdateException as exc:
-            logger.exception("Error during bulk decline: %s", exc)
-            for learner_credit_request in valid_requests:
-                add_bulk_approve_operation_result(
-                    results,
-                    'failed',
-                    learner_credit_request.uuid,
-                    learner_credit_request.state,
-                    error=str(exc)
-                )
-
-        return Response(results, status=status.HTTP_200_OK)
+            result = subsidy_request_api.decline_learner_credit_requests(
+                learner_credit_requests,
+                reviewer=request.user,
+            )
+            response_data = {
+                'declined': [str(r.uuid) for r in result.get('declined', [])],
+                'non_declinable': [str(r.uuid) for r in result.get('non_declinable', [])],
+            }
+            if result.get('non_declinable'):
+                return Response(response_data, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+            return Response(response_data, status=status.HTTP_202_ACCEPTED)
+        except Exception:  # pylint: disable=broad-except
+            return Response(
+                {"detail": "Unexpected error during bulk decline."},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
 
 
 @extend_schema_view(

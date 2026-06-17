@@ -65,12 +65,13 @@ from .subsidy_access_policy import (
 )
 from .subsidy_requests import (
     CouponCodeRequestSerializer,
+    LearnerCreditRequestApprovalResponseSerializer,
     LearnerCreditRequestApproveAllSerializer,
     LearnerCreditRequestApproveRequestSerializer,
-    LearnerCreditRequestBulkApproveRequestSerializer,
-    LearnerCreditRequestBulkDeclineSerializer,
+    LearnerCreditRequestBulkCancelSerializer,
     LearnerCreditRequestCancelAllSerializer,
     LearnerCreditRequestCancelSerializer,
+    LearnerCreditRequestDeclineAllSerializer,
     LearnerCreditRequestDeclineSerializer,
     LearnerCreditRequestRemindAllSerializer,
     LearnerCreditRequestRemindSerializer,

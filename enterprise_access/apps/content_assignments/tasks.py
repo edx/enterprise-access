@@ -14,14 +14,14 @@ from enterprise_access.apps.content_assignments.content_metadata_api import (
     get_card_image_url,
     get_content_metadata_for_assignments,
     get_course_partners,
-    get_human_readable_date
+    get_human_readable_date,
+    get_normalized_metadata_for_assignment
 )
 from enterprise_access.tasks import LoggedTaskWithRetry
 from enterprise_access.utils import (
     format_datetime_obj,
     get_automatic_expiration_date_and_reason,
     get_course_run_metadata_for_assignment,
-    get_normalized_metadata_for_assignment,
     localized_utcnow
 )
 

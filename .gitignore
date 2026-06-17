@@ -163,11 +163,11 @@ enterprise_access/assets
 # claude code personalization
 .claude/settings.local.json
 
-# Ralph
-.ralph/.*
-.ralph/status.json
-.ralph/progress.json
-.ralph/specs/
-.ralph/logs
-.ralph/live.log
-.ralph/fix_plan.md
+# personal notes
+.notes/
+
+# Ralph (deprecated, can be removed once no one has local .ralph/ dirs)
+.ralph/
+
+# Temporary docs, useful for pluggable AI context
+docs/essentials-temp/

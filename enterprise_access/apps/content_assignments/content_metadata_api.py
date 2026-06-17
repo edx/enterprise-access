@@ -133,3 +133,25 @@ def is_date_n_days_from_now(target_datetime, num_days):
     """
     future_datetime = timezone.now() + timezone.timedelta(days=num_days)
     return target_datetime.date() == future_datetime.date()
+
+
+def get_normalized_metadata_for_assignment(assignment, content_metadata):
+    """
+    Retrieve normalized metadata for a given assignment. If the assignment has
+    a preferred course run key, return the metadata for that run.
+    If metadata for the run is missing, return the normalized metadata for the advertised run.
+
+    Args:
+        assignment: The assignment object.
+        content_metadata (dict): The content metadata object
+
+    Returns:
+        dict: Normalized metadata, either for a specific course run or the advertised course run.
+    """
+    normalized_metadata_by_run = content_metadata.get('normalized_metadata_by_run', {})
+    # Return the content metadata for a specific course run based on the preferred_course_run_key
+    if preferred_course_run_key := assignment.preferred_course_run_key:
+        return normalized_metadata_by_run.get(preferred_course_run_key, {})
+    # Return current advertised course run metadata if preferred_course_run_key is NULL (i.e.,
+    # impacting legacy course-based assignments created pre-May 2024).
+    return content_metadata.get('normalized_metadata', {})

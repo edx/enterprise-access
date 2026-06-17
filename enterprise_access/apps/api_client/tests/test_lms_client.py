@@ -1161,8 +1161,9 @@ class TestLmsApiClient(TestCase):
 
         # Sanity check: looks like it hit an "accounts" or "user" endpoint on LMS
         self.assertIn('http', called_url)
-        self.assertTrue(
-            ('accounts' in called_url),
+        self.assertIn(
+            'accounts',
+            called_url,
             f"Expected an LMS user accounts endpoint, got: {called_url}",
         )
 

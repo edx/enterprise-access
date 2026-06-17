@@ -17,12 +17,12 @@ from django.core.paginator import Paginator
 from enterprise_access.apps.content_assignments.constants import LearnerContentAssignmentStateChoices
 from enterprise_access.apps.content_assignments.content_metadata_api import (
     get_content_metadata_for_assignments,
+    get_normalized_metadata_for_assignment,
     is_date_n_days_from_now,
     parse_datetime_string
 )
 from enterprise_access.apps.content_assignments.models import AssignmentConfiguration
 from enterprise_access.apps.content_assignments.tasks import send_exec_ed_enrollment_warmer
-from enterprise_access.utils import get_normalized_metadata_for_assignment
 
 logger = logging.getLogger(__name__)
 

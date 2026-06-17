@@ -24,12 +24,13 @@ from enterprise_access.apps.customer_billing.models import (
     FailedCheckoutIntentConflict,
     SelfServiceSubscriptionRenewal,
     SlugReservationConflict,
+    SspProduct,
     StripeEventData,
     StripeEventSummary
 )
 from enterprise_access.apps.customer_billing.stripe_event_handlers import StripeEventHandler
 from enterprise_access.apps.customer_billing.tests.factories import StripeEventDataFactory
-from enterprise_access.apps.customer_billing.tests.test_stripe_event_handlers import AttrDict
+from enterprise_access.apps.customer_billing.tests.utils import AttrDict
 from enterprise_access.apps.provisioning.models import (
     GetCreateFirstPaidSubscriptionPlanStep,
     GetCreateTrialSubscriptionPlanStep
@@ -196,6 +197,58 @@ class TestCheckoutIntentModel(TestCase):
 
         # Should still only have one intent for this user
         self.assertEqual(CheckoutIntent.objects.filter(user=self.user1).count(), 1)
+
+    def test_ssp_product_nullable_fk_accepts_none_and_instance(self):
+        """The SSP product relation should allow nulls and valid product instances.
+
+        Create one CheckoutIntent without a product and then verify multiple
+        SSP products (teams and the provided academy slugs) can be linked.
+        """
+        slugs = [
+            'teams-yearly',
+            'ai-academy-yearly',
+            'sustainability-academy-yearly',
+            'tech-digital-transformation-academy-yearly',
+            'data-academy-yearly',
+            'management-academy-yearly',
+            'leadership-academy-yearly',
+            'supply-chain-academy-yearly',
+            'communication-academy-yearly',
+        ]
+
+        products = []
+        for slug in slugs:
+            product, _ = SspProduct.objects.get_or_create(
+                slug=slug,
+                defaults={
+                    'stripe_price_lookup_key': f"{slug.replace('-', '_')}_price",
+                    'catalog_query_uuid': uuid4(),
+                },
+            )
+            products.append(product)
+
+        intent_without_product = CheckoutIntent.objects.create(
+            user=cast(AbstractUser, self.user1),
+            enterprise_slug='nullable-product-enterprise',
+            enterprise_name='Nullable Product Enterprise',
+            quantity=3,
+            expires_at=timezone.now() + timedelta(hours=1),
+            country='US',
+            ssp_product=None,
+        )
+        self.assertIsNone(intent_without_product.ssp_product)
+
+        for product in products:
+            intent = CheckoutIntent.objects.create(
+                user=UserFactory(),
+                enterprise_slug=f'linked-product-{product.slug}-enterprise',
+                enterprise_name=f'Linked {product.slug} Enterprise',
+                quantity=1,
+                expires_at=timezone.now() + timedelta(hours=1),
+                country='US',
+                ssp_product=product,
+            )
+            self.assertEqual(intent.ssp_product, product)
 
     def test_create_intent_with_existing_failed_intent(self):
         """
@@ -788,6 +841,7 @@ class TestStripeEventSummary(TestCase):
         invoice_event_data = {
             'id': 'evt_test_invoice',
             'type': 'invoice.paid',
+            'created': 1700000000,
             'data': {
                 'object': {
                     'object': 'invoice',
@@ -845,6 +899,7 @@ class TestStripeEventSummary(TestCase):
         subscription_event_data = {
             'id': 'evt_test_sub_created',
             'type': 'customer.subscription.created',
+            'created': 1700000000,
             'data': {
                 'object': {
                     'object': 'subscription',
@@ -900,6 +955,7 @@ class TestStripeEventSummary(TestCase):
         subscription_event_data = {
             'id': 'evt_test_sub_cancel_at',
             'type': 'customer.subscription.updated',
+            'created': 1700000000,
             'data': {
                 'object': {
                     'object': 'subscription',
@@ -1012,6 +1068,7 @@ class TestStripeEventSummary(TestCase):
         subscription_event_data = {
             'id': 'evt_test_with_plan_uuid',
             'type': 'customer.subscription.created',
+            'created': 1700000000,
             'data': {
                 'object': {
                     'object': 'subscription',
@@ -1132,6 +1189,47 @@ class TestStripeEventSummary(TestCase):
         previous = other_checkout_intent.previous_summary(current_event)
         self.assertIsNone(previous)
 
+    def test_populate_with_summary_data_falls_back_to_stripe_event_data_created(self):
+        """
+        When the raw event payload lacks a top-level 'created' key,
+        stripe_event_created_at should fall back to StripeEventData.created
+        so the non-nullable field is always populated.
+        """
+        event_data_without_created = {
+            'id': 'evt_test_no_created',
+            'type': 'customer.subscription.created',
+            # Note: no top-level 'created' key
+            'data': {
+                'object': {
+                    'object': 'subscription',
+                    'id': 'sub_test_no_created',
+                    'status': 'active',
+                    'currency': 'usd',
+                    'items': {
+                        'data': [
+                            {
+                                'current_period_start': 1609459200,
+                                'current_period_end': 1640995200,
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+
+        stripe_event_data = StripeEventData.objects.create(
+            event_id='evt_test_no_created',
+            event_type='customer.subscription.created',
+            checkout_intent=self.checkout_intent,
+            data=event_data_without_created,
+        )
+
+        summary = StripeEventSummary(stripe_event_data=stripe_event_data)
+        summary.populate_with_summary_data()
+
+        self.assertIsNotNone(summary.stripe_event_created_at)
+        self.assertEqual(summary.stripe_event_created_at, stripe_event_data.created)
+
     def _create_mock_stripe_event(self, event_type, event_data):
         """Helper to create a mock Stripe event."""
         mock_event = mock.MagicMock(spec=stripe.Event)
@@ -1174,6 +1272,7 @@ class TestStripeEventSummary(TestCase):
         subscription_event_data = {
             'id': 'evt_test_sub_created',
             'type': 'customer.subscription.created',
+            'created': 1700000000,
             'data': {
                 'object': subscription_data_object
             }
@@ -1291,7 +1390,7 @@ class TestSelfServiceSubscriptionRenewal(TestCase):
             event_id='evt_test_123',
             event_type='customer.subscription.updated',
             checkout_intent=self.checkout_intent,
-            data={'test': 'data'}
+            data={'test': 'data', 'created': 1700000000}
         )
 
         # Create renewal record
@@ -1316,6 +1415,24 @@ class TestSelfServiceSubscriptionRenewal(TestCase):
         self.assertGreaterEqual(renewal.processed_at, before_processing)
         self.assertLessEqual(renewal.processed_at, after_processing)
 
+    def test_self_service_subscription_renewal_is_canceled_default_false(self):
+        """Test that new renewal records default is_canceled to False."""
+        event_data = StripeEventData.objects.create(
+            event_id='evt_test_is_canceled_default',
+            event_type='customer.subscription.updated',
+            checkout_intent=self.checkout_intent,
+            data={'test': 'data', 'created': 1700000000}
+        )
+
+        renewal = SelfServiceSubscriptionRenewal.objects.create(
+            checkout_intent=self.checkout_intent,
+            subscription_plan_renewal_id=999,
+            stripe_subscription_id='sub_test_is_canceled_default',
+            stripe_event_data=event_data,
+        )
+
+        self.assertFalse(renewal.is_canceled)
+
     def test_self_service_subscription_renewal_mark_as_processed_multiple_times(self):
         """Test that calling mark_as_processed multiple times updates the timestamp each time."""
         # Create StripeEventData first
@@ -1323,7 +1440,7 @@ class TestSelfServiceSubscriptionRenewal(TestCase):
             event_id='evt_test_456',
             event_type='customer.subscription.updated',
             checkout_intent=self.checkout_intent,
-            data={'test': 'data'}
+            data={'test': 'data', 'created': 1700000000}
         )
 
         expected_renewal_id = 456
@@ -1392,3 +1509,57 @@ class TestSelfServiceSubscriptionRenewal(TestCase):
             stripe_event_data__event_type='customer.subscription.updated'
         )
         self.assertIn(renewal, renewals_by_event)
+
+
+class TestSspProduct(TestCase):
+    """Tests for the SspProduct model."""
+
+    def _make_product(self, **kwargs):
+        """Build an unsaved SspProduct with sensible defaults."""
+        defaults = {
+            'slug': 'ai-academy-yearly',
+            'stripe_price_lookup_key': 'ai_academy_yearly_price',
+            'catalog_query_uuid': uuid4(),
+            'academy_uuid': uuid4(),
+        }
+        defaults.update(kwargs)
+        return SspProduct(**defaults)
+
+    def test_str(self):
+        """SspProduct string representation includes slug."""
+        product = self._make_product(slug='teams-yearly')
+        self.assertEqual(str(product), '<SspProduct slug=teams-yearly>')
+
+    @mock.patch('enterprise_access.apps.customer_billing.models.get_cached_academy_data')
+    def test_academy_properties_return_fields(self, mock_get_data):
+        mock_get_data.return_value = {
+            'title': 'AI Academy',
+            'description': 'Learn AI',
+            'marketing_url': 'https://example.com/ai',
+            'thumbnail_url': 'https://example.com/ai.png',
+            'tags': ['ai', 'ml'],
+        }
+        product = self._make_product()
+        self.assertEqual(product.academy_title, 'AI Academy')
+        self.assertEqual(product.academy_description, 'Learn AI')
+        self.assertEqual(product.academy_marketing_url, 'https://example.com/ai')
+        self.assertEqual(product.academy_thumbnail_url, 'https://example.com/ai.png')
+        self.assertEqual(product.academy_tags, ['ai', 'ml'])
+
+    @mock.patch('enterprise_access.apps.customer_billing.models.get_cached_academy_data')
+    def test_academy_properties_return_none_when_no_academy_uuid(self, mock_get_data):
+        mock_get_data.return_value = None
+        product = self._make_product(academy_uuid=None)
+        self.assertIsNone(product.academy_title)
+        self.assertIsNone(product.academy_description)
+        self.assertIsNone(product.academy_marketing_url)
+        self.assertIsNone(product.academy_thumbnail_url)
+        self.assertIsNone(product.academy_tags)
+        mock_get_data.assert_called_with(None)
+
+    @mock.patch('enterprise_access.apps.customer_billing.models.get_cached_academy_data')
+    def test_academy_properties_return_none_on_missing_key(self, mock_get_data):
+        mock_get_data.return_value = {}  # empty dict — keys missing
+        product = self._make_product()
+        self.assertIsNone(product.academy_title)
+        self.assertIsNone(product.academy_tags)

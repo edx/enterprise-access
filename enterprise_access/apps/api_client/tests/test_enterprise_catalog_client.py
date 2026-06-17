@@ -274,3 +274,32 @@ class TestEnterpriseCatalogUserV1ApiClient(TestCase):
 
         # Assert the response is as expected
         self.assertEqual(result, expected_result)
+
+
+class TestEnterpriseCatalogApiClientGetAcademy(TestCase):
+    """Tests for EnterpriseCatalogApiClient.get_academy()."""
+
+    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient')
+    def test_get_academy_success(self, mock_oauth_client):
+        academy_uuid = uuid4()
+        expected = {'uuid': str(academy_uuid), 'title': 'AI Academy', 'description': 'Learn AI'}
+        mock_oauth_client.return_value.get.return_value.json.return_value = expected
+
+        client = EnterpriseCatalogApiClient()
+        result = client.get_academy(academy_uuid)
+
+        self.assertEqual(result, expected)
+        mock_oauth_client.return_value.get.assert_called_with(
+            f'http://enterprise-catalog.example.com/api/v2/academies/{academy_uuid}/',
+        )
+
+    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient')
+    def test_get_academy_raises_on_error(self, mock_oauth_client):
+        """get_academy() propagates HTTP errors."""
+        mock_response = Response()
+        mock_response.status_code = 404
+        mock_oauth_client.return_value.get.return_value = mock_response
+
+        client = EnterpriseCatalogApiClient()
+        with self.assertRaises(Exception):
+            client.get_academy(uuid4())
