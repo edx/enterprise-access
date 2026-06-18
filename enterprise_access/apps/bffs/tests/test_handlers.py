@@ -31,11 +31,34 @@ class TestTransformEnterpriseCustomer(TestHandlerContextMixin):
         return BaseLearnerPortalHandler(context)
 
     @ddt.data(
-        # (enable_integrated_search, active_integrations, expected_disable_search, expected_show_warning)
-        (False, [], True, False),
-        (False, [{'channel_code': 'SAP'}], True, False),
-        (True, [], False, False),
-        (True, [{'channel_code': 'SAP'}], False, True),
+        # Search flag disabled, no integrations: search disabled, no integration warning
+        {
+            'enable_integrated_search': False,
+            'active_integrations': [],
+            'expected_disable_search': True,
+            'expected_show_warning': False,
+        },
+        # Search flag disabled, with integrations: search disabled, warning suppressed
+        {
+            'enable_integrated_search': False,
+            'active_integrations': [{'channel_code': 'SAP'}],
+            'expected_disable_search': True,
+            'expected_show_warning': False,
+        },
+        # Search flag enabled, no integrations: search enabled, no integration warning
+        {
+            'enable_integrated_search': True,
+            'active_integrations': [],
+            'expected_disable_search': False,
+            'expected_show_warning': False,
+        },
+        # Search flag enabled, with integrations: search enabled, integration warning shown
+        {
+            'enable_integrated_search': True,
+            'active_integrations': [{'channel_code': 'SAP'}],
+            'expected_disable_search': False,
+            'expected_show_warning': True,
+        },
     )
     @ddt.unpack
     def test_transform_enterprise_customer(
@@ -57,21 +80,38 @@ class TestTransformEnterpriseCustomer(TestHandlerContextMixin):
         self.assertEqual(result['disable_search'], expected_disable_search)
         self.assertEqual(result['show_integration_warning'], expected_show_warning)
 
-    def test_transform_enterprise_customer_without_identity_provider(self):
+    @ddt.data(
+        # Search flag disabled, no identity provider: search still disabled
+        {
+            'enable_integrated_search': False,
+            'expected_disable_search': True,
+        },
+        # Search flag enabled, no identity provider: search still enabled
+        {
+            'enable_integrated_search': True,
+            'expected_disable_search': False,
+        },
+    )
+    @ddt.unpack
+    def test_transform_enterprise_customer_without_identity_provider(
+        self,
+        enable_integrated_search,
+        expected_disable_search,
+    ):
         """
-        Search should be disabled based solely on enable_integrated_customer_learner_portal_search,
+        disable_search depends solely on enable_integrated_customer_learner_portal_search,
         regardless of whether an identity_provider is configured.
         """
         handler = self._make_handler()
         enterprise_customer = {
             **self.mock_enterprise_customer,
-            'enable_integrated_customer_learner_portal_search': False,
+            'enable_integrated_customer_learner_portal_search': enable_integrated_search,
             'identity_provider': None,
         }
 
         result = handler.transform_enterprise_customer(enterprise_customer)
 
-        self.assertTrue(result['disable_search'])
+        self.assertEqual(result['disable_search'], expected_disable_search)
 
 
 class TestBaseHandler(TestHandlerContextMixin):
