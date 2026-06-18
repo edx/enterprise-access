@@ -404,6 +404,12 @@ class LearnerCreditRequestDeclineAllSerializer(serializers.Serializer):  # pylin
         required=True,
         help_text="The UUID of the SubsidyAccessPolicy to filter requests by."
     )
+    decline_reason = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        help_text="Reason for declining all matching requests.",
+    )
 
 
 # pylint: disable=abstract-method
