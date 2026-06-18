@@ -168,7 +168,7 @@ class CustomerBillingSspProductsTests(APITest):
         self.assertEqual(payload['thumbnail_url'], 'https://cdn.example.com/ai.png')
 
     @ddt.data(
-        ({}, StripePricingError('Stripe unavailable'), True, False),
+        ({}, StripePricingError('Stripe unavailable'), True, True),
         ({'include_pricing': 'false'}, None, True, False),
     )
     @ddt.unpack
@@ -202,23 +202,24 @@ class CustomerBillingSspProductsTests(APITest):
                         'ai_academy_yearly_price': {'unit_amount_decimal': Decimal('149.00')}
                     }
 
-            if query_params:
-                response = self.client.get(self.list_url, query_params)
-            else:
-                response = self.client.get(self.list_url)
+                if query_params:
+                    response = self.client.get(self.list_url, query_params)
+                else:
+                    response = self.client.get(self.list_url)
 
-            self.assertEqual(response.status_code, status.HTTP_200_OK)
-            payload = next(p for p in response.data if p['lookup_key'] ==
-                           self.essentials_product.stripe_price_lookup_key)
-            if expect_price_null:
-                self.assertIsNone(payload['price'])
-            else:
-                self.assertIsNotNone(payload['price'])
+                self.assertEqual(response.status_code, status.HTTP_200_OK)
+                payload = next(
+                    p for p in response.data
+                    if p['lookup_key'] == self.essentials_product.stripe_price_lookup_key)
+                if expect_price_null:
+                    self.assertIsNone(payload['price'])
+                else:
+                    self.assertIsNotNone(payload['price'])
 
-            if expect_stripe_called:
-                mock_get_all_stripe_prices.assert_called()
-            else:
-                mock_get_all_stripe_prices.assert_not_called()
+                if expect_stripe_called:
+                    mock_get_all_stripe_prices.assert_called()
+                else:
+                    mock_get_all_stripe_prices.assert_not_called()
 
     @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_all_stripe_prices')
     @mock.patch('enterprise_access.apps.customer_billing.models.get_cached_academy_data')

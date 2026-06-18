@@ -689,10 +689,7 @@ class SspEssentialsProductResponseSerializer(serializers.Serializer):
 
     def _academy_field(self, obj, field):
         """Safely read an academy metadata field from the SspProduct."""
-        try:
-            return getattr(obj, field, None)
-        except Exception:   # pylint: disable=broad-exception-caught
-            return None
+        return getattr(obj, field, None)
 
     @staticmethod
     def _build_public_thumbnail_url(thumbnail_url):
@@ -709,46 +706,33 @@ class SspEssentialsProductResponseSerializer(serializers.Serializer):
     # ── field methods ────────────────────────────────────────
 
     def get_name(self, obj):
-        return (
-            self._academy_field(obj, 'academy_title') or
-            self._price_data(obj).get('stripe_name')
-        )
+        return obj.academy_title or self._price_data(obj).get('stripe_name')
 
     def get_long_name(self, obj):
-        title = self._academy_field(obj, 'academy_title')
         return (
-            self._academy_field(obj, 'academy_long_name') or
-            title or
+            obj.academy_long_name or
+            obj.academy_title or
             self._price_data(obj).get('stripe_name')
         )
 
     def get_description(self, obj):
-        return (
-            self._academy_field(obj, 'academy_description') or
-            self._price_data(obj).get('stripe_description')
-        )
+        return obj.academy_description or self._price_data(obj).get('stripe_description')
 
     def get_marketing_url(self, obj):
-        return (
-            self._academy_field(obj, 'academy_marketing_url') or
-            self._price_data(obj).get('stripe_marketing_url')
-        )
+        return obj.academy_marketing_url or self._price_data(obj).get('stripe_marketing_url')
 
     def get_thumbnail_url(self, obj):
         """Get and format the public thumbnail URL for the product."""
-        raw = (
-            self._academy_field(obj, 'academy_thumbnail_url') or
-            self._price_data(obj).get('stripe_thumbnail_url')
-        )
-        return self._build_public_thumbnail_url(raw)
+        thumbnail_url = obj.academy_thumbnail_url or self._price_data(obj).get('stripe_thumbnail_url')
+        return self._build_public_thumbnail_url(thumbnail_url)
 
     def get_price(self, obj):
         """Get and format the product price as a string."""
-        raw = self._price_data(obj).get('unit_amount_decimal')
-        if raw is None:
+        price_value = self._price_data(obj).get('unit_amount_decimal')
+        if price_value is None:
             return None
         try:
-            return f'{Decimal(str(raw)):.2f}'
+            return f'{Decimal(str(price_value)):.2f}'
         except (InvalidOperation, TypeError, ValueError):
             return None
 
