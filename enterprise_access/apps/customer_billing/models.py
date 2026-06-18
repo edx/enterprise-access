@@ -101,8 +101,12 @@ class SspProduct(TimeStampedModel):
     def _academy_data(self):
         """Fetch and instance-cache the academy payload. None for non-Academy products."""
         if not getattr(self, '_academy_data_cache', None):
-            # pylint: disable=attribute-defined-outside-init
-            self._academy_data_cache = get_cached_academy_data(self.academy_uuid)
+            try:
+                # pylint: disable=attribute-defined-outside-init
+                self._academy_data_cache = get_cached_academy_data(self.academy_uuid)
+            except Exception:  # pylint: disable=broad-exception-caught
+                logger.warning('Failed to fetch academy data for %s', self.academy_uuid)
+                return None
         return self._academy_data_cache
 
     @property
