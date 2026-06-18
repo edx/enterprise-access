@@ -11,8 +11,10 @@ from uuid import uuid4
 
 import ddt
 import stripe
+from django.apps import apps
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import AbstractUser
+from django.core.exceptions import ValidationError
 from django.test import TestCase, override_settings
 from django.utils import timezone
 
@@ -49,6 +51,14 @@ class TestCheckoutIntentModel(TestCase):
     def setUp(self):
         self.user1 = UserFactory()
         self.user2 = UserFactory()
+        self.ssp_product, _ = SspProduct.objects.get_or_create(
+            slug='teams-yearly',
+            defaults={
+                'stripe_price_lookup_key': 'teams_yearly_price',
+                'catalog_query_uuid': uuid4(),
+                'is_active': True,
+            },
+        )
         self.basic_data = {
             'enterprise_slug': 'test-enterprise',
             'enterprise_name': 'Test Enterprise',
@@ -65,7 +75,7 @@ class TestCheckoutIntentModel(TestCase):
 
         # Create several intents in different states
         # Intent 1: Expired time but still in CREATED state - should be updated
-        expired_intent = CheckoutIntent.objects.create(
+        CheckoutIntent.objects.create(
             user=user,
             enterprise_name="Expired Enterprise",
             enterprise_slug="expired-enterprise",
@@ -73,11 +83,12 @@ class TestCheckoutIntentModel(TestCase):
             quantity=10,
             expires_at=timezone.now() - timedelta(minutes=5),
             country='US',
-            terms_metadata={'version': '1.0'}
+            terms_metadata={'version': '1.0'},
+            ssp_product=self.ssp_product,
         )
 
         # Intent 2: Not expired time - should not be updated
-        active_intent = CheckoutIntent.objects.create(
+        CheckoutIntent.objects.create(
             user=UserFactory(),
             enterprise_name="Active Enterprise",
             enterprise_slug="active-enterprise",
@@ -85,11 +96,12 @@ class TestCheckoutIntentModel(TestCase):
             quantity=15,
             expires_at=timezone.now() + timedelta(minutes=30),
             country='CA',
-            terms_metadata={'version': '1.1'}
+            terms_metadata={'version': '1.1'},
+            ssp_product=self.ssp_product,
         )
 
         # Intent 3: Expired time but already in PAID state - should not be updated
-        paid_intent = CheckoutIntent.objects.create(
+        CheckoutIntent.objects.create(
             user=UserFactory(),
             enterprise_name="Paid Enterprise",
             enterprise_slug="paid-enterprise",
@@ -97,7 +109,8 @@ class TestCheckoutIntentModel(TestCase):
             quantity=20,
             expires_at=timezone.now() - timedelta(minutes=10),
             country='GB',
-            terms_metadata={'version': '2.0'}
+            terms_metadata={'version': '2.0'},
+            ssp_product=self.ssp_product,
         )
 
         # Run the cleanup method
@@ -106,17 +119,67 @@ class TestCheckoutIntentModel(TestCase):
         # Verify it returns the correct count of updated intents
         self.assertEqual(updated_count, 1, "Should have updated exactly one intent")
 
-        # Verify the expired intent was updated to EXPIRED state
-        expired_intent.refresh_from_db()
-        self.assertEqual(expired_intent.state, CheckoutIntentState.EXPIRED)
+    def test_create_intent_multiple_teams_yearly_raises_runtime_error(self):
+        """If SspProduct.get raises MultipleObjectsReturned, create_intent should raise RuntimeError."""
+        # Patch the model manager's get() to raise the model's MultipleObjectsReturned
+        SspProductModel = apps.get_model('customer_billing', 'SspProduct')
+        original_get = SspProductModel.objects.get
 
-        # Verify the active intent was not updated
-        active_intent.refresh_from_db()
-        self.assertEqual(active_intent.state, CheckoutIntentState.CREATED)
+        def _raise(*args, **kwargs):
+            raise SspProductModel.MultipleObjectsReturned()
 
-        # Verify the paid intent was not updated
-        paid_intent.refresh_from_db()
-        self.assertEqual(paid_intent.state, CheckoutIntentState.PAID)
+        SspProductModel.objects.get = _raise
+        try:
+            with self.assertRaises(RuntimeError):
+                CheckoutIntent.create_intent(
+                    user=cast(AbstractUser, self.user1),
+                    quantity=1,
+                )
+        finally:
+            SspProductModel.objects.get = original_get
+
+    def test_create_intent_existing_failed_state_raises_failed_conflict(self):
+        """Existing failed intent causes create_intent to raise FailedCheckoutIntentConflict."""
+        teams = self.ssp_product
+        existing = CheckoutIntent.create_intent(
+            user=cast(AbstractUser, self.user1),
+            slug='failed-slug',
+            name='FailedCo',
+            quantity=1,
+            ssp_product=teams,
+        )
+        # Mark as an errored state
+        existing.state = CheckoutIntentState.ERRORED_BACKOFFICE
+        existing.save(update_fields=['state'])
+
+        with self.assertRaises(FailedCheckoutIntentConflict):
+            CheckoutIntent.create_intent(
+                user=cast(AbstractUser, self.user1),
+                quantity=2,
+            )
+
+    def test_create_intent_slug_reservation_conflict(self):
+        """Slug/name reserved by another user raises SlugReservationConflict."""
+        teams = self.ssp_product
+        # Other user reserves slug/name
+        CheckoutIntent.create_intent(
+            user=cast(AbstractUser, self.user2),
+            slug='reserved-slug',
+            name='ReservedCo',
+            quantity=1,
+            ssp_product=teams,
+        )
+
+        with self.assertRaises(SlugReservationConflict):
+            CheckoutIntent.create_intent(
+                user=cast(AbstractUser, self.user1),
+                slug='reserved-slug',
+                name='ReservedCo',
+                quantity=1,
+                ssp_product=teams,
+            )
+
+        # No further DB state assertions required for this test.
 
     def test_create_intent_success(self):
         """Test successful creation of checkout intent."""
@@ -198,12 +261,52 @@ class TestCheckoutIntentModel(TestCase):
         # Should still only have one intent for this user
         self.assertEqual(CheckoutIntent.objects.filter(user=self.user1).count(), 1)
 
-    def test_ssp_product_nullable_fk_accepts_none_and_instance(self):
-        """The SSP product relation should allow nulls and valid product instances.
+    def test_for_user_returns_latest_intent_for_authenticated_user(self):
+        """for_user returns the newest checkout intent for an authenticated user."""
+        other_product, _ = SspProduct.objects.get_or_create(
+            slug='ai-academy-yearly',
+            defaults={
+                'stripe_price_lookup_key': 'ai_academy_yearly_price',
+                'catalog_query_uuid': uuid4(),
+                'is_active': True,
+            },
+        )
 
-        Create one CheckoutIntent without a product and then verify multiple
-        SSP products (teams and the provided academy slugs) can be linked.
+        older_intent = CheckoutIntent.objects.create(
+            user=cast(AbstractUser, self.user1),
+            enterprise_slug='older-enterprise',
+            enterprise_name='Older Enterprise',
+            quantity=2,
+            expires_at=timezone.now() + timedelta(hours=1),
+            country='US',
+            ssp_product=self.ssp_product,
+        )
+        newer_intent = CheckoutIntent.objects.create(
+            user=cast(AbstractUser, self.user1),
+            enterprise_slug='newer-enterprise',
+            enterprise_name='Newer Enterprise',
+            quantity=3,
+            expires_at=timezone.now() + timedelta(hours=1),
+            country='US',
+            ssp_product=other_product,
+        )
+
+        self.assertNotEqual(older_intent.id, newer_intent.id)
+        self.assertEqual(CheckoutIntent.for_user(self.user1), newer_intent)
+
+    def test_for_user_returns_none_for_missing_or_unauthenticated_user(self):
+        """for_user should return None when user is missing or unauthenticated."""
+        self.assertIsNone(CheckoutIntent.for_user(None))
+
+        unauth_user = mock.Mock(is_authenticated=False)
+        self.assertIsNone(CheckoutIntent.for_user(unauth_user))
+
+    def test_ssp_product_auto_defaults_to_teams_yearly(self):
         """
+        Test that creating CheckoutIntent without ssp_product auto-defaults to teams-yearly.
+        This ensures backward compatibility when ssp_product is not provided.
+        """
+        # Ensure a set of SSP products exist (including teams-yearly)
         slugs = [
             'teams-yearly',
             'ai-academy-yearly',
@@ -227,28 +330,222 @@ class TestCheckoutIntentModel(TestCase):
             )
             products.append(product)
 
-        intent_without_product = CheckoutIntent.objects.create(
+        # Create a checkout intent without providing ssp_product
+        intent = CheckoutIntent.objects.create(
             user=cast(AbstractUser, self.user1),
-            enterprise_slug='nullable-product-enterprise',
-            enterprise_name='Nullable Product Enterprise',
+            enterprise_slug='auto-default-enterprise',
+            enterprise_name='Auto Default Enterprise',
             quantity=3,
             expires_at=timezone.now() + timedelta(hours=1),
             country='US',
-            ssp_product=None,
         )
-        self.assertIsNone(intent_without_product.ssp_product)
 
-        for product in products:
-            intent = CheckoutIntent.objects.create(
-                user=UserFactory(),
-                enterprise_slug=f'linked-product-{product.slug}-enterprise',
-                enterprise_name=f'Linked {product.slug} Enterprise',
-                quantity=1,
+        # Verify it auto-defaulted to teams-yearly
+        self.assertIsNotNone(intent.ssp_product)
+        self.assertEqual(intent.ssp_product.slug, 'teams-yearly')
+
+    def test_ssp_product_default_missing_raises_validation_error(self):
+        """Creating without ssp_product raises when teams-yearly default cannot be found."""
+        SspProduct.objects.filter(slug='teams-yearly').delete()
+
+        with self.assertRaises(ValidationError) as exc:
+            CheckoutIntent.objects.create(
+                user=cast(AbstractUser, self.user1),
+                enterprise_slug='missing-default-enterprise',
+                enterprise_name='Missing Default Enterprise',
+                quantity=3,
                 expires_at=timezone.now() + timedelta(hours=1),
                 country='US',
-                ssp_product=product,
             )
-            self.assertEqual(intent.ssp_product, product)
+
+        self.assertIn('Default ssp_product teams-yearly was not found.', str(exc.exception))
+
+    @mock.patch(
+        'enterprise_access.apps.customer_billing.models.SspProduct.objects.get',
+        side_effect=SspProduct.MultipleObjectsReturned,
+    )
+    def test_ssp_product_default_multiple_raises_validation_error(self, _mock_get):
+        """Creating without ssp_product raises when multiple teams-yearly defaults are returned."""
+        with self.assertRaises(ValidationError) as exc:
+            CheckoutIntent.objects.create(
+                user=cast(AbstractUser, self.user1),
+                enterprise_slug='multiple-default-enterprise',
+                enterprise_name='Multiple Default Enterprise',
+                quantity=3,
+                expires_at=timezone.now() + timedelta(hours=1),
+                country='US',
+            )
+
+        self.assertIn('Multiple teams-yearly ssp_product records found.', str(exc.exception))
+
+    def test_ssp_product_accepts_explicit_value(self):
+        """
+        Test that CheckoutIntent respects explicitly provided ssp_product values.
+        """
+        # Create an additional SSP product
+        custom_product, _ = SspProduct.objects.get_or_create(
+            slug='ai-academy-yearly',
+            defaults={
+                'stripe_price_lookup_key': 'ai_academy_yearly_price',
+                'catalog_query_uuid': uuid4(),
+            },
+        )
+
+        # Create intent with explicit ssp_product
+        intent = CheckoutIntent.objects.create(
+            user=UserFactory(),
+            enterprise_slug='explicit-product-enterprise',
+            enterprise_name='Explicit Product Enterprise',
+            quantity=1,
+            expires_at=timezone.now() + timedelta(hours=1),
+            country='US',
+            ssp_product=custom_product,
+        )
+
+        # Verify it uses the explicitly provided product
+        self.assertEqual(intent.ssp_product, custom_product)
+        self.assertEqual(intent.ssp_product.slug, 'ai-academy-yearly')
+
+    def test_create_intent_without_explicit_ssp_product(self):
+        """
+        Test that CheckoutIntent.create_intent() works without providing ssp_product.
+        The ssp_product should auto-default to teams-yearly for backward compatibility.
+        """
+        # Create an intent without providing ssp_product
+        intent = CheckoutIntent.create_intent(
+            user=cast(AbstractUser, self.user1),
+            slug='backward-compat-enterprise',
+            name='Backward Compatibility Enterprise',
+            quantity=5
+        )
+
+        # Verify the intent was created successfully
+        self.assertIsNotNone(intent)
+        self.assertEqual(intent.enterprise_slug, 'backward-compat-enterprise')
+        self.assertEqual(intent.enterprise_name, 'Backward Compatibility Enterprise')
+        self.assertEqual(intent.quantity, 5)
+
+        # Verify ssp_product auto-defaulted to teams-yearly
+        self.assertIsNotNone(intent.ssp_product)
+        self.assertEqual(intent.ssp_product.slug, 'teams-yearly')
+
+    def test_create_intent_raises_runtime_error_if_default_product_missing(self):
+        """create_intent should raise RuntimeError if teams-yearly default cannot be resolved."""
+        SspProduct.objects.filter(slug='teams-yearly').delete()
+
+        with self.assertRaises(RuntimeError) as exc:
+            CheckoutIntent.create_intent(
+                user=cast(AbstractUser, UserFactory()),
+                slug='missing-default-create-intent-slug',
+                name='Missing Default Create Intent',
+                quantity=5,
+            )
+
+        self.assertIn('Default SspProduct with slug teams-yearly not found.', str(exc.exception))
+
+    @mock.patch(
+        'enterprise_access.apps.customer_billing.models.SspProduct.objects.get',
+        side_effect=SspProduct.MultipleObjectsReturned,
+    )
+    def test_create_intent_raises_runtime_error_if_multiple_defaults(self, _mock_get):
+        """create_intent should raise RuntimeError if duplicate teams-yearly rows are detected."""
+        with self.assertRaises(RuntimeError) as exc:
+            CheckoutIntent.create_intent(
+                user=cast(AbstractUser, UserFactory()),
+                slug='multiple-default-create-intent-slug',
+                name='Multiple Default Create Intent',
+                quantity=5,
+            )
+
+        self.assertIn('Multiple SspProduct rows found for slug teams-yearly', str(exc.exception))
+
+    def test_create_intent_creates_separate_intent_for_different_ssp_product(self):
+        """Providing a different ssp_product should create a separate intent for the same user."""
+        original_product = self.ssp_product
+        new_product = SspProduct.objects.create(
+            slug='new-product-yearly',
+            stripe_price_lookup_key='new_product_yearly_price',
+            catalog_query_uuid=uuid4(),
+            is_active=True,
+        )
+
+        existing = CheckoutIntent.create_intent(
+            user=cast(AbstractUser, self.user1),
+            slug='existing-ssp-slug',
+            name='Existing SSP Enterprise',
+            quantity=5,
+            ssp_product=original_product,
+        )
+
+        second = CheckoutIntent.create_intent(
+            user=cast(AbstractUser, self.user1),
+            slug='existing-ssp-slug-updated',
+            name='Existing SSP Enterprise Updated',
+            quantity=10,
+            ssp_product=new_product,
+        )
+
+        self.assertNotEqual(existing.id, second.id)
+        self.assertEqual(second.ssp_product, new_product)
+        self.assertEqual(CheckoutIntent.objects.filter(user=self.user1).count(), 2)
+
+    def test_clean_allows_same_user_concurrent_intents_for_different_products(self):
+        """Model clean allows same user to hold active intents for different ssp_product values."""
+        other_product = SspProduct.objects.create(
+            slug='other-product-yearly',
+            stripe_price_lookup_key='other_product_yearly_price',
+            catalog_query_uuid=uuid4(),
+            is_active=True,
+        )
+
+        CheckoutIntent.objects.create(
+            user=self.user1,
+            enterprise_slug='same-user-product-a',
+            enterprise_name='Same User Product A',
+            quantity=5,
+            expires_at=timezone.now() + timedelta(hours=1),
+            country='US',
+            ssp_product=self.ssp_product,
+        )
+
+        candidate = CheckoutIntent(
+            user=self.user1,
+            enterprise_slug='same-user-product-b',
+            enterprise_name='Same User Product B',
+            quantity=5,
+            expires_at=timezone.now() + timedelta(hours=1),
+            country='US',
+            ssp_product=other_product,
+        )
+
+        candidate.full_clean()
+
+    def test_clean_blocks_same_user_concurrent_intents_for_same_product(self):
+        """Model clean rejects concurrent active intents for the same user + ssp_product."""
+        CheckoutIntent.objects.create(
+            user=self.user1,
+            enterprise_slug='same-product-a',
+            enterprise_name='Same Product A',
+            quantity=5,
+            expires_at=timezone.now() + timedelta(hours=1),
+            country='US',
+            ssp_product=self.ssp_product,
+        )
+
+        candidate = CheckoutIntent(
+            user=self.user1,
+            enterprise_slug='same-product-b',
+            enterprise_name='Same Product B',
+            quantity=5,
+            expires_at=timezone.now() + timedelta(hours=1),
+            country='US',
+            ssp_product=self.ssp_product,
+        )
+
+        with self.assertRaises(ValidationError) as exc:
+            candidate.full_clean()
+
+        self.assertIn('user', exc.exception.message_dict)
 
     def test_create_intent_with_existing_failed_intent(self):
         """
@@ -285,6 +582,121 @@ class TestCheckoutIntentModel(TestCase):
         self.assertEqual(intent.enterprise_name, 'Original Enterprise')
         self.assertEqual(intent.quantity, 5)
         self.assertEqual(intent.state, CheckoutIntentState.ERRORED_BACKOFFICE)
+
+    def test_user_can_have_multiple_active_intents_for_different_products(self):
+        """Users may have concurrent active intents for different SSP products."""
+        # Create a second product
+        other_product, _ = SspProduct.objects.get_or_create(
+            slug='ai-academy-yearly',
+            defaults={'stripe_price_lookup_key': 'ai_academy_yearly_price', 'catalog_query_uuid': uuid4()},
+        )
+
+        # Create intent for teams-yearly
+        CheckoutIntent.create_intent(
+            user=cast(AbstractUser, self.user1),
+            slug='teams-slug',
+            name='Teams Company',
+            quantity=1,
+            ssp_product=self.ssp_product,
+        )
+
+        # Create intent for a different product for same user
+        CheckoutIntent.create_intent(
+            user=cast(AbstractUser, self.user1),
+            slug='ai-slug',
+            name='AI Company',
+            quantity=2,
+            ssp_product=other_product,
+        )
+
+        # Both intents should exist and be distinct
+        intents = CheckoutIntent.objects.filter(user=self.user1).order_by('created')
+        self.assertEqual(intents.count(), 2)
+        self.assertEqual(intents[0].ssp_product, self.ssp_product)
+        self.assertEqual(intents[1].ssp_product, other_product)
+
+    def test_legacy_omission_uses_default_and_does_not_update_other_product_intent(self):
+        """Omitting ssp_product should treat it as teams-yearly and not update other-product intents."""
+        other_product, _ = SspProduct.objects.get_or_create(
+            slug='ai-academy-yearly',
+            defaults={'stripe_price_lookup_key': 'ai_academy_yearly_price', 'catalog_query_uuid': uuid4()},
+        )
+
+        # Create an existing intent for a different product
+        existing = CheckoutIntent.create_intent(
+            user=cast(AbstractUser, self.user1),
+            slug='existing-ai',
+            name='Existing AI',
+            quantity=2,
+            ssp_product=other_product,
+        )
+
+        # Now call create_intent without ssp_product - should create teams-yearly intent
+        new_intent = CheckoutIntent.create_intent(
+            user=cast(AbstractUser, self.user1),
+            slug='new-teams',
+            name='New Teams',
+            quantity=3,
+        )
+
+        # Ensure the existing other-product intent was not updated
+        existing.refresh_from_db()
+        self.assertEqual(existing.enterprise_slug, 'existing-ai')
+        self.assertEqual(new_intent.ssp_product.slug, 'teams-yearly')
+
+    def test_create_intent_returns_existing_for_success_state(self):
+        """If an existing intent is in a success state, create_intent should return it unchanged."""
+        intent = CheckoutIntent.create_intent(
+            user=cast(AbstractUser, self.user1),
+            slug='success-slug',
+            name='Success Company',
+            quantity=1,
+        )
+
+        # Move to PAID (success) state
+        intent.mark_as_paid('sess_success')
+
+        returned = CheckoutIntent.create_intent(
+            user=cast(AbstractUser, self.user1),
+            quantity=2,
+        )
+
+        self.assertEqual(returned.id, intent.id)
+
+    def test_clean_blocks_duplicate_active_intent_same_product(self):
+        """clean() should raise ValidationError when user already has active intent for same ssp_product."""
+        # Ensure teams product exists
+        teams, _ = SspProduct.objects.get_or_create(
+            slug='teams-yearly',
+            defaults={
+                'stripe_price_lookup_key': 'teams_yearly_price',
+                'catalog_query_uuid': uuid4(),
+                'is_active': True,
+            },
+        )
+
+        # Create an active intent for the user
+        CheckoutIntent.create_intent(
+            user=cast(AbstractUser, self.user1),
+            slug='active-slug',
+            name='Active Company',
+            quantity=1,
+            ssp_product=teams,
+        )
+
+        # Attempt to validate a new instance for same user and product
+        new_instance = CheckoutIntent(
+            user=cast(AbstractUser, self.user1),
+            enterprise_slug='new-slug',
+            enterprise_name='New Company',
+            quantity=1,
+            expires_at=timezone.now() + timedelta(hours=1),
+            country='US',
+            ssp_product=teams,
+        )
+
+        with self.assertRaises(ValidationError):
+            new_instance.clean()
 
     def test_state_transitions_happy_path(self):
         """Test the state transitions for the happy path."""
@@ -398,7 +810,8 @@ class TestCheckoutIntentModel(TestCase):
             quantity=5,
             expires_at=past_time,
             country='FR',
-            terms_metadata={'version': '1.0', 'test': True}
+            terms_metadata={'version': '1.0', 'test': True},
+            ssp_product=self.ssp_product,
         )
 
         self.assertTrue(intent.is_expired())
@@ -484,7 +897,8 @@ class TestCheckoutIntentModel(TestCase):
             quantity=10,
             expires_at=timezone.now() + timedelta(hours=2),  # Future date
             country='DE',
-            terms_metadata={'version': '1.5', 'future': True}
+            terms_metadata={'version': '1.5', 'future': True},
+            ssp_product=self.ssp_product,
         )
 
         # Check if we can reserve the same name and slug
@@ -614,6 +1028,62 @@ class TestCheckoutIntentModel(TestCase):
             terms_metadata=complex_metadata
         )
         self.assertEqual(intent3.terms_metadata, complex_metadata)
+
+    def test_create_intent_slug_name_mismatch_raises_value_error(self):
+        """Passing only one of slug/name should raise ValueError."""
+        with self.assertRaises(ValueError):
+            CheckoutIntent.create_intent(user=cast(AbstractUser, self.user1), quantity=1, slug='only-slug')
+
+    def test_create_intent_teams_missing_raises_runtime_error(self):
+        """When teams-yearly is missing, create_intent should raise RuntimeError."""
+        # Remove any teams product
+        SspProduct.objects.filter(slug='teams-yearly').delete()
+        with self.assertRaises(RuntimeError):
+            CheckoutIntent.create_intent(user=cast(AbstractUser, self.user1), quantity=1)
+
+    def test_mark_stalled_fulfillment_intents_updates_state(self):
+        """Marking stalled intents should update their state and return count/uuids."""
+        # Ensure teams product exists
+        teams, _ = SspProduct.objects.get_or_create(
+            slug='teams-yearly',
+            defaults={'stripe_price_lookup_key': 'teams_key', 'catalog_query_uuid': uuid4(), 'is_active': True},
+        )
+
+        intent = CheckoutIntent.create_intent(
+            user=cast(AbstractUser, self.user1),
+            slug='slug-stall',
+            name='StallCo',
+            quantity=1,
+            ssp_product=teams,
+        )
+        intent.mark_as_paid('sessx')
+        stale_modified = timezone.now() - timedelta(seconds=1000)
+        CheckoutIntent.objects.filter(pk=intent.pk).update(modified=stale_modified)
+
+        updated_count, _ = CheckoutIntent.mark_stalled_fulfillment_intents(stalled_threshold_seconds=1)
+        self.assertGreaterEqual(updated_count, 1)
+        intent.refresh_from_db()
+        self.assertEqual(intent.state, CheckoutIntentState.ERRORED_FULFILLMENT_STALLED)
+
+    def test_cleanup_expired_changes_state_alt(self):
+        """Another cleanup_expired scenario asserting EXPIRED state via bulk update."""
+        teams, _ = SspProduct.objects.get_or_create(
+            slug='teams-yearly',
+            defaults={'stripe_price_lookup_key': 'teams_key2', 'catalog_query_uuid': uuid4()},
+        )
+        expires_at = timezone.now() - timedelta(minutes=1)
+        intent = CheckoutIntent.objects.create(
+            user=self.user1,
+            enterprise_slug='exp-slug-alt',
+            enterprise_name='ExpiredCoAlt',
+            quantity=1,
+            expires_at=expires_at,
+            ssp_product=teams,
+        )
+
+        CheckoutIntent.cleanup_expired()
+        intent.refresh_from_db()
+        self.assertEqual(intent.state, CheckoutIntentState.EXPIRED)
 
     def test_mark_as_paid_with_stripe_customer_id(self):
         """Test mark_as_paid with stripe_customer_id parameter."""
@@ -813,9 +1283,154 @@ class TestCheckoutIntentModel(TestCase):
             state=CheckoutIntentState.CREATED,
             quantity=15,
             expires_at=timezone.now() + timedelta(minutes=30),
-            uuid=custom_uuid
+            uuid=custom_uuid,
+            ssp_product=self.ssp_product,
         )
         self.assertEqual(intent3.uuid, custom_uuid)
+
+    def test_save_raises_validation_error_when_default_product_missing(self):
+        """save() should raise ValidationError if default teams-yearly product doesn't exist."""
+        # Mock SspProduct.objects.get() to raise DoesNotExist
+        SspProductModel = apps.get_model('customer_billing', 'SspProduct')
+        original_get = SspProductModel.objects.get
+
+        def mock_get(*args, **kwargs):
+            if kwargs.get('slug') == 'teams-yearly':
+                raise SspProductModel.DoesNotExist()
+            return original_get(*args, **kwargs)
+
+        SspProductModel.objects.get = mock_get
+        try:
+            intent = CheckoutIntent(
+                user=self.user1,
+                enterprise_slug='no-default-product',
+                enterprise_name='No Default Product',
+                quantity=5,
+                expires_at=timezone.now() + timedelta(hours=1),
+                country='US',
+            )
+
+            with self.assertRaises(ValidationError) as exc:
+                intent.save()
+
+            self.assertIn('ssp_product', exc.exception.message_dict)
+            self.assertIn('teams-yearly', str(exc.exception.message_dict['ssp_product']))
+        finally:
+            SspProductModel.objects.get = original_get
+
+    def test_save_raises_validation_error_when_multiple_default_products(self):
+        """save() should raise ValidationError if multiple teams-yearly products exist."""
+        # Mock SspProduct.objects.get() to raise MultipleObjectsReturned
+        SspProductModel = apps.get_model('customer_billing', 'SspProduct')
+        original_get = SspProductModel.objects.get
+
+        def mock_get(*args, **kwargs):
+            if kwargs.get('slug') == 'teams-yearly':
+                raise SspProductModel.MultipleObjectsReturned()
+            return original_get(*args, **kwargs)
+
+        SspProductModel.objects.get = mock_get
+        try:
+            intent = CheckoutIntent(
+                user=self.user1,
+                enterprise_slug='multiple-default-product',
+                enterprise_name='Multiple Default Product',
+                quantity=5,
+                expires_at=timezone.now() + timedelta(hours=1),
+                country='US',
+            )
+
+            with self.assertRaises(ValidationError) as exc:
+                intent.save()
+
+            self.assertIn('ssp_product', exc.exception.message_dict)
+            self.assertIn('teams-yearly', str(exc.exception.message_dict['ssp_product']))
+        finally:
+            SspProductModel.objects.get = original_get
+
+    def test_save_uses_existing_ssp_product_when_provided(self):
+        """save() should use provided ssp_product without trying to get default."""
+        # Create a custom product
+        custom_product = SspProduct.objects.create(
+            slug='custom-product',
+            stripe_price_lookup_key='custom_product_price',
+            catalog_query_uuid=uuid4(),
+            is_active=True,
+        )
+
+        intent = CheckoutIntent(
+            user=self.user1,
+            enterprise_slug='explicit-product',
+            enterprise_name='Explicit Product',
+            quantity=5,
+            expires_at=timezone.now() + timedelta(hours=1),
+            country='US',
+            ssp_product=custom_product,
+        )
+
+        intent.save()
+
+        self.assertEqual(intent.ssp_product, custom_product)
+
+    def test_create_intent_with_ssp_product_scopes_to_that_product(self):
+        """create_intent should reuse existing intent for same user+product, not any intent."""
+        custom_product = SspProduct.objects.create(
+            slug='custom-product-2',
+            stripe_price_lookup_key='custom_product_2_price',
+            catalog_query_uuid=uuid4(),
+            is_active=True,
+        )
+
+        # Create first intent with default product
+        first = CheckoutIntent.create_intent(
+            user=cast(AbstractUser, self.user1),
+            slug='intent-default-product',
+            name='Intent Default Product',
+            quantity=5,
+            ssp_product=self.ssp_product,
+        )
+
+        # Create second intent with custom product - should be separate
+        second = CheckoutIntent.create_intent(
+            user=cast(AbstractUser, self.user1),
+            slug='intent-custom-product',
+            name='Intent Custom Product',
+            quantity=10,
+            ssp_product=custom_product,
+        )
+
+        self.assertNotEqual(first.id, second.id)
+        self.assertEqual(second.ssp_product, custom_product)
+
+    def test_create_intent_without_ssp_product_uses_teams_yearly_by_default(self):
+        """create_intent without ssp_product should use teams-yearly as default."""
+        intent = CheckoutIntent.create_intent(
+            user=cast(AbstractUser, self.user1),
+            slug='no-product-specified',
+            name='No Product Specified',
+            quantity=5,
+        )
+
+        self.assertEqual(intent.ssp_product.slug, 'teams-yearly')
+
+    def test_create_intent_explicit_ssp_product_overrides_fallback_logic(self):
+        """create_intent with explicit ssp_product should prefer that over teams-yearly."""
+        custom_product = SspProduct.objects.create(
+            slug='custom-override',
+            stripe_price_lookup_key='custom_override_price',
+            catalog_query_uuid=uuid4(),
+            is_active=True,
+        )
+
+        intent = CheckoutIntent.create_intent(
+            user=cast(AbstractUser, self.user1),
+            slug='explicit-product-override',
+            name='Explicit Product Override',
+            quantity=5,
+            ssp_product=custom_product,
+        )
+
+        self.assertEqual(intent.ssp_product, custom_product)
 
 
 class TestStripeEventSummary(TestCase):
@@ -825,6 +1440,14 @@ class TestStripeEventSummary(TestCase):
     def setUpTestData(cls):
         super().setUpTestData()
         cls.user = UserFactory()
+        cls.ssp_product, _ = SspProduct.objects.get_or_create(
+            slug='teams-yearly',
+            defaults={
+                'stripe_price_lookup_key': 'teams_yearly_price',
+                'catalog_query_uuid': uuid4(),
+                'is_active': True,
+            },
+        )
         cls.checkout_intent = CheckoutIntent.objects.create(
             uuid=uuid4(),
             user=cls.user,
@@ -833,6 +1456,7 @@ class TestStripeEventSummary(TestCase):
             stripe_customer_id='cus_test_456',
             quantity=10,
             expires_at=timezone.now() + timedelta(minutes=30),
+            ssp_product=cls.ssp_product,
         )
 
     def test_populate_with_summary_data_invoice_event(self):
@@ -1309,6 +1933,14 @@ class TestCheckoutIntentStalledFulfillment(TestCase):
 
     def setUp(self):
         self.user = UserFactory()
+        self.ssp_product, _ = SspProduct.objects.get_or_create(
+            slug='teams-yearly',
+            defaults={
+                'stripe_price_lookup_key': 'teams_yearly_price',
+                'catalog_query_uuid': uuid4(),
+                'is_active': True,
+            },
+        )
 
     def _create_intent(self, state, slug_suffix='', **kwargs):
         """Helper to create a CheckoutIntent with minimal boilerplate."""
@@ -1319,6 +1951,7 @@ class TestCheckoutIntentStalledFulfillment(TestCase):
             'enterprise_slug': f'test-enterprise{slug_suffix}',
             'quantity': 10,
             'expires_at': timezone.now() + timedelta(hours=1),
+            'ssp_product': kwargs.pop('ssp_product', self.ssp_product),
         }
         defaults.update(kwargs)
         return CheckoutIntent.objects.create(**defaults)

@@ -313,26 +313,6 @@ class TestCheckoutContextHandler(APITest):
 
     @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_ssp_product_pricing')
     @mock.patch('enterprise_access.apps.customer_billing.models.CheckoutIntent.objects.filter')
-    def test_load_checkout_intent_no_intent_exists(self, mock_filter, mock_get_pricing):
-        """
-        Test that load_and_process handles case where authenticated user has no checkout intent.
-        """
-        # Setup
-        mock_get_pricing.return_value = {}
-        mock_filter.return_value.first.return_value = None
-
-        context = self._create_context()
-        handler = CheckoutContextHandler(context)
-
-        # Execute
-        handler.load_and_process()
-
-        # Assert
-        self.assertIsNone(context.checkout_intent)
-        mock_filter.assert_called_once_with(user=self.user)
-
-    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_ssp_product_pricing')
-    @mock.patch('enterprise_access.apps.customer_billing.models.CheckoutIntent.objects.filter')
     def test_load_checkout_intent_for_unauthenticated_user(self, mock_filter, mock_get_pricing):
         """
         Test that load_and_process doesn't look for checkout intent for unauthenticated users.

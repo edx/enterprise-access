@@ -4,7 +4,7 @@ Models for customer billing app.
 import logging
 from datetime import timedelta
 from decimal import Decimal
-from typing import Self
+from typing import Optional, Self
 from uuid import uuid4
 
 import stripe
@@ -164,6 +164,9 @@ class CheckoutIntent(TimeStampedModel):
     class Meta:
         verbose_name = "Enterprise Checkout Intent"
         verbose_name_plural = "Enterprise Checkout Intents"
+        constraints = [
+            models.UniqueConstraint(fields=['user', 'ssp_product'], name='unique_user_ssp_product')
+        ]
 
     class StateChoices(models.TextChoices):
         """
@@ -201,7 +204,7 @@ class CheckoutIntent(TimeStampedModel):
         CheckoutIntentState.ERRORED_PROVISIONING,
     }
 
-    user = models.OneToOneField(
+    user = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
     )
@@ -275,8 +278,7 @@ class CheckoutIntent(TimeStampedModel):
     ssp_product = models.ForeignKey(
         'SspProduct',
         on_delete=models.PROTECT,
-        null=True,
-        blank=True,
+        null=False,
         help_text='The SSP product associated with this checkout intent.',
     )
     terms_metadata = models.JSONField(
@@ -298,6 +300,19 @@ class CheckoutIntent(TimeStampedModel):
             f"state={self.state}, "
             f"expires_at={self.expires_at}>"
         )
+
+    def save(self, *args, **kwargs):
+        """Ensure a valid ``ssp_product`` before persisting."""
+        if not getattr(self, 'ssp_product', None):
+            SspProductModel = apps.get_model('customer_billing', 'SspProduct')
+            try:
+                self.ssp_product = SspProductModel.objects.get(slug='teams-yearly')
+            except SspProductModel.DoesNotExist as exc:
+                raise ValidationError({'ssp_product': 'Default ssp_product teams-yearly was not found.'}) from exc
+            except SspProductModel.MultipleObjectsReturned as exc:
+                raise ValidationError({'ssp_product': 'Multiple teams-yearly ssp_product records found.'}) from exc
+
+        return super().save(*args, **kwargs)
 
     @classmethod
     def FULFILLABLE_STATES(cls) -> list[CheckoutIntentState]:
@@ -535,7 +550,7 @@ class CheckoutIntent(TimeStampedModel):
         Validate the CheckoutIntent to prevent conflicts with existing non-expired intents.
 
         This method enforces several uniqueness constraints:
-        1. A user can only have one active checkout intent at a time
+        1. A user can only have one active checkout intent per `ssp_product` at a time
         2. Enterprise name must be unique across all non-expired intents
         3. Enterprise slug must be unique across all non-expired intents
 
@@ -551,10 +566,17 @@ class CheckoutIntent(TimeStampedModel):
         # Check if this is a new instance
         if not self.pk:
             # Check if user already has a non-expired intent
-            existing_intent = CheckoutIntent.objects.filter(
+            existing_qs = CheckoutIntent.objects.filter(
                 user=self.user,
-                state__in=self.NON_EXPIRED_STATES
-            ).first()
+                state__in=self.NON_EXPIRED_STATES,
+            )
+            # If this intent already has an associated ssp_product, scope the
+            # active-intent check to that product so that users may have
+            # concurrent active intents for different SSP products.
+            if getattr(self, 'ssp_product', None) is not None:
+                existing_qs = existing_qs.filter(ssp_product=self.ssp_product)
+            existing_qs = existing_qs.order_by('-created')
+            existing_intent = existing_qs.first()
 
             if existing_intent:
                 raise ValidationError({
@@ -610,14 +632,15 @@ class CheckoutIntent(TimeStampedModel):
         return not queryset.exists()
 
     @classmethod
-    def create_intent(
+    def create_intent(  # pylint: disable=too-many-statements
         cls,
         user: AbstractUser,
         quantity: int,
         slug: str | None = None,
         name: str | None = None,
         country: str | None = None,
-        terms_metadata: dict | None = None
+        terms_metadata: dict | None = None,
+        ssp_product: Optional['SspProduct'] = None,
     ) -> Self:
         """
         Create or update a checkout intent for a user with the given enterprise details.
@@ -656,7 +679,32 @@ class CheckoutIntent(TimeStampedModel):
             if bool(slug) != bool(name):
                 raise ValueError("slug and name must either both be given or neither be given.")
 
-            existing_intent = cls.objects.filter(user=user).first()
+            # Prefer an existing intent for the same user and SSP product when provided.
+            # For legacy callers that omit `ssp_product`, treat the omission as the
+            # implied default product (teams-yearly) when selecting an existing intent.
+            # Fall back to any existing intent for the user only if the default
+            # product cannot be resolved.
+            if ssp_product:
+                existing_intent = (
+                    cls.objects.filter(
+                        user=user,
+                        ssp_product=ssp_product,
+                    ).order_by('-created').first()
+                )
+            else:
+                SspProductModel = apps.get_model('customer_billing', 'SspProduct')
+                teams_yearly = SspProductModel.objects.filter(slug='teams-yearly').first()
+                if teams_yearly:
+                    existing_intent = (
+                        cls.objects.filter(
+                            user=user,
+                            ssp_product=teams_yearly,
+                        ).order_by('-created').first()
+                    )
+                else:
+                    existing_intent = (
+                        cls.objects.filter(user=user).order_by('-created').first()
+                    )
 
             # If an existing intent has already reached a terminal state, exit fast.
             if existing_intent:
@@ -716,9 +764,30 @@ class CheckoutIntent(TimeStampedModel):
                 existing_intent.enterprise_name = name or existing_intent.enterprise_name
                 existing_intent.country = country or existing_intent.country
                 existing_intent.terms_metadata = (existing_intent.terms_metadata or {}) | (terms_metadata or {})
+                # Ensure ssp_product is set on the existing intent if provided.
+                if ssp_product:
+                    existing_intent.ssp_product = ssp_product
 
                 existing_intent.save()
                 return existing_intent
+
+            # If no ssp_product was provided, default to teams-yearly to preserve
+            # backwards compatibility for callers that didn't supply it.
+            if not ssp_product:
+                SspProductModel = apps.get_model('customer_billing', 'SspProduct')
+                try:
+                    ssp_product = SspProductModel.objects.get(slug='teams-yearly')
+                except SspProductModel.DoesNotExist as exc:
+                    msg = 'Default SspProduct with slug teams-yearly not found.'
+                    logger.error(msg)
+                    raise RuntimeError(msg) from exc
+                except SspProductModel.MultipleObjectsReturned as exc:
+                    msg = (
+                        'Multiple SspProduct rows found for slug teams-yearly; '
+                        'please resolve duplicates.'
+                    )
+                    logger.error(msg)
+                    raise RuntimeError(msg) from exc
 
             return cls.objects.create(
                 user=user,
@@ -729,6 +798,7 @@ class CheckoutIntent(TimeStampedModel):
                 expires_at=expires_at,
                 country=country,
                 terms_metadata=terms_metadata,
+                ssp_product=ssp_product,
             )
 
     @classmethod
@@ -741,7 +811,8 @@ class CheckoutIntent(TimeStampedModel):
         """
         if not user or not user.is_authenticated:
             return None
-        return cls.objects.filter(user=user).first()
+        qs = cls.objects.filter(user=user).order_by('-created')
+        return qs.first()
 
     def update_stripe_session_id(self, session_id):
         """
@@ -765,11 +836,15 @@ class CheckoutIntent(TimeStampedModel):
         event_timestamp = datetime_from_timestamp(stripe_event.created)
 
         # Find the most recent summary before this event
-        return StripeEventSummary.objects.filter(
+        qs = StripeEventSummary.objects.filter(
             checkout_intent=self,
             stripe_event_created_at__lt=event_timestamp,
             **filter_kwargs,
-        ).order_by('-stripe_event_created_at').first()
+        ).order_by('-stripe_event_created_at')
+        try:
+            return qs[0]
+        except IndexError:
+            return None
 
     def update_stripe_identifiers(self, session_id=None, customer_id=None):
         """

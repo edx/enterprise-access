@@ -17,7 +17,8 @@ from enterprise_access.apps.customer_billing.constants import CHECKOUT_SESSION_E
 from enterprise_access.apps.customer_billing.models import (
     CheckoutIntent,
     FailedCheckoutIntentConflict,
-    SlugReservationConflict
+    SlugReservationConflict,
+    SspProduct
 )
 from enterprise_access.apps.customer_billing.pricing_api import get_ssp_product_pricing
 from enterprise_access.apps.customer_billing.stripe_api import create_subscription_checkout_session
@@ -423,6 +424,45 @@ def create_free_trial_checkout_session(
 
     user = input_data['user']
 
+    # Determine SSP product for this checkout. This is required now that
+    # CheckoutIntent.ssp_product is non-nullable.
+    ssp_product = None
+    try:
+        ssp_pricing = get_ssp_product_pricing()
+        matching_price = None
+        for price_data in ssp_pricing.values():
+            if price_data.get('id') == input_data.get('stripe_price_id'):
+                matching_price = price_data
+                break
+        if matching_price:
+            lookup_key = matching_price.get('lookup_key')
+            if lookup_key:
+                ssp_product = SspProduct.objects.filter(stripe_price_lookup_key=lookup_key).first()
+    except Exception:  # pylint: disable=broad-exception-caught
+        logger.exception(
+            'Failed to determine SSP product mapping for stripe_price_id=%s',
+            input_data.get('stripe_price_id'),
+        )
+        # Preserve backwards compatibility if pricing lookup is temporarily unavailable.
+        ssp_product = None
+
+    if not ssp_product:
+        ssp_product = SspProduct.objects.filter(slug='teams-yearly').first()
+    if not ssp_product:
+        error_code, developer_message = CHECKOUT_SESSION_ERROR_CODES['stripe_price_id']['DOES_NOT_EXIST']
+        raise CreateCheckoutSessionValidationError(
+            validation_errors_by_field={
+                'stripe_price_id': {
+                    'error_code': error_code,
+                    'developer_message': (
+                        f'{developer_message} No SspProduct configured for '
+                        f'stripe_price_id={input_data.get("stripe_price_id")}. '
+                        'Ensure stripe_price_lookup_key maps to an existing SspProduct.'
+                    ),
+                }
+            }
+        )
+
     # Create checkout intent, which reserves the enterprise name & slug.
     try:
         intent = CheckoutIntent.create_intent(
@@ -430,6 +470,7 @@ def create_free_trial_checkout_session(
             quantity=input_data.get('quantity'),
             slug=input_data.get('enterprise_slug'),
             name=input_data.get('company_name'),
+            ssp_product=ssp_product,
         )
     except SlugReservationConflict as exc:
         raise CreateCheckoutSessionSlugReservationConflict() from exc
