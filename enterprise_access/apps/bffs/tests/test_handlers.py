@@ -3,11 +3,75 @@ Tests for BFF handlers
 """
 from unittest import mock
 
+import ddt
 from rest_framework import status
 
 from enterprise_access.apps.bffs.context import HandlerContext
 from enterprise_access.apps.bffs.handlers import BaseHandler, BaseLearnerPortalHandler, DashboardHandler
 from enterprise_access.apps.bffs.tests.utils import TestHandlerContextMixin
+
+
+@ddt.ddt
+class TestTransformEnterpriseCustomer(TestHandlerContextMixin):
+    """
+    Unit tests for BaseLearnerPortalHandler.transform_enterprise_customer.
+
+    Verifies that disable_search depends solely on
+    enable_integrated_customer_learner_portal_search, and that
+    show_integration_warning is set when search is enabled and active
+    integrations exist.
+    """
+
+    def _make_handler(self):
+        with mock.patch(
+            'enterprise_access.apps.api_client.lms_client.LmsUserApiClient.get_enterprise_customers_for_user',
+            return_value=self.mock_enterprise_learner_response_data,
+        ):
+            context = HandlerContext(self.request)
+        return BaseLearnerPortalHandler(context)
+
+    @ddt.data(
+        # (enable_integrated_search, active_integrations, expected_disable_search, expected_show_warning)
+        (False, [], True, False),
+        (False, [{'channel_code': 'SAP'}], True, False),
+        (True, [], False, False),
+        (True, [{'channel_code': 'SAP'}], False, True),
+    )
+    @ddt.unpack
+    def test_transform_enterprise_customer(
+        self,
+        enable_integrated_search,
+        active_integrations,
+        expected_disable_search,
+        expected_show_warning,
+    ):
+        handler = self._make_handler()
+        enterprise_customer = {
+            **self.mock_enterprise_customer,
+            'enable_integrated_customer_learner_portal_search': enable_integrated_search,
+            'active_integrations': active_integrations,
+        }
+
+        result = handler.transform_enterprise_customer(enterprise_customer)
+
+        self.assertEqual(result['disable_search'], expected_disable_search)
+        self.assertEqual(result['show_integration_warning'], expected_show_warning)
+
+    def test_transform_enterprise_customer_without_identity_provider(self):
+        """
+        Search should be disabled based solely on enable_integrated_customer_learner_portal_search,
+        regardless of whether an identity_provider is configured.
+        """
+        handler = self._make_handler()
+        enterprise_customer = {
+            **self.mock_enterprise_customer,
+            'enable_integrated_customer_learner_portal_search': False,
+            'identity_provider': None,
+        }
+
+        result = handler.transform_enterprise_customer(enterprise_customer)
+
+        self.assertTrue(result['disable_search'])
 
 
 class TestBaseHandler(TestHandlerContextMixin):
