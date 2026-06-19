@@ -11,6 +11,7 @@ from uuid import uuid4
 
 import ddt
 import stripe
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import AbstractUser
 from django.test import TestCase, override_settings
@@ -205,7 +206,7 @@ class TestCheckoutIntentModel(TestCase):
         SSP products (teams and the provided academy slugs) can be linked.
         """
         slugs = [
-            'teams-yearly',
+            settings.SSP_DEFAULT_PRODUCT_SLUG,
             'ai-academy-yearly',
             'sustainability-academy-yearly',
             'tech-digital-transformation-academy-yearly',
@@ -217,6 +218,26 @@ class TestCheckoutIntentModel(TestCase):
         ]
 
         products = []
+        # Ensure the canonical default SSP product exists for FK enforcement
+        SspProduct.objects.get_or_create(
+            slug=settings.SSP_DEFAULT_PRODUCT_SLUG,
+            defaults={
+                'stripe_price_lookup_key': 'teams_yearly_price',
+                'catalog_query_uuid': uuid4(),
+            },
+        )
+        # Create one intent without specifying a product; model default should apply
+        intent_without_product = CheckoutIntent.objects.create(
+            user=cast(AbstractUser, self.user1),
+            enterprise_slug='nullable-product-enterprise',
+            enterprise_name='Nullable Product Enterprise',
+            quantity=3,
+            expires_at=timezone.now() + timedelta(hours=1),
+            country='US',
+        )
+        self.assertIsNotNone(intent_without_product.ssp_product)
+        self.assertEqual(intent_without_product.ssp_product.slug, settings.SSP_DEFAULT_PRODUCT_SLUG)
+
         for slug in slugs:
             product, _ = SspProduct.objects.get_or_create(
                 slug=slug,
@@ -226,17 +247,6 @@ class TestCheckoutIntentModel(TestCase):
                 },
             )
             products.append(product)
-
-        intent_without_product = CheckoutIntent.objects.create(
-            user=cast(AbstractUser, self.user1),
-            enterprise_slug='nullable-product-enterprise',
-            enterprise_name='Nullable Product Enterprise',
-            quantity=3,
-            expires_at=timezone.now() + timedelta(hours=1),
-            country='US',
-            ssp_product=None,
-        )
-        self.assertIsNone(intent_without_product.ssp_product)
 
         for product in products:
             intent = CheckoutIntent.objects.create(
