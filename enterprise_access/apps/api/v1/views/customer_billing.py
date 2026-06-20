@@ -69,23 +69,20 @@ class SspProductViewSet(viewsets.ReadOnlyModelViewSet):
     def get_queryset(self):
         return SspProduct.objects.filter(is_active=True, academy_uuid__isnull=False).order_by('slug')
 
+    def get_object(self):
+        queryset = self.get_queryset()
+        lookup_value = self.kwargs[self.lookup_field]
+        product = queryset.filter(
+            Q(slug=lookup_value) | Q(stripe_price_lookup_key=lookup_value)
+        ).first()
+        if not product:
+            raise Http404
+        self.check_object_permissions(self.request, product)
+        return product
+
     def _include_pricing(self):
         include_pricing = self.request.query_params.get('include_pricing', 'true').strip().lower()
         return include_pricing not in {'false', '0', 'no'}
-
-    # Helper methods for pricing orchestration were removed; pricing is fetched
-    # via `pricing_api.get_all_stripe_prices()` and serialization is handled by
-    # the serializer.
-
-    @staticmethod
-    def _metadata_value(metadata, key):
-        """Safely read a metadata key from dict-like Stripe metadata payloads."""
-        if isinstance(metadata, dict):
-            return metadata.get(key)
-        try:
-            return metadata[key]
-        except (KeyError, TypeError):  # pragma: no cover - metadata type varies by Stripe SDK object wrappers
-            return None
 
     # pricing orchestration and serialization responsibilities have been moved
     # into `pricing_api.get_all_stripe_prices()` and the serializer respectively.
@@ -109,210 +106,37 @@ class SspProductViewSet(viewsets.ReadOnlyModelViewSet):
     )
     def list(self, request, *args, **kwargs):
         products = list(self.get_queryset())
-        pricing_by_slug = {}
+        pricing_by_lookup_key = {}
         if self._include_pricing():
             try:
                 all_prices = get_all_stripe_prices()
-                pricing_by_slug = {
-                    p.slug: all_prices.get(p.stripe_price_lookup_key)
+                pricing_by_lookup_key = {
+                    p.stripe_price_lookup_key: all_prices.get(p.stripe_price_lookup_key)
                     for p in products
                 }
             except StripePricingError:
-                pricing_by_slug = {}
+                logger.exception("Failed to fetch Stripe prices for SSP products.")
+                pricing_by_lookup_key = {}
 
         serializer = self.get_serializer(
             products,
             many=True,
-            context={"pricing": pricing_by_slug, 'request': request},
+            context={"pricing": pricing_by_lookup_key, 'request': request},
         )
         return Response(serializer.data, status=status.HTTP_200_OK)
-
-    def _resolve_product_from_price_response(self, price_resp):
-        """Resolve product and lookup_key candidate from a Stripe list response."""
-        if not (price_resp and getattr(price_resp, 'data', None)):
-            return None, None
-
-        first_price = price_resp.data[0]
-        stripe_metadata = getattr(first_price, 'metadata', None) or {}
-        stripe_slug = self._metadata_value(stripe_metadata, 'ssp_product_slug')
-        if stripe_slug:
-            product = self.get_queryset().filter(slug=stripe_slug).first()
-            if product:
-                return product, getattr(first_price, 'lookup_key', None)
-            return None, None
-        return None, getattr(first_price, 'lookup_key', None)
-
-    @staticmethod
-    def _lookup_key_from_cached_prices(requested_slug, all_prices):
-        """Resolve lookup_key from cached Stripe price map using metadata then fuzzy match."""
-        if requested_slug in all_prices:
-            return requested_slug
-
-        for lookup_key, price_data in all_prices.items():
-            meta = (price_data.get('product') or {}).get('metadata') or {}
-            if meta.get('ssp_product_slug') == requested_slug:
-                return lookup_key
-
-        for lookup_key in all_prices.keys():
-            if requested_slug in lookup_key or lookup_key in requested_slug:
-                return lookup_key
-
-        return None
-
-    def _stripe_single_lookup(self, requested_slug, active=True):
-        """Attempt a single-lookup Key query against Stripe and resolve product/lookup_key.
-
-        Returns a tuple `(product_or_none, lookup_key_or_none)`.
-        """
-        try:
-            if active:
-                price_resp = stripe.Price.list(
-                    lookup_keys=[requested_slug],
-                    active=True,
-                    expand=['data.product'],
-                    limit=1,
-                )
-            else:
-                price_resp = stripe.Price.list(
-                    lookup_keys=[requested_slug],
-                    expand=['data.product'],
-                    limit=1,
-                )
-        except stripe.error.StripeError:
-            return None, None
-
-        return self._resolve_product_from_price_response(price_resp)
-
-    def _consult_cached_mapping(self, requested_slug):
-        """If the cached all-prices map exists, consult it for a lookup_key.
-
-        Returns a tuple `(lookup_key_or_none, used_cache_bool)`.
-        """
-        try:
-            cache_key = versioned_cache_key('all_stripe_prices')
-            cached_response = TieredCache.get_cached_response(cache_key)
-            if cached_response.is_found:
-                all_prices = get_all_stripe_prices()
-                lookup_key = self._lookup_key_from_cached_prices(requested_slug, all_prices)
-                return lookup_key, True
-        except StripePricingError:
-            return None, False
-        return None, False
-
-    def _scan_active_prices_for_slug(self, requested_slug):
-        """Run a full active-price scan against Stripe and return a matching lookup_key if found."""
-        try:
-            all_active = stripe.Price.list(active=True, expand=['data.product'], limit=100)
-            for price in all_active.auto_paging_iter():
-                meta = getattr(price, 'metadata', None) or {}
-                meta_slug = self._metadata_value(meta, 'ssp_product_slug')
-                lookup_key_val = getattr(price, 'lookup_key', None)
-
-                if meta_slug == requested_slug:
-                    return lookup_key_val
-
-                if lookup_key_val and (requested_slug in lookup_key_val or lookup_key_val in requested_slug):
-                    return lookup_key_val
-        except stripe.error.StripeError:
-            return None
-        return None
 
     @extend_schema(
         tags=[CUSTOMER_BILLING_API_TAG],
         summary='Retrieve SSP product',
-        description='Public retrieve of one SSP product by slug and optional Stripe-backed pricing.',
-        parameters=[
-            OpenApiParameter(
-                name='include_pricing',
-                type=OpenApiTypes.BOOL,
-                location=OpenApiParameter.QUERY,
-                required=False,
-                description='Set false to skip Stripe pricing lookup and return metadata only.',
-            ),
-        ],
+        description='Public retrieve of one SSP product by slug. Returns metadata only.',
         responses={
             status.HTTP_200_OK: serializers.SspEssentialsProductResponseSerializer,
             status.HTTP_404_NOT_FOUND: OpenApiResponse(description='SSP product not found'),
         },
     )
     def retrieve(self, request, *args, **kwargs):
-        # Try normal lookup by DB slug first. If not found, attempt fallback resolution where
-        # the provided path segment might be a Stripe Price lookup_key (or an alias that can be
-        # resolved to one via Stripe metadata). This supports routes like:
-        # `/api/v1/ssp-products/essentials_tech_and_digital_transformation/`
-        # even when the DB `slug` differs.
-        try:
-            product = self.get_object()
-        except (exceptions.NotFound, Http404) as exc:
-            requested_slug = kwargs.get('slug')
-            # Preserve prior behavior for obvious public slugs (e.g., 'teams-yearly')
-            # which should return 404 without attempting Stripe resolution. Heuristic:
-            # treat values containing '-' and not '_' as public slugs and re-raise.
-            cond_is_str = isinstance(requested_slug, str)
-            cond_dash_only = ('-' in requested_slug and '_' not in requested_slug)
-            is_public_slug = cond_is_str and cond_dash_only
-            if is_public_slug:
-                raise Http404() from exc
-
-            product = None
-            lookup_key_candidate = None
-            used_cache = False
-
-            # First, check whether the requested slug actually matches a DB stored lookup_key
-            db_qs = self.get_queryset().filter(stripe_price_lookup_key=requested_slug)
-            product = db_qs.first()
-            logger.debug('DB lookup for stripe_price_lookup_key=%s returned %s', requested_slug, bool(product))
-
-            # If we found a DB product by lookup_key, skip Stripe resolution.
-            if not product:
-                # Try direct lookup_key match in Stripe (active prices first).
-                product_from_price, lookup_key_from_price = self._stripe_single_lookup(requested_slug, active=True)
-                if product_from_price:
-                    product = product_from_price
-                if lookup_key_from_price:
-                    lookup_key_candidate = lookup_key_from_price
-
-                # If the active lookup did not return a result, try a non-active single lookup.
-                if not (lookup_key_candidate or product):
-                    product_from_price, lookup_key_from_price = self._stripe_single_lookup(requested_slug, active=False)
-                    if product_from_price:
-                        product = product_from_price
-                    if lookup_key_from_price:
-                        lookup_key_candidate = lookup_key_from_price
-
-                    # If still nothing found, consult the cached all-prices mapping
-                    # only if it exists to avoid triggering a live full Stripe scan.
-                    if not (lookup_key_candidate or product):
-                        cached_lookup, cache_used = self._consult_cached_mapping(requested_slug)
-                        if cache_used:
-                            used_cache = True
-                            lookup_key_candidate = cached_lookup
-
-            # If direct lookup_key match didn't yield a product, do a
-            # full active-price scan and search for Stripe metadata that
-            # references the requested slug (metadata.ssp_product_slug).
-            if not product and not lookup_key_candidate and not used_cache:
-                lookup_key_candidate = self._scan_active_prices_for_slug(requested_slug)
-
-            if not product and lookup_key_candidate:
-                product = self.get_queryset().filter(
-                    stripe_price_lookup_key=lookup_key_candidate,
-                ).first()
-
-            # If no product was resolved via Stripe lookups, raise NotFound.
-            if not product:
-                raise exceptions.NotFound() from None
-
+        product = self.get_object()
         pricing_by_slug = {}
-        if self._include_pricing():
-            try:
-                all_prices = get_all_stripe_prices()
-                pricing_by_slug = {
-                    product.slug: all_prices.get(product.stripe_price_lookup_key)
-                }
-            except StripePricingError:
-                pricing_by_slug = {}
-
         serializer = self.get_serializer(product, context={"pricing": pricing_by_slug, 'request': request})
         return Response(serializer.data, status=status.HTTP_200_OK)
 

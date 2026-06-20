@@ -33,6 +33,11 @@ logger = logging.getLogger(__name__)
 User = get_user_model()
 
 
+def get_default_ssp_product_slug():
+    """Return the default SSP product slug from Django settings."""
+    return settings.SSP_DEFAULT_PRODUCT_SLUG
+
+
 class FailedCheckoutIntentConflict(Exception):
     pass
 
@@ -101,8 +106,12 @@ class SspProduct(TimeStampedModel):
     def _academy_data(self):
         """Fetch and instance-cache the academy payload. None for non-Academy products."""
         if not getattr(self, '_academy_data_cache', None):
-            # pylint: disable=attribute-defined-outside-init
-            self._academy_data_cache = get_cached_academy_data(self.academy_uuid)
+            try:
+                # pylint: disable=attribute-defined-outside-init
+                self._academy_data_cache = get_cached_academy_data(self.academy_uuid)
+            except Exception:  # pylint: disable=broad-exception-caught
+                logger.warning('Failed to fetch academy data for %s', self.academy_uuid)
+                return None
         return self._academy_data_cache
 
     @property
@@ -126,10 +135,6 @@ class SspProduct(TimeStampedModel):
         """Academy long public name. Uses long_name when present, else falls back to title."""
         if not self._academy_data:
             return None
-        long_name = self._academy_data.get('long_name')
-        if long_name:
-            return long_name
-
         return self._academy_data.get('long_name') or self.academy_title
 
     @property
@@ -183,6 +188,9 @@ class CheckoutIntent(TimeStampedModel):
     class Meta:
         verbose_name = "Enterprise Checkout Intent"
         verbose_name_plural = "Enterprise Checkout Intents"
+        constraints = [
+            models.UniqueConstraint(fields=['user', 'ssp_product'], name='unique_user_ssp_product'),
+        ]
 
     class StateChoices(models.TextChoices):
         """
@@ -220,7 +228,7 @@ class CheckoutIntent(TimeStampedModel):
         CheckoutIntentState.ERRORED_PROVISIONING,
     }
 
-    user = models.OneToOneField(
+    user = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
     )
@@ -294,8 +302,9 @@ class CheckoutIntent(TimeStampedModel):
     ssp_product = models.ForeignKey(
         'SspProduct',
         on_delete=models.PROTECT,
-        null=True,
-        blank=True,
+        null=False,
+        blank=False,
+        default=get_default_ssp_product_slug,
         help_text='The SSP product associated with this checkout intent.',
     )
     terms_metadata = models.JSONField(
