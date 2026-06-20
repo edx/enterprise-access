@@ -17,7 +17,8 @@ from enterprise_access.apps.customer_billing.constants import CHECKOUT_SESSION_E
 from enterprise_access.apps.customer_billing.models import (
     CheckoutIntent,
     FailedCheckoutIntentConflict,
-    SlugReservationConflict
+    SlugReservationConflict,
+    SspProduct
 )
 from enterprise_access.apps.customer_billing.pricing_api import get_ssp_product_pricing
 from enterprise_access.apps.customer_billing.stripe_api import create_subscription_checkout_session
@@ -446,7 +447,23 @@ def create_free_trial_checkout_session(
         raise CreateCheckoutSessionValidationError(validation_errors_by_field=validation_errors)
 
     user = input_data['user']
-
+    # ── Resolve slug ↔ price_id BEFORE creating intent ──
+    ssp_pricing = get_ssp_product_pricing()
+    ssp_product_slug = input_data.get('ssp_product_slug')
+    stripe_price_id = input_data.get('stripe_price_id')
+    if not ssp_product_slug and stripe_price_id:
+        for candidate_slug, price_data in ssp_pricing.items():
+            if price_data.get('id') == stripe_price_id:
+                ssp_product_slug = candidate_slug
+                break
+    if ssp_product_slug:
+        stripe_price_id = ssp_pricing[ssp_product_slug]['id']
+    # ── Resolve SspProduct instance for FK ──
+    ssp_product_instance = None
+    if ssp_product_slug:
+        ssp_product_instance = SspProduct.objects.filter(
+            slug=ssp_product_slug, is_active=True
+        ).first()
     # Create checkout intent, which reserves the enterprise name & slug.
     try:
         intent = CheckoutIntent.create_intent(
@@ -454,6 +471,7 @@ def create_free_trial_checkout_session(
             quantity=input_data.get('quantity'),
             slug=input_data.get('enterprise_slug'),
             name=input_data.get('company_name'),
+            ssp_product=ssp_product_instance,
         )
     except SlugReservationConflict as exc:
         raise CreateCheckoutSessionSlugReservationConflict() from exc

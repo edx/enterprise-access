@@ -56,8 +56,12 @@ class CustomerBillingCreateCheckoutSessionRequestSerializer(serializers.Serializ
             'This could be count of subscription licenses, but could also be USD of Learner Credit.'
         )
     )
+    stripe_price_id = serializers.CharField(
+        required=False,
+        help_text='The ID of the Stripe Price object representing the plan selection.',
+    )
     ssp_product_slug = serializers.SlugField(
-        required=True,
+        required=False,
         help_text='The slug of the SSP product representing the plan selection.',
     )
 
@@ -112,6 +116,10 @@ class CustomerBillingCreateCheckoutSessionValidationFailedResponseSerializer(ser
     quantity = ErrorDetailSerializer(
         required=False,
         help_text='Validation results for quantity if validation failed. Absent otherwise.',
+    )
+    stripe_price_id = ErrorDetailSerializer(
+        required=False,
+        help_text='Validation results for stripe_price_id if validation failed. Absent otherwise.',
     )
     ssp_product_slug = ErrorDetailSerializer(
         required=False,
@@ -205,6 +213,7 @@ class CheckoutIntentCreateRequestSerializer(CountryFieldMixin, serializers.Model
                 'quantity',
                 'country',
                 'terms_metadata',
+                'ssp_product'
             ]
         ]
 
@@ -248,6 +257,7 @@ class CheckoutIntentCreateRequestSerializer(CountryFieldMixin, serializers.Model
                 name=validated_data.get('enterprise_name'),
                 country=validated_data.get('country'),
                 terms_metadata=validated_data.get('terms_metadata'),
+                ssp_product=validated_data.get('ssp_product'),
             )
 
         # Catch exceptions that should return 422:

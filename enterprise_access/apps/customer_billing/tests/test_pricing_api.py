@@ -1,6 +1,7 @@
 """
 Unit tests for the pricing_api module.
 """
+import uuid
 from decimal import Decimal
 from unittest import mock
 
@@ -168,6 +169,19 @@ class TestStripePricingAPI(TestCase):
         """Test fetching SSP product pricing."""
         # Ensure we exercise the settings-backed path for quantity_range
         SspProduct.objects.all().delete()
+
+        SspProduct.objects.create(
+            slug='quarterly_license_plan',
+            stripe_price_lookup_key=MOCK_SSP_PRODUCTS['quarterly_license_plan']['lookup_key'],
+            is_active=True,
+            catalog_query_uuid=uuid.uuid4(),
+        )
+        SspProduct.objects.create(
+            slug='yearly_license_plan',
+            stripe_price_lookup_key=MOCK_SSP_PRODUCTS['yearly_license_plan']['lookup_key'],
+            is_active=True,
+            catalog_query_uuid=uuid.uuid4(),
+        )
 
         quarterly_price = self._create_mock_stripe_price()
         yearly_price = self._create_mock_stripe_price(

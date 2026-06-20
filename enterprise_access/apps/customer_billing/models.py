@@ -636,7 +636,8 @@ class CheckoutIntent(TimeStampedModel):
         slug: str | None = None,
         name: str | None = None,
         country: str | None = None,
-        terms_metadata: dict | None = None
+        terms_metadata: dict | None = None,
+        ssp_product=None,
     ) -> Self:
         """
         Create or update a checkout intent for a user with the given enterprise details.
@@ -748,6 +749,7 @@ class CheckoutIntent(TimeStampedModel):
                 expires_at=expires_at,
                 country=country,
                 terms_metadata=terms_metadata,
+                ssp_product=ssp_product,
             )
 
     @classmethod

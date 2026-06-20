@@ -433,7 +433,8 @@ class CustomerBillingViewSet(viewsets.ViewSet):
             >>>     "admin_email": "dr@evil.inc",
             >>>     "enterprise_slug": "my-sluggy"
             >>>     "quantity": 7,
-            >>>     "stripe_price_id": "price_1MoBy5LkdIwHu7ixZhnattbh"
+            >>>     "stripe_price_id": "price_1MoBy5LkdIwHu7ixZhnattbh",
+            >>>     "ssp_product_slug": "ai-academy-yearly"
             >>> }
             HTTP 201 CREATED
             >>> {
@@ -464,7 +465,8 @@ class CustomerBillingViewSet(viewsets.ViewSet):
             'Handling request to create free trial plan. '
             f'enterprise_slug="{validated_data["enterprise_slug"]}" '
             f'quantity="{validated_data["quantity"]}" '
-            f'ssp_product_slug="{validated_data["ssp_product_slug"]}"'
+            f'stripe_price_id="{validated_data.get("stripe_price_id")}" '
+            f'ssp_product_slug="{validated_data.get("ssp_product_slug")}" '
         )
         try:
             session = create_free_trial_checkout_session(
