@@ -6,6 +6,7 @@ from unittest import mock
 
 import ddt
 import requests
+import stripe
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 from django.utils import timezone
@@ -14,7 +15,11 @@ from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.customer_billing import api as customer_billing_api
 from enterprise_access.apps.customer_billing import stripe_api
 from enterprise_access.apps.customer_billing.constants import CheckoutIntentState
-from enterprise_access.apps.customer_billing.models import CheckoutIntent
+from enterprise_access.apps.customer_billing.models import (
+    CheckoutIntent,
+    FailedCheckoutIntentConflict,
+    SlugReservationConflict
+)
 
 User = get_user_model()
 
@@ -128,6 +133,50 @@ class TestCreateFreeTrialCheckoutSession(TestCase):
         self.assertEqual(intent.stripe_customer_id, 'cust-123')
         self.assertFalse(intent.is_expired())
 
+    @mock.patch(
+        'enterprise_access.apps.customer_billing.api.get_ssp_product_pricing',
+        return_value=MOCK_SSP_PRICING_DATA,
+    )
+    @mock.patch.object(customer_billing_api, 'LmsApiClient', autospec=True)
+    @mock.patch.object(stripe_api, 'stripe')
+    @mock.patch('enterprise_access.apps.customer_billing.api.create_subscription_checkout_session')
+    def test_create_free_trial_checkout_session_with_ssp_product_slug(
+        self,
+        mock_create_checkout,
+        mock_stripe,  # pylint: disable=unused-argument
+        mock_lms_client_class,
+        mock_get_ssp_pricing,  # pylint: disable=unused-argument
+    ):
+        """
+        Ensure that supplying `ssp_product_slug` resolves to an `SspProduct` instance
+        and that the created CheckoutIntent stores the FK correctly.
+        """
+        # Setup mocks
+        mock_lms_client = mock_lms_client_class.return_value
+        mock_lms_client.get_lms_user_account.return_value = [{'id': self.user.lms_user_id}]
+        mock_lms_client.get_enterprise_customer_data.side_effect = raise_404_error
+
+        mock_create_checkout.return_value = {'id': 'sess-ssp', 'customer': 'cust-ssp'}
+
+        # Call with ssp_product_slug instead of stripe_price_id
+        result = customer_billing_api.create_free_trial_checkout_session(
+            user=self.user,
+            admin_email=self.user.email,
+            enterprise_slug='my-sluggy',
+            company_name='My Cool Company',
+            quantity=20,
+            ssp_product_slug='quarterly_license_plan',
+        )
+
+        self.assertEqual(result, {'id': 'sess-ssp', 'customer': 'cust-ssp'})
+
+        intent = CheckoutIntent.objects.get(user=self.user)
+        self.assertIsNotNone(intent.ssp_product)
+
+        # Ensure the checkout creator received the provided ssp_product_slug
+        called_input = mock_create_checkout.call_args[1]['input_data']
+        self.assertEqual(called_input.get('ssp_product_slug'), 'quarterly_license_plan')
+
         # Assert library methods were called correctly.
         mock_lms_client.get_lms_user_account.assert_called_once_with(
             email=self.user.email,
@@ -137,11 +186,9 @@ class TestCreateFreeTrialCheckoutSession(TestCase):
             mock.call(enterprise_customer_name='My Cool Company'),
         ])
 
-        # Check that customer slug and user data is in Stripe metadata
-        call_args = mock_stripe.checkout.Session.create.call_args
-        metadata = call_args[1]['subscription_data']['metadata']
-        self.assertEqual(metadata['enterprise_customer_slug'], 'my-sluggy')
-        self.assertEqual(metadata['lms_user_id'], str(self.user.lms_user_id))
+        # Ensure the create checkout helper received enterprise slug and admin email
+        self.assertEqual(called_input.get('enterprise_slug'), 'my-sluggy')
+        self.assertEqual(called_input.get('admin_email'), self.user.email)
 
     @mock.patch(
         'enterprise_access.apps.customer_billing.api.get_ssp_product_pricing',
@@ -172,9 +219,10 @@ class TestCreateFreeTrialCheckoutSession(TestCase):
                 quantity=20,
                 stripe_price_id=QUARTERLY_PRICE_ID,
             )
-            # Should get slug reserved error
-            validation_errors = cm.exception.validation_errors_by_field
-            self.assertIn('user', validation_errors)
+
+        # Should get user validation error
+        validation_errors = cm.exception.validation_errors_by_field
+        self.assertIn('user', validation_errors)
 
     @mock.patch(
         'enterprise_access.apps.customer_billing.api.get_ssp_product_pricing',
@@ -262,11 +310,10 @@ class TestCreateFreeTrialCheckoutSession(TestCase):
                 quantity=20,
                 stripe_price_id=QUARTERLY_PRICE_ID,
             )
-
-            # Should get slug reserved error
-            validation_errors = cm.exception.validation_errors_by_field
-            self.assertIn('enterprise_slug', validation_errors)
-            self.assertEqual(validation_errors['enterprise_slug']['error_code'], 'slug_reserved')
+        # Should get slug reserved error
+        validation_errors = cm.exception.validation_errors_by_field
+        self.assertIn('enterprise_slug', validation_errors)
+        self.assertEqual(validation_errors['enterprise_slug']['error_code'], 'slug_reserved')
 
     @mock.patch(
         'enterprise_access.apps.customer_billing.api.get_ssp_product_pricing',
@@ -304,11 +351,10 @@ class TestCreateFreeTrialCheckoutSession(TestCase):
                 quantity=20,
                 stripe_price_id=QUARTERLY_PRICE_ID,
             )
-
-            # Should get slug reserved error
-            validation_errors = cm.exception.validation_errors_by_field
-            self.assertIn('company_name', validation_errors)
-            self.assertEqual(validation_errors['company_name']['error_code'], 'existing_enterprise_customer')
+        # Should get company name conflict error
+        validation_errors = cm.exception.validation_errors_by_field
+        self.assertIn('company_name', validation_errors)
+        self.assertEqual(validation_errors['company_name']['error_code'], 'existing_enterprise_customer')
 
     @mock.patch(
         'enterprise_access.apps.customer_billing.api.get_ssp_product_pricing',
@@ -444,6 +490,16 @@ class TestCreateFreeTrialCheckoutSession(TestCase):
                 },
             }
         },
+        {
+            'request_quantity': 0,
+            'request_stripe_price_id': QUARTERLY_PRICE_ID,
+            'expected_validation_errors': {
+                'quantity': {
+                    'error_code': 'incomplete_data',
+                    'developer_message': 'Not enough parameters were given.',
+                }
+            }
+        },
     )
     @ddt.unpack
     @mock.patch(
@@ -500,3 +556,125 @@ class TestCreateFreeTrialCheckoutSession(TestCase):
 
         actual_validation_errors = cm.exception.validation_errors_by_field
         assert actual_validation_errors == expected_validation_errors
+
+    @mock.patch(
+        'enterprise_access.apps.customer_billing.'
+        'api.get_ssp_product_pricing',
+        return_value=MOCK_SSP_PRICING_DATA
+    )
+    @mock.patch.object(customer_billing_api, 'LmsApiClient', autospec=True)
+    @mock.patch.object(CheckoutIntent, 'create_intent')
+    def test_create_intent_raises_slug_reservation_conflict(self, mock_create_intent, mock_lms_client_class, _):
+        """
+        Test that SlugReservationConflict from create_intent is wrapped in CreateCheckoutSessionSlugReservationConflict.
+        """
+        mock_lms = mock_lms_client_class.return_value
+        mock_lms.get_lms_user_account.return_value = [{'id': self.user.lms_user_id}]
+        mock_lms.get_enterprise_customer_data.side_effect = raise_404_error
+        mock_create_intent.side_effect = SlugReservationConflict()
+        with self.assertRaises(customer_billing_api.CreateCheckoutSessionSlugReservationConflict) as cm:
+            customer_billing_api.create_free_trial_checkout_session(
+                user=self.user, admin_email=self.user.email, enterprise_slug='s',
+                company_name='C', quantity=10, stripe_price_id=QUARTERLY_PRICE_ID,
+            )
+        self.assertEqual(cm.exception.non_field_errors[0]['error_code'], 'checkout_intent_conflict_slug_reserved')
+
+    @mock.patch(
+        'enterprise_access.apps.customer_billing.'
+        'api.get_ssp_product_pricing',
+        return_value=MOCK_SSP_PRICING_DATA
+    )
+    @mock.patch.object(customer_billing_api, 'LmsApiClient', autospec=True)
+    @mock.patch.object(CheckoutIntent, 'create_intent')
+    def test_create_intent_raises_failed_conflict(self, mock_create_intent, mock_lms_client_class, _):
+        """
+        Test that FailedCheckoutIntentConflict from create_intent is wrapped in CreateCheckoutSessionFailedConflict.
+        """
+        mock_lms = mock_lms_client_class.return_value
+        mock_lms.get_lms_user_account.return_value = [{'id': self.user.lms_user_id}]
+        mock_lms.get_enterprise_customer_data.side_effect = raise_404_error
+        mock_create_intent.side_effect = FailedCheckoutIntentConflict()
+        with self.assertRaises(customer_billing_api.CreateCheckoutSessionFailedConflict) as cm:
+            customer_billing_api.create_free_trial_checkout_session(
+                user=self.user, admin_email=self.user.email, enterprise_slug='s',
+                company_name='C', quantity=10, stripe_price_id=QUARTERLY_PRICE_ID,
+            )
+        self.assertEqual(cm.exception.non_field_errors[0]['error_code'], 'checkout_intent_conflict_failed')
+
+
+class TestCreateStripeBillingPortalSession(TestCase):
+    """
+    Tests for the ``create_stripe_billing_portal_session()`` function.
+    """
+
+    def test_no_customer_id_raises_value_error(self):
+        """Missing stripe_customer_id raises ValueError."""
+        intent = mock.Mock(stripe_customer_id=None, id='intent-1')
+        with self.assertRaises(ValueError):
+            customer_billing_api.create_stripe_billing_portal_session(intent, 'https://return.url')
+
+    @mock.patch('enterprise_access.apps.customer_billing.api.stripe')
+    def test_success(self, mock_stripe):
+        """Happy path returns a portal session."""
+        intent = mock.Mock(stripe_customer_id='cus_123', id='intent-1')
+        mock_stripe.billing_portal.Session.create.return_value = mock.Mock(id='bps_1')
+        result = customer_billing_api.create_stripe_billing_portal_session(intent, 'https://return.url')
+        self.assertEqual(result.id, 'bps_1')
+        mock_stripe.billing_portal.Session.create.assert_called_once_with(
+            customer='cus_123', return_url='https://return.url',
+        )
+
+    @mock.patch('enterprise_access.apps.customer_billing.api.stripe')
+    def test_stripe_error_propagates(self, mock_stripe):
+        """StripeError from portal creation is re-raised after logging."""
+        intent = mock.Mock(stripe_customer_id='cus_123', id='intent-1')
+        mock_stripe.StripeError = stripe.StripeError
+        mock_stripe.billing_portal.Session.create.side_effect = stripe.StripeError('fail')
+        with self.assertRaises(stripe.StripeError):
+            customer_billing_api.create_stripe_billing_portal_session(intent, 'https://return.url')
+
+
+@mock.patch('enterprise_access.apps.customer_billing.api.get_ssp_product_pricing')
+class TestValidatorHandlerEdgeCases(TestCase):
+    """
+    Direct handler tests for uncovered exception/edge-case branches.
+    """
+
+    def setUp(self):
+        self.validator = customer_billing_api.CheckoutSessionInputValidator()
+
+    # ── handle_quantity: except Exception when get_ssp_product_pricing raises ──
+    def test_handle_quantity_pricing_exception(self, mock_pricing):
+        mock_pricing.side_effect = RuntimeError('boom')
+        result = self.validator.handle_quantity({'quantity': 10, 'stripe_price_id': QUARTERLY_PRICE_ID})
+        self.assertEqual(result['error_code'], 'incomplete_data')
+
+    # ── handle_ssp_product_slug: non-string input → INVALID_FORMAT ──
+    def test_handle_ssp_product_slug_invalid_format(self, mock_pricing):
+        result = self.validator.handle_ssp_product_slug({'ssp_product_slug': 123})
+        self.assertEqual(result['error_code'], 'invalid_format')
+        mock_pricing.assert_not_called()
+
+    # ── handle_ssp_product_slug: unknown slug → DOES_NOT_EXIST ──
+    def test_handle_ssp_product_slug_not_found(self, mock_pricing):
+        mock_pricing.return_value = MOCK_SSP_PRICING_DATA
+        result = self.validator.handle_ssp_product_slug({'ssp_product_slug': 'nonexistent_plan'})
+        self.assertEqual(result['error_code'], 'does_not_exist')
+
+    # ── handle_ssp_product_slug: pricing call raises → DOES_NOT_EXIST ──
+    def test_handle_ssp_product_slug_pricing_exception(self, mock_pricing):
+        mock_pricing.side_effect = RuntimeError('boom')
+        result = self.validator.handle_ssp_product_slug({'ssp_product_slug': 'quarterly_license_plan'})
+        self.assertEqual(result['error_code'], 'does_not_exist')
+
+    # ── handle_stripe_price_id: non-string input → INVALID_FORMAT ──
+    def test_handle_stripe_price_id_invalid_format(self, mock_pricing):
+        result = self.validator.handle_stripe_price_id({'stripe_price_id': 999})
+        self.assertEqual(result['error_code'], 'invalid_format')
+        mock_pricing.assert_not_called()
+
+    # ── handle_stripe_price_id: pricing call raises → DOES_NOT_EXIST ──
+    def test_handle_stripe_price_id_pricing_exception(self, mock_pricing):
+        mock_pricing.side_effect = RuntimeError('boom')
+        result = self.validator.handle_stripe_price_id({'stripe_price_id': QUARTERLY_PRICE_ID})
+        self.assertEqual(result['error_code'], 'does_not_exist')

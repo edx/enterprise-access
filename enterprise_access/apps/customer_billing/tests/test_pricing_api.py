@@ -1,6 +1,7 @@
 """
 Unit tests for the pricing_api module.
 """
+import uuid
 from decimal import Decimal
 from unittest import mock
 
@@ -10,6 +11,7 @@ from edx_django_utils.cache import TieredCache
 from stripe import InvalidRequestError
 
 from enterprise_access.apps.customer_billing import pricing_api
+from enterprise_access.apps.customer_billing.models import SspProduct
 
 MOCK_SSP_PRODUCTS = {
     'quarterly_license_plan': {
@@ -37,6 +39,24 @@ class TestStripePricingAPI(TestCase):
     def setUp(self):
         # Clear cache before each test
         TieredCache.dangerous_clear_all_tiers()
+        SspProduct.objects.create(
+            slug='quarterly_license_plan',
+            stripe_price_lookup_key=MOCK_SSP_PRODUCTS['quarterly_license_plan']['lookup_key'],
+            academy_uuid=None,
+            catalog_query_uuid='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+            license_manager_product_id_trial=2,
+            license_manager_product_id_paid=1,
+            is_active=True,
+        )
+        SspProduct.objects.create(
+            slug='yearly_license_plan',
+            stripe_price_lookup_key=MOCK_SSP_PRODUCTS['yearly_license_plan']['lookup_key'],
+            academy_uuid=None,
+            catalog_query_uuid='bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+            license_manager_product_id_trial=2,
+            license_manager_product_id_paid=1,
+            is_active=True,
+        )
 
     def tearDown(self):
         # Clear cache after each test
@@ -95,7 +115,9 @@ class TestStripePricingAPI(TestCase):
             }
         }
 
-        self.assertEqual(result, expected)
+        # Only assert expected keys to remain resilient to optional fields like `ssp_product_slug`
+        for k, v in expected.items():
+            self.assertEqual(result.get(k), v)
         mock_stripe.Price.retrieve.assert_called_once_with(price_id, expand=['product'])
 
     @mock.patch('enterprise_access.apps.customer_billing.pricing_api.stripe')
@@ -145,6 +167,22 @@ class TestStripePricingAPI(TestCase):
     @mock.patch('enterprise_access.apps.customer_billing.pricing_api.stripe')
     def test_get_ssp_product_pricing(self, mock_stripe):
         """Test fetching SSP product pricing."""
+        # Ensure we exercise the settings-backed path for quantity_range
+        SspProduct.objects.all().delete()
+
+        SspProduct.objects.create(
+            slug='quarterly_license_plan',
+            stripe_price_lookup_key=MOCK_SSP_PRODUCTS['quarterly_license_plan']['lookup_key'],
+            is_active=True,
+            catalog_query_uuid=uuid.uuid4(),
+        )
+        SspProduct.objects.create(
+            slug='yearly_license_plan',
+            stripe_price_lookup_key=MOCK_SSP_PRODUCTS['yearly_license_plan']['lookup_key'],
+            is_active=True,
+            catalog_query_uuid=uuid.uuid4(),
+        )
+
         quarterly_price = self._create_mock_stripe_price()
         yearly_price = self._create_mock_stripe_price(
             price_id=MOCK_SSP_PRODUCTS['yearly_license_plan']['stripe_price_id'],
@@ -154,14 +192,14 @@ class TestStripePricingAPI(TestCase):
 
         result = pricing_api.get_ssp_product_pricing()
 
-        # Should have entries for configured SSP products
+        # Should have entries for configured SSP products (from settings)
         self.assertIn('quarterly_license_plan', result)
         self.assertIn('yearly_license_plan', result)
 
-        # Check that SSP-specific metadata is added
+        # Check that SSP-specific metadata is added and quantity_range is sourced from settings
         quarterly_data = result['quarterly_license_plan']
         self.assertEqual(quarterly_data['ssp_product_key'], 'quarterly_license_plan')
-        self.assertEqual(quarterly_data['quantity_range'], (5, 30))
+        self.assertEqual(quarterly_data.get('quantity_range'), (5, 30))
 
     def test_calculate_subtotal_basic_format(self):
         """Test subtotal calculation with basic format."""
@@ -409,3 +447,342 @@ class TestStripePricingAPI(TestCase):
             with self.assertRaises(pricing_api.StripePricingError) as cm:
                 pricing_api._validate_stripe_price_schema(mock_price)
             self.assertIn(expect_error, str(cm.exception))
+
+    def test_serialize_basic_format_with_product_metadata_ssp_slug(self):
+        """Product metadata with ssp_product_slug should be preferred."""
+        mock_price = self._create_mock_stripe_price()
+        mock_price.product.metadata = {'ssp_product_slug': 'meta-slug'}
+
+        result = pricing_api._serialize_basic_format(mock_price)  # pylint: disable=protected-access
+
+        self.assertIn('ssp_product_slug', result)
+        self.assertEqual(result['ssp_product_slug'], 'meta-slug')
+
+    def test_serialize_basic_format_model_fallback_for_ssp_slug(self):
+        """When product metadata lacks ssp_product_slug, fallback to SspProduct lookup_key."""
+        # Create a model-backed SSP product to be discovered by lookup_key
+        SspProduct.objects.create(
+            slug='fallback_slug',
+            stripe_price_lookup_key='lookup_fallback',
+            is_active=True,
+            catalog_query_uuid=uuid.uuid4(),
+        )
+
+        mock_price = self._create_mock_stripe_price(lookup_key='lookup_fallback')
+        mock_price.product.metadata = {}
+
+        result = pricing_api._serialize_basic_format(mock_price)  # pylint: disable=protected-access
+
+        self.assertIn('ssp_product_slug', result)
+        self.assertEqual(result['ssp_product_slug'], 'fallback_slug')
+
+    def test_get_ssp_product_pricing_raises_on_missing_lookup_key(self):
+        """If an active SspProduct is missing lookup_key, raise StripePricingError."""
+        # Add a product missing a lookup key
+        SspProduct.objects.create(
+            slug='bad_product',
+            stripe_price_lookup_key='',
+            is_active=True,
+            catalog_query_uuid=uuid.uuid4(),
+        )
+
+        with mock.patch('enterprise_access.apps.customer_billing.pricing_api.get_all_stripe_prices') as mock_all:
+            mock_all.return_value = {}
+            with self.assertRaises(pricing_api.StripePricingError):
+                pricing_api.get_ssp_product_pricing()
+
+    def test_get_ssp_product_pricing_raises_when_lookup_key_not_found(self):
+        """If lookup_key for a product isn't present in Stripe prices, raise StripePricingError."""
+        SspProduct.objects.create(
+            slug='missing_lookup',
+            stripe_price_lookup_key='no_such_lookup',
+            is_active=True,
+            catalog_query_uuid=uuid.uuid4(),
+        )
+
+        with mock.patch('enterprise_access.apps.customer_billing.pricing_api.get_all_stripe_prices') as mock_all:
+            mock_all.return_value = {}
+            with self.assertRaises(pricing_api.StripePricingError):
+                pricing_api.get_ssp_product_pricing()
+
+    @mock.patch('enterprise_access.apps.customer_billing.pricing_api.stripe.Price')
+    def test_get_stripe_price_data_non_stripe_exception(self, mock_stripe_price):
+        """General (non-Stripe) exceptions should be wrapped in StripePricingError."""
+        mock_stripe_price.retrieve.side_effect = RuntimeError('connection reset')
+
+        with self.assertRaises(pricing_api.StripePricingError) as cm:
+            pricing_api.get_stripe_price_data('price_999')
+
+        self.assertIn('Unexpected error', str(cm.exception))
+
+    @mock.patch('enterprise_access.apps.customer_billing.pricing_api.stripe')
+    def test_get_all_stripe_prices_basic(self, mock_stripe):
+        """Directly test get_all_stripe_prices returns a lookup_key mapping."""
+        mock_recurring = mock.MagicMock()
+        mock_recurring.interval = 'year'
+        mock_recurring.interval_count = 1
+        mock_recurring.usage_type = 'licensed'
+
+        price = self._create_mock_stripe_price(
+            price_id='price_all_1', lookup_key='lk_all_1', recurring=mock_recurring,
+        )
+        mock_stripe.Price.list.return_value.auto_paging_iter.return_value = [price]
+
+        result = pricing_api.get_all_stripe_prices()
+
+        self.assertIn('lk_all_1', result)
+        self.assertEqual(result['lk_all_1']['unit_amount'], 10000)
+        self.assertEqual(result['lk_all_1']['currency'], 'usd')
+
+    @mock.patch('enterprise_access.apps.customer_billing.pricing_api.stripe')
+    def test_get_all_stripe_prices_caching(self, mock_stripe):
+        """Second call to get_all_stripe_prices should return cached result."""
+        mock_recurring = mock.MagicMock()
+        mock_recurring.interval = 'year'
+        mock_recurring.interval_count = 1
+        mock_recurring.usage_type = 'licensed'
+
+        price = self._create_mock_stripe_price(
+            price_id='price_cache', lookup_key='lk_cache', recurring=mock_recurring,
+        )
+        mock_stripe.Price.list.return_value.auto_paging_iter.return_value = [price]
+
+        result1 = pricing_api.get_all_stripe_prices()
+
+        # Reset the mock so we can verify it is NOT called again
+        mock_stripe.Price.list.reset_mock()
+
+        result2 = pricing_api.get_all_stripe_prices()
+
+        self.assertEqual(result1, result2)
+        # Stripe should not be called again; the cache should serve the result
+        mock_stripe.Price.list.assert_not_called()
+
+    @mock.patch('enterprise_access.apps.customer_billing.pricing_api.stripe')
+    def test_get_all_stripe_prices_skips_non_recurring(self, mock_stripe):
+        """Non-recurring (one_time) prices should be skipped."""
+        mock_recurring = mock.MagicMock()
+        mock_recurring.interval = 'year'
+        mock_recurring.interval_count = 1
+        mock_recurring.usage_type = 'licensed'
+
+        recurring_price = self._create_mock_stripe_price(
+            price_id='price_rec', lookup_key='lk_rec', recurring=mock_recurring,
+        )
+
+        one_time_price = self._create_mock_stripe_price(
+            price_id='price_ot', lookup_key='lk_ot',
+        )
+        one_time_price.type = 'one_time'
+
+        mock_stripe.Price.list.return_value.auto_paging_iter.return_value = [
+            recurring_price, one_time_price,
+        ]
+
+        result = pricing_api.get_all_stripe_prices()
+
+        self.assertIn('lk_rec', result)
+        self.assertNotIn('lk_ot', result)
+
+    @mock.patch('enterprise_access.apps.customer_billing.pricing_api.stripe')
+    def test_get_all_stripe_prices_skips_missing_lookup_key(self, mock_stripe):
+        """Prices without a lookup_key should be skipped with a warning."""
+        mock_recurring = mock.MagicMock()
+        mock_recurring.interval = 'year'
+        mock_recurring.interval_count = 1
+        mock_recurring.usage_type = 'licensed'
+
+        price_with_key = self._create_mock_stripe_price(
+            price_id='price_wk', lookup_key='lk_wk', recurring=mock_recurring,
+        )
+
+        price_no_key = self._create_mock_stripe_price(
+            price_id='price_nk', recurring=mock_recurring,
+        )
+        price_no_key.lookup_key = None
+
+        mock_stripe.Price.list.return_value.auto_paging_iter.return_value = [
+            price_with_key, price_no_key,
+        ]
+
+        result = pricing_api.get_all_stripe_prices()
+
+        self.assertIn('lk_wk', result)
+        self.assertEqual(len(result), 1)
+
+    @mock.patch('enterprise_access.apps.customer_billing.pricing_api.stripe.Price')
+    def test_get_all_stripe_prices_stripe_error(self, mock_stripe_price):
+        """StripeError during Price.list should raise StripePricingError."""
+        mock_stripe_price.list.side_effect = InvalidRequestError('bad request', 'param')
+
+        with self.assertRaises(pricing_api.StripePricingError) as cm:
+            pricing_api.get_all_stripe_prices()
+
+        self.assertIn('Failed to fetch all prices', str(cm.exception))
+
+    @mock.patch('enterprise_access.apps.customer_billing.pricing_api.stripe.Price')
+    def test_get_all_stripe_prices_general_exception(self, mock_stripe_price):
+        """General exception during Price.list should raise StripePricingError."""
+        mock_stripe_price.list.side_effect = RuntimeError('unexpected failure')
+
+        with self.assertRaises(pricing_api.StripePricingError) as cm:
+            pricing_api.get_all_stripe_prices()
+
+        self.assertIn('Unexpected error', str(cm.exception))
+
+    def test_calculate_subtotal_returns_none_on_error(self):
+        """Missing keys in price_data should cause calculate_subtotal to return None."""
+        # Empty dict triggers KeyError for 'unit_amount'
+        result = pricing_api.calculate_subtotal({}, 5)
+        self.assertIsNone(result)
+
+    def test_format_price_display_returns_unavailable_on_exception(self):
+        """Missing keys inside the try block should return 'Price unavailable'."""
+        # currency matches so we enter the try block, but unit_amount_decimal is missing
+        price_data = {'currency': 'usd'}
+
+        result = pricing_api.format_price_display(price_data)
+        self.assertEqual(result, 'Price unavailable')
+
+    def test_validate_stripe_price_schema_invalid_currency_type(self):
+        """Non-string currency should raise StripePricingError."""
+        mock_price = self._create_mock_stripe_price()
+        mock_price.currency = 12345  # not a string
+
+        with self.assertRaises(pricing_api.StripePricingError) as cm:
+            pricing_api._validate_stripe_price_schema(mock_price)  # pylint: disable=protected-access
+
+        self.assertIn('Invalid currency type', str(cm.exception))
+
+    def test_validate_stripe_price_schema_missing_interval_count(self):
+        """Recurring price with missing interval_count should raise StripePricingError."""
+        mock_recurring = mock.MagicMock()
+        mock_recurring.interval = 'month'
+        mock_recurring.interval_count = None  # missing
+        mock_recurring.usage_type = 'licensed'
+
+        mock_price = self._create_mock_stripe_price(recurring=mock_recurring)
+
+        with self.assertRaises(pricing_api.StripePricingError) as cm:
+            pricing_api._validate_stripe_price_schema(mock_price)  # pylint: disable=protected-access
+
+        self.assertIn('Recurring price missing interval_count', str(cm.exception))
+
+    def test_get_ssp_product_pricing_raises_on_missing_lookup_key_slug_format(self):
+        """Ensure missing lookup_key exception correctly formats using the product slug."""
+        SspProduct.objects.all().delete()
+        SspProduct.objects.create(
+            slug='bad_product_slug_test',
+            stripe_price_lookup_key='',
+            is_active=True,
+            catalog_query_uuid=uuid.uuid4(),
+        )
+
+        with mock.patch('enterprise_access.apps.customer_billing.pricing_api.get_all_stripe_prices') as mock_all:
+            mock_all.return_value = {}
+            with self.assertRaises(pricing_api.StripePricingError) as cm:
+                pricing_api.get_ssp_product_pricing()
+
+            self.assertIn('SSP product bad_product_slug_test missing lookup_key', str(cm.exception))
+
+    def test_serialize_basic_format_metadata_exception_handled(self):
+        """Ensure exceptions raised during metadata access fallback safely to ssp_slug = None."""
+        mock_price = self._create_mock_stripe_price()
+        mock_metadata = mock.MagicMock()
+        mock_metadata.get.side_effect = RuntimeError("Metadata completely broken")
+        mock_price.product.metadata = mock_metadata
+
+        # pylint: disable=protected-access
+        result = pricing_api._serialize_basic_format(mock_price)
+        self.assertEqual(result.get('ssp_product_slug'), 'quarterly_license_plan')
+
+    @mock.patch('enterprise_access.apps.customer_billing.pricing_api.SspProduct.objects.get')
+    def test_serialize_basic_format_database_exception_handled(self, mock_get):
+        """Ensure an unexpected DB exception during lookup fallback is swallowed and logged."""
+        mock_price = self._create_mock_stripe_price(lookup_key='corrupt_lookup_key')
+        mock_price.product.metadata = {}
+
+        mock_get.side_effect = Exception("Database connection dropped completely")
+
+        # pylint: disable=protected-access
+        result = pricing_api._serialize_basic_format(mock_price)
+        self.assertNotIn('ssp_product_slug', result)
+
+    @override_settings(
+        SSP_PRODUCTS={
+            'incomplete_plan_1': {
+                'lookup_key': 'only_key_no_range',
+            },
+            'incomplete_plan_2': {
+                'quantity_range': (10, 50),
+            },
+            'complete_plan': {
+                'lookup_key': 'valid_lk_range',
+                'quantity_range': (5, 100),
+            }
+        }
+    )
+    @mock.patch('enterprise_access.apps.customer_billing.pricing_api.stripe')
+    def test_get_ssp_product_pricing_skips_invalid_settings_config(self, mock_stripe):
+        """Ensure settings blocks missing lookup_key or quantity_range are skipped gracefully."""
+        SspProduct.objects.all().delete()
+
+        # Create a valid active DB product pointing to the complete settings block
+        SspProduct.objects.create(
+            slug='complete_plan',
+            stripe_price_lookup_key='valid_lk_range',
+            is_active=True,
+            catalog_query_uuid=uuid.uuid4(),
+        )
+
+        mock_price = self._create_mock_stripe_price(lookup_key='valid_lk_range')
+        mock_stripe.Price.list().auto_paging_iter.return_value = [mock_price]
+
+        result = pricing_api.get_ssp_product_pricing()
+
+        # The complete plan should process properly
+        self.assertIn('complete_plan', result)
+        self.assertEqual(result['complete_plan'].get('quantity_range'), (5, 100))
+
+    @mock.patch('enterprise_access.apps.customer_billing.pricing_api.stripe')
+    def test_get_ssp_product_pricing_ignores_inactive_ssp_products(self, mock_stripe):
+        """Ensure that SspProduct database filtering strictly targets is_active=True objects."""
+        SspProduct.objects.all().delete()
+
+        # Create an inactive product that matches valid settings
+        SspProduct.objects.create(
+            slug='quarterly_license_plan',
+            stripe_price_lookup_key=MOCK_SSP_PRODUCTS['quarterly_license_plan']['lookup_key'],
+            is_active=False,
+            catalog_query_uuid=uuid.uuid4(),
+        )
+
+        mock_price = self._create_mock_stripe_price()
+        mock_stripe.Price.list().auto_paging_iter.return_value = [mock_price]
+
+        result = pricing_api.get_ssp_product_pricing()
+
+        self.assertEqual(len(result), 0)
+
+    @mock.patch('enterprise_access.apps.customer_billing.pricing_api.logger')
+    @mock.patch('enterprise_access.apps.customer_billing.pricing_api.SspProduct.objects')
+    def test_serialize_basic_format_ssp_lookup_exception(self, mock_ssp_objects, mock_logger):
+        """
+        Covers the except Exception branch when SspProduct lookup raises an error.
+        """
+        mock_ssp_objects.filter.side_effect = RuntimeError('DB error')
+        mock_product = mock.MagicMock()
+        mock_product.metadata = {}
+        mock_price = mock.MagicMock()
+        mock_price.id = 'price_test'
+        mock_price.unit_amount = 1000
+        mock_price.currency = 'usd'
+        mock_price.recurring = None
+        mock_price.lookup_key = 'test_lookup_key'
+        mock_price.product = mock_product
+        result = pricing_api._serialize_basic_format(mock_price)  # pylint: disable=protected-access
+        self.assertIsNone(result.get('ssp_product_slug'))
+        mock_ssp_objects.filter.assert_called_once_with(stripe_price_lookup_key='test_lookup_key')
+        mock_logger.exception.assert_called_once_with(
+            'Error looking up SspProduct for lookup_key %s', 'test_lookup_key'
+        )

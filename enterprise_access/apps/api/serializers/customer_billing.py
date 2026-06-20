@@ -15,6 +15,7 @@ from enterprise_access.apps.customer_billing.models import (
     CheckoutIntent,
     FailedCheckoutIntentConflict,
     SlugReservationConflict,
+    SspProduct,
     StripeEventSummary
 )
 
@@ -59,6 +60,10 @@ class CustomerBillingCreateCheckoutSessionRequestSerializer(serializers.Serializ
     stripe_price_id = serializers.CharField(
         required=True,
         help_text='The ID of the Stripe Price object representing the plan selection.',
+    )
+    ssp_product_slug = serializers.SlugField(
+        required=False,
+        help_text='The slug of the SSP product representing the plan selection.',
     )
 
 
@@ -116,6 +121,10 @@ class CustomerBillingCreateCheckoutSessionValidationFailedResponseSerializer(ser
     stripe_price_id = ErrorDetailSerializer(
         required=False,
         help_text='Validation results for stripe_price_id if validation failed. Absent otherwise.',
+    )
+    ssp_product_slug = ErrorDetailSerializer(
+        required=False,
+        help_text='Validation results for ssp_product_slug if validation failed. Absent otherwise.',
     )
     company_name = ErrorDetailSerializer(
         required=False,
@@ -205,6 +214,7 @@ class CheckoutIntentCreateRequestSerializer(CountryFieldMixin, serializers.Model
                 'quantity',
                 'country',
                 'terms_metadata',
+                'ssp_product'
             ]
         ]
 
@@ -241,6 +251,12 @@ class CheckoutIntentCreateRequestSerializer(CountryFieldMixin, serializers.Model
         Creates a new CheckoutIntent.
         """
         try:
+            ssp_product_slug = validated_data.pop('ssp_product', None)
+            ssp_product = None
+            if ssp_product_slug:
+                ssp_product = SspProduct.objects.filter(
+                    slug=ssp_product_slug, is_active=True
+                ).first()
             return CheckoutIntent.create_intent(
                 user=self.context['request'].user,
                 quantity=validated_data['quantity'],
@@ -248,6 +264,7 @@ class CheckoutIntentCreateRequestSerializer(CountryFieldMixin, serializers.Model
                 name=validated_data.get('enterprise_name'),
                 country=validated_data.get('country'),
                 terms_metadata=validated_data.get('terms_metadata'),
+                ssp_product=ssp_product,
             )
 
         # Catch exceptions that should return 422:

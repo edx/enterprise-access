@@ -3899,17 +3899,23 @@ class CreateCheckoutSessionViewTests(APITest):
             'client_secret': 'cs_test_abc_secret_xyz',
         }
 
-        response = self.client.post(
-            self.url,
-            data={
-                'admin_email': self.user.email,
-                'enterprise_slug': 'test-slug',
-                'company_name': 'Test Co',
-                'quantity': 5,
-                'stripe_price_id': 'price_abc123',
-            },
-            format='json',
-        )
+        # Prevent live Stripe pricing lookups during checkout flow
+        with mock.patch('enterprise_access.apps.customer_billing.api.get_ssp_product_pricing') as mock_get_pricing:
+            mock_get_pricing.return_value = {
+                'quarterly_license_plan': {'id': 'price_test_quarterly', 'quantity_range': (5, 30)}
+            }
+
+            response = self.client.post(
+                self.url,
+                data={
+                    'admin_email': self.user.email,
+                    'enterprise_slug': 'test-slug',
+                    'company_name': 'Test Co',
+                    'quantity': 5,
+                    'stripe_price_id': 'price_abc123',
+                },
+                format='json',
+            )
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(

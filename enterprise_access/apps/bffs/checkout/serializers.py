@@ -28,10 +28,16 @@ class PriceSerializer(serializers.Serializer):
     Serializer for Stripe price objects in checkout context.
     """
     id = serializers.CharField(help_text="Stripe Price ID")
+    stripe_price_id = serializers.CharField(required=False, help_text="Stripe Price ID")
     product = serializers.CharField(help_text="Stripe Product ID")
     lookup_key = serializers.CharField(help_text="Lookup key for this price")
     recurring = serializers.DictField(
         help_text="Recurring billing configuration"
+    )
+    ssp_product_slug = serializers.CharField(
+        required=False,
+        allow_null=True,
+        help_text="SSP product slug"
     )
     currency = serializers.CharField(help_text="Currency code (e.g. 'usd')")
     unit_amount = serializers.IntegerField(help_text="Price amount in cents")
@@ -214,6 +220,10 @@ class CheckoutValidationRequestSerializer(serializers.Serializer):
     enterprise_slug = serializers.SlugField(required=False, allow_blank=True, help_text="Desired enterprise slug")
     quantity = serializers.IntegerField(required=False, allow_null=True, help_text="Number of licenses")
     stripe_price_id = serializers.CharField(required=False, allow_blank=True, help_text="Stripe price ID")
+    ssp_product_slug = serializers.SlugField(
+        required=False, allow_blank=True,
+        help_text="SSP product slug for the selected plan",
+    )
 
 
 class UserAuthInfoSerializer(serializers.Serializer):
