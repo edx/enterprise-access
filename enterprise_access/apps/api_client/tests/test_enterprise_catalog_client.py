@@ -355,6 +355,23 @@ class TestEnterpriseCatalogApiClient(TestCase):
         self.assertEqual(result, payload)
 
     @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient', autospec=True)
+    def test_get_academies_returns_raw_list_response(self, mock_oauth_client):
+        payload = [
+            {'uuid': 'academy-1'},
+            {'uuid': 'academy-2'},
+        ]
+
+        mock_oauth_client.return_value.get.return_value = mock.Mock(
+            json=mock.Mock(return_value=payload),
+            raise_for_status=mock.Mock(),
+        )
+
+        client = EnterpriseCatalogApiClient()
+        result = client.get_academies()
+
+        self.assertEqual(result, payload)
+
+    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient', autospec=True)
     def test_get_academies_with_empty_endpoint_returns_empty_payload(self, mock_oauth_client):
         client = EnterpriseCatalogApiClient()
         client.academies_endpoint = ''
@@ -859,4 +876,3 @@ class TestEnterpriseCatalogApiClientGetAcademy(TestCase):
         client = EnterpriseCatalogApiClient()
         with self.assertRaises(Exception):
             client.get_academy(uuid4())
-
