@@ -19,43 +19,9 @@ class EnterpriseCatalogApiClient(BaseOAuthClient):
 
     def __init__(self):
         self.api_base_url = urljoin(settings.ENTERPRISE_CATALOG_URL, f'api/{self.api_version}/')
-        # Academies are exposed on v1 of the enterprise-catalog API, not v2.
-        self.academies_endpoint = urljoin(settings.ENTERPRISE_CATALOG_URL, 'api/v1/academies/')
+        self.academies_endpoint = urljoin(self.api_base_url, 'academies/')
         self.enterprise_catalog_endpoint = urljoin(self.api_base_url, 'enterprise-catalogs/')
         super().__init__()
-
-    def _fetch_all_pages(self, endpoint, params=None):
-        """Fetch and merge paginated enterprise-catalog responses into one payload."""
-        merged_results = []
-        next_url = endpoint
-        request_params = params
-        base_payload = None
-
-        while next_url:
-            response = self.client.get(next_url, params=request_params)
-            response.raise_for_status()
-            payload = response.json()
-
-            if not isinstance(payload, dict):
-                return payload
-
-            if base_payload is None:
-                base_payload = payload.copy()
-
-            page_results = payload.get('results')
-            if isinstance(page_results, list):
-                merged_results.extend(page_results)
-
-            next_url = payload.get('next')
-            request_params = None
-
-        if base_payload is None:
-            return {'count': 0, 'next': None, 'previous': None, 'results': []}
-
-        base_payload['results'] = merged_results
-        base_payload['count'] = len(merged_results)
-        base_payload['next'] = None
-        return base_payload
 
     @backoff.on_exception(wait_gen=backoff.expo, exception=autoretry_for_exceptions)
     def get_academy(self, academy_uuid):
@@ -72,6 +38,121 @@ class EnterpriseCatalogApiClient(BaseOAuthClient):
         response = self.client.get(endpoint)
         response.raise_for_status()
         return response.json()
+
+    @backoff.on_exception(wait_gen=backoff.expo, exception=autoretry_for_exceptions)
+    def get_academies(self, academy_uuid: str = None, is_active: bool | None = None) -> dict | list:
+        """
+        Fetch a list of academies, optionally filtered by academy_uuid.
+
+        Returns a paginated-style dict or a raw list depending on the upstream service.
+        If the response contains a `next` link, subsequent pages will be fetched and merged into a single
+        results list.
+        """
+        # Defensive: if no endpoint configured, return empty paginated shape
+        if not self.academies_endpoint:
+            return {'count': 0, 'next': None, 'previous': None, 'results': []}
+
+        params = {}
+        if academy_uuid:
+            params['academy_uuid'] = academy_uuid
+        if is_active is not None:
+            params['is_active'] = bool(is_active)
+        if not params:
+            params = None
+        response = self.client.get(self.academies_endpoint, params=params)
+        response.raise_for_status()
+        raw_payload = response.json()
+
+        def normalize_page(payload):
+            """Normalize a response payload into a paginated dict.
+
+            Behavior is intentionally conservative to match historical expectations:
+            - If the service returned a non-dict (e.g. a list), return it unchanged.
+            - If the service returned a dict without a list-valued `results`, treat
+              `results` as empty (do not coerce non-list into a single-item list).
+            - Preserve the incoming `count` value when present; only fall back to
+              computed lengths when absent.
+            """
+            if payload is None:
+                return ({'count': 0, 'results': [], 'next': None, 'previous': None}, False)
+            # If upstream returned a raw list, preserve that shape
+            if isinstance(payload, list):
+                return payload, False
+            if isinstance(payload, dict):
+                results = payload.get('results')
+                # If results is missing or not a list, treat as empty list
+                if not isinstance(results, list):
+                    results = []
+                raw_count = payload.get('count', None)
+                # Try to coerce incoming count to an int; if that fails, treat
+                # it as absent so we fall back to the computed length.
+                try:
+                    count = int(raw_count) if raw_count is not None else None
+                except (ValueError, TypeError):
+                    count = None
+                explicit_count = count is not None
+                if count is None:
+                    count = len(results)
+                return ({
+                    'count': count,
+                    'results': results,
+                    'next': payload.get('next'),
+                    'previous': payload.get('previous'),
+                }, explicit_count)
+            # Fallback: for unexpected types, wrap as single-item paginated dict
+            return ({'count': 1, 'results': [payload], 'next': None, 'previous': None}, False)
+
+        # If upstream returned a raw list, preserve that shape
+        if isinstance(raw_payload, list):
+            return raw_payload
+
+        data, explicit = normalize_page(raw_payload)
+
+        # Merge paginated results if necessary; be defensive about types
+
+        next_url = data.get('next')
+        while next_url:
+            next_resp = self.client.get(next_url)
+            next_resp.raise_for_status()
+            next_payload = next_resp.json()
+            next_data, next_explicit = normalize_page(next_payload)
+            # Only extend if both are lists
+            if isinstance(data.get('results'), list) and isinstance(next_data.get('results'), list):
+                data['results'].extend(next_data.get('results', []))
+            # update pagination markers
+            data['next'] = next_data.get('next')
+            data['previous'] = data.get('previous') or next_data.get('previous')
+            # If the upstream provided an explicit numeric count, preserve it.
+            # Otherwise recompute the total as the length of the merged results.
+            # If either page did not provide an explicit numeric count, recompute
+            explicit = explicit and next_explicit
+            if not explicit:
+                data['count'] = len(data.get('results', []))
+            next_url = data.get('next')
+        return data
+
+    @backoff.on_exception(wait_gen=backoff.expo, exception=autoretry_for_exceptions)
+    def associate_academy_with_catalog(self, academy_uuid, enterprise_catalog_uuid):
+        """
+        Associate an academy with an enterprise catalog in enterprise-catalog.
+
+        Arguments:
+            academy_uuid (str|UUID): UUID of the academy to update.
+            enterprise_catalog_uuid (str|UUID): UUID of the enterprise catalog to associate.
+
+        Returns:
+            dict: Response payload, or an empty dict when the endpoint returns no body.
+        """
+        endpoint = urljoin(self.academies_endpoint, f'{academy_uuid}/associate-catalog/')
+        response = self.client.post(
+            endpoint,
+            json={'enterprise_catalog_uuid': str(enterprise_catalog_uuid)},
+        )
+        response.raise_for_status()
+        try:
+            return response.json()
+        except ValueError:
+            return {}
 
     @backoff.on_exception(wait_gen=backoff.expo, exception=autoretry_for_exceptions)
     def contains_content_items(self, catalog_uuid, content_ids):
@@ -144,28 +225,76 @@ class EnterpriseCatalogApiClient(BaseOAuthClient):
         return response.json()['count']
 
     @backoff.on_exception(wait_gen=backoff.expo, exception=autoretry_for_exceptions)
-    def get_academies(self, academy_uuid: str | None = None) -> dict:
+    def get_catalogs(self, enterprise_customer_uuid: str = None) -> dict | list:
         """
-        Fetch academies for Essentials flows from enterprise-catalog.
+        Fetch a list of enterprise catalogs, optionally filtered by enterprise_customer_uuid.
 
-        Returns:
-            dict: Paginated response shape with keys including count/next/previous/results.
-            If the endpoint paginates, all pages are merged into a single response payload.
+        Returns a paginated-style dict or a raw list depending on the upstream service.
+        If the response contains a `next` link, subsequent pages will be fetched and merged into a single
+        results list.
         """
-        params = {'academy_uuid': str(academy_uuid)} if academy_uuid else None
-        return self._fetch_all_pages(self.academies_endpoint, params=params)
+        params = {'enterprise_customer': enterprise_customer_uuid} if enterprise_customer_uuid else None
+        response = self.client.get(self.enterprise_catalog_endpoint, params=params)
+        response.raise_for_status()
+        raw_payload = response.json()
 
-    @backoff.on_exception(wait_gen=backoff.expo, exception=autoretry_for_exceptions)
-    def get_catalogs(self, enterprise_customer_uuid: str | None = None) -> dict:
-        """
-        Fetch enterprise catalogs, optionally scoped to an enterprise customer UUID.
+        def normalize_page(payload):
+            """Normalize a response payload into a paginated dict.
 
-        Returns:
-            dict: Paginated response shape with keys including count/next/previous/results.
-            If the endpoint paginates, all pages are merged into a single response payload.
-        """
-        params = {'enterprise_customer': str(enterprise_customer_uuid)} if enterprise_customer_uuid else None
-        return self._fetch_all_pages(self.enterprise_catalog_endpoint, params=params)
+            This mirrors `get_academies()` defensive behavior so callers can
+            safely handle dict or list payloads from upstream services.
+            Returns a tuple of (paginated_dict, explicit_count_flag) when
+            payload is dict-like, or (list_payload, False) when payload is
+            a raw list. When payload is None, return an empty paginated shape
+            and False for explicit flag.
+            """
+            if payload is None:
+                return ({'count': 0, 'results': [], 'next': None, 'previous': None}, False)
+            if isinstance(payload, list):
+                return payload, False
+            if isinstance(payload, dict):
+                results = payload.get('results')
+                if not isinstance(results, list):
+                    results = []
+                raw_count = payload.get('count', None)
+                try:
+                    count = int(raw_count) if raw_count is not None else None
+                except (ValueError, TypeError):
+                    count = None
+                explicit_count = count is not None
+                if count is None:
+                    count = len(results)
+                return ({
+                    'count': count,
+                    'results': results,
+                    'next': payload.get('next'),
+                    'previous': payload.get('previous'),
+                }, explicit_count)
+            return ({'count': 1, 'results': [payload], 'next': None, 'previous': None}, False)
+
+        # Preserve raw list payloads
+        if isinstance(raw_payload, list):
+            return raw_payload
+
+        data, explicit = normalize_page(raw_payload)
+
+        # Merge paginated results if necessary; be defensive about types
+        next_url = data.get('next')
+        while next_url:
+            next_resp = self.client.get(next_url)
+            next_resp.raise_for_status()
+            next_payload = next_resp.json()
+            next_data, next_explicit = normalize_page(next_payload)
+            if isinstance(data.get('results'), list) and isinstance(next_data.get('results'), list):
+                data['results'].extend(next_data.get('results', []))
+            data['next'] = next_data.get('next')
+            data['previous'] = data.get('previous') or next_data.get('previous')
+            explicit = explicit and next_explicit
+            if not explicit:
+                data['count'] = len(data.get('results', []))
+            next_url = data.get('next')
+
+        return data
 
     def content_metadata(self, content_id):
         raise NotImplementedError('There is currently no v2 API implementation for this endpoint.')
