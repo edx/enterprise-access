@@ -3,11 +3,115 @@ Tests for BFF handlers
 """
 from unittest import mock
 
+import ddt
 from rest_framework import status
 
 from enterprise_access.apps.bffs.context import HandlerContext
 from enterprise_access.apps.bffs.handlers import BaseHandler, BaseLearnerPortalHandler, DashboardHandler
 from enterprise_access.apps.bffs.tests.utils import TestHandlerContextMixin
+
+
+@ddt.ddt
+class TestTransformEnterpriseCustomer(TestHandlerContextMixin):
+    """
+    Unit tests for BaseLearnerPortalHandler.transform_enterprise_customer.
+
+    Verifies that disable_search depends solely on
+    enable_integrated_customer_learner_portal_search, and that
+    show_integration_warning is set when search is enabled and active
+    integrations exist.
+    """
+
+    def _make_handler(self):
+        with mock.patch(
+            'enterprise_access.apps.api_client.lms_client.LmsUserApiClient.get_enterprise_customers_for_user',
+            return_value=self.mock_enterprise_learner_response_data,
+        ):
+            context = HandlerContext(self.request)
+        return BaseLearnerPortalHandler(context)
+
+    @ddt.data(
+        # Search flag disabled, no integrations: search disabled, no integration warning
+        {
+            'enable_integrated_search': False,
+            'active_integrations': [],
+            'expected_disable_search': True,
+            'expected_show_warning': False,
+        },
+        # Search flag disabled, with integrations: search disabled, warning suppressed
+        {
+            'enable_integrated_search': False,
+            'active_integrations': [{'channel_code': 'SAP'}],
+            'expected_disable_search': True,
+            'expected_show_warning': False,
+        },
+        # Search flag enabled, no integrations: search enabled, no integration warning
+        {
+            'enable_integrated_search': True,
+            'active_integrations': [],
+            'expected_disable_search': False,
+            'expected_show_warning': False,
+        },
+        # Search flag enabled, with integrations: search enabled, integration warning shown
+        {
+            'enable_integrated_search': True,
+            'active_integrations': [{'channel_code': 'SAP'}],
+            'expected_disable_search': False,
+            'expected_show_warning': True,
+        },
+    )
+    @ddt.unpack
+    def test_transform_enterprise_customer(
+        self,
+        enable_integrated_search,
+        active_integrations,
+        expected_disable_search,
+        expected_show_warning,
+    ):
+        handler = self._make_handler()
+        enterprise_customer = {
+            **self.mock_enterprise_customer,
+            'enable_integrated_customer_learner_portal_search': enable_integrated_search,
+            'active_integrations': active_integrations,
+        }
+
+        result = handler.transform_enterprise_customer(enterprise_customer)
+
+        self.assertEqual(result['disable_search'], expected_disable_search)
+        self.assertEqual(result['show_integration_warning'], expected_show_warning)
+
+    @ddt.data(
+        # Search flag disabled, no identity provider: search still disabled
+        {
+            'enable_integrated_search': False,
+            'expected_disable_search': True,
+        },
+        # Search flag enabled, no identity provider: search still enabled
+        {
+            'enable_integrated_search': True,
+            'expected_disable_search': False,
+        },
+    )
+    @ddt.unpack
+    def test_transform_enterprise_customer_without_identity_provider(
+        self,
+        enable_integrated_search,
+        expected_disable_search,
+    ):
+        """
+        disable_search depends solely on enable_integrated_customer_learner_portal_search,
+        regardless of whether an identity_provider is configured.
+        """
+        handler = self._make_handler()
+        enterprise_customer = {
+            **self.mock_enterprise_customer,
+            'enable_integrated_customer_learner_portal_search': enable_integrated_search,
+            'identity_provider': None,
+        }
+
+        result = handler.transform_enterprise_customer(enterprise_customer)
+
+        self.assertEqual(result['disable_search'], expected_disable_search)
 
 
 class TestBaseHandler(TestHandlerContextMixin):
