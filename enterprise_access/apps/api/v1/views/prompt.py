@@ -27,8 +27,7 @@ JSONValue: TypeAlias = (
     list["JSONValue"] |
     dict[str, "JSONValue"]
 )
-
-ValidatedData: TypeAlias = dict[str, object]
+ValidatedData: TypeAlias = dict[str, JSONValue]
 XpertMessage: TypeAlias = dict[str, str]
 XpertResponse: TypeAlias = dict[str, object]
 SystemPromptModel: TypeAlias = type[BaseSystemPrompt]
@@ -89,6 +88,7 @@ class BasePromptViewSet(ViewSet):
         serializer.is_valid(raise_exception=True)
 
         return serializer.validated_data
+
 
     def _get_current_prompt(
         self,
