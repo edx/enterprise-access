@@ -89,7 +89,6 @@ class LearnerContentAssignmentAdmin(DjangoQLSearchMixin, SimpleHistoryAdmin):
         'modified',
         'lms_user_id',
         'get_enterprise_customer_uuid',
-        'preferred_course_run_key',
         'parent_content_key',
         'is_assigned_course_run',
     )
