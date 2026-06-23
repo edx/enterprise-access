@@ -45,7 +45,7 @@ class TestEnterpriseCatalogApiClient(TestCase):
         assert contains_content_items
 
         mock_oauth_client.return_value.get.assert_called_with(
-            f'http://enterprise-catalog.example.com/api/v1/enterprise-catalogs/{ent_uuid}/contains_content_items/',
+            f'http://enterprise-catalog.example.com/api/v2/enterprise-catalogs/{ent_uuid}/contains_content_items/',
             params={'course_run_ids': ['AB+CD101']},
         )
 
@@ -76,7 +76,7 @@ class TestEnterpriseCatalogApiClient(TestCase):
 
         self.assertEqual(fetched_metadata['results'], mock_response_json['results'])
         mock_oauth_client.return_value.get.assert_called_with(
-            f'http://enterprise-catalog.example.com/api/v1/enterprise-catalogs/{customer_uuid}/get_content_metadata/',
+            f'http://enterprise-catalog.example.com/api/v2/enterprise-catalogs/{customer_uuid}/get_content_metadata/',
             params={
                 'content_keys': content_keys,
                 'traverse_pagination': True,
@@ -98,7 +98,7 @@ class TestEnterpriseCatalogApiClient(TestCase):
             client.catalog_content_metadata(customer_uuid, content_keys)
 
         mock_oauth_client.return_value.get.assert_called_with(
-            f'http://enterprise-catalog.example.com/api/v1/enterprise-catalogs/{customer_uuid}/get_content_metadata/',
+            f'http://enterprise-catalog.example.com/api/v2/enterprise-catalogs/{customer_uuid}/get_content_metadata/',
             params={
                 'content_keys': content_keys,
                 'traverse_pagination': True,
@@ -120,7 +120,7 @@ class TestEnterpriseCatalogApiClient(TestCase):
 
         self.assertEqual(fetched_metadata, mock_response_json['count'])
         mock_oauth_client.return_value.get.assert_called_with(
-            f'http://enterprise-catalog.example.com/api/v1/enterprise-catalogs/{catalog_uuid}/get_content_metadata/',
+            f'http://enterprise-catalog.example.com/api/v2/enterprise-catalogs/{catalog_uuid}/get_content_metadata/',
         )
 
     @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient')
@@ -180,7 +180,7 @@ class TestEnterpriseCatalogApiClient(TestCase):
 
         self.assertEqual(fetched, mock_response_json)
         mock_oauth_client.return_value.get.assert_called_with(
-            'http://enterprise-catalog.example.com/api/v1/enterprise-catalogs/',
+            'http://enterprise-catalog.example.com/api/v2/enterprise-catalogs/',
             params=None,
         )
 
@@ -195,7 +195,7 @@ class TestEnterpriseCatalogApiClient(TestCase):
 
         self.assertEqual(fetched, mock_response_json)
         mock_oauth_client.return_value.get.assert_called_with(
-            'http://enterprise-catalog.example.com/api/v1/enterprise-catalogs/',
+            'http://enterprise-catalog.example.com/api/v2/enterprise-catalogs/',
             params={'enterprise_customer': customer_uuid},
         )
 
@@ -290,14 +290,14 @@ class TestEnterpriseCatalogApiClient(TestCase):
     def test_get_catalogs_merges_paginated_results(self, mock_oauth_client):
         page_1 = {
             'count': 2,
-            'next': 'http://enterprise-catalog.example.com/api/v1/enterprise-catalogs/?page=2',
+            'next': 'http://enterprise-catalog.example.com/api/v2/enterprise-catalogs/?page=2',
             'previous': None,
             'results': [{'uuid': str(uuid4())}],
         }
         page_2 = {
             'count': 2,
             'next': None,
-            'previous': 'http://enterprise-catalog.example.com/api/v1/enterprise-catalogs/?page=1',
+            'previous': 'http://enterprise-catalog.example.com/api/v2/enterprise-catalogs/?page=1',
             'results': [{'uuid': str(uuid4())}],
         }
         mock_oauth_client.return_value.get.side_effect = [
@@ -368,6 +368,23 @@ class TestEnterpriseCatalogApiClient(TestCase):
 
         client = EnterpriseCatalogApiClient()
         result = client.get_academies()
+
+        self.assertEqual(result, payload)
+
+    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient', autospec=True)
+    def test_get_catalogs_returns_raw_list_response(self, mock_oauth_client):
+        payload = [
+            {'uuid': 'catalog-1'},
+            {'uuid': 'catalog-2'},
+        ]
+
+        mock_oauth_client.return_value.get.return_value = mock.Mock(
+            json=mock.Mock(return_value=payload),
+            raise_for_status=mock.Mock(),
+        )
+
+        client = EnterpriseCatalogApiClient()
+        result = client.get_catalogs()
 
         self.assertEqual(result, payload)
 
