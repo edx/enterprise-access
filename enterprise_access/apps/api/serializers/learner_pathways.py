@@ -21,6 +21,24 @@ class LearningIntentRequestSerializer(serializers.Serializer):
         return validated_data
 
 
+class RecommendationFeedbackRequestSerializer(serializers.Serializer):
+    """
+    Validates the request body for the recommendation-feedback endpoint.
+    """
+    selected_career = serializers.CharField(allow_blank=False)
+    course_keys = serializers.ListField(
+        child=serializers.CharField(allow_blank=False),
+        allow_empty=False,
+    )
+    learner_profile = serializers.DictField(allow_empty=False)
+
+    def create(self, validated_data):
+        return validated_data
+
+    def update(self, instance, validated_data):
+        return validated_data
+
+
 class LearningIntentResponseSerializer(serializers.Serializer):
     """
     Documents the expected HTTP 200 response shape for the learning-intent endpoint.
@@ -30,6 +48,21 @@ class LearningIntentResponseSerializer(serializers.Serializer):
     skills_required = serializers.ListField(child=serializers.CharField())
     skills_preferred = serializers.ListField(child=serializers.CharField())
     condensed_algolia_query = serializers.CharField()
+
+    def create(self, validated_data):
+        return validated_data
+
+    def update(self, instance, validated_data):
+        return validated_data
+
+
+class RecommendationFeedbackResponseSerializer(serializers.Serializer):
+    """
+    Documents the expected HTTP 200 response shape for the recommendation-feedback endpoint.
+
+    For OpenAPI schema generation only — never instantiated at runtime.
+    """
+    reasons = serializers.DictField(child=serializers.CharField())
 
     def create(self, validated_data):
         return validated_data

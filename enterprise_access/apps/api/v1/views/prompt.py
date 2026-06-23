@@ -405,3 +405,70 @@ class LearnerPathwaysViewSet(BasePromptViewSet):
         response_data = self._parse_json_content(content)
 
         return Response(response_data, status=status.HTTP_200_OK)
+
+    @extend_schema(
+        tags=[LEARNER_PATHWAYS_API_TAG],
+        summary='Provide feedback on pathway recommendations.',
+        description=(
+            'Calls Xpert with the learner\'s selected career, course keys, and learner profile '
+            'to generate reasoning for the recommendations.  Returns the raw JSON produced by Xpert.'
+        ),
+        request=api_serializers.RecommendationFeedbackRequestSerializer,
+        responses={
+            status.HTTP_200_OK: api_serializers.RecommendationFeedbackResponseSerializer,
+            status.HTTP_400_BAD_REQUEST: None,
+            status.HTTP_401_UNAUTHORIZED: None,
+            status.HTTP_403_FORBIDDEN: None,
+            status.HTTP_429_TOO_MANY_REQUESTS: None,
+            status.HTTP_500_INTERNAL_SERVER_ERROR: None,
+        },
+    )
+    @action(
+        detail=False,
+        methods=['post'],
+        url_path='recommendation-feedback',
+        url_name='recommendation-feedback',
+        authentication_classes=(JwtAuthentication,),
+        permission_classes=(permissions.IsAuthenticated, IsEnterpriseLearner),
+        throttle_classes=(ScopedRateThrottle,),
+        throttle_scope='learner_pathways_recommendation_feedback',
+    )
+    def recommendation_feedback(self, request: Request) -> Response:
+        """
+        Generate reasoning for pathway recommendations based on learner profile and selected career.
+
+        Returns HTTP 400 for invalid request input.
+        Returns HTTP 401/403 when the caller is unauthenticated or not an enterprise learner.
+        Returns HTTP 429 when the per-endpoint rate limit is exceeded.
+        Returns HTTP 500 when the prompt is missing, the Xpert call fails, or the response
+        cannot be parsed as JSON.
+        """
+        validated_data = self._validate_request(
+            request,
+            api_serializers.RecommendationFeedbackRequestSerializer,
+        )
+
+        prompt = self._get_current_prompt(
+            prompt_model=self.model_type,
+            prompt_type=PromptType.RECOMMENDATIONS_FEEDBACK,
+        )
+
+        system_prompt = self._build_system_prompt(prompt)
+
+        messages = self._build_messages(validated_data)
+
+        conversation_id = self._get_conversation_id(request)
+
+        xpert_response = self._send_xpert_message(
+            system_prompt=system_prompt,
+            messages=messages,
+            conversation_id=conversation_id,
+            tags=settings.XPERT_LEARNER_PATHWAYS_RAG_TAGS,
+            prompt_type=PromptType.RECOMMENDATIONS_FEEDBACK,
+        )
+
+        content = self._extract_xpert_content(xpert_response)
+
+        response_data = self._parse_json_content(content)
+
+        return Response(response_data, status=status.HTTP_200_OK)

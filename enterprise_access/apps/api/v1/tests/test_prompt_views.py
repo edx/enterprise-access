@@ -42,11 +42,18 @@ PATCH_UUID4 = 'enterprise_access.apps.api.v1.views.prompt.uuid_module.uuid4'
 PATCH_CONTEXTS_ACCESSIBLE = 'enterprise_access.apps.api.v1.views.prompt.contexts_accessible_from_request'
 
 _LEARNING_INTENT_URL_NAME = 'api:v1:learner-pathways-learning-intent'
+_RECOMMENDATION_FEEDBACK_URL_NAME = 'api:v1:learner-pathways-recommendation-feedback'
 
 _VALID_LEARNING_INTENT_PAYLOAD = {
     'selected_goals': 'data science',
     'free_text': 'I want to become a data scientist',
     'known_context': 'currently a software engineer',
+}
+
+_VALID_RECOMMENDATION_FEEDBACK_PAYLOAD = {
+    'selected_career': 'Data Scientist',
+    'course_keys': ['course-v1:edX+DS101+2024'],
+    'learner_profile': {'skills': ['python', 'statistics']},
 }
 
 
@@ -587,6 +594,86 @@ class TestLearningIntentRequestSerializer(TestCase):
             self.assertIn(field, s.errors)
 
 
+@ddt.ddt
+class TestRecommendationFeedbackRequestSerializer(TestCase):
+    """Tests for RecommendationFeedbackRequestSerializer."""
+
+    def _valid(self):
+        return {
+            'selected_career': 'Data Scientist',
+            'course_keys': ['course-v1:edX+DS101+2024'],
+            'learner_profile': {'skills': ['python']},
+        }
+
+    def test_valid_payload_succeeds(self):
+        s = api_serializers.RecommendationFeedbackRequestSerializer(data=self._valid())
+        self.assertTrue(s.is_valid(), s.errors)
+
+    @ddt.data('selected_career', 'course_keys', 'learner_profile')
+    def test_missing_field_fails(self, field):
+        data = self._valid()
+        del data[field]
+        s = api_serializers.RecommendationFeedbackRequestSerializer(data=data)
+        self.assertFalse(s.is_valid())
+        self.assertIn(field, s.errors)
+
+    def test_blank_selected_career_fails(self):
+        data = self._valid()
+        data['selected_career'] = ''
+        s = api_serializers.RecommendationFeedbackRequestSerializer(data=data)
+        self.assertFalse(s.is_valid())
+        self.assertIn('selected_career', s.errors)
+
+    def test_whitespace_only_selected_career_fails(self):
+        data = self._valid()
+        data['selected_career'] = '   '
+        s = api_serializers.RecommendationFeedbackRequestSerializer(data=data)
+        self.assertFalse(s.is_valid())
+        self.assertIn('selected_career', s.errors)
+
+    def test_empty_course_keys_fails(self):
+        data = self._valid()
+        data['course_keys'] = []
+        s = api_serializers.RecommendationFeedbackRequestSerializer(data=data)
+        self.assertFalse(s.is_valid())
+        self.assertIn('course_keys', s.errors)
+
+    def test_non_list_course_keys_fails(self):
+        data = self._valid()
+        data['course_keys'] = 'not-a-list'
+        s = api_serializers.RecommendationFeedbackRequestSerializer(data=data)
+        self.assertFalse(s.is_valid())
+        self.assertIn('course_keys', s.errors)
+
+    def test_blank_course_key_fails(self):
+        data = self._valid()
+        data['course_keys'] = ['']
+        s = api_serializers.RecommendationFeedbackRequestSerializer(data=data)
+        self.assertFalse(s.is_valid())
+        self.assertIn('course_keys', s.errors)
+
+    def test_whitespace_only_course_key_fails(self):
+        data = self._valid()
+        data['course_keys'] = ['   ']
+        s = api_serializers.RecommendationFeedbackRequestSerializer(data=data)
+        self.assertFalse(s.is_valid())
+        self.assertIn('course_keys', s.errors)
+
+    def test_empty_learner_profile_fails(self):
+        data = self._valid()
+        data['learner_profile'] = {}
+        s = api_serializers.RecommendationFeedbackRequestSerializer(data=data)
+        self.assertFalse(s.is_valid())
+        self.assertIn('learner_profile', s.errors)
+
+    def test_non_dict_learner_profile_fails(self):
+        data = self._valid()
+        data['learner_profile'] = ['not', 'a', 'dict']
+        s = api_serializers.RecommendationFeedbackRequestSerializer(data=data)
+        self.assertFalse(s.is_valid())
+        self.assertIn('learner_profile', s.errors)
+
+
 # ---------------------------------------------------------------------------
 # Routing tests
 # ---------------------------------------------------------------------------
@@ -599,11 +686,22 @@ class TestLearnerPathwaysRouting(TestCase):
         self.assertIn('learner-pathways', url)
         self.assertIn('learning-intent', url)
 
+    def test_recommendation_feedback_url_reverses(self):
+        url = reverse(_RECOMMENDATION_FEEDBACK_URL_NAME)
+        self.assertIn('learner-pathways', url)
+        self.assertIn('recommendation-feedback', url)
+
     def test_learning_intent_post_accepted(self):
         client = APIClient()
         url = reverse(_LEARNING_INTENT_URL_NAME)
         response = client.post(url, data={}, format='json')
         # Unauthenticated — 401 or 403, but NOT 405.
+        self.assertNotEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+
+    def test_recommendation_feedback_post_accepted(self):
+        client = APIClient()
+        url = reverse(_RECOMMENDATION_FEEDBACK_URL_NAME)
+        response = client.post(url, data={}, format='json')
         self.assertNotEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
 
     @mock.patch(PATCH_CONTEXTS_ACCESSIBLE)
@@ -615,6 +713,25 @@ class TestLearnerPathwaysRouting(TestCase):
         client.force_authenticate(user=user)
         response = client.get(url)
         self.assertEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+
+    @mock.patch(PATCH_CONTEXTS_ACCESSIBLE)
+    def test_recommendation_feedback_get_rejected(self, _mock_contexts):
+        _mock_contexts.return_value = {str(uuid.uuid4())}
+        url = reverse(_RECOMMENDATION_FEEDBACK_URL_NAME)
+        client = APIClient()
+        user = UserFactory(is_active=True)
+        client.force_authenticate(user=user)
+        response = client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+
+    def test_viewset_registered_once(self):
+        li_url = reverse(_LEARNING_INTENT_URL_NAME)
+        rf_url = reverse(_RECOMMENDATION_FEEDBACK_URL_NAME)
+        self.assertNotEqual(li_url, rf_url)
+        self.assertIn('learning-intent', li_url)
+        self.assertNotIn('recommendation-feedback', li_url)
+        self.assertIn('recommendation-feedback', rf_url)
+        self.assertNotIn('learning-intent', rf_url)
 
 
 # ---------------------------------------------------------------------------
@@ -632,21 +749,46 @@ class TestLearnerPathwaysRouteConfig(TestCase):
         ac = self._get_action('learning_intent').kwargs.get('authentication_classes', ())
         self.assertIn(JwtAuthentication, ac)
 
+    def test_recommendation_feedback_authentication_classes(self):
+        ac = self._get_action('recommendation_feedback').kwargs.get('authentication_classes', ())
+        self.assertIn(JwtAuthentication, ac)
+
     def test_learning_intent_is_authenticated_permission(self):
         pc = self._get_action('learning_intent').kwargs.get('permission_classes', ())
+        self.assertIn(permissions.IsAuthenticated, pc)
+
+    def test_recommendation_feedback_is_authenticated_permission(self):
+        pc = self._get_action('recommendation_feedback').kwargs.get('permission_classes', ())
         self.assertIn(permissions.IsAuthenticated, pc)
 
     def test_learning_intent_is_enterprise_learner_permission(self):
         pc = self._get_action('learning_intent').kwargs.get('permission_classes', ())
         self.assertIn(IsEnterpriseLearner, pc)
 
+    def test_recommendation_feedback_is_enterprise_learner_permission(self):
+        pc = self._get_action('recommendation_feedback').kwargs.get('permission_classes', ())
+        self.assertIn(IsEnterpriseLearner, pc)
+
     def test_learning_intent_throttle_class(self):
         tc = self._get_action('learning_intent').kwargs.get('throttle_classes', ())
+        self.assertIn(ScopedRateThrottle, tc)
+
+    def test_recommendation_feedback_throttle_class(self):
+        tc = self._get_action('recommendation_feedback').kwargs.get('throttle_classes', ())
         self.assertIn(ScopedRateThrottle, tc)
 
     def test_learning_intent_throttle_scope(self):
         scope = self._get_action('learning_intent').kwargs.get('throttle_scope')
         self.assertEqual(scope, 'learner_pathways_learning_intent')
+
+    def test_recommendation_feedback_throttle_scope(self):
+        scope = self._get_action('recommendation_feedback').kwargs.get('throttle_scope')
+        self.assertEqual(scope, 'learner_pathways_recommendation_feedback')
+
+    def test_throttle_scopes_are_distinct(self):
+        li_scope = self._get_action('learning_intent').kwargs.get('throttle_scope')
+        rf_scope = self._get_action('recommendation_feedback').kwargs.get('throttle_scope')
+        self.assertNotEqual(li_scope, rf_scope)
 
     def test_no_throttle_on_base_prompt_viewset(self):
         # throttle_classes must not be explicitly defined on BasePromptViewSet itself
@@ -666,7 +808,7 @@ class TestLearnerPathwaysRouteConfig(TestCase):
 
 @ddt.ddt
 class TestLearnerPathwaysAuthorization(APITest):
-    """Authorization tests for the learning-intent endpoint."""
+    """Authorization tests for both learner-pathways endpoints."""
 
     @classmethod
     def setUpTestData(cls):
@@ -674,12 +816,18 @@ class TestLearnerPathwaysAuthorization(APITest):
         cls.learning_intent_prompt = XpertLearnerPathwaysSystemPromptFactory(
             prompt_type=PromptType.LEARNER_INTENT,
         )
+        cls.recommendation_feedback_prompt = XpertLearnerPathwaysSystemPromptFactory(
+            prompt_type=PromptType.RECOMMENDATIONS_FEEDBACK,
+        )
 
     def setUp(self):
         super().setUp()
         self.addCleanup(django_cache.clear)
 
-    @ddt.data(_LEARNING_INTENT_URL_NAME)
+    @ddt.data(
+        _LEARNING_INTENT_URL_NAME,
+        _RECOMMENDATION_FEEDBACK_URL_NAME,
+    )
     def test_unauthenticated_caller_is_rejected(self, url_name):
         self.client.logout()
         self.client.cookies.clear()
@@ -690,7 +838,10 @@ class TestLearnerPathwaysAuthorization(APITest):
             status.HTTP_403_FORBIDDEN,
         ])
 
-    @ddt.data(_LEARNING_INTENT_URL_NAME)
+    @ddt.data(
+        _LEARNING_INTENT_URL_NAME,
+        _RECOMMENDATION_FEEDBACK_URL_NAME,
+    )
     @mock.patch(PATCH_CONTEXTS_ACCESSIBLE, return_value=set())
     def test_authenticated_non_enterprise_user_rejected(self, url_name, _mock_contexts):
         self.set_jwt_cookie([])
@@ -700,6 +851,7 @@ class TestLearnerPathwaysAuthorization(APITest):
 
     @ddt.data(
         (_LEARNING_INTENT_URL_NAME, _VALID_LEARNING_INTENT_PAYLOAD),
+        (_RECOMMENDATION_FEEDBACK_URL_NAME, _VALID_RECOMMENDATION_FEEDBACK_PAYLOAD),
     )
     @ddt.unpack
     @mock.patch(PATCH_XPERT_CLIENT)
@@ -720,7 +872,10 @@ class TestLearnerPathwaysAuthorization(APITest):
         response = self.client.post(url, data=payload, format='json')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
-    @ddt.data(_LEARNING_INTENT_URL_NAME)
+    @ddt.data(
+        _LEARNING_INTENT_URL_NAME,
+        _RECOMMENDATION_FEEDBACK_URL_NAME,
+    )
     @mock.patch(PATCH_XPERT_CLIENT)
     @mock.patch(PATCH_CONTEXTS_ACCESSIBLE, return_value=set())
     def test_xpert_not_called_when_auth_fails(self, url_name, _mock_contexts, mock_client_class):
@@ -737,17 +892,21 @@ class TestLearnerPathwaysAuthorization(APITest):
 @override_settings(REST_FRAMEWORK={
     'DEFAULT_THROTTLE_RATES': {
         'learner_pathways_learning_intent': '2/minute',
+        'learner_pathways_recommendation_feedback': '2/minute',
     },
 })
 @ddt.ddt
 class TestLearnerPathwaysThrottle(APITest):
-    """Throttle tests for the learning-intent endpoint."""
+    """Throttle tests for learner-pathways endpoints."""
 
     @classmethod
     def setUpTestData(cls):
         super().setUpTestData()
         cls.learning_intent_prompt = XpertLearnerPathwaysSystemPromptFactory(
             prompt_type=PromptType.LEARNER_INTENT,
+        )
+        cls.recommendation_feedback_prompt = XpertLearnerPathwaysSystemPromptFactory(
+            prompt_type=PromptType.RECOMMENDATIONS_FEEDBACK,
         )
 
     def setUp(self):
@@ -762,8 +921,13 @@ class TestLearnerPathwaysThrottle(APITest):
         rates = django_settings.REST_FRAMEWORK.get('DEFAULT_THROTTLE_RATES', {})
         self.assertIn('learner_pathways_learning_intent', rates)
 
+    def test_recommendation_feedback_scope_in_default_throttle_rates(self):
+        rates = django_settings.REST_FRAMEWORK.get('DEFAULT_THROTTLE_RATES', {})
+        self.assertIn('learner_pathways_recommendation_feedback', rates)
+
     @mock.patch.object(ScopedRateThrottle, 'THROTTLE_RATES', {
         'learner_pathways_learning_intent': '2/minute',
+        'learner_pathways_recommendation_feedback': '2/minute',
     })
     @mock.patch(PATCH_XPERT_CLIENT)
     @mock.patch(PATCH_CONTEXTS_ACCESSIBLE)
@@ -778,6 +942,70 @@ class TestLearnerPathwaysThrottle(APITest):
             self.assertEqual(resp.status_code, status.HTTP_200_OK)
         resp = self.client.post(url, data=_VALID_LEARNING_INTENT_PAYLOAD, format='json')
         self.assertEqual(resp.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+
+    @mock.patch.object(ScopedRateThrottle, 'THROTTLE_RATES', {
+        'learner_pathways_learning_intent': '2/minute',
+        'learner_pathways_recommendation_feedback': '2/minute',
+    })
+    @mock.patch(PATCH_XPERT_CLIENT)
+    @mock.patch(PATCH_CONTEXTS_ACCESSIBLE)
+    def test_recommendation_feedback_throttled_after_rate_exceeded(
+        self, mock_contexts, mock_client_class,
+    ):
+        mock_contexts.return_value = {str(uuid.uuid4())}
+        mock_client_class.return_value.send_message.return_value = {
+            'role': 'assistant', 'content': '{"r":1}',
+        }
+        url = reverse(_RECOMMENDATION_FEEDBACK_URL_NAME)
+        for _ in range(2):
+            resp = self.client.post(
+                url, data=_VALID_RECOMMENDATION_FEEDBACK_PAYLOAD, format='json',
+            )
+            self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        resp = self.client.post(
+            url, data=_VALID_RECOMMENDATION_FEEDBACK_PAYLOAD, format='json',
+        )
+        self.assertEqual(resp.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+
+    @mock.patch(PATCH_XPERT_CLIENT)
+    @mock.patch(PATCH_CONTEXTS_ACCESSIBLE)
+    def test_learning_intent_counter_does_not_consume_recommendation_feedback_scope(
+        self, mock_contexts, mock_client_class,
+    ):
+        mock_contexts.return_value = {str(uuid.uuid4())}
+        mock_client_class.return_value.send_message.return_value = {
+            'role': 'assistant', 'content': '{"r":1}',
+        }
+        li_url = reverse(_LEARNING_INTENT_URL_NAME)
+        rf_url = reverse(_RECOMMENDATION_FEEDBACK_URL_NAME)
+
+        for _ in range(3):
+            self.client.post(li_url, data=_VALID_LEARNING_INTENT_PAYLOAD, format='json')
+
+        resp = self.client.post(
+            rf_url, data=_VALID_RECOMMENDATION_FEEDBACK_PAYLOAD, format='json',
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+
+    @mock.patch(PATCH_XPERT_CLIENT)
+    @mock.patch(PATCH_CONTEXTS_ACCESSIBLE)
+    def test_recommendation_feedback_counter_does_not_consume_learning_intent_scope(
+        self, mock_contexts, mock_client_class,
+    ):
+        mock_contexts.return_value = {str(uuid.uuid4())}
+        mock_client_class.return_value.send_message.return_value = {
+            'role': 'assistant', 'content': '{"r":1}',
+        }
+        li_url = reverse(_LEARNING_INTENT_URL_NAME)
+        rf_url = reverse(_RECOMMENDATION_FEEDBACK_URL_NAME)
+
+        for _ in range(3):
+            self.client.post(
+                rf_url, data=_VALID_RECOMMENDATION_FEEDBACK_PAYLOAD, format='json',
+            )
+
+        resp = self.client.post(li_url, data=_VALID_LEARNING_INTENT_PAYLOAD, format='json')
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
 
     @mock.patch(PATCH_CONTEXTS_ACCESSIBLE, return_value=set())
     def test_auth_failure_does_not_call_xpert(self, _mock_contexts):
@@ -918,6 +1146,107 @@ class TestLearningIntentHappyPath(APITest):
 
 
 # ---------------------------------------------------------------------------
+# Happy path tests — recommendation feedback
+# ---------------------------------------------------------------------------
+
+class TestRecommendationFeedbackHappyPath(APITest):
+    """Full happy-path tests for the recommendation-feedback action."""
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        cls.prompt = XpertLearnerPathwaysSystemPromptFactory(
+            prompt_type=PromptType.RECOMMENDATIONS_FEEDBACK,
+        )
+        cls.other_prompt = XpertLearnerPathwaysSystemPromptFactory(
+            prompt_type=PromptType.LEARNER_INTENT,
+        )
+
+    def setUp(self):
+        super().setUp()
+        self.addCleanup(django_cache.clear)
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE,
+            'context': str(uuid.uuid4()),
+        }])
+        self.url = reverse(_RECOMMENDATION_FEEDBACK_URL_NAME)
+
+    @mock.patch(PATCH_XPERT_CLIENT)
+    @mock.patch(PATCH_CONTEXTS_ACCESSIBLE)
+    def test_http_200_with_valid_payload(self, mock_contexts, mock_client_class):
+        mock_contexts.return_value = {str(uuid.uuid4())}
+        mock_client_class.return_value.send_message.return_value = {
+            'role': 'assistant',
+            'content': '{"reasons":{"course-v1:edX+DS101":"Aligns with career goal"}}',
+        }
+        resp = self.client.post(
+            self.url, data=_VALID_RECOMMENDATION_FEEDBACK_PAYLOAD, format='json',
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+
+    @mock.patch(PATCH_XPERT_CLIENT)
+    @mock.patch(PATCH_CONTEXTS_ACCESSIBLE)
+    def test_correct_prompt_type_used(self, mock_contexts, mock_client_class):
+        mock_contexts.return_value = {str(uuid.uuid4())}
+        with mock.patch.object(
+            XpertLearnerPathwaysSystemPrompt, 'get_current'
+        ) as mock_get_current:
+            mock_prompt = mock.Mock()
+            mock_prompt.system_prompt = 'Be helpful.'
+            mock_prompt.output_schema = None
+            mock_get_current.return_value = mock_prompt
+            mock_client_class.return_value.send_message.return_value = {
+                'role': 'assistant', 'content': '{"r":1}',
+            }
+            self.client.post(
+                self.url, data=_VALID_RECOMMENDATION_FEEDBACK_PAYLOAD, format='json',
+            )
+            mock_get_current.assert_called_once_with(
+                prompt_type=PromptType.RECOMMENDATIONS_FEEDBACK,
+            )
+
+    @mock.patch(PATCH_XPERT_CLIENT)
+    @mock.patch(PATCH_CONTEXTS_ACCESSIBLE)
+    def test_xpert_called_exactly_once(self, mock_contexts, mock_client_class):
+        mock_contexts.return_value = {str(uuid.uuid4())}
+        mock_client_class.return_value.send_message.return_value = {
+            'role': 'assistant', 'content': '{"r":1}',
+        }
+        self.client.post(
+            self.url, data=_VALID_RECOMMENDATION_FEEDBACK_PAYLOAD, format='json',
+        )
+        self.assertEqual(mock_client_class.return_value.send_message.call_count, 1)
+
+    @mock.patch(PATCH_XPERT_CLIENT)
+    @mock.patch(PATCH_CONTEXTS_ACCESSIBLE)
+    def test_full_parsed_json_returned(self, mock_contexts, mock_client_class):
+        mock_contexts.return_value = {str(uuid.uuid4())}
+        payload_json = '{"reasons":{"course-v1:edX+DS101":"relevant"}}'
+        mock_client_class.return_value.send_message.return_value = {
+            'role': 'assistant',
+            'content': payload_json,
+        }
+        resp = self.client.post(
+            self.url, data=_VALID_RECOMMENDATION_FEEDBACK_PAYLOAD, format='json',
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.json(), json.loads(payload_json))
+
+    @mock.patch(PATCH_XPERT_CLIENT)
+    @mock.patch(PATCH_CONTEXTS_ACCESSIBLE)
+    def test_role_field_not_returned(self, mock_contexts, mock_client_class):
+        mock_contexts.return_value = {str(uuid.uuid4())}
+        mock_client_class.return_value.send_message.return_value = {
+            'role': 'assistant',
+            'content': '{"reasons":{}}',
+        }
+        resp = self.client.post(
+            self.url, data=_VALID_RECOMMENDATION_FEEDBACK_PAYLOAD, format='json',
+        )
+        self.assertNotIn('role', resp.json())
+
+
+# ---------------------------------------------------------------------------
 # Response passthrough tests
 # ---------------------------------------------------------------------------
 
@@ -931,6 +1260,9 @@ class TestLearnerPathwaysResponsePassthrough(APITest):
         cls.learning_intent_prompt = XpertLearnerPathwaysSystemPromptFactory(
             prompt_type=PromptType.LEARNER_INTENT,
         )
+        cls.recommendation_feedback_prompt = XpertLearnerPathwaysSystemPromptFactory(
+            prompt_type=PromptType.RECOMMENDATIONS_FEEDBACK,
+        )
 
     def setUp(self):
         super().setUp()
@@ -942,6 +1274,11 @@ class TestLearnerPathwaysResponsePassthrough(APITest):
 
     @ddt.data(
         ('learning_intent', _LEARNING_INTENT_URL_NAME, _VALID_LEARNING_INTENT_PAYLOAD),
+        (
+            'recommendation_feedback',
+            _RECOMMENDATION_FEEDBACK_URL_NAME,
+            _VALID_RECOMMENDATION_FEEDBACK_PAYLOAD,
+        ),
     )
     @ddt.unpack
     @mock.patch(PATCH_XPERT_CLIENT)
@@ -960,6 +1297,11 @@ class TestLearnerPathwaysResponsePassthrough(APITest):
 
     @ddt.data(
         ('learning_intent', _LEARNING_INTENT_URL_NAME, _VALID_LEARNING_INTENT_PAYLOAD),
+        (
+            'recommendation_feedback',
+            _RECOMMENDATION_FEEDBACK_URL_NAME,
+            _VALID_RECOMMENDATION_FEEDBACK_PAYLOAD,
+        ),
     )
     @ddt.unpack
     @mock.patch(PATCH_XPERT_CLIENT)
@@ -978,6 +1320,11 @@ class TestLearnerPathwaysResponsePassthrough(APITest):
 
     @ddt.data(
         ('learning_intent', _LEARNING_INTENT_URL_NAME, _VALID_LEARNING_INTENT_PAYLOAD),
+        (
+            'recommendation_feedback',
+            _RECOMMENDATION_FEEDBACK_URL_NAME,
+            _VALID_RECOMMENDATION_FEEDBACK_PAYLOAD,
+        ),
     )
     @ddt.unpack
     @mock.patch(PATCH_XPERT_CLIENT)
@@ -1002,13 +1349,16 @@ class TestLearnerPathwaysResponsePassthrough(APITest):
 
 @ddt.ddt
 class TestLearnerPathwaysFailures(APITest):
-    """500-series failure paths for the learning-intent endpoint."""
+    """500-series failure paths for both learner-pathways endpoints."""
 
     @classmethod
     def setUpTestData(cls):
         super().setUpTestData()
         cls.learning_intent_prompt = XpertLearnerPathwaysSystemPromptFactory(
             prompt_type=PromptType.LEARNER_INTENT,
+        )
+        cls.recommendation_feedback_prompt = XpertLearnerPathwaysSystemPromptFactory(
+            prompt_type=PromptType.RECOMMENDATIONS_FEEDBACK,
         )
 
     def setUp(self):
@@ -1021,6 +1371,7 @@ class TestLearnerPathwaysFailures(APITest):
 
     @ddt.data(
         (_LEARNING_INTENT_URL_NAME, _VALID_LEARNING_INTENT_PAYLOAD),
+        (_RECOMMENDATION_FEEDBACK_URL_NAME, _VALID_RECOMMENDATION_FEEDBACK_PAYLOAD),
     )
     @ddt.unpack
     @mock.patch(PATCH_CONTEXTS_ACCESSIBLE)
