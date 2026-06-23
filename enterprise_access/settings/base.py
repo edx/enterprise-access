@@ -186,6 +186,7 @@ REST_FRAMEWORK = {
         # BLOCKER: rate values for learner-pathways scopes are not yet defined.
         # None disables throttling until a rate is agreed upon.
         'learner_pathways_learning_intent': None,
+        'learner_pathways_recommendation_feedback': None,
     },
 }
 
