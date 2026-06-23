@@ -6,17 +6,12 @@ from operator import itemgetter
 
 from rest_framework import status
 
-from ..api_client.enterprise_catalog_client import EnterpriseCatalogApiClient, EnterpriseCatalogApiV1Client
+from ..api_client.enterprise_catalog_client import EnterpriseCatalogApiV1Client
 from ..api_client.exceptions import APIClientException
 from ..api_client.license_manager_client import LicenseManagerApiClient
 from ..api_client.lms_client import LmsApiClient
 
 logger = logging.getLogger(__name__)
-
-
-# Default alias: keep the public name `EnterpriseCatalogApiV1Client` available
-# for tests that patch it, but default to the v2 implementation at runtime.
-EnterpriseCatalogApiV1Client = EnterpriseCatalogApiClient
 
 
 def get_or_create_enterprise_customer(*, name, slug, country, **kwargs):

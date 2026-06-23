@@ -1063,7 +1063,7 @@ class ProvisionNewCustomerWorkflow(AbstractWorkflow):
         return self.output_data[GetCreateCatalogStepOutput.KEY]
 
     def associate_academy_output_dict(self):
-        return self.output_data[AssociateAcademyStepOutput.KEY]
+        return self.output_data.get(AssociateAcademyStepOutput.KEY, {})
 
     def customer_agreement_output_dict(self):
         return self.output_data[GetCreateCustomerAgreementStepOutput.KEY]

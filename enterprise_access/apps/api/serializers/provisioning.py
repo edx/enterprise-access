@@ -247,7 +247,7 @@ class ProvisioningResponseSerializer(BaseSerializer):
     enterprise_customer = EnterpriseCustomerResponseSerializer()
     customer_admins = AdminObjectResponseSerializer()
     enterprise_catalog = EnterpriseCatalogResponseSerializer()
-    academy = AcademyResponseSerializer()
+    academy = AcademyResponseSerializer(required=False, allow_null=True)
     customer_agreement = CustomerAgreementResponseSerializer()
     trial_subscription_plan = SubscriptionPlanResponseSerializer()
     first_paid_subscription_plan = SubscriptionPlanResponseSerializer()
