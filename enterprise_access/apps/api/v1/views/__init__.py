@@ -23,6 +23,7 @@ from .customer_billing import (
     SspProductViewSet,
     StripeEventSummaryViewSet
 )
+from .prompt import LearnerPathwaysViewSet
 from .provisioning import ProvisioningCreateView, SubscriptionPlanOLIUpdateView
 from .subsidy_access_policy import (
     SubsidyAccessPolicyAllocateViewset,
