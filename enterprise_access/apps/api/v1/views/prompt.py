@@ -162,3 +162,74 @@ class LearnerPathwaysViewSet(BasePromptViewSet):
         except ValidationError as exc:
             raise PromptRequestException(f'Invalid Xpert response: {exc.detail}') from exc
         return Response(response_serializer.data, status=status.HTTP_200_OK)
+
+    @extend_schema(
+        tags=[LEARNER_PATHWAYS_API_TAG],
+        summary='Provide feedback on pathway recommendations.',
+        description=(
+            'Calls Xpert with the learner\'s selected career, course keys, and learner profile '
+            'to generate reasoning for the recommendations.  Returns a validated response shape; '
+            'unknown top-level fields from Xpert are ignored.'
+        ),
+        request=api_serializers.RecommendationFeedbackRequestSerializer,
+        responses={
+            status.HTTP_200_OK: api_serializers.RecommendationFeedbackResponseSerializer,
+            status.HTTP_400_BAD_REQUEST: None,
+            status.HTTP_401_UNAUTHORIZED: None,
+            status.HTTP_403_FORBIDDEN: None,
+            status.HTTP_429_TOO_MANY_REQUESTS: None,
+            status.HTTP_500_INTERNAL_SERVER_ERROR: None,
+        },
+    )
+    @permission_required(constants.LEARNER_PATHWAYS_RECOMMENDATION_FEEDBACK_PERMISSION)
+    @action(
+        detail=False,
+        methods=['post'],
+        url_path='recommendation-feedback',
+        url_name='recommendation-feedback',
+        authentication_classes=(JwtAuthentication,),
+        permission_classes=(permissions.IsAuthenticated,),
+        throttle_classes=(ScopedRateThrottle,),
+        throttle_scope='learner_pathways_recommendation_feedback',
+    )
+    def recommendation_feedback(self, request: Request) -> Response:
+        """
+        Generate reasoning for pathway recommendations based on learner profile and selected career.
+
+        Returns HTTP 400 for invalid request input.
+        Returns HTTP 401/403 when the caller is unauthenticated or not an enterprise learner.
+        Returns HTTP 429 when the per-endpoint rate limit is exceeded.
+        Returns HTTP 500 when the prompt is missing, the Xpert call fails, or the response
+        cannot be parsed as JSON.
+        """
+        serializer = api_serializers.RecommendationFeedbackRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        validated_data = serializer.validated_data
+
+        conversation_id = self._get_conversation_id(request)
+
+        try:
+            prompt = prompts_api.get_current_prompt(
+                prompt_model=self.model_type,
+                prompt_type=PromptType.RECOMMENDATIONS_FEEDBACK,
+            )
+            messages = prompts_api.build_messages(validated_data)
+
+            xpert_response = prompts_api.send_xpert_message(
+                prompt=prompt,
+                messages=messages,
+                conversation_id=conversation_id,
+                tags=settings.XPERT_LEARNER_PATHWAYS_RAG_TAGS,
+                prompt_type=PromptType.RECOMMENDATIONS_FEEDBACK,
+            )
+
+            response_data = xpert_response.as_json()
+        except (prompts_api.PromptError, XpertAPIError) as exc:
+            raise PromptRequestException(str(exc)) from exc
+
+        response_serializer = api_serializers.RecommendationFeedbackResponseSerializer(data=response_data)
+        try:
+            response_serializer.is_valid(raise_exception=True)
+        except ValidationError as exc:
+            raise PromptRequestException(f'Invalid Xpert response: {exc.detail}') from exc
+        return Response(response_serializer.data, status=status.HTTP_200_OK)

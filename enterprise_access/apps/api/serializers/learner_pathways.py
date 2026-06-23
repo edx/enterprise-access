@@ -22,3 +22,22 @@ class LearningIntentResponseSerializer(serializers.Serializer):  # pylint: disab
     skills_required = serializers.ListField(child=serializers.CharField(), required=False)
     skills_preferred = serializers.ListField(child=serializers.CharField(), required=False)
     condensed_algolia_query = serializers.CharField(required=False)
+
+
+class RecommendationFeedbackRequestSerializer(serializers.Serializer):  # pylint: disable=abstract-method
+    """
+    Validates the request body for the recommendation-feedback endpoint.
+    """
+    selected_career = serializers.CharField(allow_blank=False)
+    course_keys = serializers.ListField(
+        child=serializers.CharField(allow_blank=False),
+        allow_empty=False,
+    )
+    learner_profile = serializers.DictField(allow_empty=False)
+
+
+class RecommendationFeedbackResponseSerializer(serializers.Serializer):  # pylint: disable=abstract-method
+    """
+    Validates and serializes the HTTP 200 response for the recommendation-feedback endpoint.
+    """
+    reasons = serializers.DictField(child=serializers.CharField())

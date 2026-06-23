@@ -185,6 +185,7 @@ REST_FRAMEWORK = {
         'bff_unauthenticated': '100/hour',
         'ssp_product': '120/hour',
         'learner_pathways_learning_intent': '100/hour',
+        'learner_pathways_recommendation_feedback': '100/hour',
     },
 }
 
