@@ -13,9 +13,9 @@ from enterprise_access.apps.api_client.constants import autoretry_for_exceptions
 
 class EnterpriseCatalogApiClient(BaseOAuthClient):
     """
-    V2 API client for calls to the enterprise catalog service.
+    v1 API client for calls to the enterprise catalog service.
     """
-    api_version = 'v2'
+    api_version = 'v1'
 
     def __init__(self):
         self.api_base_url = urljoin(settings.ENTERPRISE_CATALOG_URL, f'api/{self.api_version}/')
@@ -297,7 +297,7 @@ class EnterpriseCatalogApiClient(BaseOAuthClient):
         return data
 
     def content_metadata(self, content_id):
-        raise NotImplementedError('There is currently no v2 API implementation for this endpoint.')
+        raise NotImplementedError('There is currently no v1 API implementation for this endpoint.')
 
 
 class EnterpriseCatalogApiV1Client(EnterpriseCatalogApiClient):
