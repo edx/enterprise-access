@@ -587,12 +587,54 @@ class TestAdminAssignmentAuthorizedCRUD(CRUDViewTestMixin, APITest):
         actual_assignment_uuids = {UUID(assignment['uuid']) for assignment in response_json['results']}
         assert actual_assignment_uuids == expected_assignment_uuids
 
-        expected_learner_state_counts = [
-            {'count': 1, 'learner_state': 'failed'},
-            {'count': 1, 'learner_state': 'waiting'},
-            {'count': 1, 'learner_state': 'notifying'},
-        ]
-        assert response_json['learner_state_counts'] == expected_learner_state_counts
+        # Compare as a set of tuples — the API doesn't guarantee ordering for equal counts.
+        expected_learner_state_counts = {
+            ('failed', 1), ('waiting', 1), ('notifying', 1),
+        }
+        actual_learner_state_counts = {
+            (item['learner_state'], item['count'])
+            for item in response_json['learner_state_counts']
+        }
+        assert actual_learner_state_counts == expected_learner_state_counts
+
+    @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient', autospec=True)
+    @mock.patch.object(SubsidyAccessPolicy, 'subsidy_record', autospec=True)
+    def test_list_learner_state_counts_includes_expired_even_when_filtered_out(
+        self, mock_subsidy_record, mock_catalog_client
+    ):
+        """
+        ``learner_state_counts`` must always reflect all states in the assignment configuration,
+        regardless of the active ``learner_state__in`` filter.  This allows the FE to render
+        "Expired (N)" badge on the filter tab even when expired assignments are hidden from the table.
+        """
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': str(TEST_ENTERPRISE_UUID),
+        }])
+        mock_catalog_client.return_value.catalog_content_metadata.return_value = self.mock_catalog_result
+        mock_subsidy_record.return_value = self.mock_subsidy_record
+
+        expired_assignment = LearnerContentAssignmentFactory(
+            state=LearnerContentAssignmentStateChoices.EXPIRED,
+            assignment_configuration=self.assignment_configuration,
+        )
+
+        # Filter the table to exclude expired — simulates the default FE behavior.
+        response = self.client.get(
+            ADMIN_ASSIGNMENTS_LIST_ENDPOINT + '?learner_state__in=waiting,notifying,failed'
+        )
+        response_json = response.json()
+
+        # Expired assignment must not appear in the paginated results.
+        result_uuids = {assignment['uuid'] for assignment in response_json['results']}
+        assert str(expired_assignment.uuid) not in result_uuids
+
+        # But its count must still appear in learner_state_counts so the FE can show the badge.
+        learner_state_counts_by_state = {
+            item['learner_state']: item['count']
+            for item in response_json['learner_state_counts']
+        }
+        assert learner_state_counts_by_state.get(AssignmentLearnerStates.EXPIRED) == 1
 
     @ddt.data(
         None,

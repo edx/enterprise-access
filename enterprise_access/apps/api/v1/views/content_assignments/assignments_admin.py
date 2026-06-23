@@ -171,10 +171,17 @@ class LearnerContentAssignmentAdminViewSet(
         """
         response = super().list(request, *args, **kwargs)
 
-        # Compute the learner_state_counts for the filtered queryset.
-        queryset = self.filter_queryset(self.get_queryset())
+        # Compute learner_state_counts from the base queryset (scoped to the assignment configuration
+        # only, without any learner_state filter applied) so that states excluded by the active filter
+        # — most importantly `expired` — still appear in the count summary. This allows the FE to
+        # render filter tab badges like "Expired (7)" even when that state is filtered out of the table.
+        base_queryset = LearnerContentAssignment.annotate_dynamic_fields_onto_queryset(
+            LearnerContentAssignment.objects.filter(
+                assignment_configuration__uuid=self.requested_assignment_configuration_uuid
+            )
+        )
         learner_state_counter = Counter(
-            queryset.exclude(learner_state__isnull=True).values_list('learner_state', flat=True)
+            base_queryset.exclude(learner_state__isnull=True).values_list('learner_state', flat=True)
         )
         learner_state_counts = [
             {'learner_state': state, 'count': count}
