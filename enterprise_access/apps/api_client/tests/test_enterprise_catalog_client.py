@@ -96,7 +96,7 @@ class TestEnterpriseCatalogApiClient(TestCase):
 
         self.assertEqual(result, {'detail': 'ok'})
         mock_post.assert_called_once_with(
-            f'http://enterprise-catalog.example.com/api/v2/academies/{academy_uuid}/associate-catalog/',
+            f'http://enterprise-catalog.example.com/api/v1/academies/{academy_uuid}/associate-catalog/',
             json={'enterprise_catalog_uuid': str(catalog_uuid)},
         )
 
