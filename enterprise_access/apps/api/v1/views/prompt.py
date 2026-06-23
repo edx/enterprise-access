@@ -7,14 +7,24 @@ import uuid as uuid_module
 from collections.abc import Sequence
 from typing import TypeAlias, cast
 
-from rest_framework import serializers, status
+from django.conf import settings
+from drf_spectacular.utils import extend_schema
+from edx_rbac.utils import contexts_accessible_from_request
+from edx_rest_framework_extensions.auth.jwt.authentication import JwtAuthentication
+from rest_framework import permissions, serializers, status
+from rest_framework.decorators import action
 from rest_framework.exceptions import APIException
 from rest_framework.request import Request
+from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.viewsets import ViewSet
 
+from enterprise_access.apps.api import serializers as api_serializers
+from enterprise_access.apps.api.serializers.learner_pathways import LEARNER_PATHWAYS_API_TAG
 from enterprise_access.apps.api_client.base_user import get_request_id
+from enterprise_access.apps.core.constants import BFF_LEARNER_ROLE
 from enterprise_access.apps.prompts.api_client import XpertAPIClient, XpertAPIError
-from enterprise_access.apps.prompts.models import BaseSystemPrompt
+from enterprise_access.apps.prompts.models import BaseSystemPrompt, PromptType, XpertLearnerPathwaysSystemPrompt
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +109,16 @@ class BasePromptViewSet(ViewSet):
         """
         Resolve the current prompt for the exact supplied prompt type.
         """
+        if prompt_model is None:
+            raise PromptRequestException(
+                'prompt_model is a required configuration argument.'
+            )
+
+        if prompt_type is None:
+            raise PromptRequestException(
+                'prompt_type is a required configuration argument.'
+            )
+
         prompt = prompt_model.get_current(
             prompt_type=prompt_type,
         )
@@ -221,6 +241,12 @@ class BasePromptViewSet(ViewSet):
                 'Xpert response is missing the "content" field.'
             )
 
+        if not isinstance(content, str):
+            raise PromptRequestException(
+                'Xpert response "content" is not a string: '
+                f'got {type(content).__name__}.'
+            )
+
         return content
 
     def _parse_json_content(
@@ -243,3 +269,108 @@ class BasePromptViewSet(ViewSet):
             ) from exc
 
         return cast(JSONValue, parsed_content)
+
+
+class IsEnterpriseLearner(permissions.BasePermission):
+    """
+    Permit requests from authenticated users associated with at least one enterprise as a learner.
+
+    Uses the BFF_LEARNER_ROLE feature role, which is mapped from SYSTEM_ENTERPRISE_LEARNER_ROLE
+    in SYSTEM_TO_FEATURE_ROLE_MAPPING.  Enterprise admins have BFF_ADMIN_ROLE and are not permitted
+    by this check.
+
+    No existing "any enterprise learner" DRF permission class was found in the repository.
+    This is the minimal consistent implementation using the existing edx_rbac infrastructure.
+    """
+
+    def has_permission(self, request: Request, view: object) -> bool:
+        try:
+            contexts = contexts_accessible_from_request(request, [BFF_LEARNER_ROLE])
+            return bool(contexts)
+        except Exception:  # pylint: disable=broad-except
+            return False
+
+
+class LearnerPathwaysViewSet(BasePromptViewSet):
+    """
+    Endpoints for the Learner Pathways Xpert-backed feature.
+
+    Each action defines its own authentication, permissions, and throttle configuration
+    explicitly.  No shared authentication, permissions, or throttle classes are defined
+    at the class level.
+    """
+
+    model_type = XpertLearnerPathwaysSystemPrompt
+
+    # DRF 3.17.1 ViewSetMixin.as_view() rejects any @action kwarg that is not already a
+    # class attribute (hasattr check).  throttle_scope is not defined on APIView or ViewSet,
+    # so a class-level sentinel is required to allow per-action propagation.  This sentinel
+    # does not configure a shared throttle; the actual scope values are set per action.
+    throttle_scope: str | None = None
+
+    @extend_schema(
+        tags=[LEARNER_PATHWAYS_API_TAG],
+        summary='Derive learning intent from learner input.',
+        description=(
+            'Calls Xpert with the learner\'s stated goals, free-text input, and known context '
+            'to derive skills and a search query.  Returns the raw JSON produced by Xpert.'
+        ),
+        request=api_serializers.LearningIntentRequestSerializer,
+        responses={
+            status.HTTP_200_OK: api_serializers.LearningIntentResponseSerializer,
+            status.HTTP_400_BAD_REQUEST: None,
+            status.HTTP_401_UNAUTHORIZED: None,
+            status.HTTP_403_FORBIDDEN: None,
+            status.HTTP_429_TOO_MANY_REQUESTS: None,
+            status.HTTP_500_INTERNAL_SERVER_ERROR: None,
+        },
+    )
+    @action(
+        detail=False,
+        methods=['post'],
+        url_path='learning-intent',
+        url_name='learning-intent',
+        authentication_classes=(JwtAuthentication,),
+        permission_classes=(permissions.IsAuthenticated, IsEnterpriseLearner),
+        throttle_classes=(ScopedRateThrottle,),
+        throttle_scope='learner_pathways_learning_intent',
+    )
+    def learning_intent(self, request: Request) -> Response:
+        """
+        Derive learning intent from the learner's stated goals, free-text input, and known context.
+
+        Returns HTTP 400 for invalid request input.
+        Returns HTTP 401/403 when the caller is unauthenticated or not an enterprise learner.
+        Returns HTTP 429 when the per-endpoint rate limit is exceeded.
+        Returns HTTP 500 when the prompt is missing, the Xpert call fails, or the response
+        cannot be parsed as JSON.
+        """
+        validated_data = self._validate_request(
+            request,
+            api_serializers.LearningIntentRequestSerializer,
+        )
+
+        prompt = self._get_current_prompt(
+            prompt_model=self.model_type,
+            prompt_type=PromptType.LEARNER_INTENT,
+        )
+
+        system_prompt = self._build_system_prompt(prompt)
+
+        messages = self._build_messages(validated_data)
+
+        conversation_id = self._get_conversation_id(request)
+
+        xpert_response = self._send_xpert_message(
+            system_prompt=system_prompt,
+            messages=messages,
+            conversation_id=conversation_id,
+            tags=settings.XPERT_LEARNER_PATHWAYS_RAG_TAGS,
+            prompt_type=PromptType.LEARNER_INTENT,
+        )
+
+        content = self._extract_xpert_content(xpert_response)
+
+        response_data = self._parse_json_content(content)
+
+        return Response(response_data, status=status.HTTP_200_OK)
