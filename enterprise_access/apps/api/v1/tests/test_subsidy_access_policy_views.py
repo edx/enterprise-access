@@ -42,6 +42,7 @@ from enterprise_access.apps.subsidy_access_policy.constants import (
     PolicyTypes,
     TransactionStateChoices
 )
+from enterprise_access.apps.subsidy_access_policy.exceptions import ContentPriceNullException
 from enterprise_access.apps.subsidy_access_policy.models import (
     PerLearnerSpendCreditAccessPolicy,
     PolicyGroupAssociation,
@@ -2361,6 +2362,59 @@ class TestSubsidyAccessPolicyCanRedeemView(BaseCanRedeemTestMixin, APITestWithMo
         self.mock_get_content_metadata.assert_called_once_with("course-v1:demox+1234+2T2023")
 
     @mock.patch('enterprise_access.apps.subsidy_access_policy.subsidy_api.get_and_cache_transactions_for_learner')
+    def test_can_redeem_policy_existing_redemptions_missing_content_metadata(
+        self, mock_transactions_cache_for_learner
+    ):
+        """
+        Test that can_redeem returns 200 with a null list_price when the learner has already redeemed content
+        but the content metadata is no longer available (e.g. removed from catalog after redemption).
+        """
+        test_transaction_uuid = str(uuid4())
+        mock_transactions_cache_for_learner.return_value = {
+            "transactions": [{
+                "uuid": test_transaction_uuid,
+                "state": TransactionStateChoices.COMMITTED,
+                "idempotency_key": "the-idempotency-key",
+                "lms_user_id": self.user.lms_user_id,
+                "content_key": "course-v1:demox+1234+2T2023",
+                "quantity": -19900,
+                "unit": "USD_CENTS",
+                "enterprise_fulfillment_uuid": "6ff2c1c9-d5fc-48a8-81da-e6a675263f67",
+                "subsidy_access_policy_uuid": str(self.redeemable_policy.uuid),
+                "metadata": {},
+                "reversal": None,
+            }],
+            "aggregates": {
+                "total_quantity": -19900,
+            },
+        }
+
+        self.redeemable_policy.subsidy_client.can_redeem.return_value = {
+            'can_redeem': False,
+            'active': True,
+        }
+        # Simulate the content no longer existing in the catalog: get_content_metadata raises HTTPError.
+        self.mock_get_content_metadata.side_effect = HTTPError(
+            "404 Client Error: Not Found for content-metadata endpoint"
+        )
+
+        query_params = {'content_key': 'course-v1:demox+1234+2T2023'}
+        response = self.client.get(self.subsidy_access_policy_can_redeem_endpoint, query_params)
+
+        assert response.status_code == status.HTTP_200_OK
+        response_list = response.json()
+
+        assert len(response_list) == 1
+        assert response_list[0]["content_key"] == query_params["content_key"]
+        # list_price should be null: content was removed from the catalog after the learner already redeemed it.
+        assert response_list[0]["list_price"] is None
+        assert len(response_list[0]["redemptions"]) == 1
+        assert response_list[0]["redemptions"][0]["uuid"] == test_transaction_uuid
+        self.assertTrue(response_list[0]["has_successful_redemption"])
+        self.assertIsNone(response_list[0]["redeemable_subsidy_access_policy"])
+        self.assertFalse(response_list[0]["can_redeem"])
+
+    @mock.patch('enterprise_access.apps.subsidy_access_policy.subsidy_api.get_and_cache_transactions_for_learner')
     def test_can_redeem_policy_existing_reversed_redemptions(self, mock_transactions_cache_for_learner):
         """
         Test that the can_redeem endpoint returns can_redeem=True even with an existing reversed transaction.
@@ -2472,6 +2526,35 @@ class TestSubsidyAccessPolicyCanRedeemView(BaseCanRedeemTestMixin, APITestWithMo
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
         assert response.json() == {
             'detail': f'Could not determine price for content_key: {test_content_key}',
+        }
+
+    @mock.patch('enterprise_access.apps.subsidy_access_policy.subsidy_api.get_and_cache_transactions_for_learner')
+    def test_can_redeem_redeemable_policy_get_list_price_raises(self, mock_transactions_cache_for_learner):
+        """
+        Test that the can_redeem endpoint returns a 422 error when a redeemable policy's
+        get_list_price raises ContentPriceNullException (e.g. content metadata is not found).
+        """
+        test_content_key = "course-v1:demox+1234+2T2023"
+        mock_transactions_cache_for_learner.return_value = {
+            'transactions': [],
+            'aggregates': {'total_quantity': 0},
+        }
+        # Provide valid content metadata so policy.can_redeem() succeeds and the policy is redeemable.
+        self.mock_get_content_metadata.return_value = {'content_price': 5000}
+
+        with mock.patch(
+            'enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.get_list_price',
+            side_effect=ContentPriceNullException('price is null'),
+        ):
+            query_params = {'content_key': test_content_key}
+            response = self.client.get(self.subsidy_access_policy_can_redeem_endpoint, query_params)
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.json() == {
+            'detail': (
+                f'Could not determine list price for content_key {test_content_key}'
+                f' with enterprise customer {self.enterprise_uuid}'
+            )
         }
 
     @mock.patch('enterprise_access.apps.subsidy_access_policy.subsidy_api.get_and_cache_transactions_for_learner')

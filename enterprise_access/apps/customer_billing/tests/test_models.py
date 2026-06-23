@@ -11,6 +11,7 @@ from uuid import uuid4
 
 import ddt
 import stripe
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import AbstractUser
 from django.test import TestCase, override_settings
@@ -205,7 +206,7 @@ class TestCheckoutIntentModel(TestCase):
         SSP products (teams and the provided academy slugs) can be linked.
         """
         slugs = [
-            'teams-yearly',
+            settings.SSP_DEFAULT_PRODUCT_SLUG,
             'ai-academy-yearly',
             'sustainability-academy-yearly',
             'tech-digital-transformation-academy-yearly',
@@ -217,6 +218,26 @@ class TestCheckoutIntentModel(TestCase):
         ]
 
         products = []
+        # Ensure the canonical default SSP product exists for FK enforcement
+        SspProduct.objects.get_or_create(
+            slug=settings.SSP_DEFAULT_PRODUCT_SLUG,
+            defaults={
+                'stripe_price_lookup_key': 'teams_yearly_price',
+                'catalog_query_uuid': uuid4(),
+            },
+        )
+        # Create one intent without specifying a product; model default should apply
+        intent_without_product = CheckoutIntent.objects.create(
+            user=cast(AbstractUser, self.user1),
+            enterprise_slug='nullable-product-enterprise',
+            enterprise_name='Nullable Product Enterprise',
+            quantity=3,
+            expires_at=timezone.now() + timedelta(hours=1),
+            country='US',
+        )
+        self.assertIsNotNone(intent_without_product.ssp_product)
+        self.assertEqual(intent_without_product.ssp_product.slug, settings.SSP_DEFAULT_PRODUCT_SLUG)
+
         for slug in slugs:
             product, _ = SspProduct.objects.get_or_create(
                 slug=slug,
@@ -226,17 +247,6 @@ class TestCheckoutIntentModel(TestCase):
                 },
             )
             products.append(product)
-
-        intent_without_product = CheckoutIntent.objects.create(
-            user=cast(AbstractUser, self.user1),
-            enterprise_slug='nullable-product-enterprise',
-            enterprise_name='Nullable Product Enterprise',
-            quantity=3,
-            expires_at=timezone.now() + timedelta(hours=1),
-            country='US',
-            ssp_product=None,
-        )
-        self.assertIsNone(intent_without_product.ssp_product)
 
         for product in products:
             intent = CheckoutIntent.objects.create(
@@ -1534,6 +1544,9 @@ class TestSspProduct(TestCase):
     def test_academy_properties_return_fields(self, mock_get_data):
         mock_get_data.return_value = {
             'title': 'AI Academy',
+            'long_name': 'AI Academy for Enterprise Teams',
+            'long_description': 'In-depth AI learning path',
+            'short_description': 'Quick AI intro',
             'description': 'Learn AI',
             'marketing_url': 'https://example.com/ai',
             'thumbnail_url': 'https://example.com/ai.png',
@@ -1541,16 +1554,47 @@ class TestSspProduct(TestCase):
         }
         product = self._make_product()
         self.assertEqual(product.academy_title, 'AI Academy')
-        self.assertEqual(product.academy_description, 'Learn AI')
+        self.assertEqual(product.academy_long_name, 'AI Academy for Enterprise Teams')
+        self.assertEqual(product.academy_description, 'In-depth AI learning path')
         self.assertEqual(product.academy_marketing_url, 'https://example.com/ai')
         self.assertEqual(product.academy_thumbnail_url, 'https://example.com/ai.png')
         self.assertEqual(product.academy_tags, ['ai', 'ml'])
+
+    @mock.patch('enterprise_access.apps.customer_billing.models.get_cached_academy_data')
+    def test_academy_description_falls_back_from_long_to_short(self, mock_get_data):
+        mock_get_data.return_value = {
+            'title': 'AI Academy',
+            'short_description': 'Quick AI intro',
+            'description': 'Learn AI',
+        }
+        product = self._make_product()
+        self.assertEqual(product.academy_description, 'Quick AI intro')
+
+    @mock.patch('enterprise_access.apps.customer_billing.models.get_cached_academy_data')
+    def test_academy_description_falls_back_to_description(self, mock_get_data):
+        mock_get_data.return_value = {
+            'title': 'AI Academy',
+            'description': 'Learn AI',
+        }
+        product = self._make_product()
+        self.assertEqual(product.academy_description, 'Learn AI')
+
+    @mock.patch('enterprise_access.apps.customer_billing.models.get_cached_academy_data')
+    def test_academy_long_name_falls_back_to_title(self, mock_get_data):
+        mock_get_data.return_value = {
+            'title': 'AI Academy',
+            'long_description': 'In-depth AI learning path',
+            'description': 'Learn AI',
+        }
+        product = self._make_product()
+        self.assertEqual(product.academy_long_name, 'AI Academy')
 
     @mock.patch('enterprise_access.apps.customer_billing.models.get_cached_academy_data')
     def test_academy_properties_return_none_when_no_academy_uuid(self, mock_get_data):
         mock_get_data.return_value = None
         product = self._make_product(academy_uuid=None)
         self.assertIsNone(product.academy_title)
+        self.assertIsNone(product.academy_long_name)
         self.assertIsNone(product.academy_description)
         self.assertIsNone(product.academy_marketing_url)
         self.assertIsNone(product.academy_thumbnail_url)
@@ -1559,7 +1603,35 @@ class TestSspProduct(TestCase):
 
     @mock.patch('enterprise_access.apps.customer_billing.models.get_cached_academy_data')
     def test_academy_properties_return_none_on_missing_key(self, mock_get_data):
-        mock_get_data.return_value = {}  # empty dict — keys missing
+        mock_get_data.return_value = {}  # empty dict — keys missing (falsy)
         product = self._make_product()
         self.assertIsNone(product.academy_title)
+        self.assertIsNone(product.academy_description)
         self.assertIsNone(product.academy_tags)
+
+    @mock.patch('enterprise_access.apps.customer_billing.models.get_cached_academy_data')
+    def test_academy_description_payload_present_but_no_description_keys(self, mock_get_data):
+        # payload exists (truthy) but description keys are missing or falsy
+        mock_get_data.return_value = {'title': 'AI Academy'}
+        product = self._make_product()
+        self.assertIsNone(product.academy_description)
+
+    @mock.patch('enterprise_access.apps.customer_billing.models.get_cached_academy_data')
+    def test_academy_long_name_empty_string_falls_back_to_title(self, mock_get_data):
+        # long_name present but empty should fall back to title
+        mock_get_data.return_value = {
+            'title': 'AI Academy',
+            'long_name': '',
+        }
+        product = self._make_product()
+        self.assertEqual(product.academy_long_name, 'AI Academy')
+
+    @mock.patch('enterprise_access.apps.customer_billing.models.get_cached_academy_data')
+    def test_academy_thumbnail_url_prefers_image(self, mock_get_data):
+        mock_get_data.return_value = {
+            'title': 'AI Academy',
+            'image': 'https://example.com/ai-image.png',
+            'thumbnail_url': 'https://example.com/ai-thumbnail.png',
+        }
+        product = self._make_product()
+        self.assertEqual(product.academy_thumbnail_url, 'https://example.com/ai-image.png')

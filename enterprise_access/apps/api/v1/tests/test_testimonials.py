@@ -1,30 +1,15 @@
-"""
-Tests for testimonials API endpoints.
-"""
-from django.contrib.auth import get_user_model
+"""Tests for testimonials API endpoints."""
+
 from rest_framework import status
 from rest_framework.test import APITestCase
 
 from enterprise_access.apps.testimonials.models import Testimonial
 
-User = get_user_model()
-
 
 class TestimonialAPITestCase(APITestCase):
-    """Tests for the TestimonialViewSet API."""
+    """Tests for the testimonials API endpoint."""
 
     def setUp(self):
-        # Create test user and grant staff privileges so IsAdminUser permission passes
-        self.user = User.objects.create_user(
-            username="testuser",
-            password="testpass123"
-        )
-        self.user.is_staff = True
-        self.user.save()
-
-        # Authenticate user via DRF client; providing a dummy token helps bypass JWT checks
-        self.client.force_authenticate(user=self.user, token="test-token")
-
         # Create active testimonial
         self.active_testimonial = Testimonial.objects.create(
             quote_text="Active testimonial",
@@ -42,6 +27,10 @@ class TestimonialAPITestCase(APITestCase):
         )
 
         self.url = "/api/v1/testimonials/"
+
+    def test_allows_unauthenticated_access(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
 
     def test_returns_only_active_testimonials(self):
         response = self.client.get(self.url)

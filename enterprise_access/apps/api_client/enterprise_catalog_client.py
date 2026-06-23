@@ -19,7 +19,8 @@ class EnterpriseCatalogApiClient(BaseOAuthClient):
 
     def __init__(self):
         self.api_base_url = urljoin(settings.ENTERPRISE_CATALOG_URL, f'api/{self.api_version}/')
-        self.academies_endpoint = urljoin(self.api_base_url, 'academies/')
+        # Academies are exposed on v1 of the enterprise-catalog API, not v2.
+        self.academies_endpoint = urljoin(settings.ENTERPRISE_CATALOG_URL, 'api/v1/academies/')
         self.enterprise_catalog_endpoint = urljoin(self.api_base_url, 'enterprise-catalogs/')
         super().__init__()
 

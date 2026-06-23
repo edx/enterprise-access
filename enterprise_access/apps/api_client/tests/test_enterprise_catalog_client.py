@@ -297,7 +297,7 @@ class TestEnterpriseCatalogApiClientGetAcademy(TestCase):
 
         self.assertEqual(result, expected)
         mock_oauth_client.return_value.get.assert_called_with(
-            f'http://enterprise-catalog.example.com/api/v2/academies/{academy_uuid}/',
+            f'http://enterprise-catalog.example.com/api/v1/academies/{academy_uuid}/',
         )
 
     @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient')

@@ -182,6 +182,7 @@ REST_FRAMEWORK = {
     'TEST_REQUEST_DEFAULT_FORMAT': 'json',
     'DEFAULT_THROTTLE_RATES': {
         'bff_unauthenticated': '100/hour',
+        'ssp_product': '120/hour',
     },
 }
 
@@ -495,6 +496,7 @@ DISCOVERY_URL = ''
 ENTERPRISE_CATALOG_URL = ''
 ENTERPRISE_SUBSIDY_URL = ''
 ENTERPRISE_ACCESS_URL = ''
+XPERT_API_BASE_URL = ''
 
 # API Client timeouts
 LICENSE_MANAGER_CLIENT_TIMEOUT = os.environ.get('LICENSE_MANAGER_CLIENT_TIMEOUT', 45)
@@ -502,6 +504,14 @@ LMS_CLIENT_TIMEOUT = os.environ.get('LMS_CLIENT_TIMEOUT', 45)
 ECOMMERCE_CLIENT_TIMEOUT = os.environ.get('ECOMMERCE_CLIENT_TIMEOUT', 45)
 DISCOVERY_CLIENT_TIMEOUT = os.environ.get('DISCOVERY_CLIENT_TIMEOUT', 45)
 SUBSIDY_CLIENT_TIMEOUT = os.environ.get('SUBSIDY_CLIENT_TIMEOUT', 45)
+XPERT_REQUEST_TIMEOUT = os.environ.get('XPERT_REQUEST_TIMEOUT', 45)
+
+# Xpert API service settings
+XPERT_API_CLIENT_ID = ''
+XPERT_LEARNER_PATHWAYS_RAG_TAGS = [
+    'discovery',
+    'edx-available-course',
+]
 
 # Braze campaigns for learner credit browse and request(apps.subsidy_request)
 BRAZE_LEARNER_CREDIT_BNR_APPROVED_NOTIFICATION_CAMPAIGN = ''
@@ -673,6 +683,10 @@ ENABLE_CUSTOMER_BILLING_API = True
 ENABLE_BILLING_MANAGEMENT_API = False
 
 DEFAULT_SSP_PRICE_LOOKUP_KEY = 'teams_subscription_license_yearly'
+
+# Default SSP product slug assigned to new CheckoutIntent records when no product is specified.
+# Override this in environment-specific settings to change the default product.
+SSP_DEFAULT_PRODUCT_SLUG = 'teams-yearly'
 
 DEFAULT_STRIPE_CACHE_TIMEOUT = 60
 
