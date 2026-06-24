@@ -62,6 +62,10 @@ BRAZE_ENTERPRISE_PROVISION_TRIAL_ENDING_SOON_CAMPAIGN = 'test-trial-ending-remin
 BRAZE_BILLING_ERROR_CAMPAIGN = 'test-billing-error-campaign'
 BRAZE_SSP_SUBSCRIPTION_REINSTATED_CAMPAIGN = 'test-subscription-reinstated-campaign'
 
+# --- Essentials Braze Campaign UUIDs (Test) ---
+BRAZE_SSP_ESSENTIALS_TRIAL_CANCELLATION_CAMPAIGN = 'test-essentials-trial-cancel-uuid'
+BRAZE_SSP_ESSENTIALS_SUBSCRIPTION_CANCELLATION_CAMPAIGN = 'test-essentials-sub-cancel-uuid'
+
 ################### Kafka Related Settings ##############################
 KAFKA_ENABLED = False
 

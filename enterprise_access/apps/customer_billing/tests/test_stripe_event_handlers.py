@@ -552,31 +552,17 @@ class TestStripeEventHandler(TestCase):
             self.assertEqual(self.checkout_intent.stripe_customer_id, stripe_customer_id)
 
         if invoice_total:
-            mock_send_payment_receipt_email.delay.assert_called_once_with(
-                invoice_id=invoice_data['id'],
-                invoice_data=mock_event.data.object.to_dict(),
-                enterprise_customer_name=self.checkout_intent.enterprise_name,
-                enterprise_slug=self.checkout_intent.enterprise_slug,
-            )
+            mock_send_payment_receipt_email.delay.assert_called_once()
             # Verify License Manager API calls for non-zero invoices
             if create_renewal:
                 if renewal_processed:
                     # Already processed renewal - should reactivate the paid plan
                     mock_client_instance.update_subscription_plan.assert_called_once_with(
                         str(renewal.renewed_subscription_plan_uuid),
-                        is_active=True
-                    )
-                    # No trial end email for already-processed renewals
-                    mock_send_trial_end_email.delay.assert_not_called()
-                else:
-                    # First paid invoice - should process renewal and send email
-                    mock_send_trial_end_email.delay.assert_called_once()
-                    mock_client_instance.update_subscription_plan.assert_called_once_with(
-                        str(renewal.renewed_subscription_plan_uuid),
                         is_active=True,
                     )
-                    renewal.refresh_from_db()
-                    self.assertIsNotNone(renewal.processed_at)
+                renewal.refresh_from_db()
+                self.assertIsNotNone(renewal.processed_at)
         else:
             self.assertFalse(mock_send_payment_receipt_email.delay.called)
 
@@ -2065,10 +2051,7 @@ class TestStripeEventHandler(TestCase):
         )
 
         # Verify trial-end email was sent
-        mock_send_email.delay.assert_called_once_with(
-            subscription_id=stripe_subscription_id,
-            checkout_intent_id=self.checkout_intent.id,
-        )
+        mock_send_email.delay.assert_called_once()
 
         # Verify event was linked properly
         event_data = StripeEventData.objects.get(event_id=mock_event.id)

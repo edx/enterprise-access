@@ -23,7 +23,12 @@ from enterprise_access.apps.customer_billing.stripe_api import (
     get_stripe_subscription,
     get_stripe_trialing_subscription
 )
-from enterprise_access.apps.customer_billing.utils import datetime_from_timestamp
+from enterprise_access.apps.customer_billing.utils import (
+    datetime_from_timestamp,
+    get_academy_name_from_checkout_intent,
+    get_cancellation_campaign_id,
+    get_product_type_from_checkout_intent
+)
 from enterprise_access.apps.provisioning.utils import validate_trial_subscription
 from enterprise_access.tasks import LoggedTaskWithRetry
 from enterprise_access.utils import cents_to_dollars, format_cents_for_user_display, format_datetime_obj
@@ -188,7 +193,7 @@ def send_enterprise_provision_signup_confirmation_email(
 
 
 @shared_task(base=LoggedTaskWithRetry)
-def send_finalized_cancelation_email_task(checkout_intent_id, ended_at_timestamp):
+def send_finalized_cancelation_email_task(checkout_intent_id, ended_at_timestamp, product_type=None, academy_name=None):
     """
     Send Braze email notification when a paid subscription status becomes ``canceled``.
 
@@ -212,7 +217,7 @@ def send_finalized_cancelation_email_task(checkout_intent_id, ended_at_timestamp
 
 
 @shared_task(base=LoggedTaskWithRetry)
-def send_trial_cancellation_email_task(checkout_intent_id, cancel_at_timestamp):
+def send_trial_cancellation_email_task(checkout_intent_id, cancel_at_timestamp, product_type=None, academy_name=None):
     """
     Send Braze email notification when a trial subscription cancelation is scheduled.
 
@@ -233,11 +238,13 @@ def send_trial_cancellation_email_task(checkout_intent_id, cancel_at_timestamp):
         cancel_at_timestamp,
         settings.BRAZE_TRIAL_CANCELLATION_CAMPAIGN,
         'trial cancelation email',
+        product_type=product_type,
+        academy_name=academy_name,
     )
 
 
 @shared_task(base=LoggedTaskWithRetry)
-def send_paid_cancellation_email_task(checkout_intent_id, cancel_at_timestamp):
+def send_paid_cancellation_email_task(checkout_intent_id, cancel_at_timestamp, product_type=None, academy_name=None):
     """
     Send Braze email notification when a paid subscription cancelation is scheduled.
 
@@ -258,10 +265,19 @@ def send_paid_cancellation_email_task(checkout_intent_id, cancel_at_timestamp):
         cancel_at_timestamp,
         settings.BRAZE_PAID_CANCELLATION_CAMPAIGN,
         'paid cancelation scheduled email',
+        product_type=product_type,
+        academy_name=academy_name,
     )
 
 
-def _send_cancelation_campaign(checkout_intent_id, ending_timestamp, campaign_identifier, email_description):
+def _send_cancelation_campaign(
+    checkout_intent_id,
+    ending_timestamp,
+    campaign_identifier,
+    email_description,
+    product_type=None,
+    academy_name=None,
+):
     """
     Helper for sending campaign message related to subscription cancelation.
     """
@@ -293,6 +309,16 @@ def _send_cancelation_campaign(checkout_intent_id, ending_timestamp, campaign_id
         "restart_subscription_url": f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/{enterprise_slug}',
     }
 
+    # Attach academy_name only for Essentials products. Prefer values passed
+    # from the Stripe event handler when available to avoid re-inferring.
+    try:
+        resolved_product_type = product_type or get_product_type_from_checkout_intent(checkout_intent)
+        resolved_academy_name = academy_name or get_academy_name_from_checkout_intent(checkout_intent)
+        if resolved_product_type == 'essentials' and resolved_academy_name:
+            braze_trigger_properties['academy_name'] = resolved_academy_name
+    except (LookupError, AttributeError):
+        pass
+
     send_campaign_message(
         braze_client,
         campaign_identifier,
@@ -304,7 +330,7 @@ def _send_cancelation_campaign(checkout_intent_id, ending_timestamp, campaign_id
 
 
 @shared_task(base=LoggedTaskWithRetry)
-def send_billing_error_email_task(checkout_intent_id: int):
+def send_billing_error_email_task(checkout_intent_id: int, product_type=None, academy_name=None):
     """
     Send Braze email notification when a subscription encounters a billing error
     (e.g., transitions to past_due).
@@ -334,6 +360,16 @@ def send_billing_error_email_task(checkout_intent_id: int):
         "restart_subscription_url": f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/{enterprise_slug}',
     }
 
+    # Attach academy_name only for Essentials products. Prefer values passed
+    # from the Stripe event handler when available to avoid re-inferring.
+    try:
+        resolved_product_type = product_type or get_product_type_from_checkout_intent(checkout_intent)
+        resolved_academy_name = academy_name or get_academy_name_from_checkout_intent(checkout_intent)
+        if resolved_product_type == 'essentials' and resolved_academy_name:
+            braze_trigger_properties['academy_name'] = resolved_academy_name
+    except (LookupError, AttributeError):
+        pass
+
     send_campaign_message(
         braze_client,
         settings.BRAZE_BILLING_ERROR_CAMPAIGN,
@@ -345,7 +381,7 @@ def send_billing_error_email_task(checkout_intent_id: int):
 
 
 @shared_task(base=LoggedTaskWithRetry)
-def send_reinstatement_email_task(checkout_intent_id: int):
+def send_reinstatement_email_task(checkout_intent_id: int, product_type=None, academy_name=None):
     """
     Send Braze email notification when a subscription is reinstated after a scheduled cancellation.
 
@@ -389,7 +425,7 @@ def send_reinstatement_email_task(checkout_intent_id: int):
 
 
 @shared_task(base=LoggedTaskWithRetry)
-def send_trial_ending_reminder_email_task(checkout_intent_id):
+def send_trial_ending_reminder_email_task(checkout_intent_id, product_type=None, academy_name=None):
     """
     Send Braze email notification 72 hours before trial subscription ends.
 
@@ -515,6 +551,16 @@ def send_trial_ending_reminder_email_task(checkout_intent_id):
         "total_paid_amount": total_paid_amount_formatted,
     }
 
+    # Attach academy_name only for Essentials products. Prefer passed metadata
+    # when available to avoid re-inferring from DB objects.
+    try:
+        resolved_product_type = product_type or get_product_type_from_checkout_intent(checkout_intent)
+        resolved_academy_name = academy_name or get_academy_name_from_checkout_intent(checkout_intent)
+        if resolved_product_type == 'essentials' and resolved_academy_name:
+            braze_trigger_properties['academy_name'] = resolved_academy_name
+    except (LookupError, AttributeError):
+        pass
+
     send_campaign_message(
         braze_client,
         settings.BRAZE_ENTERPRISE_PROVISION_TRIAL_ENDING_SOON_CAMPAIGN,
@@ -529,6 +575,8 @@ def send_trial_ending_reminder_email_task(checkout_intent_id):
 def send_trial_end_and_subscription_started_email_task(
     subscription_id: str,
     checkout_intent_id: int,
+    product_type=None,
+    academy_name=None,
 ):
     """
     Send an email to all enterprise admins notifying about trial end and subscription start.
@@ -589,6 +637,16 @@ def send_trial_end_and_subscription_started_email_task(
         'invoice_url': invoice_url,
     }
 
+    # Attach academy_name only for Essentials products. Prefer passed metadata
+    # when available to avoid re-inferring from DB objects.
+    try:
+        resolved_product_type = product_type or get_product_type_from_checkout_intent(checkout_intent)
+        resolved_academy_name = academy_name or get_academy_name_from_checkout_intent(checkout_intent)
+        if resolved_product_type == 'essentials' and resolved_academy_name:
+            braze_trigger_properties['academy_name'] = resolved_academy_name
+    except (LookupError, AttributeError):
+        pass
+
     send_campaign_message(
         braze_client,
         settings.BRAZE_ENTERPRISE_PROVISION_TRIAL_END_SUBSCRIPTION_STARTED_CAMPAIGN,
@@ -599,12 +657,148 @@ def send_trial_end_and_subscription_started_email_task(
     )
 
 
+@shared_task(base=LoggedTaskWithRetry, bind=True)
+def send_trial_cancellation_email(self, checkout_intent_uuid, stripe_subscription_id=None):
+    """
+    Sends trial cancellation confirmation email via Braze.
+    Supports both Teams and Essentials products.
+    """
+    from django.apps import apps as django_apps
+
+    CheckoutIntent = django_apps.get_model('customer_billing', 'CheckoutIntent')
+    try:
+        checkout_intent = CheckoutIntent.objects.get(uuid=checkout_intent_uuid)
+    except CheckoutIntent.DoesNotExist:
+        logger.error(f'CheckoutIntent not found: {checkout_intent_uuid}')
+        return
+
+    product_type = get_product_type_from_checkout_intent(checkout_intent)
+    campaign_id = get_cancellation_campaign_id(product_type, cancellation_type='trial')
+    if not campaign_id:
+        logger.error(f'No Braze campaign configured for {product_type} trial cancellation')
+        return
+
+    trigger_properties = {
+        'organization': checkout_intent.enterprise_customer_name or '',
+        'enterprise_admin_portal_url': _get_admin_portal_url(checkout_intent),
+        'product_type': product_type,
+        'trial_end_date': _format_period_end_date(checkout_intent, stripe_subscription_id),
+    }
+
+    if product_type == 'essentials':
+        academy_name = get_academy_name_from_checkout_intent(checkout_intent)
+        if academy_name:
+            trigger_properties['academy_name'] = academy_name
+
+    braze_client = BrazeApiClient()
+    admin_email = checkout_intent.email
+    lms_user_id = _get_lms_user_id(checkout_intent)
+    recipient = braze_client.create_braze_recipient(
+        user_email=admin_email,
+        lms_user_id=lms_user_id,
+    )
+    braze_client.send_campaign_message(
+        campaign_id,
+        recipients=[recipient],
+        trigger_properties=trigger_properties,
+    )
+    logger.info(
+        f'Sent {product_type} trial cancellation email for '
+        f'checkout_intent={checkout_intent_uuid}'
+    )
+
+
+@shared_task(base=LoggedTaskWithRetry, bind=True)
+def send_subscription_cancellation_email(self, checkout_intent_uuid, stripe_subscription_id=None):
+    """
+    Sends paid subscription cancellation confirmation email via Braze.
+    Supports both Teams and Essentials products.
+    """
+    from django.apps import apps as django_apps
+
+    CheckoutIntent = django_apps.get_model('customer_billing', 'CheckoutIntent')
+    try:
+        checkout_intent = CheckoutIntent.objects.get(uuid=checkout_intent_uuid)
+    except CheckoutIntent.DoesNotExist:
+        logger.error(f'CheckoutIntent not found: {checkout_intent_uuid}')
+        return
+
+    product_type = get_product_type_from_checkout_intent(checkout_intent)
+    campaign_id = get_cancellation_campaign_id(product_type, cancellation_type='paid')
+    if not campaign_id:
+        logger.error(f'No Braze campaign configured for {product_type} paid cancellation')
+        return
+
+    trigger_properties = {
+        'organization': checkout_intent.enterprise_customer_name or '',
+        'enterprise_admin_portal_url': _get_admin_portal_url(checkout_intent),
+        'product_type': product_type,
+        'subscription_end_date': _format_period_end_date(checkout_intent, stripe_subscription_id),
+    }
+
+    if product_type == 'essentials':
+        academy_name = get_academy_name_from_checkout_intent(checkout_intent)
+        if academy_name:
+            trigger_properties['academy_name'] = academy_name
+
+    braze_client = BrazeApiClient()
+    admin_email = checkout_intent.email
+    lms_user_id = _get_lms_user_id(checkout_intent)
+    recipient = braze_client.create_braze_recipient(
+        user_email=admin_email,
+        lms_user_id=lms_user_id,
+    )
+    braze_client.send_campaign_message(
+        campaign_id,
+        recipients=[recipient],
+        trigger_properties=trigger_properties,
+    )
+    logger.info(
+        f'Sent {product_type} paid subscription cancellation email for '
+        f'checkout_intent={checkout_intent_uuid}'
+    )
+
+
+def _get_admin_portal_url(checkout_intent):
+    """Build the admin portal URL from checkout_intent."""
+    slug = getattr(checkout_intent, 'enterprise_customer_slug', '') or ''
+    if slug:
+        return f'https://admin.edx.org/{slug}/admin/subscription'
+    return 'https://admin.edx.org'
+
+
+def _format_period_end_date(checkout_intent, stripe_subscription_id=None):
+    """
+    Get the human-readable end date (DD MONTH YYYY) for the current period.
+    Pulls from Stripe subscription's current_period_end or cancel_at.
+    """
+    if stripe_subscription_id:
+        try:
+            subscription = stripe.Subscription.retrieve(stripe_subscription_id)
+            cancel_at = getattr(subscription, 'cancel_at', None)
+            period_end = getattr(subscription, 'current_period_end', None)
+            timestamp = cancel_at or period_end
+            if timestamp:
+                dt = datetime_from_timestamp(timestamp)
+                return dt.strftime('%d %B %Y')
+        except (AttributeError, stripe.error.StripeError):
+            logger.warning(f'Could not retrieve Stripe subscription {stripe_subscription_id}')
+    return ''
+
+
+def _get_lms_user_id(checkout_intent):
+    """Get LMS user ID from checkout_intent if available."""
+    return getattr(checkout_intent, 'lms_user_id', None)
+
+
 @shared_task(base=LoggedTaskWithRetry)
 def send_payment_receipt_email(
     invoice_id,
     invoice_data,
     enterprise_customer_name,
     enterprise_slug,
+    product_type=None,
+    academy_name=None,
 ):
     """
     Send payment receipt emails to enterprise admins after successful payment.
@@ -712,6 +906,18 @@ def send_payment_receipt_email(
         'enterprise_admin_portal_url': f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/{enterprise_slug}',
         'receipt_number': invoice_id,
     }
+
+    # Attach academy_name only for Essentials products. Prefer values passed from the
+    # Stripe event handler (product_type/academy_name) when available to avoid
+    # re-inferring from DB objects.
+    try:
+        checkout_intent_obj = invoice_summary.checkout_intent
+        resolved_product_type = product_type or get_product_type_from_checkout_intent(checkout_intent_obj)
+        resolved_academy_name = academy_name or get_academy_name_from_checkout_intent(checkout_intent_obj)
+        if resolved_product_type == 'essentials' and resolved_academy_name:
+            braze_trigger_properties['academy_name'] = resolved_academy_name
+    except (LookupError, AttributeError):
+        pass
 
     send_campaign_message(
         braze_client,

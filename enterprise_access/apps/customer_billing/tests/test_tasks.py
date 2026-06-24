@@ -1,10 +1,12 @@
 """
 Tests for customer_billing tasks.
 """
+
 import json
 from datetime import datetime
 from datetime import timezone as dt_timezone
 from unittest import mock
+from uuid import uuid4
 
 import stripe
 from django.conf import settings
@@ -13,7 +15,12 @@ from django.utils import timezone
 
 from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.customer_billing.constants import BRAZE_TIMESTAMP_FORMAT
-from enterprise_access.apps.customer_billing.models import CheckoutIntent, StripeEventData, StripeEventSummary
+from enterprise_access.apps.customer_billing.models import (
+    CheckoutIntent,
+    SspProduct,
+    StripeEventData,
+    StripeEventSummary
+)
 from enterprise_access.apps.customer_billing.tasks import (
     send_enterprise_provision_signup_confirmation_email,
     send_finalized_cancelation_email_task,
@@ -49,9 +56,7 @@ class TestSendTrialCancellationEmailTask(TestCase):
         self.cancel_at_datetime = datetime(2021, 4, 1)
         self.cancel_at_timestamp = int(self.cancel_at_datetime.timestamp())
 
-    @mock.patch(
-        "enterprise_access.apps.customer_billing.tasks.BrazeApiClient"
-    )
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
     @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
     def test_send_trial_cancellation_email_success(
         self, mock_lms_client, mock_braze_client
@@ -84,9 +89,7 @@ class TestSendTrialCancellationEmailTask(TestCase):
         call_args = mock_braze_instance.send_campaign_message.call_args
 
         # Check campaign ID
-        self.assertEqual(
-            call_args[0][0], settings.BRAZE_TRIAL_CANCELLATION_CAMPAIGN
-        )
+        self.assertEqual(call_args[0][0], settings.BRAZE_TRIAL_CANCELLATION_CAMPAIGN)
 
         # Check recipients
         recipients = call_args[1]["recipients"]
@@ -98,9 +101,7 @@ class TestSendTrialCancellationEmailTask(TestCase):
         self.assertIn("period_end_date", trigger_props)
         self.assertIn("restart_subscription_url", trigger_props)
 
-    @mock.patch(
-        "enterprise_access.apps.customer_billing.tasks.BrazeApiClient"
-    )
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
     @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
     def test_send_trial_cancellation_email_braze_exception(
         self, mock_lms_client, mock_braze_client
@@ -154,7 +155,9 @@ class TestSendPaidCancellationEmailTask(TestCase):
 
     @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
     @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
-    def test_send_paid_cancellation_email_success(self, mock_lms_client, mock_braze_client):
+    def test_send_paid_cancellation_email_success(
+        self, mock_lms_client, mock_braze_client
+    ):
         """Test successful paid cancellation email send."""
         mock_lms_instance = mock_lms_client.return_value
         mock_lms_instance.get_enterprise_customer_data.return_value = {
@@ -192,7 +195,9 @@ class TestSendPaidCancellationEmailTask(TestCase):
 
     @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
     @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
-    def test_send_paid_cancellation_email_braze_exception(self, mock_lms_client, mock_braze_client):
+    def test_send_paid_cancellation_email_braze_exception(
+        self, mock_lms_client, mock_braze_client
+    ):
         """Test that a Braze API exception propagates."""
         mock_lms_instance = mock_lms_client.return_value
         mock_lms_instance.get_enterprise_customer_data.return_value = {
@@ -200,8 +205,12 @@ class TestSendPaidCancellationEmailTask(TestCase):
         }
 
         mock_braze_instance = mock_braze_client.return_value
-        mock_braze_instance.create_braze_recipient.return_value = {"external_user_id": "123"}
-        mock_braze_instance.send_campaign_message.side_effect = Exception("Braze API error")
+        mock_braze_instance.create_braze_recipient.return_value = {
+            "external_user_id": "123"
+        }
+        mock_braze_instance.send_campaign_message.side_effect = Exception(
+            "Braze API error"
+        )
 
         with self.assertRaises(Exception) as context:
             send_paid_cancellation_email_task(
@@ -230,9 +239,7 @@ class TestSendFinalizedCancelationEmailTask(TestCase):
         self.trial_end_datetime = datetime(2021, 1, 1)
         self.trial_end_timestamp = int(self.trial_end_datetime.timestamp())
 
-    @mock.patch(
-        "enterprise_access.apps.customer_billing.tasks.BrazeApiClient"
-    )
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
     @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
     def test_send_finalized_cancelation_email_success(
         self, mock_lms_client, mock_braze_client
@@ -279,9 +286,7 @@ class TestSendFinalizedCancelationEmailTask(TestCase):
         self.assertIn("period_end_date", trigger_props)
         self.assertIn("restart_subscription_url", trigger_props)
 
-    @mock.patch(
-        "enterprise_access.apps.customer_billing.tasks.BrazeApiClient"
-    )
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
     @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
     def test_send_finalized_cancelation_email_braze_exception(
         self, mock_lms_client, mock_braze_client
@@ -327,13 +332,9 @@ class TestSendReinstatementEmailTask(TestCase):
         self.checkout_intent.stripe_customer_id = "cus_test_123"
         self.checkout_intent.save()
 
-    @mock.patch(
-        "enterprise_access.apps.customer_billing.tasks.BrazeApiClient"
-    )
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
     @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
-    def test_send_reinstatement_email_success(
-        self, mock_lms_client, mock_braze_client
-    ):
+    def test_send_reinstatement_email_success(self, mock_lms_client, mock_braze_client):
         """Test successful reinstatement email send."""
         mock_lms_instance = mock_lms_client.return_value
         mock_lms_instance.get_enterprise_customer_data.return_value = {
@@ -366,12 +367,10 @@ class TestSendReinstatementEmailTask(TestCase):
         self.assertIn("enterprise_admin_portal_url", trigger_props)
         self.assertEqual(
             trigger_props["enterprise_admin_portal_url"],
-            f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/test-enterprise'
+            f"{settings.ENTERPRISE_ADMIN_PORTAL_URL}/test-enterprise",
         )
 
-    @mock.patch(
-        "enterprise_access.apps.customer_billing.tasks.BrazeApiClient"
-    )
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
     @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
     def test_send_reinstatement_email_braze_exception(
         self, mock_lms_client, mock_braze_client
@@ -399,9 +398,51 @@ class TestSendReinstatementEmailTask(TestCase):
 
         self.assertIn("Braze API error", str(context.exception))
 
-    @mock.patch(
-        "enterprise_access.apps.customer_billing.tasks.BrazeApiClient"
-    )
+
+class TestEssentialsAcademyNameIncluded(TestCase):
+    """Ensure academy_name is included in braze trigger properties for Essentials."""
+
+    def setUp(self):
+        self.user = UserFactory()
+        # Create SSProduct-like minimal object by attaching attributes to checkout_intent after creation
+        self.checkout_intent = CheckoutIntent.create_intent(
+            user=self.user,
+            slug="essentials-enterprise",
+            name="Essentials Academy",
+            quantity=1,
+        )
+
+        # Create a real SspProduct DB record and attach it to the checkout intent
+        ssp = SspProduct.objects.create(
+            slug="essentials-academy",
+            stripe_price_lookup_key="price_essentials",
+            academy_uuid=uuid4(),
+            catalog_query_uuid=uuid4(),
+            is_active=True,
+        )
+        self.checkout_intent.ssp_product = ssp
+        self.checkout_intent.save()
+
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
+    def test_academy_name_attached(self, mock_lms, mock_braze):
+        mock_lms.return_value.get_enterprise_customer_data.return_value = {
+            "admin_users": [{"email": "admin@example.com", "lms_user_id": 1}]
+        }
+        mock_braze.return_value.create_braze_recipient.return_value = {
+            "external_user_id": "1"
+        }
+
+        send_trial_cancellation_email_task(self.checkout_intent.id, 1234567890)
+
+        mock_braze.return_value.send_campaign_message.assert_called_once()
+        props = mock_braze.return_value.send_campaign_message.call_args[1][
+            "trigger_properties"
+        ]
+        self.assertIn("academy_name", props)
+        self.assertEqual(props["academy_name"], "Essentials Academy")
+
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
     @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
     def test_send_reinstatement_email_no_admin_users(
         self, mock_lms_client, mock_braze_client
@@ -412,7 +453,7 @@ class TestSendReinstatementEmailTask(TestCase):
             "admin_users": []
         }
 
-        with self.assertRaisesRegex(Exception, 'No admin users'):
+        with self.assertRaisesRegex(Exception, "No admin users"):
             send_reinstatement_email_task(
                 checkout_intent_id=self.checkout_intent.id,
             )
@@ -424,88 +465,101 @@ class TestSendEnterpriseProvisionSignupConfirmationEmail(TestCase):
     """
     Tests for send_enterprise_provision_signup_confirmation_email task.
     """
+
     def setUp(self):
         super().setUp()
         self.trial_start = timezone.make_aware(datetime(2025, 1, 1))
         self.trial_end = timezone.make_aware(datetime(2026, 1, 1))
         self.test_data = {
-            'subscription_start_date': self.trial_start,
-            'subscription_end_date': self.trial_end,
-            'number_of_licenses': 100,
-            'activation_link': f"{settings.LMS_URL}/activate/some-activation-key",
-            'organization_name': 'Test Corp',
-            'enterprise_slug': 'test-corp',
+            "subscription_start_date": self.trial_start,
+            "subscription_end_date": self.trial_end,
+            "number_of_licenses": 100,
+            "activation_link": f"{settings.LMS_URL}/activate/some-activation-key",
+            "organization_name": "Test Corp",
+            "enterprise_slug": "test-corp",
         }
         self.mock_subscription = {
-            'trial_start': int(self.trial_start.timestamp()),
-            'trial_end': int(self.trial_end.timestamp()),
-            'plan': {
-                'amount': 10000  # $100.00 in cents
-            }
+            "trial_start": int(self.trial_start.timestamp()),
+            "trial_end": int(self.trial_end.timestamp()),
+            "plan": {"amount": 10000},  # $100.00 in cents
         }
         self.mock_admin_users = [
             {
-                'email': 'admin1@test.com',
-                'lms_user_id': 1,
+                "email": "admin1@test.com",
+                "lms_user_id": 1,
             },
             {
-                'email': 'admin2@test.com',
-                'lms_user_id': 2,
-            }
+                "email": "admin2@test.com",
+                "lms_user_id": 2,
+            },
         ]
         self.expected_braze_properties = {
-            'subscription_start_date': 'Jan 01, 2025',
-            'subscription_end_date': 'Jan 01, 2026',
-            'number_of_licenses': 100,
-            'organization': 'Test Corp',
-            'activation_link': f"{settings.LMS_URL}/activate/some-activation-key",
-            'enterprise_admin_portal_url': f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/test-corp/admin/subscriptions',
-            'trial_start_datetime': format_datetime_obj(self.trial_start, output_pattern=BRAZE_TIMESTAMP_FORMAT),
-            'trial_end_datetime': format_datetime_obj(self.trial_end, output_pattern=BRAZE_TIMESTAMP_FORMAT),
-            'plan_amount': 100.00,
-            'total_amount': 100.00 * 100,
+            "subscription_start_date": "Jan 01, 2025",
+            "subscription_end_date": "Jan 01, 2026",
+            "number_of_licenses": 100,
+            "organization": "Test Corp",
+            "activation_link": f"{settings.LMS_URL}/activate/some-activation-key",
+            "enterprise_admin_portal_url": f"{settings.ENTERPRISE_ADMIN_PORTAL_URL}/test-corp/admin/subscriptions",
+            "trial_start_datetime": format_datetime_obj(
+                self.trial_start, output_pattern=BRAZE_TIMESTAMP_FORMAT
+            ),
+            "trial_end_datetime": format_datetime_obj(
+                self.trial_end, output_pattern=BRAZE_TIMESTAMP_FORMAT
+            ),
+            "plan_amount": 100.00,
+            "total_amount": 100.00 * 100,
         }
 
-    @mock.patch('enterprise_access.apps.customer_billing.tasks.validate_trial_subscription')
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.tasks.validate_trial_subscription"
+    )
     def test_no_valid_trial_subscription(self, mock_validate_trial):
         """
         Test that task exits early when no valid trial subscription exists.
         """
         mock_validate_trial.return_value = (False, None)
         send_enterprise_provision_signup_confirmation_email(**self.test_data)
-        mock_validate_trial.assert_called_once_with(self.test_data['enterprise_slug'])
+        mock_validate_trial.assert_called_once_with(self.test_data["enterprise_slug"])
 
-    @mock.patch('enterprise_access.apps.customer_billing.tasks.BrazeApiClient')
-    @mock.patch('enterprise_access.apps.customer_billing.tasks.LmsApiClient')
-    @mock.patch('enterprise_access.apps.customer_billing.tasks.validate_trial_subscription')
-    def test_no_admin_users(self, mock_validate_trial, mock_lms_client, mock_braze_client):
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.tasks.validate_trial_subscription"
+    )
+    def test_no_admin_users(
+        self, mock_validate_trial, mock_lms_client, mock_braze_client
+    ):
         """
         Test that task exits when no admin users are found.
         """
         mock_validate_trial.return_value = (True, self.mock_subscription)
         mock_lms_client.return_value.get_enterprise_customer_data.return_value = {
-            'admin_users': []
+            "admin_users": []
         }
 
-        with self.assertRaisesRegex(Exception, 'No admin users'):
+        with self.assertRaisesRegex(Exception, "No admin users"):
             send_enterprise_provision_signup_confirmation_email(**self.test_data)
 
-        mock_validate_trial.assert_called_once_with(self.test_data['enterprise_slug'])
+        mock_validate_trial.assert_called_once_with(self.test_data["enterprise_slug"])
         mock_lms_client.return_value.get_enterprise_customer_data.assert_called_once_with(
-            enterprise_customer_slug=self.test_data['enterprise_slug']
+            enterprise_customer_slug=self.test_data["enterprise_slug"]
         )
         mock_braze_client.return_value.send_campaign_message.assert_not_called()
 
-    @mock.patch('enterprise_access.apps.customer_billing.tasks.BrazeApiClient')
-    @mock.patch('enterprise_access.apps.customer_billing.tasks.LmsApiClient')
-    @mock.patch('enterprise_access.apps.customer_billing.tasks.validate_trial_subscription')
-    def test_successful_email_send(self, mock_validate_trial, mock_lms_client, mock_braze_client):
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.tasks.validate_trial_subscription"
+    )
+    def test_successful_email_send(
+        self, mock_validate_trial, mock_lms_client, mock_braze_client
+    ):
         """
         Test successful email sending to multiple admin users.
         """
         mock_validate_trial.return_value = (True, self.mock_subscription)
         mock_lms_client.return_value.get_enterprise_customer_data.return_value = {
-            'admin_users': self.mock_admin_users
+            "admin_users": self.mock_admin_users
         }
 
         mock_braze = mock_braze_client.return_value
@@ -513,43 +567,54 @@ class TestSendEnterpriseProvisionSignupConfirmationEmail(TestCase):
         actual_calls = []
 
         def create_recipient_side_effect(user_email, lms_user_id):
-            actual_calls.append(mock.call(user_email=user_email, lms_user_id=lms_user_id))
-            recipient = {'external_id': f'braze_{lms_user_id}'}
+            actual_calls.append(
+                mock.call(user_email=user_email, lms_user_id=lms_user_id)
+            )
+            recipient = {"external_id": f"braze_{lms_user_id}"}
             braze_recipients.append(recipient)
             return recipient
+
         mock_braze.create_braze_recipient.side_effect = create_recipient_side_effect
         send_enterprise_provision_signup_confirmation_email(**self.test_data)
         expected_calls = [
-            mock.call(user_email=admin['email'], lms_user_id=admin.get('lms_user_id'))
+            mock.call(user_email=admin["email"], lms_user_id=admin.get("lms_user_id"))
             for admin in self.mock_admin_users
         ]
-        mock_validate_trial.assert_called_once_with(self.test_data['enterprise_slug'])
+        mock_validate_trial.assert_called_once_with(self.test_data["enterprise_slug"])
         mock_lms_client.return_value.get_enterprise_customer_data.assert_called_once_with(
-            enterprise_customer_slug=self.test_data['enterprise_slug']
+            enterprise_customer_slug=self.test_data["enterprise_slug"]
         )
-        mock_braze.create_braze_recipient.assert_has_calls(expected_calls, any_order=True)
-        self.assertEqual(mock_braze.create_braze_recipient.call_count, len(self.mock_admin_users))
+        mock_braze.create_braze_recipient.assert_has_calls(
+            expected_calls, any_order=True
+        )
+        self.assertEqual(
+            mock_braze.create_braze_recipient.call_count, len(self.mock_admin_users)
+        )
         mock_braze.send_campaign_message.assert_called_once_with(
             settings.BRAZE_ENTERPRISE_PROVISION_SIGNUP_CONFIRMATION_CAMPAIGN,
             recipients=braze_recipients,
             trigger_properties=self.expected_braze_properties,
         )
 
-    @mock.patch('enterprise_access.apps.customer_billing.tasks.BrazeApiClient')
-    @mock.patch('enterprise_access.apps.customer_billing.tasks.LmsApiClient')
-    @mock.patch('enterprise_access.apps.customer_billing.tasks.validate_trial_subscription')
-    def test_braze_campaign_send_failure(self, mock_validate_trial, mock_lms_client, mock_braze_client):
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.tasks.validate_trial_subscription"
+    )
+    def test_braze_campaign_send_failure(
+        self, mock_validate_trial, mock_lms_client, mock_braze_client
+    ):
         """
         Test that Braze campaign sending failures raise exceptions.
         """
         mock_validate_trial.return_value = (True, self.mock_subscription)
         mock_lms_client.return_value.get_enterprise_customer_data.return_value = {
-            'admin_users': self.mock_admin_users
+            "admin_users": self.mock_admin_users
         }
         mock_braze = mock_braze_client.return_value
         mock_braze.create_braze_recipient.side_effect = [
-            {'external_id': 'braze1'},
-            {'external_id': 'braze2'},
+            {"external_id": "braze1"},
+            {"external_id": "braze2"},
         ]
         mock_braze.send_campaign_message.side_effect = Exception("Braze Campaign Error")
         with self.assertRaises(Exception) as context:
@@ -562,9 +627,10 @@ class TestSendPaymentReceiptEmail(TestCase):
     """
     Tests for send_payment_receipt_email task.
     """
+
     def setUp(self):
         super().setUp()
-        self.user = UserFactory(email='hello@world.com')
+        self.user = UserFactory(email="hello@world.com")
         self.checkout_intent = CheckoutIntent.create_intent(
             user=self.user,
             slug="test-enterprise",
@@ -574,94 +640,105 @@ class TestSendPaymentReceiptEmail(TestCase):
         self.checkout_intent.stripe_customer_id = "cus_test_123"
         self.checkout_intent.save()
 
-        self.invoice_id = 'in_1SNvVOQ60jNALKNUMk8TZucs'
-        self.payment_intent_id = 'pi_test_payment_intent_123'
-        self.payment_method_id = 'pm_test_payment_method_456'
+        self.invoice_id = "in_1SNvVOQ60jNALKNUMk8TZucs"
+        self.payment_intent_id = "pi_test_payment_intent_123"
+        self.payment_method_id = "pm_test_payment_method_456"
         self.mock_invoice_data = {
-            'id': self.invoice_id,
-            'created': 1761829387,
-            'payment_intent': self.payment_intent_id,  # This is a string ID, not an object
+            "id": self.invoice_id,
+            "created": 1761829387,
+            "payment_intent": self.payment_intent_id,  # This is a string ID, not an object
         }
-        self.mock_payment_intent = AttrDict.wrap({
-            'id': self.payment_intent_id,
-            'payment_method': self.payment_method_id,
-        })
-        self.mock_payment_method = AttrDict.wrap({
-            'id': self.payment_method_id,
-            'card': {
-                'brand': 'visa',
-                'last4': '4242'
-            },
-            'billing_details': {
-                'name': 'Test User',
-                'address': {
-                    'line1': '123 Test St',
-                    'line2': 'Suite 100',
-                    'city': 'Test City',
-                    'state': 'TS',
-                    'postal_code': '12345',
-                    'country': 'US'
-                }
+        self.mock_payment_intent = AttrDict.wrap(
+            {
+                "id": self.payment_intent_id,
+                "payment_method": self.payment_method_id,
             }
-        })
+        )
+        self.mock_payment_method = AttrDict.wrap(
+            {
+                "id": self.payment_method_id,
+                "card": {"brand": "visa", "last4": "4242"},
+                "billing_details": {
+                    "name": "Test User",
+                    "address": {
+                        "line1": "123 Test St",
+                        "line2": "Suite 100",
+                        "city": "Test City",
+                        "state": "TS",
+                        "postal_code": "12345",
+                        "country": "US",
+                    },
+                },
+            }
+        )
         self.mock_admin_users = [
             {
-                'email': 'admin1@test.com',
-                'lms_user_id': 1,
+                "email": "admin1@test.com",
+                "lms_user_id": 1,
             },
             {
-                'email': 'admin2@test.com',
-                'lms_user_id': 2,
-            }
+                "email": "admin2@test.com",
+                "lms_user_id": 2,
+            },
         ]
-        self.enterprise_customer_name = 'Test Enterprise'
-        self.enterprise_slug = 'test-enterprise'
+        self.enterprise_customer_name = "Test Enterprise"
+        self.enterprise_slug = "test-enterprise"
 
         # Create StripeEventData and StripeEventSummary for the invoice
         self.stripe_event_data = StripeEventData.objects.create(
             event_id="evt_test_payment_receipt",
             event_type="invoice.paid",
             checkout_intent=self.checkout_intent,
-            data={'created': 1700000000},
+            data={"created": 1700000000},
         )
         # The post_save signal tries to auto-create StripeEventSummary but fails silently
         # when the event data lacks a Stripe object payload. Create it directly here.
         self.invoice_summary, _ = StripeEventSummary.objects.get_or_create(
             stripe_event_data=self.stripe_event_data,
             defaults={
-                'event_id': self.stripe_event_data.event_id,
-                'event_type': self.stripe_event_data.event_type,
-                'stripe_event_created_at': datetime.fromtimestamp(1700000000, tz=dt_timezone.utc),
-                'checkout_intent': self.checkout_intent,
-                'stripe_invoice_id': self.invoice_id,
-                'invoice_amount_paid': 198000,  # $1,980.00 (5 licenses * $396.00)
-                'invoice_unit_amount': 39600,   # $396.00 per license
-                'invoice_quantity': 5,
-                'invoice_currency': 'usd',
+                "event_id": self.stripe_event_data.event_id,
+                "event_type": self.stripe_event_data.event_type,
+                "stripe_event_created_at": datetime.fromtimestamp(
+                    1700000000, tz=dt_timezone.utc
+                ),
+                "checkout_intent": self.checkout_intent,
+                "stripe_invoice_id": self.invoice_id,
+                "invoice_amount_paid": 198000,  # $1,980.00 (5 licenses * $396.00)
+                "invoice_unit_amount": 39600,  # $396.00 per license
+                "invoice_quantity": 5,
+                "invoice_currency": "usd",
             },
         )
 
-    @mock.patch('enterprise_access.apps.customer_billing.tasks.get_stripe_payment_method')
-    @mock.patch('enterprise_access.apps.customer_billing.tasks.get_stripe_payment_intent')
-    @mock.patch('enterprise_access.apps.customer_billing.tasks.format_datetime_obj')
-    @mock.patch('enterprise_access.apps.customer_billing.tasks.BrazeApiClient')
-    @mock.patch('enterprise_access.apps.customer_billing.tasks.LmsApiClient')
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.tasks.get_stripe_payment_method"
+    )
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.tasks.get_stripe_payment_intent"
+    )
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.format_datetime_obj")
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
     def test_successful_payment_receipt_email(
-        self, mock_lms_client, mock_braze_client, mock_format_datetime,
-        mock_get_payment_intent, mock_get_payment_method
+        self,
+        mock_lms_client,
+        mock_braze_client,
+        mock_format_datetime,
+        mock_get_payment_intent,
+        mock_get_payment_method,
     ):
         """
         Test successful payment receipt email sending.
         """
         # Mock the date formatting function
-        mock_format_datetime.return_value = '03 November 2025'
+        mock_format_datetime.return_value = "03 November 2025"
 
         # Mock Stripe API calls
         mock_get_payment_intent.return_value = self.mock_payment_intent
         mock_get_payment_method.return_value = self.mock_payment_method
 
         mock_lms_client.return_value.get_enterprise_customer_data.return_value = {
-            'admin_users': self.mock_admin_users
+            "admin_users": self.mock_admin_users
         }
 
         mock_braze = mock_braze_client.return_value
@@ -669,10 +746,13 @@ class TestSendPaymentReceiptEmail(TestCase):
         actual_calls = []
 
         def create_recipient_side_effect(user_email, lms_user_id):
-            actual_calls.append(mock.call(user_email=user_email, lms_user_id=lms_user_id))
-            recipient = {'external_id': f'braze_{lms_user_id}'}
+            actual_calls.append(
+                mock.call(user_email=user_email, lms_user_id=lms_user_id)
+            )
+            recipient = {"external_id": f"braze_{lms_user_id}"}
             braze_recipients.append(recipient)
             return recipient
+
         mock_braze.create_braze_recipient.side_effect = create_recipient_side_effect
 
         # Call the task
@@ -694,25 +774,27 @@ class TestSendPaymentReceiptEmail(TestCase):
 
         # Verify Braze recipients were created for each admin
         expected_recipient_calls = [
-            mock.call(user_email=admin['email'], lms_user_id=admin.get('lms_user_id'))
+            mock.call(user_email=admin["email"], lms_user_id=admin.get("lms_user_id"))
             for admin in self.mock_admin_users
         ]
-        mock_braze.create_braze_recipient.assert_has_calls(expected_recipient_calls, any_order=True)
+        mock_braze.create_braze_recipient.assert_has_calls(
+            expected_recipient_calls, any_order=True
+        )
 
         # Verify the campaign was sent with correct properties
         # Note: total_paid_amount comes from invoice_summary.invoice_amount_paid (198000 cents = $1980.00)
         # price_per_license comes from invoice_summary.invoice_unit_amount (39600 cents = $396.00)
         expected_properties = {
-            'total_paid_amount': 1980.0,  # $396.00 * 5 licenses = $1,980.00
-            'date_paid': '03 November 2025',  # Based on mock timestamp
-            'payment_method': 'visa - 4242',
-            'license_count': 5,
-            'price_per_license': 396.0,
-            'customer_name': 'Test User',
-            'organization': 'Test Enterprise',
-            'billing_address': '123 Test St\nSuite 100\nTest City, TS 12345\nUS',
-            'enterprise_admin_portal_url': f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/test-enterprise',
-            'receipt_number': 'in_1SNvVOQ60jNALKNUMk8TZucs',
+            "total_paid_amount": 1980.0,  # $396.00 * 5 licenses = $1,980.00
+            "date_paid": "03 November 2025",  # Based on mock timestamp
+            "payment_method": "visa - 4242",
+            "license_count": 5,
+            "price_per_license": 396.0,
+            "customer_name": "Test User",
+            "organization": "Test Enterprise",
+            "billing_address": "123 Test St\nSuite 100\nTest City, TS 12345\nUS",
+            "enterprise_admin_portal_url": f"{settings.ENTERPRISE_ADMIN_PORTAL_URL}/test-enterprise",
+            "receipt_number": "in_1SNvVOQ60jNALKNUMk8TZucs",
         }
 
         mock_braze.send_campaign_message.assert_called_once_with(
@@ -721,15 +803,25 @@ class TestSendPaymentReceiptEmail(TestCase):
             trigger_properties=expected_properties,
         )
         # ensure the actual properties are JSON-serializable
-        actual_trigger_properties = mock_braze.send_campaign_message.call_args_list[0][1]['trigger_properties']
+        actual_trigger_properties = mock_braze.send_campaign_message.call_args_list[0][
+            1
+        ]["trigger_properties"]
         json.dumps(actual_trigger_properties)
 
-    @mock.patch('enterprise_access.apps.customer_billing.tasks.get_stripe_payment_method')
-    @mock.patch('enterprise_access.apps.customer_billing.tasks.get_stripe_payment_intent')
-    @mock.patch('enterprise_access.apps.customer_billing.tasks.BrazeApiClient')
-    @mock.patch('enterprise_access.apps.customer_billing.tasks.LmsApiClient')
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.tasks.get_stripe_payment_method"
+    )
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.tasks.get_stripe_payment_intent"
+    )
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
     def test_payment_receipt_no_admin_users(
-        self, mock_lms_client, mock_braze_client, mock_get_payment_intent, mock_get_payment_method
+        self,
+        mock_lms_client,
+        mock_braze_client,
+        mock_get_payment_intent,
+        mock_get_payment_method,
     ):
         """
         Test that exception is not raised when no admin users are found, and instead the email is
@@ -740,7 +832,7 @@ class TestSendPaymentReceiptEmail(TestCase):
         mock_get_payment_method.return_value = self.mock_payment_method
 
         mock_lms_client.return_value.get_enterprise_customer_data.return_value = {
-            'admin_users': []
+            "admin_users": []
         }
         mock_braze = mock_braze_client.return_value
 
@@ -762,12 +854,20 @@ class TestSendPaymentReceiptEmail(TestCase):
             trigger_properties=mock.ANY,
         )
 
-    @mock.patch('enterprise_access.apps.customer_billing.tasks.get_stripe_payment_method')
-    @mock.patch('enterprise_access.apps.customer_billing.tasks.get_stripe_payment_intent')
-    @mock.patch('enterprise_access.apps.customer_billing.tasks.BrazeApiClient')
-    @mock.patch('enterprise_access.apps.customer_billing.tasks.LmsApiClient')
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.tasks.get_stripe_payment_method"
+    )
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.tasks.get_stripe_payment_intent"
+    )
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
     def test_payment_receipt_braze_recipient_error(
-        self, mock_lms_client, mock_braze_client, mock_get_payment_intent, mock_get_payment_method
+        self,
+        mock_lms_client,
+        mock_braze_client,
+        mock_get_payment_intent,
+        mock_get_payment_method,
     ):
         """
         Test handling of Braze recipient creation errors.
@@ -777,14 +877,14 @@ class TestSendPaymentReceiptEmail(TestCase):
         mock_get_payment_method.return_value = self.mock_payment_method
 
         mock_lms_client.return_value.get_enterprise_customer_data.return_value = {
-            'admin_users': self.mock_admin_users
+            "admin_users": self.mock_admin_users
         }
 
         # Make first recipient creation fail, second one succeed
         mock_braze = mock_braze_client.return_value
         mock_braze.create_braze_recipient.side_effect = [
             Exception("Failed to create recipient"),
-            {'external_id': 'braze_2'}
+            {"external_id": "braze_2"},
         ]
 
         send_payment_receipt_email(
@@ -796,27 +896,35 @@ class TestSendPaymentReceiptEmail(TestCase):
 
         # Verify campaign was still sent for the successful recipient
         mock_braze.send_campaign_message.assert_called_once()
-        actual_recipients = mock_braze.send_campaign_message.call_args[1]['recipients']
+        actual_recipients = mock_braze.send_campaign_message.call_args[1]["recipients"]
         self.assertEqual(len(actual_recipients), 1)
-        self.assertEqual(actual_recipients[0]['external_id'], 'braze_2')
+        self.assertEqual(actual_recipients[0]["external_id"], "braze_2")
 
-    @mock.patch('enterprise_access.apps.customer_billing.tasks.get_stripe_payment_method')
-    @mock.patch('enterprise_access.apps.customer_billing.tasks.get_stripe_payment_intent')
-    @mock.patch('enterprise_access.apps.customer_billing.tasks.BrazeApiClient')
-    @mock.patch('enterprise_access.apps.customer_billing.tasks.LmsApiClient')
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.tasks.get_stripe_payment_method"
+    )
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.tasks.get_stripe_payment_intent"
+    )
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
     def test_payment_receipt_no_invoice_summary(
-        self, mock_lms_client, mock_braze_client, mock_get_payment_intent, mock_get_payment_method
+        self,
+        mock_lms_client,
+        mock_braze_client,
+        mock_get_payment_intent,
+        mock_get_payment_method,
     ):
         """
         Test that email is not sent when no invoice summary is found.
         """
         mock_lms_client.return_value.get_enterprise_customer_data.return_value = {
-            'admin_users': self.mock_admin_users
+            "admin_users": self.mock_admin_users
         }
 
         # Use a different invoice ID that doesn't have a summary
         send_payment_receipt_email(
-            invoice_id='in_nonexistent_invoice',
+            invoice_id="in_nonexistent_invoice",
             invoice_data=self.mock_invoice_data,
             enterprise_customer_name=self.enterprise_customer_name,
             enterprise_slug=self.enterprise_slug,
@@ -828,9 +936,11 @@ class TestSendPaymentReceiptEmail(TestCase):
         mock_get_payment_intent.assert_not_called()
         mock_get_payment_method.assert_not_called()
 
-    @mock.patch('enterprise_access.apps.customer_billing.tasks.get_stripe_payment_intent')
-    @mock.patch('enterprise_access.apps.customer_billing.tasks.BrazeApiClient')
-    @mock.patch('enterprise_access.apps.customer_billing.tasks.LmsApiClient')
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.tasks.get_stripe_payment_intent"
+    )
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
     def test_payment_receipt_stripe_api_error(
         self, mock_lms_client, mock_braze_client, mock_get_payment_intent
     ):
@@ -841,13 +951,13 @@ class TestSendPaymentReceiptEmail(TestCase):
         mock_get_payment_intent.side_effect = stripe.StripeError("Stripe API error")
 
         mock_lms_client.return_value.get_enterprise_customer_data.return_value = {
-            'admin_users': self.mock_admin_users
+            "admin_users": self.mock_admin_users
         }
 
         mock_braze = mock_braze_client.return_value
         mock_braze.create_braze_recipient.side_effect = [
-            {'external_id': 'braze_1'},
-            {'external_id': 'braze_2'}
+            {"external_id": "braze_1"},
+            {"external_id": "braze_2"},
         ]
 
         send_payment_receipt_email(
@@ -860,16 +970,16 @@ class TestSendPaymentReceiptEmail(TestCase):
         # Verify the campaign was still sent with default payment method values
         mock_braze.send_campaign_message.assert_called_once()
         call_args = mock_braze.send_campaign_message.call_args
-        trigger_props = call_args[1]['trigger_properties']
+        trigger_props = call_args[1]["trigger_properties"]
 
         # Payment method should fall back to default values
-        self.assertEqual(trigger_props['payment_method'], 'Card - ****')
-        self.assertEqual(trigger_props['customer_name'], '')
-        self.assertEqual(trigger_props['billing_address'], '')
+        self.assertEqual(trigger_props["payment_method"], "Card - ****")
+        self.assertEqual(trigger_props["customer_name"], "")
+        self.assertEqual(trigger_props["billing_address"], "")
 
         # Other properties should still be populated from invoice summary
-        self.assertEqual(trigger_props['total_paid_amount'], 1980.0)
-        self.assertEqual(trigger_props['license_count'], 5)
+        self.assertEqual(trigger_props["total_paid_amount"], 1980.0)
+        self.assertEqual(trigger_props["license_count"], 5)
 
 
 class TestSendTrialEndingReminderEmailTask(TestCase):
@@ -892,21 +1002,31 @@ class TestSendTrialEndingReminderEmailTask(TestCase):
             default_payment_method="pm_test_456",
             latest_invoice="in_test_789",
         )
-        self.mock_subscription.__getitem__ = mock.Mock(return_value=mock.Mock(
-            data=[
-                mock.Mock(
-                    current_period_end=int(datetime(2022, 1, 1).timestamp()),
-                    quantity=10,
-                )
-            ]
-        ))
+        self.mock_subscription.__getitem__ = mock.Mock(
+            return_value=mock.Mock(
+                data=[
+                    mock.Mock(
+                        current_period_end=int(datetime(2022, 1, 1).timestamp()),
+                        quantity=10,
+                    )
+                ]
+            )
+        )
 
-    @mock.patch("enterprise_access.apps.customer_billing.tasks.stripe.PaymentMethod.retrieve")
-    @mock.patch("enterprise_access.apps.customer_billing.tasks.get_stripe_trialing_subscription")
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.tasks.stripe.PaymentMethod.retrieve"
+    )
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.tasks.get_stripe_trialing_subscription"
+    )
     @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
     @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
     def test_send_trial_ending_reminder_email_success(
-        self, mock_lms_client, mock_braze_client, mock_get_subscription, mock_payment_method
+        self,
+        mock_lms_client,
+        mock_braze_client,
+        mock_get_subscription,
+        mock_payment_method,
     ):
         """Test successful trial ending reminder email send."""
         mock_lms_instance = mock_lms_client.return_value
@@ -928,17 +1048,19 @@ class TestSendTrialEndingReminderEmailTask(TestCase):
             event_id="evt_test_123",
             event_type="customer.subscription.created",
             checkout_intent=self.checkout_intent,
-            data={'created': 1700000000},
+            data={"created": 1700000000},
         )
         StripeEventSummary.objects.get_or_create(
             stripe_event_data=stripe_event_data,
             defaults={
-                'event_id': stripe_event_data.event_id,
-                'event_type': stripe_event_data.event_type,
-                'stripe_event_created_at': datetime.fromtimestamp(1700000000, tz=dt_timezone.utc),
-                'checkout_intent': self.checkout_intent,
-                'stripe_subscription_id': "sub_test_123",
-                'upcoming_invoice_amount_due': 633600,
+                "event_id": stripe_event_data.event_id,
+                "event_type": stripe_event_data.event_type,
+                "stripe_event_created_at": datetime.fromtimestamp(
+                    1700000000, tz=dt_timezone.utc
+                ),
+                "checkout_intent": self.checkout_intent,
+                "stripe_subscription_id": "sub_test_123",
+                "upcoming_invoice_amount_due": 633600,
             },
         )
 
@@ -956,7 +1078,8 @@ class TestSendTrialEndingReminderEmailTask(TestCase):
         call_args = mock_braze_instance.send_campaign_message.call_args
 
         self.assertEqual(
-            call_args[0][0], settings.BRAZE_ENTERPRISE_PROVISION_TRIAL_ENDING_SOON_CAMPAIGN
+            call_args[0][0],
+            settings.BRAZE_ENTERPRISE_PROVISION_TRIAL_ENDING_SOON_CAMPAIGN,
         )
 
         recipients = call_args[1]["recipients"]
@@ -966,14 +1089,18 @@ class TestSendTrialEndingReminderEmailTask(TestCase):
         self.assertIn("renewal_datetime", trigger_props)
         self.assertEqual(
             trigger_props["renewal_datetime"],
-            format_datetime_obj(datetime(2022, 1, 1), output_pattern=BRAZE_TIMESTAMP_FORMAT),
+            format_datetime_obj(
+                datetime(2022, 1, 1), output_pattern=BRAZE_TIMESTAMP_FORMAT
+            ),
         )
         self.assertIn("subscription_management_url", trigger_props)
         self.assertEqual(trigger_props["license_count"], 10)
         self.assertEqual(trigger_props["payment_method"], "Visa ending in 4242")
         self.assertEqual(trigger_props["total_paid_amount"], "$6,336.00 USD")
 
-    @mock.patch("enterprise_access.apps.customer_billing.tasks.get_stripe_trialing_subscription")
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.tasks.get_stripe_trialing_subscription"
+    )
     @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
     def test_checkout_intent_not_found(self, mock_lms_client, mock_get_subscription):
         """Test handling of non-existent checkout intent."""
@@ -982,7 +1109,9 @@ class TestSendTrialEndingReminderEmailTask(TestCase):
         mock_lms_client.return_value.get_enterprise_customer_data.assert_not_called()
         mock_get_subscription.assert_not_called()
 
-    @mock.patch("enterprise_access.apps.customer_billing.tasks.get_stripe_trialing_subscription")
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.tasks.get_stripe_trialing_subscription"
+    )
     @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
     @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
     def test_no_admin_users_found(
@@ -994,7 +1123,7 @@ class TestSendTrialEndingReminderEmailTask(TestCase):
             "admin_users": []
         }
 
-        with self.assertRaisesRegex(Exception, 'No admin users'):
+        with self.assertRaisesRegex(Exception, "No admin users"):
             send_trial_ending_reminder_email_task(
                 checkout_intent_id=self.checkout_intent.id,
             )
@@ -1002,7 +1131,9 @@ class TestSendTrialEndingReminderEmailTask(TestCase):
         mock_get_subscription.assert_not_called()
         mock_braze_client.return_value.send_campaign_message.assert_not_called()
 
-    @mock.patch("enterprise_access.apps.customer_billing.tasks.get_stripe_trialing_subscription")
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.tasks.get_stripe_trialing_subscription"
+    )
     @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
     @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
     def test_no_stripe_customer_id(
@@ -1024,7 +1155,9 @@ class TestSendTrialEndingReminderEmailTask(TestCase):
         mock_get_subscription.assert_not_called()
         mock_braze_client.return_value.send_campaign_message.assert_not_called()
 
-    @mock.patch("enterprise_access.apps.customer_billing.tasks.get_stripe_trialing_subscription")
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.tasks.get_stripe_trialing_subscription"
+    )
     @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
     @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
     def test_no_trialing_subscription_found(
@@ -1044,7 +1177,9 @@ class TestSendTrialEndingReminderEmailTask(TestCase):
 
         mock_braze_client.return_value.send_campaign_message.assert_not_called()
 
-    @mock.patch("enterprise_access.apps.customer_billing.tasks.get_stripe_trialing_subscription")
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.tasks.get_stripe_trialing_subscription"
+    )
     @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
     @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
     def test_subscription_has_no_items(
@@ -1066,12 +1201,20 @@ class TestSendTrialEndingReminderEmailTask(TestCase):
 
         mock_braze_client.return_value.send_campaign_message.assert_not_called()
 
-    @mock.patch("enterprise_access.apps.customer_billing.tasks.stripe.PaymentMethod.retrieve")
-    @mock.patch("enterprise_access.apps.customer_billing.tasks.get_stripe_trialing_subscription")
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.tasks.stripe.PaymentMethod.retrieve"
+    )
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.tasks.get_stripe_trialing_subscription"
+    )
     @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
     @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
     def test_no_payment_method(
-        self, mock_lms_client, mock_braze_client, mock_get_subscription, mock_payment_method
+        self,
+        mock_lms_client,
+        mock_braze_client,
+        mock_get_subscription,
+        mock_payment_method,
     ):
         """Test when subscription has no payment method."""
         mock_lms_instance = mock_lms_client.return_value
@@ -1084,14 +1227,16 @@ class TestSendTrialEndingReminderEmailTask(TestCase):
             default_payment_method=None,
             latest_invoice=None,
         )
-        mock_subscription.__getitem__ = mock.Mock(return_value=mock.Mock(
-            data=[
-                mock.Mock(
-                    current_period_end=1640995200,
-                    quantity=10,
-                )
-            ]
-        ))
+        mock_subscription.__getitem__ = mock.Mock(
+            return_value=mock.Mock(
+                data=[
+                    mock.Mock(
+                        current_period_end=1640995200,
+                        quantity=10,
+                    )
+                ]
+            )
+        )
         mock_get_subscription.return_value = mock_subscription
 
         mock_braze_instance = mock_braze_client.return_value
@@ -1110,12 +1255,20 @@ class TestSendTrialEndingReminderEmailTask(TestCase):
         self.assertEqual(trigger_props["payment_method"], "")
         self.assertEqual(trigger_props["total_paid_amount"], "$0.00 USD")
 
-    @mock.patch("enterprise_access.apps.customer_billing.tasks.stripe.PaymentMethod.retrieve")
-    @mock.patch("enterprise_access.apps.customer_billing.tasks.get_stripe_trialing_subscription")
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.tasks.stripe.PaymentMethod.retrieve"
+    )
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.tasks.get_stripe_trialing_subscription"
+    )
     @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
     @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
     def test_stripe_error_during_subscription_retrieval(
-        self, mock_lms_client, mock_braze_client, mock_get_subscription, _mock_payment_method
+        self,
+        mock_lms_client,
+        mock_braze_client,
+        mock_get_subscription,
+        _mock_payment_method,
     ):
         """Test handling of Stripe API errors."""
         mock_lms_instance = mock_lms_client.return_value
@@ -1131,12 +1284,20 @@ class TestSendTrialEndingReminderEmailTask(TestCase):
 
         mock_braze_client.return_value.send_campaign_message.assert_not_called()
 
-    @mock.patch("enterprise_access.apps.customer_billing.tasks.stripe.PaymentMethod.retrieve")
-    @mock.patch("enterprise_access.apps.customer_billing.tasks.get_stripe_trialing_subscription")
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.tasks.stripe.PaymentMethod.retrieve"
+    )
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.tasks.get_stripe_trialing_subscription"
+    )
     @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
     @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
     def test_braze_exception(
-        self, mock_lms_client, mock_braze_client, mock_get_subscription, mock_payment_method
+        self,
+        mock_lms_client,
+        mock_braze_client,
+        mock_get_subscription,
+        mock_payment_method,
     ):
         """Test that Braze API exception is raised and logged."""
         mock_lms_instance = mock_lms_client.return_value
@@ -1155,17 +1316,19 @@ class TestSendTrialEndingReminderEmailTask(TestCase):
             event_id="evt_test_456",
             event_type="invoice.paid",
             checkout_intent=self.checkout_intent,
-            data={'created': 1700000000},
+            data={"created": 1700000000},
         )
         StripeEventSummary.objects.get_or_create(
             stripe_event_data=stripe_event_data,
             defaults={
-                'event_id': stripe_event_data.event_id,
-                'event_type': stripe_event_data.event_type,
-                'stripe_event_created_at': datetime.fromtimestamp(1700000000, tz=dt_timezone.utc),
-                'checkout_intent': self.checkout_intent,
-                'stripe_invoice_id': "in_test_789",
-                'invoice_amount_paid': 100000,
+                "event_id": stripe_event_data.event_id,
+                "event_type": stripe_event_data.event_type,
+                "stripe_event_created_at": datetime.fromtimestamp(
+                    1700000000, tz=dt_timezone.utc
+                ),
+                "checkout_intent": self.checkout_intent,
+                "stripe_invoice_id": "in_test_789",
+                "invoice_amount_paid": 100000,
             },
         )
 
@@ -1184,12 +1347,20 @@ class TestSendTrialEndingReminderEmailTask(TestCase):
 
         self.assertIn("Braze API error", str(context.exception))
 
-    @mock.patch("enterprise_access.apps.customer_billing.tasks.stripe.PaymentMethod.retrieve")
-    @mock.patch("enterprise_access.apps.customer_billing.tasks.get_stripe_trialing_subscription")
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.tasks.stripe.PaymentMethod.retrieve"
+    )
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.tasks.get_stripe_trialing_subscription"
+    )
     @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
     @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
     def test_no_invoice_summary_found(
-        self, mock_lms_client, mock_braze_client, mock_get_subscription, mock_payment_method
+        self,
+        mock_lms_client,
+        mock_braze_client,
+        mock_get_subscription,
+        mock_payment_method,
     ):
         """Test when no invoice summary is found in database."""
         mock_lms_instance = mock_lms_client.return_value
@@ -1233,52 +1404,57 @@ class TestSendTrialEndAndSubscriptionStartedEmailTask(TestCase):
         mock_lms_client,
         mock_braze_client,
         mock_checkout_intent,
-        mock_get_stripe_subscription
+        mock_get_stripe_subscription,
     ):
-        subscription = AttrDict.wrap({
-            'id': 'sub_123',
-            'quantity': 5,
-            'plan': {'amount': 10000},
-            'items': {
-                "data": [
-                    {
-                        'current_period_start': 1762273481,  # 05 Dec 2025
-                        'current_period_end': 1793809481,  # 05 Dec 2026
-                    }
-                ]
-            },
-            'latest_invoice': {'hosted_invoice_url': 'https://invoice.url'},
-        })
+        subscription = AttrDict.wrap(
+            {
+                "id": "sub_123",
+                "quantity": 5,
+                "plan": {"amount": 10000},
+                "items": {
+                    "data": [
+                        {
+                            "current_period_start": 1762273481,  # 05 Dec 2025
+                            "current_period_end": 1793809481,  # 05 Dec 2026
+                        }
+                    ]
+                },
+                "latest_invoice": {"hosted_invoice_url": "https://invoice.url"},
+            }
+        )
         checkout_intent_obj = mock.Mock()
-        checkout_intent_obj.enterprise_name = 'Test Org'
-        checkout_intent_obj.enterprise_slug = 'test-org'
+        checkout_intent_obj.enterprise_name = "Test Org"
+        checkout_intent_obj.enterprise_slug = "test-org"
         mock_checkout_intent.objects.get.return_value = checkout_intent_obj
         mock_get_stripe_subscription.return_value = subscription
         mock_lms_instance = mock_lms_client.return_value
         mock_lms_instance.get_enterprise_customer_data.return_value = {
-            'admin_users': [
-                {'email': 'admin1@test.com'},
-                {'email': 'admin2@test.com'},
+            "admin_users": [
+                {"email": "admin1@test.com"},
+                {"email": "admin2@test.com"},
             ]
         }
         mock_braze_instance = mock_braze_client.return_value
         mock_braze_instance.create_braze_recipient.side_effect = [
-            {'external_user_id': '1'},
-            {'external_user_id': '2'},
+            {"external_user_id": "1"},
+            {"external_user_id": "2"},
         ]
-        send_trial_end_and_subscription_started_email_task('sub_123', 1)
+        send_trial_end_and_subscription_started_email_task("sub_123", 1)
         assert mock_braze_instance.send_campaign_message.called
         args, kwargs = mock_braze_instance.send_campaign_message.call_args
-        assert args[0] == settings.BRAZE_ENTERPRISE_PROVISION_TRIAL_END_SUBSCRIPTION_STARTED_CAMPAIGN
-        assert len(kwargs['recipients']) == 2
-        props = kwargs['trigger_properties']
-        assert props['total_license'] == 5
-        assert props['billing_amount'] == '100'
-        assert 'subscription_start_period' in props
-        assert 'subscription_end_period' in props
-        assert 'next_payment_date' in props
-        assert props['organization'] == 'Test Org'
-        assert props['invoice_url'] == 'https://invoice.url'
+        assert (
+            args[0] ==
+            settings.BRAZE_ENTERPRISE_PROVISION_TRIAL_END_SUBSCRIPTION_STARTED_CAMPAIGN
+        )
+        assert len(kwargs["recipients"]) == 2
+        props = kwargs["trigger_properties"]
+        assert props["total_license"] == 5
+        assert props["billing_amount"] == "100"
+        assert "subscription_start_period" in props
+        assert "subscription_end_period" in props
+        assert "next_payment_date" in props
+        assert props["organization"] == "Test Org"
+        assert props["invoice_url"] == "https://invoice.url"
 
     @mock.patch("enterprise_access.apps.customer_billing.tasks.get_stripe_subscription")
     @mock.patch("enterprise_access.apps.customer_billing.tasks.CheckoutIntent")
@@ -1289,31 +1465,35 @@ class TestSendTrialEndAndSubscriptionStartedEmailTask(TestCase):
         mock_lms_client,
         mock_braze_client,
         mock_checkout_intent,
-        mock_get_stripe_subscription
+        mock_get_stripe_subscription,
     ):
-        subscription = AttrDict.wrap({
-            'id': 'sub_123',
-            'quantity': 5,
-            'plan': {'amount': 10000},
-            'items': {
-                "data": [
-                    {
-                        'current_period_start': 1762273481,  # 05 Dec 2025
-                        'current_period_end': 1793809481,  # 05 Dec 2026
-                    }
-                ]
-            },
-            'latest_invoice': {'hosted_invoice_url': 'https://invoice.url'},
-        })
+        subscription = AttrDict.wrap(
+            {
+                "id": "sub_123",
+                "quantity": 5,
+                "plan": {"amount": 10000},
+                "items": {
+                    "data": [
+                        {
+                            "current_period_start": 1762273481,  # 05 Dec 2025
+                            "current_period_end": 1793809481,  # 05 Dec 2026
+                        }
+                    ]
+                },
+                "latest_invoice": {"hosted_invoice_url": "https://invoice.url"},
+            }
+        )
         checkout_intent_obj = mock.Mock()
-        checkout_intent_obj.enterprise_name = 'Test Org'
-        checkout_intent_obj.enterprise_slug = 'test-org'
+        checkout_intent_obj.enterprise_name = "Test Org"
+        checkout_intent_obj.enterprise_slug = "test-org"
         mock_checkout_intent.objects.get.return_value = checkout_intent_obj
         mock_get_stripe_subscription.return_value = subscription
         mock_lms_instance = mock_lms_client.return_value
-        mock_lms_instance.get_enterprise_customer_data.return_value = {'admin_users': []}
+        mock_lms_instance.get_enterprise_customer_data.return_value = {
+            "admin_users": []
+        }
 
-        with self.assertRaisesRegex(Exception, 'No admin users'):
-            send_trial_end_and_subscription_started_email_task('sub_123', 1)
+        with self.assertRaisesRegex(Exception, "No admin users"):
+            send_trial_end_and_subscription_started_email_task("sub_123", 1)
 
         assert not mock_braze_client.return_value.send_campaign_message.called
