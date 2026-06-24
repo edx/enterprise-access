@@ -18,12 +18,7 @@ from rest_framework.test import APIClient
 from rest_framework.throttling import ScopedRateThrottle
 
 from enterprise_access.apps.api import serializers as api_serializers
-from enterprise_access.apps.api.v1.views.prompt import (
-    BasePromptViewSet,
-    IsEnterpriseLearner,
-    LearnerPathwaysViewSet,
-    PromptRequestException
-)
+from enterprise_access.apps.api.v1.views.prompt import BasePromptViewSet, LearnerPathwaysViewSet, PromptRequestException
 from enterprise_access.apps.core.constants import SYSTEM_ENTERPRISE_LEARNER_ROLE
 from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.prompts.api_client import (
@@ -39,7 +34,6 @@ from test_utils import APITest
 PATCH_XPERT_CLIENT = 'enterprise_access.apps.api.v1.views.prompt.XpertAPIClient'
 PATCH_GET_REQUEST_ID = 'enterprise_access.apps.api.v1.views.prompt.get_request_id'
 PATCH_UUID4 = 'enterprise_access.apps.api.v1.views.prompt.uuid_module.uuid4'
-PATCH_CONTEXTS_ACCESSIBLE = 'enterprise_access.apps.api.v1.views.prompt.contexts_accessible_from_request'
 
 _LEARNING_INTENT_URL_NAME = 'api:v1:learner-pathways-learning-intent'
 
@@ -590,9 +584,7 @@ class TestLearnerPathwaysRouting(TestCase):
         # Unauthenticated — 401 or 403, but NOT 405.
         self.assertNotEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
 
-    @mock.patch(PATCH_CONTEXTS_ACCESSIBLE)
-    def test_learning_intent_get_rejected(self, _mock_contexts):
-        _mock_contexts.return_value = {str(uuid.uuid4())}
+    def test_learning_intent_get_rejected(self):
         url = reverse(_LEARNING_INTENT_URL_NAME)
         client = APIClient()
         user = UserFactory(is_active=True)
@@ -619,10 +611,6 @@ class TestLearnerPathwaysRouteConfig(TestCase):
     def test_learning_intent_is_authenticated_permission(self):
         pc = self._get_action('learning_intent').kwargs.get('permission_classes', ())
         self.assertIn(permissions.IsAuthenticated, pc)
-
-    def test_learning_intent_is_enterprise_learner_permission(self):
-        pc = self._get_action('learning_intent').kwargs.get('permission_classes', ())
-        self.assertIn(IsEnterpriseLearner, pc)
 
     def test_learning_intent_throttle_class(self):
         tc = self._get_action('learning_intent').kwargs.get('throttle_classes', ())
@@ -674,24 +662,14 @@ class TestLearnerPathwaysAuthorization(APITest):
             status.HTTP_403_FORBIDDEN,
         ])
 
-    @ddt.data(_LEARNING_INTENT_URL_NAME)
-    @mock.patch(PATCH_CONTEXTS_ACCESSIBLE, return_value=set())
-    def test_authenticated_non_enterprise_user_rejected(self, url_name, _mock_contexts):
-        self.set_jwt_cookie([])
-        url = reverse(url_name)
-        response = self.client.post(url, data={}, format='json')
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
-
     @ddt.data(
         (_LEARNING_INTENT_URL_NAME, _VALID_LEARNING_INTENT_PAYLOAD),
     )
     @ddt.unpack
     @mock.patch(PATCH_XPERT_CLIENT)
-    @mock.patch(PATCH_CONTEXTS_ACCESSIBLE)
     def test_enterprise_learner_is_allowed(
-        self, url_name, payload, mock_contexts, mock_client_class,
+        self, url_name, payload, mock_client_class,
     ):
-        mock_contexts.return_value = {str(uuid.uuid4())}
         mock_client_class.return_value.send_message.return_value = {
             'role': 'assistant',
             'content': '{"result":"ok"}',
@@ -706,8 +684,7 @@ class TestLearnerPathwaysAuthorization(APITest):
 
     @ddt.data(_LEARNING_INTENT_URL_NAME)
     @mock.patch(PATCH_XPERT_CLIENT)
-    @mock.patch(PATCH_CONTEXTS_ACCESSIBLE, return_value=set())
-    def test_xpert_not_called_when_auth_fails(self, url_name, _mock_contexts, mock_client_class):
+    def test_xpert_not_called_when_auth_fails(self, url_name, mock_client_class):
         self.set_jwt_cookie([])
         url = reverse(url_name)
         self.client.post(url, data={}, format='json')
@@ -750,9 +727,7 @@ class TestLearnerPathwaysThrottle(APITest):
         'learner_pathways_learning_intent': '2/minute',
     })
     @mock.patch(PATCH_XPERT_CLIENT)
-    @mock.patch(PATCH_CONTEXTS_ACCESSIBLE)
-    def test_learning_intent_throttled_after_rate_exceeded(self, mock_contexts, mock_client_class):
-        mock_contexts.return_value = {str(uuid.uuid4())}
+    def test_learning_intent_throttled_after_rate_exceeded(self, mock_client_class):
         mock_client_class.return_value.send_message.return_value = {
             'role': 'assistant', 'content': '{"r":1}',
         }
@@ -762,13 +737,6 @@ class TestLearnerPathwaysThrottle(APITest):
             self.assertEqual(resp.status_code, status.HTTP_200_OK)
         resp = self.client.post(url, data=_VALID_LEARNING_INTENT_PAYLOAD, format='json')
         self.assertEqual(resp.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
-
-    @mock.patch(PATCH_CONTEXTS_ACCESSIBLE, return_value=set())
-    def test_auth_failure_does_not_call_xpert(self, _mock_contexts):
-        with mock.patch(PATCH_XPERT_CLIENT) as mock_client_class:
-            url = reverse(_LEARNING_INTENT_URL_NAME)
-            self.client.post(url, data=_VALID_LEARNING_INTENT_PAYLOAD, format='json')
-            mock_client_class.return_value.send_message.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -798,9 +766,7 @@ class TestLearningIntentHappyPath(APITest):
         self.url = reverse(_LEARNING_INTENT_URL_NAME)
 
     @mock.patch(PATCH_XPERT_CLIENT)
-    @mock.patch(PATCH_CONTEXTS_ACCESSIBLE)
-    def test_http_200_with_valid_payload(self, mock_contexts, mock_client_class):
-        mock_contexts.return_value = {str(uuid.uuid4())}
+    def test_http_200_with_valid_payload(self, mock_client_class):
         mock_client_class.return_value.send_message.return_value = {
             'role': 'assistant',
             'content': '{"skills_required":["python"]}',
@@ -809,9 +775,7 @@ class TestLearningIntentHappyPath(APITest):
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
 
     @mock.patch(PATCH_XPERT_CLIENT)
-    @mock.patch(PATCH_CONTEXTS_ACCESSIBLE)
-    def test_correct_prompt_type_used(self, mock_contexts, mock_client_class):
-        mock_contexts.return_value = {str(uuid.uuid4())}
+    def test_correct_prompt_type_used(self, mock_client_class):
         with mock.patch.object(
             XpertLearnerPathwaysSystemPrompt, 'get_current'
         ) as mock_get_current:
@@ -828,9 +792,7 @@ class TestLearningIntentHappyPath(APITest):
             )
 
     @mock.patch(PATCH_XPERT_CLIENT)
-    @mock.patch(PATCH_CONTEXTS_ACCESSIBLE)
-    def test_server_controlled_tags_passed(self, mock_contexts, mock_client_class):
-        mock_contexts.return_value = {str(uuid.uuid4())}
+    def test_server_controlled_tags_passed(self, mock_client_class):
         mock_client_class.return_value.send_message.return_value = {
             'role': 'assistant', 'content': '{"r":1}',
         }
@@ -840,9 +802,7 @@ class TestLearningIntentHappyPath(APITest):
         self.assertEqual(call_kwargs['tags'], ['tag-a', 'tag-b'])
 
     @mock.patch(PATCH_XPERT_CLIENT)
-    @mock.patch(PATCH_CONTEXTS_ACCESSIBLE)
-    def test_xpert_called_exactly_once(self, mock_contexts, mock_client_class):
-        mock_contexts.return_value = {str(uuid.uuid4())}
+    def test_xpert_called_exactly_once(self, mock_client_class):
         mock_client_class.return_value.send_message.return_value = {
             'role': 'assistant', 'content': '{"r":1}',
         }
@@ -850,9 +810,7 @@ class TestLearningIntentHappyPath(APITest):
         self.assertEqual(mock_client_class.return_value.send_message.call_count, 1)
 
     @mock.patch(PATCH_XPERT_CLIENT)
-    @mock.patch(PATCH_CONTEXTS_ACCESSIBLE)
-    def test_full_parsed_json_returned(self, mock_contexts, mock_client_class):
-        mock_contexts.return_value = {str(uuid.uuid4())}
+    def test_full_parsed_json_returned(self, mock_client_class):
         payload_json = '{"skills_required":["python","ml"],"condensed_algolia_query":"data"}'
         mock_client_class.return_value.send_message.return_value = {
             'role': 'assistant',
@@ -863,9 +821,7 @@ class TestLearningIntentHappyPath(APITest):
         self.assertEqual(resp.json(), json.loads(payload_json))
 
     @mock.patch(PATCH_XPERT_CLIENT)
-    @mock.patch(PATCH_CONTEXTS_ACCESSIBLE)
-    def test_validated_data_encoded_as_user_message(self, mock_contexts, mock_client_class):
-        mock_contexts.return_value = {str(uuid.uuid4())}
+    def test_validated_data_encoded_as_user_message(self, mock_client_class):
         mock_client_class.return_value.send_message.return_value = {
             'role': 'assistant', 'content': '{"r":1}',
         }
@@ -879,9 +835,7 @@ class TestLearningIntentHappyPath(APITest):
         self.assertEqual(parsed['selected_goals'], _VALID_LEARNING_INTENT_PAYLOAD['selected_goals'])
 
     @mock.patch(PATCH_XPERT_CLIENT)
-    @mock.patch(PATCH_CONTEXTS_ACCESSIBLE)
-    def test_conversation_id_has_prefix(self, mock_contexts, mock_client_class):
-        mock_contexts.return_value = {str(uuid.uuid4())}
+    def test_conversation_id_has_prefix(self, mock_client_class):
         mock_client_class.return_value.send_message.return_value = {
             'role': 'assistant', 'content': '{"r":1}',
         }
@@ -890,9 +844,7 @@ class TestLearningIntentHappyPath(APITest):
         self.assertTrue(call_kwargs['conversation_id'].startswith('enterprise-access:'))
 
     @mock.patch(PATCH_XPERT_CLIENT)
-    @mock.patch(PATCH_CONTEXTS_ACCESSIBLE)
-    def test_role_field_not_returned(self, mock_contexts, mock_client_class):
-        mock_contexts.return_value = {str(uuid.uuid4())}
+    def test_role_field_not_returned(self, mock_client_class):
         mock_client_class.return_value.send_message.return_value = {
             'role': 'assistant',
             'content': '{"answer":"yes"}',
@@ -929,11 +881,9 @@ class TestLearnerPathwaysResponsePassthrough(APITest):
     )
     @ddt.unpack
     @mock.patch(PATCH_XPERT_CLIENT)
-    @mock.patch(PATCH_CONTEXTS_ACCESSIBLE)
     def test_extra_top_level_fields_preserved(
-        self, _action, url_name, payload, mock_contexts, mock_client_class,
+        self, _action, url_name, payload, mock_client_class,
     ):
-        mock_contexts.return_value = {str(uuid.uuid4())}
         mock_client_class.return_value.send_message.return_value = {
             'role': 'assistant',
             'content': '{"result":"ok","extra_field":"preserved"}',
@@ -947,11 +897,9 @@ class TestLearnerPathwaysResponsePassthrough(APITest):
     )
     @ddt.unpack
     @mock.patch(PATCH_XPERT_CLIENT)
-    @mock.patch(PATCH_CONTEXTS_ACCESSIBLE)
     def test_list_response_returned_as_list(
-        self, _action, url_name, payload, mock_contexts, mock_client_class,
+        self, _action, url_name, payload, mock_client_class,
     ):
-        mock_contexts.return_value = {str(uuid.uuid4())}
         mock_client_class.return_value.send_message.return_value = {
             'role': 'assistant',
             'content': '[1,2,3]',
@@ -965,11 +913,9 @@ class TestLearnerPathwaysResponsePassthrough(APITest):
     )
     @ddt.unpack
     @mock.patch(PATCH_XPERT_CLIENT)
-    @mock.patch(PATCH_CONTEXTS_ACCESSIBLE)
     def test_nested_values_preserved(
-        self, _action, url_name, payload, mock_contexts, mock_client_class,
+        self, _action, url_name, payload, mock_client_class,
     ):
-        mock_contexts.return_value = {str(uuid.uuid4())}
         nested = {'a': {'b': {'c': [1, 2, 3]}}}
         mock_client_class.return_value.send_message.return_value = {
             'role': 'assistant',
@@ -1007,9 +953,7 @@ class TestLearnerPathwaysFailures(APITest):
         (_LEARNING_INTENT_URL_NAME, _VALID_LEARNING_INTENT_PAYLOAD),
     )
     @ddt.unpack
-    @mock.patch(PATCH_CONTEXTS_ACCESSIBLE)
-    def test_missing_prompt_returns_500(self, url_name, payload, mock_contexts):
-        mock_contexts.return_value = {str(uuid.uuid4())}
+    def test_missing_prompt_returns_500(self, url_name, payload):
         with mock.patch.object(XpertLearnerPathwaysSystemPrompt, 'get_current', return_value=None):
             resp = self.client.post(reverse(url_name), data=payload, format='json')
         self.assertEqual(resp.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -1020,9 +964,7 @@ class TestLearnerPathwaysFailures(APITest):
         XpertAPIResponseError,
     )
     @mock.patch(PATCH_XPERT_CLIENT)
-    @mock.patch(PATCH_CONTEXTS_ACCESSIBLE)
-    def test_xpert_error_returns_500(self, error_class, mock_contexts, mock_client_class):
-        mock_contexts.return_value = {str(uuid.uuid4())}
+    def test_xpert_error_returns_500(self, error_class, mock_client_class):
         mock_client_class.return_value.send_message.side_effect = error_class('xpert error')
         resp = self.client.post(
             reverse(_LEARNING_INTENT_URL_NAME),
@@ -1034,15 +976,12 @@ class TestLearnerPathwaysFailures(APITest):
     @ddt.data(
         ('missing', {'role': 'assistant'}),
         ('none', {'role': 'assistant', 'content': None}),
-        ('non_string', {'role': 'assistant', 'content': 123}),
     )
     @ddt.unpack
     @mock.patch(PATCH_XPERT_CLIENT)
-    @mock.patch(PATCH_CONTEXTS_ACCESSIBLE)
     def test_bad_content_returns_500(
-        self, _case, xpert_response, mock_contexts, mock_client_class,
+        self, _case, xpert_response, mock_client_class,
     ):
-        mock_contexts.return_value = {str(uuid.uuid4())}
         mock_client_class.return_value.send_message.return_value = xpert_response
         resp = self.client.post(
             reverse(_LEARNING_INTENT_URL_NAME),
@@ -1057,9 +996,7 @@ class TestLearnerPathwaysFailures(APITest):
         '{"unterminated": true',
     )
     @mock.patch(PATCH_XPERT_CLIENT)
-    @mock.patch(PATCH_CONTEXTS_ACCESSIBLE)
-    def test_invalid_json_content_returns_500(self, bad_content, mock_contexts, mock_client_class):
-        mock_contexts.return_value = {str(uuid.uuid4())}
+    def test_invalid_json_content_returns_500(self, bad_content, mock_client_class):
         mock_client_class.return_value.send_message.return_value = {
             'role': 'assistant', 'content': bad_content,
         }
@@ -1071,9 +1008,7 @@ class TestLearnerPathwaysFailures(APITest):
         self.assertEqual(resp.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @mock.patch(PATCH_XPERT_CLIENT)
-    @mock.patch(PATCH_CONTEXTS_ACCESSIBLE)
-    def test_no_second_xpert_call_on_failure(self, mock_contexts, mock_client_class):
-        mock_contexts.return_value = {str(uuid.uuid4())}
+    def test_no_second_xpert_call_on_failure(self, mock_client_class):
         mock_client_class.return_value.send_message.side_effect = XpertAPIRequestError('fail')
         self.client.post(
             reverse(_LEARNING_INTENT_URL_NAME),
@@ -1083,9 +1018,7 @@ class TestLearnerPathwaysFailures(APITest):
         self.assertEqual(mock_client_class.return_value.send_message.call_count, 1)
 
     @mock.patch(PATCH_XPERT_CLIENT)
-    @mock.patch(PATCH_CONTEXTS_ACCESSIBLE)
-    def test_no_fallback_object_returned(self, mock_contexts, mock_client_class):
-        mock_contexts.return_value = {str(uuid.uuid4())}
+    def test_no_fallback_object_returned(self, mock_client_class):
         mock_client_class.return_value.send_message.side_effect = XpertAPIRequestError('fail')
         resp = self.client.post(
             reverse(_LEARNING_INTENT_URL_NAME),

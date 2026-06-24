@@ -183,9 +183,7 @@ REST_FRAMEWORK = {
     'DEFAULT_THROTTLE_RATES': {
         'bff_unauthenticated': '100/hour',
         'ssp_product': '120/hour',
-        # BLOCKER: rate values for learner-pathways scopes are not yet defined.
-        # None disables throttling until a rate is agreed upon.
-        'learner_pathways_learning_intent': None,
+        'learner_pathways_learning_intent': '100/hour',
     },
 }
 
