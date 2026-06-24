@@ -9,6 +9,7 @@ from django.conf import settings
 from enterprise_access.apps.api_client.base_oauth import BaseOAuthClient
 from enterprise_access.apps.api_client.base_user import BaseUserApiClient
 from enterprise_access.apps.api_client.constants import autoretry_for_exceptions
+from enterprise_access.apps.api_client.utils import get_paginated_payloads
 
 
 class EnterpriseCatalogApiClient(BaseOAuthClient):
@@ -226,21 +227,20 @@ class EnterpriseCatalogApiClient(BaseOAuthClient):
 
         data, explicit = normalize_page(raw_payload)
 
-        # Merge paginated results if necessary; be defensive about types
-        next_url = data.get('next')
-        while next_url:
-            next_resp = self.client.get(next_url)
-            next_resp.raise_for_status()
-            next_payload = next_resp.json()
+        # Fetch and Merge paginated results using the shared pagination helper
+        for next_payload in get_paginated_payloads(self.client, data.get("next")):
             next_data, next_explicit = normalize_page(next_payload)
+
             if isinstance(data.get('results'), list) and isinstance(next_data.get('results'), list):
                 data['results'].extend(next_data.get('results', []))
+
             data['next'] = next_data.get('next')
             data['previous'] = data.get('previous') or next_data.get('previous')
+
             explicit = explicit and next_explicit
+
             if not explicit:
                 data['count'] = len(data.get('results', []))
-            next_url = data.get('next')
 
         return data
 
