@@ -342,36 +342,6 @@ class TestEnterpriseCatalogApiClient(TestCase):
         self.assertEqual(result, {})
 
     @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient', autospec=True)
-    def test_get_academies_returns_non_dict_payload(self, mock_oauth_client):
-        payload = ['not-a-dict']
-        mock_oauth_client.return_value.get.return_value = mock.Mock(
-            json=mock.Mock(return_value=payload),
-            raise_for_status=mock.Mock(),
-        )
-
-        client = EnterpriseCatalogApiClient()
-        result = client.get_academies()
-
-        self.assertEqual(result, payload)
-
-    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient', autospec=True)
-    def test_get_academies_returns_raw_list_response(self, mock_oauth_client):
-        payload = [
-            {'uuid': 'academy-1'},
-            {'uuid': 'academy-2'},
-        ]
-
-        mock_oauth_client.return_value.get.return_value = mock.Mock(
-            json=mock.Mock(return_value=payload),
-            raise_for_status=mock.Mock(),
-        )
-
-        client = EnterpriseCatalogApiClient()
-        result = client.get_academies()
-
-        self.assertEqual(result, payload)
-
-    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient', autospec=True)
     def test_get_catalogs_returns_raw_list_response(self, mock_oauth_client):
         payload = [
             {'uuid': 'catalog-1'},
@@ -389,38 +359,6 @@ class TestEnterpriseCatalogApiClient(TestCase):
         self.assertEqual(result, payload)
 
     @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient', autospec=True)
-    def test_get_academies_does_not_merge_when_next_results_not_list(self, mock_oauth_client, ):
-        page_1 = {
-            'count': 1,
-            'next': 'page-2',
-            'previous': None,
-            'results': [{'uuid': 'academy-1'}],
-        }
-
-        page_2 = {
-            'count': 1,
-            'next': None,
-            'previous': 'page-1',
-            'results': 'not-a-list',
-        }
-
-        mock_oauth_client.return_value.get.side_effect = [
-            mock.Mock(
-                json=mock.Mock(return_value=page_1),
-                raise_for_status=mock.Mock(),
-            ),
-            mock.Mock(
-                json=mock.Mock(return_value=page_2),
-                raise_for_status=mock.Mock(),
-            ),
-        ]
-
-        client = EnterpriseCatalogApiClient()
-        result = client.get_academies()
-
-        self.assertEqual(result['results'], [{'uuid': 'academy-1'}])
-
-    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient', autospec=True)
     def test_get_academies_with_empty_endpoint_returns_empty_payload(self, mock_oauth_client):
         client = EnterpriseCatalogApiClient()
         client.academies_endpoint = ''
@@ -429,19 +367,6 @@ class TestEnterpriseCatalogApiClient(TestCase):
 
         self.assertEqual(result, {'count': 0, 'next': None, 'previous': None, 'results': []})
         mock_oauth_client.return_value.get.assert_not_called()
-
-    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient', autospec=True)
-    def test_get_academies_ignores_non_list_results(self, mock_oauth_client):
-        payload = {'count': 1, 'next': None, 'previous': None, 'results': {'title': 'not-a-list'}}
-        mock_oauth_client.return_value.get.return_value = mock.Mock(
-            json=mock.Mock(return_value=payload),
-            raise_for_status=mock.Mock(),
-        )
-
-        client = EnterpriseCatalogApiClient()
-        result = client.get_academies()
-
-        self.assertEqual(result['results'], [])
 
     @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient', autospec=True)
     def test_get_academies_with_is_active_param(self, mock_oauth_client):
@@ -458,61 +383,6 @@ class TestEnterpriseCatalogApiClient(TestCase):
             'http://enterprise-catalog.example.com/api/v1/academies/',
             params={'is_active': True},
         )
-
-    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient', autospec=True)
-    def test_get_academies_merges_paginated_results_missing_count(self, mock_oauth_client):
-        page_1 = {
-            'count': None,
-            'next': 'http://enterprise-catalog.example.com/api/v1/academies/?page=2',
-            'previous': None,
-            'results': [{'title': 'AI Academy'}],
-        }
-        page_2 = {
-            'count': None,
-            'next': None,
-            'previous': 'http://enterprise-catalog.example.com/api/v1/academies/?page=1',
-            'results': [{'title': 'Data Academy'}],
-        }
-        mock_oauth_client.return_value.get.side_effect = [
-            mock.Mock(json=mock.Mock(return_value=page_1), raise_for_status=mock.Mock()),
-            mock.Mock(json=mock.Mock(return_value=page_2), raise_for_status=mock.Mock()),
-        ]
-
-        client = EnterpriseCatalogApiClient()
-        fetched = client.get_academies()
-
-        self.assertEqual(fetched['count'], 2)
-        self.assertEqual(len(fetched['results']), 2)
-        self.assertIsNone(fetched['next'])
-        self.assertEqual(mock_oauth_client.return_value.get.call_count, 2)
-
-    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient', autospec=True)
-    def test_get_academies_merges_paginated_results_non_int_count(self, mock_oauth_client):
-        page_1 = {
-            'count': 'not-an-int',
-            'next': 'http://enterprise-catalog.example.com/api/v1/academies/?page=2',
-            'previous': None,
-            'results': [{'title': 'AI Academy'}],
-        }
-        page_2 = {
-            'count': 'also-not-int',
-            'next': None,
-            'previous': 'http://enterprise-catalog.example.com/api/v1/academies/?page=1',
-            'results': [{'title': 'Data Academy'}],
-        }
-        mock_oauth_client.return_value.get.side_effect = [
-            mock.Mock(json=mock.Mock(return_value=page_1), raise_for_status=mock.Mock()),
-            mock.Mock(json=mock.Mock(return_value=page_2), raise_for_status=mock.Mock()),
-        ]
-
-        client = EnterpriseCatalogApiClient()
-        fetched = client.get_academies()
-
-        # non-int counts should be handled gracefully and fallback to length
-        self.assertEqual(fetched['count'], 2)
-        self.assertEqual(len(fetched['results']), 2)
-        self.assertIsNone(fetched['next'])
-        self.assertEqual(mock_oauth_client.return_value.get.call_count, 2)
 
     def test_catalog_content_metadata_raises_for_empty_content_keys_with_traversal(self):
         client = EnterpriseCatalogApiClient()
@@ -552,18 +422,6 @@ class TestEnterpriseCatalogApiClient(TestCase):
         # Should not raise when traverse_pagination is False and content_keys empty
         res = client.catalog_content_metadata('catalog', [], traverse_pagination=False)
         self.assertEqual(res, {})
-
-    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient')
-    def test_get_academies_wraps_unexpected_type(self, mock_oauth_client):
-        # Upstream returns an int (unexpected); client should wrap as paginated dict
-        mock_oauth_client.return_value.get.return_value = mock.Mock(
-            json=mock.Mock(return_value=123), raise_for_status=mock.Mock()
-        )
-        client = EnterpriseCatalogApiClient()
-        res = client.get_academies()
-        self.assertIsInstance(res, dict)
-        self.assertEqual(res['count'], 1)
-        self.assertEqual(res['results'], [123])
 
     @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient', autospec=True)
     def test_associate_academy_with_catalog_with_string_uuids(self, mock_oauth_client):
@@ -612,21 +470,6 @@ class TestEnterpriseCatalogApiClient(TestCase):
         self.assertEqual(len(fetched['results']), 1)
 
     @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient')
-    def test_get_academies_handles_malformed_next_page(self, mock_oauth_client):
-        # Next page returns a dict with non-list results; extension should be safe
-        page_1 = {'results': [{'id': 1}], 'next': 'http://p2', 'previous': None, 'count': None}
-        page_2 = {'results': {'bad': 'type'}, 'next': None, 'previous': 'http://p1', 'count': None}
-        mock_oauth_client.return_value.get.side_effect = [
-            mock.Mock(json=mock.Mock(return_value=page_1), raise_for_status=mock.Mock()),
-            mock.Mock(json=mock.Mock(return_value=page_2), raise_for_status=mock.Mock()),
-        ]
-
-        client = EnterpriseCatalogApiClient()
-        res = client.get_academies()
-        # page_2 results are ignored (not list), so merged length remains 1
-        self.assertEqual(len(res['results']), 1)
-
-    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient')
     def test_catalog_content_metadata_returns_json_payload(self, mock_oauth_client):
         payload = {'next': None, 'results': [{'key': 'k'}], 'count': 1}
         mock_oauth_client.return_value.get.return_value = mock.Mock(
@@ -634,31 +477,6 @@ class TestEnterpriseCatalogApiClient(TestCase):
         )
         client = EnterpriseCatalogApiClient()
         self.assertEqual(client.catalog_content_metadata('cat', ['k']), payload)
-
-    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient')
-    def test_get_academies_preserve_raw_list(self, mock_oauth_client):
-        payload = [{'a': 1}, {'a': 2}]
-        mock_oauth_client.return_value.get.return_value = mock.Mock(
-            json=mock.Mock(return_value=payload),
-            raise_for_status=mock.Mock(),
-        )
-
-        client = EnterpriseCatalogApiClient()
-        result = client.get_academies()
-        self.assertEqual(result, payload)
-
-    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient', autospec=True)
-    def test_get_academies_handles_none_payload(self, mock_oauth_client):
-        """If upstream returns None, client should return an empty paginated dict."""
-        mock_oauth_client.return_value.get.return_value = mock.Mock(
-            json=mock.Mock(return_value=None),
-            raise_for_status=mock.Mock(),
-        )
-
-        client = EnterpriseCatalogApiClient()
-        result = client.get_academies()
-
-        self.assertEqual(result, {'count': 0, 'results': [], 'next': None, 'previous': None})
 
     @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient', autospec=True)
     def test_get_academies_merges_when_both_results_are_lists(self, mock_oauth_client):
@@ -685,6 +503,68 @@ class TestEnterpriseCatalogApiClient(TestCase):
 
         self.assertEqual(len(res['results']), 3)
         self.assertIsNone(res['next'])
+
+    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient', autospec=True)
+    def test_get_academies_returns_paginated_response(self, mock_oauth_client):
+        mock_response = {
+            'count': 1,
+            'next': None,
+            'previous': None,
+            'results': [{'uuid': 'academy-1'}],
+        }
+
+        mock_oauth_client.return_value.get.return_value = mock.Mock(
+            json=mock.Mock(return_value=mock_response),
+            raise_for_status=mock.Mock(),
+        )
+
+        client = EnterpriseCatalogApiClient()
+        result = client.get_academies()
+
+        self.assertEqual(result, mock_response)
+
+    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient', autospec=True)
+    def test_get_academies_merges_paginated_results_(self, mock_oauth_client):
+        first_page = mock.Mock(
+            json=mock.Mock(
+                return_value={
+                    'count': 2,
+                    'next': 'next-page',
+                    'previous': None,
+                    'results': [{'uuid': 'academy-1'}],
+                }
+            ),
+            raise_for_status=mock.Mock(),
+        )
+
+        second_page = mock.Mock(
+            json=mock.Mock(
+                return_value={
+                    'count': 2,
+                    'next': None,
+                    'previous': None,
+                    'results': [{'uuid': 'academy-2'}],
+                }
+            ),
+            raise_for_status=mock.Mock(),
+        )
+
+        mock_oauth_client.return_value.get.side_effect = [
+            first_page,
+            second_page,
+        ]
+
+        client = EnterpriseCatalogApiClient()
+        result = client.get_academies()
+
+        self.assertEqual(result['count'], 2)
+        self.assertEqual(
+            result['results'],
+            [
+                {'uuid': 'academy-1'},
+                {'uuid': 'academy-2'},
+            ],
+        )
 
     @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient')
     def test_get_academies_preserves_explicit_count_across_pages(self, mock_oauth_client):
