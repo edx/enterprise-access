@@ -10,7 +10,7 @@ from django.conf import settings
 from enterprise_access.apps.api_client.base_oauth import BaseOAuthClient
 from enterprise_access.apps.api_client.base_user import BaseUserApiClient
 from enterprise_access.apps.api_client.constants import autoretry_for_exceptions
-from enterprise_access.apps.api_client.utils import get_paginated_payloads
+from enterprise_access.apps.api_client.utils import fetch_all_results
 
 logger = logging.getLogger(__name__)
 
@@ -47,11 +47,12 @@ class EnterpriseCatalogApiClient(BaseOAuthClient):
     @backoff.on_exception(wait_gen=backoff.expo, exception=autoretry_for_exceptions)
     def get_academies(self, academy_uuid: str = None, is_active: bool | None = None) -> dict | list:
         """
-        Fetch a list of academies, optionally filtered by academy_uuid.
+        Fetch a list of academies.
 
-        Returns a paginated-style dict or a raw list depending on the upstream service.
-        If the response contains a `next` link, subsequent pages will be fetched and merged into a single
-        results list.
+        Optionally filters results by academy UUID and active status.
+
+        Returns:
+            dict: Paginated response containing academy results.
         """
         # Defensive: if no endpoint configured, return empty paginated shape
         if not self.academies_endpoint:
@@ -62,47 +63,7 @@ class EnterpriseCatalogApiClient(BaseOAuthClient):
             params['academy_uuid'] = academy_uuid
         if is_active is not None:
             params['is_active'] = bool(is_active)
-        response = self.client.get(self.academies_endpoint, params=params)
-        response.raise_for_status()
-
-        data = response.json()
-
-        next_url = data.get('next')
-
-        for next_payload in get_paginated_payloads(self.client, next_url, ):
-
-            next_data = next_payload
-
-            data["results"].extend(next_data.get("results", []))
-            data["next"] = next_data.get("next")
-            data["previous"] = data.get("previous") or next_data.get("previous")
-        return data
-
-    @backoff.on_exception(wait_gen=backoff.expo, exception=autoretry_for_exceptions)
-    def associate_academy_with_catalog(self, academy_uuid, enterprise_catalog_uuid):
-        """
-        Associate an academy with an enterprise catalog in enterprise-catalog.
-
-        Arguments:
-            academy_uuid (str|UUID): UUID of the academy to update.
-            enterprise_catalog_uuid (str|UUID): UUID of the enterprise catalog to associate.
-
-        Returns:
-            dict: Response payload, or an empty dict when the endpoint returns no body.
-        """
-        endpoint = urljoin(self.academies_endpoint, f'{academy_uuid}/associate-catalog/')
-        response = self.client.post(
-            endpoint,
-            json={'enterprise_catalog_uuid': str(enterprise_catalog_uuid)},
-        )
-        response.raise_for_status()
-        try:
-            return response.json()
-        except ValueError:
-            logger.warning(
-                "Failed to parse JSON response from Enterprise Catalog API."
-            )
-            return {}
+        return fetch_all_results(self.client, self.academies_endpoint, params=params)
 
     @backoff.on_exception(wait_gen=backoff.expo, exception=autoretry_for_exceptions)
     def contains_content_items(self, catalog_uuid, content_ids):
@@ -177,24 +138,17 @@ class EnterpriseCatalogApiClient(BaseOAuthClient):
     @backoff.on_exception(wait_gen=backoff.expo, exception=autoretry_for_exceptions)
     def get_catalogs(self, enterprise_customer_uuid: str = None) -> dict | list:
         """
-        Fetch a list of enterprise catalogs, optionally filtered by enterprise_customer_uuid.
+        Fetch a list of enterprise catalogs.
 
-        Returns a paginated-style dict or a raw list depending on the upstream service.
-        If the response contains a `next` link, subsequent pages will be fetched and merged into a single
-        results list.
+        Optionally filters results by enterprise_customer_uuid.
+
+        Returns:
+            dict: Paginated response containing enterprise catalog results.
         """
-        params = {'enterprise_customer': enterprise_customer_uuid} if enterprise_customer_uuid else None
-        response = self.client.get(self.enterprise_catalog_endpoint, params=params)
-        response.raise_for_status()
-        data = response.json()
-
-        # Fetch and Merge paginated results using the shared pagination helper
-        for next_payload in get_paginated_payloads(self.client, data.get("next")):
-            data['results'].extend(next_payload.get('results', []))
-            data['next'] = next_payload.get('next')
-            data['previous'] = data.get('previous') or next_payload.get('previous')
-
-        return data
+        params = {}
+        if enterprise_customer_uuid:
+            params['enterprise_customer'] = enterprise_customer_uuid
+        return fetch_all_results(self.client, self.enterprise_catalog_endpoint, params=params)
 
     def content_metadata(self, content_id):
         raise NotImplementedError('There is currently no v2 API implementation for this endpoint.')

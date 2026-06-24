@@ -3,29 +3,34 @@ Utility helpers for the API client implementation.
 """
 
 
-def get_paginated_payloads(client, next_url):
+def fetch_all_results(client, url, params=None):
     """
-    Iterate through paginated API responses.
-
-    Follows `next` links until all pages have been retrieved and yields
-    the JSON payload from each page response.
+    Fetch all paginated results.
 
     Args:
-        client: HTTP client instance.
-        next_url (str): Initial pagination URL.
+        client: HTTP client.
+        url (str): Endpoint URL.
+        params (dict | None): Optional query parameters.
 
-    Yields:
-        dict: Response payload for each page.
+    Returns:
+        dict: Response payload with all pages merged.
     """
-    payloads = []
+    if params is None:
+        params = {}
 
-    while next_url:
-        response = client.get(next_url)
+    response = client.get(url, params=params)
+    response.raise_for_status()
+
+    data = response.json()
+
+    while data.get("next"):
+        response = client.get(data["next"])
         response.raise_for_status()
 
-        payload = response.json()
-        payloads.append(payload)
+        page = response.json()
 
-        next_url = payload.get("next")
+        data["results"].extend(page.get("results", []))
+        data["next"] = page.get("next")
+        data["previous"] = data.get("previous") or page.get("previous")
 
-    return payloads
+    return data
