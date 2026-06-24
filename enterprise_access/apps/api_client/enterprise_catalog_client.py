@@ -1,6 +1,7 @@
 """
 API client for enterprise-catalog service.
 """
+import logging
 from urllib.parse import urljoin
 
 import backoff
@@ -10,6 +11,8 @@ from enterprise_access.apps.api_client.base_oauth import BaseOAuthClient
 from enterprise_access.apps.api_client.base_user import BaseUserApiClient
 from enterprise_access.apps.api_client.constants import autoretry_for_exceptions
 from enterprise_access.apps.api_client.utils import get_paginated_payloads
+
+logger = logging.getLogger(__name__)
 
 
 class EnterpriseCatalogApiClient(BaseOAuthClient):
@@ -59,8 +62,6 @@ class EnterpriseCatalogApiClient(BaseOAuthClient):
             params['academy_uuid'] = academy_uuid
         if is_active is not None:
             params['is_active'] = bool(is_active)
-        if not params:
-            params = None
         response = self.client.get(self.academies_endpoint, params=params)
         response.raise_for_status()
 
@@ -68,16 +69,13 @@ class EnterpriseCatalogApiClient(BaseOAuthClient):
 
         next_url = data.get('next')
 
-        while next_url:
-            next_resp = self.client.get(next_url)
-            next_resp.raise_for_status()
+        for next_payload in get_paginated_payloads(self.client, next_url, ):
 
-            next_data = next_resp.json()
-            data['results'].extend(next_data.get('results', []))
-            # update pagination markers
-            data['next'] = next_data.get('next')
-            data['previous'] = data.get('previous') or next_data.get('previous')
-            next_url = data.get('next')
+            next_data = next_payload
+
+            data["results"].extend(next_data.get("results", []))
+            data["next"] = next_data.get("next")
+            data["previous"] = data.get("previous") or next_data.get("previous")
         return data
 
     @backoff.on_exception(wait_gen=backoff.expo, exception=autoretry_for_exceptions)
@@ -101,6 +99,9 @@ class EnterpriseCatalogApiClient(BaseOAuthClient):
         try:
             return response.json()
         except ValueError:
+            logger.warning(
+                "Failed to parse JSON response from Enterprise Catalog API."
+            )
             return {}
 
     @backoff.on_exception(wait_gen=backoff.expo, exception=autoretry_for_exceptions)
@@ -185,62 +186,13 @@ class EnterpriseCatalogApiClient(BaseOAuthClient):
         params = {'enterprise_customer': enterprise_customer_uuid} if enterprise_customer_uuid else None
         response = self.client.get(self.enterprise_catalog_endpoint, params=params)
         response.raise_for_status()
-        raw_payload = response.json()
-
-        def normalize_page(payload):
-            """Normalize a response payload into a paginated dict.
-
-            This mirrors `get_academies()` defensive behavior so callers can
-            safely handle dict or list payloads from upstream services.
-            Returns a tuple of (paginated_dict, explicit_count_flag) when
-            payload is dict-like, or (list_payload, False) when payload is
-            a raw list. When payload is None, return an empty paginated shape
-            and False for explicit flag.
-            """
-            if payload is None:
-                return ({'count': 0, 'results': [], 'next': None, 'previous': None}, False)
-            if isinstance(payload, list):
-                return payload, False
-            if isinstance(payload, dict):
-                results = payload.get('results')
-                if not isinstance(results, list):
-                    results = []
-                raw_count = payload.get('count', None)
-                try:
-                    count = int(raw_count) if raw_count is not None else None
-                except (ValueError, TypeError):
-                    count = None
-                explicit_count = count is not None
-                if count is None:
-                    count = len(results)
-                return ({
-                    'count': count,
-                    'results': results,
-                    'next': payload.get('next'),
-                    'previous': payload.get('previous'),
-                }, explicit_count)
-            return ({'count': 1, 'results': [payload], 'next': None, 'previous': None}, False)
-
-        # Preserve raw list payloads
-        if isinstance(raw_payload, list):
-            return raw_payload
-
-        data, explicit = normalize_page(raw_payload)
+        data = response.json()
 
         # Fetch and Merge paginated results using the shared pagination helper
         for next_payload in get_paginated_payloads(self.client, data.get("next")):
-            next_data, next_explicit = normalize_page(next_payload)
-
-            if isinstance(data.get('results'), list) and isinstance(next_data.get('results'), list):
-                data['results'].extend(next_data.get('results', []))
-
-            data['next'] = next_data.get('next')
-            data['previous'] = data.get('previous') or next_data.get('previous')
-
-            explicit = explicit and next_explicit
-
-            if not explicit:
-                data['count'] = len(data.get('results', []))
+            data['results'].extend(next_payload.get('results', []))
+            data['next'] = next_payload.get('next')
+            data['previous'] = data.get('previous') or next_payload.get('previous')
 
         return data
 
