@@ -5,6 +5,7 @@ import json
 from unittest import mock
 
 import ddt
+import pytest
 from django.test import TestCase
 
 from enterprise_access.apps.prompts import api as prompts_api
@@ -32,7 +33,7 @@ class TestGetCurrentPrompt(TestCase):
             prompt_type='learner_intent',
         )
 
-        self.assertIs(result, prompt)
+        assert result is prompt
 
     def test_exact_prompt_type_passed_to_get_current(self):
         prompt_model = mock.Mock()
@@ -49,7 +50,7 @@ class TestGetCurrentPrompt(TestCase):
         prompt_model = mock.Mock()
         prompt_model.get_current.return_value = None
 
-        with self.assertRaises(prompts_api.PromptError):
+        with pytest.raises(prompts_api.PromptError):
             prompts_api.get_current_prompt(
                 prompt_model=prompt_model,
                 prompt_type='learner_intent',
@@ -59,7 +60,7 @@ class TestGetCurrentPrompt(TestCase):
         prompt_model = mock.Mock()
         prompt_model.get_current.return_value = None
 
-        with self.assertRaises(prompts_api.PromptError):
+        with pytest.raises(prompts_api.PromptError):
             prompts_api.get_current_prompt(
                 prompt_model=prompt_model,
                 prompt_type='recommendations_feedback',
@@ -83,7 +84,7 @@ class TestBuildSystemPrompt(TestCase):
     def test_strips_surrounding_whitespace(self):
         prompt = self._make_prompt('  Be helpful.  ')
         result = prompts_api.build_system_prompt(prompt)
-        self.assertEqual(result, 'Be helpful.')
+        assert result == 'Be helpful.'
 
     def test_non_empty_schema_appended(self):
         schema = {'type': 'object', 'properties': {'answer': {'type': 'string'}}}
@@ -91,8 +92,8 @@ class TestBuildSystemPrompt(TestCase):
 
         result = prompts_api.build_system_prompt(prompt)
 
-        self.assertIn('\n\nEXPECTED OUTPUT SCHEMA:\n', result)
-        self.assertIn(json.dumps(schema, indent=2, sort_keys=True), result)
+        assert '\n\nEXPECTED OUTPUT SCHEMA:\n' in result
+        assert json.dumps(schema, indent=2, sort_keys=True) in result
 
     @ddt.data(None, {})
     def test_empty_schema_not_appended(self, output_schema):
@@ -100,8 +101,8 @@ class TestBuildSystemPrompt(TestCase):
 
         result = prompts_api.build_system_prompt(prompt)
 
-        self.assertEqual(result, 'Be helpful.')
-        self.assertNotIn('EXPECTED OUTPUT SCHEMA:', result)
+        assert result == 'Be helpful.'
+        assert 'EXPECTED OUTPUT SCHEMA:' not in result
 
     def test_prompt_instance_not_mutated(self):
         schema = {'key': 'value'}
@@ -109,8 +110,8 @@ class TestBuildSystemPrompt(TestCase):
 
         prompts_api.build_system_prompt(prompt)
 
-        self.assertEqual(prompt.system_prompt, '  Original.  ')
-        self.assertIs(prompt.output_schema, schema)
+        assert prompt.system_prompt == '  Original.  '
+        assert prompt.output_schema is schema
 
 
 @ddt.ddt
@@ -120,18 +121,18 @@ class TestBuildMessages(TestCase):
     def test_builds_single_user_message_with_string_content(self):
         messages = prompts_api.build_messages({'name': 'Alice'})
 
-        self.assertEqual(messages, [
+        assert messages == [
             {'role': 'user', 'content': '{"name":"Alice"}'},
-        ])
-        self.assertIsInstance(messages[0]['content'], str)
+        ]
+        assert isinstance(messages[0]['content'], str)
 
     def test_content_is_compact_json(self):
         messages = prompts_api.build_messages({'name': 'Alice', 'count': 3})
         content = messages[0]['content']
 
-        self.assertNotIn(': ', content)
-        self.assertNotIn(', ', content)
-        self.assertEqual(json.loads(content), {'name': 'Alice', 'count': 3})
+        assert ': ' not in content
+        assert ', ' not in content
+        assert json.loads(content) == {'name': 'Alice', 'count': 3}
 
     def test_nested_json_round_trips(self):
         data = {
@@ -142,7 +143,7 @@ class TestBuildMessages(TestCase):
 
         messages = prompts_api.build_messages(data)
 
-        self.assertEqual(json.loads(messages[0]['content']), data)
+        assert json.loads(messages[0]['content']) == data
 
 
 @ddt.ddt
@@ -167,7 +168,7 @@ class TestSendXpertMessage(TestCase):
             prompt_type='learner_intent',
         )
 
-        self.assertEqual(result, mock_response)
+        assert result == mock_response
         mock_client_class.return_value.send_message.assert_called_once_with(
             system_prompt=self.system_prompt,
             messages=self.messages,
@@ -187,9 +188,7 @@ class TestSendXpertMessage(TestCase):
             tags=tags,
         )
 
-        self.assertIsNone(
-            mock_client_class.return_value.send_message.call_args.kwargs['tags'],
-        )
+        assert mock_client_class.return_value.send_message.call_args.kwargs['tags'] is None
 
     @mock.patch(PATCH_XPERT_CLIENT)
     def test_no_second_call_made(self, mock_client_class):
@@ -201,7 +200,7 @@ class TestSendXpertMessage(TestCase):
             conversation_id=self.conversation_id,
         )
 
-        self.assertEqual(mock_client_class.return_value.send_message.call_count, 1)
+        assert mock_client_class.return_value.send_message.call_count == 1
 
 
 @ddt.ddt
@@ -223,7 +222,7 @@ class TestSendXpertMessageErrors(TestCase):
         original = error_class('original error text')
         mock_client_class.return_value.send_message.side_effect = original
 
-        with self.assertRaises(prompts_api.PromptError) as ctx:
+        with pytest.raises(prompts_api.PromptError) as exc_info:
             prompts_api.send_xpert_message(
                 system_prompt='prompt',
                 messages=[],
@@ -231,9 +230,9 @@ class TestSendXpertMessageErrors(TestCase):
                 prompt_type='learner_intent',
             )
 
-        self.assertIs(ctx.exception.__cause__, original)
-        self.assertIn('original error text', str(ctx.exception))
-        self.assertEqual(mock_client_class.return_value.send_message.call_count, 1)
+        assert exc_info.value.__cause__ is original
+        assert 'original error text' in str(exc_info.value)
+        assert mock_client_class.return_value.send_message.call_count == 1
 
 
 @ddt.ddt
@@ -245,14 +244,14 @@ class TestExtractXpertContent(TestCase):
 
         result = prompts_api.extract_xpert_content(response)
 
-        self.assertEqual(result, '{"answer":"yes"}')
+        assert result == '{"answer":"yes"}'
 
     @ddt.data(
         {'role': 'assistant'},
         {'role': 'assistant', 'content': None},
     )
     def test_invalid_content_raises_error(self, response):
-        with self.assertRaises(prompts_api.PromptError):
+        with pytest.raises(prompts_api.PromptError):
             prompts_api.extract_xpert_content(response)
 
 
@@ -273,7 +272,7 @@ class TestParseJsonContent(TestCase):
     @ddt.unpack
     def test_valid_json_values_returned_unchanged(self, raw_content, expected):
         result = prompts_api.parse_json_content(raw_content)
-        self.assertEqual(result, expected)
+        assert result == expected
 
     @ddt.data(
         'not valid json',
@@ -283,11 +282,11 @@ class TestParseJsonContent(TestCase):
         '',
     )
     def test_invalid_or_fenced_json_raises_error(self, raw_content):
-        with self.assertRaises(prompts_api.PromptError):
+        with pytest.raises(prompts_api.PromptError):
             prompts_api.parse_json_content(raw_content)
 
     def test_invalid_json_exception_is_chained(self):
-        with self.assertRaises(prompts_api.PromptError) as ctx:
+        with pytest.raises(prompts_api.PromptError) as exc_info:
             prompts_api.parse_json_content('not valid json')
 
-        self.assertIsNotNone(ctx.exception.__cause__)
+        assert exc_info.value.__cause__ is not None

@@ -11,6 +11,7 @@ import uuid
 from unittest import mock
 
 import ddt
+import pytest
 from django.conf import settings as django_settings
 from django.core.cache import cache as django_cache
 from django.test import TestCase, override_settings
@@ -85,22 +86,22 @@ class TestPromptRequestException(TestCase):
 
     def test_status_code_is_500(self):
         exc = PromptRequestException('something went wrong')
-        self.assertEqual(exc.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
+        assert exc.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
 
     def test_detail_message_is_preserved(self):
         exc = PromptRequestException('something went wrong')
-        self.assertIn('something went wrong', str(exc.detail))
+        assert 'something went wrong' in str(exc.detail)
 
     def test_args_populated_with_message(self):
         exc = PromptRequestException('my error message')
-        self.assertEqual(exc.args[0], 'my error message')
+        assert exc.args[0] == 'my error message'
 
     def test_exception_chaining_preserved(self):
         original = prompts_api.PromptError('original error')
         try:
             raise PromptRequestException('wrapped') from original
         except PromptRequestException as exc:
-            self.assertIs(exc.__cause__, original)
+            assert exc.__cause__ is original
 
 
 @ddt.ddt
@@ -113,12 +114,12 @@ class TestValidateRequest(TestCase):
     def test_valid_data_returns_validated_data(self):
         request = _make_request({'name': 'Alice', 'count': 3})
         result = self.viewset._validate_request(request, _SampleSerializer)
-        self.assertEqual(result, {'name': 'Alice', 'count': 3})
+        assert result == {'name': 'Alice', 'count': 3}
 
     def test_valid_data_with_defaults(self):
         request = _make_request({'name': 'Bob'})
         result = self.viewset._validate_request(request, _SampleSerializer)
-        self.assertEqual(result, {'name': 'Bob', 'count': 0})
+        assert result == {'name': 'Bob', 'count': 0}
 
     @ddt.ddt
     class _Unused:
@@ -130,9 +131,9 @@ class TestValidateRequest(TestCase):
     )
     def test_invalid_data_raises_validation_error(self, payload):
         request = _make_request(payload)
-        with self.assertRaises(ValidationError) as ctx:
+        with pytest.raises(ValidationError) as exc_info:
             self.viewset._validate_request(request, _SampleSerializer)
-        self.assertEqual(ctx.exception.status_code, status.HTTP_400_BAD_REQUEST)
+        assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
 
     def test_serializer_context_includes_request_format_and_view(self):
         request = _make_request({'name': 'Test'})
@@ -145,9 +146,9 @@ class TestValidateRequest(TestCase):
 
         self.viewset._validate_request(request, ContextCapturingSerializer)
 
-        self.assertIs(captured['context']['request'], request)
-        self.assertIs(captured['context']['view'], self.viewset)
-        self.assertIn('format', captured['context'])
+        assert captured['context']['request'] is request
+        assert captured['context']['view'] is self.viewset
+        assert 'format' in captured['context']
 # Domain logic tests are in enterprise_access.apps.prompts.tests.test_api.
 # This test module focuses on HTTP-layer behavior in viewsets.
 
@@ -165,31 +166,31 @@ class TestLearningIntentRequestSerializer(TestCase):
 
     def test_valid_payload_succeeds(self):
         s = api_serializers.LearningIntentRequestSerializer(data=self._valid())
-        self.assertTrue(s.is_valid(), s.errors)
+        assert s.is_valid()
 
     @ddt.data('selected_goals', 'free_text', 'known_context')
     def test_missing_field_fails(self, field):
         data = self._valid()
         del data[field]
         s = api_serializers.LearningIntentRequestSerializer(data=data)
-        self.assertFalse(s.is_valid())
-        self.assertIn(field, s.errors)
+        assert not s.is_valid()
+        assert field in s.errors
 
     @ddt.data('selected_goals', 'free_text', 'known_context')
     def test_blank_field_fails(self, field):
         data = self._valid()
         data[field] = ''
         s = api_serializers.LearningIntentRequestSerializer(data=data)
-        self.assertFalse(s.is_valid())
-        self.assertIn(field, s.errors)
+        assert not s.is_valid()
+        assert field in s.errors
 
     @ddt.data('selected_goals', 'free_text', 'known_context')
     def test_whitespace_only_field_fails(self, field):
         data = self._valid()
         data[field] = '   '
         s = api_serializers.LearningIntentRequestSerializer(data=data)
-        self.assertFalse(s.is_valid())
-        self.assertIn(field, s.errors)
+        assert not s.is_valid()
+        assert field in s.errors
 
     @ddt.data(
         ('selected_goals', 123),
@@ -204,10 +205,10 @@ class TestLearningIntentRequestSerializer(TestCase):
         # DRF CharField coerces non-strings; result must still be non-blank.
         # 123 → '123' (valid), [] → '' (invalid blank), {} → repr (valid)
         if s.is_valid():
-            self.assertIsInstance(s.validated_data[field], str)
-            self.assertGreater(len(s.validated_data[field]), 0)
+            assert isinstance(s.validated_data[field], str)
+            assert len(s.validated_data[field]) > 0
         else:
-            self.assertIn(field, s.errors)
+            assert field in s.errors
 
 
 # ---------------------------------------------------------------------------
@@ -219,15 +220,15 @@ class TestLearnerPathwaysRouting(TestCase):
 
     def test_learning_intent_url_reverses(self):
         url = reverse(_LEARNING_INTENT_URL_NAME)
-        self.assertIn('learner-pathways', url)
-        self.assertIn('learning-intent', url)
+        assert 'learner-pathways' in url
+        assert 'learning-intent' in url
 
     def test_learning_intent_post_accepted(self):
         client = APIClient()
         url = reverse(_LEARNING_INTENT_URL_NAME)
         response = client.post(url, data={}, format='json')
         # Unauthenticated — 401 or 403, but NOT 405.
-        self.assertNotEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+        assert response.status_code != status.HTTP_405_METHOD_NOT_ALLOWED
 
     def test_learning_intent_get_rejected(self):
         url = reverse(_LEARNING_INTENT_URL_NAME)
@@ -235,7 +236,7 @@ class TestLearnerPathwaysRouting(TestCase):
         user = UserFactory(is_active=True)
         client.force_authenticate(user=user)
         response = client.get(url)
-        self.assertEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+        assert response.status_code == status.HTTP_405_METHOD_NOT_ALLOWED
 
 
 # ---------------------------------------------------------------------------
@@ -251,30 +252,30 @@ class TestLearnerPathwaysRouteConfig(TestCase):
 
     def test_learning_intent_authentication_classes(self):
         ac = self._get_action('learning_intent').kwargs.get('authentication_classes', ())
-        self.assertIn(JwtAuthentication, ac)
+        assert JwtAuthentication in ac
 
     def test_learning_intent_is_authenticated_permission(self):
         pc = self._get_action('learning_intent').kwargs.get('permission_classes', ())
-        self.assertIn(permissions.IsAuthenticated, pc)
+        assert permissions.IsAuthenticated in pc
 
     def test_learning_intent_throttle_class(self):
         tc = self._get_action('learning_intent').kwargs.get('throttle_classes', ())
-        self.assertIn(ScopedRateThrottle, tc)
+        assert ScopedRateThrottle in tc
 
     def test_learning_intent_throttle_scope(self):
         scope = self._get_action('learning_intent').kwargs.get('throttle_scope')
-        self.assertEqual(scope, 'learner_pathways_learning_intent')
+        assert scope == 'learner_pathways_learning_intent'
 
     def test_no_throttle_on_base_prompt_viewset(self):
         # throttle_classes must not be explicitly defined on BasePromptViewSet itself
-        self.assertNotIn('throttle_classes', BasePromptViewSet.__dict__)
-        self.assertNotIn('throttle_scope', BasePromptViewSet.__dict__)
+        assert 'throttle_classes' not in BasePromptViewSet.__dict__
+        assert 'throttle_scope' not in BasePromptViewSet.__dict__
 
     def test_no_class_level_throttle_classes_on_learner_pathways_viewset(self):
-        self.assertNotIn('throttle_classes', LearnerPathwaysViewSet.__dict__)
+        assert 'throttle_classes' not in LearnerPathwaysViewSet.__dict__
 
     def test_throttle_scope_sentinel_is_none(self):
-        self.assertIsNone(LearnerPathwaysViewSet.throttle_scope)
+        assert LearnerPathwaysViewSet.throttle_scope is None
 
 
 # ---------------------------------------------------------------------------
@@ -302,10 +303,10 @@ class TestLearnerPathwaysAuthorization(APITest):
         self.client.cookies.clear()
         url = reverse(url_name)
         response = self.client.post(url, data={}, format='json')
-        self.assertIn(response.status_code, [
+        assert response.status_code in [
             status.HTTP_401_UNAUTHORIZED,
             status.HTTP_403_FORBIDDEN,
-        ])
+        ]
 
     @ddt.data(
         (_LEARNING_INTENT_URL_NAME, _VALID_LEARNING_INTENT_PAYLOAD),
@@ -325,7 +326,7 @@ class TestLearnerPathwaysAuthorization(APITest):
         }])
         url = reverse(url_name)
         response = self.client.post(url, data=payload, format='json')
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        assert response.status_code == status.HTTP_200_OK
 
     @ddt.data(_LEARNING_INTENT_URL_NAME)
     @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
@@ -366,7 +367,7 @@ class TestLearnerPathwaysThrottle(APITest):
 
     def test_learning_intent_scope_in_default_throttle_rates(self):
         rates = django_settings.REST_FRAMEWORK.get('DEFAULT_THROTTLE_RATES', {})
-        self.assertIn('learner_pathways_learning_intent', rates)
+        assert 'learner_pathways_learning_intent' in rates
 
     @mock.patch.object(ScopedRateThrottle, 'THROTTLE_RATES', {
         'learner_pathways_learning_intent': '2/minute',
@@ -379,9 +380,9 @@ class TestLearnerPathwaysThrottle(APITest):
         url = reverse(_LEARNING_INTENT_URL_NAME)
         for _ in range(2):
             resp = self.client.post(url, data=_VALID_LEARNING_INTENT_PAYLOAD, format='json')
-            self.assertEqual(resp.status_code, status.HTTP_200_OK)
+            assert resp.status_code == status.HTTP_200_OK
         resp = self.client.post(url, data=_VALID_LEARNING_INTENT_PAYLOAD, format='json')
-        self.assertEqual(resp.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+        assert resp.status_code == status.HTTP_429_TOO_MANY_REQUESTS
 
 
 # ---------------------------------------------------------------------------
@@ -417,7 +418,7 @@ class TestLearningIntentHappyPath(APITest):
             'content': '{"skills_required":["python"]}',
         }
         resp = self.client.post(self.url, data=_VALID_LEARNING_INTENT_PAYLOAD, format='json')
-        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        assert resp.status_code == status.HTTP_200_OK
 
     @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
     def test_correct_prompt_type_used(self, mock_client_class):
@@ -444,7 +445,7 @@ class TestLearningIntentHappyPath(APITest):
         with override_settings(XPERT_LEARNER_PATHWAYS_RAG_TAGS=['tag-a', 'tag-b']):
             self.client.post(self.url, data=_VALID_LEARNING_INTENT_PAYLOAD, format='json')
         call_kwargs = mock_client_class.return_value.send_message.call_args.kwargs
-        self.assertEqual(call_kwargs['tags'], ['tag-a', 'tag-b'])
+        assert call_kwargs['tags'] == ['tag-a', 'tag-b']
 
     @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
     def test_xpert_called_exactly_once(self, mock_client_class):
@@ -452,7 +453,7 @@ class TestLearningIntentHappyPath(APITest):
             'role': 'assistant', 'content': '{"r":1}',
         }
         self.client.post(self.url, data=_VALID_LEARNING_INTENT_PAYLOAD, format='json')
-        self.assertEqual(mock_client_class.return_value.send_message.call_count, 1)
+        assert mock_client_class.return_value.send_message.call_count == 1
 
     @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
     def test_full_parsed_json_returned(self, mock_client_class):
@@ -462,8 +463,8 @@ class TestLearningIntentHappyPath(APITest):
             'content': payload_json,
         }
         resp = self.client.post(self.url, data=_VALID_LEARNING_INTENT_PAYLOAD, format='json')
-        self.assertEqual(resp.status_code, status.HTTP_200_OK)
-        self.assertEqual(resp.json(), json.loads(payload_json))
+        assert resp.status_code == status.HTTP_200_OK
+        assert resp.json() == json.loads(payload_json)
 
     @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
     def test_validated_data_encoded_as_user_message(self, mock_client_class):
@@ -473,11 +474,11 @@ class TestLearningIntentHappyPath(APITest):
         self.client.post(self.url, data=_VALID_LEARNING_INTENT_PAYLOAD, format='json')
         call_kwargs = mock_client_class.return_value.send_message.call_args.kwargs
         messages = call_kwargs['messages']
-        self.assertEqual(len(messages), 1)
-        self.assertEqual(messages[0]['role'], 'user')
-        self.assertIsInstance(messages[0]['content'], str)
+        assert len(messages) == 1
+        assert messages[0]['role'] == 'user'
+        assert isinstance(messages[0]['content'], str)
         parsed = json.loads(messages[0]['content'])
-        self.assertEqual(parsed['selected_goals'], _VALID_LEARNING_INTENT_PAYLOAD['selected_goals'])
+        assert parsed['selected_goals'] == _VALID_LEARNING_INTENT_PAYLOAD['selected_goals']
 
     @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
     def test_conversation_id_has_prefix(self, mock_client_class):
@@ -486,7 +487,7 @@ class TestLearningIntentHappyPath(APITest):
         }
         self.client.post(self.url, data=_VALID_LEARNING_INTENT_PAYLOAD, format='json')
         call_kwargs = mock_client_class.return_value.send_message.call_args.kwargs
-        self.assertTrue(call_kwargs['conversation_id'].startswith('enterprise-access:'))
+        assert call_kwargs['conversation_id'].startswith('enterprise-access:')
 
     @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
     def test_role_field_not_returned(self, mock_client_class):
@@ -495,7 +496,7 @@ class TestLearningIntentHappyPath(APITest):
             'content': '{"answer":"yes"}',
         }
         resp = self.client.post(self.url, data=_VALID_LEARNING_INTENT_PAYLOAD, format='json')
-        self.assertNotIn('role', resp.json())
+        assert 'role' not in resp.json()
 
 
 # ---------------------------------------------------------------------------
@@ -534,8 +535,8 @@ class TestLearnerPathwaysResponsePassthrough(APITest):
             'content': '{"result":"ok","extra_field":"preserved"}',
         }
         resp = self.client.post(reverse(url_name), data=payload, format='json')
-        self.assertEqual(resp.status_code, status.HTTP_200_OK)
-        self.assertIn('extra_field', resp.json())
+        assert resp.status_code == status.HTTP_200_OK
+        assert 'extra_field' in resp.json()
 
     @ddt.data(
         ('learning_intent', _LEARNING_INTENT_URL_NAME, _VALID_LEARNING_INTENT_PAYLOAD),
@@ -550,8 +551,8 @@ class TestLearnerPathwaysResponsePassthrough(APITest):
             'content': '[1,2,3]',
         }
         resp = self.client.post(reverse(url_name), data=payload, format='json')
-        self.assertEqual(resp.status_code, status.HTTP_200_OK)
-        self.assertIsInstance(resp.json(), list)
+        assert resp.status_code == status.HTTP_200_OK
+        assert isinstance(resp.json(), list)
 
     @ddt.data(
         ('learning_intent', _LEARNING_INTENT_URL_NAME, _VALID_LEARNING_INTENT_PAYLOAD),
@@ -567,8 +568,8 @@ class TestLearnerPathwaysResponsePassthrough(APITest):
             'content': json.dumps(nested),
         }
         resp = self.client.post(reverse(url_name), data=payload, format='json')
-        self.assertEqual(resp.status_code, status.HTTP_200_OK)
-        self.assertEqual(resp.json(), nested)
+        assert resp.status_code == status.HTTP_200_OK
+        assert resp.json() == nested
 
 
 # ---------------------------------------------------------------------------
@@ -601,7 +602,7 @@ class TestLearnerPathwaysFailures(APITest):
     def test_missing_prompt_returns_500(self, url_name, payload):
         with mock.patch.object(XpertLearnerPathwaysSystemPrompt, 'get_current', return_value=None):
             resp = self.client.post(reverse(url_name), data=payload, format='json')
-        self.assertEqual(resp.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
+        assert resp.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
 
     @ddt.data(
         XpertAPIConfigurationError,
@@ -616,7 +617,7 @@ class TestLearnerPathwaysFailures(APITest):
             data=_VALID_LEARNING_INTENT_PAYLOAD,
             format='json',
         )
-        self.assertEqual(resp.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
+        assert resp.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
 
     @ddt.data(
         ('missing', {'role': 'assistant'}),
@@ -633,7 +634,7 @@ class TestLearnerPathwaysFailures(APITest):
             data=_VALID_LEARNING_INTENT_PAYLOAD,
             format='json',
         )
-        self.assertEqual(resp.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
+        assert resp.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
 
     @ddt.data(
         'not valid json',
@@ -650,7 +651,7 @@ class TestLearnerPathwaysFailures(APITest):
             data=_VALID_LEARNING_INTENT_PAYLOAD,
             format='json',
         )
-        self.assertEqual(resp.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
+        assert resp.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
 
     @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
     def test_no_second_xpert_call_on_failure(self, mock_client_class):
@@ -660,7 +661,7 @@ class TestLearnerPathwaysFailures(APITest):
             data=_VALID_LEARNING_INTENT_PAYLOAD,
             format='json',
         )
-        self.assertEqual(mock_client_class.return_value.send_message.call_count, 1)
+        assert mock_client_class.return_value.send_message.call_count == 1
 
     @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
     def test_no_fallback_object_returned(self, mock_client_class):
@@ -670,8 +671,8 @@ class TestLearnerPathwaysFailures(APITest):
             data=_VALID_LEARNING_INTENT_PAYLOAD,
             format='json',
         )
-        self.assertEqual(resp.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
+        assert resp.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
         if resp.get('Content-Type', '').startswith('application/json'):
             body = resp.json()
-            self.assertNotIn('skills_required', body)
-            self.assertNotIn('reasons', body)
+            assert 'skills_required' not in body
+            assert 'reasons' not in body
