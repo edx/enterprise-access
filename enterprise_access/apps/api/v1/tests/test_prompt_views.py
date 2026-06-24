@@ -1,5 +1,9 @@
 """
-Tests for BasePromptViewSet, PromptRequestException, and LearnerPathwaysViewSet.
+Tests for PromptRequestException, BasePromptViewSet, and LearnerPathwaysViewSet.
+
+Domain logic tests are in enterprise_access.apps.prompts.tests.test_api.
+This module focuses on HTTP-layer behavior: validation, permission checks,
+throttling, error mapping, and response serialization.
 """
 # pylint: disable=protected-access
 import json
@@ -21,9 +25,9 @@ from enterprise_access.apps.api import serializers as api_serializers
 from enterprise_access.apps.api.v1.views.prompt import BasePromptViewSet, LearnerPathwaysViewSet, PromptRequestException
 from enterprise_access.apps.core.constants import SYSTEM_ENTERPRISE_LEARNER_ROLE
 from enterprise_access.apps.core.tests.factories import UserFactory
+from enterprise_access.apps.prompts import api as prompts_api
 from enterprise_access.apps.prompts.api_client import (
     XpertAPIConfigurationError,
-    XpertAPIError,
     XpertAPIRequestError,
     XpertAPIResponseError
 )
@@ -31,7 +35,7 @@ from enterprise_access.apps.prompts.models import PromptType, XpertLearnerPathwa
 from enterprise_access.apps.prompts.tests.factories import XpertLearnerPathwaysSystemPromptFactory
 from test_utils import APITest
 
-PATCH_XPERT_CLIENT = 'enterprise_access.apps.api.v1.views.prompt.XpertAPIClient'
+PATCH_PROMPTS_API = 'enterprise_access.apps.api.v1.views.prompt.prompts_api'
 PATCH_GET_REQUEST_ID = 'enterprise_access.apps.api.v1.views.prompt.get_request_id'
 PATCH_UUID4 = 'enterprise_access.apps.api.v1.views.prompt.uuid_module.uuid4'
 
@@ -92,7 +96,7 @@ class TestPromptRequestException(TestCase):
         self.assertEqual(exc.args[0], 'my error message')
 
     def test_exception_chaining_preserved(self):
-        original = XpertAPIError('original error')
+        original = prompts_api.PromptError('original error')
         try:
             raise PromptRequestException('wrapped') from original
         except PromptRequestException as exc:
@@ -144,367 +148,8 @@ class TestValidateRequest(TestCase):
         self.assertIs(captured['context']['request'], request)
         self.assertIs(captured['context']['view'], self.viewset)
         self.assertIn('format', captured['context'])
-
-
-@ddt.ddt
-class TestGetCurrentPrompt(TestCase):
-    """Tests for _get_current_prompt."""
-
-    def setUp(self):
-        self.viewset = _make_viewset()
-
-    def test_returns_prompt_when_found(self):
-        prompt = mock.Mock()
-        prompt_model = mock.Mock()
-        prompt_model.get_current.return_value = prompt
-
-        result = self.viewset._get_current_prompt(
-            prompt_model=prompt_model,
-            prompt_type='learner_intent',
-        )
-
-        self.assertIs(result, prompt)
-
-    def test_exact_prompt_type_passed_to_get_current(self):
-        prompt_model = mock.Mock()
-        prompt_model.get_current.return_value = mock.Mock()
-
-        self.viewset._get_current_prompt(
-            prompt_model=prompt_model,
-            prompt_type='learner_intent',
-        )
-
-        prompt_model.get_current.assert_called_once_with(prompt_type='learner_intent')
-
-    def test_missing_prompt_raises_500(self):
-        prompt_model = mock.Mock()
-        prompt_model.get_current.return_value = None
-
-        with self.assertRaises(PromptRequestException) as ctx:
-            self.viewset._get_current_prompt(
-                prompt_model=prompt_model,
-                prompt_type='learner_intent',
-            )
-
-        self.assertEqual(ctx.exception.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    def test_prompt_for_another_type_cannot_satisfy_lookup(self):
-        prompt_model = mock.Mock()
-        prompt_model.get_current.return_value = None
-
-        with self.assertRaises(PromptRequestException):
-            self.viewset._get_current_prompt(
-                prompt_model=prompt_model,
-                prompt_type='recommendations_feedback',
-            )
-
-        prompt_model.get_current.assert_called_once_with(
-            prompt_type='recommendations_feedback',
-        )
-
-
-@ddt.ddt
-class TestBuildSystemPrompt(TestCase):
-    """Tests for _build_system_prompt."""
-
-    def setUp(self):
-        self.viewset = _make_viewset()
-
-    def _make_prompt(self, system_prompt, output_schema=None):
-        prompt = mock.Mock()
-        prompt.system_prompt = system_prompt
-        prompt.output_schema = output_schema
-        return prompt
-
-    def test_strips_surrounding_whitespace(self):
-        prompt = self._make_prompt('  Be helpful.  ')
-        result = self.viewset._build_system_prompt(prompt)
-        self.assertEqual(result, 'Be helpful.')
-
-    def test_non_empty_schema_appended(self):
-        schema = {'type': 'object', 'properties': {'answer': {'type': 'string'}}}
-        prompt = self._make_prompt('Be helpful.', output_schema=schema)
-
-        result = self.viewset._build_system_prompt(prompt)
-
-        self.assertIn('\n\nEXPECTED OUTPUT SCHEMA:\n', result)
-        self.assertIn(json.dumps(schema, indent=2, sort_keys=True), result)
-
-    @ddt.data(None, {})
-    def test_empty_schema_not_appended(self, output_schema):
-        prompt = self._make_prompt('Be helpful.', output_schema=output_schema)
-
-        result = self.viewset._build_system_prompt(prompt)
-
-        self.assertEqual(result, 'Be helpful.')
-        self.assertNotIn('EXPECTED OUTPUT SCHEMA:', result)
-
-    def test_prompt_instance_not_mutated(self):
-        schema = {'key': 'value'}
-        prompt = self._make_prompt('  Original.  ', output_schema=schema)
-
-        self.viewset._build_system_prompt(prompt)
-
-        self.assertEqual(prompt.system_prompt, '  Original.  ')
-        self.assertIs(prompt.output_schema, schema)
-
-
-@ddt.ddt
-class TestBuildMessages(TestCase):
-    """Tests for _build_messages."""
-
-    def setUp(self):
-        self.viewset = _make_viewset()
-
-    def test_builds_single_user_message_with_string_content(self):
-        messages = self.viewset._build_messages({'name': 'Alice'})
-
-        self.assertEqual(messages, [
-            {'role': 'user', 'content': '{"name":"Alice"}'},
-        ])
-        self.assertIsInstance(messages[0]['content'], str)
-
-    def test_content_is_compact_json(self):
-        messages = self.viewset._build_messages({'name': 'Alice', 'count': 3})
-        content = messages[0]['content']
-
-        self.assertNotIn(': ', content)
-        self.assertNotIn(', ', content)
-        self.assertEqual(json.loads(content), {'name': 'Alice', 'count': 3})
-
-    def test_nested_json_round_trips(self):
-        data = {
-            'name': 'Alice',
-            'items': [1, 2, 3],
-            'metadata': {'active': True, 'notes': None},
-        }
-
-        messages = self.viewset._build_messages(data)
-
-        self.assertEqual(json.loads(messages[0]['content']), data)
-
-
-@ddt.ddt
-class TestGetConversationId(TestCase):
-    """Tests for _get_conversation_id."""
-
-    def setUp(self):
-        self.viewset = _make_viewset()
-
-    @mock.patch(PATCH_GET_REQUEST_ID, return_value='from-crum')
-    def test_repo_request_id_helper_takes_precedence(self, mock_get_request_id):
-        request = _make_request(headers={'X-Request-ID': 'from-header'})
-
-        result = self.viewset._get_conversation_id(request)
-
-        self.assertEqual(result, 'enterprise-access:from-crum')
-        mock_get_request_id.assert_called_once_with()
-
-    @mock.patch(PATCH_GET_REQUEST_ID, return_value=None)
-    def test_header_used_when_repo_helper_returns_none(self, mock_get_request_id):
-        request = _make_request(headers={'X-Request-ID': 'from-header'})
-
-        result = self.viewset._get_conversation_id(request)
-
-        self.assertEqual(result, 'enterprise-access:from-header')
-        mock_get_request_id.assert_called_once_with()
-
-    @mock.patch(PATCH_UUID4, return_value='generated-uuid')
-    @mock.patch(PATCH_GET_REQUEST_ID, return_value=None)
-    def test_uuid_generated_when_no_request_id(self, mock_get_request_id, mock_uuid4):
-        request = _make_request(headers={})
-
-        result = self.viewset._get_conversation_id(request)
-
-        self.assertEqual(result, 'enterprise-access:generated-uuid')
-        mock_get_request_id.assert_called_once_with()
-        mock_uuid4.assert_called_once_with()
-
-    @ddt.data(
-        ('from-crum', {'X-Request-ID': 'from-header'}),
-        (None, {'X-Request-ID': 'from-header'}),
-        (None, {}),
-    )
-    @ddt.unpack
-    def test_result_always_has_prefix(self, helper_value, headers):
-        request = _make_request(headers=headers)
-
-        with mock.patch(PATCH_GET_REQUEST_ID, return_value=helper_value):
-            result = self.viewset._get_conversation_id(request)
-
-        self.assertTrue(result.startswith('enterprise-access:'))
-
-
-@ddt.ddt
-class TestSendXpertMessage(TestCase):
-    """Tests for _send_xpert_message."""
-
-    def setUp(self):
-        self.viewset = _make_viewset()
-        self.system_prompt = 'You are helpful.'
-        self.messages = [{'role': 'user', 'content': '{"q":1}'}]
-        self.conversation_id = 'enterprise-access:test-123'
-
-    @mock.patch(PATCH_XPERT_CLIENT)
-    def test_client_called_once_with_correct_args(self, mock_client_class):
-        mock_response = {'role': 'assistant', 'content': '{"answer":"yes"}'}
-        mock_client_class.return_value.send_message.return_value = mock_response
-
-        result = self.viewset._send_xpert_message(
-            system_prompt=self.system_prompt,
-            messages=self.messages,
-            conversation_id=self.conversation_id,
-            tags=('tag1', 'tag2'),
-            prompt_type='learner_intent',
-        )
-
-        self.assertEqual(result, mock_response)
-        mock_client_class.return_value.send_message.assert_called_once_with(
-            system_prompt=self.system_prompt,
-            messages=self.messages,
-            conversation_id=self.conversation_id,
-            tags=['tag1', 'tag2'],
-        )
-
-    @ddt.data(None, [], ())
-    @mock.patch(PATCH_XPERT_CLIENT)
-    def test_empty_tags_passed_as_none(self, tags, mock_client_class):
-        mock_client_class.return_value.send_message.return_value = {}
-
-        self.viewset._send_xpert_message(
-            system_prompt=self.system_prompt,
-            messages=self.messages,
-            conversation_id=self.conversation_id,
-            tags=tags,
-        )
-
-        self.assertIsNone(
-            mock_client_class.return_value.send_message.call_args.kwargs['tags'],
-        )
-
-    @mock.patch(PATCH_XPERT_CLIENT)
-    def test_no_second_call_made(self, mock_client_class):
-        mock_client_class.return_value.send_message.return_value = {}
-
-        self.viewset._send_xpert_message(
-            system_prompt=self.system_prompt,
-            messages=self.messages,
-            conversation_id=self.conversation_id,
-        )
-
-        self.assertEqual(mock_client_class.return_value.send_message.call_count, 1)
-
-
-@ddt.ddt
-class TestSendXpertMessageErrors(TestCase):
-    """Tests for XpertAPIError mapping."""
-
-    def setUp(self):
-        self.viewset = _make_viewset()
-
-    @ddt.data(
-        XpertAPIError,
-        XpertAPIConfigurationError,
-        XpertAPIRequestError,
-        XpertAPIResponseError,
-    )
-    @mock.patch(PATCH_XPERT_CLIENT)
-    def test_xpert_errors_become_prompt_request_exception(
-        self,
-        error_class,
-        mock_client_class,
-    ):
-        original = error_class('original error text')
-        mock_client_class.return_value.send_message.side_effect = original
-
-        with self.assertRaises(PromptRequestException) as ctx:
-            self.viewset._send_xpert_message(
-                system_prompt='prompt',
-                messages=[],
-                conversation_id='enterprise-access:x',
-                prompt_type='learner_intent',
-            )
-
-        self.assertEqual(ctx.exception.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
-        self.assertIs(ctx.exception.__cause__, original)
-        self.assertIn('original error text', ctx.exception.args[0])
-        self.assertEqual(mock_client_class.return_value.send_message.call_count, 1)
-
-
-@ddt.ddt
-class TestExtractXpertContent(TestCase):
-    """Tests for _extract_xpert_content."""
-
-    def setUp(self):
-        self.viewset = _make_viewset()
-
-    def test_valid_response_returns_content_string(self):
-        response = {'role': 'assistant', 'content': '{"answer":"yes"}'}
-
-        result = self.viewset._extract_xpert_content(response)
-
-        self.assertEqual(result, '{"answer":"yes"}')
-
-    @ddt.data(
-        {'role': 'assistant'},
-        {'role': 'assistant', 'content': None},
-    )
-    def test_invalid_content_raises_500(self, response):
-        with self.assertRaises(PromptRequestException) as ctx:
-            self.viewset._extract_xpert_content(response)
-
-        self.assertEqual(ctx.exception.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-@ddt.ddt
-class TestParseJsonContent(TestCase):
-    """Tests for _parse_json_content."""
-
-    def setUp(self):
-        self.viewset = _make_viewset()
-
-    @ddt.data(
-        ('{"answer":42}', {'answer': 42}),
-        ('[1,2,3]', [1, 2, 3]),
-        ('"hello"', 'hello'),
-        ('99', 99),
-        ('false', False),
-        ('true', True),
-        ('null', None),
-        ('  {"trimmed":true}  ', {'trimmed': True}),
-    )
-    @ddt.unpack
-    def test_valid_json_values_returned_unchanged(self, raw_content, expected):
-        result = self.viewset._parse_json_content(raw_content)
-        self.assertEqual(result, expected)
-
-    @ddt.data(
-        'not valid json',
-        '```json\n{"key":"value"}\n```',
-        '```\n{"key":"value"}\n```',
-        '{"unterminated": true',
-        '',
-    )
-    def test_invalid_or_fenced_json_raises_500(self, raw_content):
-        with self.assertRaises(PromptRequestException) as ctx:
-            self.viewset._parse_json_content(raw_content)
-
-        self.assertEqual(ctx.exception.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    def test_invalid_json_exception_is_chained(self):
-        with self.assertRaises(PromptRequestException) as ctx:
-            self.viewset._parse_json_content('not valid json')
-
-        self.assertIsNotNone(ctx.exception.__cause__)
-        self.assertIsInstance(ctx.exception.__cause__, json.JSONDecodeError)
-
-    def test_no_repair_or_fallback_on_bad_json(self):
-        with self.assertRaises(PromptRequestException):
-            self.viewset._parse_json_content('garbage')
-
-    def test_parse_json_content_requires_string_contract(self):
-        with self.assertRaises(AttributeError):
-            self.viewset._parse_json_content({'not': 'a string'})
+# Domain logic tests are in enterprise_access.apps.prompts.tests.test_api.
+# This test module focuses on HTTP-layer behavior in viewsets.
 
 
 # ---------------------------------------------------------------------------
@@ -666,7 +311,7 @@ class TestLearnerPathwaysAuthorization(APITest):
         (_LEARNING_INTENT_URL_NAME, _VALID_LEARNING_INTENT_PAYLOAD),
     )
     @ddt.unpack
-    @mock.patch(PATCH_XPERT_CLIENT)
+    @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
     def test_enterprise_learner_is_allowed(
         self, url_name, payload, mock_client_class,
     ):
@@ -683,7 +328,7 @@ class TestLearnerPathwaysAuthorization(APITest):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
     @ddt.data(_LEARNING_INTENT_URL_NAME)
-    @mock.patch(PATCH_XPERT_CLIENT)
+    @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
     def test_xpert_not_called_when_auth_fails(self, url_name, mock_client_class):
         self.set_jwt_cookie([])
         url = reverse(url_name)
@@ -726,7 +371,7 @@ class TestLearnerPathwaysThrottle(APITest):
     @mock.patch.object(ScopedRateThrottle, 'THROTTLE_RATES', {
         'learner_pathways_learning_intent': '2/minute',
     })
-    @mock.patch(PATCH_XPERT_CLIENT)
+    @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
     def test_learning_intent_throttled_after_rate_exceeded(self, mock_client_class):
         mock_client_class.return_value.send_message.return_value = {
             'role': 'assistant', 'content': '{"r":1}',
@@ -765,7 +410,7 @@ class TestLearningIntentHappyPath(APITest):
         }])
         self.url = reverse(_LEARNING_INTENT_URL_NAME)
 
-    @mock.patch(PATCH_XPERT_CLIENT)
+    @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
     def test_http_200_with_valid_payload(self, mock_client_class):
         mock_client_class.return_value.send_message.return_value = {
             'role': 'assistant',
@@ -774,7 +419,7 @@ class TestLearningIntentHappyPath(APITest):
         resp = self.client.post(self.url, data=_VALID_LEARNING_INTENT_PAYLOAD, format='json')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
 
-    @mock.patch(PATCH_XPERT_CLIENT)
+    @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
     def test_correct_prompt_type_used(self, mock_client_class):
         with mock.patch.object(
             XpertLearnerPathwaysSystemPrompt, 'get_current'
@@ -791,7 +436,7 @@ class TestLearningIntentHappyPath(APITest):
                 prompt_type=PromptType.LEARNER_INTENT,
             )
 
-    @mock.patch(PATCH_XPERT_CLIENT)
+    @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
     def test_server_controlled_tags_passed(self, mock_client_class):
         mock_client_class.return_value.send_message.return_value = {
             'role': 'assistant', 'content': '{"r":1}',
@@ -801,7 +446,7 @@ class TestLearningIntentHappyPath(APITest):
         call_kwargs = mock_client_class.return_value.send_message.call_args.kwargs
         self.assertEqual(call_kwargs['tags'], ['tag-a', 'tag-b'])
 
-    @mock.patch(PATCH_XPERT_CLIENT)
+    @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
     def test_xpert_called_exactly_once(self, mock_client_class):
         mock_client_class.return_value.send_message.return_value = {
             'role': 'assistant', 'content': '{"r":1}',
@@ -809,7 +454,7 @@ class TestLearningIntentHappyPath(APITest):
         self.client.post(self.url, data=_VALID_LEARNING_INTENT_PAYLOAD, format='json')
         self.assertEqual(mock_client_class.return_value.send_message.call_count, 1)
 
-    @mock.patch(PATCH_XPERT_CLIENT)
+    @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
     def test_full_parsed_json_returned(self, mock_client_class):
         payload_json = '{"skills_required":["python","ml"],"condensed_algolia_query":"data"}'
         mock_client_class.return_value.send_message.return_value = {
@@ -820,7 +465,7 @@ class TestLearningIntentHappyPath(APITest):
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.json(), json.loads(payload_json))
 
-    @mock.patch(PATCH_XPERT_CLIENT)
+    @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
     def test_validated_data_encoded_as_user_message(self, mock_client_class):
         mock_client_class.return_value.send_message.return_value = {
             'role': 'assistant', 'content': '{"r":1}',
@@ -834,7 +479,7 @@ class TestLearningIntentHappyPath(APITest):
         parsed = json.loads(messages[0]['content'])
         self.assertEqual(parsed['selected_goals'], _VALID_LEARNING_INTENT_PAYLOAD['selected_goals'])
 
-    @mock.patch(PATCH_XPERT_CLIENT)
+    @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
     def test_conversation_id_has_prefix(self, mock_client_class):
         mock_client_class.return_value.send_message.return_value = {
             'role': 'assistant', 'content': '{"r":1}',
@@ -843,7 +488,7 @@ class TestLearningIntentHappyPath(APITest):
         call_kwargs = mock_client_class.return_value.send_message.call_args.kwargs
         self.assertTrue(call_kwargs['conversation_id'].startswith('enterprise-access:'))
 
-    @mock.patch(PATCH_XPERT_CLIENT)
+    @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
     def test_role_field_not_returned(self, mock_client_class):
         mock_client_class.return_value.send_message.return_value = {
             'role': 'assistant',
@@ -880,7 +525,7 @@ class TestLearnerPathwaysResponsePassthrough(APITest):
         ('learning_intent', _LEARNING_INTENT_URL_NAME, _VALID_LEARNING_INTENT_PAYLOAD),
     )
     @ddt.unpack
-    @mock.patch(PATCH_XPERT_CLIENT)
+    @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
     def test_extra_top_level_fields_preserved(
         self, _action, url_name, payload, mock_client_class,
     ):
@@ -896,7 +541,7 @@ class TestLearnerPathwaysResponsePassthrough(APITest):
         ('learning_intent', _LEARNING_INTENT_URL_NAME, _VALID_LEARNING_INTENT_PAYLOAD),
     )
     @ddt.unpack
-    @mock.patch(PATCH_XPERT_CLIENT)
+    @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
     def test_list_response_returned_as_list(
         self, _action, url_name, payload, mock_client_class,
     ):
@@ -912,7 +557,7 @@ class TestLearnerPathwaysResponsePassthrough(APITest):
         ('learning_intent', _LEARNING_INTENT_URL_NAME, _VALID_LEARNING_INTENT_PAYLOAD),
     )
     @ddt.unpack
-    @mock.patch(PATCH_XPERT_CLIENT)
+    @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
     def test_nested_values_preserved(
         self, _action, url_name, payload, mock_client_class,
     ):
@@ -963,7 +608,7 @@ class TestLearnerPathwaysFailures(APITest):
         XpertAPIRequestError,
         XpertAPIResponseError,
     )
-    @mock.patch(PATCH_XPERT_CLIENT)
+    @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
     def test_xpert_error_returns_500(self, error_class, mock_client_class):
         mock_client_class.return_value.send_message.side_effect = error_class('xpert error')
         resp = self.client.post(
@@ -978,7 +623,7 @@ class TestLearnerPathwaysFailures(APITest):
         ('none', {'role': 'assistant', 'content': None}),
     )
     @ddt.unpack
-    @mock.patch(PATCH_XPERT_CLIENT)
+    @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
     def test_bad_content_returns_500(
         self, _case, xpert_response, mock_client_class,
     ):
@@ -995,7 +640,7 @@ class TestLearnerPathwaysFailures(APITest):
         '```json\n{"key":"value"}\n```',
         '{"unterminated": true',
     )
-    @mock.patch(PATCH_XPERT_CLIENT)
+    @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
     def test_invalid_json_content_returns_500(self, bad_content, mock_client_class):
         mock_client_class.return_value.send_message.return_value = {
             'role': 'assistant', 'content': bad_content,
@@ -1007,7 +652,7 @@ class TestLearnerPathwaysFailures(APITest):
         )
         self.assertEqual(resp.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-    @mock.patch(PATCH_XPERT_CLIENT)
+    @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
     def test_no_second_xpert_call_on_failure(self, mock_client_class):
         mock_client_class.return_value.send_message.side_effect = XpertAPIRequestError('fail')
         self.client.post(
@@ -1017,7 +662,7 @@ class TestLearnerPathwaysFailures(APITest):
         )
         self.assertEqual(mock_client_class.return_value.send_message.call_count, 1)
 
-    @mock.patch(PATCH_XPERT_CLIENT)
+    @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
     def test_no_fallback_object_returned(self, mock_client_class):
         mock_client_class.return_value.send_message.side_effect = XpertAPIRequestError('fail')
         resp = self.client.post(
