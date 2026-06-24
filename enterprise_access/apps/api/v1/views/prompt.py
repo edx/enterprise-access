@@ -5,7 +5,7 @@ import json
 import logging
 import uuid as uuid_module
 from collections.abc import Sequence
-from typing import Protocol, TypeAlias, TypeVar, cast
+from typing import TypeAlias, cast
 
 from rest_framework import serializers, status
 from rest_framework.exceptions import APIException
@@ -14,6 +14,7 @@ from rest_framework.viewsets import ViewSet
 
 from enterprise_access.apps.api_client.base_user import get_request_id
 from enterprise_access.apps.prompts.api_client import XpertAPIClient, XpertAPIError
+from enterprise_access.apps.prompts.models import BaseSystemPrompt
 
 logger = logging.getLogger(__name__)
 
@@ -23,48 +24,18 @@ JSONValue: TypeAlias = (
     float |
     bool |
     None |
-    list['JSONValue'] |
-    dict[str, 'JSONValue']
+    list["JSONValue"] |
+    dict[str, "JSONValue"]
 )
-ValidatedData: TypeAlias = dict[str, JSONValue]
+
+ValidatedData: TypeAlias = dict[str, object]
 XpertMessage: TypeAlias = dict[str, str]
 XpertResponse: TypeAlias = dict[str, object]
-
-SerializerType = TypeVar(
-    'SerializerType',
-    bound=serializers.Serializer,
-)
+SystemPromptModel: TypeAlias = type[BaseSystemPrompt]
 
 _CONVERSATION_ID_PREFIX = 'enterprise-access'
 _X_REQUEST_ID_HEADER = 'X-Request-ID'
 _SCHEMA_SEPARATOR = '\n\nEXPECTED OUTPUT SCHEMA:\n'
-
-
-class SystemPrompt(Protocol):
-    """
-    Prompt instance contract required by ``BasePromptViewSet``.
-    """
-
-    @property
-    def system_prompt(self) -> str:
-        """Return the configured Xpert system prompt."""
-
-    @property
-    def output_schema(self) -> dict[str, JSONValue] | None:
-        """Return the optional structured output schema."""
-
-
-class SystemPromptModel(Protocol):
-    """
-    Prompt model contract required by ``BasePromptViewSet``.
-    """
-
-    @classmethod
-    def get_current(
-        cls,
-        prompt_type: str,
-    ) -> SystemPrompt | None:
-        """Return the current prompt for the supplied prompt type."""
 
 
 class PromptRequestException(APIException):
@@ -99,7 +70,7 @@ class BasePromptViewSet(ViewSet):
     def _validate_request(
         self,
         request: Request,
-        serializer_class: type[SerializerType],
+        serializer_class: type[serializers.Serializer],
     ) -> ValidatedData:
         """
         Validate request data and return the serializer's validated payload.
@@ -117,27 +88,17 @@ class BasePromptViewSet(ViewSet):
         )
         serializer.is_valid(raise_exception=True)
 
-        return cast(ValidatedData, serializer.validated_data)
+        return serializer.validated_data
 
     def _get_current_prompt(
         self,
         *,
-        prompt_model: type[SystemPromptModel] | None,
-        prompt_type: str | None,
-    ) -> SystemPrompt:
+        prompt_model: type[SystemPromptModel],
+        prompt_type: str,
+    ) -> BaseSystemPrompt:
         """
         Resolve the current prompt for the exact supplied prompt type.
         """
-        if prompt_model is None:
-            raise PromptRequestException(
-                'prompt_model is a required configuration argument.'
-            )
-
-        if prompt_type is None:
-            raise PromptRequestException(
-                'prompt_type is a required configuration argument.'
-            )
-
         prompt = prompt_model.get_current(
             prompt_type=prompt_type,
         )
@@ -150,7 +111,7 @@ class BasePromptViewSet(ViewSet):
 
     def _build_system_prompt(
         self,
-        prompt: SystemPrompt,
+        prompt: BaseSystemPrompt,
     ) -> str:
         """
         Build the complete system prompt sent to Xpert.
@@ -201,8 +162,7 @@ class BasePromptViewSet(ViewSet):
         directly from the supplied request is retained as a fallback for tests
         and execution contexts where CRUM has no current request.
         """
-        current_request_id: str | None = get_request_id()
-        request_id = current_request_id
+        request_id = get_request_id()
 
         if not request_id:
             request_id = request.headers.get(_X_REQUEST_ID_HEADER)
@@ -259,12 +219,6 @@ class BasePromptViewSet(ViewSet):
         if content is None:
             raise PromptRequestException(
                 'Xpert response is missing the "content" field.'
-            )
-
-        if not isinstance(content, str):
-            raise PromptRequestException(
-                'Xpert response "content" is not a string: '
-                f'got {type(content).__name__}.'
             )
 
         return content

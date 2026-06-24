@@ -155,20 +155,6 @@ class TestGetCurrentPrompt(TestCase):
 
         prompt_model.get_current.assert_called_once_with(prompt_type='learner_intent')
 
-    @ddt.data(
-        (None, 'learner_intent'),
-        (mock.Mock(), None),
-    )
-    @ddt.unpack
-    def test_missing_configuration_raises_500(self, prompt_model, prompt_type):
-        with self.assertRaises(PromptRequestException) as ctx:
-            self.viewset._get_current_prompt(
-                prompt_model=prompt_model,
-                prompt_type=prompt_type,
-            )
-
-        self.assertEqual(ctx.exception.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
-
     def test_missing_prompt_raises_500(self):
         prompt_model = mock.Mock()
         prompt_model.get_current.return_value = None
@@ -441,8 +427,6 @@ class TestExtractXpertContent(TestCase):
     @ddt.data(
         {'role': 'assistant'},
         {'role': 'assistant', 'content': None},
-        {'role': 'assistant', 'content': {'nested': 'dict'}},
-        {'role': 'assistant', 'content': 123},
     )
     def test_invalid_content_raises_500(self, response):
         with self.assertRaises(PromptRequestException) as ctx:
