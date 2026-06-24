@@ -363,7 +363,9 @@ class GetCreateCatalogStep(AbstractWorkflowStep):
 @define
 class AssociateAcademyStepInput(BaseInputOutput):
     """
-    The input object to optionally associate an academy to the created catalog.
+    The input for associating an academy to the created catalog.
+
+    If academy_uuid is none, the step is treated as a no-op and no academy association is performed.
     """
     KEY = 'associate_academy_input'
 

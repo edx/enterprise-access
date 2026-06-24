@@ -105,7 +105,7 @@ class TestAssociateAcademyWithCatalog(TestCase):
         )
         self.assertFalse(mock_client.create_enterprise_catalog.called)
 
-    @mock.patch.object(provisioning_api, 'EnterpriseCatalogApiV1Client', autospec=True)
+    @mock.patch.object(provisioning_api, 'EnterpriseCatalogApiClient', autospec=True)
     def test_associate_academy_with_catalog(self, mock_client_class):
         academy_uuid = 'academy-uuid'
         catalog_uuid = 'catalog-uuid'
@@ -120,7 +120,7 @@ class TestAssociateAcademyWithCatalog(TestCase):
             enterprise_catalog_uuid=catalog_uuid,
         )
 
-    @mock.patch.object(provisioning_api, 'EnterpriseCatalogApiV1Client', autospec=True)
+    @mock.patch.object(provisioning_api, 'EnterpriseCatalogApiClient', autospec=True)
     def test_associate_academy_with_catalog_raises(self, mock_client_class):
         mock_client_class.return_value.associate_academy_with_catalog.side_effect = Exception('api error')
 

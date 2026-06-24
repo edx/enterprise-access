@@ -6,7 +6,7 @@ from operator import itemgetter
 
 from rest_framework import status
 
-from ..api_client.enterprise_catalog_client import EnterpriseCatalogApiV1Client
+from ..api_client.enterprise_catalog_client import EnterpriseCatalogApiClient
 from ..api_client.exceptions import APIClientException
 from ..api_client.license_manager_client import LicenseManagerApiClient
 from ..api_client.lms_client import LmsApiClient
@@ -140,9 +140,9 @@ def associate_academy_with_catalog(academy_uuid: str, enterprise_catalog_uuid: s
     """
     Associates an Academy with an EnterpriseCatalog in the enterprise-catalog service.
     """
-    # Instantiate via the `EnterpriseCatalogApiV1Client` name so tests can patch
+    # Instantiate via the `EnterpriseCatalogApiClient` name so tests can patch
     # that symbol. The module-level alias defaults it to the v2 implementation.
-    client = EnterpriseCatalogApiV1Client()
+    client = EnterpriseCatalogApiClient()
     result = client.associate_academy_with_catalog(
         academy_uuid=academy_uuid,
         enterprise_catalog_uuid=enterprise_catalog_uuid,
