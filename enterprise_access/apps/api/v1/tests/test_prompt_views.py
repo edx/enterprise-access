@@ -5,19 +5,16 @@ Domain logic tests are in enterprise_access.apps.prompts.tests.test_api.
 This module focuses on HTTP-layer behavior: validation, permission checks,
 throttling, error mapping, and response serialization.
 """
-# pylint: disable=protected-access
 import json
 import uuid
 from unittest import mock
 
 import ddt
-import pytest
 from django.conf import settings as django_settings
 from django.core.cache import cache as django_cache
 from django.test import TestCase, override_settings
 from edx_rest_framework_extensions.auth.jwt.authentication import JwtAuthentication
-from rest_framework import permissions, serializers, status
-from rest_framework.exceptions import ValidationError
+from rest_framework import permissions, status
 from rest_framework.reverse import reverse
 from rest_framework.test import APIClient
 from rest_framework.throttling import ScopedRateThrottle
@@ -49,37 +46,6 @@ _VALID_LEARNING_INTENT_PAYLOAD = {
 }
 
 
-def _make_viewset():
-    """Return a bare BasePromptViewSet instance for helper tests."""
-    viewset = BasePromptViewSet()
-    viewset.request = mock.Mock()
-    viewset.kwargs = {}
-    viewset.format_kwarg = None
-    return viewset
-
-
-def _make_request(data=None, headers=None):
-    """Return a mock DRF request."""
-    request = mock.Mock()
-    request.data = data or {}
-    request.headers = headers or {}
-    return request
-
-
-class _SampleSerializer(serializers.Serializer):
-    """Minimal serializer used in request-validation tests."""
-    name = serializers.CharField()
-    count = serializers.IntegerField(required=False, default=0)
-
-    def create(self, validated_data):
-        """Create is unused for validation-only tests."""
-        return validated_data
-
-    def update(self, instance, validated_data):
-        """Update is unused for validation-only tests."""
-        return validated_data
-
-
 @ddt.ddt
 class TestPromptRequestException(TestCase):
     """Tests for PromptRequestException."""
@@ -104,51 +70,6 @@ class TestPromptRequestException(TestCase):
             assert exc.__cause__ is original
 
 
-@ddt.ddt
-class TestValidateRequest(TestCase):
-    """Tests for _validate_request."""
-
-    def setUp(self):
-        self.viewset = _make_viewset()
-
-    def test_valid_data_returns_validated_data(self):
-        request = _make_request({'name': 'Alice', 'count': 3})
-        result = self.viewset._validate_request(request, _SampleSerializer)
-        assert result == {'name': 'Alice', 'count': 3}
-
-    def test_valid_data_with_defaults(self):
-        request = _make_request({'name': 'Bob'})
-        result = self.viewset._validate_request(request, _SampleSerializer)
-        assert result == {'name': 'Bob', 'count': 0}
-
-    @ddt.ddt
-    class _Unused:
-        """Avoid nested TestCase discovery issues."""
-
-    @ddt.data(
-        {},
-        {'name': 'Alice', 'count': 'not-an-int'},
-    )
-    def test_invalid_data_raises_validation_error(self, payload):
-        request = _make_request(payload)
-        with pytest.raises(ValidationError) as exc_info:
-            self.viewset._validate_request(request, _SampleSerializer)
-        assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
-
-    def test_serializer_context_includes_request_format_and_view(self):
-        request = _make_request({'name': 'Test'})
-        captured = {}
-
-        class ContextCapturingSerializer(_SampleSerializer):
-            def is_valid(self, *, raise_exception=False):
-                captured['context'] = self.context
-                return super().is_valid(raise_exception=raise_exception)
-
-        self.viewset._validate_request(request, ContextCapturingSerializer)
-
-        assert captured['context']['request'] is request
-        assert captured['context']['view'] is self.viewset
-        assert 'format' in captured['context']
 # Domain logic tests are in enterprise_access.apps.prompts.tests.test_api.
 # This test module focuses on HTTP-layer behavior in viewsets.
 

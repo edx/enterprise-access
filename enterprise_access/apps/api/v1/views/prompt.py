@@ -7,7 +7,7 @@ import uuid as uuid_module
 from django.conf import settings
 from drf_spectacular.utils import extend_schema
 from edx_rest_framework_extensions.auth.jwt.authentication import JwtAuthentication
-from rest_framework import permissions, serializers, status
+from rest_framework import permissions, status
 from rest_framework.decorators import action
 from rest_framework.exceptions import APIException
 from rest_framework.request import Request
@@ -22,8 +22,6 @@ from enterprise_access.apps.prompts import api as prompts_api
 from enterprise_access.apps.prompts.models import PromptType, XpertLearnerPathwaysSystemPrompt
 
 logger = logging.getLogger(__name__)
-
-ValidatedData = dict[str, object]
 
 _CONVERSATION_ID_PREFIX = 'enterprise-access'
 _X_REQUEST_ID_HEADER = 'X-Request-ID'
@@ -53,37 +51,13 @@ class BasePromptViewSet(ViewSet):
     """
     Reusable helper methods for prompt-backed Xpert requests.
 
-    This base class provides HTTP-layer utilities: request validation
-    and conversation ID generation. Domain logic is delegated to
-    enterprise_access.apps.prompts.api.
+    This base class provides HTTP-layer utilities for conversation ID generation.
+    Domain logic is delegated to enterprise_access.apps.prompts.api.
 
     Concrete viewsets compose these helpers inside their individual actions.
     This class intentionally defines no actions, routes, authentication
     classes, or permission policies.
     """
-
-    def _validate_request(
-        self,
-        request: Request,
-        serializer_class: type[serializers.Serializer],
-    ) -> ValidatedData:
-        """
-        Validate request data and return the serializer's validated payload.
-
-        Invalid request data follows standard DRF validation behavior and
-        produces an HTTP 400 response.
-        """
-        serializer = serializer_class(
-            data=request.data,
-            context={
-                'request': request,
-                'format': None,
-                'view': self,
-            },
-        )
-        serializer.is_valid(raise_exception=True)
-
-        return serializer.validated_data
 
     def _get_conversation_id(
         self,
@@ -156,10 +130,9 @@ class LearnerPathwaysViewSet(BasePromptViewSet):
         Returns HTTP 500 when the prompt is missing, the Xpert call fails, or the response
         cannot be parsed as JSON.
         """
-        validated_data = self._validate_request(
-            request,
-            api_serializers.LearningIntentRequestSerializer,
-        )
+        serializer = api_serializers.LearningIntentRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        validated_data = serializer.validated_data
 
         conversation_id = self._get_conversation_id(request)
 

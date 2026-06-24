@@ -8,23 +8,14 @@ No HTTP or DRF machinery — suitable for testing in isolation.
 import json
 import logging
 from collections.abc import Sequence
-from typing import TypeAlias, cast
+from typing import Any, TypeAlias
 
 from enterprise_access.apps.prompts.api_client import XpertAPIClient, XpertAPIError
 from enterprise_access.apps.prompts.models import BaseSystemPrompt
 
 logger = logging.getLogger(__name__)
 
-JSONValue: TypeAlias = (
-    str |
-    int |
-    float |
-    bool |
-    None |
-    list["JSONValue"] |
-    dict[str, "JSONValue"]
-)
-ValidatedData: TypeAlias = dict[str, JSONValue]
+ValidatedData: TypeAlias = dict[str, Any]
 XpertMessage: TypeAlias = dict[str, str]
 XpertResponse: TypeAlias = dict[str, object]
 SystemPromptModel: TypeAlias = type[BaseSystemPrompt]
@@ -41,7 +32,7 @@ class PromptError(Exception):
 
 
 def get_current_prompt(
-    prompt_model: SystemPromptModel,
+    prompt_model: type[SystemPromptModel],
     prompt_type: str,
 ) -> BaseSystemPrompt:
     """
@@ -154,14 +145,15 @@ def extract_xpert_content(xpert_response: XpertResponse) -> str:
     content = xpert_response.get('content')
 
     if content is None:
-        raise PromptError(
-            'Xpert response is missing the "content" field.'
-        )
+        raise PromptError('Xpert response is missing the "content" field.')
+
+    if not isinstance(content, str):
+        raise PromptError('Xpert response "content" must be a string.')
 
     return content
 
 
-def parse_json_content(content: str) -> JSONValue:
+def parse_json_content(content: str) -> dict[str, Any]:
     """
     Parse and return the complete JSON value produced by Xpert.
 
@@ -180,4 +172,4 @@ def parse_json_content(content: str) -> JSONValue:
             f'Failed to parse Xpert response content as JSON: {exc}'
         ) from exc
 
-    return cast(JSONValue, parsed_content)
+    return parsed_content
