@@ -259,12 +259,6 @@ class CheckoutIntentCreateRequestSerializer(CountryFieldMixin, serializers.Model
         """
         try:
             ssp_product = validated_data.pop('ssp_product', None)
-            if ssp_product is None:
-                default_slug = getattr(settings, 'SSP_DEFAULT_PRODUCT_SLUG', None)
-                if default_slug:
-                    ssp_product = SspProduct.objects.filter(
-                        slug=default_slug, is_active=True
-                    ).first()
             return CheckoutIntent.create_intent(
                 user=self.context['request'].user,
                 quantity=validated_data['quantity'],
