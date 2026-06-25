@@ -64,7 +64,7 @@ class EnterpriseCatalogApiClient(BaseOAuthClient):
         if is_active is not None:
             params['is_active'] = bool(is_active)
         return fetch_all_results(self.client, self.academies_endpoint, params=params)
-    
+
     @backoff.on_exception(wait_gen=backoff.expo, exception=autoretry_for_exceptions)
     def associate_academy_with_catalog(self, academy_uuid, enterprise_catalog_uuid):
         """
