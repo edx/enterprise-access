@@ -64,6 +64,29 @@ class EnterpriseCatalogApiClient(BaseOAuthClient):
         if is_active is not None:
             params['is_active'] = bool(is_active)
         return fetch_all_results(self.client, self.academies_endpoint, params=params)
+    
+    @backoff.on_exception(wait_gen=backoff.expo, exception=autoretry_for_exceptions)
+    def associate_academy_with_catalog(self, academy_uuid, enterprise_catalog_uuid):
+        """
+        Associate an academy with an enterprise catalog in enterprise-catalog.
+
+        Arguments:
+            academy_uuid (str|UUID): UUID of the academy to update.
+            enterprise_catalog_uuid (str|UUID): UUID of the enterprise catalog to associate.
+
+        Returns:
+            dict: Response payload, or an empty dict when the endpoint returns no body.
+        """
+        endpoint = urljoin(self.academies_endpoint, f'{academy_uuid}/associate-catalog/')
+        response = self.client.post(
+            endpoint,
+            json={'enterprise_catalog_uuid': str(enterprise_catalog_uuid)},
+        )
+        response.raise_for_status()
+        try:
+            return response.json()
+        except ValueError:
+            return {}
 
     @backoff.on_exception(wait_gen=backoff.expo, exception=autoretry_for_exceptions)
     def contains_content_items(self, catalog_uuid, content_ids):

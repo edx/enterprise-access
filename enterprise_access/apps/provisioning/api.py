@@ -6,6 +6,7 @@ from operator import itemgetter
 
 from rest_framework import status
 
+from ..api_client.enterprise_catalog_client import EnterpriseCatalogApiClient
 from ..api_client.exceptions import APIClientException
 from ..api_client.license_manager_client import LicenseManagerApiClient
 from ..api_client.lms_client import LmsApiClient
@@ -133,6 +134,24 @@ def get_or_create_enterprise_catalog(enterprise_customer_uuid, catalog_title, ca
     )
     logger.info('Provisioning: created enterprise catalog with uuid %s', created_catalog.get('uuid'))
     return created_catalog
+
+
+def associate_academy_with_catalog(academy_uuid: str, enterprise_catalog_uuid: str):
+    """
+    Associates an Academy with an EnterpriseCatalog in the enterprise-catalog service.
+    """
+    # Instantiate via the `EnterpriseCatalogApiClient` name so tests can patch
+    # that symbol. The module-level alias defaults it to the v2 implementation.
+    client = EnterpriseCatalogApiClient()
+    result = client.associate_academy_with_catalog(
+        academy_uuid=academy_uuid,
+        enterprise_catalog_uuid=enterprise_catalog_uuid,
+    )
+    logger.info(
+        'Provisioning: associated academy %s with enterprise catalog %s',
+        academy_uuid, enterprise_catalog_uuid,
+    )
+    return result
 
 
 def get_or_create_customer_agreement(enterprise_customer_uuid, customer_slug, default_catalog_uuid=None, **kwargs):

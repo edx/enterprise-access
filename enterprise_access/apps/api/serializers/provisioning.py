@@ -64,6 +64,13 @@ class EnterpriseCatalogRequestSerializer(BaseSerializer):
     )
 
 
+class AcademyRequestSerializer(BaseSerializer):
+    """
+    Academy object serializer for provisioning requests.
+    """
+    academy_uuid = serializers.UUIDField(required=False, allow_null=True)
+
+
 class CustomerAgreementRequestSerializer(BaseSerializer):
     """
     Customer Agreement serializer for provisioning requests.
@@ -125,6 +132,11 @@ class ProvisioningRequestSerializer(BaseSerializer):
         required=False,
         allow_null=True,
     )
+    academy = AcademyRequestSerializer(
+        help_text='Optional object describing the academy association to create.',
+        required=False,
+        allow_null=True,
+    )
     customer_agreement = CustomerAgreementRequestSerializer(
         help_text='Object describing the requested Customer Agreement.',
         required=False,
@@ -180,6 +192,14 @@ class EnterpriseCatalogResponseSerializer(BaseSerializer):
     catalog_query_id = serializers.IntegerField()
 
 
+class AcademyResponseSerializer(BaseSerializer):
+    """
+    Academy association serializer for provisioning responses.
+    """
+    academy_uuid = serializers.UUIDField(required=False, allow_null=True)
+    enterprise_catalog_uuid = serializers.UUIDField()
+
+
 class SubscriptionPlanResponseSerializer(BaseSerializer):
     """
     Subscription Plan serializer for provisioning responses.
@@ -227,6 +247,7 @@ class ProvisioningResponseSerializer(BaseSerializer):
     enterprise_customer = EnterpriseCustomerResponseSerializer()
     customer_admins = AdminObjectResponseSerializer()
     enterprise_catalog = EnterpriseCatalogResponseSerializer()
+    academy = AcademyResponseSerializer(required=False, allow_null=True)
     customer_agreement = CustomerAgreementResponseSerializer()
     trial_subscription_plan = SubscriptionPlanResponseSerializer()
     first_paid_subscription_plan = SubscriptionPlanResponseSerializer()
