@@ -1,6 +1,7 @@
 """
 Unit tests for the ``enterprise_access.apps.customer_billing.api`` module.
 """
+import uuid
 from datetime import timedelta
 from unittest import mock
 
@@ -18,7 +19,8 @@ from enterprise_access.apps.customer_billing.constants import CheckoutIntentStat
 from enterprise_access.apps.customer_billing.models import (
     CheckoutIntent,
     FailedCheckoutIntentConflict,
-    SlugReservationConflict
+    SlugReservationConflict,
+    SspProduct
 )
 
 User = get_user_model()
@@ -159,6 +161,14 @@ class TestCreateFreeTrialCheckoutSession(TestCase):
         mock_create_checkout.return_value = {'id': 'sess-ssp', 'customer': 'cust-ssp'}
 
         # Call with ssp_product_slug instead of stripe_price_id
+        # Ensure an SspProduct exists so the code path that maps ssp->stripe_price is exercised
+        SspProduct.objects.create(
+            slug='quarterly_license_plan',
+            stripe_price_lookup_key=MOCK_SSP_PRODUCTS['quarterly_license_plan']['lookup_key'],
+            is_active=True,
+            catalog_query_uuid=uuid.uuid4(),
+        )
+
         result = customer_billing_api.create_free_trial_checkout_session(
             user=self.user,
             admin_email=self.user.email,
@@ -176,6 +186,11 @@ class TestCreateFreeTrialCheckoutSession(TestCase):
         # Ensure the checkout creator received the provided ssp_product_slug
         called_input = mock_create_checkout.call_args[1]['input_data']
         self.assertEqual(called_input.get('ssp_product_slug'), 'quarterly_license_plan')
+        # And stripe_price_id should be derived from the SspProduct lookup key when not provided
+        self.assertEqual(
+            called_input.get('stripe_price_id'),
+            MOCK_SSP_PRODUCTS['quarterly_license_plan']['lookup_key'],
+        )
 
         # Assert library methods were called correctly.
         mock_lms_client.get_lms_user_account.assert_called_once_with(
