@@ -607,6 +607,49 @@ class LmsApiClient(BaseOAuthClient):
 
         return None
 
+    def get_enterprise_learner_by_email(self, enterprise_customer_uuid, learner_email):
+        """
+        Return the enterprise customer user record for ``learner_email`` if the user is
+        linked to ``enterprise_customer_uuid``, otherwise return ``None``.
+
+        Two LMS API calls are made:
+        1. ``/api/user/v1/accounts`` to resolve the learner's LMS user ID from their email.
+        2. ``enterprise-learner/`` to fetch the enterprise link for that user.
+
+        Returns ``None`` when the learner has no LMS account, is not linked to the given
+        enterprise, or the account lookup returns no usable user ID.
+
+        Raises ``requests.exceptions.HTTPError`` on LMS API failures (e.g. 5xx) so that
+        calling Celery tasks retry rather than silently proceeding with a stale state.
+
+        Arguments:
+            enterprise_customer_uuid (UUID): UUID of the enterprise customer.
+            learner_email (str): Email address of the learner to check.
+        """
+        # get_lms_user_account returns None on 404 and raises HTTPError on 5xx.
+        user_accounts = self.get_lms_user_account(email=learner_email)
+        if not user_accounts:
+            return None
+
+        # get_lms_user_account(email=...) always returns a list from the accounts endpoint.
+        lms_user_id = user_accounts[0].get('id') if isinstance(user_accounts, list) else user_accounts.get('id')
+        if lms_user_id is None:
+            return None
+
+        ec_uuid = str(enterprise_customer_uuid)
+        response = self.client.get(
+            self.enterprise_learner_endpoint,
+            params={'enterprise_customer_uuid': ec_uuid, 'user_ids': lms_user_id},
+            timeout=settings.LMS_CLIENT_TIMEOUT,
+        )
+        response.raise_for_status()  # raises HTTPError on 4xx/5xx — callers (tasks) should retry
+        for result in response.json().get('results', []):
+            returned_customer = result.get('enterprise_customer', {})
+            returned_user = result.get('user', {})
+            if returned_customer.get('uuid') == ec_uuid and returned_user.get('id') == lms_user_id:
+                return result
+        return None
+
     def create_pending_enterprise_users(self, enterprise_customer_uuid, user_emails):
         """
         Creates a pending enterprise user in the given ``enterprise_customer_uuid`` for each of the

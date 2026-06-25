@@ -87,6 +87,14 @@ class TestCreatePendingEnterpriseLearnerForAssignmentTask(APITestWithMocks):
             assignment_configuration=self.assignment_configuration,
         )
 
+        # By default, the learner is NOT already actively linked.  Individual tests override this.
+        patcher = mock.patch(
+            'enterprise_access.apps.api_client.lms_client.LmsApiClient.get_enterprise_learner_by_email',
+            return_value=None,
+        )
+        self.mock_get_enterprise_learner_by_email = patcher.start()
+        self.addCleanup(patcher.stop)
+
     @ddt.data(
         # The LMS API did not find an existing PendingEnterpriseLearner, so it created one.
         {
@@ -209,6 +217,100 @@ class TestCreatePendingEnterpriseLearnerForAssignmentTask(APITestWithMocks):
         # Make sure the assignment state does NOT change to errored.
         self.assignment.refresh_from_db()
         assert self.assignment.state == LearnerContentAssignmentStateChoices.ALLOCATED
+
+    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient')
+    def test_skip_if_already_active_link(self, mock_oauth_client):
+        """
+        If the learner is already actively linked to the enterprise, the task should
+        record a successful linked action and return early without calling the
+        pending-enterprise-learner LMS endpoint.
+        """
+        self.mock_get_enterprise_learner_by_email.return_value = {
+            'enterprise_customer': {'uuid': str(TEST_ENTERPRISE_UUID)},
+            'user': {'email': TEST_EMAIL},
+            'active': True,
+        }
+
+        task_result = create_pending_enterprise_learner_for_assignment_task.delay(self.assignment.uuid)
+
+        assert task_result.state == celery_states.SUCCESS
+
+        # The pending-enterprise-learner POST endpoint must NOT have been called.
+        mock_oauth_client.return_value.post.assert_not_called()
+
+        # The active-link check must have been called with the correct arguments.
+        self.mock_get_enterprise_learner_by_email.assert_called_once_with(
+            TEST_ENTERPRISE_UUID,
+            TEST_EMAIL,
+        )
+
+        # Assignment state stays allocated and a successful linked action is recorded.
+        self.assignment.refresh_from_db()
+        assert self.assignment.state == LearnerContentAssignmentStateChoices.ALLOCATED
+        assert self.assignment.actions.filter(action_type=AssignmentActions.LEARNER_LINKED).exists()
+
+    @ddt.data(
+        # Learner has a link but it is explicitly inactive.
+        {'active': False},
+        # Learner has a link record with no 'active' field at all.
+        {},
+    )
+    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient')
+    def test_proceeds_if_link_not_active(self, active_value, mock_oauth_client):
+        """
+        If the learner's enterprise link exists but is not active, the task should
+        proceed normally and call create_pending_enterprise_users.
+        """
+        self.mock_get_enterprise_learner_by_email.return_value = {
+            'enterprise_customer': {'uuid': str(TEST_ENTERPRISE_UUID)},
+            'user': {'email': TEST_EMAIL},
+            **active_value,
+        }
+        mock_oauth_client.return_value.post.return_value = MockResponse(
+            {'enterprise_customer': str(TEST_ENTERPRISE_UUID), 'user_email': TEST_EMAIL},
+            status.HTTP_201_CREATED,
+        )
+
+        task_result = create_pending_enterprise_learner_for_assignment_task.delay(self.assignment.uuid)
+
+        assert task_result.state == celery_states.SUCCESS
+
+        # The pending-enterprise-learner POST endpoint must still have been called.
+        assert len(mock_oauth_client.return_value.post.call_args_list) == 1
+        assert mock_oauth_client.return_value.post.call_args.kwargs['json'] == [{
+            'enterprise_customer': str(self.assignment.assignment_configuration.enterprise_customer_uuid),
+            'user_email': self.assignment.learner_email,
+        }]
+
+        self.assignment.refresh_from_db()
+        assert self.assignment.state == LearnerContentAssignmentStateChoices.ALLOCATED
+
+    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient')
+    def test_max_retries_on_link_check_error(self, mock_oauth_client):
+        """
+        When get_enterprise_learner_by_email raises HTTPError (e.g. LMS 5xx), the task
+        retries until max retries, then sets the assignment to ERRORED.  This verifies
+        that the deactivation guard does not silently swallow LMS errors and proceed to
+        call create_pending_enterprise_users with a potentially wrong state.
+        """
+        error_response = MockResponse({'detail': 'Service Unavailable'}, status.HTTP_503_SERVICE_UNAVAILABLE)
+        self.mock_get_enterprise_learner_by_email.side_effect = HTTPError(response=error_response)
+
+        task_result = create_pending_enterprise_learner_for_assignment_task.delay(self.assignment.uuid)
+
+        assert task_result.state == celery_states.FAILURE
+        assert isinstance(task_result.result, HTTPError)
+
+        # Called once per attempt: 1 initial + max retries
+        assert self.mock_get_enterprise_learner_by_email.call_count == 1 + settings.TASK_MAX_RETRIES
+        # create_pending_enterprise_users must never be called when the link check errors
+        mock_oauth_client.return_value.post.assert_not_called()
+
+        self.assignment.refresh_from_db()
+        assert self.assignment.state == LearnerContentAssignmentStateChoices.ERRORED
+        action = self.assignment.actions.filter(action_type=AssignmentActions.LEARNER_LINKED).first()
+        self.assertIsNotNone(action)
+        self.assertEqual(action.error_reason, AssignmentActionErrors.INTERNAL_API_ERROR)
 
 
 @ddt.ddt
