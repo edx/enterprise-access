@@ -1,0 +1,39 @@
+enterprise_access/apps/api_client/lms_client.py
+  s_6bce46b35a2548::t_76407092cad0af 613,620,622-624,629-630,634,636,639-651
+  s_f46d5e0f948408::t_fc6e1cf892fadf 610-612,614-619,621,625-628,631-633,635,637-638,652
+enterprise_access/apps/content_assignments/tests/test_tasks.py
+  s_6bce46b35a2548::t_3f7801678796dd 312
+  s_f46d5e0f948408::t_4bd5f64f60fe9c 221-258,260-287
+  s_f46d5e0f948408::t_667a6a47adef1b 90-97
+  s_f46d5e0f948408::t_01b788b10d76d9 259
+  s_6bce46b35a2548::t_52036c5b582d51 288-311,313-314
+enterprise_access/apps/content_assignments/tasks.py
+  s_f46d5e0f948408::t_5de872a916e47d 370-387
+enterprise_access/apps/api_client/tests/test_lms_client.py
+  s_6bce46b35a2548::t_4da044691365b8 1285,1287-1288,1290,1292,1294-1295,1297,1299,1301-1302,1304,1306,1308,1311,1313,1315,1318,1320-1322,1324-1325,1327,1329,1331-1333,1336-1338,1345,1347,1361,1364-1366,1368,1385
+  s_6bce46b35a2548::t_3d6b00f003762c 1286,1289,1291,1293,1296,1298,1300,1303,1305,1307,1309-1310,1312,1314,1316-1317,1319,1323,1326,1328,1330,1334-1335,1339-1344,1346,1348-1360,1362-1363,1367,1369-1384
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.1",
+  "base_commit_sha": "6a6e5ad896e6eee2eca18dc434c8b7cf5b0cb489",
+  "prompts": {},
+  "sessions": {
+    "s_6bce46b35a2548": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d806dee4-fab1-432b-8a49-a61ceedc739d",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": null
+    },
+    "s_f46d5e0f948408": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7632db1d-dd31-40dd-9e8a-5d429994ac48",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": null
+    }
+  }
+}
