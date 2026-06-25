@@ -1,0 +1,35 @@
+enterprise_access/apps/api_client/lms_client.py
+  s_f46d5e0f948408::t_fc6e1cf892fadf 610-644
+enterprise_access/apps/content_assignments/tests/test_tasks.py
+  s_f46d5e0f948408::t_667a6a47adef1b 90-97
+  s_f46d5e0f948408::t_4bd5f64f60fe9c 221-258,260-287
+  s_f46d5e0f948408::t_01b788b10d76d9 259
+enterprise_access/apps/content_assignments/tasks.py
+  s_f46d5e0f948408::t_5de872a916e47d 370-387
+enterprise_access/apps/api_client/tests/test_lms_client.py
+  s_6bce46b35a2548::t_4da044691365b8 1285-1367
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.13",
+  "base_commit_sha": "bbea207af4316161cafeff08d1c1c6a729950705",
+  "prompts": {},
+  "sessions": {
+    "s_6bce46b35a2548": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d806dee4-fab1-432b-8a49-a61ceedc739d",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": null
+    },
+    "s_f46d5e0f948408": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7632db1d-dd31-40dd-9e8a-5d429994ac48",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": null
+    }
+  }
+}
