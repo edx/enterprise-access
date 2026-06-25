@@ -3913,6 +3913,7 @@ class CreateCheckoutSessionViewTests(APITest):
                     'company_name': 'Test Co',
                     'quantity': 5,
                     'stripe_price_id': 'price_abc123',
+                    'ssp_product': 'quarterly_license_plan',
                 },
                 format='json',
             )

@@ -34,8 +34,9 @@ User = get_user_model()
 
 
 def get_default_ssp_product_slug():
-   """Return the default SSP product slug from Django settings."""
-   return settings.SSP_DEFAULT_PRODUCT_SLUG
+    """Return the default SSP product slug from Django settings."""
+    return settings.SSP_DEFAULT_PRODUCT_SLUG
+
 
 class FailedCheckoutIntentConflict(Exception):
     pass

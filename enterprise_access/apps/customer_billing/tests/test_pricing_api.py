@@ -737,4 +737,3 @@ class TestStripePricingAPI(TestCase):
         result = pricing_api.get_ssp_product_pricing()
 
         self.assertEqual(len(result), 0)
-

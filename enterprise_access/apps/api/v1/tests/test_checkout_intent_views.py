@@ -42,6 +42,15 @@ class CheckoutIntentViewSetTestCase(APITest):
             email='test4@example.com',
             password='testpass123'
         )
+        # Ensure the default SSP product exists for class-level CheckoutIntent creation
+        SspProduct.objects.get_or_create(
+            slug='teams-yearly',
+            defaults={
+                'stripe_price_lookup_key': 'teams_subscription_license_yearly',
+                'is_active': True,
+                'catalog_query_uuid': uuid.uuid4(),
+            }
+        )
         cls.checkout_intent_2 = CheckoutIntent.objects.create(
             user=cls.user_2,
             enterprise_name="Active Enterprise 2",
@@ -51,7 +60,8 @@ class CheckoutIntentViewSetTestCase(APITest):
             expires_at=timezone.now() + timedelta(minutes=30),
             stripe_checkout_session_id='cs_test_456',
             country='US',
-            terms_metadata={'version': '1.0', 'accepted_at': '2024-01-15T10:30:00Z'}
+            terms_metadata={'version': '1.0', 'accepted_at': '2024-01-15T10:30:00Z'},
+            ssp_product_id='teams-yearly',
         )
         cls.checkout_intent_4 = CheckoutIntent.objects.create(
             user=cls.user_4,
@@ -62,7 +72,8 @@ class CheckoutIntentViewSetTestCase(APITest):
             expires_at=timezone.now() + timedelta(minutes=30),
             stripe_checkout_session_id='cs_test_987',
             country='US',
-            terms_metadata={'version': '1.0', 'accepted_at': '2024-01-15T10:30:00Z'}
+            terms_metadata={'version': '1.0', 'accepted_at': '2024-01-15T10:30:00Z'},
+            ssp_product_id='teams-yearly',
         )
 
     def setUp(self):
@@ -73,6 +84,7 @@ class CheckoutIntentViewSetTestCase(APITest):
             defaults={
                 'stripe_price_lookup_key': 'teams_subscription_license_yearly',
                 'is_active': True,
+                'catalog_query_uuid': uuid.uuid4(),
             }
         )
 
@@ -85,7 +97,8 @@ class CheckoutIntentViewSetTestCase(APITest):
             expires_at=timezone.now() + timedelta(minutes=30),
             stripe_checkout_session_id='cs_test_123',
             country='CA',
-            terms_metadata={'version': '1.1', 'test_mode': True}
+            terms_metadata={'version': '1.1', 'test_mode': True},
+            ssp_product_id='teams-yearly',
         )
         self.checkout_intent_3 = CheckoutIntent.objects.create(
             user=self.user_3,
@@ -96,7 +109,8 @@ class CheckoutIntentViewSetTestCase(APITest):
             expires_at=timezone.now() + timedelta(minutes=30),
             stripe_checkout_session_id='cs_test_789',
             country='GB',
-            terms_metadata={'version': '2.0', 'features': ['analytics', 'reporting']}
+            terms_metadata={'version': '2.0', 'features': ['analytics', 'reporting']},
+            ssp_product_id='teams-yearly',
         )
 
         # URL patterns
@@ -274,7 +288,8 @@ class CheckoutIntentViewSetTestCase(APITest):
             expires_at=timezone.now() + timedelta(minutes=30),
             stripe_checkout_session_id='cs_test_78955',
             country='FR',
-            terms_metadata={'version': '1.5', 'fulfilled': True}
+            terms_metadata={'version': '1.5', 'fulfilled': True},
+            ssp_product_id='teams-yearly',
         )
 
         detail_url = reverse(
@@ -345,7 +360,8 @@ class CheckoutIntentViewSetTestCase(APITest):
             'enterprise_name': 'Test Enterprise post',
             'quantity': 13,
             'country': 'NZ',
-            'terms_metadata': {'version': '1.0', 'accepted_at': '2024-01-15T10:30:00Z'}
+            'terms_metadata': {'version': '1.0', 'accepted_at': '2024-01-15T10:30:00Z'},
+            'ssp_product': 'teams-yearly',
         }
 
         response = self.client.post(
@@ -375,7 +391,8 @@ class CheckoutIntentViewSetTestCase(APITest):
             'enterprise_name': self.checkout_intent_1.enterprise_name,
             'quantity': 33,
             'country': 'IT',
-            'terms_metadata': {'version': '2.0', 'updated': True}
+            'terms_metadata': {'version': '2.0', 'updated': True},
+            'ssp_product': 'teams-yearly',
         }
 
         response = self.client.post(
@@ -419,7 +436,7 @@ class CheckoutIntentViewSetTestCase(APITest):
 
         response = self.client.post(
             self.list_url,
-            invalid_payload,
+            {**invalid_payload, 'ssp_product': 'teams-yearly'},
             format='json'
         )
 
@@ -441,7 +458,7 @@ class CheckoutIntentViewSetTestCase(APITest):
         # Test missing enterprise_slug
         response = self.client.post(
             self.list_url,
-            payload,
+            {**payload, 'ssp_product': 'teams-yearly'},
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         error_detail = list(response.json().values())[0][0]
@@ -455,6 +472,7 @@ class CheckoutIntentViewSetTestCase(APITest):
                 'enterprise_slug': 'test-enterprise',
                 'enterprise_name': 'Test Enterprise',
                 'quantity': 10,
+                'ssp_product': 'teams-yearly',
             },
         )
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
@@ -525,7 +543,8 @@ class CheckoutIntentViewSetTestCase(APITest):
             'enterprise_slug': 'test-enterprise-null',
             'enterprise_name': 'Test Enterprise Null',
             'quantity': 5,
-            'terms_metadata': None
+            'terms_metadata': None,
+            'ssp_product': 'teams-yearly',
         }
 
         response = self.client.post(
@@ -549,7 +568,8 @@ class CheckoutIntentViewSetTestCase(APITest):
             'enterprise_slug': 'test-enterprise-empty',
             'enterprise_name': 'Test Enterprise Empty',
             'quantity': 8,
-            'terms_metadata': {}
+            'terms_metadata': {},
+            'ssp_product': 'teams-yearly',
         }
 
         response = self.client.post(
@@ -574,7 +594,8 @@ class CheckoutIntentViewSetTestCase(APITest):
         request_data = {
             'quantity': 13,
             'country': 'NZ',
-            'terms_metadata': {'version': '1.0', 'accepted_at': '2024-01-15T10:30:00Z'}
+            'terms_metadata': {'version': '1.0', 'accepted_at': '2024-01-15T10:30:00Z'},
+            'ssp_product': 'teams-yearly',
         }
 
         response = self.client.post(
@@ -610,6 +631,7 @@ class CheckoutIntentViewSetTestCase(APITest):
             'enterprise_slug': 'new-slug',
             'enterprise_name': 'New Name',
             'quantity': 7,
+            'ssp_product': 'teams-yearly',
         }
         response = self.client.post(self.list_url, request_data, format='json')
         self.assertEqual(response.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
@@ -634,6 +656,7 @@ class CheckoutIntentViewSetTestCase(APITest):
             'enterprise_slug': 'active-enterprise',
             'enterprise_name': 'Active Enterprise',
             'quantity': 7,
+            'ssp_product': 'teams-yearly',
         }
         response = self.client.post(self.list_url, request_data, format='json')
         self.assertEqual(response.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)

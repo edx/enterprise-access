@@ -451,8 +451,7 @@ def create_free_trial_checkout_session(
     ssp_product_slug = input_data.get('ssp_product_slug')
     if not ssp_product_slug:
         ssp_product_slug = getattr(settings, 'SSP_DEFAULT_PRODUCT_SLUG', None)
-    ssp_product = None
-    
+
     ssp_product_instance = None
     if ssp_product_slug:
         ssp_product_instance = SspProduct.objects.filter(
