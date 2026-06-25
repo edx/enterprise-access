@@ -13,7 +13,7 @@ from rest_framework.reverse import reverse
 from enterprise_access.apps.core.constants import SYSTEM_ENTERPRISE_LEARNER_ROLE
 from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.customer_billing.constants import CheckoutIntentState
-from enterprise_access.apps.customer_billing.models import CheckoutIntent
+from enterprise_access.apps.customer_billing.models import CheckoutIntent, SspProduct
 from test_utils import APITest
 
 User = get_user_model()
@@ -68,6 +68,13 @@ class CheckoutIntentViewSetTestCase(APITest):
     def setUp(self):
         """Set up test data."""
         super().setUp()
+        SspProduct.objects.get_or_create(
+            slug='teams-yearly',
+            defaults={
+                'stripe_price_lookup_key': 'teams_subscription_license_yearly',
+                'is_active': True,
+            }
+        )
 
         self.checkout_intent_1 = CheckoutIntent.objects.create(
             user=self.user,

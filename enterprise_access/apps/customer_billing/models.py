@@ -33,18 +33,9 @@ logger = logging.getLogger(__name__)
 User = get_user_model()
 
 
-def get_default_ssp_product_pk():
-    """Return the PK of the default SSP product."""
-    product, _ = SspProduct.objects.get_or_create(
-        slug=settings.SSP_DEFAULT_PRODUCT_SLUG,
-        defaults={
-            'stripe_price_lookup_key': 'teams_subscription_license_yearly',
-            'catalog_query_uuid': uuid4(),
-            'is_active': True,
-        }
-    )
-    return product.pk
-
+def get_default_ssp_product_slug():
+   """Return the default SSP product slug from Django settings."""
+   return settings.SSP_DEFAULT_PRODUCT_SLUG
 
 class FailedCheckoutIntentConflict(Exception):
     pass
@@ -312,7 +303,7 @@ class CheckoutIntent(TimeStampedModel):
         on_delete=models.PROTECT,
         null=False,
         blank=False,
-        default=get_default_ssp_product_pk,
+        default=get_default_ssp_product_slug,
         help_text='The SSP product associated with this checkout intent.',
     )
     terms_metadata = models.JSONField(

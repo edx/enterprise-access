@@ -265,12 +265,7 @@ def get_ssp_product_pricing() -> Dict[str, Dict]:
     all_stripe_prices = get_all_stripe_prices()
 
     ssp_pricing = {}
-    settings_quantity_ranges = {}
-    for product_config in getattr(settings, 'SSP_PRODUCTS', {}).values():
-        lk = product_config.get('lookup_key')
-        qr = product_config.get('quantity_range')
-        if lk and qr:
-            settings_quantity_ranges[lk] = qr
+    default_quantity_range = getattr(settings, 'DEFAULT_SSP_QUANTITY_RANGE', [5, 50])
     for ssp_product in SspProduct.objects.filter(is_active=True):
         lookup_key = ssp_product.stripe_price_lookup_key
         if not lookup_key:
@@ -289,7 +284,7 @@ def get_ssp_product_pricing() -> Dict[str, Dict]:
         price_data = all_stripe_prices[lookup_key].copy()
         # Add SSP-specific metadata
         price_data['ssp_product_key'] = ssp_product.slug
-        price_data['quantity_range'] = settings_quantity_ranges.get(lookup_key)
+        price_data['quantity_range'] = default_quantity_range
         ssp_pricing[ssp_product.slug] = price_data
 
     return ssp_pricing
@@ -444,14 +439,9 @@ def _serialize_basic_format(stripe_price: stripe.Price) -> SerializedPriceData:
         if not ssp_slug:
             lookup_key = getattr(stripe_price, 'lookup_key', None)
             if lookup_key:
-                try:
-                    ssp = SspProduct.objects.filter(stripe_price_lookup_key=lookup_key).only('slug').first()
-                    if ssp:
-                        ssp_slug = ssp.slug
-                except Exception:  # pylint: disable=broad-exception-caught
-                    logger.exception('Error looking up SspProduct for lookup_key %s', lookup_key)
+                ssp = SspProduct.objects.filter(stripe_price_lookup_key=lookup_key).only('slug').first()
+                ssp_slug = ssp.slug if ssp else None
 
-        if ssp_slug:
-            base_data['ssp_product_slug'] = ssp_slug
+        base_data['ssp_product_slug'] = ssp_slug
 
     return base_data

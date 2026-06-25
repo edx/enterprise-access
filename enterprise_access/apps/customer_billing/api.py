@@ -5,6 +5,7 @@ import logging
 from collections.abc import Mapping
 from typing import TypedDict, Unpack, cast
 
+import settings
 import stripe
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import AbstractUser
@@ -447,23 +448,19 @@ def create_free_trial_checkout_session(
         raise CreateCheckoutSessionValidationError(validation_errors_by_field=validation_errors)
 
     user = input_data['user']
-    # ── Resolve slug ↔ price_id BEFORE creating intent ──
-    ssp_pricing = get_ssp_product_pricing()
     ssp_product_slug = input_data.get('ssp_product_slug')
-    stripe_price_id = input_data.get('stripe_price_id')
-    if not ssp_product_slug and stripe_price_id:
-        for candidate_slug, price_data in ssp_pricing.items():
-            if price_data.get('id') == stripe_price_id:
-                ssp_product_slug = candidate_slug
-                break
-    if ssp_product_slug:
-        stripe_price_id = ssp_pricing[ssp_product_slug]['id']
-    # ── Resolve SspProduct instance for FK ──
+    if not ssp_product_slug:
+        ssp_product_slug = getattr(settings, 'SSP_DEFAULT_PRODUCT_SLUG', None)
+    ssp_product = None
+    
     ssp_product_instance = None
     if ssp_product_slug:
         ssp_product_instance = SspProduct.objects.filter(
             slug=ssp_product_slug, is_active=True
         ).first()
+    stripe_price_id = input_data.get('stripe_price_id')
+    if not stripe_price_id and ssp_product_instance:
+        stripe_price_id = ssp_product_instance.stripe_price_lookup_key
     # Create checkout intent, which reserves the enterprise name & slug.
     try:
         intent = CheckoutIntent.create_intent(

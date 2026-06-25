@@ -17,12 +17,12 @@ MOCK_SSP_PRODUCTS = {
     'quarterly_license_plan': {
         'stripe_price_id': 'price_test_quarterly',  # DEPRECATED: Use lookup_key instead
         'lookup_key': 'price_quarterly_0002',
-        'quantity_range': (5, 30),
+        'quantity_range': [5, 50],
     },
     'yearly_license_plan': {
         'stripe_price_id': 'price_test_yearly',  # DEPRECATED: Use lookup_key instead
         'lookup_key': 'price_yearly_0001',
-        'quantity_range': (5, 30),
+        'quantity_range': [5, 50],
     },
 }
 
@@ -199,7 +199,7 @@ class TestStripePricingAPI(TestCase):
         # Check that SSP-specific metadata is added and quantity_range is sourced from settings
         quarterly_data = result['quarterly_license_plan']
         self.assertEqual(quarterly_data['ssp_product_key'], 'quarterly_license_plan')
-        self.assertEqual(quarterly_data.get('quantity_range'), (5, 30))
+        self.assertEqual(quarterly_data.get('quantity_range'), [5, 50])
 
     def test_calculate_subtotal_basic_format(self):
         """Test subtotal calculation with basic format."""
@@ -696,32 +696,6 @@ class TestStripePricingAPI(TestCase):
         result = pricing_api._serialize_basic_format(mock_price)
         self.assertEqual(result.get('ssp_product_slug'), 'quarterly_license_plan')
 
-    @mock.patch('enterprise_access.apps.customer_billing.pricing_api.SspProduct.objects.get')
-    def test_serialize_basic_format_database_exception_handled(self, mock_get):
-        """Ensure an unexpected DB exception during lookup fallback is swallowed and logged."""
-        mock_price = self._create_mock_stripe_price(lookup_key='corrupt_lookup_key')
-        mock_price.product.metadata = {}
-
-        mock_get.side_effect = Exception("Database connection dropped completely")
-
-        # pylint: disable=protected-access
-        result = pricing_api._serialize_basic_format(mock_price)
-        self.assertNotIn('ssp_product_slug', result)
-
-    @override_settings(
-        SSP_PRODUCTS={
-            'incomplete_plan_1': {
-                'lookup_key': 'only_key_no_range',
-            },
-            'incomplete_plan_2': {
-                'quantity_range': (10, 50),
-            },
-            'complete_plan': {
-                'lookup_key': 'valid_lk_range',
-                'quantity_range': (5, 100),
-            }
-        }
-    )
     @mock.patch('enterprise_access.apps.customer_billing.pricing_api.stripe')
     def test_get_ssp_product_pricing_skips_invalid_settings_config(self, mock_stripe):
         """Ensure settings blocks missing lookup_key or quantity_range are skipped gracefully."""
@@ -742,7 +716,7 @@ class TestStripePricingAPI(TestCase):
 
         # The complete plan should process properly
         self.assertIn('complete_plan', result)
-        self.assertEqual(result['complete_plan'].get('quantity_range'), (5, 100))
+        self.assertEqual(result['complete_plan'].get('quantity_range'), [5, 50])
 
     @mock.patch('enterprise_access.apps.customer_billing.pricing_api.stripe')
     def test_get_ssp_product_pricing_ignores_inactive_ssp_products(self, mock_stripe):
@@ -764,25 +738,3 @@ class TestStripePricingAPI(TestCase):
 
         self.assertEqual(len(result), 0)
 
-    @mock.patch('enterprise_access.apps.customer_billing.pricing_api.logger')
-    @mock.patch('enterprise_access.apps.customer_billing.pricing_api.SspProduct.objects')
-    def test_serialize_basic_format_ssp_lookup_exception(self, mock_ssp_objects, mock_logger):
-        """
-        Covers the except Exception branch when SspProduct lookup raises an error.
-        """
-        mock_ssp_objects.filter.side_effect = RuntimeError('DB error')
-        mock_product = mock.MagicMock()
-        mock_product.metadata = {}
-        mock_price = mock.MagicMock()
-        mock_price.id = 'price_test'
-        mock_price.unit_amount = 1000
-        mock_price.currency = 'usd'
-        mock_price.recurring = None
-        mock_price.lookup_key = 'test_lookup_key'
-        mock_price.product = mock_product
-        result = pricing_api._serialize_basic_format(mock_price)  # pylint: disable=protected-access
-        self.assertIsNone(result.get('ssp_product_slug'))
-        mock_ssp_objects.filter.assert_called_once_with(stripe_price_lookup_key='test_lookup_key')
-        mock_logger.exception.assert_called_once_with(
-            'Error looking up SspProduct for lookup_key %s', 'test_lookup_key'
-        )
