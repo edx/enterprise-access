@@ -181,23 +181,16 @@ class SubsidyAccessPolicy(TimeStampedModel):
     active = models.BooleanField(
         default=False,
         help_text=(
-            'Set to FALSE to deactivate and hide this policy. Use this when you want to disable redemption and make '
-            'it disappear from all frontends, effectively soft-deleting it. Default is False (deactivated).'
+            'Set to FALSE to deactivate this policy, and hide it from both admins and learners. Use this when you '
+            'want to effectively soft-delete this policy. A typical use case is that the policy was created on '
+            'accident or as a test. Caveat: you cannot deactivate a policy with existing spend/enrollments.'
         ),
-    )
-    learner_credit_request_config = models.OneToOneField(
-        'subsidy_request.LearnerCreditRequestConfiguration',
-        related_name="learner_credit_config",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
     )
     retired = models.BooleanField(
         default=False,
         help_text=(
-            "True means redeemability of content using this policy has been enabled. "
-            "Set this to False to deactivate the policy but keep it visible from an admin's perspective "
-            "(useful when you want to just expire a policy without expiring the whole plan)."
+            "Set to TRUE to deactivate this policy, but NOT hide it from admins. Use this when you want to disable "
+            "redemption, but you can't set active=False because this policy already has spend/enrollments."
         ),
     )
     retired_at = models.DateTimeField(
@@ -206,6 +199,13 @@ class SubsidyAccessPolicy(TimeStampedModel):
         help_text=(
             "The date and time when this policy is considered retired."
         )
+    )
+    learner_credit_request_config = models.OneToOneField(
+        'subsidy_request.LearnerCreditRequestConfiguration',
+        related_name="learner_credit_config",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
     )
     catalog_uuid = models.UUIDField(
         db_index=True,
