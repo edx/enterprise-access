@@ -367,6 +367,24 @@ def create_pending_enterprise_learner_for_assignment_task(learner_content_assign
     enterprise_customer_uuid = assignment.assignment_configuration.enterprise_customer_uuid
 
     lms_client = LmsApiClient()
+
+    # Skip pending-user creation if the learner is already actively linked to this enterprise.
+    # Calling create_pending_enterprise_users when the user is already linked can inadvertently
+    # trigger the LMS serializer's "inactivate other customers" logic and deactivate the user's
+    # links to other enterprise customers.
+    existing_link = lms_client.get_enterprise_learner_by_email(
+        enterprise_customer_uuid, assignment.learner_email
+    )
+    if existing_link and existing_link.get('active', False):
+        assignment.add_successful_linked_action()
+        logger.info(
+            'Learner is already actively linked to enterprise %s; '
+            'skipping pending enterprise user creation for assignment %s',
+            enterprise_customer_uuid,
+            assignment.uuid,
+        )
+        return
+
     # Could raise HTTPError and trigger task retry.  Intentionally ignoring response since success should just not throw
     # an exception.  Two possible success statuses are 201 (created) and 200 (found), but there's no reason to
     # distinguish them for the purpose of this task.
