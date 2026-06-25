@@ -105,6 +105,34 @@ class TestEnterpriseCatalogApiClient(TestCase):
             },
         )
 
+    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient', autospec=True)
+    def test_associate_academy_with_catalog(self, mock_oauth_client):
+        academy_uuid = uuid4()
+        catalog_uuid = uuid4()
+        mock_post = mock_oauth_client.return_value.post
+        mock_post.return_value.json.return_value = {'detail': 'ok'}
+
+        client = EnterpriseCatalogApiClient()
+        result = client.associate_academy_with_catalog(academy_uuid, catalog_uuid)
+
+        self.assertEqual(result, {'detail': 'ok'})
+        mock_post.assert_called_once_with(
+            f'http://enterprise-catalog.example.com/api/v1/academies/{academy_uuid}/associate-catalog/',
+            json={'enterprise_catalog_uuid': str(catalog_uuid)},
+        )
+
+    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient', autospec=True)
+    def test_associate_academy_with_catalog_empty_response_body(self, mock_oauth_client):
+        academy_uuid = uuid4()
+        catalog_uuid = uuid4()
+        mock_post = mock_oauth_client.return_value.post
+        mock_post.return_value.json.side_effect = ValueError()
+
+        client = EnterpriseCatalogApiClient()
+        result = client.associate_academy_with_catalog(academy_uuid, catalog_uuid)
+
+        self.assertEqual(result, {})
+
     @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient')
     def test_get_content_metadata_count(self, mock_oauth_client):
         mock_response_json = {
