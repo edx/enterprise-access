@@ -19,6 +19,7 @@ from enterprise_access.apps.api_client.enterprise_catalog_client import (
     EnterpriseCatalogUserV1ApiClient
 )
 from enterprise_access.apps.api_client.tests.test_constants import DATE_FORMAT_ISO_8601
+from enterprise_access.apps.api_client.utils import fetch_all_results
 from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.utils import _days_from_now
 
@@ -181,6 +182,30 @@ class TestEnterpriseCatalogApiClient(TestCase):
         self.assertEqual(fetched, mock_response_json)
         mock_oauth_client.return_value.get.assert_called_with(
             'http://enterprise-catalog.example.com/api/v2/enterprise-catalogs/',
+            params={},
+        )
+
+    @mock.patch("enterprise_access.apps.api_client.base_oauth.OAuthAPIClient")
+    def test_fetch_all_results_with_none_params(self, mock_oauth_client):
+        first_page = {
+            "count": 1,
+            "next": None,
+            "previous": None,
+            "results": [{"uuid": "123"}],
+        }
+
+        mock_oauth_client.return_value.get.return_value.json.return_value = first_page
+
+        result = fetch_all_results(
+            mock_oauth_client.return_value,
+            "http://enterprise-catalog.example.com/api/v2/enterprise-catalogs/",
+            params=None,
+        )
+
+        self.assertEqual(result, first_page)
+
+        mock_oauth_client.return_value.get.assert_called_once_with(
+            "http://enterprise-catalog.example.com/api/v2/enterprise-catalogs/",
             params={},
         )
 
