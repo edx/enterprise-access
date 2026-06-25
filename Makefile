@@ -79,7 +79,8 @@ style: ## run Python style checker
 	pycodestyle enterprise_access manage.py
 
 lint: ## run Python code linting
-	pylint --rcfile=pylintrc enterprise_access/ *.py
+	PYTHONPATH=. DJANGO_SETTINGS_MODULE=enterprise_access.settings.test \
+		pylint --rcfile=pylintrc enterprise_access/ *.py
 
 quality: style isort_check lint ## check code style and import sorting, then lint
 	@echo "\e[32mQuality tests passed!\e[0m"

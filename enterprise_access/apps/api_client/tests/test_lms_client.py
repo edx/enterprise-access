@@ -1282,6 +1282,107 @@ class TestLmsApiClient(TestCase):
         if expected_link is None:
             self.assertTrue(mock_logger.error.called or mock_logger.exception.called)
 
+    @ddt.data(
+        # list response, user linked → returns enterprise user record
+        {
+            'mock_user_accounts': [{'id': TEST_USER_ID}],
+            'enterprise_results': [TEST_USER_RECORD],
+            'expected_result': TEST_USER_RECORD,
+            'expect_enterprise_called': True,
+        },
+        # empty list → None, no enterprise call
+        {
+            'mock_user_accounts': [],
+            'enterprise_results': None,
+            'expected_result': None,
+            'expect_enterprise_called': False,
+        },
+        # None → None, no enterprise call
+        {
+            'mock_user_accounts': None,
+            'enterprise_results': None,
+            'expected_result': None,
+            'expect_enterprise_called': False,
+        },
+        # user has account but is not linked to this enterprise → None
+        {
+            'mock_user_accounts': [{'id': TEST_USER_ID}],
+            'enterprise_results': [],
+            'expected_result': None,
+            'expect_enterprise_called': True,
+        },
+        # list entry missing 'id' → None, no enterprise call
+        {
+            'mock_user_accounts': [{'email': 'someone@example.com'}],
+            'enterprise_results': None,
+            'expected_result': None,
+            'expect_enterprise_called': False,
+        },
+    )
+    @ddt.unpack
+    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient')
+    def test_get_enterprise_learner_by_email(
+            self,
+            mock_oauth_client,
+            mock_user_accounts,
+            enterprise_results,
+            expected_result,
+            expect_enterprise_called,
+    ):
+        """
+        Verify get_enterprise_learner_by_email resolves an email to an enterprise user record,
+        returning None when the learner has no account, no matching ID, or is not linked.
+        HTTP errors from either LMS call propagate to the caller.
+        """
+        learner_email = 'test@example.com'
+
+        if enterprise_results is not None:
+            mock_oauth_client.return_value.get.return_value = MockResponse(
+                {'results': enterprise_results}, 200
+            )
+
+        client = LmsApiClient()
+        with mock.patch.object(client, 'get_lms_user_account', return_value=mock_user_accounts) as mock_get_account:
+            result = client.get_enterprise_learner_by_email(str(TEST_ENTERPRISE_UUID), learner_email)
+
+        self.assertEqual(result, expected_result)
+        mock_get_account.assert_called_once_with(email=learner_email)
+        if expect_enterprise_called:
+            mock_oauth_client.return_value.get.assert_called_once_with(
+                client.enterprise_learner_endpoint,
+                params={'enterprise_customer_uuid': str(TEST_ENTERPRISE_UUID), 'user_ids': TEST_USER_ID},
+                timeout=settings.LMS_CLIENT_TIMEOUT,
+            )
+        else:
+            mock_oauth_client.return_value.get.assert_not_called()
+
+    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient')
+    def test_get_enterprise_learner_by_email_account_http_error(self, mock_oauth_client):
+        """
+        HTTPError from get_lms_user_account propagates to the caller instead of being swallowed.
+        This ensures calling Celery tasks retry rather than silently proceeding.
+        """
+        client = LmsApiClient()
+        with mock.patch.object(
+            client, 'get_lms_user_account', side_effect=requests.exceptions.HTTPError('500')
+        ):
+            with self.assertRaises(requests.exceptions.HTTPError):
+                client.get_enterprise_learner_by_email(str(TEST_ENTERPRISE_UUID), 'test@example.com')
+        mock_oauth_client.return_value.get.assert_not_called()
+
+    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient')
+    def test_get_enterprise_learner_by_email_enterprise_http_error(self, mock_oauth_client):
+        """
+        HTTPError from the enterprise-learner endpoint propagates to the caller.
+        This ensures calling Celery tasks retry on LMS 5xx rather than treating
+        the failure as 'not linked' and proceeding to create_pending_enterprise_users.
+        """
+        mock_oauth_client.return_value.get.return_value = MockResponse(None, 503)
+        client = LmsApiClient()
+        with mock.patch.object(client, 'get_lms_user_account', return_value=[{'id': TEST_USER_ID}]):
+            with self.assertRaises(requests.exceptions.HTTPError):
+                client.get_enterprise_learner_by_email(str(TEST_ENTERPRISE_UUID), 'test@example.com')
+
 
 class TestLmsUserApiClient(TestCase):
     """
