@@ -168,7 +168,7 @@ class TestSendXpertMessage(TestCase):
             prompt_type='learner_intent',
         )
 
-        assert result == mock_response
+        assert result == prompts_api.XpertResponse(role='assistant', content='{"answer":"yes"}')
         mock_client_class.return_value.send_message.assert_called_once_with(
             system_prompt=self.system_prompt,
             messages=self.messages,
@@ -179,7 +179,7 @@ class TestSendXpertMessage(TestCase):
     @ddt.data(None, [], ())
     @mock.patch(PATCH_XPERT_CLIENT)
     def test_empty_tags_passed_as_none(self, tags, mock_client_class):
-        mock_client_class.return_value.send_message.return_value = {}
+        mock_client_class.return_value.send_message.return_value = {'role': 'assistant', 'content': 'null'}
 
         prompts_api.send_xpert_message(
             system_prompt=self.system_prompt,
@@ -192,7 +192,7 @@ class TestSendXpertMessage(TestCase):
 
     @mock.patch(PATCH_XPERT_CLIENT)
     def test_no_second_call_made(self, mock_client_class):
-        mock_client_class.return_value.send_message.return_value = {}
+        mock_client_class.return_value.send_message.return_value = {'role': 'assistant', 'content': 'null'}
 
         prompts_api.send_xpert_message(
             system_prompt=self.system_prompt,
@@ -236,28 +236,47 @@ class TestSendXpertMessageErrors(TestCase):
 
 
 @ddt.ddt
-class TestExtractXpertContent(TestCase):
-    """Tests for extract_xpert_content."""
+class TestXpertResponseFromDict(TestCase):
+    """Tests for XpertResponse.from_dict."""
 
-    def test_valid_response_returns_content_string(self):
-        response = {'role': 'assistant', 'content': '{"answer":"yes"}'}
+    def test_valid_response_returns_xpert_response(self):
+        response_dict = {'role': 'assistant', 'content': '{"answer":"yes"}'}
 
-        result = prompts_api.extract_xpert_content(response)
+        result = prompts_api.XpertResponse.from_dict(response_dict)
 
-        assert result == '{"answer":"yes"}'
+        assert result == prompts_api.XpertResponse(role='assistant', content='{"answer":"yes"}')
+        assert result.role == 'assistant'
+        assert result.content == '{"answer":"yes"}'
+
+    def test_missing_role_defaults_to_empty_string(self):
+        response_dict = {'content': 'test'}
+
+        result = prompts_api.XpertResponse.from_dict(response_dict)
+
+        assert result.role == ''
+        assert result.content == 'test'
 
     @ddt.data(
-        {'role': 'assistant'},
-        {'role': 'assistant', 'content': None},
+        ({'role': 'assistant'}, 'missing'),
+        ({'role': 'assistant', 'content': None}, 'none'),
     )
-    def test_invalid_content_raises_error(self, response):
-        with pytest.raises(prompts_api.PromptError):
-            prompts_api.extract_xpert_content(response)
+    @ddt.unpack
+    def test_invalid_content_raises_error(self, response_dict, _case):
+        with pytest.raises(prompts_api.PromptError) as exc_info:
+            prompts_api.XpertResponse.from_dict(response_dict)
+        assert 'content' in str(exc_info.value).lower()
+
+    def test_non_string_content_raises_error(self):
+        response_dict = {'role': 'assistant', 'content': 123}
+
+        with pytest.raises(prompts_api.PromptError) as exc_info:
+            prompts_api.XpertResponse.from_dict(response_dict)
+        assert 'must be a string' in str(exc_info.value).lower()
 
 
 @ddt.ddt
-class TestParseJsonContent(TestCase):
-    """Tests for parse_json_content."""
+class TestXpertResponseAsJson(TestCase):
+    """Tests for XpertResponse.as_json."""
 
     @ddt.data(
         ('{"answer":42}', {'answer': 42}),
@@ -271,7 +290,10 @@ class TestParseJsonContent(TestCase):
     )
     @ddt.unpack
     def test_valid_json_values_returned_unchanged(self, raw_content, expected):
-        result = prompts_api.parse_json_content(raw_content)
+        response = prompts_api.XpertResponse(role='assistant', content=raw_content)
+
+        result = response.as_json()
+
         assert result == expected
 
     @ddt.data(
@@ -282,11 +304,15 @@ class TestParseJsonContent(TestCase):
         '',
     )
     def test_invalid_or_fenced_json_raises_error(self, raw_content):
+        response = prompts_api.XpertResponse(role='assistant', content=raw_content)
+
         with pytest.raises(prompts_api.PromptError):
-            prompts_api.parse_json_content(raw_content)
+            response.as_json()
 
     def test_invalid_json_exception_is_chained(self):
+        response = prompts_api.XpertResponse(role='assistant', content='not valid json')
+
         with pytest.raises(prompts_api.PromptError) as exc_info:
-            prompts_api.parse_json_content('not valid json')
+            response.as_json()
 
         assert exc_info.value.__cause__ is not None

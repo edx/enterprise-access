@@ -8,6 +8,7 @@ No HTTP or DRF machinery — suitable for testing in isolation.
 import json
 import logging
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any, TypeAlias
 
 from enterprise_access.apps.prompts.api_client import XpertAPIClient, XpertAPIError
@@ -17,7 +18,6 @@ logger = logging.getLogger(__name__)
 
 ValidatedData: TypeAlias = dict[str, Any]
 XpertMessage: TypeAlias = dict[str, str]
-XpertResponse: TypeAlias = dict[str, object]
 SystemPromptModel: TypeAlias = type[BaseSystemPrompt]
 
 _SCHEMA_SEPARATOR = '\n\nEXPECTED OUTPUT SCHEMA:\n'
@@ -29,6 +29,48 @@ class PromptError(Exception):
 
     These errors are translated by the view layer into HTTP 500 responses.
     """
+
+
+@dataclass(frozen=True)
+class XpertResponse:
+    """
+    Canonical domain model for an Xpert API response.
+
+    The raw Xpert response is a list; this dataclass wraps the first element.
+    """
+
+    role: str
+    content: str
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> 'XpertResponse':
+        """
+        Construct from a raw Xpert response dict.
+
+        Raises PromptError if the response is missing or has an invalid content field.
+        """
+        content = data.get('content')
+
+        if content is None:
+            raise PromptError('Xpert response is missing the "content" field.')
+
+        if not isinstance(content, str):
+            raise PromptError('Xpert response "content" must be a string.')
+
+        return cls(role=data.get('role', ''), content=content)
+
+    def as_json(self) -> Any:
+        """
+        Parse self.content as JSON.
+
+        Raises PromptError if JSON parsing fails.
+        """
+        try:
+            return json.loads(self.content.strip())
+        except json.JSONDecodeError as exc:
+            raise PromptError(
+                f'Failed to parse Xpert response content as JSON: {exc}'
+            ) from exc
 
 
 def get_current_prompt(
@@ -113,12 +155,12 @@ def send_xpert_message(
         PromptError: If the Xpert API call fails.
 
     Returns:
-        The raw Xpert response dict.
+        An XpertResponse domain model wrapping the Xpert response.
     """
     normalized_tags = list(tags) if tags else None
 
     try:
-        response = XpertAPIClient().send_message(
+        raw_response = XpertAPIClient().send_message(
             system_prompt=system_prompt,
             messages=messages,
             conversation_id=conversation_id,
@@ -132,44 +174,4 @@ def send_xpert_message(
         )
         raise PromptError(str(exc)) from exc
 
-    return response
-
-
-def extract_xpert_content(xpert_response: XpertResponse) -> str:
-    """
-    Extract the raw content string from the Xpert response.
-
-    Raises:
-        PromptError: If the 'content' field is missing.
-    """
-    content = xpert_response.get('content')
-
-    if content is None:
-        raise PromptError('Xpert response is missing the "content" field.')
-
-    if not isinstance(content, str):
-        raise PromptError('Xpert response "content" must be a string.')
-
-    return content
-
-
-def parse_json_content(content: str) -> dict[str, Any]:
-    """
-    Parse and return the complete JSON value produced by Xpert.
-
-    The content must be directly parseable as JSON after surrounding
-    whitespace is removed. Markdown fencing, repair prompts, retries,
-    fallback parsing, field mapping, and response normalization are
-    intentionally unsupported.
-
-    Raises:
-        PromptError: If JSON parsing fails.
-    """
-    try:
-        parsed_content = json.loads(content.strip())
-    except json.JSONDecodeError as exc:
-        raise PromptError(
-            f'Failed to parse Xpert response content as JSON: {exc}'
-        ) from exc
-
-    return parsed_content
+    return XpertResponse.from_dict(raw_response)

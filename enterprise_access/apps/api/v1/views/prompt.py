@@ -152,8 +152,7 @@ class LearnerPathwaysViewSet(BasePromptViewSet):
                 prompt_type=PromptType.LEARNER_INTENT,
             )
 
-            content = prompts_api.extract_xpert_content(xpert_response)
-            response_data = prompts_api.parse_json_content(content)
+            response_data = xpert_response.as_json()
         except prompts_api.PromptError as exc:
             raise PromptRequestException(str(exc)) from exc
 

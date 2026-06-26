@@ -9,9 +9,8 @@ from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
-# Lightweight type aliases for Xpert message structures.
+# Lightweight type alias for Xpert message structures.
 Message = dict[str, Any]
-XpertResponse = dict[str, Any]
 
 
 class XpertAPIError(Exception):
@@ -175,7 +174,7 @@ class XpertAPIClient:
             payload['tags'] = tags
         return payload
 
-    def _normalize_response(self, response: requests.Response) -> XpertResponse:
+    def _normalize_response(self, response: requests.Response) -> dict[str, Any]:
         """
         Parse and validate the Xpert response envelope.
 
@@ -219,7 +218,7 @@ class XpertAPIClient:
         messages: list[Message],
         conversation_id: str,
         tags: list[str] | None = None,
-    ) -> XpertResponse:
+    ) -> dict[str, Any]:
         """
         Send a prompt-backed message to the Xpert ``/v1/message`` endpoint.
 
