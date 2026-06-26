@@ -190,6 +190,44 @@ class TestCreateFreeTrialCheckoutSession(TestCase):
     )
     @mock.patch.object(customer_billing_api, 'LmsApiClient', autospec=True)
     @mock.patch.object(stripe_api, 'stripe')
+    @mock.patch(
+        'enterprise_access.apps.customer_billing.api.CheckoutSessionInputValidator',
+    )
+    def test_create_free_trial_checkout_session_raises_without_stripe_price_id(
+        self,
+        mock_validator_class,
+        mock_stripe,  # pylint: disable=unused-argument
+        mock_lms_client_class,  # pylint: disable=unused-argument
+        mock_get_ssp_pricing,  # pylint: disable=unused-argument
+    ):
+        """Ensure ValueError is raised when stripe_price_id is None or empty."""
+        mock_validator_class.return_value.validate.return_value = {}
+        SspProduct.objects.create(
+            slug='quarterly_license_plan',
+            stripe_price_lookup_key=MOCK_SSP_PRODUCTS['quarterly_license_plan']['lookup_key'],
+            is_active=True,
+            catalog_query_uuid=uuid.uuid4(),
+        )
+        for stripe_price_id in (None, ''):
+            with self.subTest(stripe_price_id=stripe_price_id):
+                with self.assertRaises(ValueError) as context:
+                    customer_billing_api.create_free_trial_checkout_session(
+                        user=self.user,
+                        admin_email=self.user.email,
+                        enterprise_slug='my-sluggy',
+                        company_name='My Cool Company',
+                        quantity=20,
+                        stripe_price_id=stripe_price_id,
+                        ssp_product_slug='quarterly_license_plan',
+                    )
+                self.assertIn('stripe_price_id is required', str(context.exception))
+
+    @mock.patch(
+        'enterprise_access.apps.customer_billing.api.get_ssp_product_pricing',
+        return_value=MOCK_SSP_PRICING_DATA,
+    )
+    @mock.patch.object(customer_billing_api, 'LmsApiClient', autospec=True)
+    @mock.patch.object(stripe_api, 'stripe')
     def test_create_free_trial_checkout_session_success_without_user(
         self, mock_stripe, mock_lms_client_class, mock_get_ssp_pricing,  # pylint: disable=unused-argument
     ):
