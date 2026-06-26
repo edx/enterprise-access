@@ -6,7 +6,7 @@ from rest_framework import serializers
 LEARNER_PATHWAYS_API_TAG = 'Learner Pathways'
 
 
-class LearningIntentRequestSerializer(serializers.Serializer):
+class LearningIntentRequestSerializer(serializers.Serializer):  # pylint: disable=abstract-method
     """
     Validates the request body for the learning-intent endpoint.
     """
@@ -14,14 +14,8 @@ class LearningIntentRequestSerializer(serializers.Serializer):
     free_text = serializers.CharField(allow_blank=False)
     known_context = serializers.CharField(allow_blank=False)
 
-    def create(self, validated_data):
-        return validated_data
 
-    def update(self, instance, validated_data):
-        return validated_data
-
-
-class LearningIntentResponseSerializer(serializers.Serializer):
+class LearningIntentResponseSerializer(serializers.Serializer):  # pylint: disable=abstract-method
     """
     Documents the expected HTTP 200 response shape for the learning-intent endpoint.
 
@@ -30,9 +24,3 @@ class LearningIntentResponseSerializer(serializers.Serializer):
     skills_required = serializers.ListField(child=serializers.CharField())
     skills_preferred = serializers.ListField(child=serializers.CharField())
     condensed_algolia_query = serializers.CharField()
-
-    def create(self, validated_data):
-        return validated_data
-
-    def update(self, instance, validated_data):
-        return validated_data

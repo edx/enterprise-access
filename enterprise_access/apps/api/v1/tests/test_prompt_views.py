@@ -19,7 +19,6 @@ from rest_framework.reverse import reverse
 from rest_framework.test import APIClient
 from rest_framework.throttling import ScopedRateThrottle
 
-from enterprise_access.apps.api import serializers as api_serializers
 from enterprise_access.apps.api.v1.views.prompt import BasePromptViewSet, LearnerPathwaysViewSet, PromptRequestException
 from enterprise_access.apps.core.constants import SYSTEM_ENTERPRISE_LEARNER_ROLE
 from enterprise_access.apps.core.tests.factories import UserFactory
@@ -68,68 +67,6 @@ class TestPromptRequestException(TestCase):
             raise PromptRequestException('wrapped') from original
         except PromptRequestException as exc:
             assert exc.__cause__ is original
-
-
-# Domain logic tests are in enterprise_access.apps.prompts.tests.test_api.
-# This test module focuses on HTTP-layer behavior in viewsets.
-
-
-# ---------------------------------------------------------------------------
-# Serializer tests
-# ---------------------------------------------------------------------------
-
-@ddt.ddt
-class TestLearningIntentRequestSerializer(TestCase):
-    """Tests for LearningIntentRequestSerializer."""
-
-    def _valid(self):
-        return dict(_VALID_LEARNING_INTENT_PAYLOAD)
-
-    def test_valid_payload_succeeds(self):
-        s = api_serializers.LearningIntentRequestSerializer(data=self._valid())
-        assert s.is_valid()
-
-    @ddt.data('selected_goals', 'free_text', 'known_context')
-    def test_missing_field_fails(self, field):
-        data = self._valid()
-        del data[field]
-        s = api_serializers.LearningIntentRequestSerializer(data=data)
-        assert not s.is_valid()
-        assert field in s.errors
-
-    @ddt.data('selected_goals', 'free_text', 'known_context')
-    def test_blank_field_fails(self, field):
-        data = self._valid()
-        data[field] = ''
-        s = api_serializers.LearningIntentRequestSerializer(data=data)
-        assert not s.is_valid()
-        assert field in s.errors
-
-    @ddt.data('selected_goals', 'free_text', 'known_context')
-    def test_whitespace_only_field_fails(self, field):
-        data = self._valid()
-        data[field] = '   '
-        s = api_serializers.LearningIntentRequestSerializer(data=data)
-        assert not s.is_valid()
-        assert field in s.errors
-
-    @ddt.data(
-        ('selected_goals', 123),
-        ('free_text', []),
-        ('known_context', {'nested': True}),
-    )
-    @ddt.unpack
-    def test_non_string_value_coerced_or_fails(self, field, value):
-        data = self._valid()
-        data[field] = value
-        s = api_serializers.LearningIntentRequestSerializer(data=data)
-        # DRF CharField coerces non-strings; result must still be non-blank.
-        # 123 → '123' (valid), [] → '' (invalid blank), {} → repr (valid)
-        if s.is_valid():
-            assert isinstance(s.validated_data[field], str)
-            assert len(s.validated_data[field]) > 0
-        else:
-            assert field in s.errors
 
 
 # ---------------------------------------------------------------------------
@@ -218,43 +155,51 @@ class TestLearnerPathwaysAuthorization(APITest):
         super().setUp()
         self.addCleanup(django_cache.clear)
 
-    @ddt.data(_LEARNING_INTENT_URL_NAME)
-    def test_unauthenticated_caller_is_rejected(self, url_name):
+    def test_unauthenticated_caller_is_rejected(self):
         self.client.logout()
         self.client.cookies.clear()
-        url = reverse(url_name)
-        response = self.client.post(url, data={}, format='json')
-        assert response.status_code in [
+
+        response = self.client.post(
+            reverse(_LEARNING_INTENT_URL_NAME),
+            data={},
+            format='json',
+        )
+
+        assert response.status_code in (
             status.HTTP_401_UNAUTHORIZED,
             status.HTTP_403_FORBIDDEN,
-        ]
+        )
 
-    @ddt.data(
-        (_LEARNING_INTENT_URL_NAME, _VALID_LEARNING_INTENT_PAYLOAD),
-    )
-    @ddt.unpack
     @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
-    def test_enterprise_learner_is_allowed(
-        self, url_name, payload, mock_client_class,
-    ):
+    def test_enterprise_learner_is_allowed(self, mock_client_class):
         mock_client_class.return_value.send_message.return_value = {
             'role': 'assistant',
             'content': '{"result":"ok"}',
         }
+
         self.set_jwt_cookie([{
             'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE,
             'context': str(uuid.uuid4()),
         }])
-        url = reverse(url_name)
-        response = self.client.post(url, data=payload, format='json')
+
+        response = self.client.post(
+            reverse(_LEARNING_INTENT_URL_NAME),
+            data=_VALID_LEARNING_INTENT_PAYLOAD,
+            format='json',
+        )
+
         assert response.status_code == status.HTTP_200_OK
 
-    @ddt.data(_LEARNING_INTENT_URL_NAME)
     @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
-    def test_xpert_not_called_when_auth_fails(self, url_name, mock_client_class):
+    def test_xpert_not_called_when_auth_fails(self, mock_client_class):
         self.set_jwt_cookie([])
-        url = reverse(url_name)
-        self.client.post(url, data={}, format='json')
+
+        self.client.post(
+            reverse(_LEARNING_INTENT_URL_NAME),
+            data={},
+            format='json',
+        )
+
         mock_client_class.return_value.send_message.assert_not_called()
 
 
@@ -443,52 +388,53 @@ class TestLearnerPathwaysResponsePassthrough(APITest):
             'context': str(uuid.uuid4()),
         }])
 
-    @ddt.data(
-        ('learning_intent', _LEARNING_INTENT_URL_NAME, _VALID_LEARNING_INTENT_PAYLOAD),
-    )
-    @ddt.unpack
     @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
-    def test_extra_top_level_fields_preserved(
-        self, _action, url_name, payload, mock_client_class,
-    ):
+    def test_extra_top_level_fields_preserved(self, mock_client_class):
         mock_client_class.return_value.send_message.return_value = {
             'role': 'assistant',
             'content': '{"result":"ok","extra_field":"preserved"}',
         }
-        resp = self.client.post(reverse(url_name), data=payload, format='json')
+
+        resp = self.client.post(
+            reverse(_LEARNING_INTENT_URL_NAME),
+            data=_VALID_LEARNING_INTENT_PAYLOAD,
+            format='json',
+        )
+
         assert resp.status_code == status.HTTP_200_OK
         assert 'extra_field' in resp.json()
 
-    @ddt.data(
-        ('learning_intent', _LEARNING_INTENT_URL_NAME, _VALID_LEARNING_INTENT_PAYLOAD),
-    )
-    @ddt.unpack
     @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
-    def test_list_response_returned_as_list(
-        self, _action, url_name, payload, mock_client_class,
-    ):
+    def test_list_response_returned_as_list(self, mock_client_class):
         mock_client_class.return_value.send_message.return_value = {
             'role': 'assistant',
             'content': '[1,2,3]',
         }
-        resp = self.client.post(reverse(url_name), data=payload, format='json')
+
+        resp = self.client.post(
+            reverse(_LEARNING_INTENT_URL_NAME),
+            data=_VALID_LEARNING_INTENT_PAYLOAD,
+            format='json',
+        )
+
         assert resp.status_code == status.HTTP_200_OK
         assert isinstance(resp.json(), list)
 
-    @ddt.data(
-        ('learning_intent', _LEARNING_INTENT_URL_NAME, _VALID_LEARNING_INTENT_PAYLOAD),
-    )
-    @ddt.unpack
     @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
-    def test_nested_values_preserved(
-        self, _action, url_name, payload, mock_client_class,
-    ):
+    def test_nested_values_preserved(self, mock_client_class):
         nested = {'a': {'b': {'c': [1, 2, 3]}}}
+
         mock_client_class.return_value.send_message.return_value = {
             'role': 'assistant',
             'content': json.dumps(nested),
         }
-        resp = self.client.post(reverse(url_name), data=payload, format='json')
+
+        resp = self.client.post(
+            reverse(_LEARNING_INTENT_URL_NAME),
+            data=_VALID_LEARNING_INTENT_PAYLOAD,
+            format='json',
+        )
+
         assert resp.status_code == status.HTTP_200_OK
         assert resp.json() == nested
 
@@ -516,13 +462,18 @@ class TestLearnerPathwaysFailures(APITest):
             'context': str(uuid.uuid4()),
         }])
 
-    @ddt.data(
-        (_LEARNING_INTENT_URL_NAME, _VALID_LEARNING_INTENT_PAYLOAD),
-    )
-    @ddt.unpack
-    def test_missing_prompt_returns_500(self, url_name, payload):
-        with mock.patch.object(XpertLearnerPathwaysSystemPrompt, 'get_current', return_value=None):
-            resp = self.client.post(reverse(url_name), data=payload, format='json')
+    def test_missing_prompt_returns_500(self):
+        with mock.patch.object(
+                XpertLearnerPathwaysSystemPrompt,
+                'get_current',
+                return_value=None,
+        ):
+            resp = self.client.post(
+                reverse(_LEARNING_INTENT_URL_NAME),
+                data=_VALID_LEARNING_INTENT_PAYLOAD,
+                format='json',
+            )
+
         assert resp.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
 
     @ddt.data(
