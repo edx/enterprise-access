@@ -432,7 +432,7 @@ def _serialize_basic_format(stripe_price: stripe.Price) -> SerializedPriceData:
         ssp_slug = None
         try:
             ssp_slug = product.metadata.get('ssp_product_slug') if getattr(product, 'metadata', None) else None
-        except Exception:  # pylint: disable=broad-exception-caught
+        except (AttributeError, TypeError):
             ssp_slug = None
 
         # Fallback: try to resolve from our SspProduct model using lookup_key

@@ -5,8 +5,8 @@ import logging
 from collections.abc import Mapping
 from typing import TypedDict, Unpack, cast
 
-import settings
 import stripe
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import AbstractUser
 from django.core.exceptions import ValidationError
@@ -448,18 +448,11 @@ def create_free_trial_checkout_session(
         raise CreateCheckoutSessionValidationError(validation_errors_by_field=validation_errors)
 
     user = input_data['user']
-    ssp_product_slug = input_data.get('ssp_product_slug')
-    if not ssp_product_slug:
-        ssp_product_slug = getattr(settings, 'SSP_DEFAULT_PRODUCT_SLUG', None)
-
-    ssp_product_instance = None
-    if ssp_product_slug:
-        ssp_product_instance = SspProduct.objects.filter(
-            slug=ssp_product_slug, is_active=True
-        ).first()
+    ssp_product_slug = input_data.get('ssp_product_slug') or settings.SSP_DEFAULT_PRODUCT_SLUG
+    ssp_product_instance = SspProduct.objects.get(slug=ssp_product_slug, is_active=True)
     stripe_price_id = input_data.get('stripe_price_id')
-    if not stripe_price_id and ssp_product_instance:
-        stripe_price_id = ssp_product_instance.stripe_price_lookup_key
+    if not stripe_price_id:
+        raise ValueError('stripe_price_id is required to create a checkout session.')
     # Create checkout intent, which reserves the enterprise name & slug.
     try:
         intent = CheckoutIntent.create_intent(

@@ -686,14 +686,13 @@ class TestStripePricingAPI(TestCase):
             self.assertIn('SSP product bad_product_slug_test missing lookup_key', str(cm.exception))
 
     def test_serialize_basic_format_metadata_exception_handled(self):
-        """Ensure exceptions raised during metadata access fallback safely to ssp_slug = None."""
+        """Ensure AttributeError/TypeError during metadata access fallback safely to ssp_slug = None."""
         mock_price = self._create_mock_stripe_price()
         mock_metadata = mock.MagicMock()
-        mock_metadata.get.side_effect = RuntimeError("Metadata completely broken")
+        mock_metadata.get.side_effect = TypeError("Metadata is not subscriptable")
         mock_price.product.metadata = mock_metadata
 
-        # pylint: disable=protected-access
-        result = pricing_api._serialize_basic_format(mock_price)
+        result = pricing_api._serialize_basic_format(mock_price)  # pylint: disable=protected-access
         self.assertEqual(result.get('ssp_product_slug'), 'quarterly_license_plan')
 
     @mock.patch('enterprise_access.apps.customer_billing.pricing_api.stripe')
