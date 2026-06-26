@@ -103,7 +103,7 @@ class SubscriptionPlanRequestSerializer(BaseSerializer):
     )
     product_id = serializers.ChoiceField(
         choices=settings.PROVISIONING_DEFAULTS['subscription']['all_product_choices'],
-        required=False, allow_null=False,
+        required=False, allow_null=True,
         help_text='The internal edX Enterprise Subscription Product record.',
     )
     desired_num_licenses = serializers.IntegerField(
@@ -114,6 +114,15 @@ class SubscriptionPlanRequestSerializer(BaseSerializer):
         required=False, allow_null=True, default=None,
         help_text='Optional. The enterprise catalog uuid associated with this subscription plan.',
     )
+    ssp_product_slug = serializers.SlugField(
+        required=False, allow_null=True, default=None,
+        help_text=(
+            'SSP product slug (e.g. "teams-yearly", "ai-academy-yearly"). '
+            'When provided, product_id, catalog_query, and academy_uuid are '
+            'resolved from the SspProduct model. '
+            'Kept alongside product_id for backward compatibility until SFDC is updated.'
+        ),
+    )
 
 
 class ProvisioningRequestSerializer(BaseSerializer):
@@ -122,6 +131,16 @@ class ProvisioningRequestSerializer(BaseSerializer):
     """
     enterprise_customer = EnterpriseCustomerRequestSerializer(
         help_text='Object describing the requested Enterprise Customer.',
+    )
+    ssp_product_slug = serializers.SlugField(
+        required=False,
+        allow_null=True,
+        default=None,
+        help_text=(
+            'Optional cross-service SSP product slug to apply to the provisioning request. '
+            'When provided at the top level, it will be used to resolve product_id, '
+            'catalog_query_id and academy association for subscription plans.'
+        ),
     )
     pending_admins = PendingCustomerAdminRequestSerializer(
         help_text='List of objects containing requested customer admin email addresses.',
