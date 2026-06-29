@@ -29,6 +29,7 @@ import stripe
 from django.conf import settings
 from edx_django_utils.cache import TieredCache
 
+from enterprise_access.apps.customer_billing.models import SspProduct
 from enterprise_access.cache_utils import versioned_cache_key
 
 logger = logging.getLogger(__name__)
@@ -264,23 +265,27 @@ def get_ssp_product_pricing() -> Dict[str, Dict]:
     all_stripe_prices = get_all_stripe_prices()
 
     ssp_pricing = {}
-    for product_key, product_config in settings.SSP_PRODUCTS.items():
-        lookup_key = product_config.get('lookup_key')
+    default_quantity_range = getattr(settings, 'DEFAULT_SSP_QUANTITY_RANGE', [5, 50])
+    for ssp_product in SspProduct.objects.filter(is_active=True):
+        lookup_key = ssp_product.stripe_price_lookup_key
         if not lookup_key:
-            logger.error(f'SSP product {product_key} missing lookup_key')
-            raise StripePricingError(f'SSP product {product_key} missing lookup_key')
+            logger.error(f'SSP product {ssp_product.slug} missing lookup_key')
+            raise StripePricingError(f'SSP product {ssp_product.slug} missing lookup_key')
 
         if lookup_key not in all_stripe_prices:
-            logger.error(f'lookup_key {lookup_key} for SSP product {product_key} not found in active Stripe prices')
+            logger.error(
+                f'lookup_key {lookup_key} for SSP product {ssp_product.slug} '
+                f'not found in active Stripe prices')
             raise StripePricingError(
-                f'lookup_key {lookup_key} for SSP product {product_key} not found in active Stripe prices'
+                f'lookup_key {lookup_key} for SSP product {ssp_product.slug} '
+                f'not found in active Stripe prices'
             )
 
         price_data = all_stripe_prices[lookup_key].copy()
         # Add SSP-specific metadata
-        price_data['ssp_product_key'] = product_key
-        price_data['quantity_range'] = product_config.get('quantity_range')
-        ssp_pricing[product_key] = price_data
+        price_data['ssp_product_key'] = ssp_product.slug
+        price_data['quantity_range'] = default_quantity_range
+        ssp_pricing[ssp_product.slug] = price_data
 
     return ssp_pricing
 
@@ -422,5 +427,21 @@ def _serialize_basic_format(stripe_price: stripe.Price) -> SerializedPriceData:
             'description': product.description,
             'metadata': product.metadata,
         }
+
+        # Prefer explicit metadata set on the Stripe Product (Terraform sets this).
+        ssp_slug = None
+        try:
+            ssp_slug = product.metadata.get('ssp_product_slug') if getattr(product, 'metadata', None) else None
+        except (AttributeError, TypeError):
+            ssp_slug = None
+
+        # Fallback: try to resolve from our SspProduct model using lookup_key
+        if not ssp_slug:
+            lookup_key = getattr(stripe_price, 'lookup_key', None)
+            if lookup_key:
+                ssp = SspProduct.objects.filter(stripe_price_lookup_key=lookup_key).only('slug').first()
+                ssp_slug = ssp.slug if ssp else None
+
+        base_data['ssp_product_slug'] = ssp_slug
 
     return base_data

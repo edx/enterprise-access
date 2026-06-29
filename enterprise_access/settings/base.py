@@ -683,7 +683,7 @@ ENABLE_CUSTOMER_BILLING_API = True
 ENABLE_BILLING_MANAGEMENT_API = False
 
 DEFAULT_SSP_PRICE_LOOKUP_KEY = 'teams_subscription_license_yearly'
-
+DEFAULT_SSP_QUANTITY_RANGE = [5, 50]
 # Default SSP product slug assigned to new CheckoutIntent records when no product is specified.
 # Override this in environment-specific settings to change the default product.
 SSP_DEFAULT_PRODUCT_SLUG = 'teams-yearly'
