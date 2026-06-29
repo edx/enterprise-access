@@ -594,6 +594,34 @@ class TestAdminAssignmentAuthorizedCRUD(CRUDViewTestMixin, APITest):
         ]
         assert response_json['learner_state_counts'] == expected_learner_state_counts
 
+    @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient', autospec=True)
+    @mock.patch.object(SubsidyAccessPolicy, 'subsidy_record', autospec=True)
+    def test_list_format_csv(self, mock_subsidy_record, mock_catalog_client):
+        """
+        Test that ``format_csv=true`` returns a CSV of all filtered assignments (no pagination).
+        """
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': str(TEST_ENTERPRISE_UUID),
+        }])
+        mock_catalog_client.return_value.catalog_content_metadata.return_value = self.mock_catalog_result
+        mock_subsidy_record.return_value = self.mock_subsidy_record
+
+        response = self.client.get(ADMIN_ASSIGNMENTS_LIST_ENDPOINT, data={'format_csv': 'true'})
+
+        assert response.status_code == status.HTTP_200_OK
+        assert 'text/csv' in response['Content-Type']
+        content = response.content.decode('utf-8')
+        # Header labels are present.
+        assert 'Email' in content
+        assert 'Course' in content
+        assert 'Status' in content
+        # One CSV data row per assignment for the requesting customer (plus the header row).
+        expected_count = LearnerContentAssignment.objects.filter(
+            assignment_configuration__enterprise_customer_uuid=TEST_ENTERPRISE_UUID
+        ).count()
+        assert len(content.strip().splitlines()) == expected_count + 1
+
     @ddt.data(
         None,
         'recent_action_time',

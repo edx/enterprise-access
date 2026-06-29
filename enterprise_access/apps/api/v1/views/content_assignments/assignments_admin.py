@@ -11,6 +11,7 @@ from rest_framework import authentication, mixins, permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.filters import OrderingFilter, SearchFilter
 from rest_framework.response import Response
+from rest_framework_csv.renderers import CSVRenderer
 
 from enterprise_access.apps.api import filters, serializers, utils
 from enterprise_access.apps.api.serializers.content_assignments.assignment import (
@@ -78,6 +79,30 @@ class PaginationWithPageCountAndLearnerStateCounts(PaginationWithPageCount):
 
         }
         return response_schema
+
+
+class LearnerContentAssignmentAdminCsvRenderer(CSVRenderer):
+    """
+    Controls column ordering and labels for the downloadable assignments report.
+    """
+    header = [
+        'learner_email',
+        'content_title',
+        'content_key',
+        'learner_state',
+        'recent_action.action_type',
+        'recent_action.timestamp',
+        'content_quantity',
+    ]
+    labels = {
+        'learner_email': 'Email',
+        'content_title': 'Course',
+        'content_key': 'Course Key',
+        'learner_state': 'Status',
+        'recent_action.action_type': 'Recent Action',
+        'recent_action.timestamp': 'Assignment Date',
+        'content_quantity': 'Amount',
+    }
 
 
 class LearnerContentAssignmentAdminViewSet(
@@ -168,11 +193,20 @@ class LearnerContentAssignmentAdminViewSet(
     def list(self, request, *args, **kwargs):
         """
         Lists ``LearnerContentAssignment`` records, filtered by the given query parameters.
+
+        When ``format_csv=true`` is passed, returns the full filtered result set as a downloadable CSV.
         """
+        queryset = self.filter_queryset(self.get_queryset())
+
+        if request.query_params.get('format_csv', 'false').lower() in ('true', '1'):
+            serializer = self.get_serializer(queryset, many=True)
+            request.accepted_renderer = LearnerContentAssignmentAdminCsvRenderer()
+            request.accepted_media_type = LearnerContentAssignmentAdminCsvRenderer().media_type
+            return Response(serializer.data, status=status.HTTP_200_OK, content_type='text/csv')
+
         response = super().list(request, *args, **kwargs)
 
         # Compute the learner_state_counts for the filtered queryset.
-        queryset = self.filter_queryset(self.get_queryset())
         learner_state_counter = Counter(
             queryset.exclude(learner_state__isnull=True).values_list('learner_state', flat=True)
         )
