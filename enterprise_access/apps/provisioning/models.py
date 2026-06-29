@@ -10,6 +10,7 @@ from attrs import define, field, validators
 from dateutil.relativedelta import relativedelta
 from django.conf import settings
 from django_countries import countries
+from rest_framework.exceptions import ValidationError
 
 from enterprise_access.apps.customer_billing.models import (
     CheckoutIntent,
@@ -1021,7 +1022,7 @@ class ProvisionNewCustomerWorkflow(AbstractWorkflow):
             try:
                 ssp = SspProduct.objects.get(slug=slug, is_active=True)
             except SspProduct.DoesNotExist as exc:
-                raise ValueError(f"Unknown ssp_product_slug: {slug}") from exc
+                raise ValidationError(f"Unknown ssp_product_slug: {slug}") from exc
 
             # Prefer License Manager product id from SspProduct when present.
             product_id = (
@@ -1072,9 +1073,9 @@ class ProvisionNewCustomerWorkflow(AbstractWorkflow):
         if first_paid_plan is None:
             first_paid_plan = {}
 
-        if 'product_id' not in trial_plan:
+        if trial_plan.get('product_id') is None:
             trial_plan['product_id'] = settings.PROVISIONING_TRIAL_SUBSCRIPTION_PRODUCT_ID
-        if 'product_id' not in first_paid_plan:
+        if first_paid_plan.get('product_id') is None:
             first_paid_plan['product_id'] = settings.PROVISIONING_PAID_SUBSCRIPTION_PRODUCT_ID
 
         return {

@@ -396,7 +396,6 @@ class TestProvisioningEndToEnd(APITest):
         event_data = StripeEventDataFactory.create(checkout_intent=self.checkout_intent)
         StripeEventSummaryFactory.create(stripe_event_data=event_data)
 
-        request_payload = {**DEFAULT_REQUEST_PAYLOAD}
         # Remove explicit product_id values so top-level SSP slug can resolve products
         request_payload = {**DEFAULT_REQUEST_PAYLOAD}
         request_payload['trial_subscription_plan'].pop('product_id', None)
