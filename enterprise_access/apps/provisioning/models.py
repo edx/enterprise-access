@@ -262,11 +262,10 @@ class GetCreateCatalogStepInput(BaseInputOutput):
     KEY = 'create_catalog_input'
 
     title: Optional[str] = field(default=None, validator=validators.optional(is_str))
-    # Accept either a numeric catalog_query_id (legacy) or a UUID string
-    # resolved from `SspProduct.catalog_query_uuid`. We store it as a string
-    # in workflow input to simplify structuring, but coerce back to int
-    # in `_get_catalog_query_id()` when appropriate.
-    catalog_query_id: Optional[str] = field(default=None, validator=validators.optional(is_str))
+    # The integer PK of the CatalogQuery in enterprise-catalog.
+    # Resolved from `SspProduct.catalog_query_uuid` via API call,
+    # or passed directly as an int from legacy callers.
+    catalog_query_id: Optional[int] = field(default=None, validator=validators.optional(is_int))
 
 
 @define
@@ -336,19 +335,18 @@ class GetCreateCatalogStep(AbstractWorkflowStep):
             subsidy_type = ' ' + subsidy_type
         return f"{customer_name}{subsidy_type} Catalog"
 
-    def _get_catalog_query_id(self, workflow_input):
+    def _get_catalog_query_id(self, workflow_input=None):
         """
         If not provided in the workflow input, helps infer the catalog_query_id
         based on subscription plan product id.
         """
-        # Determine catalog_query_id
-        if (catalog_query_id_input := self.input_object.catalog_query_id):
-            # If the structured value is a numeric string, convert back to int
-            # so downstream code and tests that expect an integer will continue
-            # to work. Otherwise, return the string (e.g., a UUID).
-            if isinstance(catalog_query_id_input, str) and catalog_query_id_input.isdigit():
-                return int(catalog_query_id_input)
-            return catalog_query_id_input
+        catalog_query_id = getattr(self.input_object, 'catalog_query_id', None)
+        if catalog_query_id is not None:
+            if isinstance(catalog_query_id, int):
+                return catalog_query_id
+            if isinstance(catalog_query_id, str) and catalog_query_id.isdigit():
+                return int(catalog_query_id)
+            return catalog_query_id
 
         # Need to get product_id from subscription plan input to infer catalog_query_id
         product_id = str(workflow_input.create_trial_subscription_plan_input.product_id)
@@ -1034,10 +1032,15 @@ class ProvisionNewCustomerWorkflow(AbstractWorkflow):
 
             # Use the SspProduct.catalog_query_uuid directly to determine the
             # catalog query for provisioning.
-            if getattr(ssp, 'catalog_query_uuid', None):
-                catalog_client = EnterpriseCatalogApiClient()
-                catalog_query_id = catalog_client.get_catalog_query_id_from_uuid(ssp.catalog_query_uuid)
-                catalog_request = {**catalog_request, 'catalog_query_id': catalog_query_id}
+                if getattr(ssp, 'catalog_query_uuid', None):
+                    catalog_client = EnterpriseCatalogApiClient()
+                    catalog_query_id = catalog_client.get_catalog_query_id_from_uuid(ssp.catalog_query_uuid)
+                    try:
+                        catalog_query_id = int(catalog_query_id)
+                    except (TypeError, ValueError):
+                        pass
+                    if catalog_query_id is not None:
+                        catalog_request = {**catalog_request, 'catalog_query_id': catalog_query_id}
 
             # Pass academy uuid derived from SspProduct into the associate academy
             # step input. It may be None for non-academy products (e.g. Teams).
