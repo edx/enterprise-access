@@ -2,6 +2,7 @@
 Low-level HTTP transport client for the Xpert AI service.
 """
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 import requests
@@ -9,8 +10,22 @@ from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
-# Lightweight type alias for Xpert message structures.
-Message = dict[str, Any]
+@dataclass(frozen=True)
+class XpertRequestMessage:
+    """
+    A single request message to send to Xpert.
+    """
+    role: str
+    content: str
+
+
+@dataclass(frozen=True)
+class XpertResponseMessage:
+    """
+    A single response message returned by Xpert.
+    """
+    role: str
+    content: str
 
 
 class XpertAPIError(Exception):
@@ -113,7 +128,7 @@ class XpertAPIClient:
     def _validate_request(
         self,
         system_prompt: str,
-        messages: list[Message],
+        messages: list[XpertRequestMessage],
         conversation_id: str,
     ) -> None:
         """
@@ -143,7 +158,7 @@ class XpertAPIClient:
         self,
         client_id: str,
         system_prompt: str,
-        messages: list[Message],
+        messages: list[XpertRequestMessage],
         conversation_id: str,
         tags: list[str] | None,
     ) -> dict[str, Any]:
@@ -166,7 +181,13 @@ class XpertAPIClient:
         payload: dict[str, Any] = {
             'client_id': client_id,
             'system_message': system_prompt,
-            'messages': messages,
+            'messages': [
+                {
+                    'role': message.role,
+                    'content': message.content,
+                }
+                for message in messages
+            ],
             'conversation_id': conversation_id,
             'stream': False,
         }
@@ -174,7 +195,7 @@ class XpertAPIClient:
             payload['tags'] = tags
         return payload
 
-    def _normalize_response(self, response: requests.Response) -> dict[str, Any]:
+    def _normalize_response(self, response: requests.Response) -> XpertResponseMessage:
         """
         Parse and validate the Xpert response envelope.
 
@@ -185,7 +206,7 @@ class XpertAPIClient:
             response: The raw ``requests.Response`` from the Xpert POST.
 
         Returns:
-            dict: The first response object from the Xpert response envelope.
+            XpertResponseMessage: The first response message from the Xpert response envelope.
 
         Raises:
             XpertAPIResponseError: If the response body is not valid JSON, is
@@ -205,20 +226,23 @@ class XpertAPIClient:
         if not data:
             raise XpertAPIResponseError('Xpert response envelope is an empty list.')
         first_item = data[0]
-        if not isinstance(first_item, dict):
-            raise XpertAPIResponseError(
-                f'First item in Xpert response envelope is not a dict: got {type(first_item).__name__}.'
-            )
-        return first_item
+        content = first_item.get('content')
+        if not isinstance(content, str):
+            raise XpertAPIResponseError('Xpert response message content must be a string.')
+
+        return XpertResponseMessage(
+            role=str(first_item.get('role', '')),
+            content=content,
+        )
 
     def send_message(
         self,
         *,
         system_prompt: str,
-        messages: list[Message],
+        messages: list[XpertRequestMessage],
         conversation_id: str,
         tags: list[str] | None = None,
-    ) -> dict[str, Any]:
+    ) -> XpertResponseMessage:
         """
         Send a prompt-backed message to the Xpert ``/v1/message`` endpoint.
 
@@ -239,7 +263,7 @@ class XpertAPIClient:
                 the list is non-empty; omitted otherwise.
 
         Returns:
-            dict: The first response object from the Xpert response envelope,
+            XpertResponseMessage: The first response message from the Xpert response envelope,
             e.g.::
 
                 {"role": "assistant", "content": "{\"result\": \"...\"}"}

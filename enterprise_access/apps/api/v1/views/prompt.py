@@ -24,7 +24,6 @@ from enterprise_access.apps.prompts.models import PromptType, XpertLearnerPathwa
 logger = logging.getLogger(__name__)
 
 _CONVERSATION_ID_PREFIX = 'enterprise-access'
-_X_REQUEST_ID_HEADER = 'X-Request-ID'
 
 
 class PromptRequestException(APIException):
@@ -71,9 +70,6 @@ class BasePromptViewSet(ViewSet):
         and execution contexts where CRUM has no current request.
         """
         request_id = get_request_id()
-
-        if not request_id:
-            request_id = request.headers.get(_X_REQUEST_ID_HEADER)
 
         if not request_id:
             request_id = str(uuid_module.uuid4())

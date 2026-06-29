@@ -11,13 +11,18 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, TypeAlias
 
-from enterprise_access.apps.prompts.api_client import XpertAPIClient, XpertAPIError
+from enterprise_access.apps.prompts.api_client import (
+    XpertAPIClient,
+    XpertAPIError,
+    XpertRequestMessage,
+    XpertResponseMessage,
+)
 from enterprise_access.apps.prompts.models import BaseSystemPrompt
 
 logger = logging.getLogger(__name__)
 
 ValidatedData: TypeAlias = dict[str, Any]
-XpertMessage: TypeAlias = dict[str, str]
+XpertMessage: TypeAlias = XpertRequestMessage
 SystemPromptModel: TypeAlias = type[BaseSystemPrompt]
 
 _SCHEMA_SEPARATOR = '\n\nEXPECTED OUTPUT SCHEMA:\n'
@@ -32,41 +37,24 @@ class PromptError(Exception):
 
 
 @dataclass(frozen=True)
-class XpertResponse:
+class ParsedXpertResponse:
     """
-    Canonical domain model for an Xpert API response.
+    Domain model for parsed Xpert response content.
 
-    The raw Xpert response is a list; this dataclass wraps the first element.
+    The Xpert client returns a single XpertResponseMessage. This class owns
+    parsing that message content into JSON for the API response.
     """
 
-    role: str
-    content: str
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> 'XpertResponse':
-        """
-        Construct from a raw Xpert response dict.
-
-        Raises PromptError if the response is missing or has an invalid content field.
-        """
-        content = data.get('content')
-
-        if content is None:
-            raise PromptError('Xpert response is missing the "content" field.')
-
-        if not isinstance(content, str):
-            raise PromptError('Xpert response "content" must be a string.')
-
-        return cls(role=data.get('role', ''), content=content)
+    message: XpertResponseMessage
 
     def as_json(self) -> Any:
         """
-        Parse self.content as JSON.
+        Parse the Xpert response message content as JSON.
 
         Raises PromptError if JSON parsing fails.
         """
         try:
-            return json.loads(self.content.strip())
+            return json.loads(self.message.content.strip())
         except json.JSONDecodeError as exc:
             raise PromptError(
                 f'Failed to parse Xpert response content as JSON: {exc}'
@@ -119,13 +107,13 @@ def build_messages(validated_data: ValidatedData) -> list[XpertMessage]:
     a single user message.
     """
     return [
-        {
-            'role': 'user',
-            'content': json.dumps(
+        XpertRequestMessage(
+            role='user',
+            content=json.dumps(
                 validated_data,
                 separators=(',', ':'),
             ),
-        },
+        ),
     ]
 
 
@@ -136,7 +124,7 @@ def send_xpert_message(
     conversation_id: str,
     tags: Sequence[str] | None = None,
     prompt_type: str | None = None,
-) -> XpertResponse:
+) -> ParsedXpertResponse:
     """
     Send one prompt-backed request through the Xpert client.
 
@@ -155,7 +143,7 @@ def send_xpert_message(
         PromptError: If the Xpert API call fails.
 
     Returns:
-        An XpertResponse domain model wrapping the Xpert response.
+        A ParsedXpertResponse wrapping the Xpert response message.
     """
     normalized_tags = list(tags) if tags else None
 
@@ -174,4 +162,4 @@ def send_xpert_message(
         )
         raise PromptError(str(exc)) from exc
 
-    return XpertResponse.from_dict(raw_response)
+    return ParsedXpertResponse(message=raw_response)
