@@ -12,6 +12,7 @@ from django.conf import settings
 from django_countries import countries
 from rest_framework.exceptions import ValidationError
 
+from enterprise_access.apps.api_client.enterprise_catalog_client import EnterpriseCatalogApiClient
 from enterprise_access.apps.customer_billing.models import (
     CheckoutIntent,
     SelfServiceSubscriptionRenewal,
@@ -1034,7 +1035,9 @@ class ProvisionNewCustomerWorkflow(AbstractWorkflow):
             # Use the SspProduct.catalog_query_uuid directly to determine the
             # catalog query for provisioning.
             if getattr(ssp, 'catalog_query_uuid', None):
-                catalog_request = {**catalog_request, 'catalog_query_id': str(ssp.catalog_query_uuid)}
+                catalog_client = EnterpriseCatalogApiClient()
+                catalog_query_id = catalog_client.get_catalog_query_id_from_uuid(ssp.catalog_query_uuid)
+                catalog_request = {**catalog_request, 'catalog_query_id': catalog_query_id}
 
             # Pass academy uuid derived from SspProduct into the associate academy
             # step input. It may be None for non-academy products (e.g. Teams).

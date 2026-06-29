@@ -361,8 +361,10 @@ class TestProvisioningEndToEnd(APITest):
     @mock.patch('enterprise_access.apps.provisioning.models.get_or_create_customer_agreement')
     @mock.patch('enterprise_access.apps.provisioning.models.get_or_create_subscription_plan_renewal')
     @mock.patch('enterprise_access.apps.provisioning.api.LmsApiClient')
+    @mock.patch('enterprise_access.apps.provisioning.models.EnterpriseCatalogApiClient')
     def test_provisioning_with_top_level_ssp_product_slug(
         self,
+        mock_catalog_client_cls,
         mock_lms_api_client,
         mock_create_renewal,
         mock_create_agreement,
@@ -373,6 +375,10 @@ class TestProvisioningEndToEnd(APITest):
         request, it should resolve product ids and catalog_query_uuid via the
         SspProduct model and thread academy_uuid into the associate step.
         """
+        mock_catalog_client_cls.return_value = mock.MagicMock()
+        mock_client = mock_catalog_client_cls.return_value
+        mock_client.get_catalog_query_id_from_uuid.return_value = 42
+
         # SspProduct imported at module level
         mock_client = mock_lms_api_client.return_value
         mock_client.get_enterprise_customer_data.return_value = DEFAULT_CUSTOMER_RECORD
