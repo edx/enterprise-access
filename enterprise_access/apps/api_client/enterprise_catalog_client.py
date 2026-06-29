@@ -1,6 +1,7 @@
 """
 API client for enterprise-catalog service.
 """
+import logging
 from urllib.parse import urljoin
 
 import backoff
@@ -9,17 +10,20 @@ from django.conf import settings
 from enterprise_access.apps.api_client.base_oauth import BaseOAuthClient
 from enterprise_access.apps.api_client.base_user import BaseUserApiClient
 from enterprise_access.apps.api_client.constants import autoretry_for_exceptions
+from enterprise_access.apps.api_client.utils import fetch_all_results
+
+logger = logging.getLogger(__name__)
 
 
 class EnterpriseCatalogApiClient(BaseOAuthClient):
     """
-    V2 API client for calls to the enterprise catalog service.
+    v2 API client for calls to the enterprise catalog service.
     """
     api_version = 'v2'
 
     def __init__(self):
         self.api_base_url = urljoin(settings.ENTERPRISE_CATALOG_URL, f'api/{self.api_version}/')
-        # Academies are exposed on v1 of the enterprise-catalog API, not v2.
+        # Academies are exposed on v1 of the enterprise-catalog API, not v2
         self.academies_endpoint = urljoin(settings.ENTERPRISE_CATALOG_URL, 'api/v1/academies/')
         self.enterprise_catalog_endpoint = urljoin(self.api_base_url, 'enterprise-catalogs/')
         super().__init__()
@@ -39,6 +43,27 @@ class EnterpriseCatalogApiClient(BaseOAuthClient):
         response = self.client.get(endpoint)
         response.raise_for_status()
         return response.json()
+
+    @backoff.on_exception(wait_gen=backoff.expo, exception=autoretry_for_exceptions)
+    def get_academies(self, academy_uuid: str = None, is_active: bool | None = None) -> dict | list:
+        """
+        Fetch a list of academies.
+
+        Optionally filters results by academy UUID and active status.
+
+        Returns:
+            dict: Paginated response containing academy results.
+        """
+        # Defensive: if no endpoint configured, return empty paginated shape
+        if not self.academies_endpoint:
+            return {'count': 0, 'next': None, 'previous': None, 'results': []}
+
+        params = {}
+        if academy_uuid:
+            params['academy_uuid'] = academy_uuid
+        if is_active is not None:
+            params['is_active'] = bool(is_active)
+        return fetch_all_results(self.client, self.academies_endpoint, params=params)
 
     @backoff.on_exception(wait_gen=backoff.expo, exception=autoretry_for_exceptions)
     def associate_academy_with_catalog(self, academy_uuid, enterprise_catalog_uuid):
@@ -132,6 +157,21 @@ class EnterpriseCatalogApiClient(BaseOAuthClient):
         response = self.client.get(endpoint)
         response.raise_for_status()
         return response.json()['count']
+
+    @backoff.on_exception(wait_gen=backoff.expo, exception=autoretry_for_exceptions)
+    def get_catalogs(self, enterprise_customer_uuid: str = None) -> dict | list:
+        """
+        Fetch a list of enterprise catalogs.
+
+        Optionally filters results by enterprise_customer_uuid.
+
+        Returns:
+            dict: Paginated response containing enterprise catalog results.
+        """
+        params = {}
+        if enterprise_customer_uuid:
+            params['enterprise_customer'] = enterprise_customer_uuid
+        return fetch_all_results(self.client, self.enterprise_catalog_endpoint, params=params)
 
     def content_metadata(self, content_id):
         raise NotImplementedError('There is currently no v2 API implementation for this endpoint.')
