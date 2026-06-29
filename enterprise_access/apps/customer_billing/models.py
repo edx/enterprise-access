@@ -645,7 +645,8 @@ class CheckoutIntent(TimeStampedModel):
         slug: str | None = None,
         name: str | None = None,
         country: str | None = None,
-        terms_metadata: dict | None = None
+        terms_metadata: dict | None = None,
+        ssp_product: 'SspProduct | None' = None,
     ) -> Self:
         """
         Create or update a checkout intent for a user with the given enterprise details.
@@ -744,20 +745,24 @@ class CheckoutIntent(TimeStampedModel):
                 existing_intent.enterprise_name = name or existing_intent.enterprise_name
                 existing_intent.country = country or existing_intent.country
                 existing_intent.terms_metadata = (existing_intent.terms_metadata or {}) | (terms_metadata or {})
-
+                if ssp_product is not None:
+                    existing_intent.ssp_product = ssp_product
                 existing_intent.save()
                 return existing_intent
 
-            return cls.objects.create(
-                user=user,
-                state=CheckoutIntentState.CREATED,
-                enterprise_slug=slug,
-                enterprise_name=name,
-                quantity=quantity,
-                expires_at=expires_at,
-                country=country,
-                terms_metadata=terms_metadata,
-            )
+            create_kwargs = {
+                'user': user,
+                'state': CheckoutIntentState.CREATED,
+                'enterprise_slug': slug,
+                'enterprise_name': name,
+                'quantity': quantity,
+                'expires_at': expires_at,
+                'country': country,
+                'terms_metadata': terms_metadata,
+            }
+            if ssp_product is not None:
+                create_kwargs['ssp_product'] = ssp_product
+            return cls.objects.create(**create_kwargs)
 
     @classmethod
     def for_user(cls, user):
