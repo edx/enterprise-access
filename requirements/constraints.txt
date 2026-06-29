@@ -21,3 +21,8 @@ confluent-kafka<2.6.2
 # as the package is converted to an openedx plugin.
 # https://github.com/edx/braze-client/pull/30
 edx-braze-client<1
+
+# pinning social-auth-* packages to the latest working versions. Remove these pins
+# when this ticket gets resolved: https://2u-internal.atlassian.net/browse/ENT-12017
+social-auth-app-django>=5.9.0,<6.0.0
+social-auth-core>=4.9.1,<5.0.0
