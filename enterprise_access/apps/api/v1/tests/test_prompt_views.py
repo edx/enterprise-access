@@ -26,7 +26,8 @@ from enterprise_access.apps.prompts import api as prompts_api
 from enterprise_access.apps.prompts.api_client import (
     XpertAPIConfigurationError,
     XpertAPIRequestError,
-    XpertAPIResponseError
+    XpertAPIResponseError,
+    XpertResponseMessage
 )
 from enterprise_access.apps.prompts.models import PromptType, XpertLearnerPathwaysSystemPrompt
 from enterprise_access.apps.prompts.tests.factories import XpertLearnerPathwaysSystemPromptFactory
@@ -172,10 +173,10 @@ class TestLearnerPathwaysAuthorization(APITest):
 
     @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
     def test_enterprise_learner_is_allowed(self, mock_client_class):
-        mock_client_class.return_value.send_message.return_value = {
-            'role': 'assistant',
-            'content': '{"result":"ok"}',
-        }
+        mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
+            role='assistant',
+            content='{"result":"ok"}',
+        )
 
         self.set_jwt_cookie([{
             'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE,
@@ -240,9 +241,9 @@ class TestLearnerPathwaysThrottle(APITest):
     })
     @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
     def test_learning_intent_throttled_after_rate_exceeded(self, mock_client_class):
-        mock_client_class.return_value.send_message.return_value = {
-            'role': 'assistant', 'content': '{"r":1}',
-        }
+        mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
+            role='assistant', content='{"r":1}',
+        )
         url = reverse(_LEARNING_INTENT_URL_NAME)
         for _ in range(2):
             resp = self.client.post(url, data=_VALID_LEARNING_INTENT_PAYLOAD, format='json')
@@ -279,10 +280,10 @@ class TestLearningIntentHappyPath(APITest):
 
     @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
     def test_http_200_with_valid_payload(self, mock_client_class):
-        mock_client_class.return_value.send_message.return_value = {
-            'role': 'assistant',
-            'content': '{"skills_required":["python"]}',
-        }
+        mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
+            role='assistant',
+            content='{"skills_required":["python"]}',
+        )
         resp = self.client.post(self.url, data=_VALID_LEARNING_INTENT_PAYLOAD, format='json')
         assert resp.status_code == status.HTTP_200_OK
 
@@ -295,9 +296,9 @@ class TestLearningIntentHappyPath(APITest):
             mock_prompt.system_prompt = 'Be helpful.'
             mock_prompt.output_schema = None
             mock_get_current.return_value = mock_prompt
-            mock_client_class.return_value.send_message.return_value = {
-                'role': 'assistant', 'content': '{"r":1}',
-            }
+            mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
+                role='assistant', content='{"r":1}',
+            )
             self.client.post(self.url, data=_VALID_LEARNING_INTENT_PAYLOAD, format='json')
             mock_get_current.assert_called_once_with(
                 prompt_type=PromptType.LEARNER_INTENT,
@@ -305,9 +306,9 @@ class TestLearningIntentHappyPath(APITest):
 
     @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
     def test_server_controlled_tags_passed(self, mock_client_class):
-        mock_client_class.return_value.send_message.return_value = {
-            'role': 'assistant', 'content': '{"r":1}',
-        }
+        mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
+            role='assistant', content='{"r":1}',
+        )
         with override_settings(XPERT_LEARNER_PATHWAYS_RAG_TAGS=['tag-a', 'tag-b']):
             self.client.post(self.url, data=_VALID_LEARNING_INTENT_PAYLOAD, format='json')
         call_kwargs = mock_client_class.return_value.send_message.call_args.kwargs
@@ -315,52 +316,52 @@ class TestLearningIntentHappyPath(APITest):
 
     @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
     def test_xpert_called_exactly_once(self, mock_client_class):
-        mock_client_class.return_value.send_message.return_value = {
-            'role': 'assistant', 'content': '{"r":1}',
-        }
+        mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
+            role='assistant', content='{"r":1}',
+        )
         self.client.post(self.url, data=_VALID_LEARNING_INTENT_PAYLOAD, format='json')
         assert mock_client_class.return_value.send_message.call_count == 1
 
     @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
     def test_full_parsed_json_returned(self, mock_client_class):
         payload_json = '{"skills_required":["python","ml"],"condensed_algolia_query":"data"}'
-        mock_client_class.return_value.send_message.return_value = {
-            'role': 'assistant',
-            'content': payload_json,
-        }
+        mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
+            role='assistant',
+            content=payload_json,
+        )
         resp = self.client.post(self.url, data=_VALID_LEARNING_INTENT_PAYLOAD, format='json')
         assert resp.status_code == status.HTTP_200_OK
         assert resp.json() == json.loads(payload_json)
 
     @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
     def test_validated_data_encoded_as_user_message(self, mock_client_class):
-        mock_client_class.return_value.send_message.return_value = {
-            'role': 'assistant', 'content': '{"r":1}',
-        }
+        mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
+            role='assistant', content='{"r":1}',
+        )
         self.client.post(self.url, data=_VALID_LEARNING_INTENT_PAYLOAD, format='json')
         call_kwargs = mock_client_class.return_value.send_message.call_args.kwargs
         messages = call_kwargs['messages']
         assert len(messages) == 1
-        assert messages[0]['role'] == 'user'
-        assert isinstance(messages[0]['content'], str)
-        parsed = json.loads(messages[0]['content'])
+        assert messages[0].role == 'user'
+        assert isinstance(messages[0].content, str)
+        parsed = json.loads(messages[0].content)
         assert parsed['selected_goals'] == _VALID_LEARNING_INTENT_PAYLOAD['selected_goals']
 
     @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
     def test_conversation_id_has_prefix(self, mock_client_class):
-        mock_client_class.return_value.send_message.return_value = {
-            'role': 'assistant', 'content': '{"r":1}',
-        }
+        mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
+            role='assistant', content='{"r":1}',
+        )
         self.client.post(self.url, data=_VALID_LEARNING_INTENT_PAYLOAD, format='json')
         call_kwargs = mock_client_class.return_value.send_message.call_args.kwargs
         assert call_kwargs['conversation_id'].startswith('enterprise-access:')
 
     @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
     def test_role_field_not_returned(self, mock_client_class):
-        mock_client_class.return_value.send_message.return_value = {
-            'role': 'assistant',
-            'content': '{"answer":"yes"}',
-        }
+        mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
+            role='assistant',
+            content='{"answer":"yes"}',
+        )
         resp = self.client.post(self.url, data=_VALID_LEARNING_INTENT_PAYLOAD, format='json')
         assert 'role' not in resp.json()
 
@@ -390,10 +391,10 @@ class TestLearnerPathwaysResponsePassthrough(APITest):
 
     @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
     def test_extra_top_level_fields_preserved(self, mock_client_class):
-        mock_client_class.return_value.send_message.return_value = {
-            'role': 'assistant',
-            'content': '{"result":"ok","extra_field":"preserved"}',
-        }
+        mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
+            role='assistant',
+            content='{"result":"ok","extra_field":"preserved"}',
+        )
 
         resp = self.client.post(
             reverse(_LEARNING_INTENT_URL_NAME),
@@ -406,10 +407,10 @@ class TestLearnerPathwaysResponsePassthrough(APITest):
 
     @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
     def test_list_response_returned_as_list(self, mock_client_class):
-        mock_client_class.return_value.send_message.return_value = {
-            'role': 'assistant',
-            'content': '[1,2,3]',
-        }
+        mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
+            role='assistant',
+            content='[1,2,3]',
+        )
 
         resp = self.client.post(
             reverse(_LEARNING_INTENT_URL_NAME),
@@ -424,10 +425,10 @@ class TestLearnerPathwaysResponsePassthrough(APITest):
     def test_nested_values_preserved(self, mock_client_class):
         nested = {'a': {'b': {'c': [1, 2, 3]}}}
 
-        mock_client_class.return_value.send_message.return_value = {
-            'role': 'assistant',
-            'content': json.dumps(nested),
-        }
+        mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
+            role='assistant',
+            content=json.dumps(nested),
+        )
 
         resp = self.client.post(
             reverse(_LEARNING_INTENT_URL_NAME),
@@ -492,32 +493,15 @@ class TestLearnerPathwaysFailures(APITest):
         assert resp.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
 
     @ddt.data(
-        ('missing', {'role': 'assistant'}),
-        ('none', {'role': 'assistant', 'content': None}),
-    )
-    @ddt.unpack
-    @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
-    def test_bad_content_returns_500(
-        self, _case, xpert_response, mock_client_class,
-    ):
-        mock_client_class.return_value.send_message.return_value = xpert_response
-        resp = self.client.post(
-            reverse(_LEARNING_INTENT_URL_NAME),
-            data=_VALID_LEARNING_INTENT_PAYLOAD,
-            format='json',
-        )
-        assert resp.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-
-    @ddt.data(
         'not valid json',
         '```json\n{"key":"value"}\n```',
         '{"unterminated": true',
     )
     @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
     def test_invalid_json_content_returns_500(self, bad_content, mock_client_class):
-        mock_client_class.return_value.send_message.return_value = {
-            'role': 'assistant', 'content': bad_content,
-        }
+        mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
+            role='assistant', content=bad_content,
+        )
         resp = self.client.post(
             reverse(_LEARNING_INTENT_URL_NAME),
             data=_VALID_LEARNING_INTENT_PAYLOAD,

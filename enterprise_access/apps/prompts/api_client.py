@@ -10,6 +10,7 @@ from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
+
 @dataclass(frozen=True)
 class XpertRequestMessage:
     """
@@ -226,6 +227,10 @@ class XpertAPIClient:
         if not data:
             raise XpertAPIResponseError('Xpert response envelope is an empty list.')
         first_item = data[0]
+        if not isinstance(first_item, dict):
+            raise XpertAPIResponseError(
+                f'Xpert response envelope first item is not a dict: got {type(first_item).__name__}.'
+            )
         content = first_item.get('content')
         if not isinstance(content, str):
             raise XpertAPIResponseError('Xpert response message content must be a string.')

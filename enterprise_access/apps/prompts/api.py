@@ -15,7 +15,7 @@ from enterprise_access.apps.prompts.api_client import (
     XpertAPIClient,
     XpertAPIError,
     XpertRequestMessage,
-    XpertResponseMessage,
+    XpertResponseMessage
 )
 from enterprise_access.apps.prompts.models import BaseSystemPrompt
 
