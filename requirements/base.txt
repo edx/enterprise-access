@@ -4,6 +4,8 @@
 #
 #    make upgrade
 #
+2u-enterprise-subsidy-client==2.2.1
+    # via -r requirements/base.in
 amqp==5.3.1
     # via kombu
 analytics-python==1.4.post1
@@ -28,9 +30,9 @@ backoff==1.10.0
     # via analytics-python
 billiard==4.2.4
     # via celery
-boto3==1.43.2
+boto3==1.43.36
     # via snowflake-connector-python
-botocore==1.43.2
+botocore==1.43.36
     # via
     #   boto3
     #   s3transfer
@@ -42,7 +44,7 @@ celery==5.6.3
     #   -r requirements/base.in
     #   django-celery-results
     #   edx-celeryutils
-certifi==2026.4.22
+certifi==2026.6.17
     # via
     #   requests
     #   snowflake-connector-python
@@ -54,7 +56,7 @@ charset-normalizer==3.4.7
     # via
     #   requests
     #   snowflake-connector-python
-click==8.3.3
+click==8.4.2
     # via
     #   celery
     #   click-didyoumean
@@ -76,7 +78,7 @@ confluent-kafka[avro,schema-registry]==2.6.1
     #   -r requirements/base.in
 crispy-bootstrap5==2026.3
     # via -r requirements/base.in
-cryptography==47.0.0
+cryptography==49.0.0
     # via
     #   pyjwt
     #   pyopenssl
@@ -86,7 +88,7 @@ defusedxml==0.7.1
     # via
     #   python3-openid
     #   social-auth-core
-django==5.2.13
+django==5.2.15
     # via
     #   -c requirements/common_constraints.txt
     #   -r requirements/base.in
@@ -122,7 +124,7 @@ django-celery-results==2.6.0
     # via -r requirements/base.in
 django-cors-headers==4.9.0
     # via -r requirements/base.in
-django-countries==8.2.0
+django-countries==9.0.0
     # via -r requirements/base.in
 django-crispy-forms==2.6
     # via
@@ -144,9 +146,9 @@ django-model-utils==5.0.0
     # via
     #   edx-celeryutils
     #   edx-rbac
-django-object-actions==5.0.1
+django-object-actions==5.1.2
     # via -r requirements/base.in
-django-simple-history==3.11.0
+django-simple-history==3.12.0
     # via -r requirements/base.in
 django-waffle==5.0.0
     # via
@@ -202,8 +204,6 @@ edx-drf-extensions==10.6.0
     # via
     #   -r requirements/base.in
     #   edx-rbac
-2u-enterprise-subsidy-client==2.2.1
-    # via -r requirements/base.in
 edx-event-bus-kafka==6.1.0
     # via -r requirements/base.in
 edx-opaque-keys[django]==4.0.0
@@ -226,9 +226,9 @@ fastavro==1.12.2
     #   -r requirements/base.in
     #   confluent-kafka
     #   openedx-events
-filelock==3.29.0
+filelock==3.29.4
     # via snowflake-connector-python
-idna==3.13
+idna==3.18
     # via
     #   requests
     #   snowflake-connector-python
@@ -271,7 +271,7 @@ packaging==26.2
     #   drf-yasg
     #   kombu
     #   snowflake-connector-python
-platformdirs==4.9.6
+platformdirs==4.10.0
     # via snowflake-connector-python
 ply==3.11
     # via djangoql
@@ -283,7 +283,7 @@ pycparser==3.0
     # via cffi
 pygments==2.20.0
     # via -r requirements/base.in
-pyjwt[crypto]==2.12.1
+pyjwt[crypto]==2.13.0
     # via
     #   drf-jwt
     #   edx-auth-backends
@@ -297,7 +297,7 @@ pymongo==4.17.0
     # via edx-opaque-keys
 pynacl==1.6.2
     # via edx-django-utils
-pyopenssl==26.1.0
+pyopenssl==26.3.0
     # via snowflake-connector-python
 python-dateutil==2.9.0.post0
     # via
@@ -319,13 +319,13 @@ pyyaml==6.0.3
     #   drf-spectacular
     #   drf-yasg
     #   edx-django-release-util
-redis==7.4.0
+redis==8.0.1
     # via -r requirements/base.in
 referencing==0.37.0
     # via
     #   jsonschema
     #   jsonschema-specifications
-requests==2.33.1
+requests==2.34.2
     # via
     #   analytics-python
     #   confluent-kafka
@@ -337,13 +337,13 @@ requests==2.33.1
     #   stripe
 requests-oauthlib==2.0.0
     # via social-auth-core
-rpds-py==0.30.0
+rpds-py==2026.5.1
     # via
     #   jsonschema
     #   referencing
 rules==3.5
     # via -r requirements/base.in
-s3transfer==0.17.0
+s3transfer==0.19.0
     # via boto3
 semantic-version==2.10.0
     # via edx-drf-extensions
@@ -355,11 +355,11 @@ six==1.17.0
     #   edx-django-release-util
     #   edx-rbac
     #   python-dateutil
-snowflake-connector-python==4.4.0
+snowflake-connector-python==4.6.0
     # via -r requirements/base.in
-social-auth-app-django==5.9.0
+social-auth-app-django==6.0.0
     # via edx-auth-backends
-social-auth-core==4.9.1
+social-auth-core==5.0.1
     # via
     #   edx-auth-backends
     #   social-auth-app-django
@@ -367,16 +367,16 @@ sortedcontainers==2.4.0
     # via snowflake-connector-python
 sqlparse==0.5.5
     # via django
-stevedore==5.7.0
+stevedore==5.8.0
     # via
     #   code-annotations
     #   edx-django-utils
     #   edx-opaque-keys
-stripe==15.1.0
+stripe==15.3.0
     # via -r requirements/base.in
 text-unidecode==1.3
     # via python-slugify
-tomlkit==0.14.0
+tomlkit==0.15.0
     # via snowflake-connector-python
 typing-extensions==4.15.0
     # via
@@ -389,13 +389,13 @@ typing-extensions==4.15.0
     #   stripe
 tzdata==2026.2
     # via kombu
-tzlocal==5.3.1
+tzlocal==5.4.3
     # via celery
 uritemplate==4.2.0
     # via
     #   drf-spectacular
     #   drf-yasg
-urllib3==2.6.3
+urllib3==2.7.0
     # via
     #   botocore
     #   requests
@@ -404,7 +404,7 @@ vine==5.1.0
     #   amqp
     #   celery
     #   kombu
-wcwidth==0.7.0
+wcwidth==0.8.1
     # via prompt-toolkit
 
 # The following packages are considered to be unsafe in a requirements file:
