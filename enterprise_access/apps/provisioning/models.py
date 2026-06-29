@@ -344,8 +344,6 @@ class GetCreateCatalogStep(AbstractWorkflowStep):
         if catalog_query_id is not None:
             if isinstance(catalog_query_id, int):
                 return catalog_query_id
-            if isinstance(catalog_query_id, str) and catalog_query_id.isdigit():
-                return int(catalog_query_id)
             return catalog_query_id
 
         # Need to get product_id from subscription plan input to infer catalog_query_id
@@ -1013,8 +1011,6 @@ class ProvisionNewCustomerWorkflow(AbstractWorkflow):
 
         def _resolve_ssp(plan_dict, *, is_trial: bool):
             nonlocal catalog_request, academy_request
-            if not plan_dict:
-                return plan_dict
             slug = plan_dict.get('ssp_product_slug')
             if not slug:
                 return plan_dict
@@ -1071,13 +1067,6 @@ class ProvisionNewCustomerWorkflow(AbstractWorkflow):
         # Also resolve plan-level SSP slugs if provided.
         trial_plan = _resolve_ssp(trial_subscription_plan_request_dict, is_trial=True)
         first_paid_plan = _resolve_ssp(first_paid_subscription_plan_request_dict, is_trial=False)
-
-        # Ensure product_id is always present for plan inputs. Use configured
-        # defaults when not provided by the request or resolved from SspProduct.
-        if trial_plan is None:
-            trial_plan = {}
-        if first_paid_plan is None:
-            first_paid_plan = {}
 
         if trial_plan.get('product_id') is None:
             trial_plan['product_id'] = settings.PROVISIONING_TRIAL_SUBSCRIPTION_PRODUCT_ID
