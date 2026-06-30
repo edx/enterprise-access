@@ -342,9 +342,12 @@ class GetCreateCatalogStep(AbstractWorkflowStep):
         """
         catalog_query_id = getattr(self.input_object, 'catalog_query_id', None)
         if catalog_query_id is not None:
-            if isinstance(catalog_query_id, int):
-                return catalog_query_id
-            return catalog_query_id
+            try:
+                return int(catalog_query_id)
+            except (TypeError, ValueError):
+                raise CreateCatalogStepException(
+                    f"Invalid catalog_query_id: {catalog_query_id}"
+                )
 
         # Need to get product_id from subscription plan input to infer catalog_query_id
         product_id = str(workflow_input.create_trial_subscription_plan_input.product_id)
