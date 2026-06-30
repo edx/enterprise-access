@@ -610,11 +610,10 @@ class TestGenerateInputDictSspResolution(TestCase):
             str(ssp.academy_uuid),
         )
 
-    def test_ssp_without_catalog_query_uuid_skips_api_call(self):
-        """catalog_query_uuid is None → no EnterpriseCatalogApiClient call."""
-        # catalog_query_uuid is required in the model; provide a UUID and
-        # mock the catalog client to return None so behavior matches the
-        # original intent of this test (no effective catalog_query_id).
+    def test_ssp_catalog_query_uuid_api_returns_none_omits_catalog_query_id(self):
+        """Catalog query UUID present but API returns None → omit catalog_query_id from catalog input."""
+        # catalog_query_uuid is required in the model; provide a UUID and mock the catalog
+        # client to return None so behavior matches the intent of this test (no effective catalog_query_id).
         with patch('enterprise_access.apps.provisioning.models.EnterpriseCatalogApiClient') as mock_catalog_cls:
             mock_catalog_cls.return_value.get_catalog_query_id_from_uuid.return_value = None
             ssp = SspProduct.objects.create(
