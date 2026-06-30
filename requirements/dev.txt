@@ -47,11 +47,11 @@ billiard==4.2.4
     # via
     #   -r requirements/validation.txt
     #   celery
-boto3==1.43.36
+boto3==1.43.37
     # via
     #   -r requirements/validation.txt
     #   snowflake-connector-python
-botocore==1.43.36
+botocore==1.43.37
     # via
     #   -r requirements/validation.txt
     #   boto3
@@ -323,7 +323,7 @@ edx-toggles==6.0.0
     #   edx-event-bus-kafka
 factory-boy==3.3.3
     # via -r requirements/validation.txt
-faker==40.23.0
+faker==40.27.0
     # via
     #   -r requirements/validation.txt
     #   factory-boy
@@ -659,7 +659,7 @@ rich==15.0.0
     # via
     #   -r requirements/validation.txt
     #   twine
-rpds-py==2026.5.1
+rpds-py==2026.6.3
     # via
     #   -r requirements/validation.txt
     #   jsonschema
@@ -754,7 +754,7 @@ tzdata==2026.2
     # via
     #   -r requirements/validation.txt
     #   kombu
-tzlocal==5.4.3
+tzlocal==5.4.4
     # via
     #   -r requirements/validation.txt
     #   celery
@@ -780,7 +780,7 @@ virtualenv==21.5.1
     # via
     #   -r requirements/validation.txt
     #   tox
-wcwidth==0.8.1
+wcwidth==0.8.2
     # via
     #   -r requirements/validation.txt
     #   prompt-toolkit

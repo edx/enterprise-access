@@ -59,12 +59,12 @@ billiard==4.2.4
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
     #   celery
-boto3==1.43.36
+boto3==1.43.37
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
     #   snowflake-connector-python
-botocore==1.43.36
+botocore==1.43.37
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -406,7 +406,7 @@ factory-boy==3.3.3
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
-faker==40.23.0
+faker==40.27.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -775,7 +775,7 @@ rich==15.0.0
     # via
     #   -r requirements/quality.txt
     #   twine
-rpds-py==2026.5.1
+rpds-py==2026.6.3
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -890,7 +890,7 @@ tzdata==2026.2
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
     #   kombu
-tzlocal==5.4.3
+tzlocal==5.4.4
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -921,7 +921,7 @@ virtualenv==21.5.1
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
     #   tox
-wcwidth==0.8.1
+wcwidth==0.8.2
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
