@@ -427,6 +427,26 @@ class TestProvisioningEndToEnd(APITest):
             enterprise_catalog_uuid=str(TEST_CATALOG_UUID),
         )
 
+    def test_provisioning_invalid_ssp_product_slug_returns_400(self):
+        """
+        Regression test: when an unknown/non-existent `ssp_product_slug` is
+        provided at the top-level, the API must return HTTP 400 and must NOT
+        create a workflow record.
+
+        Previously this raised SspProduct.DoesNotExist and resulted in an
+        unhandled 500 error.
+        """
+        event_data = StripeEventDataFactory.create(checkout_intent=self.checkout_intent)
+        StripeEventSummaryFactory.create(stripe_event_data=event_data)
+
+        request_payload = {**DEFAULT_REQUEST_PAYLOAD}
+        request_payload['ssp_product_slug'] = 'nonexistent-invalid-slug'
+
+        response = self.client.post(PROVISIONING_CREATE_ENDPOINT, data=request_payload)
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(ProvisionNewCustomerWorkflow.objects.count(), 0)
+
     @ddt.data(
         # Data representing the state where a net-new customer is created.
         {
