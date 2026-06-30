@@ -554,9 +554,13 @@ class TestGetCreateCatalogStepCatalogQueryId(TestCase):
             workflow_record_uuid=self.workflow.uuid,
             input_data={},
         )
-        # Without a valid workflow_input, this will raise — but we're testing the None branch
-        result_is_none = step.input_object.catalog_query_id is None
-        self.assertTrue(result_is_none)
+        self.assertTrue(settings.PRODUCT_ID_TO_CATALOG_QUERY_ID_MAPPING)
+        product_id, expected_catalog_query_id = next(iter(settings.PRODUCT_ID_TO_CATALOG_QUERY_ID_MAPPING.items()))
+        workflow_input = mock.Mock()
+        workflow_input.create_trial_subscription_plan_input = mock.Mock(product_id=product_id)
+        # pylint: disable=protected-access
+        result = step._get_catalog_query_id(workflow_input)
+        self.assertEqual(result, expected_catalog_query_id)
 
 
 class TestGenerateInputDictSspResolution(TestCase):
