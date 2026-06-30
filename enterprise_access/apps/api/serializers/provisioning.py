@@ -118,7 +118,7 @@ class SubscriptionPlanRequestSerializer(BaseSerializer):
         required=False, allow_null=True, default=None,
         help_text=(
             'SSP product slug (e.g. "teams-yearly", "ai-academy-yearly"). '
-            'When provided, product_id, catalog_query, and academy_uuid are '
+            'When provided, product_id, catalog_query_id, and academy_uuid are '
             'resolved from the SspProduct model. '
             'Kept alongside product_id for backward compatibility until SFDC is updated.'
         ),
@@ -139,7 +139,7 @@ class ProvisioningRequestSerializer(BaseSerializer):
         help_text=(
             'Optional cross-service SSP product slug to apply to the provisioning request. '
             'When provided at the top level, it will be used to resolve product_id, '
-            'catalog_query_id and academy association for subscription plans.'
+            'catalog_query_id and academy_uuid for subscription plans.'
         ),
     )
     pending_admins = PendingCustomerAdminRequestSerializer(
