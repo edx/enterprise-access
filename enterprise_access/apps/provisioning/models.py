@@ -344,10 +344,10 @@ class GetCreateCatalogStep(AbstractWorkflowStep):
         if catalog_query_id is not None:
             try:
                 return int(catalog_query_id)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError) as exc:
                 raise CreateCatalogStepException(
                     f"Invalid catalog_query_id: {catalog_query_id}"
-                )
+                ) from exc
 
         # Need to get product_id from subscription plan input to infer catalog_query_id
         product_id = str(workflow_input.create_trial_subscription_plan_input.product_id)
@@ -1031,15 +1031,17 @@ class ProvisionNewCustomerWorkflow(AbstractWorkflow):
 
             # Use the SspProduct.catalog_query_uuid directly to determine the
             # catalog query for provisioning.
-                if getattr(ssp, 'catalog_query_uuid', None):
-                    catalog_client = EnterpriseCatalogApiClient()
-                    catalog_query_id = catalog_client.get_catalog_query_id_from_uuid(ssp.catalog_query_uuid)
-                    try:
-                        catalog_query_id = int(catalog_query_id)
-                    except (TypeError, ValueError):
-                        pass
-                    if catalog_query_id is not None:
-                        catalog_request = {**catalog_request, 'catalog_query_id': catalog_query_id}
+            if getattr(ssp, 'catalog_query_uuid', None) is not None:
+                catalog_client = EnterpriseCatalogApiClient()
+                catalog_query_id = catalog_client.get_catalog_query_id_from_uuid(ssp.catalog_query_uuid)
+                try:
+                    catalog_query_id = int(catalog_query_id)
+                except (TypeError, ValueError):
+                    # If the catalog client returns None or an invalid value,
+                    # tolerate it and do not set the catalog_request.
+                    catalog_query_id = None
+                if catalog_query_id is not None:
+                    catalog_request = {**catalog_request, 'catalog_query_id': catalog_query_id}
 
             # Pass academy uuid derived from SspProduct into the associate academy
             # step input. It may be None for non-academy products (e.g. Teams).
@@ -1057,11 +1059,13 @@ class ProvisionNewCustomerWorkflow(AbstractWorkflow):
             # If the plan already has a per-plan 'ssp_product_slug', prefer it;
             # otherwise apply the top-level slug.
             trial_plan_candidate = dict(trial_subscription_plan_request_dict)
-            if not trial_plan_candidate.get('ssp_product_slug') and top_level_ssp_product_slug:
+            trial_ssp_slug = trial_plan_candidate.get('ssp_product_slug')
+            if (trial_ssp_slug is None or trial_ssp_slug == '') and top_level_ssp_product_slug:
                 trial_plan_candidate['ssp_product_slug'] = top_level_ssp_product_slug
 
             paid_plan_candidate = dict(first_paid_subscription_plan_request_dict)
-            if not paid_plan_candidate.get('ssp_product_slug') and top_level_ssp_product_slug:
+            paid_ssp_slug = paid_plan_candidate.get('ssp_product_slug')
+            if (paid_ssp_slug is None or paid_ssp_slug == '') and top_level_ssp_product_slug:
                 paid_plan_candidate['ssp_product_slug'] = top_level_ssp_product_slug
 
             trial_subscription_plan_request_dict = _resolve_ssp(trial_plan_candidate, is_trial=True)

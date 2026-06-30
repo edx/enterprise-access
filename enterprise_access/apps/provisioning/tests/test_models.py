@@ -655,16 +655,16 @@ class TestGenerateInputDictSspResolution(TestCase):
                 is_active=True,
             )
 
-        result = ProvisionNewCustomerWorkflow.generate_input_dict(
-            customer_request_dict=self.MINIMAL_CUSTOMER,
-            admin_email_list=['a@b.com'],
-            catalog_request_dict={},
-            academy_request_dict={},
-            customer_agreement_request_dict={},
-            trial_subscription_plan_request_dict={**self.MINIMAL_TRIAL},
-            first_paid_subscription_plan_request_dict={**self.MINIMAL_PAID},
-            top_level_ssp_product_slug=ssp.slug,
-        )
+            result = ProvisionNewCustomerWorkflow.generate_input_dict(
+                customer_request_dict=self.MINIMAL_CUSTOMER,
+                admin_email_list=['a@b.com'],
+                catalog_request_dict={},
+                academy_request_dict={},
+                customer_agreement_request_dict={},
+                trial_subscription_plan_request_dict={**self.MINIMAL_TRIAL},
+                first_paid_subscription_plan_request_dict={**self.MINIMAL_PAID},
+                top_level_ssp_product_slug=ssp.slug,
+            )
 
         trial_input = result['create_trial_subscription_plan_input']
         paid_input = result['create_first_paid_subscription_plan_input']
