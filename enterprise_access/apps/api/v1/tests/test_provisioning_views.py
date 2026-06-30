@@ -415,9 +415,11 @@ class TestProvisioningEndToEnd(APITest):
         workflow = ProvisionNewCustomerWorkflow.objects.first()
         trial_step = GetCreateTrialSubscriptionPlanStep.objects.filter(workflow_record_uuid=workflow.uuid).first()
         paid_step = GetCreateFirstPaidSubscriptionPlanStep.objects.filter(workflow_record_uuid=workflow.uuid).first()
+        catalog_step = GetCreateCatalogStep.objects.filter(workflow_record_uuid=workflow.uuid).first()
 
         self.assertEqual(trial_step.input_data['product_id'], 555)
         self.assertEqual(paid_step.input_data['product_id'], 666)
+        self.assertEqual(catalog_step.input_data['catalog_query_id'], 42)
 
         # Academy association should be attempted with the SspProduct.academy_uuid
         mock_associate_academy.assert_called_once_with(
