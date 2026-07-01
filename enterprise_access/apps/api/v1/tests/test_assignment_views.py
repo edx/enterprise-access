@@ -208,6 +208,23 @@ class CRUDViewTestMixin:
         linked_action.error_reason = 'Phony error reason.'
         linked_action.save()
 
+        # This assignment has expired (state=expired), AND the assigned learner is the requester.
+        # Explicit content metadata is provided (rather than the factory's Faker-generated defaults) so
+        # this fixture does not consume/perturb Faker's RNG sequence used by other fixtures/tests.
+        self.requester_assignment_expired = LearnerContentAssignmentFactory(
+            state=LearnerContentAssignmentStateChoices.EXPIRED,
+            learner_email=TEST_EMAIL,
+            lms_user_id=TEST_USER_ID,
+            transaction_uuid=uuid4(),
+            assignment_configuration=self.assignment_configuration,
+            content_key='course-v1:edX+Expired101+T2024a',
+            parent_content_key='edX+Expired101',
+            content_title='edx: Expired 101',
+            content_quantity=-100,
+        )
+        self.requester_assignment_expired.add_successful_linked_action()
+        self.requester_assignment_expired.add_successful_notified_action()
+
         ###
         # Below are additional assignments pertaining to a completely different customer than the main test customer.
         ###
@@ -589,10 +606,84 @@ class TestAdminAssignmentAuthorizedCRUD(CRUDViewTestMixin, APITest):
 
         expected_learner_state_counts = [
             {'count': 1, 'learner_state': 'failed'},
+            {'count': 1, 'learner_state': 'expired'},
             {'count': 1, 'learner_state': 'waiting'},
             {'count': 1, 'learner_state': 'notifying'},
         ]
-        assert response_json['learner_state_counts'] == expected_learner_state_counts
+        assert sorted(response_json['learner_state_counts'], key=lambda c: c['learner_state']) == \
+            sorted(expected_learner_state_counts, key=lambda c: c['learner_state'])
+
+    @ddt.data(
+        # No lifecycle filter at all.
+        {},
+        # Filtered by learner_state (excludes expired from the table rows).
+        {'learner_state': AssignmentLearnerStates.NOTIFYING},
+        {'learner_state__in': f'{AssignmentLearnerStates.NOTIFYING},{AssignmentLearnerStates.WAITING}'},
+        # Filtered by the underlying state, WITHOUT expired -- this used to drop expired from the counts.
+        {'state__in': 'allocated,errored'},
+        # Both lifecycle filters combined, neither including expired.
+        {
+            'state__in': 'allocated,errored',
+            'learner_state__in': f'{AssignmentLearnerStates.NOTIFYING},{AssignmentLearnerStates.WAITING}',
+        },
+    )
+    @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient', autospec=True)
+    @mock.patch.object(SubsidyAccessPolicy, 'subsidy_record', autospec=True)
+    def test_list_learner_state_counts_ignore_lifecycle_filters(
+        self, lifecycle_query_params, mock_subsidy_record, mock_catalog_client,
+    ):
+        """
+        Test that ``learner_state_counts`` always reflects every learner state (including ``expired``),
+        regardless of any lifecycle filter (``learner_state``/``learner_state__in`` or ``state``/``state__in``)
+        applied to the results table.
+        """
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_OPERATOR_ROLE,
+            'context': str(TEST_ENTERPRISE_UUID),
+        }])
+        mock_catalog_client.return_value.catalog_content_metadata.return_value = self.mock_catalog_result
+        mock_subsidy_record.return_value = self.mock_subsidy_record
+
+        response = self.client.get(ADMIN_ASSIGNMENTS_LIST_ENDPOINT, data=lifecycle_query_params)
+        response_json = response.json()
+
+        # Regardless of how the table rows are filtered, the counts always include every learner
+        # state -- notably the ``expired`` state even when it's excluded from the applied filters.
+        expected_learner_state_counts = [
+            {'count': 1, 'learner_state': 'failed'},
+            {'count': 1, 'learner_state': 'expired'},
+            {'count': 1, 'learner_state': 'waiting'},
+            {'count': 1, 'learner_state': 'notifying'},
+        ]
+        assert sorted(response_json['learner_state_counts'], key=lambda c: c['learner_state']) == \
+            sorted(expected_learner_state_counts, key=lambda c: c['learner_state'])
+
+    @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient', autospec=True)
+    @mock.patch.object(SubsidyAccessPolicy, 'subsidy_record', autospec=True)
+    def test_list_learner_state_counts_respect_search(self, mock_subsidy_record, mock_catalog_client):
+        """
+        Test that ``learner_state_counts`` stays scoped by non-lifecycle backends like DRF's SearchFilter.
+        Searching for a single learner's email should limit the counts to that learner's states only.
+        """
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_OPERATOR_ROLE,
+            'context': str(TEST_ENTERPRISE_UUID),
+        }])
+        mock_catalog_client.return_value.catalog_content_metadata.return_value = self.mock_catalog_result
+        mock_subsidy_record.return_value = self.mock_subsidy_record
+
+        response = self.client.get(ADMIN_ASSIGNMENTS_LIST_ENDPOINT, data={'search': TEST_EMAIL})
+        response_json = response.json()
+
+        # The requester (TEST_EMAIL) only has errored (-> failed) and expired assignments in the main
+        # config; accepted/cancelled serialize with a null learner_state and are not counted. The
+        # notifying/waiting assignments belong to other learners and must be excluded by the search.
+        expected_learner_state_counts = [
+            {'count': 1, 'learner_state': 'failed'},
+            {'count': 1, 'learner_state': 'expired'},
+        ]
+        assert sorted(response_json['learner_state_counts'], key=lambda c: c['learner_state']) == \
+            sorted(expected_learner_state_counts, key=lambda c: c['learner_state'])
 
     @ddt.data(
         None,
@@ -641,6 +732,7 @@ class TestAdminAssignmentAuthorizedCRUD(CRUDViewTestMixin, APITest):
             self.requester_assignment_cancelled,
             self.assignment_cancelled,
             self.requester_assignment_errored,
+            self.requester_assignment_expired,
             # This assignment was created first, but is knocked to the end of the list because we added a reminded
             # action most recently.
             self.assignment_allocated_post_link,
@@ -1203,6 +1295,7 @@ class TestAssignmentAuthorizedCRUD(CRUDViewTestMixin, APITest):
             self.requester_assignment_accepted,
             self.requester_assignment_cancelled,
             self.requester_assignment_errored,
+            self.requester_assignment_expired,
         ]
         expected_assignment_uuids = {assignment.uuid for assignment in expected_assignments_for_requester}
         actual_assignment_uuids = {UUID(assignment['uuid']) for assignment in response.json()['results']}
