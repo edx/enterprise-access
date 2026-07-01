@@ -11,7 +11,9 @@ from enterprise_access.apps.prompts.api_client import (
     XpertAPIClient,
     XpertAPIConfigurationError,
     XpertAPIRequestError,
-    XpertAPIResponseError
+    XpertAPIResponseError,
+    XpertRequestMessage,
+    XpertResponseMessage
 )
 
 MOCK_SETTINGS = {
@@ -47,7 +49,7 @@ class XpertAPIClientConfigurationTests(TestCase):
 
     _SEND_KWARGS = {
         'system_prompt': 'You are a helpful assistant.',
-        'messages': [{'role': 'user', 'content': 'Hello'}],
+        'messages': [XpertRequestMessage(role='user', content='Hello')],
         'conversation_id': 'conv-cfg',
     }
 
@@ -93,7 +95,7 @@ class XpertAPIClientInputValidationTests(TestCase):
         self.client = XpertAPIClient()
         self.valid_kwargs = {
             'system_prompt': 'You are a helpful assistant.',
-            'messages': [{'role': 'user', 'content': 'Hello'}],
+            'messages': [XpertRequestMessage(role='user', content='Hello')],
             'conversation_id': 'conv-123',
         }
 
@@ -187,7 +189,7 @@ class XpertAPIClientRequestTests(TestCase):
     """Tests for correct HTTP request construction."""
 
     def setUp(self):
-        self.messages = [{'role': 'user', 'content': 'Hello'}]
+        self.messages = [XpertRequestMessage(role='user', content='Hello')]
         self.system_prompt = 'You are a helpful assistant.'
         self.conversation_id = 'conv-abc'
         self.valid_envelope = [{'role': 'assistant', 'content': '{"result":"ok"}'}]
@@ -229,7 +231,7 @@ class XpertAPIClientRequestTests(TestCase):
         payload = mock_post.call_args[1]['json']
         self.assertEqual(payload['client_id'], 'test-client-id')
         self.assertEqual(payload['system_message'], self.system_prompt)
-        self.assertEqual(payload['messages'], self.messages)
+        self.assertEqual(payload['messages'], [{'role': 'user', 'content': 'Hello'}])
         self.assertEqual(payload['conversation_id'], self.conversation_id)
 
     @mock.patch(PATCH_REQUESTS_POST)
@@ -295,6 +297,19 @@ class XpertAPIClientRequestTests(TestCase):
         payload = mock_post.call_args[1]['json']
         self.assertNotIn('tags', payload)
 
+    def test_build_payload_serializes_messages_to_dicts(self):
+        """_build_payload converts XpertRequestMessage instances to JSON-serializable dicts."""
+        client = XpertAPIClient()
+        msg = XpertRequestMessage(role='user', content='hello world')
+        payload = client._build_payload(  # pylint: disable=protected-access
+            client_id='test-client-id',
+            system_prompt='Be helpful.',
+            messages=[msg],
+            conversation_id='conv-test',
+            tags=None,
+        )
+        self.assertEqual(payload['messages'], [{'role': 'user', 'content': 'hello world'}])
+
     @override_settings(XPERT_REQUEST_TIMEOUT=15)
     @mock.patch(PATCH_REQUESTS_POST)
     def test_uses_configured_timeout(self, mock_post):
@@ -316,7 +331,7 @@ class XpertAPIClientResponseTests(TestCase):
         self.client = XpertAPIClient()
         self.kwargs = {
             'system_prompt': 'You are a helpful assistant.',
-            'messages': [{'role': 'user', 'content': 'Hello'}],
+            'messages': [XpertRequestMessage(role='user', content='Hello')],
             'conversation_id': 'conv-xyz',
         }
 
@@ -326,7 +341,7 @@ class XpertAPIClientResponseTests(TestCase):
         second = {'role': 'assistant', 'content': '{"result":"ignored"}'}
         mock_post.return_value = _mock_post_response([first, second])
         result = self.client.send_message(**self.kwargs)
-        self.assertEqual(result, first)
+        self.assertEqual(result, XpertResponseMessage(role='assistant', content='{"result":"ok"}'))
 
     @mock.patch(PATCH_REQUESTS_POST)
     def test_does_not_parse_content_json_string(self, mock_post):
@@ -334,8 +349,8 @@ class XpertAPIClientResponseTests(TestCase):
         envelope = [{'role': 'assistant', 'content': raw_content}]
         mock_post.return_value = _mock_post_response(envelope)
         result = self.client.send_message(**self.kwargs)
-        self.assertEqual(result['content'], raw_content)
-        self.assertIsInstance(result['content'], str)
+        self.assertEqual(result.content, raw_content)
+        self.assertIsInstance(result.content, str)
 
     @mock.patch(PATCH_REQUESTS_POST)
     def test_raises_response_error_for_invalid_json(self, mock_post):
@@ -373,7 +388,7 @@ class XpertAPIClientErrorTests(TestCase):
         self.client = XpertAPIClient()
         self.kwargs = {
             'system_prompt': 'You are a helpful assistant.',
-            'messages': [{'role': 'user', 'content': 'Hello'}],
+            'messages': [XpertRequestMessage(role='user', content='Hello')],
             'conversation_id': 'conv-err',
         }
 

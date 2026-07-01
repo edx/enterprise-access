@@ -183,6 +183,7 @@ REST_FRAMEWORK = {
     'DEFAULT_THROTTLE_RATES': {
         'bff_unauthenticated': '100/hour',
         'ssp_product': '120/hour',
+        'learner_pathways_learning_intent': '100/hour',
     },
 }
 

@@ -1,41 +1,29 @@
 """
-Reusable base viewset for prompt-backed Xpert requests.
+REST API viewsets for prompt-backed Xpert requests.
 """
-import json
 import logging
 import uuid as uuid_module
-from collections.abc import Sequence
-from typing import TypeAlias, cast
 
-from rest_framework import serializers, status
+from django.conf import settings
+from drf_spectacular.utils import extend_schema
+from edx_rest_framework_extensions.auth.jwt.authentication import JwtAuthentication
+from rest_framework import permissions, status
+from rest_framework.decorators import action
 from rest_framework.exceptions import APIException
 from rest_framework.request import Request
+from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.viewsets import ViewSet
 
+from enterprise_access.apps.api import serializers as api_serializers
+from enterprise_access.apps.api.serializers.learner_pathways import LEARNER_PATHWAYS_API_TAG
 from enterprise_access.apps.api_client.base_user import get_request_id
-from enterprise_access.apps.prompts.api_client import XpertAPIClient, XpertAPIError
-from enterprise_access.apps.prompts.models import BaseSystemPrompt
+from enterprise_access.apps.prompts import api as prompts_api
+from enterprise_access.apps.prompts.models import PromptType, XpertLearnerPathwaysSystemPrompt
 
 logger = logging.getLogger(__name__)
 
-JSONValue: TypeAlias = (
-    str |
-    int |
-    float |
-    bool |
-    None |
-    list["JSONValue"] |
-    dict[str, "JSONValue"]
-)
-
-ValidatedData: TypeAlias = dict[str, object]
-XpertMessage: TypeAlias = dict[str, str]
-XpertResponse: TypeAlias = dict[str, object]
-SystemPromptModel: TypeAlias = type[BaseSystemPrompt]
-
 _CONVERSATION_ID_PREFIX = 'enterprise-access'
-_X_REQUEST_ID_HEADER = 'X-Request-ID'
-_SCHEMA_SEPARATOR = '\n\nEXPECTED OUTPUT SCHEMA:\n'
 
 
 class PromptRequestException(APIException):
@@ -62,94 +50,13 @@ class BasePromptViewSet(ViewSet):
     """
     Reusable helper methods for prompt-backed Xpert requests.
 
+    This base class provides HTTP-layer utilities for conversation ID generation.
+    Domain logic is delegated to enterprise_access.apps.prompts.api.
+
     Concrete viewsets compose these helpers inside their individual actions.
-    This base class intentionally defines no actions, routes, authentication
+    This class intentionally defines no actions, routes, authentication
     classes, or permission policies.
     """
-
-    def _validate_request(
-        self,
-        request: Request,
-        serializer_class: type[serializers.Serializer],
-    ) -> ValidatedData:
-        """
-        Validate request data and return the serializer's validated payload.
-
-        Invalid request data follows standard DRF validation behavior and
-        produces an HTTP 400 response.
-        """
-        serializer = serializer_class(
-            data=request.data,
-            context={
-                'request': request,
-                'format': None,
-                'view': self,
-            },
-        )
-        serializer.is_valid(raise_exception=True)
-
-        return serializer.validated_data
-
-    def _get_current_prompt(
-        self,
-        *,
-        prompt_model: type[SystemPromptModel],
-        prompt_type: str,
-    ) -> BaseSystemPrompt:
-        """
-        Resolve the current prompt for the exact supplied prompt type.
-        """
-        prompt = prompt_model.get_current(
-            prompt_type=prompt_type,
-        )
-        if prompt is None:
-            raise PromptRequestException(
-                f'No active prompt found for prompt_type={prompt_type!r}.'
-            )
-
-        return prompt
-
-    def _build_system_prompt(
-        self,
-        prompt: BaseSystemPrompt,
-    ) -> str:
-        """
-        Build the complete system prompt sent to Xpert.
-
-        The configured prompt text is stripped of surrounding whitespace.
-        A non-empty output schema is appended as formatted JSON.
-        """
-        system_prompt = prompt.system_prompt.strip()
-        output_schema = prompt.output_schema
-
-        if output_schema:
-            system_prompt += _SCHEMA_SEPARATOR + json.dumps(
-                output_schema,
-                indent=2,
-                sort_keys=True,
-            )
-
-        return system_prompt
-
-    def _build_messages(
-        self,
-        validated_data: ValidatedData,
-    ) -> list[XpertMessage]:
-        """
-        Build the default Xpert message list.
-
-        The complete validated request payload is encoded as compact JSON in
-        a single user message.
-        """
-        return [
-            {
-                'role': 'user',
-                'content': json.dumps(
-                    validated_data,
-                    separators=(',', ':'),
-                ),
-            },
-        ]
 
     def _get_conversation_id(
         self,
@@ -165,81 +72,84 @@ class BasePromptViewSet(ViewSet):
         request_id = get_request_id()
 
         if not request_id:
-            request_id = request.headers.get(_X_REQUEST_ID_HEADER)
-
-        if not request_id:
             request_id = str(uuid_module.uuid4())
 
         return f'{_CONVERSATION_ID_PREFIX}:{request_id}'
 
-    def _send_xpert_message(
-        self,
-        *,
-        system_prompt: str,
-        messages: list[XpertMessage],
-        conversation_id: str,
-        tags: Sequence[str] | None = None,
-        prompt_type: str | None = None,
-    ) -> XpertResponse:
-        """
-        Send one prompt-backed request through the existing Xpert client.
 
-        Xpert client failures are logged with tracking metadata and converted
-        to HTTP 500 prompt request failures. Prompt text, request payloads, and
-        raw model responses are not logged.
+class LearnerPathwaysViewSet(BasePromptViewSet):
+    """
+    Endpoints for the Learner Pathways Xpert-backed feature.
+
+    Each action defines its own authentication, permissions, and throttle configuration
+    explicitly.  No shared authentication, permissions, or throttle classes are defined
+    at the class level.
+    """
+
+    model_type = XpertLearnerPathwaysSystemPrompt
+    throttle_scope: str | None = None
+
+    @extend_schema(
+        tags=[LEARNER_PATHWAYS_API_TAG],
+        summary='Derive learning intent from learner input.',
+        description=(
+            'Calls Xpert with the learner\'s stated goals, free-text input, and known context '
+            'to derive skills and a search query.  Returns the raw JSON produced by Xpert.'
+        ),
+        request=api_serializers.LearningIntentRequestSerializer,
+        responses={
+            status.HTTP_200_OK: api_serializers.LearningIntentResponseSerializer,
+            status.HTTP_400_BAD_REQUEST: None,
+            status.HTTP_401_UNAUTHORIZED: None,
+            status.HTTP_403_FORBIDDEN: None,
+            status.HTTP_429_TOO_MANY_REQUESTS: None,
+            status.HTTP_500_INTERNAL_SERVER_ERROR: None,
+        },
+    )
+    @action(
+        detail=False,
+        methods=['post'],
+        url_path='learning-intent',
+        url_name='learning-intent',
+        authentication_classes=(JwtAuthentication,),
+        permission_classes=(permissions.IsAuthenticated,),
+        throttle_classes=(ScopedRateThrottle,),
+        throttle_scope='learner_pathways_learning_intent',
+    )
+    def learning_intent(self, request: Request) -> Response:
         """
-        normalized_tags = list(tags) if tags else None
+        Derive learning intent from the learner's stated goals, free-text input, and known context.
+
+        Returns HTTP 400 for invalid request input.
+        Returns HTTP 401/403 when the caller is unauthenticated or not an enterprise learner.
+        Returns HTTP 429 when the per-endpoint rate limit is exceeded.
+        Returns HTTP 500 when the prompt is missing, the Xpert call fails, or the response
+        cannot be parsed as JSON.
+        """
+        serializer = api_serializers.LearningIntentRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        validated_data = serializer.validated_data
+
+        conversation_id = self._get_conversation_id(request)
 
         try:
-            response = XpertAPIClient().send_message(
+            prompt = prompts_api.get_current_prompt(
+                prompt_model=self.model_type,
+                prompt_type=PromptType.LEARNER_INTENT,
+            )
+            system_prompt = prompts_api.build_system_prompt(prompt)
+            messages = prompts_api.build_messages(validated_data)
+
+            xpert_response = prompts_api.send_xpert_message(
                 system_prompt=system_prompt,
                 messages=messages,
                 conversation_id=conversation_id,
-                tags=normalized_tags,
+                tags=settings.XPERT_LEARNER_PATHWAYS_RAG_TAGS,
+                prompt_type=PromptType.LEARNER_INTENT,
             )
-        except XpertAPIError as exc:
-            logger.exception(
-                'Xpert request failed for prompt_type=%r, conversation_id=%r.',
-                prompt_type,
-                conversation_id,
-            )
+
+            response_data = xpert_response.as_json()
+        except prompts_api.PromptError as exc:
             raise PromptRequestException(str(exc)) from exc
 
-        return response
-
-    def _extract_xpert_content(
-        self,
-        xpert_response: XpertResponse,
-    ) -> str:
-        """
-        Extract the raw content string from the normalized Xpert response.
-        """
-        content = xpert_response.get('content')
-
-        if content is None:
-            raise PromptRequestException(
-                'Xpert response is missing the "content" field.'
-            )
-
-        return content
-
-    def _parse_json_content(
-        self,
-        content: str,
-    ) -> JSONValue:
-        """
-        Parse and return the complete JSON value produced by Xpert.
-
-        The content must be directly parseable as JSON after surrounding
-        whitespace is removed. Markdown fencing, repair prompts, retries,
-        fallback parsing, field mapping, and response normalization are
-        intentionally unsupported.
-        """
-        try:
-            parsed_content = json.loads(content.strip())
-        except json.JSONDecodeError as exc:
-            raise PromptRequestException(
-                f'Failed to parse Xpert response content as JSON: {exc}'
-            ) from exc
-
-        return cast(JSONValue, parsed_content)
+        return Response(response_data, status=status.HTTP_200_OK)
