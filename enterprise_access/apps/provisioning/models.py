@@ -10,10 +10,13 @@ from attrs import define, field, validators
 from dateutil.relativedelta import relativedelta
 from django.conf import settings
 from django_countries import countries
+from rest_framework.exceptions import ValidationError
 
+from enterprise_access.apps.api_client.enterprise_catalog_client import EnterpriseCatalogApiClient
 from enterprise_access.apps.customer_billing.models import (
     CheckoutIntent,
     SelfServiceSubscriptionRenewal,
+    SspProduct,
     StripeEventSummary
 )
 from enterprise_access.apps.customer_billing.tasks import send_enterprise_provision_signup_confirmation_email
@@ -242,6 +245,9 @@ class GetCreateEnterpriseAdminUsersStep(AbstractWorkflowStep):
         return self.output_class.from_dict(result_dict)
 
     def get_workflow_record(self):
+        """
+        Returns the workflow record associated with this step.
+        """
         return ProvisionNewCustomerWorkflow.objects.filter(
             uuid=self.workflow_record_uuid,
         ).first()
@@ -259,6 +265,9 @@ class GetCreateCatalogStepInput(BaseInputOutput):
     KEY = 'create_catalog_input'
 
     title: Optional[str] = field(default=None, validator=validators.optional(is_str))
+    # The integer PK of the CatalogQuery in enterprise-catalog.
+    # Resolved from `SspProduct.catalog_query_uuid` via API call,
+    # or passed directly as an int from legacy callers.
     catalog_query_id: Optional[int] = field(default=None, validator=validators.optional(is_int))
 
 
@@ -329,14 +338,14 @@ class GetCreateCatalogStep(AbstractWorkflowStep):
             subsidy_type = ' ' + subsidy_type
         return f"{customer_name}{subsidy_type} Catalog"
 
-    def _get_catalog_query_id(self, workflow_input):
+    def _get_catalog_query_id(self, workflow_input=None):
         """
         If not provided in the workflow input, helps infer the catalog_query_id
         based on subscription plan product id.
         """
-        # Determine catalog_query_id
-        if (catalog_query_id_input := self.input_object.catalog_query_id):
-            return catalog_query_id_input
+        catalog_query_id = getattr(self.input_object, 'catalog_query_id', None)
+        if catalog_query_id is not None:
+            return int(catalog_query_id)
 
         # Need to get product_id from subscription plan input to infer catalog_query_id
         product_id = str(workflow_input.create_trial_subscription_plan_input.product_id)
@@ -992,20 +1001,93 @@ class ProvisionNewCustomerWorkflow(AbstractWorkflow):
         customer_agreement_request_dict,
         trial_subscription_plan_request_dict,
         first_paid_subscription_plan_request_dict,
+        top_level_ssp_product_slug: Optional[str] = None,
     ):
         """
         Generates a dictionary to use as ``input_data`` for instances of this workflow.
         """
+        # Normalize inputs
+        catalog_request = catalog_request_dict or {}
+        academy_request = academy_request_dict or {}
+
+        def _resolve_ssp(plan_dict, *, is_trial: bool):
+            nonlocal catalog_request, academy_request
+            slug = plan_dict.get('ssp_product_slug')
+            if not slug:
+                return plan_dict
+            try:
+                ssp = SspProduct.objects.get(slug=slug, is_active=True)
+            except SspProduct.DoesNotExist as exc:
+                raise ValidationError(f"Unknown ssp_product_slug: {slug}") from exc
+
+            # Prefer License Manager product id from SspProduct when present.
+            product_id = (
+                ssp.license_manager_product_id_trial if is_trial else ssp.license_manager_product_id_paid
+            )
+            if product_id is not None:
+                plan_dict = {**plan_dict, 'product_id': product_id}
+
+            # Use the SspProduct.catalog_query_uuid directly to determine the
+            # catalog query for provisioning.
+            if ssp.catalog_query_uuid is not None:
+                catalog_client = EnterpriseCatalogApiClient()
+                catalog_query_id = catalog_client.get_catalog_query_id_from_uuid(ssp.catalog_query_uuid)
+                try:
+                    catalog_query_id = int(catalog_query_id)
+                except (TypeError, ValueError):
+                    # If the catalog client returns None or an invalid value,
+                    # tolerate it and do not set the catalog_request.
+                    catalog_query_id = None
+                if catalog_query_id is not None:
+                    catalog_request = {**catalog_request, 'catalog_query_id': catalog_query_id}
+
+            # Pass academy uuid derived from SspProduct into the associate academy
+            # step input. It may be None for non-academy products (e.g. Teams).
+            academy_request = {'academy_uuid': str(ssp.academy_uuid) if ssp.academy_uuid else None}
+
+            return plan_dict
+
+        # If a top-level SSP slug is provided, apply it to both plans.
+        if top_level_ssp_product_slug:
+            # Build a minimal plan dicts if missing so resolution can attach product ids
+            if trial_subscription_plan_request_dict is None:
+                trial_subscription_plan_request_dict = {}
+            if first_paid_subscription_plan_request_dict is None:
+                first_paid_subscription_plan_request_dict = {}
+            # If the plan already has a per-plan 'ssp_product_slug', prefer it;
+            # otherwise apply the top-level slug.
+            trial_plan_candidate = dict(trial_subscription_plan_request_dict)
+            trial_ssp_slug = trial_plan_candidate.get('ssp_product_slug')
+            if not trial_ssp_slug and top_level_ssp_product_slug:
+                trial_plan_candidate['ssp_product_slug'] = top_level_ssp_product_slug
+
+            paid_plan_candidate = dict(first_paid_subscription_plan_request_dict)
+            paid_ssp_slug = paid_plan_candidate.get('ssp_product_slug')
+            if not paid_ssp_slug and top_level_ssp_product_slug:
+                paid_plan_candidate['ssp_product_slug'] = top_level_ssp_product_slug
+
+            trial_subscription_plan_request_dict = _resolve_ssp(trial_plan_candidate, is_trial=True)
+            first_paid_subscription_plan_request_dict = _resolve_ssp(paid_plan_candidate, is_trial=False)
+
+        # Also resolve plan-level SSP slugs if provided.
+        trial_plan = _resolve_ssp(trial_subscription_plan_request_dict, is_trial=True)
+        first_paid_plan = _resolve_ssp(first_paid_subscription_plan_request_dict, is_trial=False)
+
+        if trial_plan.get('product_id') is None:
+            trial_plan['product_id'] = settings.PROVISIONING_TRIAL_SUBSCRIPTION_PRODUCT_ID
+        if first_paid_plan.get('product_id') is None:
+            first_paid_plan['product_id'] = settings.PROVISIONING_PAID_SUBSCRIPTION_PRODUCT_ID
+
         return {
             GetCreateCustomerStepInput.KEY: customer_request_dict,
             GetCreateEnterpriseAdminUsersInput.KEY: {
                 'user_emails': admin_email_list,
             },
-            GetCreateCatalogStepInput.KEY: catalog_request_dict or {},
-            AssociateAcademyStepInput.KEY: academy_request_dict or {},
+            GetCreateCatalogStepInput.KEY: catalog_request,
+            AssociateAcademyStepInput.KEY: academy_request,
             GetCreateCustomerAgreementStepInput.KEY: customer_agreement_request_dict or {},
-            GetCreateTrialSubscriptionPlanStepInput.KEY: trial_subscription_plan_request_dict,
-            GetCreateFirstPaidSubscriptionPlanStepInput.KEY: first_paid_subscription_plan_request_dict,
+            GetCreateTrialSubscriptionPlanStepInput.KEY: trial_plan,
+            GetCreateFirstPaidSubscriptionPlanStepInput.KEY: first_paid_plan,
             GetCreateSubscriptionPlanRenewalStepInput.KEY: {},
             NotificationStepInput.KEY: {},
         }

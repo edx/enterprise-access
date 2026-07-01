@@ -25,6 +25,7 @@ from enterprise_access.apps.customer_billing.constants import CheckoutIntentStat
 from enterprise_access.apps.customer_billing.models import (
     CheckoutIntent,
     SelfServiceSubscriptionRenewal,
+    SspProduct,
     StripeEventSummary
 )
 from enterprise_access.apps.customer_billing.tests.factories import StripeEventDataFactory, StripeEventSummaryFactory
@@ -35,6 +36,7 @@ from enterprise_access.apps.provisioning.models import (
     GetCreateCustomerStep,
     GetCreateEnterpriseAdminUsersStep,
     GetCreateFirstPaidSubscriptionPlanStep,
+    GetCreateTrialSubscriptionPlanStep,
     ProvisionNewCustomerWorkflow
 )
 from test_utils import APITest
@@ -354,6 +356,96 @@ class TestProvisioningEndToEnd(APITest):
         step_order = list(workflow.steps)
         self.assertLess(step_order.index(GetCreateCatalogStep), step_order.index(AssociateAcademyStep))
         self.assertLess(step_order.index(AssociateAcademyStep), step_order.index(GetCreateCustomerAgreementStep))
+
+    @mock.patch('enterprise_access.apps.provisioning.models.associate_academy_with_catalog')
+    @mock.patch('enterprise_access.apps.provisioning.models.get_or_create_customer_agreement')
+    @mock.patch('enterprise_access.apps.provisioning.models.get_or_create_subscription_plan_renewal')
+    @mock.patch('enterprise_access.apps.provisioning.api.LmsApiClient')
+    @mock.patch('enterprise_access.apps.provisioning.models.EnterpriseCatalogApiClient')
+    def test_provisioning_with_top_level_ssp_product_slug(
+        self,
+        mock_catalog_client_cls,
+        mock_lms_api_client,
+        mock_create_renewal,
+        mock_create_agreement,
+        mock_associate_academy,
+    ):
+        """
+        If `ssp_product_slug` is provided at the top-level of the provisioning
+        request, it should resolve product ids and catalog_query_uuid via the
+        SspProduct model and thread academy_uuid into the associate step.
+        """
+        mock_catalog_client_cls.return_value = mock.MagicMock()
+        mock_client = mock_catalog_client_cls.return_value
+        mock_client.get_catalog_query_id_from_uuid.return_value = 42
+
+        # SspProduct imported at module level
+        mock_client = mock_lms_api_client.return_value
+        mock_client.get_enterprise_customer_data.return_value = DEFAULT_CUSTOMER_RECORD
+        mock_client.get_enterprise_admin_users.return_value = []
+        mock_client.get_enterprise_catalogs.return_value = [DEFAULT_CATALOG_RECORD]
+
+        mock_create_agreement.return_value = DEFAULT_AGREEMENT_RECORD
+        mock_create_renewal.return_value = EXPECTED_SUBSCRIPTION_PLAN_RENEWAL_RESPONSE
+
+        # Create an SSP product with an academy_uuid
+        ssp = SspProduct.objects.create(
+            slug='ai-academy-yearly-2',
+            stripe_price_lookup_key='price_ai_academy_2',
+            academy_uuid=uuid.uuid4(),
+            catalog_query_uuid=uuid.uuid4(),
+            license_manager_product_id_trial=555,
+            license_manager_product_id_paid=666,
+            is_active=True,
+        )
+
+        event_data = StripeEventDataFactory.create(checkout_intent=self.checkout_intent)
+        StripeEventSummaryFactory.create(stripe_event_data=event_data)
+
+        # Remove explicit product_id values so top-level SSP slug can resolve products
+        request_payload = {**DEFAULT_REQUEST_PAYLOAD}
+        request_payload['trial_subscription_plan'].pop('product_id', None)
+        request_payload['first_paid_subscription_plan'].pop('product_id', None)
+        # Provide top-level ssp_product_slug (not per-plan)
+        request_payload['ssp_product_slug'] = ssp.slug
+
+        response = self.client.post(PROVISIONING_CREATE_ENDPOINT, data=request_payload)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+        workflow = ProvisionNewCustomerWorkflow.objects.first()
+        trial_step = GetCreateTrialSubscriptionPlanStep.objects.filter(workflow_record_uuid=workflow.uuid).first()
+        paid_step = GetCreateFirstPaidSubscriptionPlanStep.objects.filter(workflow_record_uuid=workflow.uuid).first()
+        catalog_step = GetCreateCatalogStep.objects.filter(workflow_record_uuid=workflow.uuid).first()
+
+        self.assertEqual(trial_step.input_data['product_id'], 555)
+        self.assertEqual(paid_step.input_data['product_id'], 666)
+        self.assertEqual(catalog_step.input_data['catalog_query_id'], 42)
+
+        # Academy association should be attempted with the SspProduct.academy_uuid
+        mock_associate_academy.assert_called_once_with(
+            academy_uuid=str(ssp.academy_uuid),
+            enterprise_catalog_uuid=str(TEST_CATALOG_UUID),
+        )
+
+    def test_provisioning_invalid_ssp_product_slug_returns_400(self):
+        """
+        Regression test: when an unknown/non-existent `ssp_product_slug` is
+        provided at the top-level, the API must return HTTP 400 and must NOT
+        create a workflow record.
+
+        Previously this raised SspProduct.DoesNotExist and resulted in an
+        unhandled 500 error.
+        """
+        event_data = StripeEventDataFactory.create(checkout_intent=self.checkout_intent)
+        StripeEventSummaryFactory.create(stripe_event_data=event_data)
+
+        request_payload = {**DEFAULT_REQUEST_PAYLOAD}
+        request_payload['ssp_product_slug'] = 'nonexistent-invalid-slug'
+
+        response = self.client.post(PROVISIONING_CREATE_ENDPOINT, data=request_payload)
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(ProvisionNewCustomerWorkflow.objects.count(), 0)
 
     @ddt.data(
         # Data representing the state where a net-new customer is created.

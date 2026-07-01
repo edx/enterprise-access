@@ -176,6 +176,19 @@ class EnterpriseCatalogApiClient(BaseOAuthClient):
     def content_metadata(self, content_id):
         raise NotImplementedError('There is currently no v2 API implementation for this endpoint.')
 
+    @backoff.on_exception(wait_gen=backoff.expo, exception=autoretry_for_exceptions)
+    def get_catalog_query_id_from_uuid(self, catalog_query_uuid):
+        """
+        Resolve a CatalogQuery UUID to its integer ID in enterprise-catalog.
+        """
+        endpoint = urljoin(
+            settings.ENTERPRISE_CATALOG_URL,
+            f'api/v1/catalog-queries/{catalog_query_uuid}/',
+        )
+        response = self.client.get(endpoint)
+        response.raise_for_status()
+        return response.json()['id']
+
 
 class EnterpriseCatalogApiV1Client(EnterpriseCatalogApiClient):
     """

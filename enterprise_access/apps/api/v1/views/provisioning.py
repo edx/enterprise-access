@@ -119,6 +119,7 @@ class ProvisioningCreateView(PermissionRequiredMixin, generics.CreateAPIView):
         customer_agreement_data = request_serializer.validated_data.get('customer_agreement')
         trial_subscription_plan_data = request_serializer.validated_data['trial_subscription_plan']
         first_paid_subscription_plan_data = request_serializer.validated_data['first_paid_subscription_plan']
+        top_level_ssp_product_slug = request_serializer.validated_data.get('ssp_product_slug')
 
         workflow_input_dict = ProvisionNewCustomerWorkflow.generate_input_dict(
             customer_request_data,
@@ -128,6 +129,7 @@ class ProvisioningCreateView(PermissionRequiredMixin, generics.CreateAPIView):
             customer_agreement_data,
             trial_subscription_plan_data,
             first_paid_subscription_plan_data,
+            top_level_ssp_product_slug,
         )
         workflow = ProvisionNewCustomerWorkflow.objects.create(input_data=workflow_input_dict)
 
