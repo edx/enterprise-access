@@ -171,10 +171,26 @@ class LearnerContentAssignmentAdminViewSet(
         """
         response = super().list(request, *args, **kwargs)
 
-        # Compute the learner_state_counts for the filtered queryset.
-        queryset = self.filter_queryset(self.get_queryset())
+        # Compute learner_state_counts using a queryset filtered by everything EXCEPT the lifecycle
+        # filters (``learner_state`` and the underlying ``state``). This ensures the counts always
+        # reflect every available learner state (e.g. ``expired``) regardless of which states the
+        # caller is currently filtering the table by, so the FE can keep rendering all filter-tab
+        # badges even while a subset of states is selected. Non-lifecycle filters (e.g. search on
+        # ``learner_email``/``content_key``) are still applied so the counts stay scoped to the
+        # currently-viewed population.
+        # Apply non-filterset backends that should still scope the counts (e.g. DRF's SearchFilter for
+        # ``?search=``), then apply the filterset minus the lifecycle filters.
+        base_queryset = SearchFilter().filter_queryset(request, self.get_queryset(), self)
+        query_params_for_counts = request.query_params.copy()
+        for lifecycle_filter in ('learner_state', 'learner_state__in', 'state', 'state__in'):
+            query_params_for_counts.pop(lifecycle_filter, None)
+        filterset = self.filterset_class(
+            query_params_for_counts, queryset=base_queryset, request=request,
+        )
+        queryset_for_counts = filterset.qs
+
         learner_state_counter = Counter(
-            queryset.exclude(learner_state__isnull=True).values_list('learner_state', flat=True)
+            queryset_for_counts.exclude(learner_state__isnull=True).values_list('learner_state', flat=True)
         )
         learner_state_counts = [
             {'learner_state': state, 'count': count}
