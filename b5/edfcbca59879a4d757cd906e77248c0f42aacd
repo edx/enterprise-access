@@ -1,0 +1,42 @@
+enterprise_access/apps/api/v1/views/content_assignments/assignments_admin.py
+  s_dfe2a82890f532::t_d5f5a46215b462 174-180,184-186,188
+  s_dfe2a82890f532::t_49e9ba61a30917 181-183
+  s_dfe2a82890f532::t_ff4f9879cba3eb 187,189-191,193
+enterprise_access/apps/api/v1/tests/test_assignment_views.py
+  s_dfe2a82890f532::t_68a819eb2d045c 623,626
+  s_dfe2a82890f532::t_46d79b8524092a 617-619,622,624-625,627-628,632-633,637-638,647,650-651
+  s_dfe2a82890f532::t_37031fed4f7b3d 609,613-614
+  s_dfe2a82890f532::t_7ac36fd4cc383c 660
+  s_dfe2a82890f532::t_877d41e2d9557d 735
+  s_dfe2a82890f532::t_a8dcdc6a95be6a 620-621,629-631,634-636,639-646,648-649,652-659
+  s_dfe2a82890f532::t_31b0c235f9fa46 1298
+  s_dfe2a82890f532::t_c4ed8d139e1b15 661-686
+  s_dfe2a82890f532::t_7da57710afea80 616
+  s_fc1cd7eeda8c25::t_3f5189916785ea 615
+  s_dfe2a82890f532::t_71fa7cd7ad29d6 212-213,220-223
+  s_dfe2a82890f532::t_93113f4f82be08 211,214-219,224-227
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.5",
+  "base_commit_sha": "b5edfcbca59879a4d757cd906e77248c0f42aacd",
+  "prompts": {},
+  "sessions": {
+    "s_dfe2a82890f532": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ca0dc1f3-fbce-4427-a1db-e634f4e81c41",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": null
+    },
+    "s_fc1cd7eeda8c25": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7e89f177-bba8-46b9-8038-6bb9336210ef",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "rgopalrao-sonata-png <rgopalrao-sonata@2u.com>"
+    }
+  }
+}
