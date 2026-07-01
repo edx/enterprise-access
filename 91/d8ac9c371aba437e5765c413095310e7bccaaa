@@ -1,0 +1,36 @@
+enterprise_access/apps/api/v1/tests/test_assignment_views.py
+  s_fc1cd7eeda8c25::t_3f5189916785ea 609
+  s_dfe2a82890f532::t_93113f4f82be08 211-221
+  s_dfe2a82890f532::t_37031fed4f7b3d 603,607-608
+  s_dfe2a82890f532::t_8913fbd0654b1f 604-606
+  s_dfe2a82890f532::t_877d41e2d9557d 696
+  s_dfe2a82890f532::t_31b0c235f9fa46 1259
+  s_dfe2a82890f532::t_a8dcdc6a95be6a 611-642,646-647
+  s_dfe2a82890f532::t_7da57710afea80 610
+enterprise_access/apps/api/v1/views/content_assignments/assignments_admin.py
+  s_dfe2a82890f532::t_ff4f9879cba3eb 174-186,188
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.5",
+  "base_commit_sha": "91d8ac9c371aba437e5765c413095310e7bccaaa",
+  "prompts": {},
+  "sessions": {
+    "s_dfe2a82890f532": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ca0dc1f3-fbce-4427-a1db-e634f4e81c41",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "rgopalrao-sonata-png <rgopalrao-sonata@2u.com>"
+    },
+    "s_fc1cd7eeda8c25": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7e89f177-bba8-46b9-8038-6bb9336210ef",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "rgopalrao-sonata-png <rgopalrao-sonata@2u.com>"
+    }
+  }
+}
