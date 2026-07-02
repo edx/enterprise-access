@@ -1069,9 +1069,13 @@ class ProvisionNewCustomerWorkflow(AbstractWorkflow):
             trial_subscription_plan_request_dict = _resolve_ssp(trial_plan_candidate, is_trial=True)
             first_paid_subscription_plan_request_dict = _resolve_ssp(paid_plan_candidate, is_trial=False)
 
-        # Also resolve plan-level SSP slugs if provided.
-        trial_plan = _resolve_ssp(trial_subscription_plan_request_dict, is_trial=True)
-        first_paid_plan = _resolve_ssp(first_paid_subscription_plan_request_dict, is_trial=False)
+        # Resolve plan-level SSP slugs if provided (or reuse already-resolved plans
+        # when top-level SSP was applied above).
+        trial_plan = trial_subscription_plan_request_dict
+        first_paid_plan = first_paid_subscription_plan_request_dict
+        if not top_level_ssp_product_slug:
+            trial_plan = _resolve_ssp(trial_plan, is_trial=True)
+            first_paid_plan = _resolve_ssp(first_paid_plan, is_trial=False)
 
         if trial_plan.get('product_id') is None:
             trial_plan['product_id'] = settings.PROVISIONING_TRIAL_SUBSCRIPTION_PRODUCT_ID

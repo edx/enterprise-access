@@ -37,6 +37,7 @@ class TestProvisioningSerializers(TestCase):
                 'salesforce_opportunity_line_item': 'oli-1',
                 'start_date': '2025-06-01T00:00:00Z',
                 'expiration_date': '2026-06-01T00:00:00Z',
+                'ssp_product_slug': 'ai-academy-trial',
                 'product_id': 1,
                 'desired_num_licenses': 5,
             },
@@ -45,6 +46,7 @@ class TestProvisioningSerializers(TestCase):
                 'salesforce_opportunity_line_item': None,
                 'start_date': '2026-06-01T00:00:00Z',
                 'expiration_date': '2027-06-01T00:00:00Z',
+                'ssp_product_slug': 'ai-academy-paid',
                 'product_id': 2,
                 'desired_num_licenses': 5,
             },
@@ -71,6 +73,7 @@ class TestProvisioningSerializers(TestCase):
                 'start_date': '2025-06-01T00:00:00Z',
                 'expiration_date': '2026-06-01T00:00:00Z',
                 'product_id': 1,
+                'ssp_product_slug': 'ai-academy-trial',
                 'desired_num_licenses': 5,
             },
             'first_paid_subscription_plan': {
@@ -79,6 +82,7 @@ class TestProvisioningSerializers(TestCase):
                 'start_date': '2026-06-01T00:00:00Z',
                 'expiration_date': '2027-06-01T00:00:00Z',
                 'product_id': 2,
+                'ssp_product_slug': 'ai-academy-paid',
                 'desired_num_licenses': 5,
             },
         })
