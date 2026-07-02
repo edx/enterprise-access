@@ -1,6 +1,7 @@
 """
 Low-level HTTP transport client for the Xpert AI service.
 """
+import json
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -27,6 +28,19 @@ class XpertResponseMessage:
     """
     role: str
     content: str
+
+    def as_json(self) -> Any:
+        """
+        Parse the response content as JSON.
+
+        Raises XpertAPIResponseError if content is not valid JSON.
+        """
+        try:
+            return json.loads(self.content.strip())
+        except json.JSONDecodeError as exc:
+            raise XpertAPIResponseError(
+                f'Failed to parse Xpert response content as JSON: {exc}'
+            ) from exc
 
 
 class XpertAPIError(Exception):

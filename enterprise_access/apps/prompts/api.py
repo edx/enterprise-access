@@ -8,7 +8,6 @@ No HTTP or DRF machinery — suitable for testing in isolation.
 import json
 import logging
 from collections.abc import Sequence
-from dataclasses import dataclass
 from typing import Any, TypeAlias
 
 from enterprise_access.apps.prompts.api_client import (
@@ -34,31 +33,6 @@ class PromptError(Exception):
 
     These errors are translated by the view layer into HTTP 500 responses.
     """
-
-
-@dataclass(frozen=True)
-class ParsedXpertResponse:
-    """
-    Domain model for parsed Xpert response content.
-
-    The Xpert client returns a single XpertResponseMessage. This class owns
-    parsing that message content into JSON for the API response.
-    """
-
-    message: XpertResponseMessage
-
-    def as_json(self) -> Any:
-        """
-        Parse the Xpert response message content as JSON.
-
-        Raises PromptError if JSON parsing fails.
-        """
-        try:
-            return json.loads(self.message.content.strip())
-        except json.JSONDecodeError as exc:
-            raise PromptError(
-                f'Failed to parse Xpert response content as JSON: {exc}'
-            ) from exc
 
 
 def get_current_prompt(
@@ -119,12 +93,12 @@ def build_messages(validated_data: ValidatedData) -> list[XpertMessage]:
 
 def send_xpert_message(
     *,
-    system_prompt: str,
+    prompt: BaseSystemPrompt,
     messages: list[XpertMessage],
     conversation_id: str,
     tags: Sequence[str] | None = None,
     prompt_type: str | None = None,
-) -> ParsedXpertResponse:
+) -> XpertResponseMessage:
     """
     Send one prompt-backed request through the Xpert client.
 
@@ -133,7 +107,7 @@ def send_xpert_message(
     are not logged.
 
     Args:
-        system_prompt: System prompt text for Xpert.
+        prompt: System prompt domain model; used to build the Xpert system message.
         messages: List of messages for Xpert (user role + content).
         conversation_id: Unique conversation ID for tracing.
         tags: Optional list of tags for Xpert (e.g. RAG tags).
@@ -143,12 +117,13 @@ def send_xpert_message(
         PromptError: If the Xpert API call fails.
 
     Returns:
-        A ParsedXpertResponse wrapping the Xpert response message.
+        The Xpert response message.
     """
+    system_prompt = build_system_prompt(prompt)
     normalized_tags = list(tags) if tags else None
 
     try:
-        raw_response = XpertAPIClient().send_message(
+        return XpertAPIClient().send_message(
             system_prompt=system_prompt,
             messages=messages,
             conversation_id=conversation_id,
@@ -161,5 +136,3 @@ def send_xpert_message(
             conversation_id,
         )
         raise PromptError(str(exc)) from exc
-
-    return ParsedXpertResponse(message=raw_response)

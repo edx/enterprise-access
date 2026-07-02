@@ -324,14 +324,15 @@ class TestLearningIntentHappyPath(APITest):
 
     @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
     def test_full_parsed_json_returned(self, mock_client_class):
-        payload_json = '{"skills_required":["python","ml"],"condensed_algolia_query":"data"}'
         mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
             role='assistant',
-            content=payload_json,
+            content='{"skills_required":["python","ml"],"condensed_algolia_query":"data"}',
         )
         resp = self.client.post(self.url, data=_VALID_LEARNING_INTENT_PAYLOAD, format='json')
         assert resp.status_code == status.HTTP_200_OK
-        assert resp.json() == json.loads(payload_json)
+        body = resp.json()
+        assert body['skills_required'] == ['python', 'ml']
+        assert body['condensed_algolia_query'] == 'data'
 
     @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
     def test_validated_data_encoded_as_user_message(self, mock_client_class):
@@ -390,10 +391,10 @@ class TestLearnerPathwaysResponsePassthrough(APITest):
         }])
 
     @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
-    def test_extra_top_level_fields_preserved(self, mock_client_class):
+    def test_extra_top_level_fields_dropped_by_serializer(self, mock_client_class):
         mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
             role='assistant',
-            content='{"result":"ok","extra_field":"preserved"}',
+            content='{"result":"ok","extra_field":"dropped"}',
         )
 
         resp = self.client.post(
@@ -403,10 +404,10 @@ class TestLearnerPathwaysResponsePassthrough(APITest):
         )
 
         assert resp.status_code == status.HTTP_200_OK
-        assert 'extra_field' in resp.json()
+        assert 'extra_field' not in resp.json()
 
     @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
-    def test_list_response_returned_as_list(self, mock_client_class):
+    def test_list_response_returns_400(self, mock_client_class):
         mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
             role='assistant',
             content='[1,2,3]',
@@ -418,16 +419,13 @@ class TestLearnerPathwaysResponsePassthrough(APITest):
             format='json',
         )
 
-        assert resp.status_code == status.HTTP_200_OK
-        assert isinstance(resp.json(), list)
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
 
     @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
-    def test_nested_values_preserved(self, mock_client_class):
-        nested = {'a': {'b': {'c': [1, 2, 3]}}}
-
+    def test_nested_values_in_declared_fields_preserved(self, mock_client_class):
         mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
             role='assistant',
-            content=json.dumps(nested),
+            content='{"skills_required":["a","b"],"skills_preferred":["c"]}',
         )
 
         resp = self.client.post(
@@ -437,7 +435,8 @@ class TestLearnerPathwaysResponsePassthrough(APITest):
         )
 
         assert resp.status_code == status.HTTP_200_OK
-        assert resp.json() == nested
+        assert resp.json()['skills_required'] == ['a', 'b']
+        assert resp.json()['skills_preferred'] == ['c']
 
 
 # ---------------------------------------------------------------------------

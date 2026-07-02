@@ -4,6 +4,7 @@ Tests for the Xpert API client.
 from unittest import mock
 
 import ddt
+import pytest
 import requests
 from django.test import TestCase, override_settings
 
@@ -409,3 +410,41 @@ class XpertAPIClientErrorTests(TestCase):
         mock_post.side_effect = requests.Timeout('timed out')
         with self.assertRaises(XpertAPIRequestError):
             self.client.send_message(**self.kwargs)
+
+
+@ddt.ddt
+class TestXpertResponseMessageAsJson(TestCase):
+    """Tests for XpertResponseMessage.as_json()."""
+
+    @ddt.data(
+        ('{"answer":42}', {'answer': 42}),
+        ('[1,2,3]', [1, 2, 3]),
+        ('"hello"', 'hello'),
+        ('99', 99),
+        ('false', False),
+        ('true', True),
+        ('null', None),
+        ('  {"trimmed":true}  ', {'trimmed': True}),
+    )
+    @ddt.unpack
+    def test_valid_json_values_returned_unchanged(self, raw_content, expected):
+        msg = XpertResponseMessage(role='assistant', content=raw_content)
+        assert msg.as_json() == expected
+
+    @ddt.data(
+        'not valid json',
+        '```json\n{"key":"value"}\n```',
+        '```\n{"key":"value"}\n```',
+        '{"unterminated": true',
+        '',
+    )
+    def test_invalid_or_fenced_json_raises_response_error(self, raw_content):
+        msg = XpertResponseMessage(role='assistant', content=raw_content)
+        with pytest.raises(XpertAPIResponseError):
+            msg.as_json()
+
+    def test_invalid_json_exception_is_chained(self):
+        msg = XpertResponseMessage(role='assistant', content='not valid json')
+        with pytest.raises(XpertAPIResponseError) as exc_info:
+            msg.as_json()
+        assert exc_info.value.__cause__ is not None

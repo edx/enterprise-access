@@ -19,6 +19,7 @@ from enterprise_access.apps.api import serializers as api_serializers
 from enterprise_access.apps.api.serializers.learner_pathways import LEARNER_PATHWAYS_API_TAG
 from enterprise_access.apps.api_client.base_user import get_request_id
 from enterprise_access.apps.prompts import api as prompts_api
+from enterprise_access.apps.prompts.api_client import XpertAPIError
 from enterprise_access.apps.prompts.models import PromptType, XpertLearnerPathwaysSystemPrompt
 
 logger = logging.getLogger(__name__)
@@ -137,11 +138,10 @@ class LearnerPathwaysViewSet(BasePromptViewSet):
                 prompt_model=self.model_type,
                 prompt_type=PromptType.LEARNER_INTENT,
             )
-            system_prompt = prompts_api.build_system_prompt(prompt)
             messages = prompts_api.build_messages(validated_data)
 
             xpert_response = prompts_api.send_xpert_message(
-                system_prompt=system_prompt,
+                prompt=prompt,
                 messages=messages,
                 conversation_id=conversation_id,
                 tags=settings.XPERT_LEARNER_PATHWAYS_RAG_TAGS,
@@ -149,7 +149,9 @@ class LearnerPathwaysViewSet(BasePromptViewSet):
             )
 
             response_data = xpert_response.as_json()
-        except prompts_api.PromptError as exc:
+        except (prompts_api.PromptError, XpertAPIError) as exc:
             raise PromptRequestException(str(exc)) from exc
 
-        return Response(response_data, status=status.HTTP_200_OK)
+        response_serializer = api_serializers.LearningIntentResponseSerializer(data=response_data)
+        response_serializer.is_valid(raise_exception=True)
+        return Response(response_serializer.data, status=status.HTTP_200_OK)

@@ -153,7 +153,7 @@ class TestSendXpertMessage(TestCase):
     """Tests for send_xpert_message."""
 
     def setUp(self):
-        self.system_prompt = 'You are helpful.'
+        self.mock_prompt = mock.Mock(system_prompt='You are helpful.', output_schema=None)
         self.messages = [XpertRequestMessage(role='user', content='{"q":1}')]
         self.conversation_id = 'enterprise-access:test-123'
 
@@ -163,18 +163,16 @@ class TestSendXpertMessage(TestCase):
         mock_client_class.return_value.send_message.return_value = mock_response
 
         result = prompts_api.send_xpert_message(
-            system_prompt=self.system_prompt,
+            prompt=self.mock_prompt,
             messages=self.messages,
             conversation_id=self.conversation_id,
             tags=('tag1', 'tag2'),
             prompt_type='learner_intent',
         )
 
-        assert result == prompts_api.ParsedXpertResponse(
-            message=XpertResponseMessage(role='assistant', content='{"answer":"yes"}')
-        )
+        assert result == XpertResponseMessage(role='assistant', content='{"answer":"yes"}')
         mock_client_class.return_value.send_message.assert_called_once_with(
-            system_prompt=self.system_prompt,
+            system_prompt='You are helpful.',
             messages=self.messages,
             conversation_id=self.conversation_id,
             tags=['tag1', 'tag2'],
@@ -189,7 +187,7 @@ class TestSendXpertMessage(TestCase):
         )
 
         prompts_api.send_xpert_message(
-            system_prompt=self.system_prompt,
+            prompt=self.mock_prompt,
             messages=self.messages,
             conversation_id=self.conversation_id,
             tags=tags,
@@ -205,7 +203,7 @@ class TestSendXpertMessage(TestCase):
         )
 
         prompts_api.send_xpert_message(
-            system_prompt=self.system_prompt,
+            prompt=self.mock_prompt,
             messages=self.messages,
             conversation_id=self.conversation_id,
         )
@@ -216,6 +214,9 @@ class TestSendXpertMessage(TestCase):
 @ddt.ddt
 class TestSendXpertMessageErrors(TestCase):
     """Tests for XpertAPIError mapping to PromptError."""
+
+    def setUp(self):
+        self.mock_prompt = mock.Mock(system_prompt='You are helpful.', output_schema=None)
 
     @ddt.data(
         XpertAPIError,
@@ -234,7 +235,7 @@ class TestSendXpertMessageErrors(TestCase):
 
         with pytest.raises(prompts_api.PromptError) as exc_info:
             prompts_api.send_xpert_message(
-                system_prompt='prompt',
+                prompt=self.mock_prompt,
                 messages=[],
                 conversation_id='enterprise-access:x',
                 prompt_type='learner_intent',
@@ -243,58 +244,3 @@ class TestSendXpertMessageErrors(TestCase):
         assert exc_info.value.__cause__ is original
         assert 'original error text' in str(exc_info.value)
         assert mock_client_class.return_value.send_message.call_count == 1
-
-
-class TestParsedXpertResponse(TestCase):
-    """Tests for ParsedXpertResponse construction."""
-
-    def test_can_be_constructed_with_xpert_response_message(self):
-        message = XpertResponseMessage(role='assistant', content='{"answer":"yes"}')
-        response = prompts_api.ParsedXpertResponse(message=message)
-        assert response.message is message
-
-
-@ddt.ddt
-class TestXpertResponseAsJson(TestCase):
-    """Tests for XpertResponse.as_json."""
-
-    @ddt.data(
-        ('{"answer":42}', {'answer': 42}),
-        ('[1,2,3]', [1, 2, 3]),
-        ('"hello"', 'hello'),
-        ('99', 99),
-        ('false', False),
-        ('true', True),
-        ('null', None),
-        ('  {"trimmed":true}  ', {'trimmed': True}),
-    )
-    @ddt.unpack
-    def test_valid_json_values_returned_unchanged(self, raw_content, expected):
-        response = prompts_api.ParsedXpertResponse(message=XpertResponseMessage(role='assistant', content=raw_content))
-
-        result = response.as_json()
-
-        assert result == expected
-
-    @ddt.data(
-        'not valid json',
-        '```json\n{"key":"value"}\n```',
-        '```\n{"key":"value"}\n```',
-        '{"unterminated": true',
-        '',
-    )
-    def test_invalid_or_fenced_json_raises_error(self, raw_content):
-        response = prompts_api.ParsedXpertResponse(message=XpertResponseMessage(role='assistant', content=raw_content))
-
-        with pytest.raises(prompts_api.PromptError):
-            response.as_json()
-
-    def test_invalid_json_exception_is_chained(self):
-        response = prompts_api.ParsedXpertResponse(
-            message=XpertResponseMessage(role='assistant', content='not valid json')
-        )
-
-        with pytest.raises(prompts_api.PromptError) as exc_info:
-            response.as_json()
-
-        assert exc_info.value.__cause__ is not None

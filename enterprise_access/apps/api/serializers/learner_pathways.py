@@ -17,10 +17,8 @@ class LearningIntentRequestSerializer(serializers.Serializer):  # pylint: disabl
 
 class LearningIntentResponseSerializer(serializers.Serializer):  # pylint: disable=abstract-method
     """
-    Documents the expected HTTP 200 response shape for the learning-intent endpoint.
-
-    For OpenAPI schema generation only — never instantiated at runtime.
+    Validates and serializes the HTTP 200 response for the learning-intent endpoint.
     """
-    skills_required = serializers.ListField(child=serializers.CharField())
-    skills_preferred = serializers.ListField(child=serializers.CharField())
-    condensed_algolia_query = serializers.CharField()
+    skills_required = serializers.ListField(child=serializers.CharField(), required=False)
+    skills_preferred = serializers.ListField(child=serializers.CharField(), required=False)
+    condensed_algolia_query = serializers.CharField(required=False)
