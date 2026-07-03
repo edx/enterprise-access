@@ -118,6 +118,11 @@ class CustomerBillingSspProductsTests(APITest):
 
         mock_get_all_stripe_prices.assert_called_once()
 
+        detail_url = reverse('api:v1:ssp-products-detail', kwargs={'slug': 'ai-academy-yearly'})
+        detail_response = self.client.get(detail_url)
+        self.assertEqual(detail_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(detail_response.data['tags'], ['ai', 'leadership'])
+
     @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_all_stripe_prices')
     @mock.patch('enterprise_access.apps.customer_billing.models.get_cached_academy_data')
     def test_list_ssp_products_allows_anonymous_access(

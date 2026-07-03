@@ -6,6 +6,7 @@ from urllib.parse import urljoin
 
 from django.conf import settings
 from django_countries.serializers import CountryFieldMixin
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 from rest_framework.exceptions import APIException
 
@@ -746,6 +747,7 @@ class SspEssentialsProductResponseSerializer(serializers.Serializer):
         thumbnail_url = obj.academy_thumbnail_url or self._price_data(obj).get('stripe_thumbnail_url')
         return self._build_public_thumbnail_url(thumbnail_url)
 
+    @extend_schema_field(serializers.ListField(child=serializers.CharField()))
     def get_tags(self, obj):
         return obj.academy_tags or []
 
