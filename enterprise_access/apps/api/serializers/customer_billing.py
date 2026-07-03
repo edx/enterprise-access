@@ -696,6 +696,7 @@ class SspEssentialsProductResponseSerializer(serializers.Serializer):
     description = serializers.SerializerMethodField()
     marketing_url = serializers.SerializerMethodField()
     thumbnail_url = serializers.SerializerMethodField()
+    tags = serializers.SerializerMethodField()
     price = serializers.SerializerMethodField()
     lookup_key = serializers.SerializerMethodField()
     slug = serializers.SlugField(read_only=True)
@@ -744,6 +745,9 @@ class SspEssentialsProductResponseSerializer(serializers.Serializer):
         """Get and format the public thumbnail URL for the product."""
         thumbnail_url = obj.academy_thumbnail_url or self._price_data(obj).get('stripe_thumbnail_url')
         return self._build_public_thumbnail_url(thumbnail_url)
+
+    def get_tags(self, obj):
+        return obj.academy_tags or []
 
     def get_price(self, obj):
         """Get and format the product price as a string."""
