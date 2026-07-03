@@ -42,11 +42,11 @@ billiard==4.2.4
     # via
     #   -r requirements/base.txt
     #   celery
-boto3==1.43.37
+boto3==1.43.40
     # via
     #   -r requirements/base.txt
     #   snowflake-connector-python
-botocore==1.43.37
+botocore==1.43.40
     # via
     #   -r requirements/base.txt
     #   boto3
@@ -456,7 +456,7 @@ six==1.17.0
     #   edx-django-release-util
     #   edx-rbac
     #   python-dateutil
-snowflake-connector-python==4.6.0
+snowflake-connector-python==4.7.0
     # via -r requirements/base.txt
 social-auth-app-django==5.9.0
     # via
@@ -475,7 +475,7 @@ sqlparse==0.5.5
     # via
     #   -r requirements/base.txt
     #   django
-stevedore==5.8.0
+stevedore==5.9.0
     # via
     #   -r requirements/base.txt
     #   code-annotations
@@ -491,7 +491,7 @@ tomlkit==0.15.0
     # via
     #   -r requirements/base.txt
     #   snowflake-connector-python
-typing-extensions==4.15.0
+typing-extensions==4.16.0
     # via
     #   -r requirements/base.txt
     #   cattrs
