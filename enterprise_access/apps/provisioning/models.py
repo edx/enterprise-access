@@ -1038,12 +1038,13 @@ class ProvisionNewCustomerWorkflow(AbstractWorkflow):
                     # If the catalog client returns None or an invalid value,
                     # tolerate it and do not set the catalog_request.
                     catalog_query_id = None
-                if catalog_query_id is not None:
+                if catalog_query_id is not None and 'catalog_query_id' not in catalog_request:
                     catalog_request = {**catalog_request, 'catalog_query_id': catalog_query_id}
 
             # Pass academy uuid derived from SspProduct into the associate academy
             # step input. It may be None for non-academy products (e.g. Teams).
-            academy_request = {'academy_uuid': str(ssp.academy_uuid) if ssp.academy_uuid else None}
+            if 'academy_uuid' not in academy_request:
+                academy_request = {'academy_uuid': str(ssp.academy_uuid) if ssp.academy_uuid else None}
 
             return plan_dict
 
