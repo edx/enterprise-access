@@ -59,12 +59,12 @@ billiard==4.2.4
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
     #   celery
-boto3==1.43.37
+boto3==1.43.40
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
     #   snowflake-connector-python
-botocore==1.43.37
+botocore==1.43.40
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -151,7 +151,7 @@ confluent-kafka[avro,schema-registry]==2.6.1
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
-coverage[toml]==7.14.3
+coverage[toml]==7.15.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -406,7 +406,7 @@ factory-boy==3.3.3
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
-faker==40.27.0
+faker==40.28.1
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -814,7 +814,7 @@ snowballstemmer==3.1.1
     # via
     #   -r requirements/quality.txt
     #   pydocstyle
-snowflake-connector-python==4.6.0
+snowflake-connector-python==4.7.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -839,7 +839,7 @@ sqlparse==0.5.5
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
     #   django
-stevedore==5.8.0
+stevedore==5.9.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -873,7 +873,7 @@ tox==4.56.1
     #   -r requirements/test.txt
 twine==6.2.0
     # via -r requirements/quality.txt
-typing-extensions==4.15.0
+typing-extensions==4.16.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
