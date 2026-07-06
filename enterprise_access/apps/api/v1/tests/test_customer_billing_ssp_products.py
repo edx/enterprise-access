@@ -83,6 +83,7 @@ class CustomerBillingSspProductsTests(APITest):
             'description': 'Learn AI end-to-end',
             'marketing_url': 'https://example.com/ai',
             'thumbnail_url': 'academies/ai/thumbnail.png',
+            'tags': ['ai', 'leadership'],
         }
         mock_get_cached_academy_data.side_effect = (
             lambda academy_uuid: academy_metadata if academy_uuid == self.essentials_product.academy_uuid else None
@@ -112,9 +113,15 @@ class CustomerBillingSspProductsTests(APITest):
             essentials_payload['thumbnail_url'],
             'https://s3.amazonaws.com/essentials-bucket/academies/ai/thumbnail.png',
         )
+        self.assertEqual(essentials_payload['tags'], ['ai', 'leadership'])
         self.assertEqual(essentials_payload['price'], '149.00')
 
         mock_get_all_stripe_prices.assert_called_once()
+
+        detail_url = reverse('api:v1:ssp-products-detail', kwargs={'slug': 'ai-academy-yearly'})
+        detail_response = self.client.get(detail_url)
+        self.assertEqual(detail_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(detail_response.data['tags'], ['ai', 'leadership'])
 
     @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_all_stripe_prices')
     @mock.patch('enterprise_access.apps.customer_billing.models.get_cached_academy_data')
@@ -240,6 +247,7 @@ class CustomerBillingSspProductsTests(APITest):
         self.assertIsNone(response.data[0]['description'])
         self.assertIsNone(response.data[0]['marketing_url'])
         self.assertIsNone(response.data[0]['thumbnail_url'])
+        self.assertEqual(response.data[0]['tags'], [])
         self.assertEqual(response.data[0]['lookup_key'], 'ai_academy_yearly_price')
         self.assertIsNone(response.data[0]['price'])
         mock_get_all_stripe_prices.assert_not_called()
@@ -271,6 +279,7 @@ class CustomerBillingSspProductsTests(APITest):
         self.assertEqual(response.data[0]['description'], 'Learn core AI skills')
         self.assertEqual(response.data[0]['marketing_url'], 'https://example.com/ai-essentials')
         self.assertEqual(response.data[0]['thumbnail_url'], 'https://cdn.example.com/ai-essentials.png')
+        self.assertEqual(response.data[0]['tags'], [])
         self.assertEqual(response.data[0]['price'], '149.00')
 
     @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_all_stripe_prices')
