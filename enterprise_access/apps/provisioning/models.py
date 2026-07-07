@@ -1063,9 +1063,9 @@ class ProvisionNewCustomerWorkflow(AbstractWorkflow):
 
             # Pass academy uuid derived from SspProduct into the associate academy
             # step input. It may be None for non-academy products (e.g. Teams).
-            academy_patch = {
-                'academy_uuid': str(ssp.academy_uuid) if ssp.academy_uuid else None
-            }
+            # step input.
+            if ssp.academy_uuid:
+                academy_patch = {'academy_uuid': str(ssp.academy_uuid)}
 
             return plan_dict, catalog_patch, academy_patch
 

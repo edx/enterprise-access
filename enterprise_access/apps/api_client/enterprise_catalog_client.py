@@ -187,7 +187,7 @@ class EnterpriseCatalogApiClient(BaseOAuthClient):
         )
         response = self.client.get(endpoint)
         response.raise_for_status()
-        return response.json()['id']
+        return int(response.json().get('id'))
 
 
 class EnterpriseCatalogApiV1Client(EnterpriseCatalogApiClient):

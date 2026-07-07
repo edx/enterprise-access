@@ -648,8 +648,8 @@ class TestGenerateInputDictSspResolution(TestCase):
     def test_ssp_catalog_query_uuid_api_returns_none_raises_type_error(self):
         """
         Catalog query UUID present but API returns None → int(None) raises TypeError.
-            The method should fail loudly instead of silently omitting catalog_query_id.
-    """
+        The method should fail loudly instead of silently omitting catalog_query_id.
+        """
         with patch('enterprise_access.apps.provisioning.models.EnterpriseCatalogApiClient') as mock_catalog_cls:
             mock_catalog_cls.return_value.get_catalog_query_id_from_uuid.return_value = None
 

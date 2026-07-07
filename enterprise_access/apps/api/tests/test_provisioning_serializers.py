@@ -59,6 +59,8 @@ class TestProvisioningSerializers(TestCase):
             payload['academy'] = {
                 'academy_uuid': str(uuid4()),
             }
+        else:
+            payload.pop('academy', None)
         return payload
 
     @ddt.data(
