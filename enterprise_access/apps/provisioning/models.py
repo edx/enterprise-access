@@ -992,7 +992,7 @@ class ProvisionNewCustomerWorkflow(AbstractWorkflow):
     ]
 
     @classmethod
-    def generate_input_dict(
+    def generate_input_dict(        # pylint: disable=too-many-statements,too-many-arguments,too-many-locals
         cls,
         customer_request_dict,
         admin_email_list,
@@ -1009,6 +1009,16 @@ class ProvisionNewCustomerWorkflow(AbstractWorkflow):
         # Normalize inputs
         catalog_request = catalog_request_dict or {}
         academy_request = academy_request_dict or {}
+        ssp_cache = {}
+        catalog_query_id_cache = {}
+
+        def _get_ssp(slug):
+            if slug not in ssp_cache:
+                try:
+                    ssp_cache[slug] = SspProduct.objects.get(slug=slug, is_active=True)
+                except SspProduct.DoesNotExist as exc:
+                    raise ValidationError(f"Unknown ssp_product_slug: {slug}") from exc
+            return ssp_cache[slug]
 
         def _resolve_ssp(plan_dict, *, is_trial: bool):
             """
@@ -1030,7 +1040,7 @@ class ProvisionNewCustomerWorkflow(AbstractWorkflow):
                 return plan_dict, catalog_patch, academy_patch
 
             try:
-                ssp = SspProduct.objects.get(slug=slug, is_active=True)
+                ssp = _get_ssp(slug)
             except SspProduct.DoesNotExist as exc:
                 raise ValidationError(f"Unknown ssp_product_slug: {slug}") from exc
 
@@ -1043,10 +1053,12 @@ class ProvisionNewCustomerWorkflow(AbstractWorkflow):
 
             # Resolve catalog_query_id from the SspProduct's catalog_query_uuid.
             if ssp.catalog_query_uuid is not None:
-                catalog_client = EnterpriseCatalogApiClient()
-                catalog_query_id = int(
-                    catalog_client.get_catalog_query_id_from_uuid(ssp.catalog_query_uuid)
-                )
+                if ssp.catalog_query_uuid not in catalog_query_id_cache:
+                    catalog_client = EnterpriseCatalogApiClient()
+                    catalog_query_id_cache[ssp.catalog_query_uuid] = int(
+                        catalog_client.get_catalog_query_id_from_uuid(ssp.catalog_query_uuid)
+                    )
+                catalog_query_id = catalog_query_id_cache[ssp.catalog_query_uuid]
                 catalog_patch = {'catalog_query_id': catalog_query_id}
 
             # Pass academy uuid derived from SspProduct into the associate academy
@@ -1060,7 +1072,8 @@ class ProvisionNewCustomerWorkflow(AbstractWorkflow):
         def _apply_ssp_patches(catalog_req, academy_req, catalog_patch, academy_patch):
             """
             Merge SSP-derived patches into the catalog and academy request dicts.
-            Only sets a key if it is not already present (first-write-wins).
+            - catalog_query_id from SSP overwrites any existing value (including serializer defaults).
+            - academy_uuid is only set if not already present (first-write-wins).
             """
             if catalog_patch:
                 # The request serializer injects a default catalog_query_id when the

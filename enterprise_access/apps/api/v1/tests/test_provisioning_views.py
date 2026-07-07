@@ -376,14 +376,13 @@ class TestProvisioningEndToEnd(APITest):
         SspProduct model and thread academy_uuid into the associate step.
         """
         mock_catalog_client_cls.return_value = mock.MagicMock()
-        mock_client = mock_catalog_client_cls.return_value
-        mock_client.get_catalog_query_id_from_uuid.return_value = 42
+        mock_catalog_client = mock_catalog_client_cls.return_value
+        mock_catalog_client.get_catalog_query_id_from_uuid.return_value = 42
 
-        # SspProduct imported at module level
-        mock_client = mock_lms_api_client.return_value
-        mock_client.get_enterprise_customer_data.return_value = DEFAULT_CUSTOMER_RECORD
-        mock_client.get_enterprise_admin_users.return_value = []
-        mock_client.get_enterprise_catalogs.return_value = [DEFAULT_CATALOG_RECORD]
+        mock_lms_client = mock_lms_api_client.return_value
+        mock_lms_client.get_enterprise_customer_data.return_value = DEFAULT_CUSTOMER_RECORD
+        mock_lms_client.get_enterprise_admin_users.return_value = []
+        mock_lms_client.get_enterprise_catalogs.return_value = [DEFAULT_CATALOG_RECORD]
 
         mock_create_agreement.return_value = DEFAULT_AGREEMENT_RECORD
         mock_create_renewal.return_value = EXPECTED_SUBSCRIPTION_PLAN_RENEWAL_RESPONSE

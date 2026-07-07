@@ -712,6 +712,31 @@ class TestGenerateInputDictSspResolution(TestCase):
         self.assertEqual(trial_input['product_id'], settings.PROVISIONING_TRIAL_SUBSCRIPTION_PRODUCT_ID)
         self.assertEqual(paid_input['product_id'], settings.PROVISIONING_PAID_SUBSCRIPTION_PRODUCT_ID)
 
+    @mock.patch('enterprise_access.apps.provisioning.models.SspProduct.objects.get')
+    @mock.patch('enterprise_access.apps.provisioning.models.EnterpriseCatalogApiClient')
+    def test_top_level_slug_reuses_single_ssp_resolution(self, mock_catalog_cls, mock_ssp_get):
+        """A shared top-level SSP slug should resolve once for both plans."""
+        ssp = self._create_ssp(
+            slug='shared-ssp',
+            trial_product_id=11,
+            paid_product_id=22,
+            academy_uuid=uuid4(),
+        )
+        mock_ssp_get.return_value = ssp
+        mock_catalog_cls.return_value.get_catalog_query_id_from_uuid.return_value = 123
+
+        result = self._generate_input_dict(
+            trial_subscription_plan_request_dict={**self.MINIMAL_TRIAL},
+            first_paid_subscription_plan_request_dict={**self.MINIMAL_PAID},
+            top_level_ssp_product_slug=ssp.slug,
+        )
+
+        self.assertEqual(result[GetCreateCatalogStepInput.KEY]['catalog_query_id'], 123)
+        self.assertEqual(result[GetCreateTrialSubscriptionPlanStepInput.KEY]['product_id'], 11)
+        self.assertEqual(result[GetCreateFirstPaidSubscriptionPlanStepInput.KEY]['product_id'], 22)
+        mock_ssp_get.assert_called_once_with(slug=ssp.slug, is_active=True)
+        mock_catalog_cls.return_value.get_catalog_query_id_from_uuid.assert_called_once_with(ssp.catalog_query_uuid)
+
     def test_ssp_invalid_slug_raises_validation_error(self):
         """Unknown ssp_product_slug raises ValidationError."""
         with self.assertRaises(ValidationError):
