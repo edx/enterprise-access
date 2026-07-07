@@ -33,10 +33,10 @@ from enterprise_access.apps.provisioning.models import (
     GetCreateCustomerAgreementStep,
     GetCreateFirstPaidSubscriptionPlanStepInput,
     GetCreateSubscriptionPlanRenewalStep,
+    GetCreateTrialSubscriptionPlanStepInput,
     NotificationStep,
     ProvisionNewCustomerWorkflow
 )
-from enterprise_access.apps.provisioning.models import GetCreateTrialSubscriptionPlanStepInput
 from enterprise_access.apps.provisioning.tests.factories import ProvisionNewCustomerWorkflowFactory
 
 
@@ -589,6 +589,7 @@ class TestGenerateInputDictSspResolution(TestCase):
         catalog_query_uuid=None,
         academy_uuid=None,
     ):
+        """Create a test SSP product with the supplied identifiers."""
         return SspProduct.objects.create(
             slug=slug,
             stripe_price_lookup_key=f'price_{slug}',
@@ -606,6 +607,7 @@ class TestGenerateInputDictSspResolution(TestCase):
         first_paid_subscription_plan_request_dict=None,
         top_level_ssp_product_slug=None,
     ):
+        """Build provisioning input with optional SSP overrides for a test case."""
         return ProvisionNewCustomerWorkflow.generate_input_dict(
             customer_request_dict=self.MINIMAL_CUSTOMER,
             admin_email_list=['a@b.com'],

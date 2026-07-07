@@ -19,6 +19,8 @@ class TestProvisioningSerializers(TestCase):
     """
 
     def _build_request_payload(self, *, include_academy):
+        """
+        Build a request payload for the ProvisioningRequestSerializer."""
         payload = {
             'enterprise_customer': {
                 'name': 'Test Customer',
