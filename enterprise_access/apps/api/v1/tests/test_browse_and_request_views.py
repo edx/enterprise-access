@@ -4625,6 +4625,32 @@ class TestLearnerCreditRequestViewSet(BaseEnterpriseAccessTestCase):
         self.assertEqual(len(results['declined']), 5)
         self.assertEqual(len(results['non_declinable']), 0)
 
+    @mock.patch('enterprise_access.apps.subsidy_request.api.send_learner_credit_bnr_decline_notification_task')
+    def test_decline_all_forwards_decline_reason(self, _mock_decline_notification_task):
+        """Test decline_all persists decline_reason on each declined request."""
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': str(self.enterprise_customer_uuid_1)
+        }])
+
+        response = self.client.post(
+            reverse('api:v1:learner-credit-requests-decline-all'),
+            data={
+                'policy_uuid': str(self.policy.uuid),
+                'enterprise_customer_uuid': str(self.enterprise_customer_uuid_1),
+                'decline_reason': 'Budget constraints for Q2',
+            },
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        self.user_request_1.refresh_from_db()
+        self.user_request_2.refresh_from_db()
+        self.enterprise_request.refresh_from_db()
+        self.assertEqual(self.user_request_1.decline_reason, 'Budget constraints for Q2')
+        self.assertEqual(self.user_request_2.decline_reason, 'Budget constraints for Q2')
+        self.assertEqual(self.enterprise_request.decline_reason, 'Budget constraints for Q2')
+
     def test_decline_all_no_declinable_requests(self):
         """Test decline_all returns 404 when no declinable requests exist."""
         self.set_jwt_cookie([{
