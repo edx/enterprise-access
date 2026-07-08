@@ -36,6 +36,7 @@ class Migration(migrations.Migration):
             model_name='sspproduct',
             name='marketing_url',
             field=models.URLField(
+                max_length=255,
                 blank=True,
                 help_text='Marketing URL for this product. Overrides academy_marketing_url when present.',
                 null=True,
@@ -45,6 +46,7 @@ class Migration(migrations.Migration):
             model_name='historicalsspproduct',
             name='marketing_url',
             field=models.URLField(
+                max_length=255,
                 blank=True,
                 help_text='Marketing URL for this product. Overrides academy_marketing_url when present.',
                 null=True,
