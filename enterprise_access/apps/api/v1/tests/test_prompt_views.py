@@ -20,7 +20,8 @@ from rest_framework.test import APIClient
 from rest_framework.throttling import ScopedRateThrottle
 
 from enterprise_access.apps.api.v1.views.prompt import BasePromptViewSet, LearnerPathwaysViewSet, PromptRequestException
-from enterprise_access.apps.core.constants import SYSTEM_ENTERPRISE_LEARNER_ROLE
+from enterprise_access.apps.core.constants import LEARNER_PATHWAYS_LEARNER_ROLE, SYSTEM_ENTERPRISE_LEARNER_ROLE
+from enterprise_access.apps.core.models import EnterpriseAccessFeatureRole, EnterpriseAccessRoleAssignment
 from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.prompts import api as prompts_api
 from enterprise_access.apps.prompts.api_client import (
@@ -202,6 +203,44 @@ class TestLearnerPathwaysAuthorization(APITest):
         )
 
         mock_client_class.return_value.send_message.assert_not_called()
+
+    @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
+    def test_authenticated_non_enterprise_learner_is_rejected(self, mock_client_class):
+        user = UserFactory(is_active=True)
+        self.client.force_authenticate(user=user)
+
+        response = self.client.post(
+            reverse(_LEARNING_INTENT_URL_NAME),
+            data=_VALID_LEARNING_INTENT_PAYLOAD,
+            format='json',
+        )
+
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+        mock_client_class.return_value.send_message.assert_not_called()
+
+    @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
+    def test_explicit_db_role_assignment_is_allowed(self, mock_client_class):
+        mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
+            role='assistant',
+            content='{"result":"ok"}',
+        )
+
+        user = UserFactory(is_active=True)
+        role, _ = EnterpriseAccessFeatureRole.objects.get_or_create(name=LEARNER_PATHWAYS_LEARNER_ROLE)
+        EnterpriseAccessRoleAssignment.objects.create(
+            user=user,
+            role=role,
+            enterprise_customer_uuid=uuid.uuid4(),
+        )
+        self.client.force_authenticate(user=user)
+
+        response = self.client.post(
+            reverse(_LEARNING_INTENT_URL_NAME),
+            data=_VALID_LEARNING_INTENT_PAYLOAD,
+            format='json',
+        )
+
+        assert response.status_code == status.HTTP_200_OK
 
 
 # ---------------------------------------------------------------------------
@@ -407,7 +446,7 @@ class TestLearnerPathwaysResponsePassthrough(APITest):
         assert 'extra_field' not in resp.json()
 
     @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
-    def test_list_response_returns_400(self, mock_client_class):
+    def test_list_response_returns_500(self, mock_client_class):
         mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
             role='assistant',
             content='[1,2,3]',
@@ -416,6 +455,34 @@ class TestLearnerPathwaysResponsePassthrough(APITest):
         resp = self.client.post(
             reverse(_LEARNING_INTENT_URL_NAME),
             data=_VALID_LEARNING_INTENT_PAYLOAD,
+            format='json',
+        )
+
+        assert resp.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+
+    @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
+    def test_invalid_field_type_in_xpert_response_returns_500(self, mock_client_class):
+        mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
+            role='assistant',
+            content='{"skills_required":"not-a-list"}',
+        )
+
+        resp = self.client.post(
+            reverse(_LEARNING_INTENT_URL_NAME),
+            data=_VALID_LEARNING_INTENT_PAYLOAD,
+            format='json',
+        )
+
+        assert resp.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+
+    def test_invalid_client_request_returns_400(self):
+        resp = self.client.post(
+            reverse(_LEARNING_INTENT_URL_NAME),
+            data={
+                'selected_goals': 'data science',
+                'known_context': 'currently a software engineer',
+                # 'free_text' deliberately omitted.
+            },
             format='json',
         )
 

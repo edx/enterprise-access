@@ -6,10 +6,11 @@ import uuid as uuid_module
 
 from django.conf import settings
 from drf_spectacular.utils import extend_schema
+from edx_rbac.decorators import permission_required
 from edx_rest_framework_extensions.auth.jwt.authentication import JwtAuthentication
 from rest_framework import permissions, status
 from rest_framework.decorators import action
-from rest_framework.exceptions import APIException
+from rest_framework.exceptions import APIException, ValidationError
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
@@ -18,6 +19,7 @@ from rest_framework.viewsets import ViewSet
 from enterprise_access.apps.api import serializers as api_serializers
 from enterprise_access.apps.api.serializers.learner_pathways import LEARNER_PATHWAYS_API_TAG
 from enterprise_access.apps.api_client.base_user import get_request_id
+from enterprise_access.apps.core import constants
 from enterprise_access.apps.prompts import api as prompts_api
 from enterprise_access.apps.prompts.api_client import XpertAPIError
 from enterprise_access.apps.prompts.models import PromptType, XpertLearnerPathwaysSystemPrompt
@@ -66,9 +68,9 @@ class BasePromptViewSet(ViewSet):
         """
         Construct a traceable, non-blank Xpert conversation ID.
 
-        The repository-level request-ID helper is the primary source. Reading
-        directly from the supplied request is retained as a fallback for tests
-        and execution contexts where CRUM has no current request.
+        The repository-level request-ID helper (backed by CRUM's current request)
+        is the sole source for tracing. If no request ID is available, a freshly
+        generated UUID4 is used as the fallback instead.
         """
         request_id = get_request_id()
 
@@ -95,7 +97,8 @@ class LearnerPathwaysViewSet(BasePromptViewSet):
         summary='Derive learning intent from learner input.',
         description=(
             'Calls Xpert with the learner\'s stated goals, free-text input, and known context '
-            'to derive skills and a search query.  Returns the raw JSON produced by Xpert.'
+            'to derive skills and a search query.  Returns a validated response shape; unknown '
+            'top-level fields from Xpert are ignored.'
         ),
         request=api_serializers.LearningIntentRequestSerializer,
         responses={
@@ -107,6 +110,7 @@ class LearnerPathwaysViewSet(BasePromptViewSet):
             status.HTTP_500_INTERNAL_SERVER_ERROR: None,
         },
     )
+    @permission_required(constants.LEARNER_PATHWAYS_LEARNING_INTENT_PERMISSION)
     @action(
         detail=False,
         methods=['post'],
@@ -153,5 +157,8 @@ class LearnerPathwaysViewSet(BasePromptViewSet):
             raise PromptRequestException(str(exc)) from exc
 
         response_serializer = api_serializers.LearningIntentResponseSerializer(data=response_data)
-        response_serializer.is_valid(raise_exception=True)
+        try:
+            response_serializer.is_valid(raise_exception=True)
+        except ValidationError as exc:
+            raise PromptRequestException(f'Invalid Xpert response: {exc.detail}') from exc
         return Response(response_serializer.data, status=status.HTTP_200_OK)

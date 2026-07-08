@@ -1,5 +1,5 @@
 """
-Request and documentation-only response serializers for the Learner Pathways API.
+Request and response serializers for the Learner Pathways API.
 """
 from rest_framework import serializers
 

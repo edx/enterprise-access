@@ -36,7 +36,7 @@ class PromptError(Exception):
 
 
 def get_current_prompt(
-    prompt_model: type[SystemPromptModel],
+    prompt_model: SystemPromptModel,
     prompt_type: str,
 ) -> BaseSystemPrompt:
     """
