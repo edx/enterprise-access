@@ -1531,6 +1531,7 @@ class TestSspProduct(TestCase):
             'stripe_price_lookup_key': 'ai_academy_yearly_price',
             'catalog_query_uuid': uuid4(),
             'academy_uuid': uuid4(),
+            'marketing_url': 'https://example.com/test-marketing',
         }
         defaults.update(kwargs)
         return SspProduct(**defaults)
@@ -1635,3 +1636,27 @@ class TestSspProduct(TestCase):
         }
         product = self._make_product()
         self.assertEqual(product.academy_thumbnail_url, 'https://example.com/ai-image.png')
+
+    def test_marketing_url_nullable(self):
+        """marketing_url can be null."""
+        product = SspProduct.objects.create(
+            slug='test-nullable',
+            stripe_price_lookup_key='test_nullable_key',
+            catalog_query_uuid=uuid4(),
+            is_active=True,
+            marketing_url=None,
+        )
+        product.refresh_from_db()
+        self.assertIsNone(product.marketing_url)
+
+    def test_marketing_url_persists(self):
+        """marketing_url round-trips through the database."""
+        product = SspProduct.objects.create(
+            slug='test-persist',
+            stripe_price_lookup_key='test_persist_key',
+            catalog_query_uuid=uuid4(),
+            is_active=True,
+            marketing_url='https://example.com/ai',
+        )
+        product.refresh_from_db()
+        self.assertEqual(product.marketing_url, 'https://example.com/ai')

@@ -92,6 +92,12 @@ class SspProduct(TimeStampedModel):
         default=True,
         db_index=True,
     )
+    marketing_url = models.URLField(
+        max_length=255,
+        null=True,
+        blank=True,
+        help_text='Marketing URL for this product. Overrides academy_marketing_url when present.',
+    )
 
     history = HistoricalRecords()
 

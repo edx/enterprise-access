@@ -96,6 +96,7 @@ SSP_PRODUCT_BACKFILL_DATA = [
         'license_manager_product_id_trial': 2,
         'license_manager_product_id_paid': 1,
         'is_active': True,
+        'marketing_url': 'https://example.com/teams',
     }
 ]
 ENABLE_CUSTOMER_BILLING_API = True

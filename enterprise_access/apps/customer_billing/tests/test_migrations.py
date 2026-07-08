@@ -656,3 +656,63 @@ class TestBackfillCheckoutIntentSspProduct(TransactionTestCase):
         migration_module.reverse_backfill_checkoutintent_ssp_product(new_state.apps, schema_editor=None)
 
         self.assertIsNone(CheckoutIntent.objects.get(pk=intent.pk).ssp_product_id)
+
+
+class TestSeedMarketingUrls(TransactionTestCase):
+    """Tests for migration 0038 that seeds marketing_url on SspProduct."""
+
+    migrate_from = [('customer_billing', '0037_alter_checkoutintent_sspproduct_nonnull_and_unique')]
+    migrate_to = [('customer_billing', '0038_sspproduct_marketing_url')]
+
+    def setUp(self):
+        super().setUp()
+        self.migrator = Migrator(database='default')
+        self.old_state = self.migrator.apply_initial_migration(self.migrate_from)
+
+    def tearDown(self):
+        connections['default'].close()
+        self.migrator.reset()
+        super().tearDown()
+
+    def _get_model(self, app_label, model_name):
+        return self.old_state.apps.get_model(app_label, model_name)
+
+    def test_backfill_sets_marketing_url_for_matching_rows(self):
+        """marketing_url is set for products in SSP_PRODUCT_BACKFILL_DATA; others remain null."""
+        SspProduct = self._get_model('customer_billing', 'SspProduct')
+
+        # teams-yearly already exists because migration 0033 seeds it from SSP_PRODUCT_BACKFILL_DATA.
+        SspProduct.objects.create(
+            slug='test-no-marketing-url',
+            stripe_price_lookup_key='test_no_marketing_url_key',
+            catalog_query_uuid='bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+            license_manager_product_id_trial=22,
+            license_manager_product_id_paid=11,
+            is_active=True,
+        )
+
+        new_state = self.migrator.apply_tested_migration(self.migrate_to)
+        SspProduct = new_state.apps.get_model('customer_billing', 'SspProduct')
+
+        self.assertEqual(
+            SspProduct.objects.get(slug='teams-yearly').marketing_url,
+            'https://example.com/teams',
+        )
+        self.assertIsNone(SspProduct.objects.get(slug='test-no-marketing-url').marketing_url)
+
+    def test_reverse_clears_marketing_url(self):
+        """Reverse migration clears marketing_url for products in SSP_PRODUCT_BACKFILL_DATA."""
+        new_state = self.migrator.apply_tested_migration(self.migrate_to)
+        SspProduct = new_state.apps.get_model('customer_billing', 'SspProduct')
+
+        self.assertEqual(
+            SspProduct.objects.get(slug='teams-yearly').marketing_url,
+            'https://example.com/teams',
+        )
+
+        migration_module = import_module(
+            'enterprise_access.apps.customer_billing.migrations.0038_sspproduct_marketing_url'
+        )
+        migration_module.reverse_marketing_urls(new_state.apps, schema_editor=None)
+
+        self.assertIsNone(SspProduct.objects.get(slug='teams-yearly').marketing_url)
