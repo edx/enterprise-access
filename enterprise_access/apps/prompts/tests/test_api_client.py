@@ -184,6 +184,38 @@ class XpertAPIClientInputValidationTests(TestCase):
             )
         mock_post.assert_not_called()
 
+    @mock.patch(PATCH_REQUESTS_POST)
+    def test_non_xpertrequestmessage_element_raises_request_error(self, mock_post):
+        with self.assertRaises(XpertAPIRequestError):
+            self.client.send_message(
+                system_prompt=self.valid_kwargs['system_prompt'],
+                messages=[{'role': 'user', 'content': 'Hello'}],
+                conversation_id=self.valid_kwargs['conversation_id'],
+            )
+        mock_post.assert_not_called()
+
+    @ddt.data('', '   ', '\n')
+    @mock.patch(PATCH_REQUESTS_POST)
+    def test_blank_message_role_raises_request_error(self, blank_value, mock_post):
+        with self.assertRaises(XpertAPIRequestError):
+            self.client.send_message(
+                system_prompt=self.valid_kwargs['system_prompt'],
+                messages=[XpertRequestMessage(role=blank_value, content='Hello')],
+                conversation_id=self.valid_kwargs['conversation_id'],
+            )
+        mock_post.assert_not_called()
+
+    @ddt.data('', '   ', '\n')
+    @mock.patch(PATCH_REQUESTS_POST)
+    def test_blank_message_content_raises_request_error(self, blank_value, mock_post):
+        with self.assertRaises(XpertAPIRequestError):
+            self.client.send_message(
+                system_prompt=self.valid_kwargs['system_prompt'],
+                messages=[XpertRequestMessage(role='user', content=blank_value)],
+                conversation_id=self.valid_kwargs['conversation_id'],
+            )
+        mock_post.assert_not_called()
+
 
 @override_settings(**MOCK_SETTINGS)
 class XpertAPIClientRequestTests(TestCase):

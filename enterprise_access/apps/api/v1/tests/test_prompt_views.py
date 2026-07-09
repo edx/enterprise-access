@@ -412,7 +412,7 @@ class TestLearningIntentHappyPath(APITest):
 
 @ddt.ddt
 class TestLearnerPathwaysResponsePassthrough(APITest):
-    """Assert Xpert response content is returned verbatim without filtering."""
+    """Assert Xpert response JSON is validated and normalized to the declared serializer fields."""
 
     @classmethod
     def setUpTestData(cls):

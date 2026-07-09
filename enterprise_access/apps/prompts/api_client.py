@@ -151,12 +151,14 @@ class XpertAPIClient:
 
         Arguments:
             system_prompt (str): Must be a non-blank string.
-            messages (list): Must be a non-None list.
+            messages (list): Must be a non-None list of ``XpertRequestMessage``
+                instances, each with a non-blank ``role`` and ``content``.
             conversation_id (str): Must be a non-blank string.
 
         Raises:
             XpertAPIRequestError: If any required argument is missing, blank,
-                or of the wrong type.
+                or of the wrong type, or if any message is not an
+                ``XpertRequestMessage`` with non-blank ``role`` and ``content``.
         """
         if not isinstance(system_prompt, str) or not system_prompt.strip():
             raise XpertAPIRequestError('system_prompt is required and must be a non-blank string.')
@@ -168,6 +170,15 @@ class XpertAPIClient:
             raise XpertAPIRequestError(
                 f'messages must be a list, got {type(messages).__name__}.'
             )
+        for message in messages:
+            if not isinstance(message, XpertRequestMessage):
+                raise XpertAPIRequestError(
+                    f'Each message must be an XpertRequestMessage, got {type(message).__name__}.'
+                )
+            if not isinstance(message.role, str) or not message.role.strip():
+                raise XpertAPIRequestError('Each message must have a non-blank role.')
+            if not isinstance(message.content, str) or not message.content.strip():
+                raise XpertAPIRequestError('Each message must have non-blank content.')
 
     def _build_payload(
         self,
@@ -272,9 +283,9 @@ class XpertAPIClient:
         Arguments:
             system_prompt (str): System instruction used to guide Xpert's
                 response. Sent to Xpert as the ``system_message`` payload field.
-            messages (list): Xpert-compatible conversation message list. Each
-                element should be a dict with at minimum ``role`` and ``content``
-                keys.
+            messages (list[XpertRequestMessage]): Conversation message list.
+                Each element must be an ``XpertRequestMessage`` with non-blank
+                ``role`` and ``content``.
             conversation_id (str): Xpert conversation identifier. Required by
                 Xpert for session continuity.
             tags (list | None): Optional RAG control tags that constrain Xpert retrieval
@@ -293,8 +304,9 @@ class XpertAPIClient:
         Raises:
             XpertAPIConfigurationError: If required Django settings are missing.
             XpertAPIRequestError: If ``system_prompt``, ``conversation_id``,
-                or ``messages`` fail validation, or if the HTTP transport fails
-                or returns a non-2xx status.
+                or ``messages`` (including any individual message's ``role``
+                or ``content``) fail validation, or if the HTTP transport
+                fails or returns a non-2xx status.
             XpertAPIResponseError: If the Xpert response body cannot be parsed
                 as JSON or does not conform to the expected envelope shape.
         """
