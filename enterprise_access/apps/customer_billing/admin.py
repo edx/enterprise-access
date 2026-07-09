@@ -57,7 +57,14 @@ class SspProductAdmin(DjangoQLSearchMixin, SimpleHistoryAdmin):
     """
     Admin interface for managing SSP products (Teams and Essentials Academies).
     """
-    list_display = ('slug', 'stripe_price_lookup_key', 'academy_uuid', 'catalog_query_uuid', 'is_active')
+    list_display = (
+        'slug',
+        'stripe_price_lookup_key',
+        'academy_uuid',
+        'catalog_query_uuid',
+        'is_active',
+        'marketing_url',
+    )
     list_filter = ('is_active',)
     search_fields = ('slug', 'stripe_price_lookup_key')
 
