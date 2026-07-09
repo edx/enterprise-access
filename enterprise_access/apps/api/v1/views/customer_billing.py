@@ -288,7 +288,7 @@ class CustomerBillingViewSet(viewsets.ViewSet):
             'Handling request to create free trial plan. '
             f'enterprise_slug="{validated_data["enterprise_slug"]}" '
             f'quantity="{validated_data["quantity"]}" '
-            f'stripe_price_id="{validated_data.get("stripe_price_id")}"'
+            f'stripe_price_id="{validated_data.get("stripe_price_id")}" '
             f'ssp_product_slug="{validated_data.get("ssp_product_slug")}" '
         )
         try:
