@@ -446,6 +446,26 @@ class TestProvisioningEndToEnd(APITest):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(ProvisionNewCustomerWorkflow.objects.count(), 0)
 
+    @ddt.data('trial_subscription_plan', 'first_paid_subscription_plan')
+    def test_provisioning_invalid_per_plan_ssp_product_slug_returns_400(self, plan_key):
+        """
+        Regression test: an invalid `ssp_product_slug` nested under either
+        subscription plan should return HTTP 400 and must NOT create a workflow.
+        """
+        event_data = StripeEventDataFactory.create(checkout_intent=self.checkout_intent)
+        StripeEventSummaryFactory.create(stripe_event_data=event_data)
+
+        request_payload = {**DEFAULT_REQUEST_PAYLOAD}
+        request_payload[plan_key] = {
+            **request_payload[plan_key],
+            'ssp_product_slug': 'nonexistent-invalid-slug',
+        }
+
+        response = self.client.post(PROVISIONING_CREATE_ENDPOINT, data=request_payload)
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(ProvisionNewCustomerWorkflow.objects.count(), 0)
+
     @ddt.data(
         # Data representing the state where a net-new customer is created.
         {

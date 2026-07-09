@@ -73,6 +73,14 @@ class TestProvisioningSerializers(TestCase):
 
         self.assertTrue(serializer.is_valid(), msg=f'{scenario}: {serializer.errors}')
 
+    def test_request_serializer_accepts_top_level_ssp_product_slug(self):
+        payload = self._build_request_payload(include_academy=True)
+        payload['ssp_product_slug'] = 'ai-academy-yearly'
+
+        serializer = ProvisioningRequestSerializer(data=payload)
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+
     def _build_response_payload(self):
         return {
             'enterprise_customer': {

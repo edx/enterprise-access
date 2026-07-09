@@ -58,6 +58,77 @@ def _rand_created_at():
     return timezone.now() - timedelta(seconds=randint(1, 30))
 
 
+def _build_salesforce_style_invoice_data(
+    *,
+    invoice_id,
+    subscription_id,
+    customer_id,
+    customer_email,
+    customer_name,
+    checkout_intent_id,
+    checkout_intent_uuid,
+    enterprise_customer_slug,
+    enterprise_customer_name,
+    lms_user_id,
+    catalog_title,
+    catalog_query_id,
+    period_start,
+    total=0,
+    amount_paid=0,
+):
+    """Build a Salesforce-style invoice payload for invoice event tests."""
+    period_end = period_start + (14 * 86400)
+
+    return {
+        'id': invoice_id,
+        'object': 'invoice',
+        'number': 'MYSUPERCOOLS-0002',
+        'customer': customer_id,
+        'customer_email': customer_email,
+        'customer_name': customer_name,
+        'amount_paid': amount_paid,
+        'currency': 'usd',
+        'total': total,
+        'parent': {
+            'subscription_details': {
+                'subscription': subscription_id,
+                'metadata': {
+                    'enterprise_customer_slug': enterprise_customer_slug,
+                    'enterprise_customer_name': enterprise_customer_name,
+                    'lms_user_id': lms_user_id,
+                    'enterprise_catalog': {
+                        'title': catalog_title,
+                        'catalog_query_id': catalog_query_id,
+                    },
+                    'checkout_intent_id': str(checkout_intent_id),
+                    'checkout_intent_uuid': str(checkout_intent_uuid),
+                },
+            }
+        },
+        'lines': {
+            'data': [
+                {
+                    'parent': {'type': SUBSCRIPTION_ITEM_TYPE},
+                    'amount': 0,
+                    'currency': 'usd',
+                    'quantity': 6,
+                    'price': {
+                        'product': 'prod_RnxwBMaYC6Dp4W',
+                    },
+                    'pricing': {
+                        'unit_amount': 0,
+                        'unit_amount_decimal': '0.0',
+                    },
+                    'period': {
+                        'start': period_start,
+                        'end': period_end,
+                    },
+                },
+            ],
+        },
+    }
+
+
 @ddt.ddt
 class TestStripeEventHandler(TestCase):
     """
@@ -308,6 +379,43 @@ class TestStripeEventHandler(TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(result.checkout_intent, self.checkout_intent)
         self.assertEqual(result.event_id, mock_event.id)
+
+    def test_invoice_paid_handles_salesforce_style_invoice_payload(self):
+        """Test invoice.paid ingestion with the Salesforce-style payload shape."""
+        stripe_customer_id = 'cus_salesforce_invoice_paid'
+        self.checkout_intent.stripe_customer_id = stripe_customer_id
+        self.checkout_intent.save()
+
+        invoice_data = _build_salesforce_style_invoice_data(
+            invoice_id='in_salesforce_paid_001',
+            subscription_id='sub_salesforce_paid_001',
+            customer_id=stripe_customer_id,
+            customer_email='jake.doe@example.com',
+            customer_name='Jake Doe',
+            checkout_intent_id=self.checkout_intent.id,
+            checkout_intent_uuid=self.checkout_intent.uuid,
+            enterprise_customer_slug='my-super-cool-slug',
+            enterprise_customer_name='My Super Cool Name',
+            lms_user_id='123456',
+            catalog_title='Open Courses',
+            catalog_query_id=30,
+            period_start=int(timezone.now().timestamp()),
+            total=0,
+            amount_paid=0,
+        )
+        mock_event = self._create_mock_stripe_event('invoice.paid', invoice_data)
+
+        StripeEventHandler.dispatch(mock_event)
+
+        self.checkout_intent.refresh_from_db()
+        self.assertEqual(self.checkout_intent.state, CheckoutIntentState.PAID)
+
+        event_data = StripeEventData.objects.get(event_id=mock_event.id)
+        self.assertEqual(event_data.checkout_intent, self.checkout_intent)
+        self.assertEqual(event_data.summary.stripe_invoice_id, 'in_salesforce_paid_001')
+        self.assertEqual(event_data.summary.stripe_subscription_id, 'sub_salesforce_paid_001')
+        self.assertEqual(event_data.summary.invoice_quantity, 6)
+        self.assertEqual(event_data.summary.invoice_currency, 'usd')
 
     @ddt.data(
         # Happy path: correct parent type at lines.data[0].parent.type
@@ -2491,6 +2599,44 @@ class TestInvoiceCreatedHandler(TestCase):
 
         renewal.refresh_from_db()
         self.assertEqual(renewal.stripe_invoice_id, self.invoice_id)
+
+    def test_invoice_created_handles_salesforce_style_invoice_payload(self):
+        """Test invoice.created ingestion with the Salesforce-style payload shape."""
+        renewal = self._create_renewal_with_effective_date()
+        invoice_data = _build_salesforce_style_invoice_data(
+            invoice_id='in_salesforce_created_001',
+            subscription_id=self.subscription_id,
+            customer_id=self.stripe_customer_id,
+            customer_email='jake.doe@example.com',
+            customer_name='Jake Doe',
+            checkout_intent_id=self.checkout_intent.id,
+            checkout_intent_uuid=self.checkout_intent.uuid,
+            enterprise_customer_slug='my-super-cool-slug',
+            enterprise_customer_name='My Super Cool Name',
+            lms_user_id='123456',
+            catalog_title='Open Courses',
+            catalog_query_id=30,
+            period_start=self.period_start_ts,
+            total=0,
+            amount_paid=0,
+        )
+        event = stripe.Event()
+        event.id = f'evt_test_invoice_created_salesforce_{_rand_numeric_string()}'
+        event.created = int(timezone.now().timestamp())
+        event.type = 'invoice.created'
+        event.data = stripe.StripeObject()
+        event.data.object = AttrDict.wrap(invoice_data)
+
+        StripeEventHandler.dispatch(event)
+
+        renewal.refresh_from_db()
+        self.assertEqual(renewal.stripe_invoice_id, 'in_salesforce_created_001')
+
+        event_data = StripeEventData.objects.get(event_id=event.id)
+        self.assertEqual(event_data.checkout_intent, self.checkout_intent)
+        self.assertEqual(event_data.summary.stripe_invoice_id, 'in_salesforce_created_001')
+        self.assertEqual(event_data.summary.stripe_subscription_id, self.subscription_id)
+        self.assertEqual(event_data.summary.invoice_quantity, 6)
 
     def test_invoice_created_idempotent_does_not_overwrite(self):
         """Test immutability guard: existing stripe_invoice_id is not overwritten when a different ID arrives."""
