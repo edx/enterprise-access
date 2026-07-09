@@ -700,6 +700,21 @@ class TestSeedMarketingUrls(TransactionTestCase):
         )
         self.assertIsNone(SspProduct.objects.get(slug='test-no-marketing-url').marketing_url)
 
+        # Running the seed helper again should not overwrite an existing non-empty value.
+        teams_yearly = SspProduct.objects.get(slug='teams-yearly')
+        teams_yearly.marketing_url = 'https://example.com/custom'
+        teams_yearly.save(update_fields=['marketing_url'])
+
+        migration_module = import_module(
+            'enterprise_access.apps.customer_billing.migrations.0038_sspproduct_marketing_url'
+        )
+        migration_module.seed_marketing_urls(new_state.apps, schema_editor=None)
+
+        self.assertEqual(
+            SspProduct.objects.get(slug='teams-yearly').marketing_url,
+            'https://example.com/custom',
+        )
+
     def test_reverse_clears_marketing_url(self):
         """Reverse migration clears marketing_url for products in SSP_PRODUCT_BACKFILL_DATA."""
         new_state = self.migrator.apply_tested_migration(self.migrate_to)
@@ -716,3 +731,15 @@ class TestSeedMarketingUrls(TransactionTestCase):
         migration_module.reverse_marketing_urls(new_state.apps, schema_editor=None)
 
         self.assertIsNone(SspProduct.objects.get(slug='teams-yearly').marketing_url)
+
+        # Reverse helper should not clear values that were changed after seeding.
+        teams_yearly = SspProduct.objects.get(slug='teams-yearly')
+        teams_yearly.marketing_url = 'https://example.com/custom'
+        teams_yearly.save(update_fields=['marketing_url'])
+
+        migration_module.reverse_marketing_urls(new_state.apps, schema_editor=None)
+
+        self.assertEqual(
+            SspProduct.objects.get(slug='teams-yearly').marketing_url,
+            'https://example.com/custom',
+        )

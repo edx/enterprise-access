@@ -7,13 +7,18 @@ from django.db import migrations, models
 def seed_marketing_urls(apps, schema_editor):
     """Backfill marketing_url on existing SspProduct rows from SSP_PRODUCT_BACKFILL_DATA setting."""
     SspProduct = apps.get_model('customer_billing', 'SspProduct')
-    backfill_data = settings.SSP_PRODUCT_BACKFILL_DATA
+    backfill_data = getattr(settings, 'SSP_PRODUCT_BACKFILL_DATA', [])
     if not backfill_data:
         return
     for product_data in backfill_data:
+        slug = product_data.get('slug')
         marketing_url = product_data.get('marketing_url')
-        if marketing_url:
-            SspProduct.objects.filter(slug=product_data['slug']).update(marketing_url=marketing_url)
+        if slug and marketing_url:
+            (
+                SspProduct.objects.filter(slug=slug)
+                .filter(models.Q(marketing_url__isnull=True) | models.Q(marketing_url=''))
+                .update(marketing_url=marketing_url)
+            )
 
 
 def reverse_marketing_urls(apps, schema_editor):
@@ -21,8 +26,10 @@ def reverse_marketing_urls(apps, schema_editor):
     SspProduct = apps.get_model('customer_billing', 'SspProduct')
     backfill_data = getattr(settings, 'SSP_PRODUCT_BACKFILL_DATA', [])
     for product_data in backfill_data:
-        if product_data.get('marketing_url'):
-            SspProduct.objects.filter(slug=product_data['slug']).update(marketing_url=None)
+        slug = product_data.get('slug')
+        marketing_url = product_data.get('marketing_url')
+        if slug and marketing_url:
+            SspProduct.objects.filter(slug=slug, marketing_url=marketing_url).update(marketing_url=None)
 
 
 class Migration(migrations.Migration):
