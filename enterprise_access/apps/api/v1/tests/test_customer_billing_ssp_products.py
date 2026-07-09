@@ -37,6 +37,7 @@ class CustomerBillingSspProductsTests(APITest):
             license_manager_product_id_trial=2,
             license_manager_product_id_paid=1,
             is_active=True,
+            marketing_url=None,
         )
 
     @classmethod
@@ -513,3 +514,64 @@ class CustomerBillingSspProductsTests(APITest):
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
         mock_get_cached_academy_data.assert_not_called()
         mock_get_all_stripe_prices.assert_not_called()
+
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_all_stripe_prices')
+    @mock.patch('enterprise_access.apps.customer_billing.models.get_cached_academy_data')
+    def test_list_ssp_products_prefers_db_marketing_url(
+        self,
+        mock_get_cached_academy_data,
+        mock_get_all_stripe_prices,
+    ):
+        """DB marketing_url takes priority over academy and Stripe fallbacks."""
+        self.essentials_product.marketing_url = 'https://db-url.example.com'
+        self.essentials_product.save(update_fields=['marketing_url'])
+
+        mock_get_cached_academy_data.return_value = {
+            'title': 'AI Academy',
+            'long_name': 'AI Academy for Business',
+            'description': 'Learn AI end-to-end',
+            'marketing_url': 'https://academy-url.example.com',
+            'thumbnail_url': 'https://cdn.example.com/ai.png',
+        }
+        mock_get_all_stripe_prices.return_value = {
+            'ai_academy_yearly_price': {
+                'unit_amount_decimal': Decimal('149.00'),
+                'stripe_marketing_url': 'https://stripe-url.example.com',
+            },
+        }
+
+        response = self.client.get(self.list_url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        payload = next(p for p in response.data if p['lookup_key'] == 'ai_academy_yearly_price')
+        self.assertEqual(payload['marketing_url'], 'https://db-url.example.com')
+
+    @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_all_stripe_prices')
+    @mock.patch('enterprise_access.apps.customer_billing.models.get_cached_academy_data')
+    def test_list_ssp_products_falls_back_when_db_marketing_url_is_null(
+        self,
+        mock_get_cached_academy_data,
+        mock_get_all_stripe_prices,
+    ):
+        """When DB marketing_url is null, academy_marketing_url is used."""
+        self.essentials_product.marketing_url = None
+        self.essentials_product.save(update_fields=['marketing_url'])
+
+        mock_get_cached_academy_data.return_value = {
+            'title': 'AI Academy',
+            'long_name': 'AI Academy for Business',
+            'description': 'Learn AI end-to-end',
+            'marketing_url': 'https://academy-url.example.com',
+            'thumbnail_url': 'https://cdn.example.com/ai.png',
+        }
+        mock_get_all_stripe_prices.return_value = {
+            'ai_academy_yearly_price': {
+                'unit_amount_decimal': Decimal('149.00'),
+            },
+        }
+
+        response = self.client.get(self.list_url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        payload = next(p for p in response.data if p['lookup_key'] == 'ai_academy_yearly_price')
+        self.assertEqual(payload['marketing_url'], 'https://academy-url.example.com')

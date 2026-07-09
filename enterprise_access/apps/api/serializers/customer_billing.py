@@ -740,7 +740,11 @@ class SspEssentialsProductResponseSerializer(serializers.Serializer):
         return obj.academy_description or self._price_data(obj).get('stripe_description')
 
     def get_marketing_url(self, obj):
-        return obj.academy_marketing_url or self._price_data(obj).get('stripe_marketing_url')
+        return (
+            obj.marketing_url or
+            obj.academy_marketing_url or
+            self._price_data(obj).get('stripe_marketing_url')
+        )
 
     def get_thumbnail_url(self, obj):
         """Get and format the public thumbnail URL for the product."""

@@ -22,6 +22,7 @@ from django_extensions.db.models import TimeStampedModel
 from simple_history.models import HistoricalRecords
 from simple_history.utils import bulk_update_with_history
 
+from enterprise_access.apps.api_client.enterprise_catalog_client import EnterpriseCatalogApiClient
 from enterprise_access.apps.customer_billing import stripe_api
 from enterprise_access.apps.customer_billing.academy_api import get_cached_academy_data
 from enterprise_access.apps.customer_billing.constants import ALLOWED_CHECKOUT_INTENT_STATE_TRANSITIONS
@@ -92,6 +93,12 @@ class SspProduct(TimeStampedModel):
         default=True,
         db_index=True,
     )
+    marketing_url = models.URLField(
+        max_length=255,
+        null=True,
+        blank=True,
+        help_text='Marketing URL for this product. Overrides academy_marketing_url when present.',
+    )
 
     history = HistoricalRecords()
 
@@ -153,6 +160,37 @@ class SspProduct(TimeStampedModel):
     def academy_tags(self):
         """Academy competency tags. None for non-Academy products."""
         return self._academy_data.get('tags') if self._academy_data else None
+
+    @property
+    def enterprise_catalog_metadata(self):
+        """
+        Dynamically builds the enterprise_catalog dict for Stripe subscription metadata.
+
+        Reuses EnterpriseCatalogApiClient.get_catalog_query_id_from_uuid() to resolve
+        catalog_query_uuid → integer catalog_query_id.
+
+        Raises:
+            requests.exceptions.HTTPError: If enterprise-catalog is unreachable.
+            ValueError: If the API returns an invalid (non-integer) ID.
+        """
+        if not self.catalog_query_uuid:
+            return None
+
+        catalog_client = EnterpriseCatalogApiClient()
+        catalog_query_id = catalog_client.get_catalog_query_id_from_uuid(self.catalog_query_uuid)
+
+        if catalog_query_id is None:
+            raise ValueError(
+                f"get_catalog_query_id_from_uuid returned None for "
+                f"catalog_query_uuid={self.catalog_query_uuid} on SspProduct={self.slug}"
+            )
+
+        title = self.academy_title or "Open Courses"
+
+        return {
+            "title": title,
+            "catalog_query_id": catalog_query_id,
+        }
 
 
 class CheckoutIntent(TimeStampedModel):
