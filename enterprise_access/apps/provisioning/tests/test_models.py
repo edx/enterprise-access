@@ -3,9 +3,13 @@ Tests for the provisioning.models module.
 """
 from datetime import datetime, timezone
 from unittest import mock
+from unittest.mock import patch
 from uuid import uuid4
 
+import ddt
+from django.conf import settings
 from django.test import TestCase
+from rest_framework.exceptions import ValidationError
 
 from enterprise_access.apps.api_client.license_manager_client import LicenseManagerApiClient
 from enterprise_access.apps.core.tests.factories import UserFactory
@@ -13,6 +17,7 @@ from enterprise_access.apps.customer_billing.constants import CheckoutIntentStat
 from enterprise_access.apps.customer_billing.models import (
     CheckoutIntent,
     SelfServiceSubscriptionRenewal,
+    SspProduct,
     StripeEventSummary
 )
 from enterprise_access.apps.customer_billing.tests.factories import (
@@ -24,8 +29,11 @@ from enterprise_access.apps.provisioning import models as prov_models
 from enterprise_access.apps.provisioning.models import (
     AssociateAcademyStep,
     GetCreateCatalogStep,
+    GetCreateCatalogStepInput,
     GetCreateCustomerAgreementStep,
+    GetCreateFirstPaidSubscriptionPlanStepInput,
     GetCreateSubscriptionPlanRenewalStep,
+    GetCreateTrialSubscriptionPlanStepInput,
     NotificationStep,
     ProvisionNewCustomerWorkflow
 )
@@ -522,3 +530,320 @@ class TestCheckoutIntentStepMixinUnit(TestCase):
         self.assertEqual(mock_ci.workflow, step.get_workflow_record())
         self.assertEqual(mock_ci.enterprise_uuid, enterprise_uuid)
         mock_ci.save.assert_called_once_with(update_fields=['workflow', 'enterprise_uuid'])
+
+
+class TestGetCreateCatalogStepCatalogQueryId(TestCase):
+    """
+    Tests for GetCreateCatalogStep._get_catalog_query_id branch coverage.
+    """
+
+    def setUp(self):
+        self.workflow = ProvisionNewCustomerWorkflowFactory()
+
+    def test_catalog_query_id_int_returns_int(self):
+        """When catalog_query_id is an int like 42, return it directly."""
+        step = GetCreateCatalogStep.objects.create(
+            workflow_record_uuid=self.workflow.uuid,
+            input_data={'catalog_query_id': 42},
+        )
+        # pylint: disable=protected-access
+        result = step._get_catalog_query_id(workflow_input=None)
+        self.assertEqual(result, 42)
+        self.assertIsInstance(result, int)
+
+    def test_catalog_query_id_none_falls_through(self):
+        """When catalog_query_id is None, method falls through to product_id lookup."""
+        step = GetCreateCatalogStep.objects.create(
+            workflow_record_uuid=self.workflow.uuid,
+            input_data={},
+        )
+        self.assertTrue(settings.PRODUCT_ID_TO_CATALOG_QUERY_ID_MAPPING)
+        product_id, expected_catalog_query_id = next(iter(settings.PRODUCT_ID_TO_CATALOG_QUERY_ID_MAPPING.items()))
+        workflow_input = mock.Mock()
+        workflow_input.create_trial_subscription_plan_input = mock.Mock(product_id=product_id)
+        # pylint: disable=protected-access
+        result = step._get_catalog_query_id(workflow_input)
+        self.assertEqual(result, expected_catalog_query_id)
+
+
+@ddt.ddt
+class TestGenerateInputDictSspResolution(TestCase):
+    """
+    Tests for ProvisionNewCustomerWorkflow.generate_input_dict _resolve_ssp branches.
+    """
+
+    MINIMAL_CUSTOMER = {'name': 'Test', 'slug': 'test-co', 'country': 'US'}
+    MINIMAL_TRIAL = {
+        'title': 'Trial', 'salesforce_opportunity_line_item': '00k1',
+        'start_date': '2025-06-01T00:00:00Z', 'expiration_date': '2026-03-31T00:00:00Z',
+        'desired_num_licenses': 5,
+    }
+    MINIMAL_PAID = {'title': 'Paid'}
+
+    def _create_ssp(
+        self,
+        *,
+        slug,
+        trial_product_id,
+        paid_product_id,
+        catalog_query_uuid=None,
+        academy_uuid=None,
+    ):
+        """Create a test SSP product with the supplied identifiers."""
+        return SspProduct.objects.create(
+            slug=slug,
+            stripe_price_lookup_key=f'price_{slug}',
+            catalog_query_uuid=catalog_query_uuid or uuid4(),
+            academy_uuid=academy_uuid,
+            license_manager_product_id_trial=trial_product_id,
+            license_manager_product_id_paid=paid_product_id,
+            is_active=True,
+        )
+
+    def _generate_input_dict(
+        self,
+        *,
+        trial_subscription_plan_request_dict=None,
+        first_paid_subscription_plan_request_dict=None,
+        top_level_ssp_product_slug=None,
+    ):
+        """Build provisioning input with optional SSP overrides for a test case."""
+        return ProvisionNewCustomerWorkflow.generate_input_dict(
+            customer_request_dict=self.MINIMAL_CUSTOMER,
+            admin_email_list=['a@b.com'],
+            catalog_request_dict={},
+            academy_request_dict={},
+            customer_agreement_request_dict={},
+            trial_subscription_plan_request_dict=trial_subscription_plan_request_dict,
+            first_paid_subscription_plan_request_dict=first_paid_subscription_plan_request_dict,
+            top_level_ssp_product_slug=top_level_ssp_product_slug,
+        )
+
+    @patch('enterprise_access.apps.provisioning.models.EnterpriseCatalogApiClient')
+    def test_ssp_with_catalog_query_uuid_resolves_to_int_id(self, mock_catalog_cls):
+        """catalog_query_uuid present → calls API and stores int id in catalog input."""
+        mock_catalog_cls.return_value.get_catalog_query_id_from_uuid.return_value = 99
+
+        ssp = self._create_ssp(
+            slug='test-ssp-cq',
+            trial_product_id=10,
+            paid_product_id=20,
+            academy_uuid=uuid4(),
+        )
+
+        result = self._generate_input_dict(
+            trial_subscription_plan_request_dict={**self.MINIMAL_TRIAL},
+            first_paid_subscription_plan_request_dict={**self.MINIMAL_PAID},
+            top_level_ssp_product_slug=ssp.slug,
+        )
+
+        self.assertEqual(result[GetCreateCatalogStepInput.KEY]['catalog_query_id'], 99)
+        self.assertIsInstance(result[GetCreateCatalogStepInput.KEY]['catalog_query_id'], int)
+        mock_catalog_cls.return_value.get_catalog_query_id_from_uuid.assert_called()
+        self.assertEqual(
+            result['associate_academy_input']['academy_uuid'],
+            str(ssp.academy_uuid),
+        )
+
+    def test_ssp_catalog_query_uuid_api_returns_none_raises_type_error(self):
+        """
+        Catalog query UUID present but API returns None → int(None) raises TypeError.
+        The method should fail loudly instead of silently omitting catalog_query_id.
+        """
+        with patch('enterprise_access.apps.provisioning.models.EnterpriseCatalogApiClient') as mock_catalog_cls:
+            mock_catalog_cls.return_value.get_catalog_query_id_from_uuid.return_value = None
+
+            ssp = self._create_ssp(
+                slug='test-ssp-no-cq',
+                trial_product_id=10,
+                paid_product_id=20,
+                academy_uuid=None,
+            )
+
+            with self.assertRaises(TypeError):
+                self._generate_input_dict(
+                    trial_subscription_plan_request_dict={**self.MINIMAL_TRIAL},
+                    first_paid_subscription_plan_request_dict={**self.MINIMAL_PAID},
+                    top_level_ssp_product_slug=ssp.slug,
+                )
+
+    def test_ssp_catalog_query_uuid_api_returns_invalid_str_raises_value_error(self):
+        """
+        Catalog query UUID present but API returns a non-numeric string →
+        int('not-a-number') raises ValueError. The method should fail loudly.
+        """
+        with patch('enterprise_access.apps.provisioning.models.EnterpriseCatalogApiClient') as mock_catalog_cls:
+            mock_catalog_cls.return_value.get_catalog_query_id_from_uuid.return_value = 'not-a-number'
+
+            ssp = self._create_ssp(
+                slug='test-ssp-bad-str',
+                trial_product_id=10,
+                paid_product_id=20,
+                academy_uuid=None,
+            )
+
+            with self.assertRaises(ValueError):
+                self._generate_input_dict(
+                    trial_subscription_plan_request_dict={**self.MINIMAL_TRIAL},
+                    first_paid_subscription_plan_request_dict={**self.MINIMAL_PAID},
+                    top_level_ssp_product_slug=ssp.slug,
+                )
+
+    @patch('enterprise_access.apps.provisioning.models.EnterpriseCatalogApiClient')
+    def test_ssp_with_product_id_none(self, mock_catalog_cls):
+        """license_manager_product_id_trial is None → product_id falls back to settings default."""
+        mock_catalog_cls.return_value.get_catalog_query_id_from_uuid.return_value = 42
+
+        ssp = self._create_ssp(
+            slug='test-ssp-nopid',
+            trial_product_id=None,
+            paid_product_id=None,
+            academy_uuid=None,
+        )
+
+        result = self._generate_input_dict(
+            trial_subscription_plan_request_dict={**self.MINIMAL_TRIAL},
+            first_paid_subscription_plan_request_dict={**self.MINIMAL_PAID},
+            top_level_ssp_product_slug=ssp.slug,
+        )
+
+        trial_input = result['create_trial_subscription_plan_input']
+        paid_input = result['create_first_paid_subscription_plan_input']
+        self.assertEqual(trial_input['product_id'], settings.PROVISIONING_TRIAL_SUBSCRIPTION_PRODUCT_ID)
+        self.assertEqual(paid_input['product_id'], settings.PROVISIONING_PAID_SUBSCRIPTION_PRODUCT_ID)
+
+    @mock.patch('enterprise_access.apps.provisioning.models.SspProduct.objects.get')
+    @mock.patch('enterprise_access.apps.provisioning.models.EnterpriseCatalogApiClient')
+    def test_top_level_slug_reuses_single_ssp_resolution(self, mock_catalog_cls, mock_ssp_get):
+        """A shared top-level SSP slug should resolve once for both plans."""
+        ssp = self._create_ssp(
+            slug='shared-ssp',
+            trial_product_id=11,
+            paid_product_id=22,
+            academy_uuid=uuid4(),
+        )
+        mock_ssp_get.return_value = ssp
+        mock_catalog_cls.return_value.get_catalog_query_id_from_uuid.return_value = 123
+
+        result = self._generate_input_dict(
+            trial_subscription_plan_request_dict={**self.MINIMAL_TRIAL},
+            first_paid_subscription_plan_request_dict={**self.MINIMAL_PAID},
+            top_level_ssp_product_slug=ssp.slug,
+        )
+
+        self.assertEqual(result[GetCreateCatalogStepInput.KEY]['catalog_query_id'], 123)
+        self.assertEqual(result[GetCreateTrialSubscriptionPlanStepInput.KEY]['product_id'], 11)
+        self.assertEqual(result[GetCreateFirstPaidSubscriptionPlanStepInput.KEY]['product_id'], 22)
+        mock_ssp_get.assert_called_once_with(slug=ssp.slug, is_active=True)
+        mock_catalog_cls.return_value.get_catalog_query_id_from_uuid.assert_called_once_with(ssp.catalog_query_uuid)
+
+    def test_ssp_invalid_slug_raises_validation_error(self):
+        """Unknown ssp_product_slug raises ValidationError."""
+        with self.assertRaises(ValidationError):
+            self._generate_input_dict(
+                trial_subscription_plan_request_dict={**self.MINIMAL_TRIAL, 'ssp_product_slug': 'nonexistent-slug'},
+                first_paid_subscription_plan_request_dict={**self.MINIMAL_PAID},
+                top_level_ssp_product_slug=None,
+            )
+
+    @ddt.data(
+        {
+            'scenario': 'top-level slug only',
+            'top_level_trial_product_id': 10,
+            'top_level_paid_product_id': 20,
+            'plan_level_trial_product_id': None,
+            'plan_level_paid_product_id': None,
+            'trial_subscription_plan_request_dict': {
+                'title': 'Trial',
+                'salesforce_opportunity_line_item': '00k1',
+                'start_date': '2025-06-01T00:00:00Z',
+                'expiration_date': '2026-03-31T00:00:00Z',
+                'desired_num_licenses': 5,
+            },
+            'first_paid_subscription_plan_request_dict': {'title': 'Paid'},
+            'top_level_ssp_product_slug': 'top-level-ssp',
+            'expected_trial_product_id': 10,
+            'expected_paid_product_id': 20,
+        },
+        {
+            'scenario': 'top-level slug with none plan dicts',
+            'top_level_trial_product_id': 100,
+            'top_level_paid_product_id': 200,
+            'plan_level_trial_product_id': None,
+            'plan_level_paid_product_id': None,
+            'trial_subscription_plan_request_dict': None,
+            'first_paid_subscription_plan_request_dict': None,
+            'top_level_ssp_product_slug': 'top-level-ssp',
+            'expected_trial_product_id': 100,
+            'expected_paid_product_id': 200,
+        },
+        {
+            'scenario': 'per-plan slug overrides top-level',
+            'top_level_trial_product_id': 10,
+            'top_level_paid_product_id': 20,
+            'plan_level_trial_product_id': 77,
+            'plan_level_paid_product_id': 88,
+            'trial_subscription_plan_request_dict': {
+                'title': 'Trial',
+                'salesforce_opportunity_line_item': '00k1',
+                'start_date': '2025-06-01T00:00:00Z',
+                'expiration_date': '2026-03-31T00:00:00Z',
+                'desired_num_licenses': 5,
+                'ssp_product_slug': 'plan-level-ssp',
+            },
+            'first_paid_subscription_plan_request_dict': {'title': 'Paid'},
+            'top_level_ssp_product_slug': 'top-level-ssp',
+            'expected_trial_product_id': 77,
+            'expected_paid_product_id': 20,
+        },
+    )
+    @ddt.unpack
+    @mock.patch('enterprise_access.apps.provisioning.models.EnterpriseCatalogApiClient')
+    def test_top_level_and_plan_level_slug_resolution(
+        self,
+        mock_catalog_cls,
+        scenario,
+        top_level_trial_product_id,
+        top_level_paid_product_id,
+        plan_level_trial_product_id,
+        plan_level_paid_product_id,
+        trial_subscription_plan_request_dict,
+        first_paid_subscription_plan_request_dict,
+        top_level_ssp_product_slug,
+        expected_trial_product_id,
+        expected_paid_product_id,
+    ):
+        """Top-level SSP slugs should seed missing plan data while preserving per-plan overrides."""
+        mock_catalog_cls.return_value.get_catalog_query_id_from_uuid.return_value = 42
+
+        self._create_ssp(
+            slug='top-level-ssp',
+            trial_product_id=top_level_trial_product_id,
+            paid_product_id=top_level_paid_product_id,
+            academy_uuid=None,
+        )
+        if plan_level_trial_product_id is not None:
+            self._create_ssp(
+                slug='plan-level-ssp',
+                trial_product_id=plan_level_trial_product_id,
+                paid_product_id=plan_level_paid_product_id,
+                academy_uuid=None,
+            )
+
+        result = self._generate_input_dict(
+            trial_subscription_plan_request_dict=trial_subscription_plan_request_dict,
+            first_paid_subscription_plan_request_dict=first_paid_subscription_plan_request_dict,
+            top_level_ssp_product_slug=top_level_ssp_product_slug,
+        )
+
+        self.assertEqual(result[GetCreateCatalogStepInput.KEY]['catalog_query_id'], 42, msg=scenario)
+        self.assertEqual(
+            result[GetCreateTrialSubscriptionPlanStepInput.KEY]['product_id'],
+            expected_trial_product_id,
+            msg=scenario,
+        )
+        self.assertEqual(
+            result[GetCreateFirstPaidSubscriptionPlanStepInput.KEY]['product_id'],
+            expected_paid_product_id,
+            msg=scenario,
+        )

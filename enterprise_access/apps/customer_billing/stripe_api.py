@@ -1,6 +1,7 @@
 """
 Python API for interacting with Stripe (aside from functions contained in ``pricing_api.py``).
 """
+import json
 import logging
 from functools import wraps
 from typing import Optional
@@ -11,8 +12,8 @@ from edx_django_utils.cache import TieredCache
 
 logger = logging.getLogger(__name__)
 
-## This is where the Stripe API key is set on the client.
-## Don't remove.
+# This is where the Stripe API key is set on the client.
+# Don't remove.
 stripe.api_key = settings.STRIPE_API_KEY
 
 
@@ -21,6 +22,15 @@ def create_subscription_checkout_session(input_data, lms_user_id, checkout_inten
     Creates a free trial subscription checkout session.
     """
     stripe.api_key = settings.STRIPE_API_KEY
+    enterprise_catalog = None
+    enterprise_catalog_metadata = input_data.get('enterprise_catalog')
+    if enterprise_catalog_metadata:
+        enterprise_catalog = (
+            json.dumps(enterprise_catalog_metadata)
+            if isinstance(enterprise_catalog_metadata, dict)
+            else enterprise_catalog_metadata
+        )
+
     create_kwargs: stripe.checkout.Session.CreateParams = {
         'mode': 'subscription',
         # Intended UI will be a custom react component, referred to as 'elements' on stripe's end.
@@ -46,6 +56,8 @@ def create_subscription_checkout_session(input_data, lms_user_id, checkout_inten
                 'enterprise_customer_slug': input_data['enterprise_slug'],
                 # Store the lms_user_id for improved debugging experience.
                 'lms_user_id': str(lms_user_id),
+                # Store the enterprise_catalog metadata for cross-service reference
+                'enterprise_catalog': enterprise_catalog,
                 # Store the checkout_intent ID for cross-service reference
                 'checkout_intent_id': str(checkout_intent.id),
                 'checkout_intent_uuid': str(checkout_intent.uuid),
