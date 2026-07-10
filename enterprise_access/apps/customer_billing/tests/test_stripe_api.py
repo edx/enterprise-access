@@ -231,7 +231,7 @@ class TestCreateSubscriptionCheckoutSession(StripeApiFunctionsTests):
         create_subscription_checkout_session(input_data, lms_user_id=3, checkout_intent=checkout_intent)
 
         _, kwargs = mock_session_create.call_args
-        self.assertIsNone(json.loads(kwargs['subscription_data']['metadata']['enterprise_catalog']))
+        self.assertIsNone(kwargs['subscription_data']['metadata']['enterprise_catalog'])
         mock_logger_warning.assert_called_once()
 
 

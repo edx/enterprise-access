@@ -86,10 +86,10 @@ class TestCreateFreeTrialCheckoutSession(TestCase):
             'get_catalog_query_id_from_uuid',
             return_value=1,
         )
-        self.mock_catalog_query_lookself.enterprise_catalog_lookup_patcher.start()
+        self.enterprise_catalog_lookup_patcher.start()
+        self.addCleanup(self.enterprise_catalog_lookup_patcher.stop)
 
     def tearDown(self):
-        self.enterprise_catalog_lookup_patcher.stop()
         # Clean up any intents created during tests
         CheckoutIntent.objects.all().delete()
 
