@@ -60,15 +60,19 @@ def _get_ssp_product_slug_from_stripe_event(event_data, checkout_intent=None):
     except Exception:  # pylint: disable=broad-except
         logger.debug('Error reading ssp_product from provided checkout_intent')
 
-    # Strategy 1: Resolve via subscription_id → CheckoutIntent → ssp_product
+    # Strategy 1: Resolve via subscription_id → StripeEventSummary → CheckoutIntent → ssp_product
     subscription_id = event_data.get('subscription') or event_data.get('id')
     if subscription_id:
         try:
-            checkout = CheckoutIntent.objects.filter(
-                stripe_subscription_id=subscription_id
-            ).select_related('ssp_product').first()
-            if checkout and checkout.ssp_product:
-                return checkout.ssp_product.slug
+            # StripeEventSummary records subscription IDs; prefer the most recent summary
+            summary = (
+                StripeEventSummary.objects.filter(stripe_subscription_id=subscription_id)
+                .select_related('checkout_intent__ssp_product')
+                .order_by('-stripe_event_created_at', '-id')
+                .first()
+            )
+            if summary and summary.checkout_intent and summary.checkout_intent.ssp_product:
+                return summary.checkout_intent.ssp_product.slug
         except Exception:  # pylint: disable=broad-except
             logger.debug("Could not resolve slug via subscription_id=%s", subscription_id)
 
@@ -78,7 +82,7 @@ def _get_ssp_product_slug_from_stripe_event(event_data, checkout_intent=None):
         try:
             checkout = CheckoutIntent.objects.filter(
                 stripe_customer_id=customer_id
-            ).select_related('ssp_product').order_by('-created').first()
+            ).select_related('ssp_product').order_by('-created', '-id').first()
             if checkout and checkout.ssp_product:
                 return checkout.ssp_product.slug
         except Exception:  # pylint: disable=broad-except

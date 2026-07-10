@@ -492,6 +492,45 @@ class TestNotificationStep(TestCase):
             },
         )
 
+    @mock.patch('enterprise_access.apps.provisioning.models.send_enterprise_provision_signup_confirmation_email')
+    @mock.patch('enterprise_access.apps.provisioning.models.LmsApiClient.get_lms_user_activation_link')
+    def test_process_input_includes_academy_name_when_present(
+            self,
+            mock_get_activation_link,
+            mock_send_signup_email,
+    ):
+        """NotificationStep should forward a resolved academy title when available."""
+        mock_get_activation_link.return_value = 'http://edx-platform.example.com/activate/abc123'
+
+        step = NotificationStep.objects.create(
+            workflow_record_uuid=uuid4(),
+            input_data={},
+        )
+
+        step.fulfill_checkout_intent = mock.Mock()
+
+        checkout_intent = mock.Mock()
+        checkout_intent.user.username = 'fake-username'
+        checkout_intent.ssp_product.slug = 'essentials-ai'
+        checkout_intent.ssp_product.academy_title = 'AI Academy'
+        step.get_linked_checkout_intent = mock.Mock(return_value=checkout_intent)
+
+        workflow = mock.Mock()
+        workflow.input_object.create_trial_subscription_plan_input.desired_num_licenses = 10
+        workflow.input_object.create_enterprise_admin_users_input.user_emails = ['test@example.com']
+        step.get_workflow_record = mock.Mock(return_value=workflow)
+
+        mock_accumulated_output = mock.Mock()
+        mock_accumulated_output.create_trial_subscription_plan_output.start_date = datetime(2025, 1, 1)
+        mock_accumulated_output.create_trial_subscription_plan_output.expiration_date = datetime(2025, 2, 1)
+        mock_accumulated_output.create_customer_output.name = 'Test Customer'
+        mock_accumulated_output.create_customer_output.slug = 'test-customer'
+
+        step.process_input(mock_accumulated_output)
+
+        _, delay_kwargs = mock_send_signup_email.delay.call_args
+        self.assertEqual(delay_kwargs['academy_name'], 'AI Academy')
+
 
 class TestCheckoutIntentStepMixinUnit(TestCase):
     """Unit tests for CheckoutIntentStepMixin helper behavior."""

@@ -120,8 +120,8 @@ def get_academy_name_from_slug(ssp_product_slug):
     """
     Resolve the academy name for trigger_properties from the SspProduct.
 
-    This fetches the academy_title via the SspProduct model's academy_uuid
-    → get_cached_academy_data() → enterprise-catalog API chain.
+    Uses `get_product_type_from_slug` to determine whether the slug should be
+    treated as `teams` or `essentials`, and avoids lookup for Teams products.
 
     Args:
         ssp_product_slug (str|None): The SspProduct slug.
@@ -129,10 +129,14 @@ def get_academy_name_from_slug(ssp_product_slug):
     Returns:
         str|None: The academy title, or None if not applicable (e.g. Teams).
     """
-    if not ssp_product_slug or str(ssp_product_slug).startswith('teams'):
+    if not ssp_product_slug:
         return None
 
     try:
+        product_type = get_product_type_from_slug(ssp_product_slug)
+        if product_type == 'teams':
+            return None
+
         from django.apps import apps  # pylint: disable=import-outside-toplevel
         ssp_product_model = apps.get_model('customer_billing', 'SspProduct')
         ssp_product = ssp_product_model.objects.get(slug=ssp_product_slug)

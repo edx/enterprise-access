@@ -206,8 +206,18 @@ def send_enterprise_provision_signup_confirmation_email(
     # Derive product slug from any CheckoutIntent for this enterprise when not provided
     if ssp_product_slug is None:
         try:
-            intent = CheckoutIntent.objects.filter(enterprise_slug=enterprise_slug).first()
-            ssp_product_slug = getattr(intent.ssp_product, 'slug', None) if intent else None
+            # Prefer the most recent CheckoutIntent and select related ssp_product
+            intent = (
+                CheckoutIntent.objects.filter(enterprise_slug=enterprise_slug)
+                .select_related('ssp_product')
+                .order_by('-created')
+                .first()
+            )
+            ssp_product_slug = (
+                getattr(intent.ssp_product, 'slug', None)
+                if intent and getattr(intent, 'ssp_product', None)
+                else None
+            )
         except Exception:  # pylint: disable=broad-exception-caught
             ssp_product_slug = None
 

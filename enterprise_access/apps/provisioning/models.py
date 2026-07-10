@@ -949,18 +949,17 @@ class NotificationStep(CheckoutIntentStepMixin, AbstractWorkflowStep):
             )
 
         # Resolve product slug and academy name from the CheckoutIntent
+        # Prefer the cached `academy_title` on `SspProduct` instead of calling
+        # the enterprise-catalog API directly. This preserves caching and avoids
+        # payload differences where the API may return `title` instead of `name`.
         ssp_product_slug = None
         academy_name = None
         if checkout_intent.ssp_product:
             ssp_product_slug = getattr(checkout_intent.ssp_product, 'slug', None)
-            ssp_product_academy_uuid = getattr(checkout_intent.ssp_product, 'academy_uuid', None)
-            if ssp_product_academy_uuid:
-                try:
-                    academy_detail = EnterpriseCatalogApiClient().get_academy(ssp_product_academy_uuid)
-                    academy_name = academy_detail.get('name') if academy_detail else None
-                except Exception:  # pylint: disable=broad-except
-                    # If the catalog lookup fails for any reason, leave academy_name as None.
-                    academy_name = None
+            # Use the model-level cached academy title if present
+            resolved_academy_name = getattr(checkout_intent.ssp_product, 'academy_title', None)
+            if isinstance(resolved_academy_name, str) and resolved_academy_name:
+                academy_name = resolved_academy_name
 
         task_kwargs = {
             'subscription_start_date': accumulated_output.create_trial_subscription_plan_output.start_date,
