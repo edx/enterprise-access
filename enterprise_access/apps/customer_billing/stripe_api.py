@@ -38,6 +38,11 @@ def create_subscription_checkout_session(input_data, lms_user_id, checkout_inten
                 exc,
             )
 
+    if enterprise_catalog is not None and isinstance(enterprise_catalog, (dict, list)):
+        enterprise_catalog = json.dumps(enterprise_catalog)
+    elif enterprise_catalog is not None:
+        enterprise_catalog = str(enterprise_catalog)
+
     create_kwargs: stripe.checkout.Session.CreateParams = {
         'mode': 'subscription',
         # Intended UI will be a custom react component, referred to as 'elements' on stripe's end.
@@ -64,7 +69,7 @@ def create_subscription_checkout_session(input_data, lms_user_id, checkout_inten
                 # Store the lms_user_id for improved debugging experience.
                 'lms_user_id': str(lms_user_id),
                 # Store the enterprise_catalog metadata for cross-service reference
-                'enterprise_catalog': json.dumps(enterprise_catalog) if enterprise_catalog else None,
+                'enterprise_catalog': enterprise_catalog,
                 # Store the checkout_intent ID for cross-service reference
                 'checkout_intent_id': str(checkout_intent.id),
                 'checkout_intent_uuid': str(checkout_intent.uuid),
