@@ -239,7 +239,7 @@ class TestLearnerPathwaysAuthorization(APITest):
     def test_enterprise_learner_is_allowed(self, url_name, payload, mock_client_class):
         mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
             role='assistant',
-            content='{"result":"ok"}',
+            content='{"result":"ok","reasons":{}}',
         )
         self.set_jwt_cookie([{
             'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE,
@@ -283,7 +283,7 @@ class TestLearnerPathwaysAuthorization(APITest):
     def test_explicit_db_role_assignment_is_allowed(self, url_name, payload, mock_client_class):
         mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
             role='assistant',
-            content='{"result":"ok"}',
+            content='{"result":"ok","reasons":{}}',
         )
 
         user = UserFactory(is_active=True)
@@ -363,7 +363,7 @@ class TestLearnerPathwaysThrottle(APITest):
     @mock.patch(PATCH_XPERT_CLIENT)
     def test_recommendation_feedback_throttled_after_rate_exceeded(self, mock_client_class):
         mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
-            role='assistant', content='{"r":1}',
+            role='assistant', content='{"reasons":{}}',
         )
         url = reverse(_RECOMMENDATION_FEEDBACK_URL_NAME)
         for _ in range(2):
@@ -375,7 +375,7 @@ class TestLearnerPathwaysThrottle(APITest):
     @mock.patch(PATCH_XPERT_CLIENT)
     def test_learning_intent_counter_does_not_consume_recommendation_feedback_scope(self, mock_client_class):
         mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
-            role='assistant', content='{"r":1}',
+            role='assistant', content='{"reasons":{}}',
         )
         li_url = reverse(_LEARNING_INTENT_URL_NAME)
         rf_url = reverse(_RECOMMENDATION_FEEDBACK_URL_NAME)
