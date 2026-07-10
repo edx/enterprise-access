@@ -8,6 +8,7 @@ import rules
 from django.test import TestCase
 
 from enterprise_access.apps.core import constants
+from enterprise_access.apps.core import rules as core_rules
 from enterprise_access.apps.core.models import EnterpriseAccessFeatureRole, EnterpriseAccessRoleAssignment
 from enterprise_access.apps.core.tests.factories import UserFactory
 
@@ -61,3 +62,11 @@ class LearnerPathwaysPermissionTests(TestCase):
     )
     def test_permission_is_registered(self, permission):
         assert rules.perm_exists(permission)
+
+    def test_recommendation_feedback_predicate_is_learning_intent_predicate(self):
+        # The two permissions must remain distinctly mapped, but they share one
+        # consolidated predicate implementation — not two copies of the same expression.
+        assert (
+            core_rules.has_learner_pathways_recommendation_feedback_access
+            is core_rules.has_learner_pathways_learning_intent_access
+        )

@@ -506,8 +506,7 @@ has_learner_pathways_learning_intent_access = (
 )
 
 has_learner_pathways_recommendation_feedback_access = (
-    has_implicit_access_to_learner_pathways_for_any_context |
-    has_explicit_access_to_learner_pathways_for_any_context
+    has_learner_pathways_learning_intent_access
 )
 
 ###############################################

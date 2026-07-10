@@ -15,10 +15,12 @@ from django.core.cache import cache as django_cache
 from django.test import TestCase, override_settings
 from edx_rest_framework_extensions.auth.jwt.authentication import JwtAuthentication
 from rest_framework import permissions, status
+from rest_framework.response import Response
 from rest_framework.reverse import reverse
 from rest_framework.test import APIClient
 from rest_framework.throttling import ScopedRateThrottle
 
+from enterprise_access.apps.api import serializers as api_serializers
 from enterprise_access.apps.api.v1.views.prompt import BasePromptViewSet, LearnerPathwaysViewSet, PromptRequestException
 from enterprise_access.apps.core.constants import LEARNER_PATHWAYS_LEARNER_ROLE, SYSTEM_ENTERPRISE_LEARNER_ROLE
 from enterprise_access.apps.core.models import EnterpriseAccessFeatureRole, EnterpriseAccessRoleAssignment
@@ -77,6 +79,48 @@ class TestPromptRequestException(TestCase):
             raise PromptRequestException('wrapped') from original
         except PromptRequestException as exc:
             assert exc.__cause__ is original
+
+
+# ---------------------------------------------------------------------------
+# Shared workflow delegation tests
+# ---------------------------------------------------------------------------
+
+class TestPromptWorkflowDelegation(APITest):
+    """Assert each action delegates to the shared _execute_prompt_workflow helper with its own configuration."""
+
+    def setUp(self):
+        super().setUp()
+        self.addCleanup(django_cache.clear)
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE,
+            'context': str(uuid.uuid4()),
+        }])
+
+    @mock.patch.object(LearnerPathwaysViewSet, '_execute_prompt_workflow')
+    def test_learning_intent_delegates_with_expected_configuration(self, mock_execute):
+        mock_execute.return_value = Response(status=status.HTTP_200_OK)
+
+        self.client.post(reverse(_LEARNING_INTENT_URL_NAME), data=_VALID_LEARNING_INTENT_PAYLOAD, format='json')
+
+        assert mock_execute.call_count == 1
+        _, kwargs = mock_execute.call_args
+        assert kwargs['request_serializer_class'] is api_serializers.LearningIntentRequestSerializer
+        assert kwargs['response_serializer_class'] is api_serializers.LearningIntentResponseSerializer
+        assert kwargs['prompt_type'] == PromptType.LEARNER_INTENT
+
+    @mock.patch.object(LearnerPathwaysViewSet, '_execute_prompt_workflow')
+    def test_recommendation_feedback_delegates_with_expected_configuration(self, mock_execute):
+        mock_execute.return_value = Response(status=status.HTTP_200_OK)
+
+        self.client.post(
+            reverse(_RECOMMENDATION_FEEDBACK_URL_NAME), data=_VALID_RECOMMENDATION_FEEDBACK_PAYLOAD, format='json',
+        )
+
+        assert mock_execute.call_count == 1
+        _, kwargs = mock_execute.call_args
+        assert kwargs['request_serializer_class'] is api_serializers.RecommendationFeedbackRequestSerializer
+        assert kwargs['response_serializer_class'] is api_serializers.RecommendationFeedbackResponseSerializer
+        assert kwargs['prompt_type'] == PromptType.RECOMMENDATIONS_FEEDBACK
 
 
 # ---------------------------------------------------------------------------
