@@ -1,6 +1,7 @@
 """
 Python API for interacting with Stripe (aside from functions contained in ``pricing_api.py``).
 """
+import json
 import logging
 from functools import wraps
 from typing import Optional
@@ -63,7 +64,7 @@ def create_subscription_checkout_session(input_data, lms_user_id, checkout_inten
                 # Store the lms_user_id for improved debugging experience.
                 'lms_user_id': str(lms_user_id),
                 # Store the enterprise_catalog metadata for cross-service reference
-                'enterprise_catalog': enterprise_catalog,
+                'enterprise_catalog': json.dumps(enterprise_catalog) if enterprise_catalog else None,
                 # Store the checkout_intent ID for cross-service reference
                 'checkout_intent_id': str(checkout_intent.id),
                 'checkout_intent_uuid': str(checkout_intent.uuid),

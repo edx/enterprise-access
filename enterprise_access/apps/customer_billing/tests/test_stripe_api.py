@@ -1,6 +1,7 @@
 """
 Unit tests for interacting with stripe via ``stripe_api.api``.
 """
+import json
 import uuid
 from unittest import mock
 
@@ -162,7 +163,7 @@ class TestCreateSubscriptionCheckoutSession(StripeApiFunctionsTests):
         self.assertNotIn('customer', kwargs)
         self.assertEqual(kwargs.get('ui_mode'), 'elements')
         self.assertEqual(
-            kwargs['subscription_data']['metadata']['enterprise_catalog'],
+            json.loads(kwargs['subscription_data']['metadata']['enterprise_catalog']),
             {'catalog_query_id': 101, 'title': 'Open Courses'},
         )
 
@@ -197,7 +198,7 @@ class TestCreateSubscriptionCheckoutSession(StripeApiFunctionsTests):
         self.assertNotIn('customer_email', kwargs)
         self.assertEqual(kwargs.get('ui_mode'), 'elements')
         self.assertEqual(
-            kwargs['subscription_data']['metadata']['enterprise_catalog'],
+            json.loads(kwargs['subscription_data']['metadata']['enterprise_catalog']),
             {'catalog_query_id': 202, 'title': 'Open Courses'},
         )
 
@@ -217,7 +218,7 @@ class TestCreateSubscriptionCheckoutSession(StripeApiFunctionsTests):
     ):
         """When enterprise-catalog cannot resolve the catalog query id, metadata should remain None."""
         mock_customer_search.return_value = mock.MagicMock(data=[])
-        mock_get_catalog_query_id.return_value = None
+        mock_get_catalog_query_id.side_effect = ValueError('invalid catalog query payload')
         mock_stripe_session = mock.Mock()
         mock_stripe_session.to_dict.return_value = {'id': 'cs_test_missing_catalog'}
         mock_session_create.return_value = mock_stripe_session
@@ -230,7 +231,7 @@ class TestCreateSubscriptionCheckoutSession(StripeApiFunctionsTests):
         create_subscription_checkout_session(input_data, lms_user_id=3, checkout_intent=checkout_intent)
 
         _, kwargs = mock_session_create.call_args
-        self.assertIsNone(kwargs['subscription_data']['metadata']['enterprise_catalog'])
+        self.assertIsNone(json.loads(kwargs['subscription_data']['metadata']['enterprise_catalog']))
         mock_logger_warning.assert_called_once()
 
 
