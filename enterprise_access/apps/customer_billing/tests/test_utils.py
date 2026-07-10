@@ -178,6 +178,14 @@ class TestGetAcademyNameFromSlug(TestCase):
 
         self.assertEqual(result, 'Test Academy')
 
+    @override_settings(ENABLE_SSP_ESSENTIALS_CAMPAIGNS=True)
+    def test_returns_none_on_unexpected_exception_in_db_lookup(self):
+        """An unexpected exception during DB lookup is swallowed and None is returned."""
+        with mock.patch('django.apps.apps.get_model') as mock_get_model:
+            mock_get_model.return_value.objects.get.side_effect = RuntimeError('db boom')
+            result = get_academy_name_from_slug('essentials-exploding')
+        self.assertIsNone(result)
+
 
 class TestAcademyLookupAndCheckoutIntentSelectionAdditional(TestCase):
     """Additional tests for academy lookup and checkout intent selection logic."""
@@ -346,3 +354,28 @@ class TestAcademyLookupAndCheckoutIntentSelectionAdditional(TestCase):
         }
         slug = _get_ssp_product_slug_from_stripe_event(event_data)
         self.assertEqual(slug, 'essentials-from-line')
+
+    def test_get_ssp_product_slug_returns_none_when_all_strategies_fail(self):
+        """With no subscription_id, no customer_id, and no line metadata, returns None."""
+        slug = _get_ssp_product_slug_from_stripe_event({})
+        self.assertIsNone(slug)
+
+    def test_get_ssp_product_slug_handles_exception_in_subscription_id_strategy(self):
+        """Exception from StripeEventSummary query is swallowed; resolution falls through."""
+        event_data = {'subscription': 'sub_strategy1_raises'}
+        with mock.patch(
+            'enterprise_access.apps.customer_billing.stripe_event_handlers.StripeEventSummary.objects.filter',
+            side_effect=RuntimeError('db fail'),
+        ):
+            slug = _get_ssp_product_slug_from_stripe_event(event_data)
+        self.assertIsNone(slug)
+
+    def test_get_ssp_product_slug_handles_exception_in_customer_id_strategy(self):
+        """Exception from CheckoutIntent query is swallowed; resolution falls through."""
+        event_data = {'customer': 'cus_strategy2_raises'}
+        with mock.patch(
+            'enterprise_access.apps.customer_billing.stripe_event_handlers.CheckoutIntent.objects.filter',
+            side_effect=RuntimeError('db fail'),
+        ):
+            slug = _get_ssp_product_slug_from_stripe_event(event_data)
+        self.assertIsNone(slug)

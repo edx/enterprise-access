@@ -1216,6 +1216,35 @@ class TestStripeEventHandler(TestCase):
         slug = _get_ssp_product_slug_from_stripe_event(event_data)
         self.assertEqual(slug, 'essentials-from-line')
 
+    def test_get_ssp_product_slug_customer_id_present_but_no_matching_checkout(self):
+        """When customer_id is in event but no CheckoutIntent matches, fall through to invoice lines."""
+        # customer_id is present but no CheckoutIntent has this stripe_customer_id
+        # → checkout is None → condition at line 86 is False → falls through to strategy 3
+        # invoice lines also have no slug → final return None
+        event_data = {
+            'customer': 'cus_nonexistent_999',
+            'lines': {
+                'data': [
+                    {'price': {'metadata': {}}},
+                ]
+            },
+        }
+        slug = _get_ssp_product_slug_from_stripe_event(event_data)
+        self.assertIsNone(slug)
+
+    def test_get_ssp_product_slug_invoice_lines_without_slug_returns_none(self):
+        """When invoice lines are present but none have ssp_product_slug, return None."""
+        event_data = {
+            'lines': {
+                'data': [
+                    {'price': {'metadata': {}}},
+                    {'price': {'metadata': {'other_key': 'other_value'}}},
+                ]
+            }
+        }
+        slug = _get_ssp_product_slug_from_stripe_event(event_data)
+        self.assertIsNone(slug)
+
     def test_subscription_updated_active_marks_renewals_uncanceled(self):
         """
         Restored subscriptions should flip renewal records back to is_canceled=False and clear subscription_cancel_at.

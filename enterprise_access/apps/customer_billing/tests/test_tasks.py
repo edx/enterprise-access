@@ -5,6 +5,7 @@ import json
 from datetime import datetime
 from datetime import timezone as dt_timezone
 from unittest import mock
+from uuid import uuid4
 
 import stripe
 from django.conf import settings
@@ -13,8 +14,14 @@ from django.utils import timezone
 
 from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.customer_billing.constants import BRAZE_TIMESTAMP_FORMAT
-from enterprise_access.apps.customer_billing.models import CheckoutIntent, StripeEventData, StripeEventSummary
+from enterprise_access.apps.customer_billing.models import (
+    CheckoutIntent,
+    SspProduct,
+    StripeEventData,
+    StripeEventSummary
+)
 from enterprise_access.apps.customer_billing.tasks import (
+    _build_common_trigger_properties,
     send_billing_error_email_task,
     send_enterprise_provision_signup_confirmation_email,
     send_finalized_cancelation_email_task,
@@ -27,6 +34,35 @@ from enterprise_access.apps.customer_billing.tasks import (
 )
 from enterprise_access.apps.customer_billing.tests.utils import AttrDict
 from enterprise_access.utils import format_datetime_obj
+
+
+class TestBuildCommonTriggerProperties(TestCase):
+    """Tests for the _build_common_trigger_properties helper."""
+
+    def test_provided_academy_name_is_used_without_db_lookup(self):
+        """When academy_name is in extra kwargs, it is set directly without calling get_academy_name_from_slug."""
+        with mock.patch(
+            'enterprise_access.apps.customer_billing.tasks.get_academy_name_from_slug'
+        ) as mock_lookup:
+            result = _build_common_trigger_properties(
+                ssp_product_slug='essentials-ai',
+                organization_name='Acme',
+                academy_name='Provided Academy',
+            )
+        mock_lookup.assert_not_called()
+        self.assertEqual(result['academy_name'], 'Provided Academy')
+
+    def test_academy_name_resolved_from_db_when_not_provided(self):
+        """When academy_name is absent, get_academy_name_from_slug is called and its result is set."""
+        with mock.patch(
+            'enterprise_access.apps.customer_billing.tasks.get_academy_name_from_slug',
+            return_value='DB Academy',
+        ):
+            result = _build_common_trigger_properties(
+                ssp_product_slug='essentials-ai',
+                organization_name='Acme',
+            )
+        self.assertEqual(result['academy_name'], 'DB Academy')
 
 
 class TestSendTrialCancellationEmailTask(TestCase):
@@ -86,7 +122,8 @@ class TestSendTrialCancellationEmailTask(TestCase):
 
         # Check campaign ID
         self.assertEqual(
-            call_args[0][0], settings.BRAZE_TRIAL_CANCELLATION_CAMPAIGN
+            call_args[0][0],
+            settings.BRAZE_TRIAL_CANCELLATION_CAMPAIGN
         )
 
         # Check recipients
@@ -133,6 +170,37 @@ class TestSendTrialCancellationEmailTask(TestCase):
 
         # Verify the exception message
         self.assertIn("Braze API error", str(context.exception))
+
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.get_academy_name_from_slug', return_value='AI Academy')
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
+    def test_cancellation_includes_product_info_when_ssp_product_set(
+        self, mock_lms_client, mock_braze_client, _mock_academy_name
+    ):
+        """When checkout_intent has an ssp_product, product_slug and academy_name are in trigger props."""
+        ssp_product = SspProduct.objects.create(
+            slug='essentials-ai-2025',
+            stripe_price_lookup_key='essentials_ai_2025_key',
+            catalog_query_uuid=uuid4(),
+            is_active=True,
+        )
+        self.checkout_intent.ssp_product = ssp_product
+        self.checkout_intent.save()
+
+        mock_lms_client.return_value.get_enterprise_customer_data.return_value = {
+            'admin_users': [{'email': 'admin@example.com', 'lms_user_id': 1}]
+        }
+        mock_braze_client.return_value.create_braze_recipient.return_value = {'external_user_id': '1'}
+
+        send_trial_cancellation_email_task(
+            checkout_intent_id=self.checkout_intent.id,
+            cancel_at_timestamp=self.cancel_at_timestamp,
+        )
+
+        call_kwargs = mock_braze_client.return_value.send_campaign_message.call_args[1]
+        trigger_props = call_kwargs['trigger_properties']
+        self.assertEqual(trigger_props.get('product_slug'), 'essentials-ai-2025')
+        self.assertEqual(trigger_props.get('academy_name'), 'AI Academy')
 
 
 class TestSendBillingErrorEmailTask(TestCase):
@@ -619,6 +687,65 @@ class TestSendEnterpriseProvisionSignupConfirmationEmail(TestCase):
 
         self.assertEqual(str(context.exception), "Braze Campaign Error")
 
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.BrazeApiClient')
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.LmsApiClient')
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.validate_trial_subscription')
+    def test_derives_ssp_slug_from_checkout_intent_when_none_passed(
+        self, mock_validate_trial, mock_lms_client, mock_braze_client
+    ):
+        """When ssp_product_slug is not passed, function resolves it from the most recent CheckoutIntent."""
+        mock_validate_trial.return_value = (True, self.mock_subscription)
+        mock_lms_client.return_value.get_enterprise_customer_data.return_value = {
+            'admin_users': self.mock_admin_users
+        }
+        mock_braze = mock_braze_client.return_value
+        mock_braze.create_braze_recipient.side_effect = [
+            {'external_id': 'braze1'}, {'external_id': 'braze2'}
+        ]
+
+        ssp_product = SspProduct.objects.create(
+            slug='essentials-signup-lookup',
+            stripe_price_lookup_key='essentials_signup_lookup_key',
+            catalog_query_uuid=uuid4(),
+            is_active=True,
+        )
+        user = UserFactory()
+        intent = CheckoutIntent.create_intent(user=user, slug='test-corp', name='Test Corp', quantity=1)
+        intent.ssp_product = ssp_product
+        intent.save()
+
+        # Call without ssp_product_slug — the function should resolve it from the DB
+        test_data = dict(self.test_data)
+        test_data.pop('ssp_product_slug', None)
+        send_enterprise_provision_signup_confirmation_email(**test_data)
+
+        mock_braze.send_campaign_message.assert_called_once()
+
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.BrazeApiClient')
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.LmsApiClient')
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.validate_trial_subscription')
+    def test_ssp_slug_db_lookup_exception_is_swallowed(
+        self, mock_validate_trial, mock_lms_client, mock_braze_client
+    ):
+        """When the CheckoutIntent DB lookup raises, the exception is swallowed and None is used."""
+        mock_validate_trial.return_value = (True, self.mock_subscription)
+        mock_lms_client.return_value.get_enterprise_customer_data.return_value = {
+            'admin_users': self.mock_admin_users
+        }
+        mock_braze = mock_braze_client.return_value
+        mock_braze.create_braze_recipient.side_effect = [
+            {'external_id': 'braze1'}, {'external_id': 'braze2'}
+        ]
+
+        with mock.patch(
+            'enterprise_access.apps.customer_billing.tasks.CheckoutIntent.objects.filter',
+            side_effect=RuntimeError('db fail'),
+        ):
+            send_enterprise_provision_signup_confirmation_email(**self.test_data)
+
+        # Campaign is still sent despite the lookup failure
+        mock_braze.send_campaign_message.assert_called_once()
+
 
 class TestSendPaymentReceiptEmail(TestCase):
     """
@@ -865,6 +992,27 @@ class TestSendPaymentReceiptEmail(TestCase):
         self.assertEqual(len(actual_recipients), 1)
         self.assertEqual(actual_recipients[0]['external_id'], 'braze_2')
 
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.prepare_admin_braze_recipients')
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.BrazeApiClient')
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.LmsApiClient')
+    def test_no_braze_recipients_returns_early(
+        self, mock_lms_client, mock_braze_client, mock_prepare
+    ):
+        """When all recipient creations fail, prepare returns [] and task exits before sending."""
+        mock_lms_client.return_value.get_enterprise_customer_data.return_value = {
+            'admin_users': self.mock_admin_users
+        }
+        mock_prepare.return_value = []
+
+        send_payment_receipt_email(
+            invoice_id=self.invoice_id,
+            invoice_data=self.mock_invoice_data,
+            enterprise_customer_name=self.enterprise_customer_name,
+            enterprise_slug=self.enterprise_slug,
+        )
+
+        mock_braze_client.return_value.send_campaign_message.assert_not_called()
+
     @mock.patch('enterprise_access.apps.customer_billing.tasks.get_stripe_payment_method')
     @mock.patch('enterprise_access.apps.customer_billing.tasks.get_stripe_payment_intent')
     @mock.patch('enterprise_access.apps.customer_billing.tasks.BrazeApiClient')
@@ -1063,6 +1211,24 @@ class TestSendTrialEndingReminderEmailTask(TestCase):
             send_trial_ending_reminder_email_task(
                 checkout_intent_id=self.checkout_intent.id,
             )
+
+        mock_get_subscription.assert_not_called()
+        mock_braze_client.return_value.send_campaign_message.assert_not_called()
+
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.get_stripe_trialing_subscription")
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.prepare_admin_braze_recipients")
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
+    def test_no_braze_recipients_returns_early(
+        self, mock_lms_client, mock_braze_client, mock_prepare, mock_get_subscription
+    ):
+        """When prepare_admin_braze_recipients returns [], task exits before hitting Stripe."""
+        mock_lms_client.return_value.get_enterprise_customer_data.return_value = {
+            'admin_users': [{'email': 'admin@example.com', 'lms_user_id': 1}]
+        }
+        mock_prepare.return_value = []
+
+        send_trial_ending_reminder_email_task(checkout_intent_id=self.checkout_intent.id)
 
         mock_get_subscription.assert_not_called()
         mock_braze_client.return_value.send_campaign_message.assert_not_called()
