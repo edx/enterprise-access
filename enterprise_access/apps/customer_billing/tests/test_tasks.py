@@ -681,6 +681,7 @@ class TestSendPaymentReceiptEmail(TestCase):
             invoice_data=self.mock_invoice_data,
             enterprise_customer_name=self.enterprise_customer_name,
             enterprise_slug=self.enterprise_slug,
+            ssp_product_slug=settings.SSP_DEFAULT_PRODUCT_SLUG,
         )
 
         # Verify Stripe API calls

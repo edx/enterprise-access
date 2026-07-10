@@ -661,7 +661,7 @@ class TestStripeEventHandler(TestCase):
 
         if invoice_total:
             # Validate the payment receipt task was queued with expected core kwargs.
-            self.assertTrue(mock_send_payment_receipt_email.delay.called)
+            mock_send_payment_receipt_email.delay.assert_called_once()
             call_kwargs = mock_send_payment_receipt_email.delay.call_args.kwargs
             self.assertEqual(call_kwargs.get('invoice_id'), invoice_data['id'])
             self.assertEqual(call_kwargs.get('invoice_data'), mock_event.data.object.to_dict())
@@ -774,7 +774,7 @@ class TestStripeEventHandler(TestCase):
         StripeEventHandler.dispatch(mock_event)
 
         # Ensure the task was queued and contains expected kwargs (allow extra kwargs like ssp_product_slug).
-        self.assertTrue(mock_email_task.delay.called)
+        mock_email_task.delay.assert_called_once()
         call_kwargs = mock_email_task.delay.call_args.kwargs
         self.assertEqual(call_kwargs.get('checkout_intent_id'), self.checkout_intent.id)
         self.assertEqual(call_kwargs.get('cancel_at_timestamp'), cancel_at_timestamp)
@@ -849,7 +849,7 @@ class TestStripeEventHandler(TestCase):
         StripeEventHandler.dispatch(mock_event)
 
         # Ensure the task was queued and contains expected kwargs (allow extra kwargs like ssp_product_slug).
-        self.assertTrue(mock_email_task.delay.called)
+        mock_email_task.delay.assert_called_once()
         self.assertEqual(mock_email_task.delay.call_args.kwargs.get('checkout_intent_id'), self.checkout_intent.id)
 
     @mock.patch(
@@ -919,7 +919,7 @@ class TestStripeEventHandler(TestCase):
         StripeEventHandler.dispatch(mock_event)
 
         # Ensure the task was queued and contains expected kwargs (allow extra kwargs like ssp_product_slug).
-        self.assertTrue(mock_paid_email_task.delay.called)
+        mock_paid_email_task.delay.assert_called_once()
         call_kwargs = mock_paid_email_task.delay.call_args.kwargs
         self.assertEqual(call_kwargs.get('checkout_intent_id'), self.checkout_intent.id)
         self.assertEqual(call_kwargs.get('cancel_at_timestamp'), cancel_at_timestamp)
@@ -992,7 +992,7 @@ class TestStripeEventHandler(TestCase):
 
         mock_cancel.assert_called_once_with(self.checkout_intent)
         # Allow extra kwargs like `ssp_product_slug` added to task signature.
-        self.assertTrue(mock_send_billing_error.delay.called)
+        mock_send_billing_error.delay.assert_called_once()
         call_kwargs = mock_send_billing_error.delay.call_args.kwargs
         self.assertEqual(call_kwargs.get('checkout_intent_id'), self.checkout_intent.id)
 
@@ -1113,7 +1113,7 @@ class TestStripeEventHandler(TestCase):
 
         mock_cancel.assert_called_once_with(self.checkout_intent)
         # Allow extra kwargs like `ssp_product_slug` added to task signature.
-        self.assertTrue(mock_send_cancelation_email.delay.called)
+        mock_send_cancelation_email.delay.assert_called_once()
         trial_end_value = mock_send_cancelation_email.delay.call_args_list[0].kwargs['ended_at_timestamp']
         # Test that we use a default trial end of now if no value can be found in the event.
         # The different between these two integer timestamps should be small,
@@ -1169,7 +1169,7 @@ class TestStripeEventHandler(TestCase):
         self.assertIsNone(renewal.subscription_cancel_at)
         mock_cancel.assert_called_once_with(self.checkout_intent)
         # Allow extra kwargs like `ssp_product_slug` added to task signature.
-        self.assertTrue(mock_send_cancelation_email.delay.called)
+        mock_send_cancelation_email.delay.assert_called_once()
         call_kwargs = mock_send_cancelation_email.delay.call_args.kwargs
         self.assertEqual(call_kwargs.get('checkout_intent_id'), self.checkout_intent.id)
         self.assertEqual(call_kwargs.get('ended_at_timestamp'), 1700000000)
@@ -1308,7 +1308,7 @@ class TestStripeEventHandler(TestCase):
 
         mock_cancel.assert_called_once_with(self.checkout_intent)
         # Allow extra kwargs like `ssp_product_slug` added to task signature.
-        self.assertTrue(mock_send_cancelation_email.delay.called)
+        mock_send_cancelation_email.delay.assert_called_once()
         call_kwargs = mock_send_cancelation_email.delay.call_args.kwargs
         self.assertEqual(call_kwargs.get('checkout_intent_id'), self.checkout_intent.id)
         self.assertEqual(call_kwargs.get('ended_at_timestamp'), 1234567890)
@@ -1388,7 +1388,7 @@ class TestStripeEventHandler(TestCase):
         # Verify other cancellation actions still occurred
         mock_cancel.assert_called_once_with(self.checkout_intent)
         # Allow extra kwargs like `ssp_product_slug` added to task signature.
-        self.assertTrue(mock_send_cancelation_email.delay.called)
+        mock_send_cancelation_email.delay.assert_called_once()
         call_kwargs = mock_send_cancelation_email.delay.call_args.kwargs
         self.assertEqual(call_kwargs.get('checkout_intent_id'), self.checkout_intent.id)
         self.assertEqual(call_kwargs.get('ended_at_timestamp'), 1234567890)
@@ -1415,7 +1415,7 @@ class TestStripeEventHandler(TestCase):
         StripeEventHandler.dispatch(mock_event)
 
         # Allow extra kwargs like `ssp_product_slug` added to task signature.
-        self.assertTrue(mock_email_task.delay.called)
+        mock_email_task.delay.assert_called_once()
         self.assertEqual(mock_email_task.delay.call_args.kwargs.get('checkout_intent_id'), self.checkout_intent.id)
 
         event_data = StripeEventData.objects.get(event_id=mock_event.id)
@@ -1956,7 +1956,7 @@ class TestStripeEventHandler(TestCase):
         )
 
         # Verify trial-end email task WAS queued (first trial→paid transition)
-        self.assertTrue(mock_send_email_task.delay.called)
+        mock_send_email_task.delay.assert_called_once()
         call_kwargs = mock_send_email_task.delay.call_args.kwargs
         self.assertEqual(call_kwargs.get('subscription_id'), stripe_subscription_id)
         self.assertEqual(call_kwargs.get('checkout_intent_id'), self.checkout_intent.id)
@@ -2178,7 +2178,7 @@ class TestStripeEventHandler(TestCase):
         )
 
         # Verify trial-end email was sent
-        self.assertTrue(mock_send_email.delay.called)
+        mock_send_email.delay.assert_called_once()
         call_kwargs = mock_send_email.delay.call_args.kwargs
         self.assertEqual(call_kwargs.get('subscription_id'), stripe_subscription_id)
         self.assertEqual(call_kwargs.get('checkout_intent_id'), self.checkout_intent.id)

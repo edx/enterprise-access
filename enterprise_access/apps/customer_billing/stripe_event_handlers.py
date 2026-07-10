@@ -61,7 +61,7 @@ def _get_ssp_product_slug_from_stripe_event(event_data, checkout_intent=None):
         logger.debug('Error reading ssp_product from provided checkout_intent')
 
     # Strategy 1: Resolve via subscription_id → CheckoutIntent → ssp_product
-    subscription_id = event_data.get('id') or event_data.get('subscription')
+    subscription_id = event_data.get('subscription') or event_data.get('id')
     if subscription_id:
         try:
             checkout = CheckoutIntent.objects.filter(

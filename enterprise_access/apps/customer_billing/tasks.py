@@ -76,33 +76,6 @@ def _build_common_trigger_properties(ssp_product_slug, organization_name=None, *
     return properties
 
 
-def _get_enterprise_admin_recipients(braze_client, enterprise_slug):
-    """
-    Fetch enterprise admin users and create Braze recipients.
-
-    Returns:
-        list: List of Braze recipient dicts.
-    """
-    admins = get_enterprise_admins(enterprise_slug)
-    if not admins:
-        logger.error(
-            "No enterprise admins found for slug=%s. Email not sent.",
-            enterprise_slug,
-        )
-        # Tests expect an exception when no admin users are present.
-        raise Exception('No admin users')
-
-    recipients = []
-    for admin in admins:
-        recipient = braze_client.create_braze_recipient(
-            user_email=admin['email'],
-            lms_user_id=admin.get('lms_user_id'),
-        )
-        recipients.append(recipient)
-
-    return recipients
-
-
 def get_enterprise_admins(enterprise_slug, raise_if_empty=False):
     """
     Fetches enterprise admin users for the given slug.
@@ -229,8 +202,6 @@ def send_enterprise_provision_signup_confirmation_email(
 
     total_cost_cents = subscription['plan']['amount'] * number_of_licenses
 
-    campaign_id = get_campaign_id('signup_confirmation', ssp_product_slug)
-
     braze_client = BrazeApiClient()
     # Derive product slug from any CheckoutIntent for this enterprise when not provided
     if ssp_product_slug is None:
@@ -240,10 +211,9 @@ def send_enterprise_provision_signup_confirmation_email(
         except Exception:  # pylint: disable=broad-exception-caught
             ssp_product_slug = None
 
-    # Create Braze recipients and raise if no admin users (tests expect exception)
-    recipients = _get_enterprise_admin_recipients(braze_client, enterprise_slug)
-    if not recipients:
-        return
+    campaign_id = get_campaign_id('signup_confirmation', ssp_product_slug)
+    admin_users = get_enterprise_admins(enterprise_slug, raise_if_empty=True)
+    recipients = prepare_admin_braze_recipients(braze_client, admin_users, enterprise_slug, raise_if_empty=True)
 
     trigger_properties = _build_common_trigger_properties(
         ssp_product_slug=ssp_product_slug,
@@ -261,10 +231,13 @@ def send_enterprise_provision_signup_confirmation_email(
         total_amount=float(cents_to_dollars(total_cost_cents)),
     )
 
-    braze_client.send_campaign_message(
+    send_campaign_message(
+        braze_client,
         campaign_id,
         recipients=recipients,
         trigger_properties=trigger_properties,
+        organization_name=organization_name,
+        email_description='signup confirmation email',
     )
 
 
@@ -416,13 +389,6 @@ def send_billing_error_email_task(checkout_intent_id: int, ssp_product_slug: str
     checkout_intent = CheckoutIntent.objects.get(id=checkout_intent_id)
     enterprise_slug = checkout_intent.enterprise_slug
 
-    # Derive product slug from checkout intent when not explicitly provided
-    if ssp_product_slug is None:
-        try:
-            ssp_product_slug = getattr(checkout_intent.ssp_product, 'slug', None)
-        except Exception:  # pylint: disable=broad-exception-caught
-            ssp_product_slug = None
-
     braze_client = BrazeApiClient()
     admin_users = get_enterprise_admins(enterprise_slug, raise_if_empty=False)
     # Use tolerant recipient creation so individual failures don't abort the send
@@ -452,10 +418,13 @@ def send_billing_error_email_task(checkout_intent_id: int, ssp_product_slug: str
         customer_portal_url=settings.STRIPE_CUSTOMER_PORTAL_URL,
     )
 
-    braze_client.send_campaign_message(
+    send_campaign_message(
+        braze_client,
         campaign_id,
         recipients=recipients,
         trigger_properties=trigger_properties,
+        organization_name=checkout_intent.enterprise_name,
+        email_description='billing error email',
     )
 
 
@@ -534,13 +503,6 @@ def send_trial_ending_reminder_email_task(checkout_intent_id, ssp_product_slug: 
         checkout_intent_id,
         enterprise_slug,
     )
-
-    # Derive product slug from checkout intent when not explicitly provided
-    if ssp_product_slug is None:
-        try:
-            ssp_product_slug = getattr(checkout_intent.ssp_product, 'slug', None)
-        except Exception:  # pylint: disable=broad-exception-caught
-            ssp_product_slug = None
 
     # Fetch admin users and raise if none found (tests expect an exception)
     admin_users = get_enterprise_admins(enterprise_slug, raise_if_empty=True)
@@ -649,10 +611,13 @@ def send_trial_ending_reminder_email_task(checkout_intent_id, ssp_product_slug: 
         subscription_management_url=f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/{enterprise_slug}/admin/subscriptions',
     )
 
-    braze_client.send_campaign_message(
+    send_campaign_message(
+        braze_client,
         campaign_id,
         recipients=recipients,
         trigger_properties=trigger_properties,
+        organization_name=checkout_intent.enterprise_name,
+        email_description='trial ending reminder email',
     )
 
 
@@ -677,17 +642,10 @@ def send_trial_end_and_subscription_started_email_task(
     subscription = get_stripe_subscription(subscription_id).to_dict()
     checkout_intent = CheckoutIntent.objects.get(id=checkout_intent_id)
 
-    # Derive product slug from checkout intent when not explicitly provided
-    if ssp_product_slug is None:
-        try:
-            ssp_product_slug = getattr(checkout_intent.ssp_product, 'slug', None)
-        except Exception:  # pylint: disable=broad-exception-caught
-            ssp_product_slug = None
-
     total_license = subscription.get('quantity')
     plan = subscription.get('plan', {})
     amount_cents = plan.get('amount', 0)
-    _billing_amount = str(cents_to_dollars(amount_cents)) if amount_cents else None
+    billing_amount = str(cents_to_dollars(amount_cents)) if amount_cents else None
 
     items = (subscription.get("items") or {}).get("data") or []
     first_item = items[0] if items else {}
@@ -713,9 +671,8 @@ def send_trial_end_and_subscription_started_email_task(
 
     braze_client = BrazeApiClient()
     # Create braze recipients for admin users; this flow should raise when no admins
-    recipients = _get_enterprise_admin_recipients(braze_client, enterprise_slug)
-    if not recipients:
-        return
+    admin_users = get_enterprise_admins(enterprise_slug, raise_if_empty=True)
+    recipients = prepare_admin_braze_recipients(braze_client, admin_users, enterprise_slug, raise_if_empty=True)
 
     campaign_id = get_campaign_id('trial_end_subscription_started', ssp_product_slug)
 
@@ -737,12 +694,15 @@ def send_trial_end_and_subscription_started_email_task(
     if next_payment_date:
         trigger_properties['next_payment_date'] = next_payment_date
     trigger_properties['total_license'] = total_license
-    trigger_properties['billing_amount'] = _billing_amount
+    trigger_properties['billing_amount'] = billing_amount
 
-    braze_client.send_campaign_message(
+    send_campaign_message(
+        braze_client,
         campaign_id,
         recipients=recipients,
         trigger_properties=trigger_properties,
+        organization_name=organization_name,
+        email_description='trial end and subscription started email',
     )
 
 
@@ -793,13 +753,6 @@ def send_payment_receipt_email(
             'lms_user_id': user.lms_user_id,
         }]
 
-    # Derive product slug from invoice summary's checkout intent when not explicitly provided
-    if ssp_product_slug is None:
-        try:
-            ssp_product_slug = getattr(invoice_summary.checkout_intent.ssp_product, 'slug', None)
-        except Exception:  # pylint: disable=broad-exception-caught
-            ssp_product_slug = None
-
     braze_client = BrazeApiClient()
     # Create braze recipients for admin users, tolerating per-recipient failures
     recipients = prepare_admin_braze_recipients(braze_client, admin_users, enterprise_slug, raise_if_empty=False)
@@ -807,7 +760,7 @@ def send_payment_receipt_email(
         return
 
     # Format the payment date
-    _formatted_payment_date = format_datetime_obj(
+    formatted_payment_date = format_datetime_obj(
         datetime_from_timestamp(invoice_data.get('created', 0)), BRAZE_DATE_FORMAT_1
     )
 
@@ -852,13 +805,13 @@ def send_payment_receipt_email(
             )
 
     # Get subscription details from invoice summary
-    _quantity = invoice_summary.invoice_quantity or 0
-    _price_per_license = invoice_summary.invoice_unit_amount or 0
-    _total_amount = invoice_summary.invoice_amount_paid or 0
+    quantity = invoice_summary.invoice_quantity or 0
+    price_per_license_cents = invoice_summary.invoice_unit_amount or 0
+    total_amount = invoice_summary.invoice_amount_paid or 0
 
     # Legacy/consumer-friendly values expected by existing Braze templates/tests
-    total_paid_amount = float(cents_to_dollars(_total_amount)) if _total_amount else 0.0
-    price_per_license = float(cents_to_dollars(_price_per_license)) if _price_per_license else 0.0
+    total_paid_amount = float(cents_to_dollars(total_amount)) if total_amount else 0.0
+    price_per_license = float(cents_to_dollars(price_per_license_cents)) if price_per_license_cents else 0.0
 
     # (payment_method_display, billing_address, customer_name) are already
     # set to sensible defaults above and may have been overridden by Stripe data.
@@ -872,17 +825,20 @@ def send_payment_receipt_email(
         enterprise_admin_portal_url=f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/{enterprise_slug}',
         # Backwards-compatible keys expected by tests/templates
         total_paid_amount=total_paid_amount,
-        date_paid=_formatted_payment_date,
+        date_paid=formatted_payment_date,
         payment_method=payment_method_display,
-        license_count=_quantity,
+        license_count=int(quantity),
         price_per_license=price_per_license,
         customer_name=customer_name,
         billing_address=billing_address,
         receipt_number=invoice_id,
     )
 
-    braze_client.send_campaign_message(
+    send_campaign_message(
+        braze_client,
         campaign_id,
         recipients=recipients,
         trigger_properties=trigger_properties,
+        organization_name=enterprise_customer_name,
+        email_description='payment receipt email',
     )
