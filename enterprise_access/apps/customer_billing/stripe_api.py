@@ -11,8 +11,6 @@ from django.conf import settings
 from edx_django_utils.cache import TieredCache
 from requests.exceptions import HTTPError
 
-from enterprise_access.apps.api_client.enterprise_catalog_client import EnterpriseCatalogApiClient
-
 logger = logging.getLogger(__name__)
 
 # This is where the Stripe API key is set on the client.
@@ -27,27 +25,17 @@ def create_subscription_checkout_session(input_data, lms_user_id, checkout_inten
     stripe.api_key = settings.STRIPE_API_KEY
     enterprise_catalog = None
     SspProduct = apps.get_model('customer_billing', 'SspProduct')
-    client = EnterpriseCatalogApiClient()
-    sspproduct = SspProduct.objects.get(slug=input_data.get('ssp_product_slug'))
-    catagery_query_id = client.get_catalog_query_id_from_uuid(
-        catalog_query_uuid=sspproduct.catalog_query_uuid
-    )
-
-    try:
-        catalog_query_id = client.get_catalog_query_id_from_uuid(sspproduct.catalog_query_uuid)
-        if catalog_query_id is None:
-            raise ValueError('enterprise-catalog returned no catalog_query_id')
-        enterprise_catalog = {
-            'catalog_query_id': catagery_query_id,
-            'title': 'Open Courses'
-        }
-    except (HTTPError, TypeError, ValueError) as exc:
-        logger.warning(
-            f"Could not find catalog_query_id for ssp_product_slug: {input_data.get('ssp_product_slug')}"
-            'Could not resolve enterprise_catalog metadata for ssp_product_slug=%s: %s',
-            input_data.get('ssp_product_slug'),
-            exc,
-        )
+    ssp_product_slug = input_data.get('ssp_product_slug')
+    if ssp_product_slug:
+        try:
+            ssp_product = SspProduct.objects.get(slug=ssp_product_slug, is_active=True)
+            enterprise_catalog = ssp_product.enterprise_catalog_metadata
+        except (SspProduct.DoesNotExist, HTTPError, TypeError, ValueError) as exc:
+            logger.warning(
+                'Could not resolve enterprise_catalog metadata for ssp_product_slug=%s: %s',
+                ssp_product_slug,
+                exc,
+            )
 
     create_kwargs: stripe.checkout.Session.CreateParams = {
         'mode': 'subscription',

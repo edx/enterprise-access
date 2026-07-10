@@ -132,7 +132,7 @@ class TestCreateSubscriptionCheckoutSession(StripeApiFunctionsTests):
         }
 
     @mock.patch(
-        'enterprise_access.apps.customer_billing.stripe_api.EnterpriseCatalogApiClient.get_catalog_query_id_from_uuid'
+        'enterprise_access.apps.api_client.enterprise_catalog_client.EnterpriseCatalogApiClient.get_catalog_query_id_from_uuid'
     )
     @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.checkout.Session.create')
     @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Customer.search')
@@ -166,7 +166,7 @@ class TestCreateSubscriptionCheckoutSession(StripeApiFunctionsTests):
         )
 
     @mock.patch(
-        'enterprise_access.apps.customer_billing.stripe_api.EnterpriseCatalogApiClient.get_catalog_query_id_from_uuid'
+        'enterprise_access.apps.api_client.enterprise_catalog_client.EnterpriseCatalogApiClient.get_catalog_query_id_from_uuid'
     )
     @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.checkout.Session.create')
     @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Customer.search')
@@ -201,7 +201,7 @@ class TestCreateSubscriptionCheckoutSession(StripeApiFunctionsTests):
 
     @mock.patch('enterprise_access.apps.customer_billing.stripe_api.logger.warning')
     @mock.patch(
-        'enterprise_access.apps.customer_billing.stripe_api.EnterpriseCatalogApiClient.get_catalog_query_id_from_uuid'
+        'enterprise_access.apps.api_client.enterprise_catalog_client.EnterpriseCatalogApiClient.get_catalog_query_id_from_uuid'
     )
     @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.checkout.Session.create')
     @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Customer.search')
