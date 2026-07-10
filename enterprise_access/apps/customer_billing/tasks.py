@@ -56,13 +56,9 @@ def _build_common_trigger_properties(ssp_product_slug, organization_name=None, *
             properties['academy_name'] = provided_academy_name
         else:
             # Try to resolve academy name whenever a slug is available
-            try:
-                academy_name = get_academy_name_from_slug(ssp_product_slug)
-                if academy_name:
-                    properties['academy_name'] = academy_name
-            except Exception:  # pylint: disable=broad-exception-caught
-                # Do not fail email sending for academy lookup issues
-                logger.exception('Failed to resolve academy name for slug=%s', ssp_product_slug)
+            academy_name = get_academy_name_from_slug(ssp_product_slug)
+            if academy_name:
+                properties['academy_name'] = academy_name
 
     if organization_name:
         properties['organization'] = organization_name

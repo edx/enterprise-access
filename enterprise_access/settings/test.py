@@ -59,6 +59,10 @@ BRAZE_GROUPS_EMAIL_AUTO_REMINDER_DAY_85_CAMPAIGN = 'test-day-85-reminder-campaig
 BRAZE_TRIAL_CANCELLATION_CAMPAIGN = 'test-trial-cancellation-campaign'
 BRAZE_PAID_CANCELLATION_CAMPAIGN = 'test-paid-cancellation-campaign'
 BRAZE_ENTERPRISE_PROVISION_TRIAL_ENDING_SOON_CAMPAIGN = 'test-trial-ending-reminder-campaign'
+# Enterprise provision campaigns (test defaults)
+BRAZE_ENTERPRISE_PROVISION_SIGNUP_CONFIRMATION_CAMPAIGN = 'test-enterprise-signup-confirmation-campaign'
+BRAZE_ENTERPRISE_PROVISION_PAYMENT_RECEIPT_CAMPAIGN = 'test-enterprise-payment-receipt-campaign'
+BRAZE_ENTERPRISE_PROVISION_TRIAL_END_SUBSCRIPTION_STARTED_CAMPAIGN = 'test-trial-end-subscription-started-campaign'
 BRAZE_BILLING_ERROR_CAMPAIGN = 'test-billing-error-campaign'
 BRAZE_SSP_SUBSCRIPTION_REINSTATED_CAMPAIGN = 'test-subscription-reinstated-campaign'
 

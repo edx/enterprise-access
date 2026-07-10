@@ -11,7 +11,7 @@ from django.test import TestCase, override_settings
 from django.utils import timezone
 
 from enterprise_access.apps.core.tests.factories import UserFactory
-from enterprise_access.apps.customer_billing.models import CheckoutIntent, SspProduct
+from enterprise_access.apps.customer_billing.models import CheckoutIntent, SspProduct, StripeEventData
 from enterprise_access.apps.customer_billing.stripe_event_handlers import _get_ssp_product_slug_from_stripe_event
 from enterprise_access.apps.customer_billing.utils import (
     datetime_from_timestamp,
@@ -172,7 +172,6 @@ class TestGetAcademyNameFromSlug(TestCase):
             mock_model = mock_get_model.return_value
             mock_model.objects.get.return_value = mock_product
             # Ensure essentials routing is enabled for this test
-            from django.test import override_settings
 
             with override_settings(ENABLE_SSP_ESSENTIALS_CAMPAIGNS=True):
                 result = get_academy_name_from_slug('essentials-monthly')
@@ -181,6 +180,7 @@ class TestGetAcademyNameFromSlug(TestCase):
 
 
 class TestAcademyLookupAndCheckoutIntentSelectionAdditional(TestCase):
+    """Additional tests for academy lookup and checkout intent selection logic."""
     def test_get_academy_name_from_slug_uses_cached_academy_title(self):
         # Create an SspProduct with an academy_uuid and patch the cached fetch
         slug = 'essentials-sample'
@@ -223,7 +223,6 @@ class TestAcademyLookupAndCheckoutIntentSelectionAdditional(TestCase):
         c2.stripe_subscription_id = subscription_id
         c2.save()
         # Create StripeEventData + StripeEventSummary for each checkout intent
-        from enterprise_access.apps.customer_billing.models import StripeEventData, StripeEventSummary
         ev1 = StripeEventData.objects.create(
             event_id=f'evt-{subscription_id}-1',
             event_type='customer.subscription.created',
@@ -249,13 +248,6 @@ class TestAcademyLookupAndCheckoutIntentSelectionAdditional(TestCase):
         s2.save()
         # Ensure most recent (c2) is returned
         event_data = {'subscription': subscription_id}
-        # Debug: inspect DB state
-        from enterprise_access.apps.customer_billing.models import StripeEventSummary
-        qs = (
-            StripeEventSummary.objects.filter(stripe_subscription_id=subscription_id)
-            .select_related('checkout_intent__ssp_product')
-            .order_by('-stripe_event_created_at', '-id')
-        )
         slug = _get_ssp_product_slug_from_stripe_event(event_data)
         # c2 has no ssp_product by default; create ssp_product attached to c2 and test
         sp, _ = SspProduct.objects.get_or_create(
@@ -268,13 +260,6 @@ class TestAcademyLookupAndCheckoutIntentSelectionAdditional(TestCase):
         c2.ssp_product = sp
         c2.save()
 
-        # Debug: inspect DB state after attach
-        from enterprise_access.apps.customer_billing.models import StripeEventSummary
-        qs2 = (
-            StripeEventSummary.objects.filter(stripe_subscription_id=subscription_id)
-            .select_related('checkout_intent__ssp_product')
-            .order_by('-stripe_event_created_at', '-id')
-        )
         slug = _get_ssp_product_slug_from_stripe_event(event_data)
         self.assertEqual(slug, 'essentials-recent')
 
@@ -302,7 +287,6 @@ class TestAcademyLookupAndCheckoutIntentSelectionAdditional(TestCase):
         c.ssp_product = sp
         c.save()
         # Create summary for fallback
-        from enterprise_access.apps.customer_billing.models import StripeEventData, StripeEventSummary
         ev = StripeEventData.objects.create(
             event_id=f'evt-{subscription_id}-fallback',
             event_type='customer.subscription.created',

@@ -59,21 +59,16 @@ def get_product_type_from_slug(ssp_product_slug):
     Returns:
         str: 'teams' or 'essentials'
     """
-    try:
-        # settings is already imported at module level; avoid re-import
-        if not getattr(settings, 'ENABLE_SSP_ESSENTIALS_CAMPAIGNS', False):
-            return 'teams'
-
-        if not ssp_product_slug:
-            return 'teams'
-
-        slug = str(ssp_product_slug).lower()
-        if slug.startswith('teams'):
-            return 'teams'
-        return 'essentials'
-    except Exception:  # pylint: disable=broad-except
-        logger.exception('Failed to determine product type for slug=%r', ssp_product_slug)
+    if not getattr(settings, 'ENABLE_SSP_ESSENTIALS_CAMPAIGNS', False):
         return 'teams'
+
+    if not ssp_product_slug:
+        return 'teams'
+
+    slug = str(ssp_product_slug).lower()
+    if slug.startswith('teams'):
+        return 'teams'
+    return 'essentials'
 
 
 def get_campaign_id(email_type, ssp_product_slug=None):
