@@ -9,6 +9,7 @@ import stripe
 from django.apps import apps
 from django.conf import settings
 from edx_django_utils.cache import TieredCache
+from requests.exceptions import HTTPError
 
 from enterprise_access.apps.api_client.enterprise_catalog_client import EnterpriseCatalogApiClient
 
@@ -32,14 +33,20 @@ def create_subscription_checkout_session(input_data, lms_user_id, checkout_inten
         catalog_query_uuid=sspproduct.catalog_query_uuid
     )
 
-    if catagery_query_id:
+    try:
+        catalog_query_id = client.get_catalog_query_id_from_uuid(sspproduct.catalog_query_uuid)
+        if catalog_query_id is None:
+            raise ValueError('enterprise-catalog returned no catalog_query_id')
         enterprise_catalog = {
             'catalog_query_id': catagery_query_id,
             'title': 'Open Courses'
         }
-    else:
+    except (HTTPError, TypeError, ValueError) as exc:
         logger.warning(
             f"Could not find catalog_query_id for ssp_product_slug: {input_data.get('ssp_product_slug')}"
+            'Could not resolve enterprise_catalog metadata for ssp_product_slug=%s: %s',
+            input_data.get('ssp_product_slug'),
+            exc,
         )
 
     create_kwargs: stripe.checkout.Session.CreateParams = {
