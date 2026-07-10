@@ -393,6 +393,43 @@ def has_explicit_access_to_stripe_event_summary_admin(user, enterprise_customer_
     return _has_explicit_access_to_role(user, enterprise_customer_uuid, constants.STRIPE_EVENT_SUMMARY_ADMIN_ROLE)
 
 
+@rules.predicate
+def has_implicit_access_to_learner_pathways_for_any_context(_, *args, **kwargs):
+    """
+    Check if the request user has implicit access (via their JWT) to the
+    `LEARNER_PATHWAYS_LEARNER_ROLE` feature role, for any enterprise customer.
+    Note, there is no enterprise customer context against which access to this
+    role is checked.
+
+    Returns:
+        boolean: whether the request user has access.
+    """
+    current_request = crum.get_current_request()
+    if not current_request:
+        return False
+
+    return request_user_has_implicit_access_via_jwt(
+        get_decoded_jwt(current_request),
+        constants.LEARNER_PATHWAYS_LEARNER_ROLE,
+    )
+
+
+@rules.predicate
+def has_explicit_access_to_learner_pathways_for_any_context(user, *args, **kwargs):
+    """
+    Check if the request user has explicit (database-persisted) access to the
+    `LEARNER_PATHWAYS_LEARNER_ROLE` feature role, for any enterprise customer.
+
+    Returns:
+        boolean: whether the request user has access.
+    """
+    return user_has_access_via_database(
+        user,
+        constants.LEARNER_PATHWAYS_LEARNER_ROLE,
+        EnterpriseAccessRoleAssignment,
+    )
+
+
 ######################################################
 # Consolidate implicit and explicit rule predicates. #
 ######################################################
@@ -461,6 +498,11 @@ has_admin_learner_profile_admin_access = (
 
 has_stripe_event_summary_admin_access = (
     has_implicit_access_to_stripe_event_summary_admin | has_explicit_access_to_stripe_event_summary_admin
+)
+
+has_learner_pathways_learning_intent_access = (
+    has_implicit_access_to_learner_pathways_for_any_context |
+    has_explicit_access_to_learner_pathways_for_any_context
 )
 
 ###############################################
@@ -600,4 +642,10 @@ rules.add_perm(
 rules.add_perm(
     constants.STRIPE_EVENT_SUMMARY_READ_PERMISSION,
     has_stripe_event_summary_admin_access,
+)
+
+# Grants permission to derive learning intent via the Learner Pathways API.
+rules.add_perm(
+    constants.LEARNER_PATHWAYS_LEARNING_INTENT_PERMISSION,
+    has_learner_pathways_learning_intent_access,
 )

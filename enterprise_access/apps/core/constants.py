@@ -49,6 +49,9 @@ PROVISIONING_CREATE_PERMISSION = 'provisioning.can_create'
 STRIPE_EVENT_SUMMARY_ADMIN_ROLE = 'enterprise_access_stripe_event_summary_admin'
 STRIPE_EVENT_SUMMARY_READ_PERMISSION = 'stripe_event_summary.has_read_access'
 
+LEARNER_PATHWAYS_LEARNER_ROLE = 'enterprise_access_learner_pathways_learner'
+LEARNER_PATHWAYS_LEARNING_INTENT_PERMISSION = 'learner_pathways.has_learning_intent_access'
+
 ALL_ACCESS_CONTEXT = '*'
 
 

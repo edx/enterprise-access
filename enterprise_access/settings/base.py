@@ -14,6 +14,7 @@ from enterprise_access.apps.core.constants import (
     CONTENT_ASSIGNMENTS_OPERATOR_ROLE,
     CUSTOMER_BILLING_ADMIN_ROLE,
     CUSTOMER_BILLING_OPERATOR_ROLE,
+    LEARNER_PATHWAYS_LEARNER_ROLE,
     PROVISIONING_ADMIN_ROLE,
     REQUESTS_ADMIN_ROLE,
     REQUESTS_LEARNER_ROLE,
@@ -183,6 +184,7 @@ REST_FRAMEWORK = {
     'DEFAULT_THROTTLE_RATES': {
         'bff_unauthenticated': '100/hour',
         'ssp_product': '120/hour',
+        'learner_pathways_learning_intent': '100/hour',
     },
 }
 
@@ -366,6 +368,7 @@ SYSTEM_TO_FEATURE_ROLE_MAPPING = {
         CONTENT_ASSIGNMENTS_LEARNER_ROLE,
         REQUESTS_LEARNER_ROLE,
         BFF_LEARNER_ROLE,
+        LEARNER_PATHWAYS_LEARNER_ROLE,
     ],
     SYSTEM_ENTERPRISE_PROVISIONING_ADMIN_ROLE: [
         PROVISIONING_ADMIN_ROLE,

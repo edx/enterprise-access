@@ -1,7 +1,9 @@
 """
 Low-level HTTP transport client for the Xpert AI service.
 """
+import json
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 import requests
@@ -9,9 +11,36 @@ from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
-# Lightweight type aliases for Xpert message structures.
-Message = dict[str, Any]
-XpertResponse = dict[str, Any]
+
+@dataclass(frozen=True)
+class XpertRequestMessage:
+    """
+    A single request message to send to Xpert.
+    """
+    role: str
+    content: str
+
+
+@dataclass(frozen=True)
+class XpertResponseMessage:
+    """
+    A single response message returned by Xpert.
+    """
+    role: str
+    content: str
+
+    def as_json(self) -> Any:
+        """
+        Parse the response content as JSON.
+
+        Raises XpertAPIResponseError if content is not valid JSON.
+        """
+        try:
+            return json.loads(self.content.strip())
+        except json.JSONDecodeError as exc:
+            raise XpertAPIResponseError(
+                f'Failed to parse Xpert response content as JSON: {exc}'
+            ) from exc
 
 
 class XpertAPIError(Exception):
@@ -114,7 +143,7 @@ class XpertAPIClient:
     def _validate_request(
         self,
         system_prompt: str,
-        messages: list[Message],
+        messages: list[XpertRequestMessage],
         conversation_id: str,
     ) -> None:
         """
@@ -122,12 +151,14 @@ class XpertAPIClient:
 
         Arguments:
             system_prompt (str): Must be a non-blank string.
-            messages (list): Must be a non-None list.
+            messages (list): Must be a non-None list of ``XpertRequestMessage``
+                instances, each with a non-blank ``role`` and ``content``.
             conversation_id (str): Must be a non-blank string.
 
         Raises:
             XpertAPIRequestError: If any required argument is missing, blank,
-                or of the wrong type.
+                or of the wrong type, or if any message is not an
+                ``XpertRequestMessage`` with non-blank ``role`` and ``content``.
         """
         if not isinstance(system_prompt, str) or not system_prompt.strip():
             raise XpertAPIRequestError('system_prompt is required and must be a non-blank string.')
@@ -139,12 +170,21 @@ class XpertAPIClient:
             raise XpertAPIRequestError(
                 f'messages must be a list, got {type(messages).__name__}.'
             )
+        for message in messages:
+            if not isinstance(message, XpertRequestMessage):
+                raise XpertAPIRequestError(
+                    f'Each message must be an XpertRequestMessage, got {type(message).__name__}.'
+                )
+            if not isinstance(message.role, str) or not message.role.strip():
+                raise XpertAPIRequestError('Each message must have a non-blank role.')
+            if not isinstance(message.content, str) or not message.content.strip():
+                raise XpertAPIRequestError('Each message must have non-blank content.')
 
     def _build_payload(
         self,
         client_id: str,
         system_prompt: str,
-        messages: list[Message],
+        messages: list[XpertRequestMessage],
         conversation_id: str,
         tags: list[str] | None,
     ) -> dict[str, Any]:
@@ -167,7 +207,13 @@ class XpertAPIClient:
         payload: dict[str, Any] = {
             'client_id': client_id,
             'system_message': system_prompt,
-            'messages': messages,
+            'messages': [
+                {
+                    'role': message.role,
+                    'content': message.content,
+                }
+                for message in messages
+            ],
             'conversation_id': conversation_id,
             'stream': False,
         }
@@ -175,7 +221,7 @@ class XpertAPIClient:
             payload['tags'] = tags
         return payload
 
-    def _normalize_response(self, response: requests.Response) -> XpertResponse:
+    def _normalize_response(self, response: requests.Response) -> XpertResponseMessage:
         """
         Parse and validate the Xpert response envelope.
 
@@ -186,7 +232,7 @@ class XpertAPIClient:
             response: The raw ``requests.Response`` from the Xpert POST.
 
         Returns:
-            dict: The first response object from the Xpert response envelope.
+            XpertResponseMessage: The first response message from the Xpert response envelope.
 
         Raises:
             XpertAPIResponseError: If the response body is not valid JSON, is
@@ -208,18 +254,25 @@ class XpertAPIClient:
         first_item = data[0]
         if not isinstance(first_item, dict):
             raise XpertAPIResponseError(
-                f'First item in Xpert response envelope is not a dict: got {type(first_item).__name__}.'
+                f'Xpert response envelope first item is not a dict: got {type(first_item).__name__}.'
             )
-        return first_item
+        content = first_item.get('content')
+        if not isinstance(content, str):
+            raise XpertAPIResponseError('Xpert response message content must be a string.')
+
+        return XpertResponseMessage(
+            role=str(first_item.get('role', '')),
+            content=content,
+        )
 
     def send_message(
         self,
         *,
         system_prompt: str,
-        messages: list[Message],
+        messages: list[XpertRequestMessage],
         conversation_id: str,
         tags: list[str] | None = None,
-    ) -> XpertResponse:
+    ) -> XpertResponseMessage:
         """
         Send a prompt-backed message to the Xpert ``/v1/message`` endpoint.
 
@@ -230,9 +283,9 @@ class XpertAPIClient:
         Arguments:
             system_prompt (str): System instruction used to guide Xpert's
                 response. Sent to Xpert as the ``system_message`` payload field.
-            messages (list): Xpert-compatible conversation message list. Each
-                element should be a dict with at minimum ``role`` and ``content``
-                keys.
+            messages (list[XpertRequestMessage]): Conversation message list.
+                Each element must be an ``XpertRequestMessage`` with non-blank
+                ``role`` and ``content``.
             conversation_id (str): Xpert conversation identifier. Required by
                 Xpert for session continuity.
             tags (list | None): Optional RAG control tags that constrain Xpert retrieval
@@ -240,7 +293,7 @@ class XpertAPIClient:
                 the list is non-empty; omitted otherwise.
 
         Returns:
-            dict: The first response object from the Xpert response envelope,
+            XpertResponseMessage: The first response message from the Xpert response envelope,
             e.g.::
 
                 {"role": "assistant", "content": "{\"result\": \"...\"}"}
@@ -251,8 +304,9 @@ class XpertAPIClient:
         Raises:
             XpertAPIConfigurationError: If required Django settings are missing.
             XpertAPIRequestError: If ``system_prompt``, ``conversation_id``,
-                or ``messages`` fail validation, or if the HTTP transport fails
-                or returns a non-2xx status.
+                or ``messages`` (including any individual message's ``role``
+                or ``content``) fail validation, or if the HTTP transport
+                fails or returns a non-2xx status.
             XpertAPIResponseError: If the Xpert response body cannot be parsed
                 as JSON or does not conform to the expected envelope shape.
         """
