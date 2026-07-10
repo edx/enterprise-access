@@ -472,6 +472,7 @@ def create_free_trial_checkout_session(
         input_data={**input_data, 'ssp_product_slug': ssp_product_slug, 'stripe_price_id': stripe_price_id},
         lms_user_id=lms_user_id,
         checkout_intent=intent,
+        enterprise_catalog_metadata=ssp_product_instance.enterprise_catalog_metadata,
     )
 
     intent.update_stripe_identifiers(

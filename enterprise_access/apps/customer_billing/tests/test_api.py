@@ -183,6 +183,10 @@ class TestCreateFreeTrialCheckoutSession(TestCase):
         self.assertEqual(called_input.get('stripe_price_id'), QUARTERLY_PRICE_ID)
         self.assertEqual(called_input.get('enterprise_slug'), 'my-sluggy')
         self.assertEqual(called_input.get('admin_email'), self.user.email)
+        self.assertEqual(
+            mock_create_checkout.call_args[1]['enterprise_catalog_metadata'],
+            {'title': 'Open Courses', 'catalog_query_id': 1},
+        )
         mock_lms_client.get_lms_user_account.assert_called_once_with(
             email=self.user.email,
         )

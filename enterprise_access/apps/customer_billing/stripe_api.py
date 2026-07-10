@@ -19,18 +19,23 @@ logger = logging.getLogger(__name__)
 stripe.api_key = settings.STRIPE_API_KEY
 
 
-def create_subscription_checkout_session(input_data, lms_user_id, checkout_intent) -> dict:
+def create_subscription_checkout_session(
+    input_data,
+    lms_user_id,
+    checkout_intent,
+    enterprise_catalog_metadata=None,
+) -> dict:
     """
     Creates a free trial subscription checkout session.
     """
     stripe.api_key = settings.STRIPE_API_KEY
     enterprise_catalog = None
-    SspProduct = apps.get_model('customer_billing', 'SspProduct')
     ssp_product_slug = input_data.get('ssp_product_slug')
-    if ssp_product_slug:
+    if enterprise_catalog_metadata is None and ssp_product_slug:
+        SspProduct = apps.get_model('customer_billing', 'SspProduct')
         try:
             ssp_product = SspProduct.objects.get(slug=ssp_product_slug, is_active=True)
-            enterprise_catalog = ssp_product.enterprise_catalog_metadata
+            enterprise_catalog_metadata = ssp_product.enterprise_catalog_metadata
         except (SspProduct.DoesNotExist, HTTPError, TypeError, ValueError) as exc:
             logger.warning(
                 'Could not resolve enterprise_catalog metadata for ssp_product_slug=%s: %s',
@@ -38,10 +43,10 @@ def create_subscription_checkout_session(input_data, lms_user_id, checkout_inten
                 exc,
             )
 
-    if enterprise_catalog is not None and isinstance(enterprise_catalog, (dict, list)):
-        enterprise_catalog = json.dumps(enterprise_catalog)
-    elif enterprise_catalog is not None:
-        enterprise_catalog = str(enterprise_catalog)
+    if enterprise_catalog_metadata is not None and isinstance(enterprise_catalog_metadata, (dict, list)):
+        enterprise_catalog = json.dumps(enterprise_catalog_metadata)
+    elif enterprise_catalog_metadata is not None:
+        enterprise_catalog = str(enterprise_catalog_metadata)
 
     create_kwargs: stripe.checkout.Session.CreateParams = {
         'mode': 'subscription',

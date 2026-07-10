@@ -3878,11 +3878,20 @@ class CreateCheckoutSessionViewTests(APITest):
         CheckoutIntent.objects.all().delete()
         super().tearDown()
 
+    @mock.patch(
+        'enterprise_access.apps.customer_billing.models.SspProduct.enterprise_catalog_metadata',
+        new_callable=mock.PropertyMock,
+        return_value={'title': 'Open Courses', 'catalog_query_id': 1},
+    )
     @mock.patch('enterprise_access.apps.customer_billing.api.create_subscription_checkout_session')
     @mock.patch('enterprise_access.apps.customer_billing.api.CheckoutIntent.create_intent')
     @mock.patch('enterprise_access.apps.customer_billing.api.CheckoutSessionInputValidator.validate')
     def test_create_checkout_session_returns_client_secret_from_dict(
-        self, mock_validate, mock_create_intent, mock_create_stripe_session,
+        self,
+        mock_validate,
+        mock_create_intent,
+        mock_create_stripe_session,
+        mock_enterprise_catalog_metadata,
     ):
         """
         client_secret is read via dict access from the dict returned by create_subscription_checkout_session,
@@ -3923,3 +3932,4 @@ class CreateCheckoutSessionViewTests(APITest):
             response.data['checkout_session_client_secret'],
             'cs_test_abc_secret_xyz',
         )
+        mock_enterprise_catalog_metadata.assert_called()
