@@ -163,6 +163,10 @@ enterprise_access/assets
 # claude code personalization
 .claude/settings.local.json
 
+# not everyone is using gitnexus
+.claude/skills/gitnexus
+AGENTS.local.md
+
 # personal notes
 .notes/
 
@@ -170,4 +174,4 @@ enterprise_access/assets
 .ralph/
 
 # Temporary docs, useful for pluggable AI context
-docs/essentials-temp/
+docs/tmp

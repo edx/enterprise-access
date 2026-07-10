@@ -12,7 +12,12 @@ from django.conf import settings
 from enterprise_access.apps.api_client.braze_client import BrazeApiClient
 from enterprise_access.apps.api_client.discovery_client import DiscoveryApiClient
 from enterprise_access.apps.api_client.lms_client import LmsApiClient
-from enterprise_access.apps.content_assignments.tasks import BrazeCampaignSender, _get_assignment_or_raise
+from enterprise_access.apps.content_assignments.tasks import (
+    _BRAZE_COURSE_PROPS,
+    BrazeCampaignSender,
+    _get_assignment_or_raise,
+    _prepare_braze_sender
+)
 from enterprise_access.apps.subsidy_request.constants import (
     LearnerCreditRequestActionErrorReasons,
     SubsidyRequestStates
@@ -363,16 +368,8 @@ def send_learner_credit_bnr_request_approve_task(approved_assignment_uuid):
     Args:
         approved_assignment_uuid: (string) the approved assignment uuid
     """
-    assignment = _get_assignment_or_raise(approved_assignment_uuid)
-    campaign_sender = BrazeCampaignSender(assignment)
-
-    braze_trigger_properties = campaign_sender.get_properties(
-        'contact_admin_link',
-        'organization',
-        'course_title',
-        'start_date',
-        'course_partner',
-        'course_card_image'
+    assignment, campaign_sender, braze_trigger_properties = _prepare_braze_sender(
+        approved_assignment_uuid, *_BRAZE_COURSE_PROPS,
     )
     campaign_uuid = settings.BRAZE_LEARNER_CREDIT_BNR_APPROVED_NOTIFICATION_CAMPAIGN
     campaign_sender.send_campaign_message(
@@ -389,16 +386,8 @@ def send_reminder_email_for_pending_learner_credit_request(assignment_uuid):
     Args:
         assignment_uuid (str): The UUID of the LearnerContentAssignment associated with the LCR.
     """
-    assignment = _get_assignment_or_raise(assignment_uuid)
-
-    campaign_sender = BrazeCampaignSender(assignment)
-    braze_trigger_properties = campaign_sender.get_properties(
-        'contact_admin_link',
-        'organization',
-        'course_title',
-        'start_date',
-        'course_partner',
-        'course_card_image',
+    assignment, campaign_sender, braze_trigger_properties = _prepare_braze_sender(
+        assignment_uuid, *_BRAZE_COURSE_PROPS,
     )
     campaign_uuid = settings.BRAZE_LEARNER_CREDIT_BNR_REMIND_NOTIFICATION_CAMPAIGN
     campaign_sender.send_campaign_message(

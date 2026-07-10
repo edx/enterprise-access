@@ -149,22 +149,13 @@ class LicenseManagerApiClient(BaseOAuthClient):
             'enterprise_customer_uuid': enterprise_customer_uuid,
             'user_email': user_email
         }
-        results = []
-        current_response = None
-        next_url = self.admin_license_view_endpoint
         try:
-            while next_url:
-                current_response = self.client.get(
-                    next_url,
-                    params=query_params,
-                    timeout=settings.LICENSE_MANAGER_CLIENT_TIMEOUT
-                )
-                current_response.raise_for_status()
-                data = current_response.json()
-                results.extend(data.get('results', []))
-
-                next_url = data.get('next') if traverse_pagination else None
-            return results
+            return self.get_paginated_results(
+                self.admin_license_view_endpoint,
+                query_params,
+                settings.LICENSE_MANAGER_CLIENT_TIMEOUT,
+                traverse_pagination,
+            )
         except requests.exceptions.HTTPError as exc:
             logger.exception(
                 f"Failed to get learner subscription licenses for admin : {safe_error_response_content(exc)}"

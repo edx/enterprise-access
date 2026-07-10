@@ -1,0 +1,19 @@
+[MESSAGES CONTROL]
+disable=all
+enable=duplicate-code
+
+[SIMILARITIES]
+# Minimum lines of code similarity to trigger a warning.
+# Lower = noisier (parser boilerplate); raise cautiously.
+min-similarity-lines=8
+ignore-comments=yes
+ignore-docstrings=yes
+ignore-imports=yes
+ignore-signatures=yes
+
+[MASTER]
+# Exclude test files, management command boilerplate (parser args legitimately repeat),
+# and migrations (Django migration files repeat field definitions by design).
+ignore-paths=^.*/tests/.*$,
+    ^.*/management/commands/.*$,
+    ^.*/migrations/.*$
