@@ -60,7 +60,7 @@ def get_product_type_from_slug(ssp_product_slug):
         str: 'teams' or 'essentials'
     """
     try:
-        from django.conf import settings  # import here to avoid top-level import cycles
+        # settings is already imported at module level; avoid re-import
         if not getattr(settings, 'ENABLE_SSP_ESSENTIALS_CAMPAIGNS', False):
             return 'teams'
 
@@ -71,7 +71,7 @@ def get_product_type_from_slug(ssp_product_slug):
         if slug.startswith('teams'):
             return 'teams'
         return 'essentials'
-    except Exception:
+    except Exception:  # pylint: disable=broad-except
         logger.exception('Failed to determine product type for slug=%r', ssp_product_slug)
         return 'teams'
 

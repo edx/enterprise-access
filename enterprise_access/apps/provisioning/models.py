@@ -958,7 +958,7 @@ class NotificationStep(CheckoutIntentStepMixin, AbstractWorkflowStep):
                 try:
                     academy_detail = EnterpriseCatalogApiClient().get_academy(ssp_product_academy_uuid)
                     academy_name = academy_detail.get('name') if academy_detail else None
-                except Exception:
+                except Exception:  # pylint: disable=broad-except
                     # If the catalog lookup fails for any reason, leave academy_name as None.
                     academy_name = None
 

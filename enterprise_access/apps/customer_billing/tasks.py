@@ -67,7 +67,12 @@ def _build_common_trigger_properties(ssp_product_slug, organization_name=None, *
     if organization_name:
         properties['organization'] = organization_name
 
-    properties.update(extra)
+    # Avoid inserting keys with None values (tests expect absent keys, not None)
+    if isinstance(extra, dict):
+        filtered_extra = {k: v for k, v in extra.items() if v is not None}
+    else:
+        filtered_extra = extra
+    properties.update(filtered_extra)
     return properties
 
 

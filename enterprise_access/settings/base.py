@@ -655,11 +655,6 @@ PRODUCT_ID_TO_CATALOG_QUERY_ID_MAPPING = {
 PROVISIONING_PAID_SUBSCRIPTION_PRODUCT_ID = 1
 PROVISIONING_TRIAL_SUBSCRIPTION_PRODUCT_ID = 2
 
-# Feature flag: opt-in to routing certain SSP product slugs to "essentials"
-# When False (default) the system preserves the historical behavior and
-# treats products as 'teams' for campaign routing. Set to True to enable
-# classification of slugs that do not start with 'teams' as 'essentials'.
-ENABLE_SSP_ESSENTIALS_CAMPAIGNS = os.environ.get('ENABLE_SSP_ESSENTIALS_CAMPAIGNS', 'False').lower() in ('1', 'true', 'yes')
 
 # SSP Product backfill data for data migrations.
 # Each environment should define this with its own product rows.
