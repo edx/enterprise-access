@@ -47,17 +47,17 @@ billiard==4.2.4
     # via
     #   -r requirements/validation.txt
     #   celery
-boto3==1.43.40
+boto3==1.43.45
     # via
     #   -r requirements/validation.txt
     #   snowflake-connector-python
-botocore==1.43.40
+botocore==1.43.45
     # via
     #   -r requirements/validation.txt
     #   boto3
     #   s3transfer
     #   snowflake-connector-python
-build==1.5.0
+build==1.5.1
     # via
     #   -r requirements/pip-tools.txt
     #   pip-tools
@@ -77,14 +77,14 @@ certifi==2026.6.17
     #   -r requirements/validation.txt
     #   requests
     #   snowflake-connector-python
-cffi==2.0.0
+cffi==2.1.0
     # via
     #   -r requirements/validation.txt
     #   cryptography
     #   pynacl
 chardet==7.4.3
     # via diff-cover
-charset-normalizer==3.4.7
+charset-normalizer==3.4.9
     # via
     #   -r requirements/validation.txt
     #   requests
@@ -164,7 +164,7 @@ distlib==0.4.3
     # via
     #   -r requirements/validation.txt
     #   virtualenv
-django==5.2.15
+django==5.2.16
     # via
     #   -r requirements/validation.txt
     #   crispy-bootstrap5
@@ -265,7 +265,7 @@ drf-jwt==1.19.2
     # via
     #   -r requirements/validation.txt
     #   edx-drf-extensions
-drf-spectacular==0.29.0
+drf-spectacular==0.30.0
     # via -r requirements/validation.txt
 drf-yasg==1.21.15
     # via
@@ -332,7 +332,7 @@ fastavro==1.12.2
     #   -r requirements/validation.txt
     #   confluent-kafka
     #   openedx-events
-filelock==3.29.4
+filelock==3.29.7
     # via
     #   -r requirements/validation.txt
     #   python-discovery
@@ -593,7 +593,7 @@ python-dateutil==2.9.0.post0
     #   botocore
     #   celery
     #   freezegun
-python-discovery==1.4.2
+python-discovery==1.4.4
     # via
     #   -r requirements/validation.txt
     #   tox
@@ -692,7 +692,7 @@ snowballstemmer==3.1.1
     # via
     #   -r requirements/validation.txt
     #   pydocstyle
-snowflake-connector-python==4.7.0
+snowflake-connector-python==4.6.0
     # via -r requirements/validation.txt
 social-auth-app-django==5.9.0
     # via
@@ -734,7 +734,7 @@ tomlkit==0.15.0
     #   edx-lint
     #   pylint
     #   snowflake-connector-python
-tox==4.56.1
+tox==4.56.4
     # via -r requirements/validation.txt
 twine==6.2.0
     # via -r requirements/validation.txt
@@ -776,7 +776,7 @@ vine==5.1.0
     #   amqp
     #   celery
     #   kombu
-virtualenv==21.5.1
+virtualenv==21.6.0
     # via
     #   -r requirements/validation.txt
     #   tox
