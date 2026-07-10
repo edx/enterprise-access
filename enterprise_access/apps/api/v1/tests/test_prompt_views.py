@@ -15,10 +15,12 @@ from django.core.cache import cache as django_cache
 from django.test import TestCase, override_settings
 from edx_rest_framework_extensions.auth.jwt.authentication import JwtAuthentication
 from rest_framework import permissions, status
+from rest_framework.response import Response
 from rest_framework.reverse import reverse
 from rest_framework.test import APIClient
 from rest_framework.throttling import ScopedRateThrottle
 
+from enterprise_access.apps.api import serializers as api_serializers
 from enterprise_access.apps.api.v1.views.prompt import BasePromptViewSet, LearnerPathwaysViewSet, PromptRequestException
 from enterprise_access.apps.core.constants import LEARNER_PATHWAYS_LEARNER_ROLE, SYSTEM_ENTERPRISE_LEARNER_ROLE
 from enterprise_access.apps.core.models import EnterpriseAccessFeatureRole, EnterpriseAccessRoleAssignment
@@ -37,13 +39,21 @@ from test_utils import APITest
 PATCH_PROMPTS_API = 'enterprise_access.apps.api.v1.views.prompt.prompts_api'
 PATCH_GET_REQUEST_ID = 'enterprise_access.apps.api.v1.views.prompt.get_request_id'
 PATCH_UUID4 = 'enterprise_access.apps.api.v1.views.prompt.uuid_module.uuid4'
+PATCH_XPERT_CLIENT = 'enterprise_access.apps.prompts.api.XpertAPIClient'
 
 _LEARNING_INTENT_URL_NAME = 'api:v1:learner-pathways-learning-intent'
+_RECOMMENDATION_FEEDBACK_URL_NAME = 'api:v1:learner-pathways-recommendation-feedback'
 
 _VALID_LEARNING_INTENT_PAYLOAD = {
     'selected_goals': 'data science',
     'free_text': 'I want to become a data scientist',
     'known_context': 'currently a software engineer',
+}
+
+_VALID_RECOMMENDATION_FEEDBACK_PAYLOAD = {
+    'selected_career': 'Data Scientist',
+    'course_keys': ['course-v1:edX+DS101+2024'],
+    'learner_profile': {'skills': ['python', 'statistics']},
 }
 
 
@@ -72,6 +82,48 @@ class TestPromptRequestException(TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Shared workflow delegation tests
+# ---------------------------------------------------------------------------
+
+class TestPromptWorkflowDelegation(APITest):
+    """Assert each action delegates to the shared _execute_prompt_workflow helper with its own configuration."""
+
+    def setUp(self):
+        super().setUp()
+        self.addCleanup(django_cache.clear)
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE,
+            'context': str(uuid.uuid4()),
+        }])
+
+    @mock.patch.object(LearnerPathwaysViewSet, '_execute_prompt_workflow')
+    def test_learning_intent_delegates_with_expected_configuration(self, mock_execute):
+        mock_execute.return_value = Response(status=status.HTTP_200_OK)
+
+        self.client.post(reverse(_LEARNING_INTENT_URL_NAME), data=_VALID_LEARNING_INTENT_PAYLOAD, format='json')
+
+        assert mock_execute.call_count == 1
+        _, kwargs = mock_execute.call_args
+        assert kwargs['request_serializer_class'] is api_serializers.LearningIntentRequestSerializer
+        assert kwargs['response_serializer_class'] is api_serializers.LearningIntentResponseSerializer
+        assert kwargs['prompt_type'] == PromptType.LEARNER_INTENT
+
+    @mock.patch.object(LearnerPathwaysViewSet, '_execute_prompt_workflow')
+    def test_recommendation_feedback_delegates_with_expected_configuration(self, mock_execute):
+        mock_execute.return_value = Response(status=status.HTTP_200_OK)
+
+        self.client.post(
+            reverse(_RECOMMENDATION_FEEDBACK_URL_NAME), data=_VALID_RECOMMENDATION_FEEDBACK_PAYLOAD, format='json',
+        )
+
+        assert mock_execute.call_count == 1
+        _, kwargs = mock_execute.call_args
+        assert kwargs['request_serializer_class'] is api_serializers.RecommendationFeedbackRequestSerializer
+        assert kwargs['response_serializer_class'] is api_serializers.RecommendationFeedbackResponseSerializer
+        assert kwargs['prompt_type'] == PromptType.RECOMMENDATIONS_FEEDBACK
+
+
+# ---------------------------------------------------------------------------
 # Routing tests
 # ---------------------------------------------------------------------------
 
@@ -83,9 +135,21 @@ class TestLearnerPathwaysRouting(TestCase):
         assert 'learner-pathways' in url
         assert 'learning-intent' in url
 
+    def test_recommendation_feedback_url_reverses(self):
+        url = reverse(_RECOMMENDATION_FEEDBACK_URL_NAME)
+        assert 'learner-pathways' in url
+        assert 'recommendation-feedback' in url
+
     def test_learning_intent_post_accepted(self):
         client = APIClient()
         url = reverse(_LEARNING_INTENT_URL_NAME)
+        response = client.post(url, data={}, format='json')
+        # Unauthenticated — 401 or 403, but NOT 405.
+        assert response.status_code != status.HTTP_405_METHOD_NOT_ALLOWED
+
+    def test_recommendation_feedback_post_accepted(self):
+        client = APIClient()
+        url = reverse(_RECOMMENDATION_FEEDBACK_URL_NAME)
         response = client.post(url, data={}, format='json')
         # Unauthenticated — 401 or 403, but NOT 405.
         assert response.status_code != status.HTTP_405_METHOD_NOT_ALLOWED
@@ -97,6 +161,23 @@ class TestLearnerPathwaysRouting(TestCase):
         client.force_authenticate(user=user)
         response = client.get(url)
         assert response.status_code == status.HTTP_405_METHOD_NOT_ALLOWED
+
+    def test_recommendation_feedback_get_rejected(self):
+        url = reverse(_RECOMMENDATION_FEEDBACK_URL_NAME)
+        client = APIClient()
+        user = UserFactory(is_active=True)
+        client.force_authenticate(user=user)
+        response = client.get(url)
+        assert response.status_code == status.HTTP_405_METHOD_NOT_ALLOWED
+
+    def test_viewset_registered_once(self):
+        li_url = reverse(_LEARNING_INTENT_URL_NAME)
+        rf_url = reverse(_RECOMMENDATION_FEEDBACK_URL_NAME)
+        assert li_url != rf_url
+        assert 'learning-intent' in li_url
+        assert 'recommendation-feedback' not in li_url
+        assert 'recommendation-feedback' in rf_url
+        assert 'learning-intent' not in rf_url
 
 
 # ---------------------------------------------------------------------------
@@ -114,17 +195,38 @@ class TestLearnerPathwaysRouteConfig(TestCase):
         ac = self._get_action('learning_intent').kwargs.get('authentication_classes', ())
         assert JwtAuthentication in ac
 
+    def test_recommendation_feedback_authentication_classes(self):
+        ac = self._get_action('recommendation_feedback').kwargs.get('authentication_classes', ())
+        assert JwtAuthentication in ac
+
     def test_learning_intent_is_authenticated_permission(self):
         pc = self._get_action('learning_intent').kwargs.get('permission_classes', ())
+        assert permissions.IsAuthenticated in pc
+
+    def test_recommendation_feedback_is_authenticated_permission(self):
+        pc = self._get_action('recommendation_feedback').kwargs.get('permission_classes', ())
         assert permissions.IsAuthenticated in pc
 
     def test_learning_intent_throttle_class(self):
         tc = self._get_action('learning_intent').kwargs.get('throttle_classes', ())
         assert ScopedRateThrottle in tc
 
+    def test_recommendation_feedback_throttle_class(self):
+        tc = self._get_action('recommendation_feedback').kwargs.get('throttle_classes', ())
+        assert ScopedRateThrottle in tc
+
     def test_learning_intent_throttle_scope(self):
         scope = self._get_action('learning_intent').kwargs.get('throttle_scope')
         assert scope == 'learner_pathways_learning_intent'
+
+    def test_recommendation_feedback_throttle_scope(self):
+        scope = self._get_action('recommendation_feedback').kwargs.get('throttle_scope')
+        assert scope == 'learner_pathways_recommendation_feedback'
+
+    def test_throttle_scopes_are_distinct(self):
+        li_scope = self._get_action('learning_intent').kwargs.get('throttle_scope')
+        rf_scope = self._get_action('recommendation_feedback').kwargs.get('throttle_scope')
+        assert li_scope != rf_scope
 
     def test_no_throttle_on_base_prompt_viewset(self):
         # throttle_classes must not be explicitly defined on BasePromptViewSet itself
@@ -144,7 +246,7 @@ class TestLearnerPathwaysRouteConfig(TestCase):
 
 @ddt.ddt
 class TestLearnerPathwaysAuthorization(APITest):
-    """Authorization tests for the learning-intent endpoint."""
+    """Authorization tests for both learner-pathways endpoints."""
 
     @classmethod
     def setUpTestData(cls):
@@ -152,77 +254,80 @@ class TestLearnerPathwaysAuthorization(APITest):
         cls.learning_intent_prompt = XpertLearnerPathwaysSystemPromptFactory(
             prompt_type=PromptType.LEARNER_INTENT,
         )
+        cls.recommendation_feedback_prompt = XpertLearnerPathwaysSystemPromptFactory(
+            prompt_type=PromptType.RECOMMENDATIONS_FEEDBACK,
+        )
 
     def setUp(self):
         super().setUp()
         self.addCleanup(django_cache.clear)
 
-    def test_unauthenticated_caller_is_rejected(self):
+    @ddt.data(_LEARNING_INTENT_URL_NAME, _RECOMMENDATION_FEEDBACK_URL_NAME)
+    def test_unauthenticated_caller_is_rejected(self, url_name):
         self.client.logout()
         self.client.cookies.clear()
 
-        response = self.client.post(
-            reverse(_LEARNING_INTENT_URL_NAME),
-            data={},
-            format='json',
-        )
+        response = self.client.post(reverse(url_name), data={}, format='json')
 
         assert response.status_code in (
             status.HTTP_401_UNAUTHORIZED,
             status.HTTP_403_FORBIDDEN,
         )
 
-    @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
-    def test_enterprise_learner_is_allowed(self, mock_client_class):
+    @ddt.data(
+        (_LEARNING_INTENT_URL_NAME, _VALID_LEARNING_INTENT_PAYLOAD),
+        (_RECOMMENDATION_FEEDBACK_URL_NAME, _VALID_RECOMMENDATION_FEEDBACK_PAYLOAD),
+    )
+    @ddt.unpack
+    @mock.patch(PATCH_XPERT_CLIENT)
+    def test_enterprise_learner_is_allowed(self, url_name, payload, mock_client_class):
         mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
             role='assistant',
-            content='{"result":"ok"}',
+            content='{"result":"ok","reasons":{}}',
         )
-
         self.set_jwt_cookie([{
             'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE,
             'context': str(uuid.uuid4()),
         }])
 
-        response = self.client.post(
-            reverse(_LEARNING_INTENT_URL_NAME),
-            data=_VALID_LEARNING_INTENT_PAYLOAD,
-            format='json',
-        )
+        response = self.client.post(reverse(url_name), data=payload, format='json')
 
         assert response.status_code == status.HTTP_200_OK
 
-    @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
-    def test_xpert_not_called_when_auth_fails(self, mock_client_class):
+    @ddt.data(_LEARNING_INTENT_URL_NAME, _RECOMMENDATION_FEEDBACK_URL_NAME)
+    @mock.patch(PATCH_XPERT_CLIENT)
+    def test_xpert_not_called_when_auth_fails(self, url_name, mock_client_class):
         self.set_jwt_cookie([])
 
-        self.client.post(
-            reverse(_LEARNING_INTENT_URL_NAME),
-            data={},
-            format='json',
-        )
+        self.client.post(reverse(url_name), data={}, format='json')
 
         mock_client_class.return_value.send_message.assert_not_called()
 
-    @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
-    def test_authenticated_non_enterprise_learner_is_rejected(self, mock_client_class):
+    @ddt.data(
+        (_LEARNING_INTENT_URL_NAME, _VALID_LEARNING_INTENT_PAYLOAD),
+        (_RECOMMENDATION_FEEDBACK_URL_NAME, _VALID_RECOMMENDATION_FEEDBACK_PAYLOAD),
+    )
+    @ddt.unpack
+    @mock.patch(PATCH_XPERT_CLIENT)
+    def test_authenticated_non_enterprise_learner_is_rejected(self, url_name, payload, mock_client_class):
         user = UserFactory(is_active=True)
         self.client.force_authenticate(user=user)
 
-        response = self.client.post(
-            reverse(_LEARNING_INTENT_URL_NAME),
-            data=_VALID_LEARNING_INTENT_PAYLOAD,
-            format='json',
-        )
+        response = self.client.post(reverse(url_name), data=payload, format='json')
 
         assert response.status_code == status.HTTP_403_FORBIDDEN
         mock_client_class.return_value.send_message.assert_not_called()
 
-    @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
-    def test_explicit_db_role_assignment_is_allowed(self, mock_client_class):
+    @ddt.data(
+        (_LEARNING_INTENT_URL_NAME, _VALID_LEARNING_INTENT_PAYLOAD),
+        (_RECOMMENDATION_FEEDBACK_URL_NAME, _VALID_RECOMMENDATION_FEEDBACK_PAYLOAD),
+    )
+    @ddt.unpack
+    @mock.patch(PATCH_XPERT_CLIENT)
+    def test_explicit_db_role_assignment_is_allowed(self, url_name, payload, mock_client_class):
         mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
             role='assistant',
-            content='{"result":"ok"}',
+            content='{"result":"ok","reasons":{}}',
         )
 
         user = UserFactory(is_active=True)
@@ -234,11 +339,7 @@ class TestLearnerPathwaysAuthorization(APITest):
         )
         self.client.force_authenticate(user=user)
 
-        response = self.client.post(
-            reverse(_LEARNING_INTENT_URL_NAME),
-            data=_VALID_LEARNING_INTENT_PAYLOAD,
-            format='json',
-        )
+        response = self.client.post(reverse(url_name), data=payload, format='json')
 
         assert response.status_code == status.HTTP_200_OK
 
@@ -250,17 +351,21 @@ class TestLearnerPathwaysAuthorization(APITest):
 @override_settings(REST_FRAMEWORK={
     'DEFAULT_THROTTLE_RATES': {
         'learner_pathways_learning_intent': '2/minute',
+        'learner_pathways_recommendation_feedback': '2/minute',
     },
 })
 @ddt.ddt
 class TestLearnerPathwaysThrottle(APITest):
-    """Throttle tests for the learning-intent endpoint."""
+    """Throttle tests for learner-pathways endpoints."""
 
     @classmethod
     def setUpTestData(cls):
         super().setUpTestData()
         cls.learning_intent_prompt = XpertLearnerPathwaysSystemPromptFactory(
             prompt_type=PromptType.LEARNER_INTENT,
+        )
+        cls.recommendation_feedback_prompt = XpertLearnerPathwaysSystemPromptFactory(
+            prompt_type=PromptType.RECOMMENDATIONS_FEEDBACK,
         )
 
     def setUp(self):
@@ -275,10 +380,15 @@ class TestLearnerPathwaysThrottle(APITest):
         rates = django_settings.REST_FRAMEWORK.get('DEFAULT_THROTTLE_RATES', {})
         assert 'learner_pathways_learning_intent' in rates
 
+    def test_recommendation_feedback_scope_in_default_throttle_rates(self):
+        rates = django_settings.REST_FRAMEWORK.get('DEFAULT_THROTTLE_RATES', {})
+        assert 'learner_pathways_recommendation_feedback' in rates
+
     @mock.patch.object(ScopedRateThrottle, 'THROTTLE_RATES', {
         'learner_pathways_learning_intent': '2/minute',
+        'learner_pathways_recommendation_feedback': '2/minute',
     })
-    @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
+    @mock.patch(PATCH_XPERT_CLIENT)
     def test_learning_intent_throttled_after_rate_exceeded(self, mock_client_class):
         mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
             role='assistant', content='{"r":1}',
@@ -289,6 +399,50 @@ class TestLearnerPathwaysThrottle(APITest):
             assert resp.status_code == status.HTTP_200_OK
         resp = self.client.post(url, data=_VALID_LEARNING_INTENT_PAYLOAD, format='json')
         assert resp.status_code == status.HTTP_429_TOO_MANY_REQUESTS
+
+    @mock.patch.object(ScopedRateThrottle, 'THROTTLE_RATES', {
+        'learner_pathways_learning_intent': '2/minute',
+        'learner_pathways_recommendation_feedback': '2/minute',
+    })
+    @mock.patch(PATCH_XPERT_CLIENT)
+    def test_recommendation_feedback_throttled_after_rate_exceeded(self, mock_client_class):
+        mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
+            role='assistant', content='{"reasons":{}}',
+        )
+        url = reverse(_RECOMMENDATION_FEEDBACK_URL_NAME)
+        for _ in range(2):
+            resp = self.client.post(url, data=_VALID_RECOMMENDATION_FEEDBACK_PAYLOAD, format='json')
+            assert resp.status_code == status.HTTP_200_OK
+        resp = self.client.post(url, data=_VALID_RECOMMENDATION_FEEDBACK_PAYLOAD, format='json')
+        assert resp.status_code == status.HTTP_429_TOO_MANY_REQUESTS
+
+    @mock.patch(PATCH_XPERT_CLIENT)
+    def test_learning_intent_counter_does_not_consume_recommendation_feedback_scope(self, mock_client_class):
+        mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
+            role='assistant', content='{"reasons":{}}',
+        )
+        li_url = reverse(_LEARNING_INTENT_URL_NAME)
+        rf_url = reverse(_RECOMMENDATION_FEEDBACK_URL_NAME)
+
+        for _ in range(3):
+            self.client.post(li_url, data=_VALID_LEARNING_INTENT_PAYLOAD, format='json')
+
+        resp = self.client.post(rf_url, data=_VALID_RECOMMENDATION_FEEDBACK_PAYLOAD, format='json')
+        assert resp.status_code == status.HTTP_200_OK
+
+    @mock.patch(PATCH_XPERT_CLIENT)
+    def test_recommendation_feedback_counter_does_not_consume_learning_intent_scope(self, mock_client_class):
+        mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
+            role='assistant', content='{"r":1}',
+        )
+        li_url = reverse(_LEARNING_INTENT_URL_NAME)
+        rf_url = reverse(_RECOMMENDATION_FEEDBACK_URL_NAME)
+
+        for _ in range(3):
+            self.client.post(rf_url, data=_VALID_RECOMMENDATION_FEEDBACK_PAYLOAD, format='json')
+
+        resp = self.client.post(li_url, data=_VALID_LEARNING_INTENT_PAYLOAD, format='json')
+        assert resp.status_code == status.HTTP_200_OK
 
 
 # ---------------------------------------------------------------------------
@@ -317,7 +471,7 @@ class TestLearningIntentHappyPath(APITest):
         }])
         self.url = reverse(_LEARNING_INTENT_URL_NAME)
 
-    @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
+    @mock.patch(PATCH_XPERT_CLIENT)
     def test_http_200_with_valid_payload(self, mock_client_class):
         mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
             role='assistant',
@@ -326,7 +480,7 @@ class TestLearningIntentHappyPath(APITest):
         resp = self.client.post(self.url, data=_VALID_LEARNING_INTENT_PAYLOAD, format='json')
         assert resp.status_code == status.HTTP_200_OK
 
-    @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
+    @mock.patch(PATCH_XPERT_CLIENT)
     def test_correct_prompt_type_used(self, mock_client_class):
         with mock.patch.object(
             XpertLearnerPathwaysSystemPrompt, 'get_current'
@@ -343,7 +497,7 @@ class TestLearningIntentHappyPath(APITest):
                 prompt_type=PromptType.LEARNER_INTENT,
             )
 
-    @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
+    @mock.patch(PATCH_XPERT_CLIENT)
     def test_server_controlled_tags_passed(self, mock_client_class):
         mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
             role='assistant', content='{"r":1}',
@@ -353,7 +507,7 @@ class TestLearningIntentHappyPath(APITest):
         call_kwargs = mock_client_class.return_value.send_message.call_args.kwargs
         assert call_kwargs['tags'] == ['tag-a', 'tag-b']
 
-    @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
+    @mock.patch(PATCH_XPERT_CLIENT)
     def test_xpert_called_exactly_once(self, mock_client_class):
         mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
             role='assistant', content='{"r":1}',
@@ -361,7 +515,7 @@ class TestLearningIntentHappyPath(APITest):
         self.client.post(self.url, data=_VALID_LEARNING_INTENT_PAYLOAD, format='json')
         assert mock_client_class.return_value.send_message.call_count == 1
 
-    @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
+    @mock.patch(PATCH_XPERT_CLIENT)
     def test_full_parsed_json_returned(self, mock_client_class):
         mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
             role='assistant',
@@ -373,7 +527,7 @@ class TestLearningIntentHappyPath(APITest):
         assert body['skills_required'] == ['python', 'ml']
         assert body['condensed_algolia_query'] == 'data'
 
-    @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
+    @mock.patch(PATCH_XPERT_CLIENT)
     def test_validated_data_encoded_as_user_message(self, mock_client_class):
         mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
             role='assistant', content='{"r":1}',
@@ -387,7 +541,7 @@ class TestLearningIntentHappyPath(APITest):
         parsed = json.loads(messages[0].content)
         assert parsed['selected_goals'] == _VALID_LEARNING_INTENT_PAYLOAD['selected_goals']
 
-    @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
+    @mock.patch(PATCH_XPERT_CLIENT)
     def test_conversation_id_has_prefix(self, mock_client_class):
         mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
             role='assistant', content='{"r":1}',
@@ -396,7 +550,7 @@ class TestLearningIntentHappyPath(APITest):
         call_kwargs = mock_client_class.return_value.send_message.call_args.kwargs
         assert call_kwargs['conversation_id'].startswith('enterprise-access:')
 
-    @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
+    @mock.patch(PATCH_XPERT_CLIENT)
     def test_role_field_not_returned(self, mock_client_class):
         mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
             role='assistant',
@@ -407,17 +561,19 @@ class TestLearningIntentHappyPath(APITest):
 
 
 # ---------------------------------------------------------------------------
-# Response passthrough tests
+# Happy path tests — recommendation feedback
 # ---------------------------------------------------------------------------
 
-@ddt.ddt
-class TestLearnerPathwaysResponsePassthrough(APITest):
-    """Assert Xpert response JSON is validated and normalized to the declared serializer fields."""
+class TestRecommendationFeedbackHappyPath(APITest):
+    """Full happy-path tests for the recommendation-feedback action."""
 
     @classmethod
     def setUpTestData(cls):
         super().setUpTestData()
-        cls.learning_intent_prompt = XpertLearnerPathwaysSystemPromptFactory(
+        cls.prompt = XpertLearnerPathwaysSystemPromptFactory(
+            prompt_type=PromptType.RECOMMENDATIONS_FEEDBACK,
+        )
+        cls.other_prompt = XpertLearnerPathwaysSystemPromptFactory(
             prompt_type=PromptType.LEARNER_INTENT,
         )
 
@@ -428,8 +584,121 @@ class TestLearnerPathwaysResponsePassthrough(APITest):
             'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE,
             'context': str(uuid.uuid4()),
         }])
+        self.url = reverse(_RECOMMENDATION_FEEDBACK_URL_NAME)
 
-    @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
+    @mock.patch(PATCH_XPERT_CLIENT)
+    def test_http_200_with_valid_payload(self, mock_client_class):
+        mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
+            role='assistant',
+            content='{"reasons":{"course-v1:edX+DS101":"Aligns with career goal"}}',
+        )
+        resp = self.client.post(self.url, data=_VALID_RECOMMENDATION_FEEDBACK_PAYLOAD, format='json')
+        assert resp.status_code == status.HTTP_200_OK
+
+    @mock.patch(PATCH_XPERT_CLIENT)
+    def test_correct_prompt_type_used(self, mock_client_class):
+        with mock.patch.object(
+            XpertLearnerPathwaysSystemPrompt, 'get_current'
+        ) as mock_get_current:
+            mock_prompt = mock.Mock()
+            mock_prompt.system_prompt = 'Be helpful.'
+            mock_prompt.output_schema = None
+            mock_get_current.return_value = mock_prompt
+            mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
+                role='assistant', content='{"reasons":{}}',
+            )
+            self.client.post(self.url, data=_VALID_RECOMMENDATION_FEEDBACK_PAYLOAD, format='json')
+            mock_get_current.assert_called_once_with(
+                prompt_type=PromptType.RECOMMENDATIONS_FEEDBACK,
+            )
+
+    @mock.patch(PATCH_XPERT_CLIENT)
+    def test_server_controlled_tags_passed(self, mock_client_class):
+        mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
+            role='assistant', content='{"reasons":{}}',
+        )
+        with override_settings(XPERT_LEARNER_PATHWAYS_RAG_TAGS=['tag-a', 'tag-b']):
+            self.client.post(self.url, data=_VALID_RECOMMENDATION_FEEDBACK_PAYLOAD, format='json')
+        call_kwargs = mock_client_class.return_value.send_message.call_args.kwargs
+        assert call_kwargs['tags'] == ['tag-a', 'tag-b']
+
+    @mock.patch(PATCH_XPERT_CLIENT)
+    def test_xpert_called_exactly_once(self, mock_client_class):
+        mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
+            role='assistant', content='{"reasons":{}}',
+        )
+        self.client.post(self.url, data=_VALID_RECOMMENDATION_FEEDBACK_PAYLOAD, format='json')
+        assert mock_client_class.return_value.send_message.call_count == 1
+
+    @mock.patch(PATCH_XPERT_CLIENT)
+    def test_full_parsed_json_returned(self, mock_client_class):
+        mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
+            role='assistant',
+            content='{"reasons":{"course-v1:edX+DS101":"relevant"}}',
+        )
+        resp = self.client.post(self.url, data=_VALID_RECOMMENDATION_FEEDBACK_PAYLOAD, format='json')
+        assert resp.status_code == status.HTTP_200_OK
+        assert resp.json()['reasons'] == {'course-v1:edX+DS101': 'relevant'}
+
+    @mock.patch(PATCH_XPERT_CLIENT)
+    def test_validated_data_encoded_as_user_message(self, mock_client_class):
+        mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
+            role='assistant', content='{"reasons":{}}',
+        )
+        self.client.post(self.url, data=_VALID_RECOMMENDATION_FEEDBACK_PAYLOAD, format='json')
+        call_kwargs = mock_client_class.return_value.send_message.call_args.kwargs
+        messages = call_kwargs['messages']
+        assert len(messages) == 1
+        assert messages[0].role == 'user'
+        assert isinstance(messages[0].content, str)
+        parsed = json.loads(messages[0].content)
+        assert parsed['selected_career'] == _VALID_RECOMMENDATION_FEEDBACK_PAYLOAD['selected_career']
+
+    @mock.patch(PATCH_XPERT_CLIENT)
+    def test_conversation_id_has_prefix(self, mock_client_class):
+        mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
+            role='assistant', content='{"reasons":{}}',
+        )
+        self.client.post(self.url, data=_VALID_RECOMMENDATION_FEEDBACK_PAYLOAD, format='json')
+        call_kwargs = mock_client_class.return_value.send_message.call_args.kwargs
+        assert call_kwargs['conversation_id'].startswith('enterprise-access:')
+
+    @mock.patch(PATCH_XPERT_CLIENT)
+    def test_role_field_not_returned(self, mock_client_class):
+        mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
+            role='assistant',
+            content='{"reasons":{}}',
+        )
+        resp = self.client.post(self.url, data=_VALID_RECOMMENDATION_FEEDBACK_PAYLOAD, format='json')
+        assert 'role' not in resp.json()
+
+
+# ---------------------------------------------------------------------------
+# Response passthrough tests
+# ---------------------------------------------------------------------------
+
+class TestLearnerPathwaysResponsePassthrough(APITest):
+    """Assert Xpert response JSON is validated and normalized to the declared serializer fields."""
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        cls.learning_intent_prompt = XpertLearnerPathwaysSystemPromptFactory(
+            prompt_type=PromptType.LEARNER_INTENT,
+        )
+        cls.recommendation_feedback_prompt = XpertLearnerPathwaysSystemPromptFactory(
+            prompt_type=PromptType.RECOMMENDATIONS_FEEDBACK,
+        )
+
+    def setUp(self):
+        super().setUp()
+        self.addCleanup(django_cache.clear)
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE,
+            'context': str(uuid.uuid4()),
+        }])
+
+    @mock.patch(PATCH_XPERT_CLIENT)
     def test_extra_top_level_fields_dropped_by_serializer(self, mock_client_class):
         mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
             role='assistant',
@@ -445,7 +714,23 @@ class TestLearnerPathwaysResponsePassthrough(APITest):
         assert resp.status_code == status.HTTP_200_OK
         assert 'extra_field' not in resp.json()
 
-    @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
+    @mock.patch(PATCH_XPERT_CLIENT)
+    def test_recommendation_feedback_extra_top_level_fields_dropped_by_serializer(self, mock_client_class):
+        mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
+            role='assistant',
+            content='{"reasons":{"course-v1:edX+DS101":"relevant"},"extra_field":"dropped"}',
+        )
+
+        resp = self.client.post(
+            reverse(_RECOMMENDATION_FEEDBACK_URL_NAME),
+            data=_VALID_RECOMMENDATION_FEEDBACK_PAYLOAD,
+            format='json',
+        )
+
+        assert resp.status_code == status.HTTP_200_OK
+        assert 'extra_field' not in resp.json()
+
+    @mock.patch(PATCH_XPERT_CLIENT)
     def test_list_response_returns_500(self, mock_client_class):
         mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
             role='assistant',
@@ -460,7 +745,22 @@ class TestLearnerPathwaysResponsePassthrough(APITest):
 
         assert resp.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
 
-    @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
+    @mock.patch(PATCH_XPERT_CLIENT)
+    def test_recommendation_feedback_list_response_returns_500(self, mock_client_class):
+        mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
+            role='assistant',
+            content='[1,2,3]',
+        )
+
+        resp = self.client.post(
+            reverse(_RECOMMENDATION_FEEDBACK_URL_NAME),
+            data=_VALID_RECOMMENDATION_FEEDBACK_PAYLOAD,
+            format='json',
+        )
+
+        assert resp.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+
+    @mock.patch(PATCH_XPERT_CLIENT)
     def test_invalid_field_type_in_xpert_response_returns_500(self, mock_client_class):
         mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
             role='assistant',
@@ -470,6 +770,21 @@ class TestLearnerPathwaysResponsePassthrough(APITest):
         resp = self.client.post(
             reverse(_LEARNING_INTENT_URL_NAME),
             data=_VALID_LEARNING_INTENT_PAYLOAD,
+            format='json',
+        )
+
+        assert resp.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+
+    @mock.patch(PATCH_XPERT_CLIENT)
+    def test_recommendation_feedback_invalid_field_type_in_xpert_response_returns_500(self, mock_client_class):
+        mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
+            role='assistant',
+            content='{"reasons":"not-a-dict"}',
+        )
+
+        resp = self.client.post(
+            reverse(_RECOMMENDATION_FEEDBACK_URL_NAME),
+            data=_VALID_RECOMMENDATION_FEEDBACK_PAYLOAD,
             format='json',
         )
 
@@ -488,7 +803,20 @@ class TestLearnerPathwaysResponsePassthrough(APITest):
 
         assert resp.status_code == status.HTTP_400_BAD_REQUEST
 
-    @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
+    def test_recommendation_feedback_invalid_client_request_returns_400(self):
+        resp = self.client.post(
+            reverse(_RECOMMENDATION_FEEDBACK_URL_NAME),
+            data={
+                'selected_career': 'Data Scientist',
+                'course_keys': ['course-v1:edX+DS101+2024'],
+                # 'learner_profile' deliberately omitted.
+            },
+            format='json',
+        )
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+
+    @mock.patch(PATCH_XPERT_CLIENT)
     def test_nested_values_in_declared_fields_preserved(self, mock_client_class):
         mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
             role='assistant',
@@ -505,6 +833,22 @@ class TestLearnerPathwaysResponsePassthrough(APITest):
         assert resp.json()['skills_required'] == ['a', 'b']
         assert resp.json()['skills_preferred'] == ['c']
 
+    @mock.patch(PATCH_XPERT_CLIENT)
+    def test_recommendation_feedback_nested_values_in_declared_fields_preserved(self, mock_client_class):
+        mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
+            role='assistant',
+            content='{"reasons":{"course-a":"reason-a","course-b":"reason-b"}}',
+        )
+
+        resp = self.client.post(
+            reverse(_RECOMMENDATION_FEEDBACK_URL_NAME),
+            data=_VALID_RECOMMENDATION_FEEDBACK_PAYLOAD,
+            format='json',
+        )
+
+        assert resp.status_code == status.HTTP_200_OK
+        assert resp.json()['reasons'] == {'course-a': 'reason-a', 'course-b': 'reason-b'}
+
 
 # ---------------------------------------------------------------------------
 # Failure tests
@@ -512,13 +856,16 @@ class TestLearnerPathwaysResponsePassthrough(APITest):
 
 @ddt.ddt
 class TestLearnerPathwaysFailures(APITest):
-    """500-series failure paths for the learning-intent endpoint."""
+    """500-series failure paths for both learner-pathways endpoints."""
 
     @classmethod
     def setUpTestData(cls):
         super().setUpTestData()
         cls.learning_intent_prompt = XpertLearnerPathwaysSystemPromptFactory(
             prompt_type=PromptType.LEARNER_INTENT,
+        )
+        cls.recommendation_feedback_prompt = XpertLearnerPathwaysSystemPromptFactory(
+            prompt_type=PromptType.RECOMMENDATIONS_FEEDBACK,
         )
 
     def setUp(self):
@@ -529,17 +876,18 @@ class TestLearnerPathwaysFailures(APITest):
             'context': str(uuid.uuid4()),
         }])
 
-    def test_missing_prompt_returns_500(self):
+    @ddt.data(
+        (_LEARNING_INTENT_URL_NAME, _VALID_LEARNING_INTENT_PAYLOAD),
+        (_RECOMMENDATION_FEEDBACK_URL_NAME, _VALID_RECOMMENDATION_FEEDBACK_PAYLOAD),
+    )
+    @ddt.unpack
+    def test_missing_prompt_returns_500(self, url_name, payload):
         with mock.patch.object(
                 XpertLearnerPathwaysSystemPrompt,
                 'get_current',
                 return_value=None,
         ):
-            resp = self.client.post(
-                reverse(_LEARNING_INTENT_URL_NAME),
-                data=_VALID_LEARNING_INTENT_PAYLOAD,
-                format='json',
-            )
+            resp = self.client.post(reverse(url_name), data=payload, format='json')
 
         assert resp.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
 
@@ -548,9 +896,41 @@ class TestLearnerPathwaysFailures(APITest):
         XpertAPIRequestError,
         XpertAPIResponseError,
     )
-    @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
+    @mock.patch(PATCH_XPERT_CLIENT)
     def test_xpert_error_returns_500(self, error_class, mock_client_class):
         mock_client_class.return_value.send_message.side_effect = error_class('xpert error')
+        resp = self.client.post(
+            reverse(_LEARNING_INTENT_URL_NAME),
+            data=_VALID_LEARNING_INTENT_PAYLOAD,
+            format='json',
+        )
+        assert resp.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+
+    @ddt.data(
+        XpertAPIConfigurationError,
+        XpertAPIRequestError,
+        XpertAPIResponseError,
+    )
+    @mock.patch(PATCH_XPERT_CLIENT)
+    def test_recommendation_feedback_xpert_error_returns_500(self, error_class, mock_client_class):
+        mock_client_class.return_value.send_message.side_effect = error_class('xpert error')
+        resp = self.client.post(
+            reverse(_RECOMMENDATION_FEEDBACK_URL_NAME),
+            data=_VALID_RECOMMENDATION_FEEDBACK_PAYLOAD,
+            format='json',
+        )
+        assert resp.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+
+    @ddt.data(
+        'not valid json',
+        '```json\n{"key":"value"}\n```',
+        '{"unterminated": true',
+    )
+    @mock.patch(PATCH_XPERT_CLIENT)
+    def test_invalid_json_content_returns_500(self, bad_content, mock_client_class):
+        mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
+            role='assistant', content=bad_content,
+        )
         resp = self.client.post(
             reverse(_LEARNING_INTENT_URL_NAME),
             data=_VALID_LEARNING_INTENT_PAYLOAD,
@@ -563,19 +943,19 @@ class TestLearnerPathwaysFailures(APITest):
         '```json\n{"key":"value"}\n```',
         '{"unterminated": true',
     )
-    @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
-    def test_invalid_json_content_returns_500(self, bad_content, mock_client_class):
+    @mock.patch(PATCH_XPERT_CLIENT)
+    def test_recommendation_feedback_invalid_json_content_returns_500(self, bad_content, mock_client_class):
         mock_client_class.return_value.send_message.return_value = XpertResponseMessage(
             role='assistant', content=bad_content,
         )
         resp = self.client.post(
-            reverse(_LEARNING_INTENT_URL_NAME),
-            data=_VALID_LEARNING_INTENT_PAYLOAD,
+            reverse(_RECOMMENDATION_FEEDBACK_URL_NAME),
+            data=_VALID_RECOMMENDATION_FEEDBACK_PAYLOAD,
             format='json',
         )
         assert resp.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
 
-    @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
+    @mock.patch(PATCH_XPERT_CLIENT)
     def test_no_second_xpert_call_on_failure(self, mock_client_class):
         mock_client_class.return_value.send_message.side_effect = XpertAPIRequestError('fail')
         self.client.post(
@@ -585,7 +965,7 @@ class TestLearnerPathwaysFailures(APITest):
         )
         assert mock_client_class.return_value.send_message.call_count == 1
 
-    @mock.patch('enterprise_access.apps.prompts.api.XpertAPIClient')
+    @mock.patch(PATCH_XPERT_CLIENT)
     def test_no_fallback_object_returned(self, mock_client_class):
         mock_client_class.return_value.send_message.side_effect = XpertAPIRequestError('fail')
         resp = self.client.post(

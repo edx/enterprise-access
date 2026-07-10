@@ -51,6 +51,7 @@ STRIPE_EVENT_SUMMARY_READ_PERMISSION = 'stripe_event_summary.has_read_access'
 
 LEARNER_PATHWAYS_LEARNER_ROLE = 'enterprise_access_learner_pathways_learner'
 LEARNER_PATHWAYS_LEARNING_INTENT_PERMISSION = 'learner_pathways.has_learning_intent_access'
+LEARNER_PATHWAYS_RECOMMENDATION_FEEDBACK_PERMISSION = 'learner_pathways.has_recommendation_feedback_access'
 
 ALL_ACCESS_CONTEXT = '*'
 

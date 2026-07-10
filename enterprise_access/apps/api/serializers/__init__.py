@@ -37,7 +37,12 @@ from .customer_billing import (
     TransactionResponseSerializer,
     TransactionsListResponseSerializer
 )
-from .learner_pathways import LearningIntentRequestSerializer, LearningIntentResponseSerializer
+from .learner_pathways import (
+    LearningIntentRequestSerializer,
+    LearningIntentResponseSerializer,
+    RecommendationFeedbackRequestSerializer,
+    RecommendationFeedbackResponseSerializer
+)
 from .provisioning import (
     ProvisioningRequestSerializer,
     ProvisioningResponseSerializer,
