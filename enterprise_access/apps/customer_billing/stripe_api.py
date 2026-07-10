@@ -7,10 +7,8 @@ from functools import wraps
 from typing import Optional
 
 import stripe
-from django.apps import apps
 from django.conf import settings
 from edx_django_utils.cache import TieredCache
-from requests.exceptions import HTTPError
 
 logger = logging.getLogger(__name__)
 
@@ -30,19 +28,6 @@ def create_subscription_checkout_session(
     """
     stripe.api_key = settings.STRIPE_API_KEY
     enterprise_catalog = None
-    ssp_product_slug = input_data.get('ssp_product_slug')
-    if enterprise_catalog_metadata is None and ssp_product_slug:
-        SspProduct = apps.get_model('customer_billing', 'SspProduct')
-        try:
-            ssp_product = SspProduct.objects.get(slug=ssp_product_slug, is_active=True)
-            enterprise_catalog_metadata = ssp_product.enterprise_catalog_metadata
-        except (SspProduct.DoesNotExist, HTTPError, TypeError, ValueError) as exc:
-            logger.warning(
-                'Could not resolve enterprise_catalog metadata for ssp_product_slug=%s: %s',
-                ssp_product_slug,
-                exc,
-            )
-
     if enterprise_catalog_metadata is not None and isinstance(enterprise_catalog_metadata, (dict, list)):
         enterprise_catalog = json.dumps(enterprise_catalog_metadata)
     elif enterprise_catalog_metadata is not None:

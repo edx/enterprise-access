@@ -109,55 +109,36 @@ class TestStripeCheckoutSession(StripeApiFunctionsTests):
 class TestCreateSubscriptionCheckoutSession(StripeApiFunctionsTests):
     """Tests for create_subscription_checkout_session customer vs customer_email selection."""
 
-    def setUp(self):
-        super().setUp()
-        self.ssp_product_slug = 'quarterly_license_plan'
-
     def _base_input(self, admin_email='admin@example.com'):
-        # Minimal inputs used by create_subscription_checkout_session
         return {
             'admin_email': admin_email,
             'company_name': 'Acme Co',
             'enterprise_slug': 'acme',
             'stripe_price_id': 'price_123',
             'quantity': 3,
-            'ssp_product_slug': self.ssp_product_slug,
         }
 
-    def _mock_ssp_product(self, enterprise_catalog_metadata):
-        """
-        Return a mock SspProduct model with the given enterprise_catalog_metadata.
-        """
-        ssp_product = mock.MagicMock(enterprise_catalog_metadata=enterprise_catalog_metadata)
-        mock_model = mock.MagicMock()
-        mock_model.DoesNotExist = type('DoesNotExist', (Exception,), {})
-        mock_model.objects.get.return_value = ssp_product
-        return mock_model
+    def _call(self, admin_email, enterprise_catalog_metadata, lms_user_id=1):
+        checkout_intent = mock.MagicMock()
+        checkout_intent.id = 'chk_123'
+        checkout_intent.uuid = 'uuid_123'
+        return create_subscription_checkout_session(
+            self._base_input(admin_email=admin_email),
+            lms_user_id=lms_user_id,
+            checkout_intent=checkout_intent,
+            enterprise_catalog_metadata=enterprise_catalog_metadata,
+        )
 
-    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.apps.get_model')
     @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.checkout.Session.create')
     @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Customer.search')
-    def test_sets_customer_email_when_no_existing_customer(
-        self,
-        mock_customer_search,
-        mock_session_create,
-        mock_get_model,
-    ):
+    def test_sets_customer_email_when_no_existing_customer(self, mock_customer_search, mock_session_create):
         """When no Stripe customer exists for admin_email, pass customer_email and not customer."""
         mock_customer_search.return_value = mock.MagicMock(data=[])
-        mock_get_model.return_value = self._mock_ssp_product(
-            {'catalog_query_id': 101, 'title': 'Open Courses'}
-        )
         mock_stripe_session = mock.Mock()
         mock_stripe_session.to_dict.return_value = {'id': 'cs_test_abc'}
         mock_session_create.return_value = mock_stripe_session
 
-        input_data = self._base_input(admin_email='new-admin@example.com')
-        checkout_intent = mock.MagicMock()
-        checkout_intent.id = 'chk_123'
-        checkout_intent.uuid = 'uuid_123'
-
-        create_subscription_checkout_session(input_data, lms_user_id=1, checkout_intent=checkout_intent)
+        self._call('new-admin@example.com', {'catalog_query_id': 101, 'title': 'Open Courses'})
 
         _, kwargs = mock_session_create.call_args
         self.assertEqual(kwargs.get('customer_email'), 'new-admin@example.com')
@@ -167,32 +148,17 @@ class TestCreateSubscriptionCheckoutSession(StripeApiFunctionsTests):
             kwargs['subscription_data']['metadata']['enterprise_catalog'],
             json.dumps({'catalog_query_id': 101, 'title': 'Open Courses'}),
         )
-        mock_get_model.assert_called_once_with('customer_billing', 'SspProduct')
 
-    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.apps.get_model')
     @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.checkout.Session.create')
     @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Customer.search')
-    def test_sets_customer_when_existing_customer_found(
-        self,
-        mock_customer_search,
-        mock_session_create,
-        mock_get_model,
-    ):
+    def test_sets_customer_when_existing_customer_found(self, mock_customer_search, mock_session_create):
         """When a Stripe customer exists for admin_email, pass customer and not customer_email."""
         mock_customer_search.return_value = mock.MagicMock(data=[{'id': 'cus_12345'}])
-        mock_get_model.return_value = self._mock_ssp_product(
-            {'catalog_query_id': 202, 'title': 'Open Courses'}
-        )
         mock_stripe_session = mock.Mock()
         mock_stripe_session.to_dict.return_value = {'id': 'cs_test_def'}
         mock_session_create.return_value = mock_stripe_session
 
-        input_data = self._base_input(admin_email='existing-admin@example.com')
-        checkout_intent = mock.MagicMock()
-        checkout_intent.id = 'chk_456'
-        checkout_intent.uuid = 'uuid_456'
-
-        create_subscription_checkout_session(input_data, lms_user_id=1, checkout_intent=checkout_intent)
+        self._call('existing-admin@example.com', {'catalog_query_id': 202, 'title': 'Open Courses'})
 
         _, kwargs = mock_session_create.call_args
         self.assertEqual(kwargs.get('customer'), 'cus_12345')
@@ -203,54 +169,30 @@ class TestCreateSubscriptionCheckoutSession(StripeApiFunctionsTests):
             json.dumps({'catalog_query_id': 202, 'title': 'Open Courses'}),
         )
 
-    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.apps.get_model')
     @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.checkout.Session.create')
     @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Customer.search')
-    def test_sets_none_enterprise_catalog_when_catalog_query_id_missing(
-        self,
-        mock_customer_search,
-        mock_session_create,
-        mock_get_model,
-    ):
-        """When enterprise_catalog resolves to None, omit it from Stripe metadata."""
+    def test_omits_enterprise_catalog_when_metadata_is_none(self, mock_customer_search, mock_session_create):
+        """When enterprise_catalog_metadata is None, omit enterprise_catalog from Stripe metadata."""
         mock_customer_search.return_value = mock.MagicMock(data=[])
-        mock_get_model.return_value = self._mock_ssp_product(None)
         mock_stripe_session = mock.Mock()
-        mock_stripe_session.to_dict.return_value = {'id': 'cs_test_missing_catalog'}
+        mock_stripe_session.to_dict.return_value = {'id': 'cs_test_none'}
         mock_session_create.return_value = mock_stripe_session
 
-        input_data = self._base_input(admin_email='missing-catalog@example.com')
-        checkout_intent = mock.MagicMock()
-        checkout_intent.id = 'chk_789'
-        checkout_intent.uuid = 'uuid_789'
-
-        create_subscription_checkout_session(input_data, lms_user_id=3, checkout_intent=checkout_intent)
+        self._call('missing-catalog@example.com', None)
 
         _, kwargs = mock_session_create.call_args
         self.assertNotIn('enterprise_catalog', kwargs['subscription_data']['metadata'])
 
-    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.apps.get_model')
     @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.checkout.Session.create')
     @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Customer.search')
-    def test_serializes_enterprise_catalog_list_values(
-        self,
-        mock_customer_search,
-        mock_session_create,
-        mock_get_model,
-    ):
+    def test_serializes_enterprise_catalog_list_values(self, mock_customer_search, mock_session_create):
         """Lists should be JSON-serialized before being attached to Stripe metadata."""
         mock_customer_search.return_value = mock.MagicMock(data=[])
-        mock_get_model.return_value = self._mock_ssp_product(['catalog', 303])
         mock_stripe_session = mock.Mock()
-        mock_stripe_session.to_dict.return_value = {'id': 'cs_test_list_catalog'}
+        mock_stripe_session.to_dict.return_value = {'id': 'cs_test_list'}
         mock_session_create.return_value = mock_stripe_session
 
-        input_data = self._base_input(admin_email='list-catalog@example.com')
-        checkout_intent = mock.MagicMock()
-        checkout_intent.id = 'chk_999'
-        checkout_intent.uuid = 'uuid_999'
-
-        create_subscription_checkout_session(input_data, lms_user_id=4, checkout_intent=checkout_intent)
+        self._call('list-catalog@example.com', ['catalog', 303])
 
         _, kwargs = mock_session_create.call_args
         self.assertEqual(
@@ -258,65 +200,19 @@ class TestCreateSubscriptionCheckoutSession(StripeApiFunctionsTests):
             json.dumps(['catalog', 303]),
         )
 
-    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.apps.get_model')
     @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.checkout.Session.create')
     @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Customer.search')
-    def test_stringifies_scalar_enterprise_catalog_values(
-        self,
-        mock_customer_search,
-        mock_session_create,
-        mock_get_model,
-    ):
+    def test_stringifies_scalar_enterprise_catalog_values(self, mock_customer_search, mock_session_create):
         """Scalar enterprise_catalog values should be coerced to strings before Stripe metadata."""
         mock_customer_search.return_value = mock.MagicMock(data=[])
-        mock_get_model.return_value = self._mock_ssp_product(404)
         mock_stripe_session = mock.Mock()
-        mock_stripe_session.to_dict.return_value = {'id': 'cs_test_scalar_catalog'}
+        mock_stripe_session.to_dict.return_value = {'id': 'cs_test_scalar'}
         mock_session_create.return_value = mock_stripe_session
 
-        input_data = self._base_input(admin_email='scalar-catalog@example.com')
-        checkout_intent = mock.MagicMock()
-        checkout_intent.id = 'chk_1000'
-        checkout_intent.uuid = 'uuid_1000'
-
-        create_subscription_checkout_session(input_data, lms_user_id=5, checkout_intent=checkout_intent)
+        self._call('scalar-catalog@example.com', 404)
 
         _, kwargs = mock_session_create.call_args
         self.assertEqual(kwargs['subscription_data']['metadata']['enterprise_catalog'], '404')
-
-    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.apps.get_model')
-    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.checkout.Session.create')
-    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Customer.search')
-    def test_logs_warning_when_ssp_product_lookup_fails(
-        self,
-        mock_customer_search,
-        mock_session_create,
-        mock_get_model,
-    ):
-        """Lookup failures should be swallowed, logged, and leave enterprise_catalog unset."""
-        mock_customer_search.return_value = mock.MagicMock(data=[])
-        mock_model = mock.MagicMock()
-        mock_model.DoesNotExist = type('DoesNotExist', (Exception,), {})
-        mock_model.objects.get.side_effect = mock_model.DoesNotExist('missing product')
-        mock_get_model.return_value = mock_model
-        mock_stripe_session = mock.Mock()
-        mock_stripe_session.to_dict.return_value = {'id': 'cs_test_lookup_failure'}
-        mock_session_create.return_value = mock_stripe_session
-
-        input_data = self._base_input(admin_email='lookup-failure@example.com')
-        checkout_intent = mock.MagicMock()
-        checkout_intent.id = 'chk_1001'
-        checkout_intent.uuid = 'uuid_1001'
-
-        with self.assertLogs('enterprise_access.apps.customer_billing.stripe_api', level='WARNING') as logs:
-            create_subscription_checkout_session(input_data, lms_user_id=5, checkout_intent=checkout_intent)
-
-        _, kwargs = mock_session_create.call_args
-        self.assertNotIn('enterprise_catalog', kwargs['subscription_data']['metadata'])
-        self.assertIn(
-            'Could not resolve enterprise_catalog metadata for ssp_product_slug=quarterly_license_plan',
-            logs.output[0],
-        )
 
 
 class TestStripePaymentIntent(StripeApiFunctionsTests):

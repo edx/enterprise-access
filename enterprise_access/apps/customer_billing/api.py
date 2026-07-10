@@ -471,7 +471,7 @@ def create_free_trial_checkout_session(
     enterprise_catalog_metadata = None
     try:
         enterprise_catalog_metadata = ssp_product_instance.enterprise_catalog_metadata
-    except (SspProduct.DoesNotExist, HTTPError, TypeError, ValueError) as exc:
+    except (HTTPError, ValueError) as exc:
         logger.warning(
             'Could not resolve enterprise_catalog metadata for ssp_product_slug=%s: %s',
             ssp_product_slug,
