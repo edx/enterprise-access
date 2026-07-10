@@ -468,10 +468,20 @@ def create_free_trial_checkout_session(
         raise CreateCheckoutSessionFailedConflict() from exc
 
     lms_user_id = user.lms_user_id
+    enterprise_catalog_metadata = None
+    try:
+        enterprise_catalog_metadata = ssp_product_instance.enterprise_catalog_metadata
+    except (HTTPError, ValueError) as exc:
+        logger.warning(
+            'Could not resolve enterprise_catalog metadata for ssp_product_slug=%s: %s',
+            ssp_product_slug,
+            exc,
+        )
     checkout_session = create_subscription_checkout_session(
         input_data={**input_data, 'ssp_product_slug': ssp_product_slug, 'stripe_price_id': stripe_price_id},
         lms_user_id=lms_user_id,
         checkout_intent=intent,
+        enterprise_catalog_metadata=enterprise_catalog_metadata,
     )
 
     intent.update_stripe_identifiers(

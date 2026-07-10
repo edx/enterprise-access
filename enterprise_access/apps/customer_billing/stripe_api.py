@@ -17,19 +17,21 @@ logger = logging.getLogger(__name__)
 stripe.api_key = settings.STRIPE_API_KEY
 
 
-def create_subscription_checkout_session(input_data, lms_user_id, checkout_intent) -> dict:
+def create_subscription_checkout_session(
+    input_data,
+    lms_user_id,
+    checkout_intent,
+    enterprise_catalog_metadata=None,
+) -> dict:
     """
     Creates a free trial subscription checkout session.
     """
     stripe.api_key = settings.STRIPE_API_KEY
     enterprise_catalog = None
-    enterprise_catalog_metadata = input_data.get('enterprise_catalog')
-    if enterprise_catalog_metadata:
-        enterprise_catalog = (
-            json.dumps(enterprise_catalog_metadata)
-            if isinstance(enterprise_catalog_metadata, dict)
-            else enterprise_catalog_metadata
-        )
+    if enterprise_catalog_metadata is not None and isinstance(enterprise_catalog_metadata, (dict, list)):
+        enterprise_catalog = json.dumps(enterprise_catalog_metadata)
+    elif enterprise_catalog_metadata is not None:
+        enterprise_catalog = str(enterprise_catalog_metadata)
 
     create_kwargs: stripe.checkout.Session.CreateParams = {
         'mode': 'subscription',
@@ -56,8 +58,6 @@ def create_subscription_checkout_session(input_data, lms_user_id, checkout_inten
                 'enterprise_customer_slug': input_data['enterprise_slug'],
                 # Store the lms_user_id for improved debugging experience.
                 'lms_user_id': str(lms_user_id),
-                # Store the enterprise_catalog metadata for cross-service reference
-                'enterprise_catalog': enterprise_catalog,
                 # Store the checkout_intent ID for cross-service reference
                 'checkout_intent_id': str(checkout_intent.id),
                 'checkout_intent_uuid': str(checkout_intent.uuid),
@@ -87,6 +87,9 @@ def create_subscription_checkout_session(input_data, lms_user_id, checkout_inten
         create_kwargs['customer'] = found_stripe_customer_by_email['id']
     else:
         create_kwargs['customer_email'] = input_data['admin_email']
+
+    if enterprise_catalog is not None:
+        create_kwargs['subscription_data']['metadata']['enterprise_catalog'] = enterprise_catalog
 
     return stripe.checkout.Session.create(**create_kwargs).to_dict()
 
