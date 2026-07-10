@@ -1,14 +1,16 @@
 """
 Python API for interacting with Stripe (aside from functions contained in ``pricing_api.py``).
 """
-import json
 import logging
 from functools import wraps
 from typing import Optional
 
 import stripe
+from django.apps import apps
 from django.conf import settings
 from edx_django_utils.cache import TieredCache
+
+from enterprise_access.apps.api_client.enterprise_catalog_client import EnterpriseCatalogApiClient
 
 logger = logging.getLogger(__name__)
 
@@ -23,12 +25,21 @@ def create_subscription_checkout_session(input_data, lms_user_id, checkout_inten
     """
     stripe.api_key = settings.STRIPE_API_KEY
     enterprise_catalog = None
-    enterprise_catalog_metadata = input_data.get('enterprise_catalog')
-    if enterprise_catalog_metadata:
-        enterprise_catalog = (
-            json.dumps(enterprise_catalog_metadata)
-            if isinstance(enterprise_catalog_metadata, dict)
-            else enterprise_catalog_metadata
+    SspProduct = apps.get_model('customer_billing', 'SspProduct')
+    client = EnterpriseCatalogApiClient()
+    sspproduct = SspProduct.objects.get(slug=input_data.get('ssp_product_slug'))
+    catagery_query_id = client.get_catalog_query_id_from_uuid(
+        catalog_query_uuid=sspproduct.catalog_query_uuid
+    )
+
+    if catagery_query_id:
+        enterprise_catalog = {
+            'catalog_query_id': catagery_query_id,
+            'title': 'Open Courses'
+        }
+    else:
+        logger.warning(
+            f"Could not find catalog_query_id for ssp_product_slug: {input_data.get('ssp_product_slug')}"
         )
 
     create_kwargs: stripe.checkout.Session.CreateParams = {

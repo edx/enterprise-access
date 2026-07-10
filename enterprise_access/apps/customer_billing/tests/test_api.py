@@ -81,8 +81,15 @@ class TestCreateFreeTrialCheckoutSession(TestCase):
     def setUp(self):
         self.user = UserFactory()
         self.other_user = UserFactory()
+        self.enterprise_catalog_lookup_patcher = mock.patch(
+            'enterprise_access.apps.api_client.enterprise_catalog_client.EnterpriseCatalogApiClient.'
+            'get_catalog_query_id_from_uuid',
+            return_value=1,
+        )
+        self.mock_catalog_query_lookup = self.enterprise_catalog_lookup_patcher.start()
 
     def tearDown(self):
+        self.enterprise_catalog_lookup_patcher.stop()
         # Clean up any intents created during tests
         CheckoutIntent.objects.all().delete()
 
