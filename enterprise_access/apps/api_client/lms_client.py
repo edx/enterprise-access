@@ -110,22 +110,13 @@ class LmsApiClient(BaseOAuthClient):
             'lms_user_id': lms_user_id,
         }
 
-        results = []
-        current_response = None
-        next_url = self.enterprise_flex_membership_endpoint
         try:
-            while next_url:
-                current_response = self.client.get(
-                    next_url,
-                    params=query_params,
-                    timeout=settings.LMS_CLIENT_TIMEOUT
-                )
-                current_response.raise_for_status()
-                data = current_response.json()
-                results.extend(data.get('results', []))
-
-                next_url = data.get('next') if traverse_pagination else None
-            return results
+            return self.get_paginated_results(
+                self.enterprise_flex_membership_endpoint,
+                query_params,
+                settings.LMS_CLIENT_TIMEOUT,
+                traverse_pagination,
+            )
         except requests.exceptions.HTTPError as exc:
             logger.exception(
                 f"Failed to fetch enterprise flex group memberships for learner {lms_user_id}: {exc} "
