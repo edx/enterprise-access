@@ -1,0 +1,24 @@
+enterprise_access/apps/customer_billing/tests/test_stripe_api.py
+  s_15cc99ad967372::t_4f77cb0a9ef202 178
+  s_15cc99ad967372::t_19df2e6753e215 209
+  s_15cc99ad967372::t_a98e3d5e672966 192
+  s_15cc99ad967372::t_933b89f6a5c0fe 121-131,134,141,154,161,174-175,181,188,195,205,212
+enterprise_access/apps/customer_billing/api.py
+  s_15cc99ad967372::t_cf425fa984cd0e 474
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "85474c8f6e4bf67bef79c3be409a5333d537cded",
+  "prompts": {},
+  "sessions": {
+    "s_15cc99ad967372": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "10b13a88-8380-489d-bcaa-f5c387169360",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Alexander Dusenbery <adusenbery@2u.com>"
+    }
+  }
+}
