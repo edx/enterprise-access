@@ -703,6 +703,8 @@ class TestSendPaymentReceiptEmail(TestCase):
         # Note: total_paid_amount comes from invoice_summary.invoice_amount_paid (198000 cents = $1980.00)
         # price_per_license comes from invoice_summary.invoice_unit_amount (39600 cents = $396.00)
         expected_properties = {
+            'product_slug': settings.SSP_DEFAULT_PRODUCT_SLUG,
+            'product_key': settings.SSP_DEFAULT_PRODUCT_SLUG,
             'total_paid_amount': 1980.0,  # $396.00 * 5 licenses = $1,980.00
             'date_paid': '03 November 2025',  # Based on mock timestamp
             'payment_method': 'visa - 4242',

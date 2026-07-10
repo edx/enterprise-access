@@ -948,17 +948,33 @@ class NotificationStep(CheckoutIntentStepMixin, AbstractWorkflowStep):
                 user_email=user_email,
             )
 
-        # Notify the customer admin via email.
-        send_enterprise_provision_signup_confirmation_email.delay(
-            # The email campaign will be specifically designed around the trial plan parameters.
-            accumulated_output.create_trial_subscription_plan_output.start_date,
-            accumulated_output.create_trial_subscription_plan_output.expiration_date,
-            desired_num_licenses,
-            activation_link,
-            # Remaining campaign params.
-            accumulated_output.create_customer_output.name,
-            accumulated_output.create_customer_output.slug
-        )
+        # Resolve product slug and academy name from the CheckoutIntent
+        ssp_product_slug = None
+        academy_name = None
+        if checkout_intent.ssp_product:
+            ssp_product_slug = getattr(checkout_intent.ssp_product, 'slug', None)
+            ssp_product_academy_uuid = getattr(checkout_intent.ssp_product, 'academy_uuid', None)
+            if ssp_product_academy_uuid:
+                try:
+                    academy_detail = EnterpriseCatalogApiClient().get_academy(ssp_product_academy_uuid)
+                    academy_name = academy_detail.get('name') if academy_detail else None
+                except Exception:
+                    # If the catalog lookup fails for any reason, leave academy_name as None.
+                    academy_name = None
+
+        task_kwargs = {
+            'subscription_start_date': accumulated_output.create_trial_subscription_plan_output.start_date,
+            'subscription_end_date': accumulated_output.create_trial_subscription_plan_output.expiration_date,
+            'number_of_licenses': desired_num_licenses,
+            'activation_link': activation_link,
+            'organization_name': accumulated_output.create_customer_output.name,
+            'enterprise_slug': accumulated_output.create_customer_output.slug,
+            'ssp_product_slug': ssp_product_slug,
+        }
+        if academy_name is not None:
+            task_kwargs['academy_name'] = academy_name
+
+        send_enterprise_provision_signup_confirmation_email.delay(**task_kwargs)
 
         # TODO: Is there a better way than to just send an empty dict?
         return self.output_class.from_dict({})

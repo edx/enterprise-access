@@ -478,13 +478,19 @@ class TestNotificationStep(TestCase):
         mock_send_signup_email.delay.assert_called_once()
         delay_args, delay_kwargs = mock_send_signup_email.delay.call_args
 
-        # delay args are:
-        # 0 start_date, 1 expiration_date, 2 desired_num_licenses, 3 activation_link, 4 name, 5 slug
-        self.assertEqual(delay_args[2], 10)
-        self.assertEqual(delay_args[3], expected_activation_link)
-        self.assertEqual(delay_args[4], 'Test Customer')
-        self.assertEqual(delay_args[5], 'test-customer')
-        self.assertEqual(delay_kwargs, {})
+        self.assertEqual(delay_args, ())
+        self.assertEqual(
+            delay_kwargs,
+            {
+                'subscription_start_date': datetime(2025, 1, 1),
+                'subscription_end_date': datetime(2025, 2, 1),
+                'number_of_licenses': 10,
+                'activation_link': expected_activation_link,
+                'organization_name': 'Test Customer',
+                'enterprise_slug': 'test-customer',
+                'ssp_product_slug': checkout_intent.ssp_product.slug,
+            },
+        )
 
 
 class TestCheckoutIntentStepMixinUnit(TestCase):
