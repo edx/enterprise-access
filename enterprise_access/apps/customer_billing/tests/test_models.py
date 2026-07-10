@@ -1530,6 +1530,7 @@ class TestSspProduct(TestCase):
             'slug': 'ai-academy-yearly',
             'stripe_price_lookup_key': 'ai_academy_yearly_price',
             'catalog_query_uuid': uuid4(),
+            'catalog_query_id': randint(1, 1000000),
             'academy_uuid': uuid4(),
             'marketing_url': 'https://example.com/test-marketing',
         }
