@@ -212,7 +212,7 @@ class TestCreateSubscriptionCheckoutSession(StripeApiFunctionsTests):
         mock_session_create,
         mock_get_model,
     ):
-        """When enterprise_catalog resolves to None, metadata should remain None."""
+        """When enterprise_catalog resolves to None, omit it from Stripe metadata."""
         mock_customer_search.return_value = mock.MagicMock(data=[])
         mock_get_model.return_value = self._mock_ssp_product(None)
         mock_stripe_session = mock.Mock()
@@ -227,7 +227,7 @@ class TestCreateSubscriptionCheckoutSession(StripeApiFunctionsTests):
         create_subscription_checkout_session(input_data, lms_user_id=3, checkout_intent=checkout_intent)
 
         _, kwargs = mock_session_create.call_args
-        self.assertIsNone(kwargs['subscription_data']['metadata']['enterprise_catalog'])
+        self.assertNotIn('enterprise_catalog', kwargs['subscription_data']['metadata'])
 
     @mock.patch('enterprise_access.apps.customer_billing.stripe_api.apps.get_model')
     @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.checkout.Session.create')
@@ -256,6 +256,66 @@ class TestCreateSubscriptionCheckoutSession(StripeApiFunctionsTests):
         self.assertEqual(
             kwargs['subscription_data']['metadata']['enterprise_catalog'],
             json.dumps(['catalog', 303]),
+        )
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.apps.get_model')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.checkout.Session.create')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Customer.search')
+    def test_stringifies_scalar_enterprise_catalog_values(
+        self,
+        mock_customer_search,
+        mock_session_create,
+        mock_get_model,
+    ):
+        """Scalar enterprise_catalog values should be coerced to strings before Stripe metadata."""
+        mock_customer_search.return_value = mock.MagicMock(data=[])
+        mock_get_model.return_value = self._mock_ssp_product(404)
+        mock_stripe_session = mock.Mock()
+        mock_stripe_session.to_dict.return_value = {'id': 'cs_test_scalar_catalog'}
+        mock_session_create.return_value = mock_stripe_session
+
+        input_data = self._base_input(admin_email='scalar-catalog@example.com')
+        checkout_intent = mock.MagicMock()
+        checkout_intent.id = 'chk_1000'
+        checkout_intent.uuid = 'uuid_1000'
+
+        create_subscription_checkout_session(input_data, lms_user_id=5, checkout_intent=checkout_intent)
+
+        _, kwargs = mock_session_create.call_args
+        self.assertEqual(kwargs['subscription_data']['metadata']['enterprise_catalog'], '404')
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.apps.get_model')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.checkout.Session.create')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Customer.search')
+    def test_logs_warning_when_ssp_product_lookup_fails(
+        self,
+        mock_customer_search,
+        mock_session_create,
+        mock_get_model,
+    ):
+        """Lookup failures should be swallowed, logged, and leave enterprise_catalog unset."""
+        mock_customer_search.return_value = mock.MagicMock(data=[])
+        mock_model = mock.MagicMock()
+        mock_model.DoesNotExist = type('DoesNotExist', (Exception,), {})
+        mock_model.objects.get.side_effect = mock_model.DoesNotExist('missing product')
+        mock_get_model.return_value = mock_model
+        mock_stripe_session = mock.Mock()
+        mock_stripe_session.to_dict.return_value = {'id': 'cs_test_lookup_failure'}
+        mock_session_create.return_value = mock_stripe_session
+
+        input_data = self._base_input(admin_email='lookup-failure@example.com')
+        checkout_intent = mock.MagicMock()
+        checkout_intent.id = 'chk_1001'
+        checkout_intent.uuid = 'uuid_1001'
+
+        with self.assertLogs('enterprise_access.apps.customer_billing.stripe_api', level='WARNING') as logs:
+            create_subscription_checkout_session(input_data, lms_user_id=5, checkout_intent=checkout_intent)
+
+        _, kwargs = mock_session_create.call_args
+        self.assertNotIn('enterprise_catalog', kwargs['subscription_data']['metadata'])
+        self.assertIn(
+            'Could not resolve enterprise_catalog metadata for ssp_product_slug=quarterly_license_plan',
+            logs.output[0],
         )
 
 

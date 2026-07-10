@@ -68,8 +68,6 @@ def create_subscription_checkout_session(input_data, lms_user_id, checkout_inten
                 'enterprise_customer_slug': input_data['enterprise_slug'],
                 # Store the lms_user_id for improved debugging experience.
                 'lms_user_id': str(lms_user_id),
-                # Store the enterprise_catalog metadata for cross-service reference
-                'enterprise_catalog': enterprise_catalog,
                 # Store the checkout_intent ID for cross-service reference
                 'checkout_intent_id': str(checkout_intent.id),
                 'checkout_intent_uuid': str(checkout_intent.uuid),
@@ -99,6 +97,9 @@ def create_subscription_checkout_session(input_data, lms_user_id, checkout_inten
         create_kwargs['customer'] = found_stripe_customer_by_email['id']
     else:
         create_kwargs['customer_email'] = input_data['admin_email']
+
+    if enterprise_catalog is not None:
+        create_kwargs['subscription_data']['metadata']['enterprise_catalog'] = enterprise_catalog
 
     return stripe.checkout.Session.create(**create_kwargs).to_dict()
 
