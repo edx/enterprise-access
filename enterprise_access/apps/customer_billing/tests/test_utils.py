@@ -302,3 +302,47 @@ class TestAcademyLookupAndCheckoutIntentSelectionAdditional(TestCase):
         event_data = {'id': subscription_id}
         slug = _get_ssp_product_slug_from_stripe_event(event_data)
         self.assertEqual(slug, 'essentials-fallback')
+
+    def test_get_ssp_product_slug_handles_checkout_intent_ssp_product_access_exception(self):
+        """If accessing checkout_intent.ssp_product raises, we continue to other strategies."""
+        subscription_id = 'sub_except_1'
+        # Ensure an SspProduct exists and a CheckoutIntent with a stripe_customer_id maps to it
+        sp, _ = SspProduct.objects.get_or_create(
+            slug='essentials-customer-ex',
+            defaults={
+                'stripe_price_lookup_key': 'k_ex',
+                'catalog_query_uuid': uuid4(),
+            },
+        )
+        user = UserFactory()
+        c = CheckoutIntent.create_intent(user=user, slug='e-ex', name='E-Ex', quantity=1)
+        c.stripe_customer_id = 'cus_for_exception'
+        c.ssp_product = sp
+        c.save()
+
+        class BadCheckoutIntent:
+            @property
+            def ssp_product(self):
+                raise Exception('boom')
+
+        event_data = {'customer': 'cus_for_exception', 'id': subscription_id}
+        slug = _get_ssp_product_slug_from_stripe_event(event_data, checkout_intent=BadCheckoutIntent())
+        self.assertEqual(slug, 'essentials-customer-ex')
+
+    def test_get_ssp_product_slug_resolves_from_invoice_line_metadata(self):
+        """Should read ssp_product_slug from invoice line price.metadata."""
+        event_data = {
+            'lines': {
+                'data': [
+                    {
+                        'price': {
+                            'metadata': {
+                                'ssp_product_slug': 'essentials-from-line'
+                            }
+                        }
+                    }
+                ]
+            }
+        }
+        slug = _get_ssp_product_slug_from_stripe_event(event_data)
+        self.assertEqual(slug, 'essentials-from-line')

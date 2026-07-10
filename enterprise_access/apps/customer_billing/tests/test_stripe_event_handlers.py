@@ -23,12 +23,14 @@ from enterprise_access.apps.customer_billing.constants import (
 from enterprise_access.apps.customer_billing.models import (
     CheckoutIntent,
     SelfServiceSubscriptionRenewal,
+    SspProduct,
     StripeEventData,
     StripeEventSummary
 )
 from enterprise_access.apps.customer_billing.stripe_event_handlers import (
     CheckoutIntentLookupError,
     StripeEventHandler,
+    _get_ssp_product_slug_from_stripe_event,
     _valid_invoice_event_type,
     cancel_all_future_plans,
     get_checkout_intent_identifier_from_subscription,
@@ -1173,6 +1175,46 @@ class TestStripeEventHandler(TestCase):
         call_kwargs = mock_send_cancelation_email.delay.call_args.kwargs
         self.assertEqual(call_kwargs.get('checkout_intent_id'), self.checkout_intent.id)
         self.assertEqual(call_kwargs.get('ended_at_timestamp'), 1700000000)
+
+    def test_get_ssp_product_slug_handles_checkout_intent_ssp_product_access_exception(self):
+        """If provided checkout_intent.ssp_product access raises, handler falls back to other strategies."""
+        # Create an SspProduct and a CheckoutIntent with stripe_customer_id
+        sp, _ = SspProduct.objects.get_or_create(
+            slug='essentials-customer-ex',
+            defaults={'stripe_price_lookup_key': 'kx', 'catalog_query_uuid': uuid.uuid4()},
+        )
+        user = UserFactory()
+        c = CheckoutIntent.create_intent(user=user, slug='e-ex', name='E-Ex', quantity=1)
+        c.stripe_customer_id = 'cus_for_exception'
+        c.ssp_product = sp
+        c.save()
+
+        class BadCheckoutIntent:
+            @property
+            def ssp_product(self):
+                raise Exception('boom')
+
+        event_data = {'customer': 'cus_for_exception', 'id': 'sub_except_1'}
+        slug = _get_ssp_product_slug_from_stripe_event(event_data, checkout_intent=BadCheckoutIntent())
+        self.assertEqual(slug, 'essentials-customer-ex')
+
+    def test_get_ssp_product_slug_resolves_from_invoice_line_metadata(self):
+        """Should read ssp_product_slug from invoice line price.metadata."""
+        event_data = {
+            'lines': {
+                'data': [
+                    {
+                        'price': {
+                            'metadata': {
+                                'ssp_product_slug': 'essentials-from-line'
+                            }
+                        }
+                    }
+                ]
+            }
+        }
+        slug = _get_ssp_product_slug_from_stripe_event(event_data)
+        self.assertEqual(slug, 'essentials-from-line')
 
     def test_subscription_updated_active_marks_renewals_uncanceled(self):
         """

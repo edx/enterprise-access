@@ -134,7 +134,7 @@ def get_academy_name_from_slug(ssp_product_slug):
 
         from django.apps import apps  # pylint: disable=import-outside-toplevel
         ssp_product_model = apps.get_model('customer_billing', 'SspProduct')
-        ssp_product = ssp_product_model.objects.get(slug=ssp_product_slug)
+        ssp_product = ssp_product_model.objects.get(slug=ssp_product_slug, is_active=True)
         return getattr(ssp_product, 'academy_title', None)
     except Exception:  # pylint: disable=broad-except
         logger.exception(

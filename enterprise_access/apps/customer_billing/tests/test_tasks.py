@@ -8,13 +8,14 @@ from unittest import mock
 
 import stripe
 from django.conf import settings
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.utils import timezone
 
 from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.customer_billing.constants import BRAZE_TIMESTAMP_FORMAT
 from enterprise_access.apps.customer_billing.models import CheckoutIntent, StripeEventData, StripeEventSummary
 from enterprise_access.apps.customer_billing.tasks import (
+    send_billing_error_email_task,
     send_enterprise_provision_signup_confirmation_email,
     send_finalized_cancelation_email_task,
     send_paid_cancellation_email_task,
@@ -132,6 +133,67 @@ class TestSendTrialCancellationEmailTask(TestCase):
 
         # Verify the exception message
         self.assertIn("Braze API error", str(context.exception))
+
+
+class TestSendBillingErrorEmailTask(TestCase):
+    """Tests for send_billing_error_email_task."""
+
+    def setUp(self):
+        self.user = UserFactory()
+        self.checkout_intent = CheckoutIntent.create_intent(
+            user=self.user,
+            slug="test-enterprise",
+            name="Test Enterprise",
+            quantity=10,
+        )
+        self.checkout_intent.stripe_customer_id = "cus_billing_err"
+        self.checkout_intent.save()
+
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.BrazeApiClient')
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.get_enterprise_admins')
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.prepare_admin_braze_recipients')
+    def test_send_billing_error_email_no_recipients_returns(self, mock_prepare, mock_get_admins, mock_braze):
+        """If no recipients are prepared, task should return early without sending."""
+        mock_get_admins.return_value = [{'email': 'admin@test.com'}]
+        mock_prepare.return_value = []
+
+        # Should return None / no exception
+        send_billing_error_email_task(self.checkout_intent.id, ssp_product_slug=None)
+
+        mock_braze.return_value.send_campaign_message.assert_not_called()
+
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.BrazeApiClient')
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.get_campaign_id')
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.get_enterprise_admins')
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.prepare_admin_braze_recipients')
+    @override_settings(STRIPE_CUSTOMER_PORTAL_URL='https://customer.portal')
+    def test_send_billing_error_email_sends_campaign(
+        self,
+        mock_prepare,
+        mock_get_admins,
+        mock_get_campaign,
+        mock_braze,
+    ):
+        """When recipients exist, should call Braze with campaign from get_campaign_id and
+        trigger properties.
+        """
+        mock_get_admins.return_value = [{'email': 'admin@test.com', 'lms_user_id': 1}]
+        mock_recipient = {'external_id': 'braze_1'}
+        mock_prepare.return_value = [mock_recipient]
+        mock_get_campaign.return_value = 'campaign-uuid-123'
+
+        send_billing_error_email_task(self.checkout_intent.id, ssp_product_slug='essentials-monthly')
+
+        mock_braze.return_value.send_campaign_message.assert_called_once()
+        args, kwargs = mock_braze.return_value.send_campaign_message.call_args
+        # campaign id is first positional arg
+        self.assertEqual(args[0], 'campaign-uuid-123')
+        # recipients passed through
+        self.assertEqual(kwargs['recipients'], [mock_recipient])
+        # trigger_properties should include enterprise_admin_portal_url and customer_portal_url
+        tp = kwargs['trigger_properties']
+        self.assertIn('enterprise_admin_portal_url', tp)
+        self.assertIn('customer_portal_url', tp)
 
 
 class TestSendPaidCancellationEmailTask(TestCase):
