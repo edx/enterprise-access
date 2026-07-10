@@ -128,9 +128,9 @@ class TestCreateSubscriptionCheckoutSession(StripeApiFunctionsTests):
         """
         Return a mock SspProduct model with the given enterprise_catalog_metadata.
         """
-        ssp_product = mock.MagicMock()
-        ssp_product.enterprise_catalog_metadata = enterprise_catalog_metadata
+        ssp_product = mock.MagicMock(enterprise_catalog_metadata=enterprise_catalog_metadata)
         mock_model = mock.MagicMock()
+        mock_model.DoesNotExist = type('DoesNotExist', (Exception,), {})
         mock_model.objects.get.return_value = ssp_product
         return mock_model
 

@@ -196,6 +196,55 @@ class TestCreateFreeTrialCheckoutSession(TestCase):
         ])
 
     @mock.patch(
+        'enterprise_access.apps.customer_billing.models.SspProduct.enterprise_catalog_metadata',
+        new_callable=mock.PropertyMock,
+        side_effect=ValueError('invalid catalog metadata'),
+    )
+    @mock.patch(
+        'enterprise_access.apps.customer_billing.api.get_ssp_product_pricing',
+        return_value=MOCK_SSP_PRICING_DATA,
+    )
+    @mock.patch.object(customer_billing_api, 'LmsApiClient', autospec=True)
+    @mock.patch.object(stripe_api, 'stripe')
+    @mock.patch('enterprise_access.apps.customer_billing.api.create_subscription_checkout_session')
+    def test_create_free_trial_checkout_session_omits_catalog_on_metadata_failure(
+        self,
+        mock_create_checkout,
+        mock_stripe,  # pylint: disable=unused-argument
+        mock_lms_client_class,
+        mock_get_ssp_pricing,  # pylint: disable=unused-argument
+        mock_enterprise_catalog_metadata,
+    ):
+        """Enterprise catalog lookup failures should not block checkout session creation."""
+        mock_lms_client = mock_lms_client_class.return_value
+        mock_lms_client.get_lms_user_account.return_value = [{'id': self.user.lms_user_id}]
+        mock_lms_client.get_enterprise_customer_data.side_effect = raise_404_error
+        mock_create_checkout.return_value = {'id': 'sess-ssp', 'customer': 'cust-ssp'}
+        SspProduct.objects.create(
+            slug='quarterly_license_plan',
+            stripe_price_lookup_key=MOCK_SSP_PRODUCTS['quarterly_license_plan']['lookup_key'],
+            is_active=True,
+            catalog_query_uuid=uuid.uuid4(),
+        )
+
+        result = customer_billing_api.create_free_trial_checkout_session(
+            user=self.user,
+            admin_email=self.user.email,
+            enterprise_slug='my-sluggy',
+            company_name='My Cool Company',
+            quantity=20,
+            stripe_price_id=QUARTERLY_PRICE_ID,
+            ssp_product_slug='quarterly_license_plan',
+        )
+
+        self.assertEqual(result, {'id': 'sess-ssp', 'customer': 'cust-ssp'})
+        self.assertEqual(
+            mock_create_checkout.call_args[1]['enterprise_catalog_metadata'],
+            None,
+        )
+        mock_enterprise_catalog_metadata.assert_called()
+
+    @mock.patch(
         'enterprise_access.apps.customer_billing.api.get_ssp_product_pricing',
         return_value=MOCK_SSP_PRICING_DATA,
     )
