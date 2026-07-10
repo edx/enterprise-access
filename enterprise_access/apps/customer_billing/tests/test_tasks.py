@@ -64,6 +64,20 @@ class TestBuildCommonTriggerProperties(TestCase):
             )
         self.assertEqual(result['academy_name'], 'DB Academy')
 
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.isinstance', return_value=False, create=True)
+    def test_extra_values_are_passed_through_when_dict_guard_is_bypassed(self, _mock_isinstance):
+        """If the dict guard is bypassed, extra kwargs are still merged without filtering."""
+        result = _build_common_trigger_properties(
+            ssp_product_slug=None,
+            organization_name='Acme',
+            optional_value=None,
+            included_value='included',
+        )
+
+        self.assertIn('optional_value', result)
+        self.assertIsNone(result['optional_value'])
+        self.assertEqual(result['included_value'], 'included')
+
 
 class TestSendTrialCancellationEmailTask(TestCase):
     """Tests for send_trial_cancellation_email_task."""
@@ -201,6 +215,46 @@ class TestSendTrialCancellationEmailTask(TestCase):
         trigger_props = call_kwargs['trigger_properties']
         self.assertEqual(trigger_props.get('product_slug'), 'essentials-ai-2025')
         self.assertEqual(trigger_props.get('academy_name'), 'AI Academy')
+
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.logger.exception')
+    @mock.patch(
+        'enterprise_access.apps.customer_billing.tasks.get_academy_name_from_slug',
+        side_effect=Exception('lookup failed'),
+    )
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
+    def test_cancellation_logs_product_lookup_failure_and_still_sends(
+        self,
+        mock_lms_client,
+        mock_braze_client,
+        _mock_academy_name,
+        mock_logger_exception,
+    ):
+        """Product lookup failures should be logged without blocking the cancellation email."""
+        ssp_product = SspProduct.objects.create(
+            slug='essentials-ai-2025',
+            stripe_price_lookup_key='essentials_ai_2025_key',
+            catalog_query_uuid=uuid4(),
+            is_active=True,
+        )
+        self.checkout_intent.ssp_product = ssp_product
+        self.checkout_intent.save()
+
+        mock_lms_client.return_value.get_enterprise_customer_data.return_value = {
+            'admin_users': [{'email': 'admin@example.com', 'lms_user_id': 1}]
+        }
+        mock_braze_client.return_value.create_braze_recipient.return_value = {'external_user_id': '1'}
+
+        send_trial_cancellation_email_task(
+            checkout_intent_id=self.checkout_intent.id,
+            cancel_at_timestamp=self.cancel_at_timestamp,
+        )
+
+        mock_logger_exception.assert_called_once_with(
+            'Failed resolving product/academy info for CheckoutIntent %s',
+            self.checkout_intent.id,
+        )
+        mock_braze_client.return_value.send_campaign_message.assert_called_once()
 
 
 class TestSendBillingErrorEmailTask(TestCase):
