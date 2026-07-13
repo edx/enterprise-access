@@ -25,7 +25,7 @@ from enterprise_access.apps.bffs.checkout.serializers import (
 from enterprise_access.apps.bffs.tests.utils import default_field_constraints
 from enterprise_access.apps.core.constants import SYSTEM_ENTERPRISE_LEARNER_ROLE
 from enterprise_access.apps.customer_billing.constants import CheckoutIntentState
-from enterprise_access.apps.customer_billing.models import CheckoutIntent
+from enterprise_access.apps.customer_billing.models import CheckoutIntent, SspProduct
 from enterprise_access.apps.customer_billing.tests.utils import AttrDict
 from test_utils import APITest
 
@@ -250,6 +250,93 @@ class CheckoutBFFViewSetTests(APITest):
             customers[0]['admin_portal_url'],
             f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/test-enterprise',
         )
+
+    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_and_cache_enterprise_customer_users')
+    @mock.patch('enterprise_access.apps.bffs.checkout.handlers.transform_enterprise_customer_users_data')
+    def test_authenticated_user_customers_include_product_type(self, mock_transform, mock_get_customers):
+        """
+        Test that existing customers include product metadata derived from checkout intent SSP product.
+        """
+        teams_customer_uuid = str(uuid.uuid4())
+        essentials_customer_uuid = str(uuid.uuid4())
+
+        teams_product, _ = SspProduct.objects.get_or_create(
+            slug='teams-yearly',
+            defaults={
+                'stripe_price_lookup_key': 'teams_subscription_license_yearly',
+                'catalog_query_uuid': uuid.uuid4(),
+                'is_active': True,
+            },
+        )
+        essentials_product = SspProduct.objects.create(
+            slug='ai-academy-yearly',
+            stripe_price_lookup_key='ai_academy_yearly_for_checkout_bff_test',
+            academy_uuid=uuid.uuid4(),
+            catalog_query_uuid=uuid.uuid4(),
+            is_active=True,
+        )
+
+        CheckoutIntent.objects.create(
+            user=self.user,
+            enterprise_uuid=teams_customer_uuid,
+            enterprise_name='Teams Enterprise',
+            enterprise_slug='teams-enterprise',
+            stripe_customer_id='cus_teams',
+            state=CheckoutIntentState.PAID,
+            quantity=10,
+            expires_at=timezone.now() + timedelta(hours=1),
+            ssp_product=teams_product,
+        )
+        CheckoutIntent.objects.create(
+            user=self.user,
+            enterprise_uuid=essentials_customer_uuid,
+            enterprise_name='Essentials Enterprise',
+            enterprise_slug='essentials-enterprise',
+            stripe_customer_id='cus_essentials',
+            state=CheckoutIntentState.PAID,
+            quantity=10,
+            expires_at=timezone.now() + timedelta(hours=1),
+            ssp_product=essentials_product,
+        )
+
+        mock_get_customers.return_value = {'results': [{'enterprise_customer': {'uuid': teams_customer_uuid}}]}
+        mock_transform.return_value = {
+            'all_linked_enterprise_customer_users': [
+                {'enterprise_customer': {
+                    'uuid': teams_customer_uuid,
+                    'name': 'Teams Enterprise',
+                    'slug': 'teams-enterprise',
+                    'stripe_customer_id': 'cus_teams',
+                    'is_self_service': True,
+                }},
+                {'enterprise_customer': {
+                    'uuid': essentials_customer_uuid,
+                    'name': 'Essentials Enterprise',
+                    'slug': 'essentials-enterprise',
+                    'stripe_customer_id': 'cus_essentials',
+                    'is_self_service': True,
+                }},
+            ]
+        }
+
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE,
+            'context': str(uuid.uuid4()),
+        }])
+
+        response = self.client.post(self.url, {}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        customers_by_uuid = {
+            customer['customer_uuid']: customer
+            for customer in response.data['existing_customers_for_authenticated_user']
+        }
+
+        self.assertEqual(customers_by_uuid[teams_customer_uuid]['ssp_product_slug'], 'teams-yearly')
+        self.assertEqual(customers_by_uuid[teams_customer_uuid]['product_type'], 'teams')
+
+        self.assertEqual(customers_by_uuid[essentials_customer_uuid]['ssp_product_slug'], 'ai-academy-yearly')
+        self.assertEqual(customers_by_uuid[essentials_customer_uuid]['product_type'], 'essentials')
 
     @mock.patch('enterprise_access.apps.bffs.checkout.handlers.get_and_cache_enterprise_customer_users')
     def test_enterprise_api_error_handling(self, mock_get_customers):

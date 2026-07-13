@@ -4,6 +4,7 @@ Handlers for the Checkout BFF endpoints.
 import logging
 from datetime import datetime
 from typing import Dict
+from uuid import UUID
 
 import stripe
 from django.conf import settings
@@ -127,11 +128,22 @@ class CheckoutContextHandler(CheckoutIntentAwareHandlerMixin, BaseHandler):
 
             # Format data according to our API contract
             formatted_customers = []
+            customer_uuids = []
+
+            for customer_user in transformed_data.get('all_linked_enterprise_customer_users', []):
+                customer = customer_user.get('enterprise_customer', {})
+                customer_uuid = customer.get('uuid') if customer else None
+                if customer_uuid:
+                    customer_uuids.append(str(customer_uuid))
+
+            product_metadata_by_customer_uuid = self._get_product_metadata_by_customer_uuid(customer_uuids)
 
             for customer_user in transformed_data.get('all_linked_enterprise_customer_users', []):
                 customer = customer_user.get('enterprise_customer', {})
                 if customer:
                     slug = customer.get('slug')
+                    customer_uuid = str(customer.get('uuid')) if customer.get('uuid') else None
+                    product_metadata = product_metadata_by_customer_uuid.get(customer_uuid, {})
                     admin_portal_url = f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/{slug}' if slug else ''
                     formatted_customers.append({
                         'customer_uuid': customer.get('uuid'),
@@ -140,6 +152,8 @@ class CheckoutContextHandler(CheckoutIntentAwareHandlerMixin, BaseHandler):
                         'stripe_customer_id': customer.get('stripe_customer_id', ''),
                         'is_self_service': customer.get('is_self_service', False),
                         'admin_portal_url': admin_portal_url,
+                        'ssp_product_slug': product_metadata.get('ssp_product_slug'),
+                        'product_type': product_metadata.get('product_type'),
                     })
 
             self.context.existing_customers_for_authenticated_user = formatted_customers
@@ -152,6 +166,54 @@ class CheckoutContextHandler(CheckoutIntentAwareHandlerMixin, BaseHandler):
                 user_message="Could not fetch existing customer data for user",
                 developer_message=f"Unable to load customer data for user: {exc}",
             )
+
+    def _get_product_metadata_by_customer_uuid(self, customer_uuids):
+        """
+        Build a mapping from enterprise customer UUID to product metadata.
+
+        The most recently modified checkout intent is used when multiple intents
+        exist for the same enterprise customer.
+        """
+        if not customer_uuids:
+            return {}
+
+        valid_customer_uuids = []
+        for customer_uuid in customer_uuids:
+            try:
+                UUID(str(customer_uuid))
+                valid_customer_uuids.append(customer_uuid)
+            except (TypeError, ValueError):
+                continue
+
+        if not valid_customer_uuids:
+            return {}
+
+        intents = (
+            CheckoutIntent.objects.filter(
+                enterprise_uuid__in=valid_customer_uuids,
+            )
+            .exclude(ssp_product__isnull=True)
+            .select_related('ssp_product')
+            .only('enterprise_uuid', 'modified', 'ssp_product__slug', 'ssp_product__academy_uuid')
+            .order_by('-modified')
+        )
+
+        product_metadata_by_customer_uuid = {}
+        for intent in intents:
+            customer_uuid = str(intent.enterprise_uuid)
+            if customer_uuid in product_metadata_by_customer_uuid:
+                continue
+
+            ssp_product = intent.ssp_product
+            if not ssp_product:
+                continue
+
+            product_metadata_by_customer_uuid[customer_uuid] = {
+                'ssp_product_slug': ssp_product.slug,
+                'product_type': 'essentials' if ssp_product.academy_uuid else 'teams',
+            }
+
+        return product_metadata_by_customer_uuid
 
     def _get_pricing_data(self) -> Dict:
         """
