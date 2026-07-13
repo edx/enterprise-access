@@ -227,8 +227,9 @@ class CheckoutIntent(TimeStampedModel):
     4. Mark as fulfilled after provisioning
     intent.mark_as_fulfilled(workflow)
 
-    Billing-address fields contain location data and follow the same local user-retirement process
-    as the rest of the CheckoutIntent row.
+    Billing-address fields contain location data and are retired with the
+    ``CheckoutIntent`` row itself via the same model-level retirement/deletion
+    process that applies to the rest of this record.
     .. pii_types: location
     .. pii_retirement: local_api
     """
