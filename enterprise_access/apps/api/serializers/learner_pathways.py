@@ -13,6 +13,7 @@ class LearningIntentRequestSerializer(serializers.Serializer):  # pylint: disabl
     selected_goals = serializers.CharField(allow_blank=False)
     free_text = serializers.CharField(allow_blank=False)
     known_context = serializers.CharField(allow_blank=False)
+    interested_industries = serializers.CharField(allow_blank=False)
 
 
 class LearningIntentResponseSerializer(serializers.Serializer):  # pylint: disable=abstract-method

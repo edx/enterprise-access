@@ -48,6 +48,7 @@ _VALID_LEARNING_INTENT_PAYLOAD = {
     'selected_goals': 'data science',
     'free_text': 'I want to become a data scientist',
     'known_context': 'currently a software engineer',
+    'interested_industries': 'healthcare, technology',
 }
 
 _VALID_RECOMMENDATION_FEEDBACK_PAYLOAD = {
@@ -540,6 +541,7 @@ class TestLearningIntentHappyPath(APITest):
         assert isinstance(messages[0].content, str)
         parsed = json.loads(messages[0].content)
         assert parsed['selected_goals'] == _VALID_LEARNING_INTENT_PAYLOAD['selected_goals']
+        assert parsed['interested_industries'] == _VALID_LEARNING_INTENT_PAYLOAD['interested_industries']
 
     @mock.patch(PATCH_XPERT_CLIENT)
     def test_conversation_id_has_prefix(self, mock_client_class):
@@ -677,6 +679,7 @@ class TestRecommendationFeedbackHappyPath(APITest):
 # Response passthrough tests
 # ---------------------------------------------------------------------------
 
+@ddt.ddt
 class TestLearnerPathwaysResponsePassthrough(APITest):
     """Assert Xpert response JSON is validated and normalized to the declared serializer fields."""
 
@@ -790,16 +793,19 @@ class TestLearnerPathwaysResponsePassthrough(APITest):
 
         assert resp.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
 
-    def test_invalid_client_request_returns_400(self):
-        resp = self.client.post(
-            reverse(_LEARNING_INTENT_URL_NAME),
-            data={
-                'selected_goals': 'data science',
-                'known_context': 'currently a software engineer',
-                # 'free_text' deliberately omitted.
-            },
-            format='json',
-        )
+    @ddt.data('selected_goals', 'free_text', 'known_context', 'interested_industries')
+    def test_missing_required_field_returns_400(self, omitted_field):
+        payload = {k: v for k, v in _VALID_LEARNING_INTENT_PAYLOAD.items() if k != omitted_field}
+
+        resp = self.client.post(reverse(_LEARNING_INTENT_URL_NAME), data=payload, format='json')
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+
+    @ddt.data('selected_goals', 'free_text', 'known_context', 'interested_industries')
+    def test_blank_required_field_returns_400(self, blank_field):
+        payload = {**_VALID_LEARNING_INTENT_PAYLOAD, blank_field: ''}
+
+        resp = self.client.post(reverse(_LEARNING_INTENT_URL_NAME), data=payload, format='json')
 
         assert resp.status_code == status.HTTP_400_BAD_REQUEST
 
