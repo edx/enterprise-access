@@ -37,6 +37,7 @@ def create_subscription_checkout_session(
         'mode': 'subscription',
         # Intended UI will be a custom react component, referred to as 'elements' on stripe's end.
         'ui_mode': 'elements',
+        'billing_address_collection': 'required',
         # Specify the type and quantity of what is being purchased.  Units for `quantity` depends on
         # the price specified, and the product associated with the price.
         'line_items': [{
@@ -66,6 +67,10 @@ def create_subscription_checkout_session(
         # Always collect payment method, not just when the amount is greater than zero.  This is influential for
         # creating a free trial plan because the amount is always zero.
         'payment_method_collection': 'always',
+        'customer_update': {
+            'address': 'auto',
+            'name': 'auto',
+        },
         # This restricts the output for the payment element to only show the card option
         'payment_method_types': [
             'card'

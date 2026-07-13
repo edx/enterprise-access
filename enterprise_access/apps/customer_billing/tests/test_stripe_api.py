@@ -144,6 +144,8 @@ class TestCreateSubscriptionCheckoutSession(StripeApiFunctionsTests):
         self.assertEqual(kwargs.get('customer_email'), 'new-admin@example.com')
         self.assertNotIn('customer', kwargs)
         self.assertEqual(kwargs.get('ui_mode'), 'elements')
+        self.assertEqual(kwargs.get('billing_address_collection'), 'required')
+        self.assertEqual(kwargs.get('customer_update'), {'address': 'auto', 'name': 'auto'})
         self.assertEqual(
             kwargs['subscription_data']['metadata']['enterprise_catalog'],
             json.dumps({'catalog_query_id': 101, 'title': 'Open Courses'}),
@@ -164,6 +166,8 @@ class TestCreateSubscriptionCheckoutSession(StripeApiFunctionsTests):
         self.assertEqual(kwargs.get('customer'), 'cus_12345')
         self.assertNotIn('customer_email', kwargs)
         self.assertEqual(kwargs.get('ui_mode'), 'elements')
+        self.assertEqual(kwargs.get('billing_address_collection'), 'required')
+        self.assertEqual(kwargs.get('customer_update'), {'address': 'auto', 'name': 'auto'})
         self.assertEqual(
             kwargs['subscription_data']['metadata']['enterprise_catalog'],
             json.dumps({'catalog_query_id': 202, 'title': 'Open Courses'}),

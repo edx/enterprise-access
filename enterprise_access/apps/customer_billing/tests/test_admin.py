@@ -21,6 +21,19 @@ class TestCheckoutIntentAdmin(TestCase):
 
         self.assertIn('ssp_product', integration_fields)
 
+    def test_billing_address_fields_are_displayed_on_detail_view(self):
+        admin_instance = CheckoutIntentAdmin(CheckoutIntent, admin.site)
+
+        billing_fields = next(
+            fieldset['fields']
+            for name, fieldset in admin_instance.fieldsets
+            if name == 'Billing Address'
+        )
+
+        self.assertIn('billing_address_country', billing_fields)
+        self.assertIn('billing_address_line_1', billing_fields)
+        self.assertIn('billing_address_postal_code', billing_fields)
+
 
 class TestSspProductAdmin(TestCase):
     """Tests for the SspProduct admin configuration."""

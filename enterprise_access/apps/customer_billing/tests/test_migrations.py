@@ -715,6 +715,56 @@ class TestSeedMarketingUrls(TransactionTestCase):
             'https://example.com/custom',
         )
 
+
+class TestCheckoutIntentBillingAddressMigration(TransactionTestCase):
+    """Tests for migration 0041 adding billing address fields to CheckoutIntent."""
+
+    migrate_from = [('customer_billing', '0040_alter_checkoutintent_ssp_product_and_more')]
+    migrate_to = [('customer_billing', '0041_checkoutintent_billing_address_city_and_more')]
+
+    def setUp(self):
+        super().setUp()
+        self.migrator = Migrator(database='default')
+        self.old_state = self.migrator.apply_initial_migration(self.migrate_from)
+
+    def tearDown(self):
+        connections['default'].close()
+        self.migrator.reset()
+        super().tearDown()
+
+    def _get_model(self, app_label, model_name):
+        return self.old_state.apps.get_model(app_label, model_name)
+
+    def test_existing_checkout_intents_get_null_billing_address_defaults(self):
+        """Existing checkout intents remain valid and receive null billing address fields."""
+        User = self._get_model('core', 'User')
+        CheckoutIntent = self._get_model('customer_billing', 'CheckoutIntent')
+
+        user = User.objects.create(
+            username=f'user_{uuid4().hex[:8]}',
+            email=f'{uuid4().hex}@example.com',
+        )
+        intent = CheckoutIntent.objects.create(
+            user=user,
+            enterprise_name='Existing Enterprise',
+            enterprise_slug='existing-enterprise',
+            quantity=5,
+            expires_at=django_tz.now() + timedelta(hours=1),
+            country='US',
+            ssp_product_id='teams-yearly',
+        )
+
+        new_state = self.migrator.apply_tested_migration(self.migrate_to)
+        CheckoutIntent = new_state.apps.get_model('customer_billing', 'CheckoutIntent')
+        migrated_intent = CheckoutIntent.objects.get(pk=intent.pk)
+
+        self.assertIsNone(migrated_intent.billing_address_country)
+        self.assertIsNone(migrated_intent.billing_address_line_1)
+        self.assertIsNone(migrated_intent.billing_address_line_2)
+        self.assertIsNone(migrated_intent.billing_address_city)
+        self.assertIsNone(migrated_intent.billing_address_state)
+        self.assertIsNone(migrated_intent.billing_address_postal_code)
+
     def test_reverse_clears_marketing_url(self):
         """Reverse migration clears marketing_url for products in SSP_PRODUCT_BACKFILL_DATA."""
         new_state = self.migrator.apply_tested_migration(self.migrate_to)

@@ -39,6 +39,12 @@ class CheckoutSessionInputValidatorData(TypedDict, total=False):
     quantity: int
     ssp_product_slug: str
     stripe_price_id: str
+    billing_address_country: str | None
+    billing_address_line_1: str | None
+    billing_address_line_2: str | None
+    billing_address_city: str | None
+    billing_address_state: str | None
+    billing_address_postal_code: str | None
 
 
 class CheckoutSessionInputData(TypedDict, total=True):
@@ -52,6 +58,12 @@ class CheckoutSessionInputData(TypedDict, total=True):
     quantity: int
     ssp_product_slug: str
     stripe_price_id: str
+    billing_address_country: str | None
+    billing_address_line_1: str | None
+    billing_address_line_2: str | None
+    billing_address_city: str | None
+    billing_address_state: str | None
+    billing_address_postal_code: str | None
 
 
 class FieldValidationResult(TypedDict):
@@ -387,6 +399,7 @@ class CheckoutSessionInputValidator():
         validation_decisions = {
             field_name: self.validation_handlers[field_name](self, input_data)
             for field_name in input_data.keys()
+            if field_name in self.validation_handlers
         }
         # Remove valid responses.
         validation_decisions = {
@@ -460,6 +473,12 @@ def create_free_trial_checkout_session(
             quantity=input_data.get('quantity'),
             slug=input_data.get('enterprise_slug'),
             name=input_data.get('company_name'),
+            billing_address_country=input_data.get('billing_address_country'),
+            billing_address_line_1=input_data.get('billing_address_line_1'),
+            billing_address_line_2=input_data.get('billing_address_line_2'),
+            billing_address_city=input_data.get('billing_address_city'),
+            billing_address_state=input_data.get('billing_address_state'),
+            billing_address_postal_code=input_data.get('billing_address_postal_code'),
             ssp_product=ssp_product_instance,
         )
     except SlugReservationConflict as exc:

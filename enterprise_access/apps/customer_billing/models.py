@@ -204,7 +204,7 @@ class CheckoutIntent(TimeStampedModel):
     Tracks the complete lifecycle of a self-service checkout process:
 
     1. Reserves enterprise slugs/names during checkout
-    2. Stores minimal purchase data needed for UI rendering
+    2. Stores minimal purchase data needed for UI rendering, including billing address details
     3. Tracks the checkout and provisioning process state
     4. Records errors that occur during the flow
 
@@ -227,7 +227,8 @@ class CheckoutIntent(TimeStampedModel):
     4. Mark as fulfilled after provisioning
     intent.mark_as_fulfilled(workflow)
 
-    .. no_pii: This model has no PII
+    .. pii_types: location
+    .. pii_retirement: local_api
     """
     class Meta:
         verbose_name = "Enterprise Checkout Intent"
@@ -334,6 +335,42 @@ class CheckoutIntent(TimeStampedModel):
         null=True,
         help_text="The customer's country",
         blank_label="(select country)",
+    )
+    billing_address_country = CountryField(
+        null=True,
+        blank=True,
+        help_text="Two-letter ISO country code for the billing address.",
+        blank_label="(select country)",
+    )
+    billing_address_line_1 = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        help_text="First line of the billing street address.",
+    )
+    billing_address_line_2 = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        help_text="Second line of the billing street address.",
+    )
+    billing_address_city = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        help_text="Billing address city.",
+    )
+    billing_address_state = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        help_text="Billing address state or province.",
+    )
+    billing_address_postal_code = models.CharField(
+        max_length=20,
+        null=True,
+        blank=True,
+        help_text="Billing address postal code.",
     )
     last_checkout_error = models.TextField(blank=True, null=True)
     last_provisioning_error = models.TextField(blank=True, null=True)
@@ -689,6 +726,12 @@ class CheckoutIntent(TimeStampedModel):
         slug: str | None = None,
         name: str | None = None,
         country: str | None = None,
+        billing_address_country: str | None = None,
+        billing_address_line_1: str | None = None,
+        billing_address_line_2: str | None = None,
+        billing_address_city: str | None = None,
+        billing_address_state: str | None = None,
+        billing_address_postal_code: str | None = None,
         terms_metadata: dict | None = None,
         ssp_product: 'SspProduct | None' = None,
     ) -> Self:
@@ -788,6 +831,18 @@ class CheckoutIntent(TimeStampedModel):
                 existing_intent.enterprise_slug = slug or existing_intent.enterprise_slug
                 existing_intent.enterprise_name = name or existing_intent.enterprise_name
                 existing_intent.country = country or existing_intent.country
+                if billing_address_country is not None:
+                    existing_intent.billing_address_country = billing_address_country
+                if billing_address_line_1 is not None:
+                    existing_intent.billing_address_line_1 = billing_address_line_1
+                if billing_address_line_2 is not None:
+                    existing_intent.billing_address_line_2 = billing_address_line_2
+                if billing_address_city is not None:
+                    existing_intent.billing_address_city = billing_address_city
+                if billing_address_state is not None:
+                    existing_intent.billing_address_state = billing_address_state
+                if billing_address_postal_code is not None:
+                    existing_intent.billing_address_postal_code = billing_address_postal_code
                 existing_intent.terms_metadata = (existing_intent.terms_metadata or {}) | (terms_metadata or {})
                 if ssp_product is not None:
                     existing_intent.ssp_product = ssp_product
@@ -802,6 +857,12 @@ class CheckoutIntent(TimeStampedModel):
                 'quantity': quantity,
                 'expires_at': expires_at,
                 'country': country,
+                'billing_address_country': billing_address_country,
+                'billing_address_line_1': billing_address_line_1,
+                'billing_address_line_2': billing_address_line_2,
+                'billing_address_city': billing_address_city,
+                'billing_address_state': billing_address_state,
+                'billing_address_postal_code': billing_address_postal_code,
                 'terms_metadata': terms_metadata,
             }
             if ssp_product is not None:

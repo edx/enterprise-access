@@ -55,6 +55,14 @@ class TestCheckoutIntentModel(TestCase):
             'enterprise_name': 'Test Enterprise',
             'quantity': 10,
         }
+        self.billing_address = {
+            'billing_address_country': 'US',
+            'billing_address_line_1': '123 Main St',
+            'billing_address_line_2': 'Suite 100',
+            'billing_address_city': 'Boston',
+            'billing_address_state': 'MA',
+            'billing_address_postal_code': '02110',
+        }
 
     def tearDown(self):
         CheckoutIntent.objects.all().delete()
@@ -127,6 +135,7 @@ class TestCheckoutIntentModel(TestCase):
             slug=self.basic_data['enterprise_slug'],
             name=self.basic_data['enterprise_name'],
             quantity=self.basic_data['quantity'],
+            **self.billing_address,
             terms_metadata=terms_metadata
         )
 
@@ -134,6 +143,12 @@ class TestCheckoutIntentModel(TestCase):
         self.assertEqual(intent.enterprise_slug, self.basic_data['enterprise_slug'])
         self.assertEqual(intent.enterprise_name, self.basic_data['enterprise_name'])
         self.assertEqual(intent.quantity, self.basic_data['quantity'])
+        self.assertEqual(intent.billing_address_country, 'US')
+        self.assertEqual(intent.billing_address_line_1, '123 Main St')
+        self.assertEqual(intent.billing_address_line_2, 'Suite 100')
+        self.assertEqual(intent.billing_address_city, 'Boston')
+        self.assertEqual(intent.billing_address_state, 'MA')
+        self.assertEqual(intent.billing_address_postal_code, '02110')
         self.assertEqual(intent.terms_metadata, terms_metadata)
         self.assertEqual(intent.state, CheckoutIntentState.CREATED)
         self.assertIsNone(intent.workflow)
@@ -176,6 +191,11 @@ class TestCheckoutIntentModel(TestCase):
             slug='first-slug',
             name='First Enterprise',
             quantity=5,
+            billing_address_line_1='123 Main St',
+            billing_address_city='Boston',
+            billing_address_state='MA',
+            billing_address_postal_code='02110',
+            billing_address_country='US',
             terms_metadata=first_terms
         )
 
@@ -186,6 +206,12 @@ class TestCheckoutIntentModel(TestCase):
             slug='second-slug',
             name='Second Enterprise',
             quantity=10,
+            billing_address_line_1='500 Market St',
+            billing_address_line_2='Floor 2',
+            billing_address_city='San Francisco',
+            billing_address_state='CA',
+            billing_address_postal_code='94105',
+            billing_address_country='US',
             terms_metadata=second_terms
         )
 
@@ -194,6 +220,12 @@ class TestCheckoutIntentModel(TestCase):
         self.assertEqual(second_intent.enterprise_slug, 'second-slug')
         self.assertEqual(second_intent.enterprise_name, 'Second Enterprise')
         self.assertEqual(second_intent.quantity, 10)
+        self.assertEqual(second_intent.billing_address_line_1, '500 Market St')
+        self.assertEqual(second_intent.billing_address_line_2, 'Floor 2')
+        self.assertEqual(second_intent.billing_address_city, 'San Francisco')
+        self.assertEqual(second_intent.billing_address_state, 'CA')
+        self.assertEqual(second_intent.billing_address_postal_code, '94105')
+        self.assertEqual(second_intent.billing_address_country, 'US')
         self.assertEqual(second_intent.terms_metadata, second_terms)
 
         # Should still only have one intent for this user
