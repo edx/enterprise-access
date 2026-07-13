@@ -12,7 +12,6 @@ from django.conf import settings
 from django_countries import countries
 from rest_framework.exceptions import ValidationError
 
-from enterprise_access.apps.api_client.enterprise_catalog_client import EnterpriseCatalogApiClient
 from enterprise_access.apps.customer_billing.models import (
     CheckoutIntent,
     SelfServiceSubscriptionRenewal,
@@ -266,8 +265,6 @@ class GetCreateCatalogStepInput(BaseInputOutput):
 
     title: Optional[str] = field(default=None, validator=validators.optional(is_str))
     # The integer PK of the CatalogQuery in enterprise-catalog.
-    # Resolved from `SspProduct.catalog_query_uuid` via API call,
-    # or passed directly as an int from legacy callers.
     catalog_query_id: Optional[int] = field(default=None, validator=validators.optional(is_int))
 
 
@@ -1010,7 +1007,6 @@ class ProvisionNewCustomerWorkflow(AbstractWorkflow):
         catalog_request = catalog_request_dict or {}
         academy_request = academy_request_dict or {}
         ssp_cache = {}
-        catalog_query_id_cache = {}
 
         def _get_ssp(slug):
             if slug not in ssp_cache:
@@ -1027,10 +1023,8 @@ class ProvisionNewCustomerWorkflow(AbstractWorkflow):
             Returns:
                 A 3-tuple of (updated_plan_dict, catalog_patch, academy_patch).
                 - updated_plan_dict: the plan dict with product_id injected (if resolvable).
-                - catalog_patch: dict with ``catalog_query_id`` if the SSP has a catalog_query_uuid,
-                otherwise empty dict.
-                - academy_patch: dict with ``academy_uuid`` if the SSP has an academy_uuid,
-                otherwise empty dict.
+                - catalog_patch: dict with ``catalog_query_id`` if set on the SspProduct.
+                - academy_patch: dict with ``academy_uuid`` if the SSP has an academy_uuid.
             """
             catalog_patch = {}
             academy_patch = {}
@@ -1039,30 +1033,17 @@ class ProvisionNewCustomerWorkflow(AbstractWorkflow):
             if not slug:
                 return plan_dict, catalog_patch, academy_patch
 
-            try:
-                ssp = _get_ssp(slug)
-            except SspProduct.DoesNotExist as exc:
-                raise ValidationError(f"Unknown ssp_product_slug: {slug}") from exc
+            ssp = _get_ssp(slug)
 
-            # Prefer License Manager product id from SspProduct when present.
             product_id = (
                 ssp.license_manager_product_id_trial if is_trial else ssp.license_manager_product_id_paid
             )
             if product_id is not None:
                 plan_dict = {**plan_dict, 'product_id': product_id}
 
-            # Resolve catalog_query_id from the SspProduct's catalog_query_uuid.
-            if ssp.catalog_query_uuid is not None:
-                if ssp.catalog_query_uuid not in catalog_query_id_cache:
-                    catalog_client = EnterpriseCatalogApiClient()
-                    catalog_query_id_cache[ssp.catalog_query_uuid] = int(
-                        catalog_client.get_catalog_query_id_from_uuid(ssp.catalog_query_uuid)
-                    )
-                catalog_query_id = catalog_query_id_cache[ssp.catalog_query_uuid]
-                catalog_patch = {'catalog_query_id': catalog_query_id}
+            if ssp.catalog_query_id is not None:
+                catalog_patch = {'catalog_query_id': ssp.catalog_query_id}
 
-            # Pass academy uuid derived from SspProduct into the associate academy
-            # step input. It may be None for non-academy products (e.g. Teams).
             if ssp.academy_uuid:
                 academy_patch = {'academy_uuid': str(ssp.academy_uuid)}
 

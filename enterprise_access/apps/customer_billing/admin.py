@@ -61,6 +61,7 @@ class SspProductAdmin(DjangoQLSearchMixin, SimpleHistoryAdmin):
         'slug',
         'stripe_price_lookup_key',
         'academy_uuid',
+        'catalog_query_id',
         'catalog_query_uuid',
         'is_active',
         'marketing_url',

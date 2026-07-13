@@ -3,7 +3,6 @@ Tests for the provisioning.models module.
 """
 from datetime import datetime, timezone
 from unittest import mock
-from unittest.mock import patch
 from uuid import uuid4
 
 import ddt
@@ -586,14 +585,15 @@ class TestGenerateInputDictSspResolution(TestCase):
         slug,
         trial_product_id,
         paid_product_id,
-        catalog_query_uuid=None,
+        catalog_query_id=42,
         academy_uuid=None,
     ):
         """Create a test SSP product with the supplied identifiers."""
         return SspProduct.objects.create(
             slug=slug,
             stripe_price_lookup_key=f'price_{slug}',
-            catalog_query_uuid=catalog_query_uuid or uuid4(),
+            catalog_query_uuid=uuid4(),
+            catalog_query_id=catalog_query_id,
             academy_uuid=academy_uuid,
             license_manager_product_id_trial=trial_product_id,
             license_manager_product_id_paid=paid_product_id,
@@ -619,15 +619,13 @@ class TestGenerateInputDictSspResolution(TestCase):
             top_level_ssp_product_slug=top_level_ssp_product_slug,
         )
 
-    @patch('enterprise_access.apps.provisioning.models.EnterpriseCatalogApiClient')
-    def test_ssp_with_catalog_query_uuid_resolves_to_int_id(self, mock_catalog_cls):
-        """catalog_query_uuid present → calls API and stores int id in catalog input."""
-        mock_catalog_cls.return_value.get_catalog_query_id_from_uuid.return_value = 99
-
+    def test_ssp_resolves_catalog_query_id_from_model(self):
+        """catalog_query_id is read directly from SspProduct — no API call needed."""
         ssp = self._create_ssp(
             slug='test-ssp-cq',
             trial_product_id=10,
             paid_product_id=20,
+            catalog_query_id=99,
             academy_uuid=uuid4(),
         )
 
@@ -639,61 +637,10 @@ class TestGenerateInputDictSspResolution(TestCase):
 
         self.assertEqual(result[GetCreateCatalogStepInput.KEY]['catalog_query_id'], 99)
         self.assertIsInstance(result[GetCreateCatalogStepInput.KEY]['catalog_query_id'], int)
-        mock_catalog_cls.return_value.get_catalog_query_id_from_uuid.assert_called()
-        self.assertEqual(
-            result['associate_academy_input']['academy_uuid'],
-            str(ssp.academy_uuid),
-        )
+        self.assertEqual(result['associate_academy_input']['academy_uuid'], str(ssp.academy_uuid))
 
-    def test_ssp_catalog_query_uuid_api_returns_none_raises_type_error(self):
-        """
-        Catalog query UUID present but API returns None → int(None) raises TypeError.
-        The method should fail loudly instead of silently omitting catalog_query_id.
-        """
-        with patch('enterprise_access.apps.provisioning.models.EnterpriseCatalogApiClient') as mock_catalog_cls:
-            mock_catalog_cls.return_value.get_catalog_query_id_from_uuid.return_value = None
-
-            ssp = self._create_ssp(
-                slug='test-ssp-no-cq',
-                trial_product_id=10,
-                paid_product_id=20,
-                academy_uuid=None,
-            )
-
-            with self.assertRaises(TypeError):
-                self._generate_input_dict(
-                    trial_subscription_plan_request_dict={**self.MINIMAL_TRIAL},
-                    first_paid_subscription_plan_request_dict={**self.MINIMAL_PAID},
-                    top_level_ssp_product_slug=ssp.slug,
-                )
-
-    def test_ssp_catalog_query_uuid_api_returns_invalid_str_raises_value_error(self):
-        """
-        Catalog query UUID present but API returns a non-numeric string →
-        int('not-a-number') raises ValueError. The method should fail loudly.
-        """
-        with patch('enterprise_access.apps.provisioning.models.EnterpriseCatalogApiClient') as mock_catalog_cls:
-            mock_catalog_cls.return_value.get_catalog_query_id_from_uuid.return_value = 'not-a-number'
-
-            ssp = self._create_ssp(
-                slug='test-ssp-bad-str',
-                trial_product_id=10,
-                paid_product_id=20,
-                academy_uuid=None,
-            )
-
-            with self.assertRaises(ValueError):
-                self._generate_input_dict(
-                    trial_subscription_plan_request_dict={**self.MINIMAL_TRIAL},
-                    first_paid_subscription_plan_request_dict={**self.MINIMAL_PAID},
-                    top_level_ssp_product_slug=ssp.slug,
-                )
-
-    @patch('enterprise_access.apps.provisioning.models.EnterpriseCatalogApiClient')
-    def test_ssp_with_product_id_none(self, mock_catalog_cls):
+    def test_ssp_with_product_id_none(self):
         """license_manager_product_id_trial is None → product_id falls back to settings default."""
-        mock_catalog_cls.return_value.get_catalog_query_id_from_uuid.return_value = 42
-
         ssp = self._create_ssp(
             slug='test-ssp-nopid',
             trial_product_id=None,
@@ -713,17 +660,16 @@ class TestGenerateInputDictSspResolution(TestCase):
         self.assertEqual(paid_input['product_id'], settings.PROVISIONING_PAID_SUBSCRIPTION_PRODUCT_ID)
 
     @mock.patch('enterprise_access.apps.provisioning.models.SspProduct.objects.get')
-    @mock.patch('enterprise_access.apps.provisioning.models.EnterpriseCatalogApiClient')
-    def test_top_level_slug_reuses_single_ssp_resolution(self, mock_catalog_cls, mock_ssp_get):
-        """A shared top-level SSP slug should resolve once for both plans."""
+    def test_top_level_slug_reuses_single_ssp_resolution(self, mock_ssp_get):
+        """A shared top-level SSP slug should hit the DB once for both plans."""
         ssp = self._create_ssp(
             slug='shared-ssp',
             trial_product_id=11,
             paid_product_id=22,
+            catalog_query_id=123,
             academy_uuid=uuid4(),
         )
         mock_ssp_get.return_value = ssp
-        mock_catalog_cls.return_value.get_catalog_query_id_from_uuid.return_value = 123
 
         result = self._generate_input_dict(
             trial_subscription_plan_request_dict={**self.MINIMAL_TRIAL},
@@ -735,7 +681,6 @@ class TestGenerateInputDictSspResolution(TestCase):
         self.assertEqual(result[GetCreateTrialSubscriptionPlanStepInput.KEY]['product_id'], 11)
         self.assertEqual(result[GetCreateFirstPaidSubscriptionPlanStepInput.KEY]['product_id'], 22)
         mock_ssp_get.assert_called_once_with(slug=ssp.slug, is_active=True)
-        mock_catalog_cls.return_value.get_catalog_query_id_from_uuid.assert_called_once_with(ssp.catalog_query_uuid)
 
     def test_ssp_invalid_slug_raises_validation_error(self):
         """Unknown ssp_product_slug raises ValidationError."""
@@ -798,10 +743,8 @@ class TestGenerateInputDictSspResolution(TestCase):
         },
     )
     @ddt.unpack
-    @mock.patch('enterprise_access.apps.provisioning.models.EnterpriseCatalogApiClient')
     def test_top_level_and_plan_level_slug_resolution(
         self,
-        mock_catalog_cls,
         scenario,
         top_level_trial_product_id,
         top_level_paid_product_id,
@@ -814,8 +757,6 @@ class TestGenerateInputDictSspResolution(TestCase):
         expected_paid_product_id,
     ):
         """Top-level SSP slugs should seed missing plan data while preserving per-plan overrides."""
-        mock_catalog_cls.return_value.get_catalog_query_id_from_uuid.return_value = 42
-
         self._create_ssp(
             slug='top-level-ssp',
             trial_product_id=top_level_trial_product_id,
