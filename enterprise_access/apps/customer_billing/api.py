@@ -399,6 +399,9 @@ class CheckoutSessionInputValidator():
         validation_decisions = {
             field_name: self.validation_handlers[field_name](self, input_data)
             for field_name in input_data.keys()
+            # Some request fields (for example billing address details) are validated by the
+            # DRF serializer before this validator runs, so only dispatch handlers for the
+            # subset of fields this validator knows how to evaluate.
             if field_name in self.validation_handlers
         }
         # Remove valid responses.
