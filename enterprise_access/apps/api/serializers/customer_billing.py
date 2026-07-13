@@ -51,7 +51,7 @@ BILLING_ADDRESS_REQUIRED_FIELDS = (
 )
 
 
-def _has_billing_address_value(value):
+def _is_billing_address_value_present(value):
     return value not in (None, '')
 
 
@@ -68,13 +68,13 @@ def validate_billing_address_fields(serializer, attrs):
         else:
             final_values[field_name] = None
 
-    if not any(_has_billing_address_value(value) for value in final_values.values()):
+    if not any(_is_billing_address_value_present(value) for value in final_values.values()):
         return attrs
 
     errors = {
         field_name: 'This field is required when billing address details are provided.'
         for field_name in BILLING_ADDRESS_REQUIRED_FIELDS
-        if not _has_billing_address_value(final_values[field_name])
+        if not _is_billing_address_value_present(final_values[field_name])
     }
     if errors:
         raise serializers.ValidationError(errors)
