@@ -54,6 +54,20 @@ def _get_assignment_or_raise(assignment_uuid):
         raise
 
 
+# Common Braze property set shared across course-related campaign tasks.
+_BRAZE_COURSE_PROPS = (
+    'contact_admin_link', 'organization', 'course_title',
+    'start_date', 'course_partner', 'course_card_image',
+)
+
+
+def _prepare_braze_sender(assignment_uuid, *property_names):
+    """Return (assignment, BrazeCampaignSender, trigger_properties) for a Braze campaign."""
+    assignment = _get_assignment_or_raise(assignment_uuid)
+    sender = BrazeCampaignSender(assignment)
+    return assignment, sender, sender.get_properties(*property_names)
+
+
 def _get_learner_credit_request_or_raise(learner_credit_request_uuid):
     """
     Returns a ``LearnerCreditRequest`` instance with the given uuid, or raises
@@ -447,19 +461,9 @@ def send_exec_ed_enrollment_warmer(assignment_uuid, days_before_course_start_dat
     Args:
         assignment_uuid: (string) the subsidy request uuid
     """
-    assignment = _get_assignment_or_raise(assignment_uuid)
-
-    campaign_sender = BrazeCampaignSender(assignment)
-    braze_trigger_properties = campaign_sender.get_properties(
-        'contact_admin_link',
-        'organization',
-        'course_title',
-        'start_date',
-        'course_partner',
-        'course_card_image',
-        'learner_portal_link',
+    assignment, campaign_sender, braze_trigger_properties = _prepare_braze_sender(
+        assignment_uuid, *_BRAZE_COURSE_PROPS, 'learner_portal_link',
     )
-
     braze_trigger_properties['days_before_course_start_date'] = days_before_course_start_date
 
     campaign_uuid = settings.BRAZE_ASSIGNMENT_NUDGE_EXEC_ED_ACCEPTED_ASSIGNMENT_CAMPAIGN
