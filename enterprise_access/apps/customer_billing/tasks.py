@@ -44,7 +44,7 @@ def _build_common_trigger_properties(ssp_product=None, organization_name=None, *
     properties = {}
     if ssp_product:
         properties.update({'product_slug': ssp_product.slug, 'product_key': ssp_product.slug})
-        provided_academy_name = extra.get('academy_name') if isinstance(extra, dict) else None
+        provided_academy_name = extra.get('academy_name')
         if provided_academy_name:
             properties['academy_name'] = provided_academy_name
         elif ssp_product.academy_uuid is not None:
@@ -56,10 +56,7 @@ def _build_common_trigger_properties(ssp_product=None, organization_name=None, *
         properties['organization'] = organization_name
 
     # Avoid inserting keys with None values (tests expect absent keys, not None)
-    if isinstance(extra, dict):
-        filtered_extra = {k: v for k, v in extra.items() if v is not None}
-    else:
-        filtered_extra = extra
+    filtered_extra = {k: v for k, v in extra.items() if v is not None}
     properties.update(filtered_extra)
     return properties
 
@@ -399,6 +396,7 @@ def send_billing_error_email_task(checkout_intent_id: int):
         next_retry_date='',
         enterprise_slug=enterprise_slug,
         enterprise_admin_portal_url=f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/{enterprise_slug}',
+        restart_subscription_url=f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/{enterprise_slug}',
         customer_portal_url=settings.STRIPE_CUSTOMER_PORTAL_URL,
     )
 
