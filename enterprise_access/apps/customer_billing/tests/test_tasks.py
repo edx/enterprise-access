@@ -1646,7 +1646,7 @@ class TestSendTrialEndingReminderEmailTask(TestCase):
     @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
     @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
     def test_subscription_summary_without_upcoming_invoice_uses_default_total(
-        self, mock_lms_client, mock_braze_client, mock_get_subscription, mock_payment_method
+        self, mock_lms_client, mock_braze_client, mock_get_subscription, _mock_payment_method
     ):
         """If subscription summary exists but upcoming_invoice_amount_due is None, default total is used."""
         mock_lms_client.return_value.get_enterprise_customer_data.return_value = {
@@ -1663,7 +1663,6 @@ class TestSendTrialEndingReminderEmailTask(TestCase):
         ))
         mock_get_subscription.return_value = mock_subscription
 
-        # Mock StripeEventSummary.get_latest_subscription_created to return an object with None upcoming_invoice_amount_due
         class DummySummary:
             upcoming_invoice_amount_due = None
 
