@@ -21,12 +21,6 @@ class EnterpriseCustomerSerializer(serializers.Serializer):
     stripe_customer_id = serializers.CharField(required=False, allow_blank=True)
     is_self_service = serializers.BooleanField(default=False)
     admin_portal_url = serializers.CharField()
-    ssp_product_slug = serializers.SlugField(required=False, allow_null=True)
-    product_type = serializers.ChoiceField(
-        choices=['essentials', 'teams'],
-        required=False,
-        allow_null=True,
-    )
 
 
 class PriceSerializer(serializers.Serializer):
