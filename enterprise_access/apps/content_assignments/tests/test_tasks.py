@@ -993,6 +993,34 @@ class TestBrazeEmailTasks(APITestWithMocks):
         )
         self.assertEqual(expected_result, action_required_by)
 
+    @mock.patch('enterprise_access.apps.content_assignments.tasks.LmsApiClient')
+    @mock.patch('enterprise_access.apps.content_assignments.tasks.BrazeApiClient')
+    @ddt.data(
+        {'contact_email': 'contact@example.com', 'expected_recipient_emails': ['contact@example.com']},
+        {'contact_email': None, 'expected_recipient_emails': ['test@admin.com']},
+    )
+    @ddt.unpack
+    def test_get_contact_admin_link_prefers_contact_email(
+        self,
+        mock_braze_client_class,
+        mock_lms_client_class,
+        contact_email,
+        expected_recipient_emails,
+    ):
+        """
+        Tests that get_contact_admin_link prefers the enterprise customer's `contact_email`
+        when present, falling back to `admin_users` emails when it is not.
+        """
+        customer_data = dict(self.mock_enterprise_customer_data)
+        if contact_email:
+            customer_data['contact_email'] = contact_email
+        mock_lms_client_class.return_value.get_enterprise_customer_data.return_value = customer_data
+
+        sender = BrazeCampaignSender(self.assignment_course)
+        sender.get_contact_admin_link()
+
+        mock_braze_client_class.return_value.generate_mailto_link.assert_called_once_with(expected_recipient_emails)
+
 
 class TestClearPiiForExpiredAssignmentsTask(APITestWithMocks):
     """
