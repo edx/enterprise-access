@@ -23,14 +23,12 @@ from enterprise_access.apps.customer_billing.constants import (
 from enterprise_access.apps.customer_billing.models import (
     CheckoutIntent,
     SelfServiceSubscriptionRenewal,
-    SspProduct,
     StripeEventData,
     StripeEventSummary
 )
 from enterprise_access.apps.customer_billing.stripe_event_handlers import (
     CheckoutIntentLookupError,
     StripeEventHandler,
-    _get_ssp_product_slug_from_stripe_event,
     _valid_invoice_event_type,
     cancel_all_future_plans,
     get_checkout_intent_identifier_from_subscription,
@@ -775,7 +773,7 @@ class TestStripeEventHandler(TestCase):
 
         StripeEventHandler.dispatch(mock_event)
 
-        # Ensure the task was queued and contains expected kwargs (allow extra kwargs like ssp_product_slug).
+        # Ensure the task was queued with the expected identifiers.
         mock_email_task.delay.assert_called_once()
         call_kwargs = mock_email_task.delay.call_args.kwargs
         self.assertEqual(call_kwargs.get('checkout_intent_id'), self.checkout_intent.id)
@@ -850,7 +848,7 @@ class TestStripeEventHandler(TestCase):
 
         StripeEventHandler.dispatch(mock_event)
 
-        # Ensure the task was queued and contains expected kwargs (allow extra kwargs like ssp_product_slug).
+        # Ensure the task was queued with the expected identifiers.
         mock_email_task.delay.assert_called_once()
         self.assertEqual(mock_email_task.delay.call_args.kwargs.get('checkout_intent_id'), self.checkout_intent.id)
 
@@ -920,7 +918,7 @@ class TestStripeEventHandler(TestCase):
 
         StripeEventHandler.dispatch(mock_event)
 
-        # Ensure the task was queued and contains expected kwargs (allow extra kwargs like ssp_product_slug).
+        # Ensure the task was queued with the expected identifiers.
         mock_paid_email_task.delay.assert_called_once()
         call_kwargs = mock_paid_email_task.delay.call_args.kwargs
         self.assertEqual(call_kwargs.get('checkout_intent_id'), self.checkout_intent.id)
@@ -993,7 +991,6 @@ class TestStripeEventHandler(TestCase):
         StripeEventHandler.dispatch(mock_event)
 
         mock_cancel.assert_called_once_with(self.checkout_intent)
-        # Allow extra kwargs like `ssp_product_slug` added to task signature.
         mock_send_billing_error.delay.assert_called_once()
         call_kwargs = mock_send_billing_error.delay.call_args.kwargs
         self.assertEqual(call_kwargs.get('checkout_intent_id'), self.checkout_intent.id)
@@ -1114,7 +1111,6 @@ class TestStripeEventHandler(TestCase):
         StripeEventHandler.dispatch(mock_event)
 
         mock_cancel.assert_called_once_with(self.checkout_intent)
-        # Allow extra kwargs like `ssp_product_slug` added to task signature.
         mock_send_cancelation_email.delay.assert_called_once()
         trial_end_value = mock_send_cancelation_email.delay.call_args_list[0].kwargs['ended_at_timestamp']
         # Test that we use a default trial end of now if no value can be found in the event.
@@ -1170,80 +1166,10 @@ class TestStripeEventHandler(TestCase):
         self.assertTrue(renewal.is_canceled)
         self.assertIsNone(renewal.subscription_cancel_at)
         mock_cancel.assert_called_once_with(self.checkout_intent)
-        # Allow extra kwargs like `ssp_product_slug` added to task signature.
         mock_send_cancelation_email.delay.assert_called_once()
         call_kwargs = mock_send_cancelation_email.delay.call_args.kwargs
         self.assertEqual(call_kwargs.get('checkout_intent_id'), self.checkout_intent.id)
         self.assertEqual(call_kwargs.get('ended_at_timestamp'), 1700000000)
-
-    def test_get_ssp_product_slug_handles_checkout_intent_ssp_product_access_exception(self):
-        """If provided checkout_intent.ssp_product access raises, handler falls back to other strategies."""
-        # Create an SspProduct and a CheckoutIntent with stripe_customer_id
-        sp, _ = SspProduct.objects.get_or_create(
-            slug='essentials-customer-ex',
-            defaults={'stripe_price_lookup_key': 'kx', 'catalog_query_uuid': uuid.uuid4()},
-        )
-        user = UserFactory()
-        c = CheckoutIntent.create_intent(user=user, slug='e-ex', name='E-Ex', quantity=1)
-        c.stripe_customer_id = 'cus_for_exception'
-        c.ssp_product = sp
-        c.save()
-
-        class BadCheckoutIntent:
-            @property
-            def ssp_product(self):
-                raise Exception('boom')
-
-        event_data = {'customer': 'cus_for_exception', 'id': 'sub_except_1'}
-        slug = _get_ssp_product_slug_from_stripe_event(event_data, checkout_intent=BadCheckoutIntent())
-        self.assertEqual(slug, 'essentials-customer-ex')
-
-    def test_get_ssp_product_slug_resolves_from_invoice_line_metadata(self):
-        """Should read ssp_product_slug from invoice line price.metadata."""
-        event_data = {
-            'lines': {
-                'data': [
-                    {
-                        'price': {
-                            'metadata': {
-                                'ssp_product_slug': 'essentials-from-line'
-                            }
-                        }
-                    }
-                ]
-            }
-        }
-        slug = _get_ssp_product_slug_from_stripe_event(event_data)
-        self.assertEqual(slug, 'essentials-from-line')
-
-    def test_get_ssp_product_slug_customer_id_present_but_no_matching_checkout(self):
-        """When customer_id is in event but no CheckoutIntent matches, fall through to invoice lines."""
-        # customer_id is present but no CheckoutIntent has this stripe_customer_id
-        # → checkout is None → condition at line 86 is False → falls through to strategy 3
-        # invoice lines also have no slug → final return None
-        event_data = {
-            'customer': 'cus_nonexistent_999',
-            'lines': {
-                'data': [
-                    {'price': {'metadata': {}}},
-                ]
-            },
-        }
-        slug = _get_ssp_product_slug_from_stripe_event(event_data)
-        self.assertIsNone(slug)
-
-    def test_get_ssp_product_slug_invoice_lines_without_slug_returns_none(self):
-        """When invoice lines are present but none have ssp_product_slug, return None."""
-        event_data = {
-            'lines': {
-                'data': [
-                    {'price': {'metadata': {}}},
-                    {'price': {'metadata': {'other_key': 'other_value'}}},
-                ]
-            }
-        }
-        slug = _get_ssp_product_slug_from_stripe_event(event_data)
-        self.assertIsNone(slug)
 
     def test_subscription_updated_active_marks_renewals_uncanceled(self):
         """
@@ -1378,7 +1304,6 @@ class TestStripeEventHandler(TestCase):
         StripeEventHandler.dispatch(mock_event)
 
         mock_cancel.assert_called_once_with(self.checkout_intent)
-        # Allow extra kwargs like `ssp_product_slug` added to task signature.
         mock_send_cancelation_email.delay.assert_called_once()
         call_kwargs = mock_send_cancelation_email.delay.call_args.kwargs
         self.assertEqual(call_kwargs.get('checkout_intent_id'), self.checkout_intent.id)

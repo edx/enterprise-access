@@ -948,19 +948,6 @@ class NotificationStep(CheckoutIntentStepMixin, AbstractWorkflowStep):
                 user_email=user_email,
             )
 
-        # Resolve product slug and academy name from the CheckoutIntent
-        # Prefer the cached `academy_title` on `SspProduct` instead of calling
-        # the enterprise-catalog API directly. This preserves caching and avoids
-        # payload differences where the API may return `title` instead of `name`.
-        ssp_product_slug = None
-        academy_name = None
-        if checkout_intent.ssp_product:
-            ssp_product_slug = getattr(checkout_intent.ssp_product, 'slug', None)
-            # Use the model-level cached academy title if present
-            resolved_academy_name = getattr(checkout_intent.ssp_product, 'academy_title', None)
-            if isinstance(resolved_academy_name, str) and resolved_academy_name:
-                academy_name = resolved_academy_name
-
         task_kwargs = {
             'subscription_start_date': accumulated_output.create_trial_subscription_plan_output.start_date,
             'subscription_end_date': accumulated_output.create_trial_subscription_plan_output.expiration_date,
@@ -968,10 +955,7 @@ class NotificationStep(CheckoutIntentStepMixin, AbstractWorkflowStep):
             'activation_link': activation_link,
             'organization_name': accumulated_output.create_customer_output.name,
             'enterprise_slug': accumulated_output.create_customer_output.slug,
-            'ssp_product_slug': ssp_product_slug,
         }
-        if academy_name is not None:
-            task_kwargs['academy_name'] = academy_name
 
         send_enterprise_provision_signup_confirmation_email.delay(**task_kwargs)
 

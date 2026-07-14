@@ -39,73 +39,6 @@ from enterprise_access.apps.track.segment import track_event
 logger = logging.getLogger(__name__)
 
 
-# =============================================================================
-# NEW: Helper to resolve ssp_product_slug from Stripe event
-# =============================================================================
-def _get_ssp_product_slug_from_stripe_event(event_data, checkout_intent=None):
-    """
-    Resolve the ssp_product_slug from a Stripe event payload.
-
-    Resolution order:
-    1. Use provided `checkout_intent.ssp_product` if available
-    2. Try to find CheckoutIntent via stripe_subscription_id → get ssp_product.slug
-    3. Try to find CheckoutIntent via stripe_customer_id → get ssp_product.slug
-    4. Try to read from Stripe Price metadata (invoice line items)
-    5. Return None (defaults to Teams behavior)
-    """
-    # If caller provided a CheckoutIntent with ssp_product, prefer it
-    try:
-        if checkout_intent and getattr(checkout_intent, 'ssp_product', None):
-            return checkout_intent.ssp_product.slug
-    except Exception:  # pylint: disable=broad-except
-        logger.debug('Error reading ssp_product from provided checkout_intent')
-
-    # Strategy 1: Resolve via subscription_id → StripeEventSummary → CheckoutIntent → ssp_product
-    subscription_id = event_data.get('subscription') or event_data.get('id')
-    if subscription_id:
-        try:
-            # StripeEventSummary records subscription IDs; prefer the most recent summary
-            summary = (
-                StripeEventSummary.objects.filter(stripe_subscription_id=subscription_id)
-                .select_related('checkout_intent__ssp_product')
-                .order_by('-stripe_event_created_at', '-id')
-                .first()
-            )
-            if summary and summary.checkout_intent and summary.checkout_intent.ssp_product:
-                return summary.checkout_intent.ssp_product.slug
-        except Exception:  # pylint: disable=broad-except
-            logger.debug("Could not resolve slug via subscription_id=%s", subscription_id)
-
-    # Strategy 2: Resolve via customer_id → CheckoutIntent → ssp_product
-    customer_id = event_data.get('customer')
-    if customer_id:
-        try:
-            checkout = CheckoutIntent.objects.filter(
-                stripe_customer_id=customer_id
-            ).select_related('ssp_product').order_by('-created', '-id').first()
-            if checkout and checkout.ssp_product:
-                return checkout.ssp_product.slug
-        except Exception:  # pylint: disable=broad-except
-            logger.debug("Could not resolve slug via customer_id=%s", customer_id)
-
-    # Strategy 3: Read from invoice line item price metadata
-    lines = event_data.get('lines', {}).get('data', []) if isinstance(event_data, dict) else []
-    for line in lines:
-        price = line.get('price', {})
-        metadata = price.get('metadata', {})
-        slug = metadata.get('ssp_product_slug')
-        if slug:
-            return slug
-
-    logger.info(
-        "Could not resolve ssp_product_slug from event. Defaulting to Teams behavior. "
-        "subscription_id=%s, customer_id=%s",
-        subscription_id,
-        customer_id,
-    )
-    return None
-
-
 class CheckoutIntentLookupError(Exception):
     """Raised when CheckoutIntent cannot be found by UUID or ID."""
 
@@ -245,7 +178,7 @@ def get_checkout_intent_or_raise(
     if uuid_str:
         try:
             uuid_value = UUID(uuid_str)
-            return CheckoutIntent.objects.get(uuid=uuid_value)
+            return CheckoutIntent.objects.select_related('ssp_product').get(uuid=uuid_value)
         except (ValueError, TypeError) as exc:
             logger.warning(
                 'Invalid UUID format %s for event %s: %s',
@@ -262,7 +195,7 @@ def get_checkout_intent_or_raise(
     # Fall back to ID lookup
     if id_int is not None:
         try:
-            return CheckoutIntent.objects.get(id=id_int)
+            return CheckoutIntent.objects.select_related('ssp_product').get(id=id_int)
         except CheckoutIntent.DoesNotExist as exc:
             logger.warning(
                 'CheckoutIntent with id=%s not found for event %s',
@@ -522,11 +455,9 @@ def _handle_invoice_paid_status_updated(
             client.update_subscription_plan(str(renewal.renewed_subscription_plan_uuid), is_active=True)
 
         # Send the trial-end email
-        ssp_product_slug = _get_ssp_product_slug_from_stripe_event(event.data.object.to_dict(), checkout_intent)
         send_trial_end_and_subscription_started_email_task.delay(
             subscription_id=stripe_subscription_id,
             checkout_intent_id=checkout_intent.id,
-            ssp_product_slug=ssp_product_slug,
         )
 
 
@@ -571,8 +502,7 @@ def _handle_subscription_updated_status_updates(
                 subscription.id,
                 checkout_intent.id,
             )
-        ssp_product_slug = _get_ssp_product_slug_from_stripe_event(subscription.to_dict(), checkout_intent)
-        send_billing_error_email_task.delay(checkout_intent_id=checkout_intent.id, ssp_product_slug=ssp_product_slug)
+        send_billing_error_email_task.delay(checkout_intent_id=checkout_intent.id)
 
 
 class StripeEventHandler:
@@ -653,13 +583,11 @@ class StripeEventHandler:
             # Renewal might want to force a retry by raising, risking duplicate receipt emails. We'll
             # mitigate this by configuring the Braze campaign to avoid sending more than 1 in a 3
             # day period.
-            ssp_product_slug = _get_ssp_product_slug_from_stripe_event(invoice.to_dict(), checkout_intent)
             send_payment_receipt_email.delay(
                 invoice_id=invoice.id,
                 invoice_data=invoice.to_dict(),
                 enterprise_customer_name=checkout_intent.enterprise_name,
                 enterprise_slug=checkout_intent.enterprise_slug,
-                ssp_product_slug=ssp_product_slug,
             )
             # only update status for non-trial invoice.paid events
             _handle_invoice_paid_status_updated(event, checkout_intent)
@@ -783,10 +711,8 @@ class StripeEventHandler:
         )
 
         # Queue the trial ending reminder email task
-        ssp_product_slug = _get_ssp_product_slug_from_stripe_event(subscription.to_dict(), checkout_intent)
         send_trial_ending_reminder_email_task.delay(
             checkout_intent_id=checkout_intent.id,
-            ssp_product_slug=ssp_product_slug,
         )
 
     @on_stripe_event('payment_method.attached')
@@ -902,19 +828,15 @@ class StripeEventHandler:
             )
             if current_status == StripeSubscriptionStatus.TRIALING:
                 logger.info(f"Queuing trial cancellation email for checkout_intent uuid={checkout_intent.uuid}")
-                ssp_product_slug = _get_ssp_product_slug_from_stripe_event(subscription, checkout_intent)
                 send_trial_cancellation_email_task.delay(
                     checkout_intent_id=checkout_intent.id,
                     cancel_at_timestamp=current_cancel_at,
-                    ssp_product_slug=ssp_product_slug,
                 )
             elif current_status == StripeSubscriptionStatus.ACTIVE:
                 logger.info(f"Queuing paid cancellation email for checkout_intent.id={checkout_intent.id}")
-                ssp_product_slug = _get_ssp_product_slug_from_stripe_event(subscription, checkout_intent)
                 send_paid_cancellation_email_task.delay(
                     checkout_intent_id=checkout_intent.id,
                     cancel_at_timestamp=current_cancel_at,
-                    ssp_product_slug=ssp_product_slug,
                 )
 
         # Detect when cancellation is reversed/reinstated (had value, now None)

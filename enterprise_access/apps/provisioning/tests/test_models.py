@@ -488,18 +488,55 @@ class TestNotificationStep(TestCase):
                 'activation_link': expected_activation_link,
                 'organization_name': 'Test Customer',
                 'enterprise_slug': 'test-customer',
-                'ssp_product_slug': checkout_intent.ssp_product.slug,
             },
         )
+        self.assertNotIn('ssp_product_slug', delay_kwargs)
+        self.assertNotIn('academy_name', delay_kwargs)
 
     @mock.patch('enterprise_access.apps.provisioning.models.send_enterprise_provision_signup_confirmation_email')
     @mock.patch('enterprise_access.apps.provisioning.models.LmsApiClient.get_lms_user_activation_link')
-    def test_process_input_includes_academy_name_when_present(
+    def test_process_input_skips_activation_link_lookup_when_username_and_email_absent(
             self,
             mock_get_activation_link,
             mock_send_signup_email,
     ):
-        """NotificationStep should forward a resolved academy title when available."""
+        """NotificationStep should leave activation_link unset when no identity data exists."""
+        step = NotificationStep.objects.create(
+            workflow_record_uuid=uuid4(),
+            input_data={},
+        )
+
+        step.fulfill_checkout_intent = mock.Mock()
+
+        checkout_intent = mock.Mock()
+        checkout_intent.user.username = None
+        step.get_linked_checkout_intent = mock.Mock(return_value=checkout_intent)
+
+        workflow = mock.Mock()
+        workflow.input_object.create_trial_subscription_plan_input.desired_num_licenses = 10
+        workflow.input_object.create_enterprise_admin_users_input.user_emails = []
+        step.get_workflow_record = mock.Mock(return_value=workflow)
+
+        mock_accumulated_output = mock.Mock()
+        mock_accumulated_output.create_trial_subscription_plan_output.start_date = datetime(2025, 1, 1)
+        mock_accumulated_output.create_trial_subscription_plan_output.expiration_date = datetime(2025, 2, 1)
+        mock_accumulated_output.create_customer_output.name = 'Test Customer'
+        mock_accumulated_output.create_customer_output.slug = 'test-customer'
+
+        step.process_input(mock_accumulated_output)
+
+        mock_get_activation_link.assert_not_called()
+        _, delay_kwargs = mock_send_signup_email.delay.call_args
+        self.assertIsNone(delay_kwargs['activation_link'])
+
+    @mock.patch('enterprise_access.apps.provisioning.models.send_enterprise_provision_signup_confirmation_email')
+    @mock.patch('enterprise_access.apps.provisioning.models.LmsApiClient.get_lms_user_activation_link')
+    def test_process_input_does_not_forward_academy_name_when_present(
+            self,
+            mock_get_activation_link,
+            mock_send_signup_email,
+    ):
+        """NotificationStep should no longer forward academy metadata to the task."""
         mock_get_activation_link.return_value = 'http://edx-platform.example.com/activate/abc123'
 
         step = NotificationStep.objects.create(
@@ -529,7 +566,33 @@ class TestNotificationStep(TestCase):
         step.process_input(mock_accumulated_output)
 
         _, delay_kwargs = mock_send_signup_email.delay.call_args
-        self.assertEqual(delay_kwargs['academy_name'], 'AI Academy')
+        self.assertNotIn('academy_name', delay_kwargs)
+        self.assertNotIn('ssp_product_slug', delay_kwargs)
+        self.assertEqual(delay_kwargs['activation_link'], 'http://edx-platform.example.com/activate/abc123')
+
+    def test_get_workflow_record_returns_matching_workflow(self):
+        workflow = ProvisionNewCustomerWorkflowFactory()
+        step = NotificationStep.objects.create(
+            workflow_record_uuid=workflow.uuid,
+            input_data={},
+        )
+
+        self.assertEqual(step.get_workflow_record(), workflow)
+
+    def test_get_preceding_step_record_returns_matching_renewal_step(self):
+        workflow = ProvisionNewCustomerWorkflowFactory()
+        renewal_step = GetCreateSubscriptionPlanRenewalStep.objects.create(
+            workflow_record_uuid=workflow.uuid,
+            input_data={},
+            output_data={},
+        )
+        step = NotificationStep.objects.create(
+            workflow_record_uuid=workflow.uuid,
+            preceding_step_uuid=renewal_step.uuid,
+            input_data={},
+        )
+
+        self.assertEqual(step.get_preceding_step_record(), renewal_step)
 
 
 class TestCheckoutIntentStepMixinUnit(TestCase):
