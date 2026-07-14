@@ -331,6 +331,33 @@ class TestSendBillingErrorEmailTask(TestCase):
         mock_braze.return_value.send_campaign_message.assert_not_called()
 
     @mock.patch('enterprise_access.apps.customer_billing.tasks.BrazeApiClient')
+    @mock.patch('enterprise_access.apps.customer_billing.tasks._get_checkout_intent_with_product')
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.get_enterprise_admins')
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.prepare_admin_braze_recipients')
+    def test_send_billing_error_uses_checkout_helper_and_non_raising_admin_lookup(
+        self,
+        mock_prepare,
+        mock_get_admins,
+        mock_get_checkout_intent,
+        mock_braze,
+    ):
+        """Billing error task should fetch checkout intent via helper and use non-raising admin lookup."""
+        mock_checkout_intent = mock.Mock()
+        mock_checkout_intent.enterprise_slug = 'test-enterprise'
+        mock_checkout_intent.enterprise_name = 'Test Enterprise'
+        mock_checkout_intent.ssp_product = self.checkout_intent.ssp_product
+        mock_get_checkout_intent.return_value = mock_checkout_intent
+
+        mock_get_admins.return_value = [{'email': 'admin@test.com', 'lms_user_id': 1}]
+        mock_prepare.return_value = []
+
+        send_billing_error_email_task(self.checkout_intent.id)
+
+        mock_get_checkout_intent.assert_called_once_with(self.checkout_intent.id)
+        mock_get_admins.assert_called_once_with('test-enterprise', raise_if_empty=False)
+        mock_braze.return_value.send_campaign_message.assert_not_called()
+
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.BrazeApiClient')
     @mock.patch('enterprise_access.apps.customer_billing.tasks.get_campaign_id')
     @mock.patch('enterprise_access.apps.customer_billing.tasks.get_enterprise_admins')
     @mock.patch('enterprise_access.apps.customer_billing.tasks.prepare_admin_braze_recipients')
@@ -604,6 +631,7 @@ class TestSendCancelationCampaignHelper(TestCase):
         self.assertEqual(academy_title_property.call_count, 1)
         trigger_properties = mock_send_campaign.call_args.kwargs['trigger_properties']
         self.assertEqual(trigger_properties.get('academy_name'), 'Academy Once')
+        self.assertIn('restart_subscription_url', trigger_properties)
 
 
 class TestSendReinstatementEmailTask(TestCase):
