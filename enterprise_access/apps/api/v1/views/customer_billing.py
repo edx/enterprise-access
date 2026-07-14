@@ -51,6 +51,9 @@ from .constants import CHECKOUT_INTENT_EXAMPLES, ERROR_RESPONSES, PATCH_REQUEST_
 stripe.api_key = settings.STRIPE_API_KEY
 logger = logging.getLogger(__name__)
 
+SSP_PRODUCT_TYPE_ESSENTIALS = 'Essentials'
+SSP_PRODUCT_TYPE_TEAMS = 'Teams'
+
 CUSTOMER_BILLING_API_TAG = 'Customer Billing'
 STRIPE_EVENT_API_TAG = 'Stripe Event Summary'
 
@@ -820,11 +823,11 @@ class BillingManagementViewSet(viewsets.ViewSet):
         Returns:
             tuple: (stripe_customer_id, checkout_intent) if found, (None, None) otherwise
         """
-        checkout_intent = (
-            CheckoutIntent.objects.select_related('ssp_product')
-            .filter(enterprise_uuid=enterprise_uuid)
-            .first()
-        )
+        checkout_intent = CheckoutIntent.objects.select_related(
+            'ssp_product',
+        ).filter(
+            enterprise_uuid=enterprise_uuid,
+        ).first()
         if not checkout_intent or not checkout_intent.stripe_customer_id:
             logger.warning(
                 f'No checkout intent with stripe customer ID found for enterprise_uuid: {enterprise_uuid}'
@@ -839,10 +842,10 @@ class BillingManagementViewSet(viewsets.ViewSet):
 
         Returns Teams for non-academy products and Essentials for academy-backed products.
         """
-        ssp_product = getattr(checkout_intent, 'ssp_product', None)
+        ssp_product = checkout_intent.ssp_product
         if not ssp_product:
             return None
-        return 'Essentials' if ssp_product.academy_uuid else 'Teams'
+        return SSP_PRODUCT_TYPE_ESSENTIALS if ssp_product.academy_uuid else SSP_PRODUCT_TYPE_TEAMS
 
     def _get_active_subscription_for_customer(self, stripe_customer_id):
         """
