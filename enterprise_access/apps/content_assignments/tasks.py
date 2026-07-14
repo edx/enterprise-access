@@ -237,6 +237,8 @@ class BrazeCampaignSender:
         return properties
 
     def get_contact_admin_link(self):
+        if contact_email := self.customer_data.get('contact_email'):
+            return self.braze_client.generate_mailto_link([contact_email])
         admin_emails = [user['email'] for user in self.customer_data['admin_users']]
         return self.braze_client.generate_mailto_link(admin_emails)
 
