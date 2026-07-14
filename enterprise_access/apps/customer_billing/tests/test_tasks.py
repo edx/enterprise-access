@@ -84,6 +84,25 @@ class TestBuildCommonTriggerProperties(TestCase):
 
         self.assertNotIn('optional_value', result)
         self.assertEqual(result['included_value'], 'included')
+        # organization_name should be added as `organization` key
+        self.assertEqual(result.get('organization'), 'Acme')
+
+    def test_academy_uuid_without_title_does_not_set_academy_name(self):
+        """If ssp_product has an academy_uuid but academy_title is falsy, no academy_name is set."""
+        ssp_product = SspProduct.objects.create(
+            slug='no-academy-title',
+            stripe_price_lookup_key='no_academy_key',
+            catalog_query_uuid=uuid4(),
+            academy_uuid=uuid4(),
+            is_active=True,
+        )
+        # academy_title property returns None
+        with mock.patch.object(SspProduct, 'academy_title', new_callable=mock.PropertyMock, return_value=None):
+            result = _build_common_trigger_properties(
+                ssp_product=ssp_product,
+                organization_name='Org',
+            )
+        self.assertNotIn('academy_name', result)
 
 
 class TestBillingTaskHelpers(TestCase):
@@ -740,6 +759,30 @@ class TestSendReinstatementEmailTask(TestCase):
             )
 
         mock_braze_client.return_value.send_campaign_message.assert_not_called()
+
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.send_campaign_message')
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.prepare_admin_braze_recipients')
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.get_enterprise_admins')
+    @mock.patch('enterprise_access.apps.customer_billing.tasks._get_checkout_intent_with_product')
+    def test_reinstatement_uses_checkout_helper(
+        self, mock_get_checkout_intent, mock_get_admins, mock_prepare, mock_send_campaign
+    ):
+        """Ensure the task fetches the CheckoutIntent via the helper function."""
+        mock_checkout = mock.Mock()
+        mock_checkout.enterprise_slug = 'test-enterprise'
+        mock_checkout.enterprise_name = 'Test Enterprise'
+        mock_get_checkout_intent.return_value = mock_checkout
+
+        mock_get_admins.return_value = [{'email': 'admin@test.com', 'lms_user_id': 1}]
+        mock_prepare.return_value = [{'external_user_id': 'braze_1'}]
+
+        # Patch BrazeApiClient instantiation to avoid requiring real settings
+        with mock.patch('enterprise_access.apps.customer_billing.tasks.BrazeApiClient') as mock_braze_client:
+            mock_braze_client.return_value = mock.Mock()
+            send_reinstatement_email_task(checkout_intent_id=42)
+
+        mock_get_checkout_intent.assert_called_once_with(42)
+        mock_send_campaign.assert_called_once()
 
 
 class TestSendEnterpriseProvisionSignupConfirmationEmail(TestCase):
@@ -1602,6 +1645,42 @@ class TestSendTrialEndingReminderEmailTask(TestCase):
     @mock.patch("enterprise_access.apps.customer_billing.tasks.get_stripe_trialing_subscription")
     @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
     @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
+    def test_subscription_summary_without_upcoming_invoice_uses_default_total(
+        self, mock_lms_client, mock_braze_client, mock_get_subscription, mock_payment_method
+    ):
+        """If subscription summary exists but upcoming_invoice_amount_due is None, default total is used."""
+        mock_lms_client.return_value.get_enterprise_customer_data.return_value = {
+            "admin_users": [{"email": "admin@example.com", "lms_user_id": 123}]
+        }
+
+        mock_subscription = mock.Mock(
+            id="sub_test_123",
+            default_payment_method=None,
+            latest_invoice="in_test_789",
+        )
+        mock_subscription.__getitem__ = mock.Mock(return_value=mock.Mock(
+            data=[mock.Mock(current_period_end=1640995200, quantity=10)]
+        ))
+        mock_get_subscription.return_value = mock_subscription
+
+        # Mock StripeEventSummary.get_latest_subscription_created to return an object with None upcoming_invoice_amount_due
+        class DummySummary:
+            upcoming_invoice_amount_due = None
+
+        with mock.patch.object(StripeEventSummary, 'get_latest_subscription_created', return_value=DummySummary()):
+            mock_braze_instance = mock_braze_client.return_value
+            mock_braze_instance.create_braze_recipient.return_value = {"external_user_id": "123"}
+
+            send_trial_ending_reminder_email_task(checkout_intent_id=self.checkout_intent.id)
+
+            mock_braze_instance.send_campaign_message.assert_called_once()
+            trigger_props = mock_braze_instance.send_campaign_message.call_args[1]['trigger_properties']
+            self.assertEqual(trigger_props['total_paid_amount'], "$0.00 USD")
+
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.stripe.PaymentMethod.retrieve")
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.get_stripe_trialing_subscription")
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
     def test_no_invoice_summary_found(
         self, mock_lms_client, mock_braze_client, mock_get_subscription, mock_payment_method
     ):
@@ -1736,3 +1815,48 @@ class TestSendTrialEndAndSubscriptionStartedEmailTask(TestCase):
             send_trial_end_and_subscription_started_email_task('sub_123', 1)
 
         assert not mock_braze_client.return_value.send_campaign_message.called
+
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.get_stripe_subscription")
+    @mock.patch("enterprise_access.apps.customer_billing.tasks._get_checkout_intent_with_product")
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
+    def test_no_periods_in_subscription_results_in_missing_period_fields(
+        self,
+        mock_lms_client,
+        mock_braze_client,
+        mock_get_checkout_intent,
+        mock_get_stripe_subscription,
+    ):
+        """When subscription has no items/periods, period fields are not set."""
+        subscription = AttrDict.wrap({
+            'id': 'sub_123',
+            'quantity': 5,
+            'plan': {'amount': 10000},
+            'items': {'data': []},
+            'latest_invoice': None,
+        })
+        mock_get_stripe_subscription.return_value = subscription
+
+        checkout_intent_obj = mock.Mock()
+        checkout_intent_obj.enterprise_name = 'Test Org'
+        checkout_intent_obj.enterprise_slug = 'test-org'
+        checkout_intent_obj.ssp_product = mock.Mock(slug='teams-yearly', academy_uuid=None, academy_title=None)
+        mock_get_checkout_intent.return_value = checkout_intent_obj
+
+        mock_lms_client.return_value.get_enterprise_customer_data.return_value = {
+            'admin_users': [
+                {'email': 'admin1@test.com'},
+            ]
+        }
+
+        mock_braze_instance = mock_braze_client.return_value
+        mock_braze_instance.create_braze_recipient.return_value = {'external_user_id': '1'}
+
+        send_trial_end_and_subscription_started_email_task('sub_123', 1)
+
+        assert mock_braze_instance.send_campaign_message.called
+        args, kwargs = mock_braze_instance.send_campaign_message.call_args
+        props = kwargs['trigger_properties']
+        assert 'subscription_start_period' not in props
+        assert 'subscription_end_period' not in props
+        assert 'next_payment_date' not in props

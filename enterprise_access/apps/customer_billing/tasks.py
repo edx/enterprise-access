@@ -422,7 +422,7 @@ def send_reinstatement_email_task(checkout_intent_id: int):
     Args:
         checkout_intent_id (int): ID of the CheckoutIntent record
     """
-    checkout_intent = CheckoutIntent.objects.get(id=checkout_intent_id)
+    checkout_intent = _get_checkout_intent_with_product(checkout_intent_id)
     enterprise_slug = checkout_intent.enterprise_slug
 
     admin_users = get_enterprise_admins(enterprise_slug, raise_if_empty=True)
