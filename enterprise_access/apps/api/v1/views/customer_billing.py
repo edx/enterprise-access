@@ -827,6 +827,12 @@ class BillingManagementViewSet(viewsets.ViewSet):
             'ssp_product',
         ).filter(
             enterprise_uuid=enterprise_uuid,
+        ).exclude(
+            stripe_customer_id__isnull=True,
+        ).exclude(
+            stripe_customer_id='',
+        ).order_by(
+            '-created',
         ).first()
         if not checkout_intent or not checkout_intent.stripe_customer_id:
             logger.warning(
@@ -842,10 +848,7 @@ class BillingManagementViewSet(viewsets.ViewSet):
 
         Returns Teams for non-academy products and Essentials for academy-backed products.
         """
-        ssp_product = checkout_intent.ssp_product
-        if not ssp_product:
-            return None
-        return SSP_PRODUCT_TYPE_ESSENTIALS if ssp_product.academy_uuid else SSP_PRODUCT_TYPE_TEAMS
+        return SSP_PRODUCT_TYPE_ESSENTIALS if checkout_intent.ssp_product.academy_uuid else SSP_PRODUCT_TYPE_TEAMS
 
     def _get_active_subscription_for_customer(self, stripe_customer_id):
         """

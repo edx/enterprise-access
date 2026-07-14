@@ -2366,18 +2366,14 @@ class BillingManagementSubscriptionTests(BillingManagementBaseTest):
         response_data = response.json()
         self.assertEqual(response_data['product_type'], 'Essentials')
 
-    def test_get_product_type_from_checkout_intent_returns_none_without_ssp_product(self):
+    def test_get_product_type_from_checkout_intent_returns_expected_values(self):
         """
-        Test the product type helper returns expected values for no product, Teams, and Essentials.
+        Test the product type helper returns expected values for Teams and Essentials.
         """
-        checkout_intent_without_product = mock.Mock(ssp_product=None)
         teams_checkout_intent = mock.Mock(ssp_product=mock.Mock(academy_uuid=None))
         essentials_checkout_intent = mock.Mock(ssp_product=mock.Mock(academy_uuid=uuid.uuid4()))
 
         # pylint: disable=protected-access
-        self.assertIsNone(
-            BillingManagementViewSet._get_product_type_from_checkout_intent(checkout_intent_without_product)
-        )
         self.assertEqual(
             BillingManagementViewSet._get_product_type_from_checkout_intent(teams_checkout_intent),
             'Teams'
