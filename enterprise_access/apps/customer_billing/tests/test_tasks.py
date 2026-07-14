@@ -22,6 +22,7 @@ from enterprise_access.apps.customer_billing.models import (
 )
 from enterprise_access.apps.customer_billing.tasks import (
     _build_common_trigger_properties,
+    _send_cancelation_campaign,
     get_enterprise_admins,
     prepare_admin_braze_recipients,
     send_billing_error_email_task,
@@ -279,6 +280,28 @@ class TestSendTrialCancellationEmailTask(TestCase):
         self.assertEqual(trigger_props['product_type'], 'teams')
         self.assertNotIn('academy_name', trigger_props)
 
+    @mock.patch('enterprise_access.apps.customer_billing.tasks._send_cancelation_campaign')
+    @mock.patch('enterprise_access.apps.customer_billing.tasks._get_checkout_intent_with_product')
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.get_campaign_id')
+    def test_trial_cancellation_fetches_checkout_intent_once_and_passes_object(
+        self,
+        _mock_get_campaign_id,
+        mock_get_checkout_intent,
+        mock_send_cancelation_campaign,
+    ):
+        mock_checkout_intent = mock.Mock()
+        mock_checkout_intent.ssp_product = mock.Mock()
+        mock_get_checkout_intent.return_value = mock_checkout_intent
+
+        send_trial_cancellation_email_task(
+            checkout_intent_id=self.checkout_intent.id,
+            cancel_at_timestamp=self.cancel_at_timestamp,
+        )
+
+        mock_get_checkout_intent.assert_called_once_with(self.checkout_intent.id)
+        call_args = mock_send_cancelation_campaign.call_args[0]
+        self.assertIs(call_args[0], mock_checkout_intent)
+
 
 class TestSendBillingErrorEmailTask(TestCase):
     """Tests for send_billing_error_email_task."""
@@ -419,6 +442,28 @@ class TestSendPaidCancellationEmailTask(TestCase):
 
         self.assertIn("Braze API error", str(context.exception))
 
+    @mock.patch('enterprise_access.apps.customer_billing.tasks._send_cancelation_campaign')
+    @mock.patch('enterprise_access.apps.customer_billing.tasks._get_checkout_intent_with_product')
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.get_campaign_id')
+    def test_paid_cancellation_fetches_checkout_intent_once_and_passes_object(
+        self,
+        _mock_get_campaign_id,
+        mock_get_checkout_intent,
+        mock_send_cancelation_campaign,
+    ):
+        mock_checkout_intent = mock.Mock()
+        mock_checkout_intent.ssp_product = mock.Mock()
+        mock_get_checkout_intent.return_value = mock_checkout_intent
+
+        send_paid_cancellation_email_task(
+            checkout_intent_id=self.checkout_intent.id,
+            cancel_at_timestamp=self.cancel_at_timestamp,
+        )
+
+        mock_get_checkout_intent.assert_called_once_with(self.checkout_intent.id)
+        call_args = mock_send_cancelation_campaign.call_args[0]
+        self.assertIs(call_args[0], mock_checkout_intent)
+
 
 class TestSendFinalizedCancelationEmailTask(TestCase):
     """Tests for send_finalized_cancelation_email_task."""
@@ -518,6 +563,47 @@ class TestSendFinalizedCancelationEmailTask(TestCase):
 
         # Verify the exception message
         self.assertIn("Braze API error", str(context.exception))
+
+
+class TestSendCancelationCampaignHelper(TestCase):
+    """Tests for the _send_cancelation_campaign helper."""
+
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.send_campaign_message')
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.prepare_admin_braze_recipients')
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.get_enterprise_admins')
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.BrazeApiClient')
+    def test_academy_title_evaluated_once(
+        self,
+        _mock_braze_client,
+        mock_get_admins,
+        mock_prepare_recipients,
+        mock_send_campaign,
+    ):
+        mock_get_admins.return_value = [{'email': 'admin@example.com', 'lms_user_id': 1}]
+        mock_prepare_recipients.return_value = [{'external_user_id': '1'}]
+
+        ssp_product = mock.Mock()
+        ssp_product.slug = 'essentials-once'
+        ssp_product.academy_uuid = uuid4()
+        academy_title_property = mock.PropertyMock(return_value='Academy Once')
+        type(ssp_product).academy_title = academy_title_property
+
+        checkout_intent = mock.Mock()
+        checkout_intent.id = 42
+        checkout_intent.enterprise_slug = 'test-enterprise'
+        checkout_intent.enterprise_name = 'Test Enterprise'
+        checkout_intent.ssp_product = ssp_product
+
+        _send_cancelation_campaign(
+            checkout_intent,
+            ending_timestamp=int(datetime(2025, 6, 1).timestamp()),
+            campaign_identifier='campaign-id',
+            email_description='test cancellation email',
+        )
+
+        self.assertEqual(academy_title_property.call_count, 1)
+        trigger_properties = mock_send_campaign.call_args.kwargs['trigger_properties']
+        self.assertEqual(trigger_properties.get('academy_name'), 'Academy Once')
 
 
 class TestSendReinstatementEmailTask(TestCase):

@@ -36,7 +36,7 @@ def _build_common_trigger_properties(ssp_product=None, organization_name=None, *
     Build the common trigger_properties dict shared across all email tasks.
 
     Includes:
-      - product_slug / product_key: the SSP product key/slug (empty when not provided)
+            - product_slug / product_key: the SSP product key/slug (omitted when not provided)
       - academy_name: resolved from SspProduct when available
       - organization: the enterprise org name
       - Any extra kwargs passed in
@@ -243,8 +243,9 @@ def send_finalized_cancelation_email_task(checkout_intent_id, ended_at_timestamp
         BrazeClientError: If there's an error communicating with Braze
         Exception: For any other unexpected errors during email sending
     """
+    checkout_intent = _get_checkout_intent_with_product(checkout_intent_id)
     _send_cancelation_campaign(
-        checkout_intent_id,
+        checkout_intent,
         ended_at_timestamp,
         settings.BRAZE_SSP_CANCELATION_FINALIZATION_CAMPAIGN,
         'cancelation finalized email',
@@ -271,7 +272,7 @@ def send_trial_cancellation_email_task(checkout_intent_id, cancel_at_timestamp):
     checkout_intent = _get_checkout_intent_with_product(checkout_intent_id)
     campaign_id = get_campaign_id('trial_cancellation', checkout_intent.ssp_product)
     _send_cancelation_campaign(
-        checkout_intent_id,
+        checkout_intent,
         cancel_at_timestamp,
         campaign_id,
         'trial cancelation email',
@@ -298,18 +299,17 @@ def send_paid_cancellation_email_task(checkout_intent_id, cancel_at_timestamp):
     checkout_intent = _get_checkout_intent_with_product(checkout_intent_id)
     campaign_id = get_campaign_id('paid_cancellation', checkout_intent.ssp_product)
     _send_cancelation_campaign(
-        checkout_intent_id,
+        checkout_intent,
         cancel_at_timestamp,
         campaign_id,
         'paid cancelation scheduled email',
     )
 
 
-def _send_cancelation_campaign(checkout_intent_id, ending_timestamp, campaign_identifier, email_description):
+def _send_cancelation_campaign(checkout_intent, ending_timestamp, campaign_identifier, email_description):
     """
     Helper for sending campaign message related to subscription cancelation.
     """
-    checkout_intent = _get_checkout_intent_with_product(checkout_intent_id)
     enterprise_slug = checkout_intent.enterprise_slug
 
     admin_users = get_enterprise_admins(enterprise_slug, raise_if_empty=True)
@@ -320,7 +320,7 @@ def _send_cancelation_campaign(checkout_intent_id, ending_timestamp, campaign_id
 
     logger.info(
         "Sending cancellation email for CheckoutIntent %s (enterprise slug: %s)",
-        checkout_intent_id,
+        checkout_intent.id,
         enterprise_slug,
     )
 
@@ -342,8 +342,9 @@ def _send_cancelation_campaign(checkout_intent_id, ending_timestamp, campaign_id
         'product_type': get_product_type(ssp_product),
         'product_slug': ssp_product.slug,
     })
-    if ssp_product.academy_uuid is not None and ssp_product.academy_title:
-        braze_trigger_properties['academy_name'] = ssp_product.academy_title
+    academy_title = ssp_product.academy_title if ssp_product.academy_uuid is not None else None
+    if academy_title:
+        braze_trigger_properties['academy_name'] = academy_title
 
     send_campaign_message(
         braze_client,
