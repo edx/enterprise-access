@@ -119,9 +119,13 @@ class TestCreateSubscriptionCheckoutSession(StripeApiFunctionsTests):
         }
 
     def _call(self, admin_email, enterprise_catalog_metadata, lms_user_id=1):
+        """
+        Helper to create a checkout session with some mocked values.
+        """
         checkout_intent = mock.MagicMock()
         checkout_intent.id = 'chk_123'
         checkout_intent.uuid = 'uuid_123'
+        checkout_intent.ssp_product.slug = 'test-product-slug'
         return create_subscription_checkout_session(
             self._base_input(admin_email=admin_email),
             lms_user_id=lms_user_id,
@@ -213,6 +217,20 @@ class TestCreateSubscriptionCheckoutSession(StripeApiFunctionsTests):
 
         _, kwargs = mock_session_create.call_args
         self.assertEqual(kwargs['subscription_data']['metadata']['enterprise_catalog'], '404')
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.checkout.Session.create')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Customer.search')
+    def test_includes_ssp_product_slug_in_metadata(self, mock_customer_search, mock_session_create):
+        """ssp_product_slug from checkout_intent.ssp_product.slug should appear in subscription_data metadata."""
+        mock_customer_search.return_value = mock.MagicMock(data=[])
+        mock_stripe_session = mock.Mock()
+        mock_stripe_session.to_dict.return_value = {'id': 'cs_test_slug'}
+        mock_session_create.return_value = mock_stripe_session
+
+        self._call('admin@example.com', None)
+
+        _, kwargs = mock_session_create.call_args
+        self.assertEqual(kwargs['subscription_data']['metadata']['ssp_product_slug'], 'test-product-slug')
 
 
 class TestStripePaymentIntent(StripeApiFunctionsTests):
