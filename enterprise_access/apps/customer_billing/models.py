@@ -603,6 +603,39 @@ class CheckoutIntent(TimeStampedModel):
 
         return cls.objects.filter(query)
 
+    @classmethod
+    def get_latest_for_customer(
+        cls,
+        customer_uuid=None,
+        customer_slug=None,
+        require_stripe_customer=False,
+    ):
+        """
+        Return the most recently created CheckoutIntent for a customer.
+
+        Args:
+            customer_uuid: Enterprise customer UUID to filter by.
+            customer_slug: Enterprise customer slug to filter by.
+            require_stripe_customer: If True, only return intents that have
+                a non-empty stripe_customer_id.
+
+        Returns:
+            CheckoutIntent | None: Most recent matching intent, or None.
+        """
+        if not (customer_uuid or customer_slug):
+            raise ValueError("One of customer_uuid or customer_slug must be provided")
+
+        queryset = cls.objects.select_related('ssp_product')
+        if customer_uuid:
+            queryset = queryset.filter(enterprise_uuid=customer_uuid)
+        if customer_slug:
+            queryset = queryset.filter(enterprise_slug=customer_slug)
+
+        if require_stripe_customer:
+            queryset = queryset.exclude(stripe_customer_id__isnull=True).exclude(stripe_customer_id='')
+
+        return queryset.order_by('-created').first()
+
     def clean(self):
         """
         Validate the CheckoutIntent to prevent conflicts with existing non-expired intents.

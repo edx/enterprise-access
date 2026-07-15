@@ -59,8 +59,23 @@ BRAZE_GROUPS_EMAIL_AUTO_REMINDER_DAY_85_CAMPAIGN = 'test-day-85-reminder-campaig
 BRAZE_TRIAL_CANCELLATION_CAMPAIGN = 'test-trial-cancellation-campaign'
 BRAZE_PAID_CANCELLATION_CAMPAIGN = 'test-paid-cancellation-campaign'
 BRAZE_ENTERPRISE_PROVISION_TRIAL_ENDING_SOON_CAMPAIGN = 'test-trial-ending-reminder-campaign'
+# Enterprise provision campaigns (test defaults)
+BRAZE_ENTERPRISE_PROVISION_SIGNUP_CONFIRMATION_CAMPAIGN = 'test-enterprise-signup-confirmation-campaign'
+BRAZE_ENTERPRISE_PROVISION_PAYMENT_RECEIPT_CAMPAIGN = 'test-enterprise-payment-receipt-campaign'
+BRAZE_ENTERPRISE_PROVISION_TRIAL_END_SUBSCRIPTION_STARTED_CAMPAIGN = 'test-trial-end-subscription-started-campaign'
 BRAZE_BILLING_ERROR_CAMPAIGN = 'test-billing-error-campaign'
 BRAZE_SSP_SUBSCRIPTION_REINSTATED_CAMPAIGN = 'test-subscription-reinstated-campaign'
+
+# ============================================================
+# SSP Essentials Braze Campaign Settings (Test)
+# ============================================================
+BRAZE_ESSENTIALS_SIGNUP_CONFIRMATION_CAMPAIGN = 'test-essentials-signup-confirmation-uuid'
+BRAZE_ESSENTIALS_TRIAL_ENDING_SOON_CAMPAIGN = 'test-essentials-trial-ending-soon-uuid'
+BRAZE_ESSENTIALS_TRIAL_CANCELLATION_CAMPAIGN = 'test-essentials-trial-cancellation-uuid'
+BRAZE_ESSENTIALS_PAYMENT_RECEIPT_CAMPAIGN = 'test-essentials-payment-receipt-uuid'
+BRAZE_ESSENTIALS_TRIAL_END_SUBSCRIPTION_STARTED_CAMPAIGN = 'test-essentials-trial-end-sub-started-uuid'
+BRAZE_ESSENTIALS_BILLING_ERROR_CAMPAIGN = 'test-essentials-billing-error-uuid'
+BRAZE_ESSENTIALS_PAID_CANCELLATION_CAMPAIGN = 'test-essentials-paid-cancellation-uuid'
 
 ################### Kafka Related Settings ##############################
 KAFKA_ENABLED = False

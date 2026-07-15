@@ -178,7 +178,7 @@ def get_checkout_intent_or_raise(
     if uuid_str:
         try:
             uuid_value = UUID(uuid_str)
-            return CheckoutIntent.objects.get(uuid=uuid_value)
+            return CheckoutIntent.objects.select_related('ssp_product').get(uuid=uuid_value)
         except (ValueError, TypeError) as exc:
             logger.warning(
                 'Invalid UUID format %s for event %s: %s',
@@ -195,7 +195,7 @@ def get_checkout_intent_or_raise(
     # Fall back to ID lookup
     if id_int is not None:
         try:
-            return CheckoutIntent.objects.get(id=id_int)
+            return CheckoutIntent.objects.select_related('ssp_product').get(id=id_int)
         except CheckoutIntent.DoesNotExist as exc:
             logger.warning(
                 'CheckoutIntent with id=%s not found for event %s',

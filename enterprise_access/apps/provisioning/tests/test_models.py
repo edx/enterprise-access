@@ -450,6 +450,7 @@ class TestNotificationStep(TestCase):
         step.fulfill_checkout_intent = mock.Mock()
 
         checkout_intent = mock.Mock()
+        checkout_intent.id = 101
         checkout_intent.user.username = 'fake-username'
         step.get_linked_checkout_intent = mock.Mock(return_value=checkout_intent)
 
@@ -477,13 +478,126 @@ class TestNotificationStep(TestCase):
         mock_send_signup_email.delay.assert_called_once()
         delay_args, delay_kwargs = mock_send_signup_email.delay.call_args
 
-        # delay args are:
-        # 0 start_date, 1 expiration_date, 2 desired_num_licenses, 3 activation_link, 4 name, 5 slug
-        self.assertEqual(delay_args[2], 10)
-        self.assertEqual(delay_args[3], expected_activation_link)
-        self.assertEqual(delay_args[4], 'Test Customer')
-        self.assertEqual(delay_args[5], 'test-customer')
-        self.assertEqual(delay_kwargs, {})
+        self.assertEqual(delay_args, ())
+        self.assertEqual(
+            delay_kwargs,
+            {
+                'subscription_start_date': datetime(2025, 1, 1),
+                'subscription_end_date': datetime(2025, 2, 1),
+                'number_of_licenses': 10,
+                'activation_link': expected_activation_link,
+                'organization_name': 'Test Customer',
+                'enterprise_slug': 'test-customer',
+                'checkout_intent_id': 101,
+            },
+        )
+        self.assertNotIn('ssp_product_slug', delay_kwargs)
+        self.assertNotIn('academy_name', delay_kwargs)
+
+    @mock.patch('enterprise_access.apps.provisioning.models.send_enterprise_provision_signup_confirmation_email')
+    @mock.patch('enterprise_access.apps.provisioning.models.LmsApiClient.get_lms_user_activation_link')
+    def test_process_input_skips_activation_link_lookup_when_username_and_email_absent(
+            self,
+            mock_get_activation_link,
+            mock_send_signup_email,
+    ):
+        """NotificationStep should leave activation_link unset when no identity data exists."""
+        step = NotificationStep.objects.create(
+            workflow_record_uuid=uuid4(),
+            input_data={},
+        )
+
+        step.fulfill_checkout_intent = mock.Mock()
+
+        checkout_intent = mock.Mock()
+        checkout_intent.id = 202
+        checkout_intent.user.username = None
+        step.get_linked_checkout_intent = mock.Mock(return_value=checkout_intent)
+
+        workflow = mock.Mock()
+        workflow.input_object.create_trial_subscription_plan_input.desired_num_licenses = 10
+        workflow.input_object.create_enterprise_admin_users_input.user_emails = []
+        step.get_workflow_record = mock.Mock(return_value=workflow)
+
+        mock_accumulated_output = mock.Mock()
+        mock_accumulated_output.create_trial_subscription_plan_output.start_date = datetime(2025, 1, 1)
+        mock_accumulated_output.create_trial_subscription_plan_output.expiration_date = datetime(2025, 2, 1)
+        mock_accumulated_output.create_customer_output.name = 'Test Customer'
+        mock_accumulated_output.create_customer_output.slug = 'test-customer'
+
+        step.process_input(mock_accumulated_output)
+
+        mock_get_activation_link.assert_not_called()
+        _, delay_kwargs = mock_send_signup_email.delay.call_args
+        self.assertIsNone(delay_kwargs['activation_link'])
+        self.assertEqual(delay_kwargs['checkout_intent_id'], 202)
+
+    @mock.patch('enterprise_access.apps.provisioning.models.send_enterprise_provision_signup_confirmation_email')
+    @mock.patch('enterprise_access.apps.provisioning.models.LmsApiClient.get_lms_user_activation_link')
+    def test_process_input_does_not_forward_academy_name_when_present(
+            self,
+            mock_get_activation_link,
+            mock_send_signup_email,
+    ):
+        """NotificationStep should no longer forward academy metadata to the task."""
+        mock_get_activation_link.return_value = 'http://edx-platform.example.com/activate/abc123'
+
+        step = NotificationStep.objects.create(
+            workflow_record_uuid=uuid4(),
+            input_data={},
+        )
+
+        step.fulfill_checkout_intent = mock.Mock()
+
+        checkout_intent = mock.Mock()
+        checkout_intent.id = 303
+        checkout_intent.user.username = 'fake-username'
+        checkout_intent.ssp_product.slug = 'essentials-ai'
+        checkout_intent.ssp_product.academy_title = 'AI Academy'
+        step.get_linked_checkout_intent = mock.Mock(return_value=checkout_intent)
+
+        workflow = mock.Mock()
+        workflow.input_object.create_trial_subscription_plan_input.desired_num_licenses = 10
+        workflow.input_object.create_enterprise_admin_users_input.user_emails = ['test@example.com']
+        step.get_workflow_record = mock.Mock(return_value=workflow)
+
+        mock_accumulated_output = mock.Mock()
+        mock_accumulated_output.create_trial_subscription_plan_output.start_date = datetime(2025, 1, 1)
+        mock_accumulated_output.create_trial_subscription_plan_output.expiration_date = datetime(2025, 2, 1)
+        mock_accumulated_output.create_customer_output.name = 'Test Customer'
+        mock_accumulated_output.create_customer_output.slug = 'test-customer'
+
+        step.process_input(mock_accumulated_output)
+
+        _, delay_kwargs = mock_send_signup_email.delay.call_args
+        self.assertNotIn('academy_name', delay_kwargs)
+        self.assertNotIn('ssp_product_slug', delay_kwargs)
+        self.assertEqual(delay_kwargs['activation_link'], 'http://edx-platform.example.com/activate/abc123')
+        self.assertEqual(delay_kwargs['checkout_intent_id'], 303)
+
+    def test_get_workflow_record_returns_matching_workflow(self):
+        workflow = ProvisionNewCustomerWorkflowFactory()
+        step = NotificationStep.objects.create(
+            workflow_record_uuid=workflow.uuid,
+            input_data={},
+        )
+
+        self.assertEqual(step.get_workflow_record(), workflow)
+
+    def test_get_preceding_step_record_returns_matching_renewal_step(self):
+        workflow = ProvisionNewCustomerWorkflowFactory()
+        renewal_step = GetCreateSubscriptionPlanRenewalStep.objects.create(
+            workflow_record_uuid=workflow.uuid,
+            input_data={},
+            output_data={},
+        )
+        step = NotificationStep.objects.create(
+            workflow_record_uuid=workflow.uuid,
+            preceding_step_uuid=renewal_step.uuid,
+            input_data={},
+        )
+
+        self.assertEqual(step.get_preceding_step_record(), renewal_step)
 
 
 class TestCheckoutIntentStepMixinUnit(TestCase):

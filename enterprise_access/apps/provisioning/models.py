@@ -945,17 +945,17 @@ class NotificationStep(CheckoutIntentStepMixin, AbstractWorkflowStep):
                 user_email=user_email,
             )
 
-        # Notify the customer admin via email.
-        send_enterprise_provision_signup_confirmation_email.delay(
-            # The email campaign will be specifically designed around the trial plan parameters.
-            accumulated_output.create_trial_subscription_plan_output.start_date,
-            accumulated_output.create_trial_subscription_plan_output.expiration_date,
-            desired_num_licenses,
-            activation_link,
-            # Remaining campaign params.
-            accumulated_output.create_customer_output.name,
-            accumulated_output.create_customer_output.slug
-        )
+        task_kwargs = {
+            'subscription_start_date': accumulated_output.create_trial_subscription_plan_output.start_date,
+            'subscription_end_date': accumulated_output.create_trial_subscription_plan_output.expiration_date,
+            'number_of_licenses': desired_num_licenses,
+            'activation_link': activation_link,
+            'organization_name': accumulated_output.create_customer_output.name,
+            'enterprise_slug': accumulated_output.create_customer_output.slug,
+            'checkout_intent_id': checkout_intent.id if checkout_intent else None,
+        }
+
+        send_enterprise_provision_signup_confirmation_email.delay(**task_kwargs)
 
         # TODO: Is there a better way than to just send an empty dict?
         return self.output_class.from_dict({})
