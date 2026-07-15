@@ -8,6 +8,7 @@ from unittest import mock
 from uuid import uuid4
 
 import stripe
+from braze.exceptions import BrazeClientError
 from django.conf import settings
 from django.test import TestCase, override_settings
 from django.utils import timezone
@@ -37,7 +38,6 @@ from enterprise_access.apps.customer_billing.tasks import (
 )
 from enterprise_access.apps.customer_billing.tests.utils import AttrDict
 from enterprise_access.utils import format_datetime_obj
-from braze.exceptions import BrazeClientError
 
 
 class TestBuildCommonTriggerProperties(TestCase):
