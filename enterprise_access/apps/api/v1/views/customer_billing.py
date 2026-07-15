@@ -51,6 +51,9 @@ from .constants import CHECKOUT_INTENT_EXAMPLES, ERROR_RESPONSES, PATCH_REQUEST_
 stripe.api_key = settings.STRIPE_API_KEY
 logger = logging.getLogger(__name__)
 
+SSP_PRODUCT_TYPE_ESSENTIALS = 'Essentials'
+SSP_PRODUCT_TYPE_TEAMS = 'Teams'
+
 CUSTOMER_BILLING_API_TAG = 'Customer Billing'
 STRIPE_EVENT_API_TAG = 'Stripe Event Summary'
 
@@ -820,13 +823,32 @@ class BillingManagementViewSet(viewsets.ViewSet):
         Returns:
             tuple: (stripe_customer_id, checkout_intent) if found, (None, None) otherwise
         """
-        checkout_intent = CheckoutIntent.objects.filter(enterprise_uuid=enterprise_uuid).first()
+        checkout_intent = CheckoutIntent.objects.select_related(
+            'ssp_product',
+        ).filter(
+            enterprise_uuid=enterprise_uuid,
+        ).exclude(
+            stripe_customer_id__isnull=True,
+        ).exclude(
+            stripe_customer_id='',
+        ).order_by(
+            '-created',
+        ).first()
         if not checkout_intent or not checkout_intent.stripe_customer_id:
             logger.warning(
                 f'No checkout intent with stripe customer ID found for enterprise_uuid: {enterprise_uuid}'
             )
             return None, None
         return checkout_intent.stripe_customer_id, checkout_intent
+
+    @staticmethod
+    def _get_product_type_from_checkout_intent(checkout_intent):
+        """
+        Derive the public product_type label from the checkout intent's SSP product.
+
+        Returns Teams for non-academy products and Essentials for academy-backed products.
+        """
+        return SSP_PRODUCT_TYPE_ESSENTIALS if checkout_intent.ssp_product.academy_uuid else SSP_PRODUCT_TYPE_TEAMS
 
     def _get_active_subscription_for_customer(self, stripe_customer_id):
         """
@@ -1919,6 +1941,7 @@ class BillingManagementViewSet(viewsets.ViewSet):
                 'cancel_at': cancel_at,
                 'current_period_end': current_period_end,
                 'currency': subscription_summary.currency,
+                'product_type': self._get_product_type_from_checkout_intent(checkout_intent),
                 'yearly_amount': yearly_amount,
                 'license_count': license_count,
             }
@@ -2196,6 +2219,7 @@ class BillingManagementViewSet(viewsets.ViewSet):
                 'status': updated_subscription.get('status'),
                 'cancel_at_period_end': updated_subscription.get('cancel_at_period_end', False),
                 'current_period_end': updated_subscription.get('current_period_end'),
+                'product_type': self._get_product_type_from_checkout_intent(checkout_intent),
             }
 
             serializer = serializers.StripeSubscriptionResponseSerializer(data=sub_data)
@@ -2337,6 +2361,7 @@ class BillingManagementViewSet(viewsets.ViewSet):
                 'status': updated_subscription.get('status'),
                 'cancel_at_period_end': updated_subscription.get('cancel_at_period_end', False),
                 'current_period_end': updated_subscription.get('current_period_end'),
+                'product_type': self._get_product_type_from_checkout_intent(checkout_intent),
             }
 
             serializer = serializers.StripeSubscriptionResponseSerializer(data=sub_data)

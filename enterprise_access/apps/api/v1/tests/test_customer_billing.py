@@ -22,7 +22,12 @@ from enterprise_access.apps.core.constants import (
 )
 from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.customer_billing.constants import CheckoutIntentState
-from enterprise_access.apps.customer_billing.models import CheckoutIntent, StripeEventData, StripeEventSummary
+from enterprise_access.apps.customer_billing.models import (
+    CheckoutIntent,
+    SspProduct,
+    StripeEventData,
+    StripeEventSummary
+)
 from enterprise_access.apps.customer_billing.tests.utils import AttrDict
 from test_utils import APITest
 
@@ -2285,9 +2290,99 @@ class BillingManagementSubscriptionTests(BillingManagementBaseTest):
         self.assertEqual(sub['id'], 'sub_test123')
         self.assertEqual(sub['status'], 'active')
         self.assertFalse(sub['cancel_at_period_end'])
+        self.assertEqual(sub['product_type'], 'Teams')
         # Yearly amount: 50000 (unit_amount) * 5 (quantity) = 250000
         self.assertEqual(sub['yearly_amount'], 250000)
         self.assertEqual(sub['license_count'], 5)
+
+    def test_get_subscription_success_essentials_product_type(self):
+        """
+        Test retrieving subscription response includes Essentials product_type for academy-backed products.
+        """
+        essentials_product = SspProduct.objects.create(
+            slug='ai-academy-yearly',
+            stripe_price_lookup_key='ai_academy_yearly_price_test',
+            academy_uuid=uuid.uuid4(),
+            catalog_query_uuid=uuid.uuid4(),
+            is_active=True,
+        )
+        checkout_intent = CheckoutIntent.objects.create(
+            user=self.user,
+            enterprise_uuid=str(uuid.uuid4()),
+            enterprise_name='Essentials Enterprise',
+            enterprise_slug='essentials-enterprise',
+            stripe_customer_id='cus_essentials_123',
+            state=CheckoutIntentState.PAID,
+            quantity=10,
+            expires_at=timezone.now() + timedelta(hours=1),
+            ssp_product=essentials_product,
+        )
+
+        sub_event_data = StripeEventData.objects.create(
+            event_id='evt_sub_essentials',
+            event_type='customer.subscription.updated',
+            checkout_intent=checkout_intent,
+            data={'data': {'object': {}}},
+        )
+        StripeEventSummary.objects.create(
+            stripe_event_data=sub_event_data,
+            event_id='evt_sub_essentials',
+            event_type='customer.subscription.updated',
+            checkout_intent=checkout_intent,
+            stripe_event_created_at=timezone.now(),
+            stripe_subscription_id='sub_essentials_test',
+            subscription_status='active',
+            subscription_period_start=timezone.now() - timedelta(days=30),
+            subscription_period_end=timezone.now() + timedelta(days=335),
+            currency='usd',
+        )
+
+        invoice_event_data = StripeEventData.objects.create(
+            event_id='evt_invoice_essentials',
+            event_type='invoice.paid',
+            checkout_intent=checkout_intent,
+            data={'data': {'object': {}}},
+        )
+        StripeEventSummary.objects.create(
+            stripe_event_data=invoice_event_data,
+            event_id='evt_invoice_essentials',
+            event_type='invoice.paid',
+            checkout_intent=checkout_intent,
+            stripe_event_created_at=timezone.now(),
+            stripe_subscription_id='sub_essentials_test',
+            invoice_unit_amount=50000,
+            invoice_quantity=5,
+        )
+
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': str(checkout_intent.enterprise_uuid),
+        }])
+
+        url = reverse('api:v1:billing-management-get-subscription')
+        response = self.client.get(url, {'enterprise_customer_uuid': str(checkout_intent.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response_data = response.json()
+        self.assertEqual(response_data['product_type'], 'Essentials')
+
+    def test_get_product_type_from_checkout_intent_returns_expected_values(self):
+        """
+        Test the product type helper returns expected values for Teams and Essentials.
+        """
+        teams_checkout_intent = mock.Mock(ssp_product=mock.Mock(academy_uuid=None))
+        essentials_checkout_intent = mock.Mock(ssp_product=mock.Mock(academy_uuid=uuid.uuid4()))
+
+        # pylint: disable=protected-access
+        self.assertEqual(
+            BillingManagementViewSet._get_product_type_from_checkout_intent(teams_checkout_intent),
+            'Teams'
+        )
+        self.assertEqual(
+            BillingManagementViewSet._get_product_type_from_checkout_intent(essentials_checkout_intent),
+            'Essentials'
+        )
+        # pylint: enable=protected-access
 
     def test_get_subscription_no_active_subscription(self):
         """
@@ -2531,6 +2626,7 @@ class BillingManagementCancelSubscriptionTests(BillingManagementBaseTest):
         sub = response_data
         self.assertEqual(sub['id'], 'sub_test123')
         self.assertTrue(sub['cancel_at_period_end'])
+        self.assertEqual(sub['product_type'], 'Teams')
         mock_sub_modify.assert_called_once_with('sub_test123', cancel_at_period_end=True)
 
     @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_ssp_product_pricing')
@@ -2542,6 +2638,16 @@ class BillingManagementCancelSubscriptionTests(BillingManagementBaseTest):
         """
         Test successfully cancelling an Essentials plan subscription.
         """
+
+        essentials_product = SspProduct.objects.create(
+            slug='ai-academy-cancel-yearly',
+            stripe_price_lookup_key='ai_academy_cancel_yearly_price_test',
+            academy_uuid=uuid.uuid4(),
+            catalog_query_uuid=uuid.uuid4(),
+            is_active=True,
+        )
+        self.checkout_intent.ssp_product = essentials_product
+        self.checkout_intent.save(update_fields=['ssp_product'])
 
         # Create StripeEventSummary with active subscription (not scheduled for cancellation)
         event_data = StripeEventData.objects.create(
@@ -2598,6 +2704,7 @@ class BillingManagementCancelSubscriptionTests(BillingManagementBaseTest):
         response_data = response.json()
         sub = response_data
         self.assertTrue(sub['cancel_at_period_end'])
+        self.assertEqual(sub['product_type'], 'Essentials')
 
     @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_ssp_product_pricing')
     @mock.patch('stripe.Subscription.retrieve')
@@ -2934,6 +3041,8 @@ class BillingManagementReinstateSubscriptionTests(BillingManagementBaseTest):
         sub = response_data
         self.assertEqual(sub['id'], 'sub_test123')
         self.assertFalse(sub['cancel_at_period_end'])
+        self.assertEqual(sub['product_type'], 'Teams')
+        self.assertIn('product_type', sub)
         mock_sub_modify.assert_called_once_with('sub_test123', cancel_at_period_end=False)
 
     @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_ssp_product_pricing')
@@ -2945,6 +3054,16 @@ class BillingManagementReinstateSubscriptionTests(BillingManagementBaseTest):
         """
         Test successfully reinstating an Essentials plan subscription.
         """
+
+        essentials_product = SspProduct.objects.create(
+            slug='ai-academy-reinstate-yearly',
+            stripe_price_lookup_key='ai_academy_reinstate_yearly_price_test',
+            academy_uuid=uuid.uuid4(),
+            catalog_query_uuid=uuid.uuid4(),
+            is_active=True,
+        )
+        self.checkout_intent.ssp_product = essentials_product
+        self.checkout_intent.save(update_fields=['ssp_product'])
 
         # Create StripeEventSummary with subscription scheduled for cancellation
         future_cancel_at = timezone.now() + timedelta(days=30)
@@ -3003,6 +3122,7 @@ class BillingManagementReinstateSubscriptionTests(BillingManagementBaseTest):
         response_data = response.json()
         sub = response_data
         self.assertFalse(sub['cancel_at_period_end'])
+        self.assertEqual(sub['product_type'], 'Essentials')
 
     @mock.patch('stripe.Subscription.retrieve')
     def test_reinstate_subscription_learner_credit_plan_fails(self, mock_sub_retrieve):
