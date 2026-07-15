@@ -409,6 +409,7 @@ class TestSendBillingErrorEmailTask(TestCase):
         self.assertIn('enterprise_admin_portal_url', tp)
         self.assertIn('restart_subscription_url', tp)
         self.assertIn('customer_portal_url', tp)
+        self.assertNotIn('next_retry_date', tp)
 
 
 class TestSendPaidCancellationEmailTask(TestCase):
@@ -650,6 +651,7 @@ class TestSendCancelationCampaignHelper(TestCase):
         self.assertEqual(academy_title_property.call_count, 1)
         trigger_properties = mock_send_campaign.call_args.kwargs['trigger_properties']
         self.assertEqual(trigger_properties.get('academy_name'), 'Academy Once')
+        self.assertEqual(trigger_properties.get('product_key'), 'essentials-once')
         self.assertIn('restart_subscription_url', trigger_properties)
 
 
@@ -921,6 +923,49 @@ class TestSendEnterpriseProvisionSignupConfirmationEmail(TestCase):
             send_enterprise_provision_signup_confirmation_email(**self.test_data)
 
         self.assertEqual(str(context.exception), "Braze Campaign Error")
+
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.BrazeApiClient')
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.LmsApiClient')
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.validate_trial_subscription')
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.get_campaign_id')
+    @mock.patch('enterprise_access.apps.customer_billing.tasks._get_checkout_intent_with_product')
+    def test_uses_explicit_checkout_intent_when_provided(
+        self,
+        mock_get_checkout_intent,
+        mock_get_campaign_id,
+        mock_validate_trial,
+        mock_lms_client,
+        mock_braze_client,
+    ):
+        """When checkout_intent_id is provided, the task uses that exact intent for product selection."""
+        mock_validate_trial.return_value = (True, self.mock_subscription)
+        mock_lms_client.return_value.get_enterprise_customer_data.return_value = {
+            'admin_users': self.mock_admin_users
+        }
+        mock_braze = mock_braze_client.return_value
+        mock_braze.create_braze_recipient.side_effect = [
+            {'external_id': 'braze1'},
+            {'external_id': 'braze2'},
+        ]
+
+        ssp_product = mock.Mock()
+        checkout_intent = mock.Mock()
+        checkout_intent.ssp_product = ssp_product
+        mock_get_checkout_intent.return_value = checkout_intent
+        mock_get_campaign_id.return_value = 'campaign-id'
+
+        send_enterprise_provision_signup_confirmation_email(
+            **self.test_data,
+            checkout_intent_id=42,
+        )
+
+        mock_get_checkout_intent.assert_called_once_with(42)
+        mock_get_campaign_id.assert_called_once_with('signup_confirmation', ssp_product)
+        mock_braze.send_campaign_message.assert_called_once_with(
+            'campaign-id',
+            recipients=mock.ANY,
+            trigger_properties=mock.ANY,
+        )
 
     @mock.patch('enterprise_access.apps.customer_billing.tasks.BrazeApiClient')
     @mock.patch('enterprise_access.apps.customer_billing.tasks.LmsApiClient')

@@ -546,6 +546,43 @@ class TestCheckoutIntentModel(TestCase):
         with self.assertRaises(ValueError):
             CheckoutIntent.filter_by_name_and_slug()
 
+    def test_get_latest_for_customer_requires_identifier(self):
+        """The helper should require either customer_uuid or customer_slug."""
+        with self.assertRaises(ValueError):
+            CheckoutIntent.get_latest_for_customer()
+
+    def test_get_latest_for_customer_filters_and_orders(self):
+        """Returns newest matching intent and can require a Stripe customer id."""
+        customer_uuid = uuid4()
+        slug = 'latest-customer-slug'
+        expires_at = timezone.now() + timedelta(hours=1)
+
+        older_with_stripe = CheckoutIntent.objects.create(
+            user=UserFactory(),
+            enterprise_slug=slug,
+            enterprise_uuid=customer_uuid,
+            quantity=1,
+            expires_at=expires_at,
+            stripe_customer_id='cus_older',
+        )
+        newer_without_stripe = CheckoutIntent.objects.create(
+            user=UserFactory(),
+            enterprise_slug=slug,
+            enterprise_uuid=customer_uuid,
+            quantity=1,
+            expires_at=expires_at,
+            stripe_customer_id='',
+        )
+
+        latest_by_slug = CheckoutIntent.get_latest_for_customer(customer_slug=slug)
+        self.assertEqual(latest_by_slug.id, newer_without_stripe.id)
+
+        latest_with_stripe = CheckoutIntent.get_latest_for_customer(
+            customer_uuid=customer_uuid,
+            require_stripe_customer=True,
+        )
+        self.assertEqual(latest_with_stripe.id, older_with_stripe.id)
+
     @override_settings(INTENT_RESERVATION_DURATION_MINUTES=60)
     def test_custom_reservation_duration(self):
         """Test that custom reservation duration is respected."""

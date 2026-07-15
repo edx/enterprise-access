@@ -820,7 +820,10 @@ class BillingManagementViewSet(viewsets.ViewSet):
         Returns:
             tuple: (stripe_customer_id, checkout_intent) if found, (None, None) otherwise
         """
-        checkout_intent = CheckoutIntent.objects.filter(enterprise_uuid=enterprise_uuid).first()
+        checkout_intent = CheckoutIntent.get_latest_for_customer(
+            customer_uuid=enterprise_uuid,
+            require_stripe_customer=True,
+        )
         if not checkout_intent or not checkout_intent.stripe_customer_id:
             logger.warning(
                 f'No checkout intent with stripe customer ID found for enterprise_uuid: {enterprise_uuid}'

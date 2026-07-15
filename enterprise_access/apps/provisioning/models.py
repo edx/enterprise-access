@@ -955,6 +955,7 @@ class NotificationStep(CheckoutIntentStepMixin, AbstractWorkflowStep):
             'activation_link': activation_link,
             'organization_name': accumulated_output.create_customer_output.name,
             'enterprise_slug': accumulated_output.create_customer_output.slug,
+            'checkout_intent_id': checkout_intent.id if checkout_intent else None,
         }
 
         send_enterprise_provision_signup_confirmation_email.delay(**task_kwargs)

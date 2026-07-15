@@ -451,6 +451,7 @@ class TestNotificationStep(TestCase):
         step.fulfill_checkout_intent = mock.Mock()
 
         checkout_intent = mock.Mock()
+        checkout_intent.id = 101
         checkout_intent.user.username = 'fake-username'
         step.get_linked_checkout_intent = mock.Mock(return_value=checkout_intent)
 
@@ -488,6 +489,7 @@ class TestNotificationStep(TestCase):
                 'activation_link': expected_activation_link,
                 'organization_name': 'Test Customer',
                 'enterprise_slug': 'test-customer',
+                'checkout_intent_id': 101,
             },
         )
         self.assertNotIn('ssp_product_slug', delay_kwargs)
@@ -509,6 +511,7 @@ class TestNotificationStep(TestCase):
         step.fulfill_checkout_intent = mock.Mock()
 
         checkout_intent = mock.Mock()
+        checkout_intent.id = 202
         checkout_intent.user.username = None
         step.get_linked_checkout_intent = mock.Mock(return_value=checkout_intent)
 
@@ -528,6 +531,7 @@ class TestNotificationStep(TestCase):
         mock_get_activation_link.assert_not_called()
         _, delay_kwargs = mock_send_signup_email.delay.call_args
         self.assertIsNone(delay_kwargs['activation_link'])
+        self.assertEqual(delay_kwargs['checkout_intent_id'], 202)
 
     @mock.patch('enterprise_access.apps.provisioning.models.send_enterprise_provision_signup_confirmation_email')
     @mock.patch('enterprise_access.apps.provisioning.models.LmsApiClient.get_lms_user_activation_link')
@@ -547,6 +551,7 @@ class TestNotificationStep(TestCase):
         step.fulfill_checkout_intent = mock.Mock()
 
         checkout_intent = mock.Mock()
+        checkout_intent.id = 303
         checkout_intent.user.username = 'fake-username'
         checkout_intent.ssp_product.slug = 'essentials-ai'
         checkout_intent.ssp_product.academy_title = 'AI Academy'
@@ -569,6 +574,7 @@ class TestNotificationStep(TestCase):
         self.assertNotIn('academy_name', delay_kwargs)
         self.assertNotIn('ssp_product_slug', delay_kwargs)
         self.assertEqual(delay_kwargs['activation_link'], 'http://edx-platform.example.com/activate/abc123')
+        self.assertEqual(delay_kwargs['checkout_intent_id'], 303)
 
     def test_get_workflow_record_returns_matching_workflow(self):
         workflow = ProvisionNewCustomerWorkflowFactory()
