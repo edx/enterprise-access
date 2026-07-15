@@ -6,6 +6,7 @@ import logging
 from datetime import datetime
 
 import stripe
+from braze.exceptions import BrazeClientError
 from celery import shared_task
 from django.conf import settings
 
@@ -113,7 +114,7 @@ def prepare_admin_braze_recipients(braze_client, admin_users, enterprise_slug, r
     if not recipients:
         logger.error('No valid Braze recipients created for enterprise %s.', enterprise_slug)
         if raise_if_empty:
-            raise Exception(f'No Braze recipients created for enterprise {enterprise_slug}')
+            raise BrazeClientError(f'No Braze recipients created for enterprise {enterprise_slug}')
     return recipients
 
 
@@ -380,12 +381,18 @@ def send_billing_error_email_task(checkout_intent_id: int):
 
     braze_client = BrazeApiClient()
     admin_users = get_enterprise_admins(enterprise_slug, raise_if_empty=False)
+    if not admin_users:
+        logger.warning(
+            'Billing error email not sent: no admin users found for enterprise slug: %s',
+            enterprise_slug,
+        )
+        return
     # Use tolerant recipient creation so individual failures don't abort the send
     recipients = prepare_admin_braze_recipients(
         braze_client,
         admin_users,
         enterprise_slug,
-        raise_if_empty=False,
+        raise_if_empty=True,
     )
     if not recipients:
         logger.warning(
@@ -393,7 +400,9 @@ def send_billing_error_email_task(checkout_intent_id: int):
             checkout_intent_id,
             enterprise_slug,
         )
-        return
+        raise BrazeClientError(
+            f'No Braze recipients created for enterprise {enterprise_slug}'
+        )
 
     logger.info(
         "Sending billing error email for CheckoutIntent %s (enterprise slug: %s)",
@@ -410,7 +419,7 @@ def send_billing_error_email_task(checkout_intent_id: int):
         enterprise_slug=enterprise_slug,
         enterprise_admin_portal_url=f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/{enterprise_slug}',
         restart_subscription_url=f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/{enterprise_slug}',
-        customer_portal_url=settings.STRIPE_CUSTOMER_PORTAL_URL,
+        customer_portal_url=getattr(settings, 'STRIPE_CUSTOMER_PORTAL_URL', None),
     )
 
     send_campaign_message(
@@ -494,12 +503,15 @@ def send_trial_ending_reminder_email_task(checkout_intent_id):
 
     enterprise_slug = checkout_intent.enterprise_slug
 
-    # Fetch admin users and raise if none found (tests expect an exception)
     admin_users = get_enterprise_admins(enterprise_slug, raise_if_empty=True)
 
     braze_client = BrazeApiClient()
-    # Create braze recipients for admin users, but tolerate per-recipient failures
-    recipients = prepare_admin_braze_recipients(braze_client, admin_users, enterprise_slug, raise_if_empty=False)
+    recipients = prepare_admin_braze_recipients(
+        braze_client,
+        admin_users,
+        enterprise_slug,
+        raise_if_empty=True,
+    )
     if not recipients:
         logger.warning(
             (
@@ -509,7 +521,9 @@ def send_trial_ending_reminder_email_task(checkout_intent_id):
             checkout_intent_id,
             enterprise_slug,
         )
-        return
+        raise BrazeClientError(
+            f'No Braze recipients created for enterprise {enterprise_slug}'
+        )
 
     logger.info(
         (

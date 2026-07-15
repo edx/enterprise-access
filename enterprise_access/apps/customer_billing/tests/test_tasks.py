@@ -37,6 +37,7 @@ from enterprise_access.apps.customer_billing.tasks import (
 )
 from enterprise_access.apps.customer_billing.tests.utils import AttrDict
 from enterprise_access.utils import format_datetime_obj
+from braze.exceptions import BrazeClientError
 
 
 class TestBuildCommonTriggerProperties(TestCase):
@@ -339,13 +340,13 @@ class TestSendBillingErrorEmailTask(TestCase):
     @mock.patch('enterprise_access.apps.customer_billing.tasks.BrazeApiClient')
     @mock.patch('enterprise_access.apps.customer_billing.tasks.get_enterprise_admins')
     @mock.patch('enterprise_access.apps.customer_billing.tasks.prepare_admin_braze_recipients')
-    def test_send_billing_error_email_no_recipients_returns(self, mock_prepare, mock_get_admins, mock_braze):
-        """If no recipients are prepared, task should return early without sending."""
+    def test_send_billing_error_email_no_recipients_raises(self, mock_prepare, mock_get_admins, mock_braze):
+        """If all recipient creation fails, task should raise so Celery can retry."""
         mock_get_admins.return_value = [{'email': 'admin@test.com'}]
         mock_prepare.return_value = []
 
-        # Should return None / no exception
-        send_billing_error_email_task(self.checkout_intent.id)
+        with self.assertRaises(BrazeClientError):
+            send_billing_error_email_task(self.checkout_intent.id)
 
         mock_braze.return_value.send_campaign_message.assert_not_called()
 
@@ -368,13 +369,13 @@ class TestSendBillingErrorEmailTask(TestCase):
         mock_get_checkout_intent.return_value = mock_checkout_intent
 
         mock_get_admins.return_value = [{'email': 'admin@test.com', 'lms_user_id': 1}]
-        mock_prepare.return_value = []
+        mock_prepare.return_value = [{'external_id': 'braze_1'}]
 
         send_billing_error_email_task(self.checkout_intent.id)
 
         mock_get_checkout_intent.assert_called_once_with(self.checkout_intent.id)
         mock_get_admins.assert_called_once_with('test-enterprise', raise_if_empty=False)
-        mock_braze.return_value.send_campaign_message.assert_not_called()
+        mock_braze.return_value.send_campaign_message.assert_called_once()
 
     @mock.patch('enterprise_access.apps.customer_billing.tasks.BrazeApiClient')
     @mock.patch('enterprise_access.apps.customer_billing.tasks.get_campaign_id')
@@ -1470,16 +1471,17 @@ class TestSendTrialEndingReminderEmailTask(TestCase):
     @mock.patch("enterprise_access.apps.customer_billing.tasks.prepare_admin_braze_recipients")
     @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
     @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
-    def test_no_braze_recipients_returns_early(
+    def test_no_braze_recipients_raises_and_retries(
         self, mock_lms_client, mock_braze_client, mock_prepare, mock_get_subscription
     ):
-        """When prepare_admin_braze_recipients returns [], task exits before hitting Stripe."""
+        """When every recipient creation fails, task should raise so Celery can retry."""
         mock_lms_client.return_value.get_enterprise_customer_data.return_value = {
             'admin_users': [{'email': 'admin@example.com', 'lms_user_id': 1}]
         }
         mock_prepare.return_value = []
 
-        send_trial_ending_reminder_email_task(checkout_intent_id=self.checkout_intent.id)
+        with self.assertRaises(BrazeClientError):
+            send_trial_ending_reminder_email_task(checkout_intent_id=self.checkout_intent.id)
 
         mock_get_subscription.assert_not_called()
         mock_braze_client.return_value.send_campaign_message.assert_not_called()
