@@ -1,9 +1,11 @@
 """
 Django admin configuration for customer billing app.
 """
+import logging
+
 import stripe
 from django import forms
-from django.contrib import admin
+from django.contrib import admin, messages
 from django.core.exceptions import ValidationError
 from django.core.management import call_command
 from django.utils import timezone
@@ -14,6 +16,8 @@ from simple_history.admin import SimpleHistoryAdmin
 from .constants import CheckoutIntentState
 from .models import CheckoutIntent, SelfServiceSubscriptionRenewal, SspProduct, StripeEventData, StripeEventSummary
 from .stripe_event_handlers import StripeEventHandler
+
+logger = logging.getLogger(__name__)
 
 
 class CheckoutIntentAdminForm(forms.ModelForm):
@@ -174,6 +178,7 @@ class CheckoutIntentAdmin(DjangoQLSearchMixin, admin.ModelAdmin):
     actions = [
         'cleanup_expired_intents',
         'mark_as_expired',
+        'backfill_ssp_product_slug_to_stripe',
     ]
 
     def user_email(self, obj):
@@ -287,6 +292,45 @@ class CheckoutIntentAdmin(DjangoQLSearchMixin, admin.ModelAdmin):
         self.message_user(
             request,
             "Cleanup command executed successfully. Check server logs for details."
+        )
+
+    @admin.action(description='Backfill ssp_product_slug to Stripe subscription metadata')
+    def backfill_ssp_product_slug_to_stripe(self, request, queryset):
+        """
+        Patch ssp_product_slug onto each intent's Stripe subscription metadata.
+        Skips intents with no associated renewal/subscription ID.
+        """
+        updated = skipped = errors = 0
+
+        for intent in queryset.select_related('ssp_product'):
+            renewal = intent.renewals.filter(
+                stripe_subscription_id__isnull=False,
+            ).exclude(
+                stripe_subscription_id='',
+            ).first()
+
+            if not renewal:
+                skipped += 1
+                continue
+
+            try:
+                stripe.Subscription.modify(
+                    renewal.stripe_subscription_id,
+                    metadata={'ssp_product_slug': intent.ssp_product.slug},
+                )
+                updated += 1
+            except stripe.StripeError as exc:
+                logger.error(
+                    'Failed to backfill ssp_product_slug for intent %s subscription %s: %s',
+                    intent.uuid, renewal.stripe_subscription_id, exc,
+                )
+                errors += 1
+
+        level = messages.ERROR if errors else messages.SUCCESS
+        self.message_user(
+            request,
+            f"Updated {updated} subscription(s). Skipped {skipped} (no subscription ID). Errors: {errors}.",
+            level=level,
         )
 
 
