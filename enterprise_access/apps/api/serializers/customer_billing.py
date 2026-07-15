@@ -676,6 +676,11 @@ class StripeSubscriptionResponseSerializer(serializers.Serializer):
         max_length=3,
         help_text='Three-letter ISO currency code',
     )
+    product_type = serializers.CharField(
+        required=False,
+        allow_null=True,
+        help_text='Product type for the subscription, such as Teams or Essentials',
+    )
     yearly_amount = serializers.IntegerField(
         required=False,
         allow_null=True,

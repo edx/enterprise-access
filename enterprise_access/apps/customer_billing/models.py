@@ -77,8 +77,9 @@ class SspProduct(TimeStampedModel):
         help_text='enterprise-catalog Academy UUID. Null for non-Academy products (e.g. Teams).',
     )
     catalog_query_id = models.IntegerField(
-        null=True,
-        blank=True,
+        null=False,
+        blank=False,
+        default=0,
         db_index=True,
         help_text='The enterprise-catalog CatalogQuery.id value, used during provisioning.',
     )
