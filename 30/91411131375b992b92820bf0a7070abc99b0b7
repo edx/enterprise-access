@@ -1,0 +1,33 @@
+enterprise_access/apps/customer_billing/tests/test_admin.py
+  s_e24b77f20c5e5f::t_f2768f3b5e0687 3,5-6,8-9,12-16
+  s_e24b77f20c5e5f::t_991f9d572a1521 47,52
+  s_e24b77f20c5e5f::t_16e98e28623442 4
+  s_e24b77f20c5e5f::t_385043170211b4 46,48-51
+  s_e24b77f20c5e5f::t_6390c9ee232975 40-45,53-88
+enterprise_access/apps/customer_billing/tests/test_stripe_api.py
+  s_e24b77f20c5e5f::t_b3991ccca6750d 128
+  s_e24b77f20c5e5f::t_86c85ee6c8e161 221-234
+enterprise_access/apps/customer_billing/admin.py
+  s_e24b77f20c5e5f::t_0f533fc6172ab6 8
+  s_e24b77f20c5e5f::t_2cb405376b9017 20-21
+  s_e24b77f20c5e5f::t_a125751fd36ee0 4-5
+  s_e24b77f20c5e5f::t_3515f44f54bec1 181
+  s_e24b77f20c5e5f::t_540a43a74c42a0 329
+  s_e24b77f20c5e5f::t_359628690c91d0 297-328,330-335
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "3091411131375b992b92820bf0a7070abc99b0b7",
+  "prompts": {},
+  "sessions": {
+    "s_e24b77f20c5e5f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2274e599-18f4-4fa8-b961-afbd9019156b",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Alexander Dusenbery <adusenbery@2u.com>"
+    }
+  }
+}
