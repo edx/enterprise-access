@@ -2,14 +2,15 @@
 Tests for the ``api.py`` module of the content_assignments app.
 """
 import re
+import uuid
 
 from django.test import TestCase
 from django.utils import timezone
 
 from enterprise_access.apps.subsidy_access_policy.tests.factories import AssignedLearnerCreditAccessPolicyFactory
 
-from ..constants import RETIRED_EMAIL_ADDRESS_FORMAT, AssignmentActions
-from ..models import AssignmentConfiguration
+from ..constants import RETIRED_EMAIL_ADDRESS_FORMAT, AssignmentActions, AssignmentActorTypes, AssignmentSources
+from ..models import AssignmentConfiguration, LearnerContentAssignmentAction
 from .factories import LearnerContentAssignmentFactory
 
 
@@ -165,3 +166,133 @@ class TestAssignmentActions(TestCase):
 
         for historical_record in self.assignment.history.all():
             self.assertIsNotNone(re.match(pattern, historical_record.learner_email))
+
+
+class TestLearnerContentAssignmentActionAuditFields(TestCase):
+    """
+    Unit tests for ENT-12026 audit field extensions on LearnerContentAssignmentAction.
+    Covers: nullable defaults, field persistence, enum choices, new action types, index declaration.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.assignment_configuration = AssignmentConfiguration.objects.create()
+        cls.assignment = LearnerContentAssignmentFactory.create(
+            assignment_configuration=cls.assignment_configuration,
+        )
+
+    def tearDown(self):
+        super().tearDown()
+        self.assignment.actions.all().delete()
+
+    def _create_action(self, **kwargs):
+        """Create an action with safe defaults; override via kwargs."""
+        return self.assignment.actions.create(
+            action_type=AssignmentActions.NOTIFIED,
+            completed_at=timezone.now(),
+            **kwargs,
+        )
+
+    # --- Nullable defaults ---
+
+    def test_new_fields_are_null_by_default(self):
+        """Every new audit field defaults to None when not supplied."""
+        action = self._create_action()
+        self.assertIsNone(action.actor_lms_user_id)
+        self.assertIsNone(action.actor_type)
+        self.assertIsNone(action.learner_lms_user_id)
+        self.assertIsNone(action.learner_email)
+        self.assertIsNone(action.learner_external_key)
+        self.assertIsNone(action.source)
+        self.assertIsNone(action.enterprise_customer_uuid)
+        self.assertIsNone(action.metadata)
+
+    # --- Persistence / round-trip ---
+
+    def test_audit_fields_persist_and_round_trip(self):
+        """All new fields are saved to and retrieved from the DB correctly."""
+        customer_uuid = uuid.uuid4()
+        action = self._create_action(
+            actor_lms_user_id=42,
+            actor_type=AssignmentActorTypes.ADMIN,
+            learner_lms_user_id=99,
+            learner_email='learner@example.com',
+            learner_external_key='ext-key-001',
+            source=AssignmentSources.ADMIN_UI_SINGLE,
+            enterprise_customer_uuid=customer_uuid,
+            metadata={'correlation_id': 'abc-123', 'batch_id': 'batch-456'},
+        )
+        action.refresh_from_db()
+        self.assertEqual(action.actor_lms_user_id, 42)
+        self.assertEqual(action.actor_type, AssignmentActorTypes.ADMIN)
+        self.assertEqual(action.learner_lms_user_id, 99)
+        self.assertEqual(action.learner_email, 'learner@example.com')
+        self.assertEqual(action.learner_external_key, 'ext-key-001')
+        self.assertEqual(action.source, AssignmentSources.ADMIN_UI_SINGLE)
+        self.assertEqual(action.enterprise_customer_uuid, customer_uuid)
+        self.assertEqual(action.metadata['correlation_id'], 'abc-123')
+        self.assertEqual(action.metadata['batch_id'], 'batch-456')
+
+    # --- Enum choices ---
+
+    def test_all_actor_type_choices_are_accepted(self):
+        """actor_type accepts every value in AssignmentActorTypes.CHOICES."""
+        for value, _ in AssignmentActorTypes.CHOICES:
+            with self.subTest(actor_type=value):
+                action = self._create_action(actor_type=value)
+                self.assertEqual(action.actor_type, value)
+
+    def test_all_source_choices_are_accepted(self):
+        """source accepts every value in AssignmentSources.CHOICES."""
+        for value, _ in AssignmentSources.CHOICES:
+            with self.subTest(source=value):
+                action = self._create_action(source=value)
+                self.assertEqual(action.source, value)
+
+    # --- New action type enums ---
+
+    def test_new_action_types_are_valid_choices(self):
+        """ALLOCATED, REALLOCATED, APPROVED, ERRORED are accepted action_type values."""
+        new_types = [
+            AssignmentActions.ALLOCATED,
+            AssignmentActions.REALLOCATED,
+            AssignmentActions.APPROVED,
+            AssignmentActions.ERRORED,
+        ]
+        for action_type in new_types:
+            with self.subTest(action_type=action_type):
+                action = self.assignment.actions.create(
+                    action_type=action_type,
+                    completed_at=timezone.now(),
+                )
+                self.assertEqual(action.action_type, action_type)
+
+    # --- Index declaration ---
+
+    def test_composite_indexes_declared_on_meta(self):
+        """Both composite indexes are present in LearnerContentAssignmentAction._meta.indexes."""
+        index_field_sets = [
+            tuple(idx.fields)
+            for idx in LearnerContentAssignmentAction._meta.indexes
+        ]
+        self.assertIn(('assignment', 'created'), index_field_sets)
+        self.assertIn(('enterprise_customer_uuid', 'created'), index_field_sets)
+
+    # --- Metadata JSON structure ---
+
+    def test_metadata_accepts_all_documented_keys(self):
+        """metadata JSONField persists all documented audit keys correctly."""
+        payload = {
+            'correlation_id': 'corr-001',
+            'batch_id': 'batch-002',
+            'request_id': 'req-003',
+            'state_before': 'allocated',
+            'state_after': 'errored',
+            'error_code': 'STRIPE_TIMEOUT',
+            'error_message': 'Stripe API timed out.',
+            'idempotency_key': 'idem-key-xyz',
+        }
+        action = self._create_action(metadata=payload)
+        action.refresh_from_db()
+        self.assertEqual(action.metadata, payload)

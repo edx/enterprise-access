@@ -25,8 +25,10 @@ from .constants import (
     RETIRED_EMAIL_ADDRESS_FORMAT,
     AssignmentActionErrors,
     AssignmentActions,
+    AssignmentActorTypes,
     AssignmentLearnerStates,
     AssignmentRecentActionTypes,
+    AssignmentSources,
     LearnerContentAssignmentStateChoices
 )
 
@@ -920,11 +922,58 @@ class LearnerContentAssignmentAction(TimeStampedModel):
         editable=False,
         help_text="Any traceback we recorded when an error was encountered.",
     )
+    actor_lms_user_id = models.IntegerField(
+        null=True, blank=True,
+        help_text="LMS user ID of the actor who triggered this action.",
+    )
+    actor_type = models.CharField(
+        max_length=32, null=True, blank=True,
+        choices=AssignmentActorTypes.CHOICES,
+        help_text="Type of actor who triggered this action (admin, learner, or system).",
+    )
+    learner_lms_user_id = models.IntegerField(
+        null=True, blank=True,
+        help_text="LMS user ID of the learner affected by this action.",
+    )
+    learner_email = models.CharField(
+        max_length=255, null=True, blank=True,
+        help_text="Email of the learner affected by this action at the time of the action.",
+    )
+    learner_external_key = models.CharField(
+        max_length=255, null=True, blank=True,
+        help_text="External key of the learner affected by this action, if available.",
+    )
+    source = models.CharField(
+        max_length=64, null=True, blank=True,
+        choices=AssignmentSources.CHOICES,
+        help_text="Originating source or channel that triggered this action.",
+    )
+    enterprise_customer_uuid = models.UUIDField(
+        null=True, blank=True,
+        help_text="UUID of the enterprise customer associated with this action.",
+    )
+    metadata = models.JSONField(
+        null=True, blank=True, default=None,
+        help_text=(
+            "Arbitrary audit metadata. Supported keys: correlation_id, batch_id, "
+            "request_id, state_before, state_after, error_code, error_message, idempotency_key."
+        ),
+    )
 
     history = HistoricalRecords()
 
     class Meta:
         ordering = ['created']
+        indexes = [
+            models.Index(
+                fields=['assignment', 'created'],
+                name='lcaa_assignment_created_idx',
+            ),
+            models.Index(
+                fields=['enterprise_customer_uuid', 'created'],
+                name='lcaa_customer_created_idx',
+            ),
+        ]
 
     def __str__(self):
         return (
