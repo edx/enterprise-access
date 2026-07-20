@@ -125,6 +125,12 @@ class TestCreateFreeTrialCheckoutSession(TestCase):
             company_name='My Cool Company',
             quantity=20,
             stripe_price_id=QUARTERLY_PRICE_ID,
+            billing_address_country='US',
+            billing_address_line_1='123 Main St',
+            billing_address_line_2='Suite 400',
+            billing_address_city='Boston',
+            billing_address_state='MA',
+            billing_address_postal_code='02110',
         )
 
         # Assert API response.
@@ -140,6 +146,12 @@ class TestCreateFreeTrialCheckoutSession(TestCase):
         self.assertEqual(intent.enterprise_name, 'My Cool Company')
         self.assertEqual(intent.stripe_checkout_session_id, 'test-stripe-checkout-session')
         self.assertEqual(intent.stripe_customer_id, 'cust-123')
+        self.assertEqual(intent.billing_address_country, 'US')
+        self.assertEqual(intent.billing_address_line_1, '123 Main St')
+        self.assertEqual(intent.billing_address_line_2, 'Suite 400')
+        self.assertEqual(intent.billing_address_city, 'Boston')
+        self.assertEqual(intent.billing_address_state, 'MA')
+        self.assertEqual(intent.billing_address_postal_code, '02110')
         self.assertFalse(intent.is_expired())
 
     @mock.patch(
@@ -174,6 +186,11 @@ class TestCreateFreeTrialCheckoutSession(TestCase):
             quantity=20,
             stripe_price_id=QUARTERLY_PRICE_ID,
             ssp_product_slug='quarterly_license_plan',
+            billing_address_country='US',
+            billing_address_line_1='123 Main St',
+            billing_address_city='Boston',
+            billing_address_state='MA',
+            billing_address_postal_code='02110',
         )
         self.assertEqual(result, {'id': 'sess-ssp', 'customer': 'cust-ssp'})
         intent = CheckoutIntent.objects.get(user=self.user)
@@ -183,6 +200,11 @@ class TestCreateFreeTrialCheckoutSession(TestCase):
         self.assertEqual(called_input.get('stripe_price_id'), QUARTERLY_PRICE_ID)
         self.assertEqual(called_input.get('enterprise_slug'), 'my-sluggy')
         self.assertEqual(called_input.get('admin_email'), self.user.email)
+        self.assertEqual(called_input.get('billing_address_country'), 'US')
+        self.assertEqual(called_input.get('billing_address_line_1'), '123 Main St')
+        self.assertEqual(called_input.get('billing_address_city'), 'Boston')
+        self.assertEqual(called_input.get('billing_address_state'), 'MA')
+        self.assertEqual(called_input.get('billing_address_postal_code'), '02110')
         self.assertEqual(
             mock_create_checkout.call_args[1]['enterprise_catalog_metadata'],
             {'title': 'Open Courses', 'catalog_query_id': 1},

@@ -648,6 +648,12 @@ class TestCheckoutSuccessResponseBuilder(APITest):
             'expires_at': timezone.now().isoformat(),
             'admin_portal_url': 'https://portal.edx.org/test-enterprise',
             'country': 'US',
+            'billing_address_country': 'US',
+            'billing_address_line_1': '123 Main St',
+            'billing_address_line_2': 'Suite 200',
+            'billing_address_city': 'New York',
+            'billing_address_state': 'NY',
+            'billing_address_postal_code': '10001',
             'terms_metadata': {
                 'version': '2.1',
                 'accepted_at': '2024-01-15T10:30:00Z',
