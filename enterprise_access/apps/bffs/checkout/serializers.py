@@ -180,6 +180,11 @@ class CheckoutIntentMinimalResponseSerializer(serializers.Serializer):
         required=False,
         allow_null=True,
     )
+    ssp_product = serializers.SlugField(
+        help_text='SSP product slug associated with this checkout intent',
+        required=False,
+        allow_null=True,
+    )
 
 
 class CheckoutContextResponseSerializer(MinimalBffResponseSerializer):
