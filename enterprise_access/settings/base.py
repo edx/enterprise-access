@@ -543,6 +543,11 @@ BRAZE_ASSIGNMENT_REMINDER_NOTIFICATION_CAMPAIGN = ''
 # Budget deactivation settings
 ALLOW_BUDGET_DEACTIVATION_WITH_SPEND = False
 
+# Hard guard for the customer_billing.bypass_salesforce_for_provisioning waffle flag.
+# Must be explicitly enabled (e.g. in stage) in addition to the waffle flag before the
+# invoice.paid webhook handler will bypass Salesforce and directly trigger provisioning.
+ALLOW_SALESFORCE_BYPASS = False
+
 BRAZE_ASSIGNMENT_REMINDER_POST_LOGISTRATION_NOTIFICATION_CAMPAIGN = ''
 BRAZE_ASSIGNMENT_NUDGE_EXEC_ED_ACCEPTED_ASSIGNMENT_CAMPAIGN = ''
 BRAZE_ASSIGNMENT_CANCELLED_NOTIFICATION_CAMPAIGN = ''

@@ -7,6 +7,7 @@ from functools import wraps
 from uuid import UUID
 
 import stripe
+from django.conf import settings
 from django.utils import timezone
 from simple_history.utils import bulk_update_with_history
 
@@ -33,8 +34,11 @@ from enterprise_access.apps.customer_billing.tasks import (
     send_trial_end_and_subscription_started_email_task,
     send_trial_ending_reminder_email_task
 )
+from enterprise_access.apps.customer_billing.toggles import bypass_salesforce_for_provisioning_enabled
 from enterprise_access.apps.customer_billing.utils import datetime_from_timestamp
+from enterprise_access.apps.provisioning.models import ProvisionNewCustomerWorkflow
 from enterprise_access.apps.track.segment import track_event
+from enterprise_access.apps.workflow.exceptions import UnitOfWorkException
 
 logger = logging.getLogger(__name__)
 
@@ -381,6 +385,57 @@ def _valid_invoice_event_type(event: stripe.Event):
         return False
 
 
+def _bypass_salesforce_for_provisioning(checkout_intent: CheckoutIntent) -> None:
+    """
+    Directly trigger ``ProvisionNewCustomerWorkflow`` for the given ``checkout_intent``,
+    skipping the usual Salesforce-driven provisioning path.
+
+    Gated by the ``customer_billing.bypass_salesforce_for_provisioning`` waffle flag and
+    the ``settings.ALLOW_SALESFORCE_BYPASS`` hard guard. Intended only for end-to-end
+    testing in staging, where Salesforce is unavailable.
+    """
+    if not settings.ALLOW_SALESFORCE_BYPASS:
+        return
+    if not bypass_salesforce_for_provisioning_enabled():
+        return
+
+    logger.info(
+        'Bypassing Salesforce for checkout_intent uuid=%s: directly triggering provisioning workflow.',
+        checkout_intent.uuid,
+    )
+
+    customer_request_dict = {
+        'name': checkout_intent.enterprise_name,
+        'slug': checkout_intent.enterprise_slug,
+        'country': checkout_intent.country,
+    }
+    admin_email_list = [checkout_intent.user.email]
+
+    workflow_input_dict = ProvisionNewCustomerWorkflow.generate_input_dict(
+        customer_request_dict,
+        admin_email_list,
+        None,
+        None,
+        None,
+        {},
+        {},
+        checkout_intent.ssp_product.slug,
+    )
+    workflow = ProvisionNewCustomerWorkflow.objects.create(input_data=workflow_input_dict)
+
+    try:
+        workflow.execute()
+    except UnitOfWorkException as exc:
+        logger.error(
+            'Salesforce bypass provisioning workflow failed for checkout_intent uuid=%s: %s',
+            checkout_intent.uuid, exc,
+        )
+        checkout_intent.mark_provisioning_error(str(exc), workflow=workflow)
+        return
+
+    checkout_intent.mark_as_fulfilled(workflow=workflow)
+
+
 def _handle_invoice_paid_status_updated(
     event: stripe.Event,
     checkout_intent: CheckoutIntent,
@@ -604,6 +659,9 @@ class StripeEventHandler:
                 'Could not mark checkout intent %s as paid via invoice %s, because %s',
                 checkout_intent.uuid, invoice.id, exc,
             )
+            return
+
+        _bypass_salesforce_for_provisioning(checkout_intent)
 
     @on_stripe_event('invoice.created')
     @staticmethod
