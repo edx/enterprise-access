@@ -51,6 +51,7 @@ class TestCheckoutContextResponseBuilder(APITest):
             'last_provisioning_error': '',
             'workflow': None,
             'admin_portal_url': 'https://portal.edx.org/test-enterprise',
+            'ssp_product': 'data-academy-yearly',
         }
 
     def _create_context(self):
@@ -356,6 +357,7 @@ class TestCheckoutContextResponseBuilder(APITest):
         self.assertEqual(intent_data['stripe_checkout_session_id'], 'cs_test_123abc')
         self.assertEqual(intent_data['admin_portal_url'], 'https://portal.edx.org/test-enterprise')
         self.assertEqual(intent_data['quantity'], 5)
+        self.assertEqual(intent_data['ssp_product'], 'data-academy-yearly')
 
     def test_build_context_with_no_checkout_intent(self):
         """
@@ -422,6 +424,47 @@ class TestCheckoutContextResponseBuilder(APITest):
         self.assertIn('checkout_intent', data)
         self.assertEqual(data['checkout_intent']['state'], 'errored_backoffice')
         self.assertEqual(data['checkout_intent']['last_provisioning_error'], 'Salesforce integration failed')
+
+    def test_checkout_intent_response_includes_ssp_product(self):
+        """
+        Test that ssp_product is present and correctly serialized in the
+        checkout intent minimal response shape.
+        """
+        context = self._create_minimal_valid_context()
+        context.checkout_intent = self.mock_checkout_intent
+
+        builder = CheckoutContextResponseBuilder(context)
+        builder.build()
+
+        data, status_code = builder.serialize()
+
+        self.assertEqual(status_code, status.HTTP_200_OK)
+        self.assertIn('checkout_intent', data)
+
+        intent_data = data['checkout_intent']
+        # Assert ssp_product is present and matches
+        self.assertIn('ssp_product', intent_data)
+        self.assertEqual(intent_data['ssp_product'], 'data-academy-yearly')
+
+    def test_checkout_intent_response_ssp_product_null(self):
+        """
+        Test that ssp_product serializes correctly when null
+        (e.g. legacy Teams intents created before SspProduct FK was added).
+        """
+        context = self._create_minimal_valid_context()
+        intent_without_ssp = dict(self.mock_checkout_intent)
+        intent_without_ssp['ssp_product'] = None
+        context.checkout_intent = intent_without_ssp
+
+        builder = CheckoutContextResponseBuilder(context)
+        builder.build()
+
+        data, status_code = builder.serialize()
+
+        self.assertEqual(status_code, status.HTTP_200_OK)
+        intent_data = data['checkout_intent']
+        self.assertIn('ssp_product', intent_data)
+        self.assertIsNone(intent_data['ssp_product'])
 
 
 @ddt.ddt
