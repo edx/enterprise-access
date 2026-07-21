@@ -40,6 +40,7 @@ class TestCheckoutContextResponseBuilder(APITest):
         self.request.user = self.user
 
         self.mock_checkout_intent = {
+            'uuid': 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
             'id': 123,
             'state': 'created',
             'enterprise_name': 'Test Enterprise',
@@ -439,9 +440,11 @@ class TestCheckoutContextResponseBuilder(APITest):
         data, status_code = builder.serialize()
 
         self.assertEqual(status_code, status.HTTP_200_OK)
+        self.assertEqual(data['warnings'], [])
         self.assertIn('checkout_intent', data)
-
         intent_data = data['checkout_intent']
+        self.assertIn('uuid', intent_data)
+        self.assertEqual(intent_data['uuid'], 'a1b2c3d4-e5f6-7890-abcd-ef1234567890')
         # Assert ssp_product is present and matches
         self.assertIn('ssp_product', intent_data)
         self.assertEqual(intent_data['ssp_product'], 'data-academy-yearly')
@@ -462,6 +465,7 @@ class TestCheckoutContextResponseBuilder(APITest):
         data, status_code = builder.serialize()
 
         self.assertEqual(status_code, status.HTTP_200_OK)
+        self.assertEqual(data['warnings'], [])
         intent_data = data['checkout_intent']
         self.assertIn('ssp_product', intent_data)
         self.assertIsNone(intent_data['ssp_product'])
