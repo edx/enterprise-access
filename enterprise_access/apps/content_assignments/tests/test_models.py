@@ -175,8 +175,7 @@ class TestLearnerContentAssignmentActionAuditFields(TestCase):
     """
 
     @classmethod
-    def setUpClass(cls):
-        super().setUpClass()
+    def setUpTestData(cls):
         cls.assignment_configuration = AssignmentConfiguration.objects.create()
         cls.assignment = LearnerContentAssignmentFactory.create(
             assignment_configuration=cls.assignment_configuration,

@@ -881,7 +881,10 @@ class LearnerContentAssignmentAction(TimeStampedModel):
     A model that persists information regarding certain non-lifecycle actions
     on ``LearnerContentAssignment`` records.
 
-    .. no_pii: This model has no PII
+    .. pii: The learner_email field stores PII,
+       which is to be scrubbed via local API retirement handling.
+    .. pii_types: email_address
+    .. pii_retirement: local_api
     """
     uuid = models.UUIDField(
         primary_key=True,
