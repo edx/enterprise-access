@@ -20,11 +20,11 @@ class TestAssignmentActions(TestCase):
     """
 
     @classmethod
-    def setUpClass(cls):
+    def setUpTestData(cls):
         """
         Set up a single assignment record.
         """
-        super().setUpClass()
+        super().setUpTestData()
         cls.assignment_configuration = AssignmentConfiguration.objects.create()
         cls.subsidy_access_policy = AssignedLearnerCreditAccessPolicyFactory.create(
             assignment_configuration=cls.assignment_configuration,
@@ -32,13 +32,6 @@ class TestAssignmentActions(TestCase):
         cls.assignment = LearnerContentAssignmentFactory.create(
             assignment_configuration=cls.assignment_configuration,
         )
-
-    def tearDown(self):
-        """
-        Clear all actions after each test function.
-        """
-        super().tearDown()
-        self.assignment.actions.all().delete()
 
     def test_get_set_linked_action(self):
         """
@@ -149,23 +142,33 @@ class TestAssignmentActions(TestCase):
 
     def test_clear_pii(self):
         """
-        Tests that we can clear pii on an assignment.
+        Tests that we can clear PII on an assignment and related action audit records.
         """
         self.assignment.learner_email = 'foo@bar.com'
         self.assignment.lms_user_id = 12345
         self.assignment.save()
+        action = self.assignment.actions.create(
+            action_type=AssignmentActions.NOTIFIED,
+            completed_at=timezone.now(),
+            learner_email='foo@bar.com',
+        )
 
         self.assignment.clear_pii()
         self.assignment.save()
 
         self.assignment.refresh_from_db()
+        action.refresh_from_db()
 
         self.assertEqual(12345, self.assignment.lms_user_id)
         pattern = RETIRED_EMAIL_ADDRESS_FORMAT.format('[a-f0-9]{16}')
         self.assertIsNotNone(re.match(pattern, self.assignment.learner_email))
+        self.assertIsNotNone(re.match(pattern, action.learner_email))
 
         for historical_record in self.assignment.history.all():
             self.assertIsNotNone(re.match(pattern, historical_record.learner_email))
+
+        for action_historical_record in action.history.all():
+            self.assertIsNotNone(re.match(pattern, action_historical_record.learner_email))
 
 
 class TestLearnerContentAssignmentActionAuditFields(TestCase):
@@ -180,10 +183,6 @@ class TestLearnerContentAssignmentActionAuditFields(TestCase):
         cls.assignment = LearnerContentAssignmentFactory.create(
             assignment_configuration=cls.assignment_configuration,
         )
-
-    def tearDown(self):
-        super().tearDown()
-        self.assignment.actions.all().delete()
 
     def _create_action(self, **kwargs):
         """Create an action with safe defaults; override via kwargs."""

@@ -246,8 +246,9 @@ class LearnerContentAssignment(TimeStampedModel):
     are allowed, and we can use the history table of this model to ascertain
     when/why such state transitions occurred.
 
-    .. pii: The learner_email field stores PII,
-       which is to be scrubbed after 90 days via management command.
+     .. pii: The learner_email field stores PII,
+         which is scrubbed after 90 days by local API retirement handling
+         in the clear_pii_for_expired_assignments management command/task.
     .. pii_types: email_address
     .. pii_retirement: local_api
     """
@@ -743,11 +744,16 @@ class LearnerContentAssignment(TimeStampedModel):
         Removes PII field values from this assignment by setting
         the ``learner_email`` field to a templated email address
         that's relatively uniqueified with the addition of a random, 8-byte,
-        hex string. Does the same for related historical records.
+        hex string. Does the same for related historical records, and for
+        this assignment's action audit rows and their historical records.
         """
         retired_email = self._unique_retired_email()
         self.learner_email = retired_email
         self.history.update(learner_email=retired_email)  # pylint: disable=no-member
+        self.actions.update(learner_email=retired_email)  # pylint: disable=no-member
+        self.actions.model.history.filter(assignment_id=self.pk).update(  # pylint: disable=no-member
+            learner_email=retired_email,
+        )
 
     @classmethod
     def annotate_dynamic_fields_onto_queryset(cls, queryset):
@@ -881,8 +887,9 @@ class LearnerContentAssignmentAction(TimeStampedModel):
     A model that persists information regarding certain non-lifecycle actions
     on ``LearnerContentAssignment`` records.
 
-    .. pii: The learner_email field stores PII,
-       which is to be scrubbed via local API retirement handling.
+     .. pii: The learner_email field stores PII,
+         which is scrubbed after 90 days by local API retirement handling
+         in the clear_pii_for_expired_assignments management command/task.
     .. pii_types: email_address
     .. pii_retirement: local_api
     """
