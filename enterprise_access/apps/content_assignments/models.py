@@ -962,6 +962,7 @@ class LearnerContentAssignmentAction(TimeStampedModel):
         null=True, blank=True,
         help_text="UUID of the enterprise customer associated with this action.",
     )
+    # Intentionally schema-flexible; help_text keys are common examples, not an exhaustive contract.
     metadata = models.JSONField(
         null=True, blank=True, default=None,
         help_text=(
