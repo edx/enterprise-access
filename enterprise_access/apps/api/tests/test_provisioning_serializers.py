@@ -10,6 +10,7 @@ from enterprise_access.apps.api.serializers.provisioning import (
     ProvisioningRequestSerializer,
     ProvisioningResponseSerializer
 )
+from enterprise_access.apps.customer_billing.models import SspProduct
 
 
 @ddt.ddt
@@ -17,6 +18,15 @@ class TestProvisioningSerializers(TestCase):
     """
     Tests for academy provisioning serializer validation.
     """
+
+    def setUp(self):
+        self.ssp_product = SspProduct.objects.create(
+            slug='ai-academy-yearly',
+            stripe_price_lookup_key='ai_academy_yearly_price',
+            catalog_query_uuid=uuid4(),
+            catalog_query_id=2,
+            academy_uuid=uuid4(),
+        )
 
     def _build_request_payload(self, *, include_academy):
         """
@@ -76,6 +86,23 @@ class TestProvisioningSerializers(TestCase):
     def test_request_serializer_accepts_top_level_ssp_product_slug(self):
         payload = self._build_request_payload(include_academy=True)
         payload['ssp_product_slug'] = 'ai-academy-yearly'
+
+        serializer = ProvisioningRequestSerializer(data=payload)
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+
+    def test_request_serializer_rejects_unknown_catalog_query_id(self):
+        payload = self._build_request_payload(include_academy=False)
+        payload['enterprise_catalog']['catalog_query_id'] = 9999
+
+        serializer = ProvisioningRequestSerializer(data=payload)
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn('catalog_query_id', serializer.errors.get('enterprise_catalog', {}))
+
+    def test_request_serializer_accepts_null_catalog_query_id(self):
+        payload = self._build_request_payload(include_academy=False)
+        payload['enterprise_catalog']['catalog_query_id'] = None
 
         serializer = ProvisioningRequestSerializer(data=payload)
 
