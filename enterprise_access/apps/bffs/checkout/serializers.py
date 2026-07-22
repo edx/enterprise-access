@@ -224,7 +224,7 @@ class CheckoutValidationRequestSerializer(serializers.Serializer):
     quantity = serializers.IntegerField(required=False, allow_null=True, help_text="Number of licenses")
     stripe_price_id = serializers.CharField(required=False, allow_blank=True, help_text="Stripe price ID")
     ssp_product_slug = serializers.SlugField(
-        allow_null=False, required=True,
+        required=False, allow_blank=True,
         help_text="SSP product slug for the selected plan",
     )
 
