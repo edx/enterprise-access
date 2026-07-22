@@ -449,15 +449,14 @@ class TestCheckoutContextResponseBuilder(APITest):
         self.assertIn('ssp_product', intent_data)
         self.assertEqual(intent_data['ssp_product'], 'data-academy-yearly')
 
-    def test_checkout_intent_response_ssp_product_null(self):
+    def test_checkout_intent_response_ssp_product_always_present(self):
         """
-        Test that ssp_product serializes correctly when null
-        (e.g. legacy Teams intents created before SspProduct FK was added).
+        Test that ssp_product is always present and non-null in the
+        checkout intent response, reflecting the non-nullable DB constraint
+        (backfilled by migration 0037).
         """
         context = self._create_minimal_valid_context()
-        intent_without_ssp = dict(self.mock_checkout_intent)
-        intent_without_ssp['ssp_product'] = None
-        context.checkout_intent = intent_without_ssp
+        context.checkout_intent = self.mock_checkout_intent
 
         builder = CheckoutContextResponseBuilder(context)
         builder.build()
@@ -465,10 +464,11 @@ class TestCheckoutContextResponseBuilder(APITest):
         data, status_code = builder.serialize()
 
         self.assertEqual(status_code, status.HTTP_200_OK)
-        self.assertEqual(data['warnings'], [])
         intent_data = data['checkout_intent']
         self.assertIn('ssp_product', intent_data)
-        self.assertIsNone(intent_data['ssp_product'])
+        # ssp_product must never be null per the model constraint
+        self.assertIsNotNone(intent_data['ssp_product'])
+        self.assertEqual(intent_data['ssp_product'], 'data-academy-yearly')
 
 
 @ddt.ddt

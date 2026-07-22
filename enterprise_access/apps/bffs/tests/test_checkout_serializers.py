@@ -36,20 +36,21 @@ class TestCheckoutIntentMinimalResponseSerializer(TestCase):
         self.assertIn('ssp_product', serializer.validated_data)
         self.assertEqual(serializer.validated_data['ssp_product'], 'data-academy-yearly')
 
-    def test_ssp_product_null_is_valid(self):
-        """ssp_product=None must be accepted (legacy intents pre-SspProduct FK)."""
+    def test_ssp_product_null_is_invalid(self):
+        """ssp_product=None must be rejected (ssp_product is non-nullable on CheckoutIntent)."""
         serializer = CheckoutIntentMinimalResponseSerializer(
             data=self._valid_payload(ssp_product=None)
         )
-        self.assertTrue(serializer.is_valid(), serializer.errors)
-        self.assertIsNone(serializer.validated_data.get('ssp_product'))
+        self.assertFalse(serializer.is_valid())
+        self.assertIn('ssp_product', serializer.errors)
 
-    def test_ssp_product_absent_is_valid(self):
-        """ssp_product omitted entirely must not cause a validation error."""
+    def test_ssp_product_absent_is_invalid(self):
+        """ssp_product omitted entirely must produce a validation error."""
         payload = self._valid_payload()
         payload.pop('ssp_product')
         serializer = CheckoutIntentMinimalResponseSerializer(data=payload)
-        self.assertTrue(serializer.is_valid(), serializer.errors)
+        self.assertFalse(serializer.is_valid())
+        self.assertIn('ssp_product', serializer.errors)
 
     def test_uuid_required(self):
         """

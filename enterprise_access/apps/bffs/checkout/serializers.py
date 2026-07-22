@@ -182,8 +182,6 @@ class CheckoutIntentMinimalResponseSerializer(serializers.Serializer):
     )
     ssp_product = serializers.SlugField(
         help_text='SSP product slug associated with this checkout intent',
-        required=False,
-        allow_null=True,
     )
 
 
@@ -226,7 +224,7 @@ class CheckoutValidationRequestSerializer(serializers.Serializer):
     quantity = serializers.IntegerField(required=False, allow_null=True, help_text="Number of licenses")
     stripe_price_id = serializers.CharField(required=False, allow_blank=True, help_text="Stripe price ID")
     ssp_product_slug = serializers.SlugField(
-        required=False, allow_blank=True,
+        allow_null=False, required=True,
         help_text="SSP product slug for the selected plan",
     )
 
