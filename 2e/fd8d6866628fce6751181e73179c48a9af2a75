@@ -1,0 +1,27 @@
+enterprise_access/apps/api/tests/test_provisioning_serializers.py
+  s_316d9f1516139a::t_7b9f56be6a56be 13
+  s_316d9f1516139a::t_2fba527477e7c0 22-30
+  s_316d9f1516139a::t_8c270d702388fc 94-110
+enterprise_access/apps/api/serializers/provisioning.py
+  s_316d9f1516139a::t_b723a4264c8d2a 62-65,68,70-81
+  s_316d9f1516139a::t_27f51fd43a9a4f 10
+  s_316d9f1516139a::t_2292156f287ef9 69
+  s_316d9f1516139a::t_de1111ae4569d3 11
+  s_316d9f1516139a::t_a50730a012f870 82
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "2efd8d6866628fce6751181e73179c48a9af2a75",
+  "prompts": {},
+  "sessions": {
+    "s_316d9f1516139a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e8678381-2846-4820-8bd2-81f6e834b9e5",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Alexander Dusenbery <adusenbery@2u.com>"
+    }
+  }
+}
