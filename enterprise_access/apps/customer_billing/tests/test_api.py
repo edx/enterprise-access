@@ -81,13 +81,6 @@ class TestCreateFreeTrialCheckoutSession(TestCase):
     def setUp(self):
         self.user = UserFactory()
         self.other_user = UserFactory()
-        self.enterprise_catalog_lookup_patcher = mock.patch(
-            'enterprise_access.apps.api_client.enterprise_catalog_client.EnterpriseCatalogApiClient.'
-            'get_catalog_query_id_from_uuid',
-            return_value=1,
-        )
-        self.enterprise_catalog_lookup_patcher.start()
-        self.addCleanup(self.enterprise_catalog_lookup_patcher.stop)
 
     def tearDown(self):
         # Clean up any intents created during tests
@@ -165,6 +158,7 @@ class TestCreateFreeTrialCheckoutSession(TestCase):
             stripe_price_lookup_key=MOCK_SSP_PRODUCTS['quarterly_license_plan']['lookup_key'],
             is_active=True,
             catalog_query_uuid=uuid.uuid4(),
+            catalog_query_id=1,
         )
         result = customer_billing_api.create_free_trial_checkout_session(
             user=self.user,
@@ -215,7 +209,7 @@ class TestCreateFreeTrialCheckoutSession(TestCase):
         mock_get_ssp_pricing,  # pylint: disable=unused-argument
         mock_enterprise_catalog_metadata,
     ):
-        """Enterprise catalog lookup failures should not block checkout session creation."""
+        """A ValueError from enterprise_catalog_metadata should not block checkout session creation."""
         mock_lms_client = mock_lms_client_class.return_value
         mock_lms_client.get_lms_user_account.return_value = [{'id': self.user.lms_user_id}]
         mock_lms_client.get_enterprise_customer_data.side_effect = raise_404_error
