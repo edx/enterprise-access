@@ -132,14 +132,27 @@ class ProvisioningCreateView(PermissionRequiredMixin, generics.CreateAPIView):
             top_level_ssp_product_slug,
         )
         workflow = ProvisionNewCustomerWorkflow.objects.create(input_data=workflow_input_dict)
+        logger.info(
+            'Created ProvisionNewCustomerWorkflow (uuid=%s) for enterprise_slug=%s, admin_emails=%s',
+            workflow.uuid, customer_request_data.get('slug'), admin_emails,
+        )
 
         try:
             workflow.execute()
         except UnitOfWorkException as exc:
+            logger.exception(
+                'Provisioning workflow (uuid=%s) failed for enterprise_slug=%s: %s',
+                workflow.uuid, customer_request_data.get('slug'), exc,
+            )
             raise ProvisioningException(
                 detail=f'Error in provisioning workflow: {exc}',
                 code=exc.code,
             ) from exc
+
+        logger.info(
+            'Provisioning workflow (uuid=%s) completed successfully for enterprise_slug=%s',
+            workflow.uuid, customer_request_data.get('slug'),
+        )
 
         response_serializer = serializers.ProvisioningResponseSerializer({
             'enterprise_customer': workflow.customer_output_dict(),
@@ -180,6 +193,7 @@ class SubscriptionPlanOLIUpdateView(PermissionRequiredMixin, APIView):
         """
         serializer = serializers.SubscriptionPlanOLIUpdateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        logger.info('Received SubscriptionPlanOLIUpdate request: %s', serializer.validated_data)
 
         try:
             if serializer.validated_data.get('checkout_intent_uuid'):
@@ -252,7 +266,7 @@ class SubscriptionPlanOLIUpdateView(PermissionRequiredMixin, APIView):
             return Response(response_serializer.data, status=status.HTTP_200_OK)
 
         except Exception as e:
-            logger.error(
+            logger.exception(
                 f"Failed to update subscription plan {subscription_plan_uuid} "
                 f"with OLI {salesforce_oli}: {str(e)}"
             )

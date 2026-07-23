@@ -1,5 +1,6 @@
 """ Abstract models and classes to support concrete workflows.. """
 
+import logging
 from uuid import uuid4
 
 from attrs import define, field, make_class
@@ -12,6 +13,8 @@ from model_utils.models import SoftDeletableModel, TimeStampedModel
 
 from .exceptions import UnitOfWorkException
 from .serialization import BaseInputOutput
+
+logger = logging.getLogger(__name__)
 
 
 @define
@@ -105,6 +108,10 @@ class AbstractUnitOfWork(TimeStampedModel, SoftDeletableModel):
         Returns:
           An instance of ``self.output_class``.
         """
+        logger.info(
+            'Executing %s (uuid=%s) with input_data=%s',
+            self.__class__.__name__, self.uuid, self.input_data,
+        )
         try:
             result = self.process_input(
                 accumulated_output=accumulated_output,
@@ -112,9 +119,17 @@ class AbstractUnitOfWork(TimeStampedModel, SoftDeletableModel):
             )
             self.output_data = result.to_dict()
             self.succeeded_at = timezone.now()
+            logger.info(
+                'Successfully executed %s (uuid=%s), output_data=%s',
+                self.__class__.__name__, self.uuid, self.output_data,
+            )
         except Exception as exc:
             self.failed_at = timezone.now()
             self.exception_message = str(exc)
+            logger.exception(
+                'Failed to execute %s (uuid=%s): %s',
+                self.__class__.__name__, self.uuid, exc,
+            )
             raise self.exception_class(str(exc)) from exc
         finally:
             self.save()
@@ -200,9 +215,19 @@ class AbstractWorkflow(AbstractUnitOfWork):
           of the output of each step in this workflow.
         """
         if self.succeeded_at:
+            logger.info(
+                '%s (uuid=%s) already succeeded at %s, skipping re-execution',
+                self.__class__.__name__, self.uuid, self.succeeded_at,
+            )
             return None
 
         accumulated_output = accumulated_output or self.output_class()
+
+        logger.info(
+            'Starting workflow %s (uuid=%s) with steps=%s',
+            self.__class__.__name__, self.uuid,
+            [step_class.__name__ for step_class in self.steps],
+        )
 
         preceding_step_record = None
         for workflow_step_class in self.steps:
@@ -217,9 +242,19 @@ class AbstractWorkflow(AbstractUnitOfWork):
             if preceding_step_record:
                 step_record_kwargs['defaults']['preceding_step_uuid'] = preceding_step_record.uuid
 
-            step_record, _ = workflow_step_class.objects.get_or_create(**step_record_kwargs)
+            step_record, created = workflow_step_class.objects.get_or_create(**step_record_kwargs)
+            logger.info(
+                'Workflow %s (uuid=%s): step %s record %s (created=%s, step_uuid=%s)',
+                self.__class__.__name__, self.uuid, workflow_step_class.__name__,
+                'created' if created else 'reused', created, step_record.uuid,
+            )
             preceding_step_record = step_record
             if step_record.succeeded_at:
+                logger.info(
+                    'Workflow %s (uuid=%s): step %s (step_uuid=%s) already succeeded at %s, skipping',
+                    self.__class__.__name__, self.uuid, workflow_step_class.__name__,
+                    step_record.uuid, step_record.succeeded_at,
+                )
                 setattr(
                     accumulated_output,
                     workflow_step_class.output_class.KEY,
@@ -234,4 +269,8 @@ class AbstractWorkflow(AbstractUnitOfWork):
                 step_output,
             )
 
+        logger.info(
+            'Completed workflow %s (uuid=%s)',
+            self.__class__.__name__, self.uuid,
+        )
         return accumulated_output
