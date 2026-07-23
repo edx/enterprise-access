@@ -38,7 +38,6 @@ from enterprise_access.apps.customer_billing.toggles import bypass_salesforce_fo
 from enterprise_access.apps.customer_billing.utils import datetime_from_timestamp
 from enterprise_access.apps.provisioning.models import ProvisionNewCustomerWorkflow
 from enterprise_access.apps.track.segment import track_event
-from enterprise_access.apps.workflow.exceptions import UnitOfWorkException
 
 logger = logging.getLogger(__name__)
 
@@ -404,30 +403,30 @@ def _bypass_salesforce_for_provisioning(checkout_intent: CheckoutIntent) -> None
         checkout_intent.uuid,
     )
 
-    customer_request_dict = {
-        'name': checkout_intent.enterprise_name,
-        'slug': checkout_intent.enterprise_slug,
-        'country': checkout_intent.country,
-    }
-    admin_email_list = [checkout_intent.user.email]
-
-    workflow_input_dict = ProvisionNewCustomerWorkflow.generate_input_dict(
-        customer_request_dict,
-        admin_email_list,
-        None,
-        None,
-        None,
-        {},
-        {},
-        checkout_intent.ssp_product.slug,
-    )
-    workflow = ProvisionNewCustomerWorkflow.objects.create(input_data=workflow_input_dict)
-
+    workflow = None
     try:
+        customer_request_dict = {
+            'name': checkout_intent.enterprise_name,
+            'slug': checkout_intent.enterprise_slug,
+            'country': checkout_intent.country,
+        }
+        admin_email_list = [checkout_intent.user.email]
+
+        workflow_input_dict = ProvisionNewCustomerWorkflow.generate_input_dict(
+            customer_request_dict,
+            admin_email_list,
+            None,
+            None,
+            None,
+            {},
+            {},
+            checkout_intent.ssp_product.slug,
+        )
+        workflow = ProvisionNewCustomerWorkflow.objects.create(input_data=workflow_input_dict)
         workflow.execute()
-    except UnitOfWorkException as exc:
-        logger.error(
-            'Salesforce bypass provisioning workflow failed for checkout_intent uuid=%s: %s',
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.exception(
+            'Salesforce bypass provisioning failed for checkout_intent uuid=%s: %s',
             checkout_intent.uuid, exc,
         )
         checkout_intent.mark_provisioning_error(str(exc), workflow=workflow)
