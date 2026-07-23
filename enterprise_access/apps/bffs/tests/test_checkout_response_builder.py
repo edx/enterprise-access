@@ -40,6 +40,7 @@ class TestCheckoutContextResponseBuilder(APITest):
         self.request.user = self.user
 
         self.mock_checkout_intent = {
+            'uuid': 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
             'id': 123,
             'state': 'created',
             'enterprise_name': 'Test Enterprise',
@@ -51,6 +52,7 @@ class TestCheckoutContextResponseBuilder(APITest):
             'last_provisioning_error': '',
             'workflow': None,
             'admin_portal_url': 'https://portal.edx.org/test-enterprise',
+            'ssp_product': 'data-academy-yearly',
         }
 
     def _create_context(self):
@@ -356,6 +358,7 @@ class TestCheckoutContextResponseBuilder(APITest):
         self.assertEqual(intent_data['stripe_checkout_session_id'], 'cs_test_123abc')
         self.assertEqual(intent_data['admin_portal_url'], 'https://portal.edx.org/test-enterprise')
         self.assertEqual(intent_data['quantity'], 5)
+        self.assertEqual(intent_data['ssp_product'], 'data-academy-yearly')
 
     def test_build_context_with_no_checkout_intent(self):
         """
@@ -422,6 +425,50 @@ class TestCheckoutContextResponseBuilder(APITest):
         self.assertIn('checkout_intent', data)
         self.assertEqual(data['checkout_intent']['state'], 'errored_backoffice')
         self.assertEqual(data['checkout_intent']['last_provisioning_error'], 'Salesforce integration failed')
+
+    def test_checkout_intent_response_includes_ssp_product(self):
+        """
+        Test that ssp_product is present and correctly serialized in the
+        checkout intent minimal response shape.
+        """
+        context = self._create_minimal_valid_context()
+        context.checkout_intent = self.mock_checkout_intent
+
+        builder = CheckoutContextResponseBuilder(context)
+        builder.build()
+
+        data, status_code = builder.serialize()
+
+        self.assertEqual(status_code, status.HTTP_200_OK)
+        self.assertEqual(data['warnings'], [])
+        self.assertIn('checkout_intent', data)
+        intent_data = data['checkout_intent']
+        self.assertIn('uuid', intent_data)
+        self.assertEqual(intent_data['uuid'], 'a1b2c3d4-e5f6-7890-abcd-ef1234567890')
+        # Assert ssp_product is present and matches
+        self.assertIn('ssp_product', intent_data)
+        self.assertEqual(intent_data['ssp_product'], 'data-academy-yearly')
+
+    def test_checkout_intent_response_ssp_product_always_present(self):
+        """
+        Test that ssp_product is always present and non-null in the
+        checkout intent response, reflecting the non-nullable DB constraint
+        (backfilled by migration 0037).
+        """
+        context = self._create_minimal_valid_context()
+        context.checkout_intent = self.mock_checkout_intent
+
+        builder = CheckoutContextResponseBuilder(context)
+        builder.build()
+
+        data, status_code = builder.serialize()
+
+        self.assertEqual(status_code, status.HTTP_200_OK)
+        intent_data = data['checkout_intent']
+        self.assertIn('ssp_product', intent_data)
+        # ssp_product must never be null per the model constraint
+        self.assertIsNotNone(intent_data['ssp_product'])
+        self.assertEqual(intent_data['ssp_product'], 'data-academy-yearly')
 
 
 @ddt.ddt
