@@ -400,7 +400,13 @@ class CheckoutIntent(TimeStampedModel):
         if current_state == new_state:
             return True
         allowed_transitions = ALLOWED_CHECKOUT_INTENT_STATE_TRANSITIONS.get(current_state, [])
-        return new_state in allowed_transitions
+        is_valid = new_state in allowed_transitions
+        if not is_valid:
+            logger.warning(
+                'Rejected CheckoutIntent state transition from %s to %s (allowed: %s)',
+                current_state, new_state, allowed_transitions,
+            )
+        return is_valid
 
     def mark_as_paid(self, stripe_session_id=None, stripe_customer_id=None, **kwargs):
         """Mark the intent as paid after successful Stripe checkout."""
@@ -409,12 +415,24 @@ class CheckoutIntent(TimeStampedModel):
 
         if stripe_session_id:
             if self.state == CheckoutIntentState.PAID and stripe_session_id != self.stripe_checkout_session_id:
+                logger.error(
+                    'CheckoutIntent %s: refusing to overwrite stripe_checkout_session_id %s with %s while PAID',
+                    self.id, self.stripe_checkout_session_id, stripe_session_id,
+                )
                 raise ValueError("Cannot transition from PAID to PAID with a different stripe_checkout_session_id")
 
         if stripe_customer_id:
             if self.state == CheckoutIntentState.PAID and stripe_customer_id != self.stripe_customer_id:
+                logger.error(
+                    'CheckoutIntent %s: refusing to overwrite stripe_customer_id %s with %s while PAID',
+                    self.id, self.stripe_customer_id, stripe_customer_id,
+                )
                 raise ValueError("Cannot transition from PAID to PAID with a different stripe_customer_id")
 
+        logger.info(
+            'Marking CheckoutIntent %s as PAID (stripe_session_id=%s, stripe_customer_id=%s)',
+            self.id, stripe_session_id, stripe_customer_id,
+        )
         self.state = CheckoutIntentState.PAID
         if stripe_session_id:
             self.stripe_checkout_session_id = stripe_session_id
@@ -433,6 +451,10 @@ class CheckoutIntent(TimeStampedModel):
         self.state = CheckoutIntentState.FULFILLED
         if workflow:
             self.workflow = workflow
+        logger.info(
+            'Marking CheckoutIntent %s as FULFILLED (workflow_uuid=%s)',
+            self.id, workflow.uuid if workflow else None,
+        )
         self.save(update_fields=['state', 'workflow', 'modified'])
         logger.info(f'CheckoutIntent {self} marked as {CheckoutIntentState.FULFILLED}.')
         return self
@@ -447,6 +469,10 @@ class CheckoutIntent(TimeStampedModel):
 
         self.state = CheckoutIntentState.ERRORED_BACKOFFICE
         self.last_provisioning_error = error_message
+        logger.error(
+            'Marking CheckoutIntent %s as ERRORED_BACKOFFICE: %s',
+            self.id, error_message,
+        )
         self.save(update_fields=['state', 'last_provisioning_error', 'modified'])
         logger.info(f'CheckoutIntent {self} marked as {CheckoutIntentState.ERRORED_BACKOFFICE}.')
         return self
@@ -463,6 +489,10 @@ class CheckoutIntent(TimeStampedModel):
         self.last_provisioning_error = error_message
         if workflow:
             self.workflow = workflow
+        logger.error(
+            'Marking CheckoutIntent %s as ERRORED_PROVISIONING (workflow_uuid=%s): %s',
+            self.id, workflow.uuid if workflow else None, error_message,
+        )
         self.save(update_fields=['state', 'last_provisioning_error', 'workflow', 'modified'])
         logger.info(f'CheckoutIntent {self} marked as {CheckoutIntentState.ERRORED_PROVISIONING}.')
         return self
@@ -663,6 +693,10 @@ class CheckoutIntent(TimeStampedModel):
             ).first()
 
             if existing_intent:
+                logger.warning(
+                    'Rejecting new CheckoutIntent for user %s: already has active intent %s',
+                    self.user.email, existing_intent,
+                )
                 raise ValidationError({
                     'user': f"User {self.user.email} already has an active checkout intent ({existing_intent})."
                 })
@@ -680,6 +714,10 @@ class CheckoutIntent(TimeStampedModel):
         name_conflicts = [c for c in conflicts if c.enterprise_name == self.enterprise_name]
         if name_conflicts:
             conflict = name_conflicts[0]
+            logger.warning(
+                'Rejecting CheckoutIntent for enterprise_name=%s: already reserved by %s (intent %s)',
+                self.enterprise_name, conflict.user.email, conflict,
+            )
             raise ValidationError({
                 'enterprise_name': (
                     f"This enterprise name is already reserved by {conflict.user.email} (intent is {conflict})"
@@ -690,6 +728,10 @@ class CheckoutIntent(TimeStampedModel):
         slug_conflicts = [c for c in conflicts if c.enterprise_slug == self.enterprise_slug]
         if slug_conflicts:
             conflict = slug_conflicts[0]
+            logger.warning(
+                'Rejecting CheckoutIntent for enterprise_slug=%s: already reserved by %s (intent %s)',
+                self.enterprise_slug, conflict.user.email, conflict,
+            )
             raise ValidationError({
                 'enterprise_slug': f"This slug is already reserved by {conflict.user.email} (intent is {conflict})"
             })
@@ -768,9 +810,17 @@ class CheckoutIntent(TimeStampedModel):
             # If an existing intent has already reached a terminal state, exit fast.
             if existing_intent:
                 if existing_intent.state in cls.SUCCESS_STATES:
+                    logger.info(
+                        'create_intent for user %s: existing intent %s already in success state %s, returning as-is',
+                        user.email, existing_intent.id, existing_intent.state,
+                    )
                     return existing_intent
 
                 if existing_intent.state in cls.FAILURE_STATES:
+                    logger.warning(
+                        'create_intent for user %s: existing intent %s is in failure state %s',
+                        user.email, existing_intent.id, existing_intent.state,
+                    )
                     raise FailedCheckoutIntentConflict("Failed checkout record already exists")
 
             # Establish whether or not a new slug needs to be reserved. This logic is really only an
@@ -800,6 +850,10 @@ class CheckoutIntent(TimeStampedModel):
             # If we are reserving a new slug, then gate this whole view on it not already being reserved.
             if should_reserve_new_slug:
                 if not cls.can_reserve(slug, name, exclude_user=user):
+                    logger.warning(
+                        'create_intent for user %s: slug %s / name %s is already reserved',
+                        user.email, slug, name,
+                    )
                     raise SlugReservationConflict(f"Slug '{slug}' or name '{name}' is already reserved")
 
             expires_at = timezone.now() + timedelta(minutes=cls.get_reservation_duration())
@@ -826,6 +880,10 @@ class CheckoutIntent(TimeStampedModel):
                 if ssp_product is not None:
                     existing_intent.ssp_product = ssp_product
                 existing_intent.save()
+                logger.info(
+                    'create_intent for user %s: updated existing intent %s with slug=%s, name=%s, quantity=%s',
+                    user.email, existing_intent.id, slug, name, quantity,
+                )
                 return existing_intent
 
             create_kwargs = {
@@ -840,7 +898,12 @@ class CheckoutIntent(TimeStampedModel):
             }
             if ssp_product is not None:
                 create_kwargs['ssp_product'] = ssp_product
-            return cls.objects.create(**create_kwargs)
+            new_intent = cls.objects.create(**create_kwargs)
+            logger.info(
+                'create_intent for user %s: created new intent %s with slug=%s, name=%s, quantity=%s',
+                user.email, new_intent.id, slug, name, quantity,
+            )
+            return new_intent
 
     @classmethod
     def for_user(cls, user):
@@ -859,6 +922,7 @@ class CheckoutIntent(TimeStampedModel):
         Deprecated in favor of update_stripe_identifiers below.
         Update the associated Stripe checkout session ID.
         """
+        logger.info('Updating CheckoutIntent %s stripe_checkout_session_id to %s', self.id, session_id)
         self.stripe_checkout_session_id = session_id
         self.save(update_fields=['stripe_checkout_session_id', 'modified'])
 
@@ -886,6 +950,10 @@ class CheckoutIntent(TimeStampedModel):
         """
         Updates stripe identifiers related to this checkout intent record.
         """
+        logger.info(
+            'Updating CheckoutIntent %s stripe identifiers: session_id=%s, customer_id=%s',
+            self.id, session_id, customer_id,
+        )
         if session_id:
             self.stripe_checkout_session_id = session_id
         if customer_id:
