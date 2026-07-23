@@ -1,6 +1,7 @@
 """
 Tests for the provisioning views.
 """
+import copy
 import random
 import uuid
 from datetime import timedelta
@@ -303,6 +304,12 @@ class TestProvisioningEndToEnd(APITest):
             },
         ])
         self.checkout_intent = self._create_checkout_intent()
+        self.ssp_product = SspProduct.objects.create(
+            slug='test-product',
+            stripe_price_lookup_key='test_price',
+            catalog_query_uuid=uuid.uuid4(),
+            catalog_query_id=2,
+        )
 
     def _create_checkout_intent(self):
         """Helper to create a checkout intent for testing."""
@@ -397,7 +404,7 @@ class TestProvisioningEndToEnd(APITest):
         StripeEventSummaryFactory.create(stripe_event_data=event_data)
 
         # Remove explicit product_id values so top-level SSP slug can resolve products
-        request_payload = {**DEFAULT_REQUEST_PAYLOAD}
+        request_payload = copy.deepcopy(DEFAULT_REQUEST_PAYLOAD)
         request_payload['trial_subscription_plan'].pop('product_id', None)
         request_payload['first_paid_subscription_plan'].pop('product_id', None)
         # Provide top-level ssp_product_slug (not per-plan)
@@ -760,7 +767,8 @@ class TestProvisioningEndToEnd(APITest):
         event_data = StripeEventDataFactory.create(checkout_intent=self.checkout_intent)
         StripeEventSummaryFactory.create(stripe_event_data=event_data)
 
-        request_payload = {**DEFAULT_REQUEST_PAYLOAD}
+        request_payload = copy.deepcopy(DEFAULT_REQUEST_PAYLOAD)
+        request_payload['enterprise_catalog']['catalog_query_id'] = self.ssp_product.catalog_query_id
         response = self.client.post(PROVISIONING_CREATE_ENDPOINT, data=request_payload)
 
         assert response.status_code == status.HTTP_201_CREATED
@@ -772,13 +780,13 @@ class TestProvisioningEndToEnd(APITest):
 
         mock_client.get_enterprise_catalogs.assert_called_once_with(
             enterprise_customer_uuid=str(TEST_ENTERPRISE_UUID),
-            catalog_query_id=2,
+            catalog_query_id=self.ssp_product.catalog_query_id,
         )
         if test_data['catalog_to_create']:
             mock_client.create_enterprise_catalog.assert_called_once_with(
                 enterprise_customer_uuid=str(TEST_ENTERPRISE_UUID),
                 catalog_title='Test catalog',
-                catalog_query_id=2,
+                catalog_query_id=self.ssp_product.catalog_query_id,
             )
         else:
             self.assertFalse(mock_client.create_enterprise_catalog.called)
@@ -1144,7 +1152,7 @@ class TestCheckoutIntentSynchronization(APITest):
 
     def _get_base_request_payload(self):
         """Helper to get base request payload with test enterprise slug."""
-        payload = {**DEFAULT_REQUEST_PAYLOAD}
+        payload = copy.deepcopy(DEFAULT_REQUEST_PAYLOAD)
         payload['enterprise_customer']['slug'] = self.enterprise_slug
         return payload
 

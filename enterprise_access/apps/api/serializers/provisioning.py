@@ -7,6 +7,8 @@ from django.conf import settings
 from django_countries.serializer_fields import CountryField
 from rest_framework import serializers
 
+from enterprise_access.apps.customer_billing.models import SspProduct
+
 logger = logging.getLogger(__name__)
 
 
@@ -57,11 +59,21 @@ class EnterpriseCatalogRequestSerializer(BaseSerializer):
     title = serializers.CharField(
         help_text='The name of the Enterprise Catalog.',
     )
-    catalog_query_id = serializers.ChoiceField(
-        choices=settings.PROVISIONING_DEFAULTS['catalog']['all_catalog_query_choices'],
-        default=settings.PROVISIONING_DEFAULTS['subscription']['trial_catalog_query_choices'][0][0],
-        help_text='The id of the related Catalog Query.',
+    catalog_query_id = serializers.IntegerField(
+        required=False,
+        allow_null=True,
+        help_text='The id of the related Catalog Query. Must match a catalog_query_id on an active SspProduct.',
     )
+
+    def validate_catalog_query_id(self, value):
+        """Reject catalog_query_id values not present on any active SspProduct."""
+        if value is None:
+            return value
+        if not SspProduct.objects.filter(is_active=True, catalog_query_id=value).exists():
+            raise serializers.ValidationError(
+                f'{value} is not a valid catalog_query_id. Must match an active SspProduct.'
+            )
+        return value
 
 
 class AcademyRequestSerializer(BaseSerializer):
