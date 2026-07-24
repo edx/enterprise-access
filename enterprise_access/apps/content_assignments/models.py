@@ -25,8 +25,10 @@ from .constants import (
     RETIRED_EMAIL_ADDRESS_FORMAT,
     AssignmentActionErrors,
     AssignmentActions,
+    AssignmentActorTypes,
     AssignmentLearnerStates,
     AssignmentRecentActionTypes,
+    AssignmentSources,
     LearnerContentAssignmentStateChoices
 )
 
@@ -244,8 +246,9 @@ class LearnerContentAssignment(TimeStampedModel):
     are allowed, and we can use the history table of this model to ascertain
     when/why such state transitions occurred.
 
-    .. pii: The learner_email field stores PII,
-       which is to be scrubbed after 90 days via management command.
+     .. pii: The learner_email field stores PII,
+         which is scrubbed after 90 days by local API retirement handling
+         in the clear_pii_for_expired_assignments management command/task.
     .. pii_types: email_address
     .. pii_retirement: local_api
     """
@@ -741,11 +744,16 @@ class LearnerContentAssignment(TimeStampedModel):
         Removes PII field values from this assignment by setting
         the ``learner_email`` field to a templated email address
         that's relatively uniqueified with the addition of a random, 8-byte,
-        hex string. Does the same for related historical records.
+        hex string. Does the same for related historical records, and for
+        this assignment's action audit rows and their historical records.
         """
         retired_email = self._unique_retired_email()
         self.learner_email = retired_email
         self.history.update(learner_email=retired_email)  # pylint: disable=no-member
+        self.actions.update(learner_email=retired_email)  # pylint: disable=no-member
+        self.actions.model.history.filter(assignment_id=self.pk).update(  # pylint: disable=no-member
+            learner_email=retired_email,
+        )
 
     @classmethod
     def annotate_dynamic_fields_onto_queryset(cls, queryset):
@@ -879,7 +887,11 @@ class LearnerContentAssignmentAction(TimeStampedModel):
     A model that persists information regarding certain non-lifecycle actions
     on ``LearnerContentAssignment`` records.
 
-    .. no_pii: This model has no PII
+     .. pii: The learner_email field stores PII,
+         which is scrubbed after 90 days by local API retirement handling
+         in the clear_pii_for_expired_assignments management command/task.
+    .. pii_types: email_address
+    .. pii_retirement: local_api
     """
     uuid = models.UUIDField(
         primary_key=True,
@@ -920,11 +932,59 @@ class LearnerContentAssignmentAction(TimeStampedModel):
         editable=False,
         help_text="Any traceback we recorded when an error was encountered.",
     )
+    actor_lms_user_id = models.IntegerField(
+        null=True, blank=True,
+        help_text="LMS user ID of the actor who triggered this action.",
+    )
+    actor_type = models.CharField(
+        max_length=32, null=True, blank=True,
+        choices=AssignmentActorTypes.CHOICES,
+        help_text="Type of actor who triggered this action (admin, learner, or system).",
+    )
+    learner_lms_user_id = models.IntegerField(
+        null=True, blank=True,
+        help_text="LMS user ID of the learner affected by this action.",
+    )
+    learner_email = models.CharField(
+        max_length=255, null=True, blank=True,
+        help_text="Email of the learner affected by this action at the time of the action.",
+    )
+    learner_external_key = models.CharField(
+        max_length=255, null=True, blank=True,
+        help_text="External key of the learner affected by this action, if available.",
+    )
+    source = models.CharField(
+        max_length=64, null=True, blank=True,
+        choices=AssignmentSources.CHOICES,
+        help_text="Originating source or channel that triggered this action.",
+    )
+    enterprise_customer_uuid = models.UUIDField(
+        null=True, blank=True,
+        help_text="UUID of the enterprise customer associated with this action.",
+    )
+    # Intentionally schema-flexible; help_text keys are common examples, not an exhaustive contract.
+    metadata = models.JSONField(
+        null=True, blank=True, default=None,
+        help_text=(
+            "Arbitrary audit metadata. Supported keys: correlation_id, batch_id, "
+            "request_id, state_before, state_after, error_code, error_message, idempotency_key."
+        ),
+    )
 
     history = HistoricalRecords()
 
     class Meta:
         ordering = ['created']
+        indexes = [
+            models.Index(
+                fields=['assignment', 'created'],
+                name='lcaa_assignment_created_idx',
+            ),
+            models.Index(
+                fields=['enterprise_customer_uuid', 'created'],
+                name='lcaa_customer_created_idx',
+            ),
+        ]
 
     def __str__(self):
         return (
