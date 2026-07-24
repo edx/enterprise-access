@@ -12,7 +12,7 @@ amqp==5.3.1
     #   kombu
 analytics-python==1.4.post1
     # via -r requirements/base.txt
-asgiref==3.11.1
+asgiref==3.12.1
     # via
     #   -r requirements/base.txt
     #   django
@@ -42,11 +42,11 @@ billiard==4.2.4
     # via
     #   -r requirements/base.txt
     #   celery
-boto3==1.43.40
+boto3==1.43.55
     # via
     #   -r requirements/base.txt
     #   snowflake-connector-python
-botocore==1.43.40
+botocore==1.43.55
     # via
     #   -r requirements/base.txt
     #   boto3
@@ -59,17 +59,17 @@ celery==5.6.3
     #   -r requirements/base.txt
     #   django-celery-results
     #   edx-celeryutils
-certifi==2026.6.17
+certifi==2026.7.22
     # via
     #   -r requirements/base.txt
     #   requests
     #   snowflake-connector-python
-cffi==2.0.0
+cffi==2.1.0
     # via
     #   -r requirements/base.txt
     #   cryptography
     #   pynacl
-charset-normalizer==3.4.7
+charset-normalizer==3.4.9
     # via
     #   -r requirements/base.txt
     #   requests
@@ -115,7 +115,7 @@ defusedxml==0.7.1
     #   -r requirements/base.txt
     #   python3-openid
     #   social-auth-core
-django==5.2.15
+django==5.2.16
     # via
     #   -r requirements/base.txt
     #   crispy-bootstrap5
@@ -164,7 +164,7 @@ django-crum==0.7.9
     #   edx-toggles
 django-extensions==4.1
     # via -r requirements/base.txt
-django-filter==25.2
+django-filter==26.1
     # via -r requirements/base.txt
 django-log-request-id==2.1.2
     # via -r requirements/base.txt
@@ -175,7 +175,7 @@ django-model-utils==5.0.0
     #   edx-rbac
 django-object-actions==5.1.2
     # via -r requirements/base.txt
-django-simple-history==3.12.0
+django-simple-history==3.13.0
     # via -r requirements/base.txt
 django-waffle==5.0.0
     # via
@@ -204,7 +204,7 @@ drf-jwt==1.19.2
     # via
     #   -r requirements/base.txt
     #   edx-drf-extensions
-drf-spectacular==0.29.0
+drf-spectacular==0.30.0
     # via -r requirements/base.txt
 drf-yasg==1.21.15
     # via
@@ -261,13 +261,13 @@ fastavro==1.12.2
     #   -r requirements/base.txt
     #   confluent-kafka
     #   openedx-events
-filelock==3.29.4
+filelock==3.32.0
     # via
     #   -r requirements/base.txt
     #   snowflake-connector-python
-gevent==26.5.0
+gevent==26.7.0
     # via -r requirements/production.in
-greenlet==3.5.3
+greenlet==3.5.4
     # via gevent
 gunicorn==26.0.0
     # via -r requirements/production.in
@@ -336,7 +336,7 @@ packaging==26.2
     #   gunicorn
     #   kombu
     #   snowflake-connector-python
-platformdirs==4.10.0
+platformdirs==4.11.0
     # via
     #   -r requirements/base.txt
     #   snowflake-connector-python
@@ -439,7 +439,7 @@ rpds-py==2026.6.3
     #   referencing
 rules==3.5
     # via -r requirements/base.txt
-s3transfer==0.19.0
+s3transfer==0.19.2
     # via
     #   -r requirements/base.txt
     #   boto3
@@ -456,7 +456,7 @@ six==1.17.0
     #   edx-django-release-util
     #   edx-rbac
     #   python-dateutil
-snowflake-connector-python==4.7.0
+snowflake-connector-python==4.7.1
     # via -r requirements/base.txt
 social-auth-app-django==5.9.0
     # via
@@ -481,13 +481,13 @@ stevedore==5.9.0
     #   code-annotations
     #   edx-django-utils
     #   edx-opaque-keys
-stripe==15.3.0
+stripe==15.3.1
     # via -r requirements/base.txt
 text-unidecode==1.3
     # via
     #   -r requirements/base.txt
     #   python-slugify
-tomlkit==0.15.0
+tomlkit==0.15.1
     # via
     #   -r requirements/base.txt
     #   snowflake-connector-python
@@ -501,7 +501,7 @@ typing-extensions==4.16.0
     #   referencing
     #   snowflake-connector-python
     #   stripe
-tzdata==2026.2
+tzdata==2026.3
     # via
     #   -r requirements/base.txt
     #   kombu
