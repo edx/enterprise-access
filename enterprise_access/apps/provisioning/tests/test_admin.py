@@ -2,7 +2,10 @@
 Unit tests for the provisioning module.
 """
 from unittest.mock import MagicMock, patch
+from uuid import uuid4
 
+import ddt
+from django.conf import settings
 from django.contrib.admin.sites import AdminSite
 from django.contrib.messages import ERROR, SUCCESS
 from django.contrib.messages.storage.fallback import FallbackStorage
@@ -193,3 +196,201 @@ class AdminTriggerProvisioningWorkflowAdminTests(TestCase):
 
         assert response.status_code == 200
         assert b'Trigger Subscription Trial Provisioning Workflow' in response.content
+
+
+# (admin_class, model_class, display_method_name, step_getter_name, reverse_target) for every
+# "simple" *_link display method: no branching on the type of the returned step record.
+SIMPLE_LINK_CASES = (
+    {
+        'admin_class': admin.ProvisionNewCustomerWorkflowAdmin,
+        'model_class': models.ProvisionNewCustomerWorkflow,
+        'display_method_name': 'create_customer_step_link',
+        'step_getter_name': 'get_create_customer_step',
+        'reverse_target': 'admin:provisioning_getcreatecustomerstep_change',
+    },
+    {
+        'admin_class': admin.ProvisionNewCustomerWorkflowAdmin,
+        'model_class': models.ProvisionNewCustomerWorkflow,
+        'display_method_name': 'create_admin_users_step_link',
+        'step_getter_name': 'get_create_enterprise_admin_users_step',
+        'reverse_target': 'admin:provisioning_getcreateenterpriseadminusersstep_change',
+    },
+    {
+        'admin_class': admin.ProvisionNewCustomerWorkflowAdmin,
+        'model_class': models.ProvisionNewCustomerWorkflow,
+        'display_method_name': 'create_catalog_step_link',
+        'step_getter_name': 'get_create_catalog_step',
+        'reverse_target': 'admin:provisioning_getcreatecatalogstep_change',
+    },
+    {
+        'admin_class': admin.ProvisionNewCustomerWorkflowAdmin,
+        'model_class': models.ProvisionNewCustomerWorkflow,
+        'display_method_name': 'create_customer_agreement_step_link',
+        'step_getter_name': 'get_create_customer_agreement_step',
+        'reverse_target': 'admin:provisioning_getcreatecustomeragreementstep_change',
+    },
+    {
+        'admin_class': admin.ProvisionNewCustomerWorkflowAdmin,
+        'model_class': models.ProvisionNewCustomerWorkflow,
+        'display_method_name': 'create_subscription_plan_step_link',
+        'step_getter_name': 'get_create_trial_subscription_plan_step',
+        'reverse_target': 'admin:provisioning_getcreatetrialsubscriptionplanstep_change',
+    },
+    {
+        'admin_class': admin.GetCreateEnterpriseAdminUsersStepAdmin,
+        'model_class': models.GetCreateEnterpriseAdminUsersStep,
+        'display_method_name': 'preceding_step_link',
+        'step_getter_name': 'get_preceding_step_record',
+        'reverse_target': 'admin:provisioning_getcreatecustomerstep_change',
+    },
+    {
+        'admin_class': admin.GetCreateCatalogStepAdmin,
+        'model_class': models.GetCreateCatalogStep,
+        'display_method_name': 'preceding_step_link',
+        'step_getter_name': 'get_preceding_step_record',
+        'reverse_target': 'admin:provisioning_getcreateenterpriseadminusersstep_change',
+    },
+    {
+        'admin_class': admin.AssociateAcademyStepAdmin,
+        'model_class': models.AssociateAcademyStep,
+        'display_method_name': 'preceding_step_link',
+        'step_getter_name': 'get_preceding_step_record',
+        'reverse_target': 'admin:provisioning_getcreatecatalogstep_change',
+    },
+    {
+        'admin_class': admin.GetCreateTrialSubscriptionPlanStepAdmin,
+        'model_class': models.GetCreateTrialSubscriptionPlanStep,
+        'display_method_name': 'preceding_step_link',
+        'step_getter_name': 'get_preceding_step_record',
+        'reverse_target': 'admin:provisioning_getcreatecustomeragreementstep_change',
+    },
+    {
+        'admin_class': admin.ProvisionWorkflowStepAdminBase,
+        'model_class': models.GetCreateCustomerStep,
+        'display_method_name': 'workflow_record_link',
+        'step_getter_name': 'get_workflow_record',
+        'reverse_target': 'admin:provisioning_provisionnewcustomerworkflow_change',
+    },
+)
+
+
+@ddt.ddt
+class ProvisioningAdminLinkDisplayTests(TestCase):
+    """
+    Tests for the `format_html()`-based link display methods on the provisioning admin classes.
+
+    These methods used to build their return value with `mark_safe('<a href="{}">{}</a>'.format(...))`,
+    which pylint-django 2.8.0's `mark-safe-interpolation` (W5151) check flags because interpolated
+    values aren't HTML-escaped before being marked safe. They were converted to
+    `format_html('<a href="{}">{}</a>', ...)`, which escapes each argument. These tests would have
+    caught a broken conversion (e.g. swapped argument order, or reintroducing string interpolation).
+    """
+    def setUp(self):
+        self.site = AdminSite()
+
+    @ddt.data(*SIMPLE_LINK_CASES)
+    @ddt.unpack
+    def test_returns_none_when_no_step_record(
+        self, admin_class, model_class, display_method_name, step_getter_name, reverse_target,
+    ):
+        """No underlying step/workflow record yet -> the display method returns None."""
+        del reverse_target  # unused in this test
+        model_admin = admin_class(model_class, self.site)
+        obj = MagicMock(**{f'{step_getter_name}.return_value': None})
+
+        display_method = getattr(model_admin, display_method_name)
+        self.assertIsNone(display_method(obj))
+
+    @ddt.data(*SIMPLE_LINK_CASES)
+    @ddt.unpack
+    def test_renders_anchor_tag_linking_to_step_record(
+        self, admin_class, model_class, display_method_name, step_getter_name, reverse_target,
+    ):
+        """A step/workflow record exists -> the display method renders a link to its admin page."""
+        model_admin = admin_class(model_class, self.site)
+        step_pk = uuid4()
+        step_record = MagicMock(pk=step_pk)
+        obj = MagicMock(**{f'{step_getter_name}.return_value': step_record})
+
+        result = getattr(model_admin, display_method_name)(obj)
+
+        expected_url = reverse(reverse_target, args=(step_pk,))
+        self.assertEqual(result, f'<a href="{expected_url}">{step_pk}</a>')
+
+    def test_format_html_escapes_malicious_interpolated_value(self):
+        """
+        `format_html()` HTML-escapes its arguments, unlike the `mark_safe(str.format(...))` pattern
+        it replaced. Uses `enterprise_customer_admin_link`, which builds its URL directly from a
+        stored uuid value (no `reverse()` involved), so any string can stand in for that value.
+        """
+        model_admin = admin.ProvisionNewCustomerWorkflowAdmin(models.ProvisionNewCustomerWorkflow, self.site)
+        malicious_uuid = '"><script>alert(1)</script>'
+        step_record = MagicMock(output_object=MagicMock(uuid=malicious_uuid))
+        obj = MagicMock(get_create_customer_step=MagicMock(return_value=step_record))
+
+        result = model_admin.enterprise_customer_admin_link(obj)
+
+        self.assertNotIn('<script>', result)
+        self.assertIn('&lt;script&gt;', result)
+
+    def test_subscription_plan_link_renders_anchor_tag(self):
+        """
+        `subscription_plan_link` builds its URL directly from a stored uuid value (no `reverse()`
+        involved), pointing at the License Manager admin, analogous to `enterprise_customer_admin_link`.
+        """
+        model_admin = admin.ProvisionNewCustomerWorkflowAdmin(models.ProvisionNewCustomerWorkflow, self.site)
+        plan_uuid = uuid4()
+        step_record = MagicMock(output_object=MagicMock(uuid=plan_uuid))
+        obj = MagicMock(get_create_trial_subscription_plan_step=MagicMock(return_value=step_record))
+
+        result = model_admin.subscription_plan_link(obj)
+
+        expected_url = f'{settings.LICENSE_MANAGER_URL}/admin/subscriptions/subscriptionplan/{plan_uuid}/change/'
+        self.assertEqual(result, f'<a href="{expected_url}">{expected_url}</a>')
+
+    def test_subscription_plan_link_escapes_malicious_interpolated_value(self):
+        """
+        Mirrors `test_format_html_escapes_malicious_interpolated_value`: `format_html()` HTML-escapes
+        its arguments, unlike the `mark_safe(str.format(...))` pattern it replaced.
+        """
+        model_admin = admin.ProvisionNewCustomerWorkflowAdmin(models.ProvisionNewCustomerWorkflow, self.site)
+        malicious_uuid = '"><script>alert(1)</script>'
+        step_record = MagicMock(output_object=MagicMock(uuid=malicious_uuid))
+        obj = MagicMock(get_create_trial_subscription_plan_step=MagicMock(return_value=step_record))
+
+        result = model_admin.subscription_plan_link(obj)
+
+        self.assertNotIn('<script>', result)
+        self.assertIn('&lt;script&gt;', result)
+
+
+class GetCreateCustomerAgreementStepAdminPrecedingStepLinkTests(TestCase):
+    """
+    Tests for `GetCreateCustomerAgreementStepAdmin.preceding_step_link`, which (unlike the other
+    `preceding_step_link` implementations) branches on the type of the preceding step record.
+    """
+    def setUp(self):
+        self.site = AdminSite()
+        self.model_admin = admin.GetCreateCustomerAgreementStepAdmin(models.GetCreateCustomerAgreementStep, self.site)
+
+    def test_returns_none_when_no_preceding_step_record(self):
+        obj = MagicMock(get_preceding_step_record=MagicMock(return_value=None))
+        self.assertIsNone(self.model_admin.preceding_step_link(obj))
+
+    def test_links_to_associate_academy_step_by_default(self):
+        step_record = models.AssociateAcademyStep(uuid=uuid4())
+        obj = MagicMock(get_preceding_step_record=MagicMock(return_value=step_record))
+
+        result = self.model_admin.preceding_step_link(obj)
+
+        expected_url = reverse("admin:provisioning_associateacademystep_change", args=(step_record.pk,))
+        self.assertEqual(result, f'<a href="{expected_url}">{step_record.pk}</a>')
+
+    def test_links_to_catalog_step_when_preceding_step_is_a_catalog_step(self):
+        step_record = models.GetCreateCatalogStep(uuid=uuid4())
+        obj = MagicMock(get_preceding_step_record=MagicMock(return_value=step_record))
+
+        result = self.model_admin.preceding_step_link(obj)
+
+        expected_url = reverse("admin:provisioning_getcreatecatalogstep_change", args=(step_record.pk,))
+        self.assertEqual(result, f'<a href="{expected_url}">{step_record.pk}</a>')
