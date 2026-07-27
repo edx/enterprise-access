@@ -246,7 +246,7 @@ class LearnerContentAssignment(TimeStampedModel):
     are allowed, and we can use the history table of this model to ascertain
     when/why such state transitions occurred.
 
-     .. pii: The learner_email field stores PII,
+    .. pii: The learner_email field stores PII,
          which is scrubbed after 90 days by local API retirement handling
          in the clear_pii_for_expired_assignments management command/task.
     .. pii_types: email_address
@@ -750,6 +750,8 @@ class LearnerContentAssignment(TimeStampedModel):
         retired_email = self._unique_retired_email()
         self.learner_email = retired_email
         self.history.update(learner_email=retired_email)  # pylint: disable=no-member
+        # Bulk-scrub action audit rows directly; intentionally bypasses
+        # HistoricalRecords save signal to avoid creating new PII-containing history rows.
         self.actions.update(learner_email=retired_email)  # pylint: disable=no-member
         self.actions.model.history.filter(assignment_id=self.pk).update(  # pylint: disable=no-member
             learner_email=retired_email,
@@ -887,7 +889,7 @@ class LearnerContentAssignmentAction(TimeStampedModel):
     A model that persists information regarding certain non-lifecycle actions
     on ``LearnerContentAssignment`` records.
 
-     .. pii: The learner_email field stores PII,
+    .. pii: The learner_email field stores PII,
          which is scrubbed after 90 days by local API retirement handling
          in the clear_pii_for_expired_assignments management command/task.
     .. pii_types: email_address
@@ -964,7 +966,7 @@ class LearnerContentAssignmentAction(TimeStampedModel):
     )
     # Intentionally schema-flexible; help_text keys are common examples, not an exhaustive contract.
     metadata = models.JSONField(
-        null=True, blank=True, default=None,
+        null=True, blank=True, default=dict,
         help_text=(
             "Arbitrary audit metadata. Supported keys: correlation_id, batch_id, "
             "request_id, state_before, state_after, error_code, error_message, idempotency_key."

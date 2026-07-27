@@ -204,7 +204,7 @@ class TestLearnerContentAssignmentActionAuditFields(TestCase):
         self.assertIsNone(action.learner_external_key)
         self.assertIsNone(action.source)
         self.assertIsNone(action.enterprise_customer_uuid)
-        self.assertIsNone(action.metadata)
+        self.assertEqual(action.metadata, {})
 
     # --- Persistence / round-trip ---
 
