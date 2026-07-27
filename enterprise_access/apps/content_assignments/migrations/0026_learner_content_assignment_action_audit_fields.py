@@ -80,7 +80,7 @@ class Migration(migrations.Migration):
             name="metadata",
             field=models.JSONField(
                 blank=True,
-                default=None,
+                default=dict,
                 help_text="Arbitrary audit metadata. Supported keys: correlation_id, batch_id, request_id, state_before, state_after, error_code, error_message, idempotency_key.",
                 null=True,
             ),
@@ -173,7 +173,7 @@ class Migration(migrations.Migration):
             name="metadata",
             field=models.JSONField(
                 blank=True,
-                default=None,
+                default=dict,
                 help_text="Arbitrary audit metadata. Supported keys: correlation_id, batch_id, request_id, state_before, state_after, error_code, error_message, idempotency_key.",
                 null=True,
             ),

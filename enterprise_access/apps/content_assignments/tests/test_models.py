@@ -1,5 +1,5 @@
 """
-Tests for the ``api.py`` module of the content_assignments app.
+Tests for the ``models.py`` module of the content_assignments app.
 """
 import re
 import uuid
