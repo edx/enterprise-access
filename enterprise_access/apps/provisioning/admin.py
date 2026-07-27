@@ -6,7 +6,7 @@ from django.http import HttpResponseRedirect
 from django.shortcuts import render
 from django.urls import reverse
 from django.utils import timezone
-from django.utils.safestring import mark_safe
+from django.utils.html import format_html
 from django.utils.translation import gettext_lazy as _
 from djangoql.admin import DjangoQLSearchMixin
 
@@ -41,7 +41,7 @@ class ProvisionNewCustomerWorkflowAdmin(DjangoQLSearchMixin, admin.ModelAdmin):
         'create_admin_users_step_link',
         'create_catalog_step_link',
         'create_customer_agreement_step_link',
-        'create_subscription_plan_step_link',
+        'create_trial_subscription_plan_step_link',
         'enterprise_customer_admin_link',
         'subscription_plan_link',
     )
@@ -56,10 +56,11 @@ class ProvisionNewCustomerWorkflowAdmin(DjangoQLSearchMixin, admin.ModelAdmin):
         step_record = obj.get_create_customer_step()
         if not step_record:
             return None
-        return mark_safe('<a href="{}">{}</a>'.format(
+        return format_html(
+            '<a href="{}">{}</a>',
             reverse("admin:provisioning_getcreatecustomerstep_change", args=(step_record.pk,)),
             step_record.pk,
-        ))
+        )
 
     @admin.display(
         description='Create Admin Users Step'
@@ -71,10 +72,11 @@ class ProvisionNewCustomerWorkflowAdmin(DjangoQLSearchMixin, admin.ModelAdmin):
         step_record = obj.get_create_enterprise_admin_users_step()
         if not step_record:
             return None
-        return mark_safe('<a href="{}">{}</a>'.format(
+        return format_html(
+            '<a href="{}">{}</a>',
             reverse("admin:provisioning_getcreateenterpriseadminusersstep_change", args=(step_record.pk,)),
             step_record.pk,
-        ))
+        )
 
     @admin.display(
         description='Create Catalog Step'
@@ -86,10 +88,11 @@ class ProvisionNewCustomerWorkflowAdmin(DjangoQLSearchMixin, admin.ModelAdmin):
         step_record = obj.get_create_catalog_step()
         if not step_record:
             return None
-        return mark_safe('<a href="{}">{}</a>'.format(
+        return format_html(
+            '<a href="{}">{}</a>',
             reverse("admin:provisioning_getcreatecatalogstep_change", args=(step_record.pk,)),
             step_record.pk,
-        ))
+        )
 
     @admin.display(
         description='Create Customer Agreement Step'
@@ -101,25 +104,27 @@ class ProvisionNewCustomerWorkflowAdmin(DjangoQLSearchMixin, admin.ModelAdmin):
         step_record = obj.get_create_customer_agreement_step()
         if not step_record:
             return None
-        return mark_safe('<a href="{}">{}</a>'.format(
+        return format_html(
+            '<a href="{}">{}</a>',
             reverse("admin:provisioning_getcreatecustomeragreementstep_change", args=(step_record.pk,)),
             step_record.pk,
-        ))
+        )
 
     @admin.display(
-        description='Create Subscription Plan Step'
+        description='Create Trial Subscription Plan Step'
     )
-    def create_subscription_plan_step_link(self, obj):
+    def create_trial_subscription_plan_step_link(self, obj):
         """
         Returns a link to the subscription plan creation step admin page for this workflow.
         """
-        step_record = obj.get_create_subscription_plan_step()
+        step_record = obj.get_create_trial_subscription_plan_step()
         if not step_record:
             return None
-        return mark_safe('<a href="{}">{}</a>'.format(
-            reverse("admin:provisioning_getcreatesubscriptionplanstep_change", args=(step_record.pk,)),
+        return format_html(
+            '<a href="{}">{}</a>',
+            reverse("admin:provisioning_getcreatetrialsubscriptionplanstep_change", args=(step_record.pk,)),
             step_record.pk,
-        ))
+        )
 
     @admin.display(
         description='Enterprise Customer Record (LMS)'
@@ -131,7 +136,7 @@ class ProvisionNewCustomerWorkflowAdmin(DjangoQLSearchMixin, admin.ModelAdmin):
         step_record = obj.get_create_customer_step()
         customer_uuid = step_record.output_object.uuid
         url = f'{settings.LMS_URL}/admin/enterprise/enterprisecustomer/{customer_uuid}/change/'
-        return mark_safe(f'<a href="{url}">{url}</a>')
+        return format_html('<a href="{}">{}</a>', url, url)
 
     @admin.display(
         description='Subscription Plan Record (License Manager)'
@@ -140,10 +145,10 @@ class ProvisionNewCustomerWorkflowAdmin(DjangoQLSearchMixin, admin.ModelAdmin):
         """
         Link to the EnterpriseCustomer Admin record in the LMS service.
         """
-        step_record = obj.get_create_subscription_plan_step()
+        step_record = obj.get_create_trial_subscription_plan_step()
         plan_uuid = step_record.output_object.uuid
         url = f'{settings.LICENSE_MANAGER_URL}/admin/subscriptions/subscriptionplan/{plan_uuid}/change/'
-        return mark_safe(f'<a href="{url}">{url}</a>')
+        return format_html('<a href="{}">{}</a>', url, url)
 
 
 class ProvisionWorkflowStepAdminBase(admin.ModelAdmin):
@@ -179,10 +184,11 @@ class ProvisionWorkflowStepAdminBase(admin.ModelAdmin):
         workflow_record = obj.get_workflow_record()
         if not workflow_record:
             return None
-        return mark_safe('<a href="{}">{}</a>'.format(
+        return format_html(
+            '<a href="{}">{}</a>',
             reverse("admin:provisioning_provisionnewcustomerworkflow_change", args=(workflow_record.pk,)),
             workflow_record.pk,
-        ))
+        )
 
     @admin.action(description='Re-process the input for this step')
     def process_input(self, request, queryset):
@@ -218,10 +224,11 @@ class GetCreateEnterpriseAdminUsersStepAdmin(DjangoQLSearchMixin, ProvisionWorkf
         step_record = obj.get_preceding_step_record()
         if not step_record:
             return None
-        return mark_safe('<a href="{}">{}</a>'.format(
+        return format_html(
+            '<a href="{}">{}</a>',
             reverse("admin:provisioning_getcreatecustomerstep_change", args=(step_record.pk,)),
             step_record.pk,
-        ))
+        )
 
 
 @admin.register(models.GetCreateCatalogStep)
@@ -242,10 +249,11 @@ class GetCreateCatalogStepAdmin(DjangoQLSearchMixin, ProvisionWorkflowStepAdminB
         step_record = obj.get_preceding_step_record()
         if not step_record:
             return None
-        return mark_safe('<a href="{}">{}</a>'.format(
+        return format_html(
+            '<a href="{}">{}</a>',
             reverse("admin:provisioning_getcreateenterpriseadminusersstep_change", args=(step_record.pk,)),
             step_record.pk,
-        ))
+        )
 
 
 @admin.register(models.AssociateAcademyStep)
@@ -266,10 +274,11 @@ class AssociateAcademyStepAdmin(DjangoQLSearchMixin, ProvisionWorkflowStepAdminB
         step_record = obj.get_preceding_step_record()
         if not step_record:
             return None
-        return mark_safe('<a href="{}">{}</a>'.format(
+        return format_html(
+            '<a href="{}">{}</a>',
             reverse("admin:provisioning_getcreatecatalogstep_change", args=(step_record.pk,)),
             step_record.pk,
-        ))
+        )
 
 
 @admin.register(models.GetCreateCustomerAgreementStep)
@@ -293,10 +302,11 @@ class GetCreateCustomerAgreementStepAdmin(DjangoQLSearchMixin, ProvisionWorkflow
         admin_change_url = "admin:provisioning_associateacademystep_change"
         if isinstance(step_record, models.GetCreateCatalogStep):
             admin_change_url = "admin:provisioning_getcreatecatalogstep_change"
-        return mark_safe('<a href="{}">{}</a>'.format(
+        return format_html(
+            '<a href="{}">{}</a>',
             reverse(admin_change_url, args=(step_record.pk,)),
             step_record.pk,
-        ))
+        )
 
 
 @admin.register(models.GetCreateTrialSubscriptionPlanStep)
@@ -317,10 +327,11 @@ class GetCreateTrialSubscriptionPlanStepAdmin(DjangoQLSearchMixin, ProvisionWork
         step_record = obj.get_preceding_step_record()
         if not step_record:
             return None
-        return mark_safe('<a href="{}">{}</a>'.format(
+        return format_html(
+            '<a href="{}">{}</a>',
             reverse("admin:provisioning_getcreatecustomeragreementstep_change", args=(step_record.pk,)),
             step_record.pk,
-        ))
+        )
 
 
 @admin.register(models.GetCreateSubscriptionPlanRenewalStep)
