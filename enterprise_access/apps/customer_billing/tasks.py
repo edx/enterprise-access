@@ -35,8 +35,10 @@ logger = logging.getLogger(__name__)
 def _format_currency_for_braze(amount_cents, suffix=''):
     """Format a cents value for Braze templates."""
     if amount_cents is None:
-        return 0
-    dollars = amount_cents // 100
+        return None
+    dollars, cents = divmod(int(amount_cents), 100)
+    if cents:
+        return f"${dollars:,}.{cents:02d}{suffix}"
     return f"${dollars:,}{suffix}"
 
 

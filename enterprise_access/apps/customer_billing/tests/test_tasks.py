@@ -113,6 +113,10 @@ class TestFormatCurrencyNoCents(TestCase):
     def test_formats_cents_without_fractional_digits(self):
         self.assertEqual(_format_currency_for_braze(1200000), '$12,000')
         self.assertEqual(_format_currency_for_braze(39600), '$396')
+        self.assertEqual(_format_currency_for_braze(12345), '$123.45')
+
+    def test_returns_none_for_missing_amount(self):
+        self.assertIsNone(_format_currency_for_braze(None))
 
 
 class TestBillingTaskHelpers(TestCase):
