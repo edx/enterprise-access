@@ -23,6 +23,7 @@ from enterprise_access.apps.customer_billing.models import (
 )
 from enterprise_access.apps.customer_billing.tasks import (
     _build_common_trigger_properties,
+    _format_currency_for_braze,
     _send_cancelation_campaign,
     get_enterprise_admins,
     prepare_admin_braze_recipients,
@@ -104,6 +105,14 @@ class TestBuildCommonTriggerProperties(TestCase):
                 organization_name='Org',
             )
         self.assertNotIn('academy_name', result)
+
+
+class TestFormatCurrencyNoCents(TestCase):
+    """Tests for the shared Braze currency formatter."""
+
+    def test_formats_cents_without_fractional_digits(self):
+        self.assertEqual(_format_currency_for_braze(1200000), '$12,000')
+        self.assertEqual(_format_currency_for_braze(39600), '$396')
 
 
 class TestBillingTaskHelpers(TestCase):
@@ -827,11 +836,14 @@ class TestSendEnterpriseProvisionSignupConfirmationEmail(TestCase):
             'number_of_licenses': 100,
             'organization': 'Test Corp',
             'activation_link': f"{settings.LMS_URL}/activate/some-activation-key",
+            'email_verification_url': f"{settings.LMS_URL}/activate/some-activation-key",
             'enterprise_admin_portal_url': f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/test-corp/admin/subscriptions',
             'trial_start_datetime': format_datetime_obj(self.trial_start, output_pattern=BRAZE_TIMESTAMP_FORMAT),
             'trial_end_datetime': format_datetime_obj(self.trial_end, output_pattern=BRAZE_TIMESTAMP_FORMAT),
             'plan_amount': 100.00,
+            'plan_amount_formatted': '$100',
             'total_amount': 100.00 * 100,
+            'total_amount_formatted': '$10,000',
         }
 
     @mock.patch('enterprise_access.apps.customer_billing.tasks.validate_trial_subscription')
@@ -1152,6 +1164,11 @@ class TestSendPaymentReceiptEmail(TestCase):
             'payment_method': 'visa - 4242',
             'license_count': 5,
             'price_per_license': 396.0,
+            'total_paid_amount_formatted': '$1,980',
+            'amount_paid_formatted': '$1,980',
+            'price_per_license_formatted': '$396/license',
+            'price_per_license_display': '$396/license',
+            'total_formatted': '$1,980',
             'customer_name': 'Test User',
             'organization': 'Test Enterprise',
             'billing_address': '123 Test St\nSuite 100\nTest City, TS 12345\nUS',
@@ -1818,6 +1835,9 @@ class TestSendTrialEndAndSubscriptionStartedEmailTask(TestCase):
         props = kwargs['trigger_properties']
         assert props['total_license'] == 5
         assert props['billing_amount'] == '100'
+        assert props['billing_amount_formatted'] == '$500'
+        assert props['total_billing_amount_formatted'] == '$500'
+        assert props['total_billing_amount'] == 50000
         assert 'subscription_start_period' in props
         assert 'subscription_end_period' in props
         assert 'next_payment_date' in props

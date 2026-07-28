@@ -32,6 +32,14 @@ from enterprise_access.utils import cents_to_dollars, format_cents_for_user_disp
 logger = logging.getLogger(__name__)
 
 
+def _format_currency_for_braze(amount_cents, suffix=''):
+    """Format a cents value for Braze templates."""
+    if amount_cents is None:
+        return 0
+    dollars = amount_cents // 100
+    return f"${dollars:,}{suffix}"
+
+
 def _build_common_trigger_properties(ssp_product=None, organization_name=None, **extra):
     """
     Build the common trigger_properties dict shared across all email tasks.
@@ -193,8 +201,9 @@ def send_enterprise_provision_signup_confirmation_email(
 
     trial_start_date = datetime_from_timestamp(subscription['trial_start'])
     trial_end_date = datetime_from_timestamp(subscription['trial_end'])
+    amount_cents = subscription['plan']['amount']
 
-    total_cost_cents = subscription['plan']['amount'] * number_of_licenses
+    total_cost_cents = amount_cents * number_of_licenses
 
     braze_client = BrazeApiClient()
     intent = None
@@ -224,12 +233,15 @@ def send_enterprise_provision_signup_confirmation_email(
         subscription_end_date=format_datetime_obj(subscription_end_date, output_pattern=BRAZE_DATE_FORMAT_2),
         number_of_licenses=number_of_licenses,
         activation_link=activation_link,
+        email_verification_url=activation_link,
         # Do not include raw enterprise_slug in trigger properties (tests/templates expect URL only)
         enterprise_admin_portal_url=f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/{enterprise_slug}/admin/subscriptions',
         trial_start_datetime=format_datetime_obj(trial_start_date, output_pattern=BRAZE_TIMESTAMP_FORMAT),
         trial_end_datetime=format_datetime_obj(trial_end_date, output_pattern=BRAZE_TIMESTAMP_FORMAT),
-        plan_amount=float(cents_to_dollars(subscription['plan']['amount'])),
-        total_amount=float(cents_to_dollars(total_cost_cents)),
+        plan_amount=amount_cents / 100,
+        plan_amount_formatted=_format_currency_for_braze(subscription['plan']['amount']),
+        total_amount=total_cost_cents / 100,
+        total_amount_formatted=_format_currency_for_braze(total_cost_cents),
     )
 
     send_campaign_message(
@@ -666,6 +678,8 @@ def send_trial_end_and_subscription_started_email_task(
     plan = subscription.get('plan', {})
     amount_cents = plan.get('amount', 0)
     billing_amount = str(cents_to_dollars(amount_cents)) if amount_cents else None
+    billing_amount_formatted = _format_currency_for_braze(amount_cents)
+    total_billing_amount = amount_cents * total_license if amount_cents and total_license else 0
 
     items = (subscription.get("items") or {}).get("data") or []
     first_item = items[0] if items else {}
@@ -704,6 +718,8 @@ def send_trial_end_and_subscription_started_email_task(
         enterprise_slug=enterprise_slug,
         enterprise_admin_portal_url=f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/{enterprise_slug}',
         invoice_url=invoice_url,
+        billing_amount_formatted=billing_amount_formatted,
+        total_billing_amount_formatted=_format_currency_for_braze(total_billing_amount),
     )
 
     # Backwards-compatible aliases expected by existing tests/templates
@@ -715,6 +731,8 @@ def send_trial_end_and_subscription_started_email_task(
         trigger_properties['next_payment_date'] = next_payment_date
     trigger_properties['total_license'] = total_license
     trigger_properties['billing_amount'] = billing_amount
+    trigger_properties['billing_amount_formatted'] = _format_currency_for_braze(total_billing_amount)
+    trigger_properties['total_billing_amount'] = total_billing_amount
 
     send_campaign_message(
         braze_client,
@@ -849,10 +867,15 @@ def send_payment_receipt_email(
         enterprise_admin_portal_url=f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/{enterprise_slug}',
         # Backwards-compatible keys expected by tests/templates
         total_paid_amount=total_paid_amount,
+        total_paid_amount_formatted=_format_currency_for_braze(total_amount),
+        amount_paid_formatted=_format_currency_for_braze(total_amount),
         date_paid=formatted_payment_date,
         payment_method=payment_method_display,
         license_count=int(quantity),
         price_per_license=price_per_license,
+        price_per_license_formatted=_format_currency_for_braze(price_per_license_cents, '/license'),
+        price_per_license_display=_format_currency_for_braze(price_per_license_cents, '/license'),
+        total_formatted=_format_currency_for_braze(total_amount),
         customer_name=customer_name,
         billing_address=billing_address,
         receipt_number=invoice_id,
