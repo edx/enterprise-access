@@ -2080,6 +2080,7 @@ class AssignedLearnerCreditAccessPolicy(AssignedCreditPolicyMixin, SubsidyAccess
             content_price_cents,
             admin_lms_user_id,
             suppress_email=suppress_email,
+            require_exact_course_run=self.is_late_redemption_allowed,
         )
 
 
@@ -2235,6 +2236,7 @@ class ForcedPolicyRedemption(TimeStampedModel):
             self.course_run_key,
             self.content_price_cents,
             known_lms_user_ids=[self.lms_user_id],
+            require_exact_course_run=True,
         )
 
     def force_redeem(self, extra_metadata=None):

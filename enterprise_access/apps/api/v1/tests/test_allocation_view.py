@@ -1164,7 +1164,11 @@ class TestSubsidyAccessPolicyAllocationEndToEnd(APITestWithMocks):
     @mock.patch.object(SubsidyAccessPolicy, 'subsidy_record', autospec=True)
     @mock.patch(
         'enterprise_access.apps.content_assignments.api.get_and_cache_content_metadata',
-        return_value={'content_title': 'the-title'},
+        return_value={
+            'content_title': 'the-title',
+            'content_key': 'edX+Privacy101',
+            'course_run_key': 'course-v1:edX+Privacy101+3T2020',
+        },
     )
     @mock.patch(
         'enterprise_access.apps.content_assignments.api.create_pending_enterprise_learner_for_assignment_task'
