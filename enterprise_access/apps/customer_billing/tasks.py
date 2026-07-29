@@ -225,6 +225,7 @@ def send_enterprise_provision_signup_confirmation_email(
         intent = _get_latest_checkout_intent_for_enterprise_slug(enterprise_slug)
 
     ssp_product = intent.ssp_product if intent else None
+    customer_name = intent.user.get_full_name() if intent else None
 
     campaign_id = get_campaign_id('signup_confirmation', ssp_product)
     admin_users = get_enterprise_admins(enterprise_slug, raise_if_empty=True)
@@ -245,6 +246,7 @@ def send_enterprise_provision_signup_confirmation_email(
         plan_amount_formatted=_format_currency_for_braze(subscription['plan']['amount']),
         total_amount=total_cost_cents / 100,
         total_amount_formatted=_format_currency_for_braze(total_cost_cents),
+        customer_name=customer_name,
     )
 
     send_campaign_message(
