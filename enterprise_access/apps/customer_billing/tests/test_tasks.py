@@ -840,7 +840,6 @@ class TestSendEnterpriseProvisionSignupConfirmationEmail(TestCase):
             'number_of_licenses': 100,
             'organization': 'Test Corp',
             'activation_link': f"{settings.LMS_URL}/activate/some-activation-key",
-            'email_verification_url': f"{settings.LMS_URL}/activate/some-activation-key",
             'enterprise_admin_portal_url': f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/test-corp/admin/subscriptions',
             'trial_start_datetime': format_datetime_obj(self.trial_start, output_pattern=BRAZE_TIMESTAMP_FORMAT),
             'trial_end_datetime': format_datetime_obj(self.trial_end, output_pattern=BRAZE_TIMESTAMP_FORMAT),

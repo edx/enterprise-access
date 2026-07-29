@@ -237,7 +237,6 @@ def send_enterprise_provision_signup_confirmation_email(
         subscription_end_date=format_datetime_obj(subscription_end_date, output_pattern=BRAZE_DATE_FORMAT_2),
         number_of_licenses=number_of_licenses,
         activation_link=activation_link,
-        email_verification_url=activation_link,
         # Do not include raw enterprise_slug in trigger properties (tests/templates expect URL only)
         enterprise_admin_portal_url=f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/{enterprise_slug}/admin/subscriptions',
         trial_start_datetime=format_datetime_obj(trial_start_date, output_pattern=BRAZE_TIMESTAMP_FORMAT),
