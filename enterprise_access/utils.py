@@ -279,18 +279,30 @@ def cents_to_dollars(value_in_cents):
     return Decimal(value_in_cents) / Decimal(100)
 
 
-def format_cents_for_user_display(amount_cents):
+def format_cents_for_user_display(amount_cents, include_cents=True, suffix='', include_currency_code=True):
     """
     Formats a monetary amount in cents as a user-friendly string with USD currency.
 
     Args:
         amount_cents: The amount in cents (int or string)
 
+        include_cents: If True, always show two decimal places.
+        suffix: Optional suffix appended to the formatted amount.
+        include_currency_code: If True, append ``USD`` to the output.
+
     Returns:
         str: Formatted string like "$1,234.56 USD"
     """
     dollars = cents_to_dollars(amount_cents)
-    return f"${dollars:,.2f} USD"
+    if include_cents:
+        amount = f"${dollars:,.2f}"
+    else:
+        amount = f"${dollars:,.0f}" if dollars == dollars.to_integral_value() else f"${dollars:,.2f}"
+    if suffix:
+        amount = f"{amount}{suffix}"
+    if include_currency_code:
+        return f"{amount} USD"
+    return amount
 
 
 def format_datetime_obj(datetime_obj, output_pattern):

@@ -36,10 +36,12 @@ def _format_currency_for_braze(amount_cents, suffix=''):
     """Format a cents value for Braze templates."""
     if amount_cents is None:
         return None
-    dollars, cents = divmod(int(amount_cents), 100)
-    if cents:
-        return f"${dollars:,}.{cents:02d}{suffix}"
-    return f"${dollars:,}{suffix}"
+    return format_cents_for_user_display(
+        amount_cents,
+        include_cents=False,
+        suffix=suffix,
+        include_currency_code=False,
+    )
 
 
 def _build_common_trigger_properties(ssp_product=None, organization_name=None, **extra):
@@ -680,7 +682,6 @@ def send_trial_end_and_subscription_started_email_task(
     plan = subscription.get('plan', {})
     amount_cents = plan.get('amount', 0)
     billing_amount = str(cents_to_dollars(amount_cents)) if amount_cents else None
-    billing_amount_formatted = _format_currency_for_braze(amount_cents)
     total_billing_amount = amount_cents * total_license if amount_cents and total_license else 0
 
     items = (subscription.get("items") or {}).get("data") or []
@@ -720,7 +721,6 @@ def send_trial_end_and_subscription_started_email_task(
         enterprise_slug=enterprise_slug,
         enterprise_admin_portal_url=f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/{enterprise_slug}',
         invoice_url=invoice_url,
-        billing_amount_formatted=billing_amount_formatted,
         total_billing_amount_formatted=_format_currency_for_braze(total_billing_amount),
     )
 
