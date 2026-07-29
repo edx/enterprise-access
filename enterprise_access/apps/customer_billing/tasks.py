@@ -212,6 +212,7 @@ def send_enterprise_provision_signup_confirmation_email(
         intent = _get_latest_checkout_intent_for_enterprise_slug(enterprise_slug)
 
     ssp_product = intent.ssp_product if intent else None
+    customer_name = intent.user.get_full_name() if intent else None
 
     campaign_id = get_campaign_id('signup_confirmation', ssp_product)
     admin_users = get_enterprise_admins(enterprise_slug, raise_if_empty=True)
@@ -230,6 +231,7 @@ def send_enterprise_provision_signup_confirmation_email(
         trial_end_datetime=format_datetime_obj(trial_end_date, output_pattern=BRAZE_TIMESTAMP_FORMAT),
         plan_amount=float(cents_to_dollars(subscription['plan']['amount'])),
         total_amount=float(cents_to_dollars(total_cost_cents)),
+        customer_name=customer_name,
     )
 
     send_campaign_message(

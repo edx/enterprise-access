@@ -796,6 +796,7 @@ class TestSendEnterpriseProvisionSignupConfirmationEmail(TestCase):
         super().setUp()
         self.trial_start = timezone.make_aware(datetime(2025, 1, 1))
         self.trial_end = timezone.make_aware(datetime(2026, 1, 1))
+        self.customer_name = 'Test User'
         self.test_data = {
             'subscription_start_date': self.trial_start,
             'subscription_end_date': self.trial_end,
@@ -991,13 +992,50 @@ class TestSendEnterpriseProvisionSignupConfirmationEmail(TestCase):
             is_active=True,
         )
         user = UserFactory()
+        user.first_name = 'Test'
+        user.last_name = 'User'
+        user.save()
         intent = CheckoutIntent.create_intent(user=user, slug='test-corp', name='Test Corp', quantity=1)
         intent.ssp_product = ssp_product
         intent.save()
 
         send_enterprise_provision_signup_confirmation_email(**self.test_data)
 
-        mock_braze.send_campaign_message.assert_called_once()
+        mock_braze.send_campaign_message.assert_called_once_with(
+            settings.BRAZE_ENTERPRISE_PROVISION_SIGNUP_CONFIRMATION_CAMPAIGN,
+            recipients=mock.ANY,
+            trigger_properties=mock.ANY,
+        )
+        trigger_properties = mock_braze.send_campaign_message.call_args.kwargs['trigger_properties']
+        self.assertEqual(trigger_properties['customer_name'], 'Test User')
+
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.BrazeApiClient')
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.LmsApiClient')
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.validate_trial_subscription')
+    def test_omits_customer_name_when_checkout_intent_is_missing(
+        self,
+        mock_validate_trial,
+        mock_lms_client,
+        mock_braze_client,
+    ):
+        """The task omits customer_name when no checkout intent can be resolved."""
+        mock_validate_trial.return_value = (True, self.mock_subscription)
+        mock_lms_client.return_value.get_enterprise_customer_data.return_value = {
+            'admin_users': self.mock_admin_users
+        }
+        mock_braze = mock_braze_client.return_value
+        mock_braze.create_braze_recipient.side_effect = [
+            {'external_id': 'braze1'}, {'external_id': 'braze2'}
+        ]
+
+        with mock.patch(
+            'enterprise_access.apps.customer_billing.tasks._get_latest_checkout_intent_for_enterprise_slug',
+            return_value=None,
+        ):
+            send_enterprise_provision_signup_confirmation_email(**self.test_data)
+
+        trigger_properties = mock_braze.send_campaign_message.call_args.kwargs['trigger_properties']
+        self.assertNotIn('customer_name', trigger_properties)
 
 
 class TestSendPaymentReceiptEmail(TestCase):
