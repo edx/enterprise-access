@@ -1967,3 +1967,48 @@ class TestSendTrialEndAndSubscriptionStartedEmailTask(TestCase):
         assert 'subscription_start_period' not in props
         assert 'subscription_end_period' not in props
         assert 'next_payment_date' not in props
+
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.get_stripe_subscription")
+    @mock.patch("enterprise_access.apps.customer_billing.tasks._get_checkout_intent_with_product")
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
+    def test_no_plan_amount_omits_billing_amount_fields(
+        self,
+        mock_lms_client,
+        mock_braze_client,
+        mock_get_checkout_intent,
+        mock_get_stripe_subscription,
+    ):
+        """When the plan has no amount, billing-amount trigger properties are omitted entirely."""
+        subscription = AttrDict.wrap({
+            'id': 'sub_123',
+            'quantity': 5,
+            'plan': {'amount': 0},
+            'items': {'data': []},
+            'latest_invoice': None,
+        })
+        mock_get_stripe_subscription.return_value = subscription
+
+        checkout_intent_obj = mock.Mock()
+        checkout_intent_obj.enterprise_name = 'Test Org'
+        checkout_intent_obj.enterprise_slug = 'test-org'
+        checkout_intent_obj.ssp_product = mock.Mock(slug='teams-yearly', academy_uuid=None, academy_title=None)
+        mock_get_checkout_intent.return_value = checkout_intent_obj
+
+        mock_lms_client.return_value.get_enterprise_customer_data.return_value = {
+            'admin_users': [
+                {'email': 'admin1@test.com'},
+            ]
+        }
+
+        mock_braze_instance = mock_braze_client.return_value
+        mock_braze_instance.create_braze_recipient.return_value = {'external_user_id': '1'}
+
+        send_trial_end_and_subscription_started_email_task('sub_123', 1)
+
+        assert mock_braze_instance.send_campaign_message.called
+        args, kwargs = mock_braze_instance.send_campaign_message.call_args
+        props = kwargs['trigger_properties']
+        assert 'billing_amount_formatted' not in props
+        assert 'total_billing_amount' not in props
+        assert 'total_billing_amount_formatted' not in props
