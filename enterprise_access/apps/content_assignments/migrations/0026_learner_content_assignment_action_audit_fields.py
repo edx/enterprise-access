@@ -82,7 +82,6 @@ class Migration(migrations.Migration):
                 blank=True,
                 default=dict,
                 help_text="Arbitrary audit metadata. Supported keys: correlation_id, batch_id, request_id, state_before, state_after, error_code, error_message, idempotency_key.",
-                null=True,
             ),
         ),
         migrations.AddField(
@@ -175,7 +174,6 @@ class Migration(migrations.Migration):
                 blank=True,
                 default=dict,
                 help_text="Arbitrary audit metadata. Supported keys: correlation_id, batch_id, request_id, state_before, state_after, error_code, error_message, idempotency_key.",
-                null=True,
             ),
         ),
         migrations.AddField(

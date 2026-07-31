@@ -966,7 +966,7 @@ class LearnerContentAssignmentAction(TimeStampedModel):
     )
     # Intentionally schema-flexible; help_text keys are common examples, not an exhaustive contract.
     metadata = models.JSONField(
-        null=True, blank=True, default=dict,
+        blank=True, default=dict,
         help_text=(
             "Arbitrary audit metadata. Supported keys: correlation_id, batch_id, "
             "request_id, state_before, state_after, error_code, error_message, idempotency_key."
