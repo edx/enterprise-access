@@ -1,12 +1,16 @@
 """
 Response builders for the Checkout BFF endpoints.
 """
+import logging
+
 from enterprise_access.apps.bffs.checkout.serializers import (
     CheckoutContextResponseSerializer,
     CheckoutSuccessResponseSerializer,
     CheckoutValidationResponseSerializer
 )
 from enterprise_access.apps.bffs.response_builder import BaseResponseBuilder
+
+logger = logging.getLogger(__name__)
 
 
 class CheckoutContextResponseBuilder(BaseResponseBuilder):
@@ -26,6 +30,13 @@ class CheckoutContextResponseBuilder(BaseResponseBuilder):
             'field_constraints': self.context.field_constraints,
             'checkout_intent': self.context.checkout_intent,
         }
+        logger.info(
+            'Building %s: checkout_intent=%s, existing_customers_count=%s, has_errors=%s',
+            self.__class__.__name__,
+            (self.context.checkout_intent or {}).get('id') if self.context.checkout_intent else None,
+            len(self.context.existing_customers_for_authenticated_user or []),
+            bool(getattr(self.context, 'errors', None)),
+        )
 
         # Update the data with the serialized data
         self.response_data.update(response_data)
@@ -59,6 +70,11 @@ class CheckoutValidationResponseBuilder(BaseResponseBuilder):
 
         # Build the response
         user_authn = getattr(self.context, 'user_authn', None) or {'user_exists_for_email': None}
+        failed_fields = [field for field, decision in validation_decisions.items() if decision]
+        logger.info(
+            'Building %s: failed_fields=%s, user_exists_for_email=%s',
+            self.__class__.__name__, failed_fields, user_authn.get('user_exists_for_email'),
+        )
         self.response_data = {
             'validation_decisions': validation_decisions,
             'user_authn': user_authn,

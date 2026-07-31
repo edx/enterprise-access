@@ -1,6 +1,7 @@
 """
 Tests for the provisioning views.
 """
+import copy
 import random
 import uuid
 from datetime import timedelta
@@ -303,6 +304,12 @@ class TestProvisioningEndToEnd(APITest):
             },
         ])
         self.checkout_intent = self._create_checkout_intent()
+        self.ssp_product = SspProduct.objects.create(
+            slug='test-product',
+            stripe_price_lookup_key='test_price',
+            catalog_query_uuid=uuid.uuid4(),
+            catalog_query_id=2,
+        )
 
     def _create_checkout_intent(self):
         """Helper to create a checkout intent for testing."""
@@ -397,7 +404,7 @@ class TestProvisioningEndToEnd(APITest):
         StripeEventSummaryFactory.create(stripe_event_data=event_data)
 
         # Remove explicit product_id values so top-level SSP slug can resolve products
-        request_payload = {**DEFAULT_REQUEST_PAYLOAD}
+        request_payload = copy.deepcopy(DEFAULT_REQUEST_PAYLOAD)
         request_payload['trial_subscription_plan'].pop('product_id', None)
         request_payload['first_paid_subscription_plan'].pop('product_id', None)
         # Provide top-level ssp_product_slug (not per-plan)
@@ -760,7 +767,8 @@ class TestProvisioningEndToEnd(APITest):
         event_data = StripeEventDataFactory.create(checkout_intent=self.checkout_intent)
         StripeEventSummaryFactory.create(stripe_event_data=event_data)
 
-        request_payload = {**DEFAULT_REQUEST_PAYLOAD}
+        request_payload = copy.deepcopy(DEFAULT_REQUEST_PAYLOAD)
+        request_payload['enterprise_catalog']['catalog_query_id'] = self.ssp_product.catalog_query_id
         response = self.client.post(PROVISIONING_CREATE_ENDPOINT, data=request_payload)
 
         assert response.status_code == status.HTTP_201_CREATED
@@ -772,13 +780,13 @@ class TestProvisioningEndToEnd(APITest):
 
         mock_client.get_enterprise_catalogs.assert_called_once_with(
             enterprise_customer_uuid=str(TEST_ENTERPRISE_UUID),
-            catalog_query_id=2,
+            catalog_query_id=self.ssp_product.catalog_query_id,
         )
         if test_data['catalog_to_create']:
             mock_client.create_enterprise_catalog.assert_called_once_with(
                 enterprise_customer_uuid=str(TEST_ENTERPRISE_UUID),
                 catalog_title='Test catalog',
-                catalog_query_id=2,
+                catalog_query_id=self.ssp_product.catalog_query_id,
             )
         else:
             self.assertFalse(mock_client.create_enterprise_catalog.called)
@@ -1144,7 +1152,7 @@ class TestCheckoutIntentSynchronization(APITest):
 
     def _get_base_request_payload(self):
         """Helper to get base request payload with test enterprise slug."""
-        payload = {**DEFAULT_REQUEST_PAYLOAD}
+        payload = copy.deepcopy(DEFAULT_REQUEST_PAYLOAD)
         payload['enterprise_customer']['slug'] = self.enterprise_slug
         return payload
 
@@ -1373,38 +1381,16 @@ class TestSubscriptionPlanOLIUpdateView(APITest):
             expires_at=timezone.now() + timedelta(hours=1),
             enterprise_uuid=TEST_ENTERPRISE_UUID,
         )
-        self.workflow = ProvisionNewCustomerWorkflow.objects.create(
-            input_data={'test': 'data'}
-        )
-        self.checkout_intent.workflow = self.workflow
-        self.checkout_intent.save()
 
         self.subscription_plan_uuid = uuid.uuid4()
-        # Create a subscription plan step with complete output data
-        GetCreateFirstPaidSubscriptionPlanStep.objects.create(
-            workflow_record_uuid=self.workflow.uuid,
-            input_data={
-                'title': 'Paid Plan',
-                'is_trial': False,
-                'salesforce_opportunity_line_item': 'existing_oli_123',
-                'start_date': '2025-01-15T00:00:00Z',
-                'expiration_date': '2025-12-31T23:59:59Z',
-                'desired_num_licenses': 10,
-                'product_id': 1,
-            },
-            output_data={
-                'uuid': str(self.subscription_plan_uuid),
-                'title': 'Paid Plan',
-                'salesforce_opportunity_line_item': 'existing_oli_123',
-                'created': '2025-01-01T00:00:00Z',
-                'start_date': '2025-01-15T00:00:00Z',
-                'expiration_date': '2025-12-31T23:59:59Z',
-                'is_active': True,
-                'is_current': True,
-                'plan_type': 'Standard',
-                'enterprise_catalog_uuid': str(TEST_CATALOG_UUID),
-                'product': 1,
-            }
+        stripe_event_data = StripeEventDataFactory(checkout_intent=self.checkout_intent)
+        self.renewal = SelfServiceSubscriptionRenewal.objects.create(
+            checkout_intent=self.checkout_intent,
+            subscription_plan_renewal_id=1,
+            stripe_subscription_id='sub_test_123',
+            stripe_event_data=stripe_event_data,
+            renewed_subscription_plan_uuid=self.subscription_plan_uuid,
+            effective_date=timezone.now() + timedelta(days=14),
         )
 
         self.endpoint_url = reverse('api:v1:subscription-plan-oli-update')
@@ -1417,9 +1403,8 @@ class TestSubscriptionPlanOLIUpdateView(APITest):
 
     def tearDown(self):
         super().tearDown()
+        SelfServiceSubscriptionRenewal.objects.all().delete()
         CheckoutIntent.objects.all().delete()
-        ProvisionNewCustomerWorkflow.objects.all().delete()
-        GetCreateFirstPaidSubscriptionPlanStep.objects.all().delete()
 
     @mock.patch('enterprise_access.apps.api.v1.views.provisioning.LicenseManagerApiClient')
     def test_successful_oli_update(self, mock_license_manager_client):
@@ -1467,32 +1452,45 @@ class TestSubscriptionPlanOLIUpdateView(APITest):
         else:
             self.assertTrue(any('not found' in str(item).lower() for item in response_data))
 
-    def test_no_workflow_associated(self):
-        """Test error when CheckoutIntent has no workflow."""
-        checkout_intent_no_workflow = CheckoutIntent.objects.create(
-            user=UserFactory(),
-            enterprise_slug='test-no-workflow',
-            enterprise_name='Test No Workflow',
-            quantity=5,
-            state=CheckoutIntentState.PAID,
-            expires_at=timezone.now() + timedelta(hours=1),
-        )
+    def test_no_renewal_returns_404(self):
+        """Test 404 when no SelfServiceSubscriptionRenewal exists for the CheckoutIntent."""
+        self.renewal.delete()
 
         request_data = {
-            'checkout_intent_uuid': str(checkout_intent_no_workflow.uuid),
+            'checkout_intent_uuid': str(self.checkout_intent.uuid),
             'salesforce_opportunity_line_item': 'new_oli_456',
         }
 
         response = self.client.post(self.endpoint_url, data=request_data)
 
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        response_data = response.json()
-        # Handle both dict and list response formats
-        if isinstance(response_data, dict):
-            self.assertIn('no associated workflow', response_data.get('detail', '').lower())
-        else:
-            # If it's a list (field errors), check the first item
-            self.assertTrue(any('no associated workflow' in str(item).lower() for item in response_data))
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    @mock.patch('enterprise_access.apps.api.v1.views.provisioning.LicenseManagerApiClient')
+    def test_year2_renewal_uses_latest_effective_date(self, mock_license_manager_client):
+        """Year-2 OLI update should target the most recent renewal, not the original."""
+        mock_client = mock_license_manager_client.return_value
+        year2_plan_uuid = uuid.uuid4()
+        stripe_event_data = StripeEventDataFactory(checkout_intent=self.checkout_intent)
+        SelfServiceSubscriptionRenewal.objects.create(
+            checkout_intent=self.checkout_intent,
+            subscription_plan_renewal_id=2,
+            stripe_subscription_id='sub_test_456',
+            stripe_event_data=stripe_event_data,
+            renewed_subscription_plan_uuid=year2_plan_uuid,
+            effective_date=timezone.now() + timedelta(days=365),
+        )
+
+        response = self.client.post(self.endpoint_url, data={
+            'checkout_intent_id': self.checkout_intent.id,
+            'salesforce_opportunity_line_item': 'year2_oli',
+        })
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(str(response.json()['subscription_plan_uuid']), str(year2_plan_uuid))
+        mock_client.update_subscription_plan.assert_called_once_with(
+            subscription_uuid=str(year2_plan_uuid),
+            salesforce_opportunity_line_item='year2_oli',
+        )
 
     @mock.patch('enterprise_access.apps.api.v1.views.provisioning.LicenseManagerApiClient')
     def test_license_manager_api_error(self, mock_license_manager_client):

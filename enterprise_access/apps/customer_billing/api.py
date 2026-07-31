@@ -440,11 +440,19 @@ def create_free_trial_checkout_session(
     """
     Create a Stripe "Checkout Session" for a free trial subscription plan.
     """
+    logger.info(
+        'create_free_trial_checkout_session called for enterprise_slug=%s, ssp_product_slug=%s',
+        input_data.get('enterprise_slug'), input_data.get('ssp_product_slug'),
+    )
     validator = CheckoutSessionInputValidator()
     validation_errors = validator.validate(
         input_data=cast(CheckoutSessionInputValidatorData, input_data)
     )
     if validation_errors:
+        logger.info(
+            'create_free_trial_checkout_session validation failed for enterprise_slug=%s: %s',
+            input_data.get('enterprise_slug'), validation_errors,
+        )
         raise CreateCheckoutSessionValidationError(validation_errors_by_field=validation_errors)
 
     user = input_data['user']
@@ -462,9 +470,21 @@ def create_free_trial_checkout_session(
             name=input_data.get('company_name'),
             ssp_product=ssp_product_instance,
         )
+        logger.info(
+            'Created/reserved CheckoutIntent %s for user_id=%s, enterprise_slug=%s',
+            intent.id, user.id, input_data.get('enterprise_slug'),
+        )
     except SlugReservationConflict as exc:
+        logger.warning(
+            'Slug reservation conflict creating CheckoutIntent for user_id=%s, enterprise_slug=%s: %s',
+            user.id, input_data.get('enterprise_slug'), exc,
+        )
         raise CreateCheckoutSessionSlugReservationConflict() from exc
     except FailedCheckoutIntentConflict as exc:
+        logger.warning(
+            'Failed CheckoutIntent conflict for user_id=%s, enterprise_slug=%s: %s',
+            user.id, input_data.get('enterprise_slug'), exc,
+        )
         raise CreateCheckoutSessionFailedConflict() from exc
 
     lms_user_id = user.lms_user_id

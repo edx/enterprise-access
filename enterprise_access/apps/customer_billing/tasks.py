@@ -32,6 +32,18 @@ from enterprise_access.utils import cents_to_dollars, format_cents_for_user_disp
 logger = logging.getLogger(__name__)
 
 
+def _format_currency_for_braze(amount_cents, suffix=''):
+    """Format a cents value for Braze templates."""
+    if amount_cents is None:
+        return None
+    return format_cents_for_user_display(
+        amount_cents,
+        include_cents=False,
+        suffix=suffix,
+        include_currency_code=False,
+    )
+
+
 def _build_common_trigger_properties(ssp_product=None, organization_name=None, **extra):
     """
     Build the common trigger_properties dict shared across all email tasks.
@@ -193,8 +205,9 @@ def send_enterprise_provision_signup_confirmation_email(
 
     trial_start_date = datetime_from_timestamp(subscription['trial_start'])
     trial_end_date = datetime_from_timestamp(subscription['trial_end'])
+    amount_cents = subscription['plan']['amount']
 
-    total_cost_cents = subscription['plan']['amount'] * number_of_licenses
+    total_cost_cents = amount_cents * number_of_licenses
 
     braze_client = BrazeApiClient()
     intent = None
@@ -212,6 +225,7 @@ def send_enterprise_provision_signup_confirmation_email(
         intent = _get_latest_checkout_intent_for_enterprise_slug(enterprise_slug)
 
     ssp_product = intent.ssp_product if intent else None
+    customer_name = intent.user.get_full_name() if intent else None
 
     campaign_id = get_campaign_id('signup_confirmation', ssp_product)
     admin_users = get_enterprise_admins(enterprise_slug, raise_if_empty=True)
@@ -228,8 +242,11 @@ def send_enterprise_provision_signup_confirmation_email(
         enterprise_admin_portal_url=f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/{enterprise_slug}/admin/subscriptions',
         trial_start_datetime=format_datetime_obj(trial_start_date, output_pattern=BRAZE_TIMESTAMP_FORMAT),
         trial_end_datetime=format_datetime_obj(trial_end_date, output_pattern=BRAZE_TIMESTAMP_FORMAT),
-        plan_amount=float(cents_to_dollars(subscription['plan']['amount'])),
+        plan_amount=float(cents_to_dollars(amount_cents)),
+        plan_amount_formatted=_format_currency_for_braze(subscription['plan']['amount']),
         total_amount=float(cents_to_dollars(total_cost_cents)),
+        total_amount_formatted=_format_currency_for_braze(total_cost_cents),
+        customer_name=customer_name,
     )
 
     send_campaign_message(
@@ -666,6 +683,7 @@ def send_trial_end_and_subscription_started_email_task(
     plan = subscription.get('plan', {})
     amount_cents = plan.get('amount', 0)
     billing_amount = str(cents_to_dollars(amount_cents)) if amount_cents else None
+    total_billing_amount = amount_cents * total_license if amount_cents and total_license else None
 
     items = (subscription.get("items") or {}).get("data") or []
     first_item = items[0] if items else {}
@@ -704,6 +722,7 @@ def send_trial_end_and_subscription_started_email_task(
         enterprise_slug=enterprise_slug,
         enterprise_admin_portal_url=f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/{enterprise_slug}',
         invoice_url=invoice_url,
+        total_billing_amount_formatted=_format_currency_for_braze(total_billing_amount),
     )
 
     # Backwards-compatible aliases expected by existing tests/templates
@@ -715,6 +734,11 @@ def send_trial_end_and_subscription_started_email_task(
         trigger_properties['next_payment_date'] = next_payment_date
     trigger_properties['total_license'] = total_license
     trigger_properties['billing_amount'] = billing_amount
+    billing_amount_formatted = _format_currency_for_braze(total_billing_amount)
+    if billing_amount_formatted is not None:
+        trigger_properties['billing_amount_formatted'] = billing_amount_formatted
+    if total_billing_amount is not None:
+        trigger_properties['total_billing_amount'] = total_billing_amount
 
     send_campaign_message(
         braze_client,
@@ -836,6 +860,8 @@ def send_payment_receipt_email(
     # Legacy/consumer-friendly values expected by existing Braze templates/tests
     total_paid_amount = float(cents_to_dollars(total_amount)) if total_amount else 0.0
     price_per_license = float(cents_to_dollars(price_per_license_cents)) if price_per_license_cents else 0.0
+    total_amount_formatted = _format_currency_for_braze(total_amount)
+    price_per_license_formatted = _format_currency_for_braze(price_per_license_cents, '/license')
 
     # (payment_method_display, billing_address, customer_name) are already
     # set to sensible defaults above and may have been overridden by Stripe data.
@@ -849,10 +875,15 @@ def send_payment_receipt_email(
         enterprise_admin_portal_url=f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/{enterprise_slug}',
         # Backwards-compatible keys expected by tests/templates
         total_paid_amount=total_paid_amount,
+        total_paid_amount_formatted=total_amount_formatted,
+        amount_paid_formatted=total_amount_formatted,
         date_paid=formatted_payment_date,
         payment_method=payment_method_display,
         license_count=int(quantity),
         price_per_license=price_per_license,
+        price_per_license_formatted=price_per_license_formatted,
+        price_per_license_display=price_per_license_formatted,
+        total_formatted=total_amount_formatted,
         customer_name=customer_name,
         billing_address=billing_address,
         receipt_number=invoice_id,

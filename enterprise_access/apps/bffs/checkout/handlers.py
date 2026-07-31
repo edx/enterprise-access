@@ -85,6 +85,10 @@ class CheckoutContextHandler(CheckoutIntentAwareHandlerMixin, BaseHandler):
         4. Gathers field constraints from settings
         5. Populates the context with all data
         """
+        logger.info(
+            "Loading checkout context for user=%s, authenticated=%s",
+            self.context.user, getattr(self.context.user, 'is_authenticated', False),
+        )
         try:
             self.context.pricing = self._get_pricing_data()
             self.context.field_constraints = self._get_field_constraints()
@@ -143,6 +147,10 @@ class CheckoutContextHandler(CheckoutIntentAwareHandlerMixin, BaseHandler):
                     })
 
             self.context.existing_customers_for_authenticated_user = formatted_customers
+            logger.info(
+                "Loaded %s existing enterprise customers for user %s",
+                len(formatted_customers), self.context.user,
+            )
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.exception(
                 "Error loading enterprise customers for user: %s",
@@ -254,6 +262,10 @@ class CheckoutValidationHandler(BaseHandler):
         Process the validation request.
         """
         request_data = self.context.request.data
+        logger.info(
+            "Processing checkout field validation for authenticated_user=%s, fields=%s",
+            self.authenticated_user, list(request_data.keys()),
+        )
 
         # Check if admin_email is provided to check user existence
         # We intentionally initialize this to None,
@@ -281,6 +293,10 @@ class CheckoutValidationHandler(BaseHandler):
             )
             validation_decisions.update(validation_results)
 
+        logger.info(
+            "Checkout field validation result for authenticated_user=%s: failed_fields=%s",
+            self.authenticated_user, list(validation_decisions.keys()),
+        )
         self.context.validation_decisions = validation_decisions
         self.context.user_authn = {
             'user_exists_for_email': user_exists_for_email
@@ -293,9 +309,12 @@ class CheckoutValidationHandler(BaseHandler):
         try:
             lms_client = LmsApiClient()
             user_data = lms_client.get_lms_user_account(email=email)
-            return bool(user_data)
-        except Exception:  # pylint: disable=broad-except
+            exists = bool(user_data)
+            logger.info('LMS user existence check for email=%s: exists=%s', email, exists)
+            return exists
+        except Exception as exc:  # pylint: disable=broad-except
             # In case of error, we don't know if the user exists
+            logger.exception('Error checking LMS user existence for email=%s: %s', email, exc)
             return None
 
 
@@ -313,6 +332,10 @@ class CheckoutSuccessHandler(CheckoutContextHandler):
         """
         super().load_and_process()
         if self.context.checkout_intent is None:
+            logger.warning(
+                "No checkout intent found for user %s on checkout success handler",
+                self.context.user,
+            )
             return
 
         self.context.checkout_intent['first_billable_invoice'] = None
@@ -345,6 +368,11 @@ class CheckoutSuccessHandler(CheckoutContextHandler):
                 f"{checkout_intent_data.get('id')}"
             )
             return
+
+        logger.info(
+            "Enhancing checkout intent %s with Stripe data from session %s",
+            checkout_intent_data.get('id'), session_id,
+        )
 
         try:
             session = get_stripe_checkout_session(session_id).to_dict()

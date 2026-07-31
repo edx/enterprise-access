@@ -131,7 +131,7 @@ class CheckoutBFFViewSetTests(APITest):
                 'prices': []
             },
             'field_constraints': default_field_constraints,
-            'checkout_intent': self.mock_checkout_intent_data
+            'checkout_intent': {**self.mock_checkout_intent_data, 'ssp_product': 'data-academy-yearly'}
         }
 
         # Validate using our serializer
@@ -167,7 +167,8 @@ class CheckoutBFFViewSetTests(APITest):
             'enterprise_slug': 'test-enterprise',
             'stripe_checkout_session_id': 'cs_test_123abc',
             'expires_at': '2025-08-02T13:52:11Z',
-            'admin_portal_url': 'https://portal.edx.org/test-enterprise'
+            'admin_portal_url': 'https://portal.edx.org/test-enterprise',
+            'ssp_product': 'data-academy-yearly',
         }
 
         serializer = CheckoutIntentMinimalResponseSerializer(data=sample_data)
