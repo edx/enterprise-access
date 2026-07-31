@@ -200,7 +200,7 @@ class LmsApiClient(BaseOAuthClient):
             'name': name,
             'slug': slug,
             'country': country,
-            'enable_analytics_screen': False,
+            'enable_analytics_screen': True,
             'enable_portal_subscription_management_screen': True,
             'site': {
                 'domain': settings.PROVISIONING_DEFAULTS['customer']['site_domain'],
