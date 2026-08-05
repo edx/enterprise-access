@@ -26,3 +26,12 @@ edx-braze-client<1
 # when this ticket gets resolved: https://2u-internal.atlassian.net/browse/ENT-12017
 social-auth-app-django>=5.9.0,<6.0.0
 social-auth-core>=4.9.1,<5.0.0
+
+# pip-tools 7.6.0 is incompatible with pip 25.x: pip-compile crashes with
+# "TypeError: RequirementCommand.make_requirement_preparer() missing 1
+# required keyword-only argument: 'allow_editables'". This broke the
+# `make upgrade` CI job because requirements/pip-tools.in has no upper
+# bound, so `pip-compile --upgrade` on pip-tools.txt silently picks up
+# the broken 7.6.0 release. Remove this pin once a pip-tools release
+# fixes the incompatibility.
+pip-tools<7.6.0
