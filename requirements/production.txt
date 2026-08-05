@@ -103,7 +103,7 @@ confluent-kafka[avro,schema-registry]==2.6.1
     # via -r requirements/base.txt
 crispy-bootstrap5==2026.3
     # via -r requirements/base.txt
-cryptography==49.0.0
+cryptography==50.0.0
     # via
     #   -r requirements/base.txt
     #   pyjwt
