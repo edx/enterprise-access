@@ -28,9 +28,9 @@ from enterprise_access.apps.subsidy_access_policy.content_metadata_api import ge
 from enterprise_access.apps.subsidy_request.constants import SubsidyRequestStates
 from enterprise_access.utils import chunks, get_automatic_expiration_date_and_reason, localized_utcnow
 
-from .constants import LearnerContentAssignmentStateChoices
+from .constants import AssignmentActions, AssignmentActorTypes, AssignmentSources, LearnerContentAssignmentStateChoices
 from .content_metadata_api import get_normalized_metadata_for_assignment
-from .models import AssignmentConfiguration, LearnerContentAssignment
+from .models import AssignmentConfiguration, LearnerContentAssignment, LearnerContentAssignmentAction
 from .tasks import (
     create_pending_enterprise_learner_for_assignment_task,
     send_assignment_automatically_expired_email,
@@ -77,6 +77,102 @@ def _inexact_email_filter(emails, field_name='email'):
         kwargs = {f'{field_name}__iexact': email}
         email_filter |= Q(**kwargs)
     return email_filter
+
+
+def _create_assignment_action(
+    assignment,
+    action_type,
+    actor_lms_user_id,
+    source,
+    correlation_id,
+):
+    """Persist a single audit action row for the given assignment."""
+    policy = assignment.assignment_configuration.policy
+    policy_uuid = str(policy.uuid) if policy else str(assignment.assignment_configuration.uuid)
+
+    return LearnerContentAssignmentAction.objects.create(
+        assignment=assignment,
+        action_type=action_type,
+        actor_lms_user_id=actor_lms_user_id,
+        actor_type=AssignmentActorTypes.ADMIN,
+        source=source,
+        enterprise_customer_uuid=assignment.assignment_configuration.enterprise_customer_uuid,
+        learner_lms_user_id=assignment.lms_user_id,
+        learner_email=assignment.learner_email,
+        metadata={
+            'correlation_id': correlation_id,
+            'allocation_batch_id': str(assignment.allocation_batch_id),
+            'policy_uuid': policy_uuid,
+            'state_after': assignment.state,
+        },
+    )
+
+
+def _process_existing_assignments(
+    existing_assignments,
+    lms_user_ids_by_email,
+    emails_by_lms_user_id,
+    content_quantity,
+    allocation_batch_id,
+    preferred_course_run_key,
+    parent_content_key,
+    is_assigned_course_run,
+):
+    """Classify and mutate existing assignments in-memory; returns (needs_update, reallocated, emails_seen)."""
+    needs_update = set()
+    reallocated = []
+    emails_seen = set()
+
+    for assignment in existing_assignments:
+        if not assignment.lms_user_id:
+            existing_lms_user_id = lms_user_ids_by_email.get(assignment.learner_email.lower())
+            if existing_lms_user_id:
+                assignment.lms_user_id = existing_lms_user_id
+                needs_update.add(assignment)
+
+        if assignment.state == LearnerContentAssignmentStateChoices.EXPIRED and assignment.lms_user_id is not None:
+            # Expired assignments carry a retired email; restore the real one from the lms_user_id lookup.
+            assignment_email_from_lms_user_id = emails_by_lms_user_id.get(assignment.lms_user_id)
+            if assignment_email_from_lms_user_id is not None:
+                assignment.learner_email = assignment_email_from_lms_user_id
+                needs_update.add(assignment)
+
+        if assignment.state in LearnerContentAssignmentStateChoices.REALLOCATE_STATES:
+            _reallocate_assignment(
+                assignment,
+                content_quantity,
+                allocation_batch_id,
+                preferred_course_run_key,
+                parent_content_key,
+                is_assigned_course_run,
+            )
+            needs_update.add(assignment)
+            reallocated.append(assignment)
+        elif assignment.state == LearnerContentAssignmentStateChoices.ALLOCATED:
+            # For already-allocated assignments, update stale run/parent/type fields as needed.
+            if assignment.preferred_course_run_key != preferred_course_run_key:
+                assignment.preferred_course_run_key = preferred_course_run_key
+                needs_update.add(assignment)
+            if assignment.parent_content_key != parent_content_key:
+                assignment.parent_content_key = parent_content_key
+                needs_update.add(assignment)
+            if assignment.is_assigned_course_run != is_assigned_course_run:
+                assignment.is_assigned_course_run = is_assigned_course_run
+                needs_update.add(assignment)
+
+        emails_seen.add(assignment.learner_email.lower())
+
+    return needs_update, reallocated, emails_seen
+
+
+def _write_allocation_audit_actions(
+    reallocated_assignments, created_assignments, actor_lms_user_id, source, correlation_id,
+):
+    """Write REALLOCATED and ALLOCATED audit rows for a completed allocation batch."""
+    for assignment in reallocated_assignments:
+        _create_assignment_action(assignment, AssignmentActions.REALLOCATED, actor_lms_user_id, source, correlation_id)
+    for assignment in created_assignments:
+        _create_assignment_action(assignment, AssignmentActions.ALLOCATED, actor_lms_user_id, source, correlation_id)
 
 
 def create_assignment_configuration(enterprise_customer_uuid, **kwargs):
@@ -264,6 +360,7 @@ def get_allocated_quantity_for_configuration(assignment_configuration):
 def allocate_assignments(
     assignment_configuration, learner_emails, content_key,
     content_price_cents, admin_lms_user_id=None, known_lms_user_ids=None, suppress_email=False,
+    actor_lms_user_id=None, source=AssignmentSources.API, correlation_id=None,
 ):
     """
     Creates or updates an allocated assignment record
@@ -300,6 +397,8 @@ def allocate_assignments(
     """
     # Set a batch ID to track assignments updated and/or created together.
     allocation_batch_id = uuid4()
+    correlation_id = correlation_id or str(uuid4())
+    actor_lms_user_id = admin_lms_user_id if actor_lms_user_id is None else actor_lms_user_id
 
     message = (
         'Allocating assignments: assignment_configuration=%s, batch_id=%s, '
@@ -336,65 +435,22 @@ def allocate_assignments(
         content_key,
         lms_user_ids_by_email,
     )
-    # Maintain a set of emails with existing records - we know we don't have to create
-    # new assignments for these.
-    learner_emails_with_existing_assignments = set()
-
-    # Keep a running list of all existing assignments that will need to be included in bulk update.
-    existing_assignments_needs_update = set()
-
-    # This step to find and update the preferred_course_run_key is required in order
-    # for nudge emails to target the start date of the new run. For run-based assignments,
-    # the preferred_course_run_key is the same as the assignment's content_key.
     preferred_course_run_key = _get_preferred_course_run_key(assignment_configuration, content_key)
-
-    # Determine if the assignment's content_key is a course run or a course key based
-    # on an associated parent content key. If the parent content key is None, then the
-    # assignment is for a course; otherwise, it's an assignment for a course run.
     parent_content_key = _get_parent_content_key(assignment_configuration, content_key)
     is_assigned_course_run = bool(parent_content_key)
 
-    # Split up the existing assignment records by state
-    for assignment in existing_assignments:
-        if not assignment.lms_user_id:
-            existing_lms_user_id = lms_user_ids_by_email.get(assignment.learner_email.lower())
-            if existing_lms_user_id:
-                assignment.lms_user_id = existing_lms_user_id
-                existing_assignments_needs_update.add(assignment)
-
-        if assignment.state == LearnerContentAssignmentStateChoices.EXPIRED and assignment.lms_user_id is not None:
-            # If the existing assignment is expired and has an lms_user_id, it has a retired/expired email address
-            # that we want to change based on our lookup of lms_user_id -> email.
-            assignment_email_from_lms_user_id = emails_by_lms_user_id.get(assignment.lms_user_id)
-            if assignment_email_from_lms_user_id is not None:
-                assignment.learner_email = assignment_email_from_lms_user_id
-                existing_assignments_needs_update.add(assignment)
-
-        if assignment.state in LearnerContentAssignmentStateChoices.REALLOCATE_STATES:
-            _reallocate_assignment(
-                assignment,
-                content_quantity,
-                allocation_batch_id,
-                preferred_course_run_key,
-                parent_content_key,
-                is_assigned_course_run,
-            )
-            existing_assignments_needs_update.add(assignment)
-        elif assignment.state == LearnerContentAssignmentStateChoices.ALLOCATED:
-            # For some already-allocated assignments being re-assigned, we might still need to update the preferred
-            # course run for nudge email purposes.
-            if assignment.preferred_course_run_key != preferred_course_run_key:
-                assignment.preferred_course_run_key = preferred_course_run_key
-                existing_assignments_needs_update.add(assignment)
-            # Update the parent_content_key and is_assigned_course_run fields if they have changed.
-            if assignment.parent_content_key != parent_content_key:
-                assignment.parent_content_key = parent_content_key
-                existing_assignments_needs_update.add(assignment)
-            if assignment.is_assigned_course_run != is_assigned_course_run:
-                assignment.is_assigned_course_run = is_assigned_course_run
-                existing_assignments_needs_update.add(assignment)
-
-        learner_emails_with_existing_assignments.add(assignment.learner_email.lower())
+    existing_assignments_needs_update, reallocated_assignments, learner_emails_with_existing_assignments = (
+        _process_existing_assignments(
+            existing_assignments,
+            lms_user_ids_by_email,
+            emails_by_lms_user_id,
+            content_quantity,
+            allocation_batch_id,
+            preferred_course_run_key,
+            parent_content_key,
+            is_assigned_course_run,
+        )
+    )
 
     with transaction.atomic():
         # Bulk update and get a list of refreshed objects
@@ -418,6 +474,10 @@ def allocate_assignments(
             lms_user_ids_by_email,
             allocation_batch_id,
             admin_lms_user_id,
+        )
+
+        _write_allocation_audit_actions(
+            reallocated_assignments, created_assignments, actor_lms_user_id, source, correlation_id,
         )
 
     # Enqueue an asynchronous task to link assigned learners to the customer

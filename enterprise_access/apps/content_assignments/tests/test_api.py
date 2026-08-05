@@ -26,8 +26,14 @@ from ..api import (
     get_assignment_for_learner,
     get_assignments_for_configuration
 )
-from ..constants import NUM_DAYS_BEFORE_AUTO_EXPIRATION, LearnerContentAssignmentStateChoices
-from ..models import AssignmentConfiguration, LearnerContentAssignment
+from ..constants import (
+    NUM_DAYS_BEFORE_AUTO_EXPIRATION,
+    AssignmentActions,
+    AssignmentActorTypes,
+    AssignmentSources,
+    LearnerContentAssignmentStateChoices
+)
+from ..models import AssignmentConfiguration, LearnerContentAssignment, LearnerContentAssignmentAction
 from .factories import AssignmentConfigurationFactory, LearnerContentAssignmentFactory
 
 # This is normally much larger (350), but that blows up the test duration.
@@ -619,6 +625,44 @@ class TestAssignmentAllocationAndCancellation(TestCase):
         self.assertEqual(allocated_assignment_old_run_based.state, LearnerContentAssignmentStateChoices.ALLOCATED)
         self.assertEqual(accepted_assignment.state, LearnerContentAssignmentStateChoices.ACCEPTED)
 
+        # Assignments that were reallocated from a terminal state get an audit row.
+        expected_reallocated_assignments = (
+            cancelled_assignment,
+            cancelled_assignment_old_run,
+            cancelled_assignment_old_parent_content_key,
+            cancelled_assignment_old_run_based,
+            errored_assignment,
+        )
+        for assignment in expected_reallocated_assignments:
+            action = LearnerContentAssignmentAction.objects.get(assignment=assignment)
+            self.assertEqual(action.action_type, AssignmentActions.REALLOCATED)
+            self.assertEqual(action.actor_lms_user_id, admin_lms_user_id)
+            self.assertEqual(action.actor_type, AssignmentActorTypes.ADMIN)
+            self.assertEqual(action.source, AssignmentSources.API)
+            self.assertEqual(action.learner_lms_user_id, assignment.lms_user_id)
+            self.assertEqual(action.learner_email, assignment.learner_email)
+            self.assertEqual(action.enterprise_customer_uuid, self.assignment_configuration.enterprise_customer_uuid)
+            self.assertEqual(action.metadata['allocation_batch_id'], str(assignment.allocation_batch_id))
+            self.assertIsNotNone(action.metadata['correlation_id'])
+            self.assertEqual(action.metadata['state_after'], assignment.state)
+
+        # Field-only updates (e.g. stale run key) and no-change records must not get audit rows.
+        expected_no_audit_assignments = (
+            allocated_assignment_old_run,
+            allocated_assignment_null_run,
+            allocated_assignment,
+            accepted_assignment,
+        )
+        if is_assigned_course_run:
+            expected_no_audit_assignments += (
+                allocated_assignment_old_parent_content_key,
+                allocated_assignment_old_run_based,
+            )
+        for assignment in expected_no_audit_assignments:
+            self.assertFalse(
+                LearnerContentAssignmentAction.objects.filter(assignment=assignment).exists()
+            )
+
         # We should have created only one new, allocated assignment for eugene@foo.com
         self.assertEqual(len(allocation_results['created']), 1)
         created_assignment = allocation_results['created'][0]
@@ -631,6 +675,21 @@ class TestAssignmentAllocationAndCancellation(TestCase):
         self.assertEqual(created_assignment.content_quantity, -1 * content_price_cents)
         self.assertEqual(created_assignment.state, LearnerContentAssignmentStateChoices.ALLOCATED)
         self.assertEqual(created_assignment.admin_lms_user_id, 3)
+
+        created_action = LearnerContentAssignmentAction.objects.get(assignment=created_assignment)
+        self.assertEqual(created_action.action_type, AssignmentActions.ALLOCATED)
+        self.assertEqual(created_action.actor_lms_user_id, admin_lms_user_id)
+        self.assertEqual(created_action.actor_type, AssignmentActorTypes.ADMIN)
+        self.assertEqual(created_action.source, AssignmentSources.API)
+        self.assertEqual(created_action.learner_lms_user_id, created_assignment.lms_user_id)
+        self.assertEqual(created_action.learner_email, created_assignment.learner_email)
+        self.assertEqual(
+            created_action.enterprise_customer_uuid,
+            self.assignment_configuration.enterprise_customer_uuid,
+        )
+        self.assertEqual(created_action.metadata['allocation_batch_id'], str(created_assignment.allocation_batch_id))
+        self.assertIsNotNone(created_action.metadata['correlation_id'])
+        self.assertEqual(created_action.metadata['state_after'], created_assignment.state)
 
         # Assert that an async task was enqueued for each of the updated and created assignments
         mock_pending_learner_task.delay.assert_has_calls([

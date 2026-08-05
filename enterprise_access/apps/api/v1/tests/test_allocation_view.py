@@ -16,6 +16,7 @@ from rest_framework.serializers import ValidationError
 from enterprise_access.apps.content_assignments.constants import (
     NUM_DAYS_BEFORE_AUTO_EXPIRATION,
     AssignmentAutomaticExpiredReason,
+    AssignmentSources,
     LearnerContentAssignmentStateChoices
 )
 from enterprise_access.apps.content_assignments.tests.factories import (
@@ -366,11 +367,14 @@ class TestSubsidyAccessPolicyAllocationView(APITestWithMocks):
     @mock.patch.object(AssignedLearnerCreditAccessPolicy, 'can_allocate', autospec=True)
     @mock.patch.object(SubsidyAccessPolicy, 'subsidy_record', autospec=True)
     @mock.patch(
-        'enterprise_access.apps.subsidy_access_policy.models.assignments_api.allocate_assignments',
+        'enterprise_access.apps.api.v1.views.subsidy_access_policy.assignments_api.allocate_assignments',
         autospec=True,
     )
     @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient', autospec=True)
-    def test_allocate_happy_path(self, mock_catalog_client, mock_allocate, mock_subsidy_record, mock_can_allocate):
+    @mock.patch('enterprise_access.apps.api.v1.views.subsidy_access_policy.uuid4')
+    def test_allocate_happy_path(
+        self, mock_uuid4, mock_catalog_client, mock_allocate, mock_subsidy_record, mock_can_allocate
+    ):
         """
         Tests that we can successfully call the allocate view
         and that policy-level allocation occurs.
@@ -381,6 +385,7 @@ class TestSubsidyAccessPolicyAllocationView(APITestWithMocks):
             'created': [self.bob_assignment],
             'no_change': [self.carol_assignment],
         }
+        mock_uuid4.return_value = UUID('11111111-1111-1111-1111-111111111111')
 
         # Mock results from the catalog content metadata API endpoint.
         mock_catalog_client.return_value.catalog_content_metadata.return_value = self.mock_catalog_result
@@ -489,11 +494,14 @@ class TestSubsidyAccessPolicyAllocationView(APITestWithMocks):
             allocate_payload['content_price_cents'],
             allocate_payload['admin_lms_user_id'],
             suppress_email=allocate_payload['suppress_email'],
+            actor_lms_user_id=self.user.lms_user_id,
+            source=AssignmentSources.API,
+            correlation_id=str(mock_uuid4.return_value),
         )
 
     @mock.patch.object(AssignedLearnerCreditAccessPolicy, 'can_allocate', autospec=True)
     @mock.patch(
-        'enterprise_access.apps.subsidy_access_policy.models.assignments_api.allocate_assignments',
+        'enterprise_access.apps.api.v1.views.subsidy_access_policy.assignments_api.allocate_assignments',
         autospec=True,
     )
     @mock.patch(
@@ -543,7 +551,7 @@ class TestSubsidyAccessPolicyAllocationView(APITestWithMocks):
 
     @mock.patch.object(AssignedLearnerCreditAccessPolicy, 'can_allocate', autospec=True)
     @mock.patch(
-        'enterprise_access.apps.subsidy_access_policy.models.assignments_api.allocate_assignments',
+        'enterprise_access.apps.api.v1.views.subsidy_access_policy.assignments_api.allocate_assignments',
         autospec=True,
     )
     def test_cannot_allocate_negative_quantities(self, mock_allocate, mock_can_allocate):
@@ -571,7 +579,7 @@ class TestSubsidyAccessPolicyAllocationView(APITestWithMocks):
 
     @mock.patch.object(AssignedLearnerCreditAccessPolicy, 'can_allocate', autospec=True)
     @mock.patch(
-        'enterprise_access.apps.subsidy_access_policy.models.assignments_api.allocate_assignments',
+        'enterprise_access.apps.api.v1.views.subsidy_access_policy.assignments_api.allocate_assignments',
         autospec=True,
     )
     def test_cannot_allocate_locked(self, mock_allocate, mock_can_allocate):

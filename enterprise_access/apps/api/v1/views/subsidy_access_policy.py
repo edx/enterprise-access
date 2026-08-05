@@ -7,6 +7,7 @@ import os
 from collections import defaultdict
 from contextlib import suppress
 from urllib import parse
+from uuid import uuid4
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
@@ -27,7 +28,9 @@ from rest_framework_csv.renderers import CSVRenderer
 from enterprise_access.apps.api import filters, serializers, utils
 from enterprise_access.apps.api.mixins import UserDetailsFromJwtMixin
 from enterprise_access.apps.api_client.lms_client import LmsApiClient
+from enterprise_access.apps.content_assignments import api as assignments_api
 from enterprise_access.apps.content_assignments.api import AllocationException
+from enterprise_access.apps.content_assignments.constants import AssignmentSources
 from enterprise_access.apps.content_metadata.api import get_and_cache_content_metadata
 from enterprise_access.apps.core.constants import (
     SUBSIDY_ACCESS_POLICY_ALLOCATION_PERMISSION,
@@ -1082,6 +1085,8 @@ class SubsidyAccessPolicyAllocateViewset(UserDetailsFromJwtMixin, PermissionRequ
         # Extracts the LMS admin user ID from the validated serializer data to track and verify
         # who created each Learner Credit (LC) assignment.
         admin_lms_user_id = serializer.data['admin_lms_user_id']
+        actor_lms_user_id = self.lms_user_id or request.user.lms_user_id or admin_lms_user_id
+        correlation_id = str(uuid4())
         # For Having a control on the automated email generated while assigning a course
         suppress_email = serializer.data.get('suppress_email', False)
 
@@ -1093,12 +1098,16 @@ class SubsidyAccessPolicyAllocateViewset(UserDetailsFromJwtMixin, PermissionRequ
                     content_price_cents,
                 )
                 if can_allocate:
-                    allocation_result = policy.allocate(
+                    allocation_result = assignments_api.allocate_assignments(
+                        policy.assignment_configuration,
                         learner_emails,
                         content_key,
                         content_price_cents,
                         admin_lms_user_id,
                         suppress_email=suppress_email,
+                        actor_lms_user_id=actor_lms_user_id,
+                        source=AssignmentSources.API,
+                        correlation_id=correlation_id,
                     )
                     response_serializer = serializers.SubsidyAccessPolicyAllocationResponseSerializer(
                         allocation_result,
