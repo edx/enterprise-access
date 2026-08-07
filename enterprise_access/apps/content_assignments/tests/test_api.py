@@ -636,6 +636,8 @@ class TestAssignmentAllocationAndCancellation(TestCase):
         for assignment in expected_reallocated_assignments:
             action = LearnerContentAssignmentAction.objects.get(assignment=assignment)
             self.assertEqual(action.action_type, AssignmentActions.REALLOCATED)
+            self.assertIsNotNone(action.completed_at)
+            self.assertIsNone(action.error_reason)
             self.assertEqual(action.actor_lms_user_id, admin_lms_user_id)
             self.assertEqual(action.actor_type, AssignmentActorTypes.ADMIN)
             self.assertEqual(action.source, AssignmentSources.API)
@@ -644,6 +646,11 @@ class TestAssignmentAllocationAndCancellation(TestCase):
             self.assertEqual(action.enterprise_customer_uuid, self.assignment_configuration.enterprise_customer_uuid)
             self.assertEqual(action.metadata['allocation_batch_id'], str(assignment.allocation_batch_id))
             self.assertIsNotNone(action.metadata['correlation_id'])
+            self.assertEqual(
+                action.metadata['policy_or_config_uuid'],
+                str(self.assignment_configuration.uuid),
+            )
+            self.assertNotIn('policy_uuid', action.metadata)
             self.assertEqual(action.metadata['state_after'], assignment.state)
 
         # Field-only updates (e.g. stale run key) and no-change records must not get audit rows.
@@ -678,6 +685,8 @@ class TestAssignmentAllocationAndCancellation(TestCase):
 
         created_action = LearnerContentAssignmentAction.objects.get(assignment=created_assignment)
         self.assertEqual(created_action.action_type, AssignmentActions.ALLOCATED)
+        self.assertIsNotNone(created_action.completed_at)
+        self.assertIsNone(created_action.error_reason)
         self.assertEqual(created_action.actor_lms_user_id, admin_lms_user_id)
         self.assertEqual(created_action.actor_type, AssignmentActorTypes.ADMIN)
         self.assertEqual(created_action.source, AssignmentSources.API)
@@ -689,6 +698,11 @@ class TestAssignmentAllocationAndCancellation(TestCase):
         )
         self.assertEqual(created_action.metadata['allocation_batch_id'], str(created_assignment.allocation_batch_id))
         self.assertIsNotNone(created_action.metadata['correlation_id'])
+        self.assertEqual(
+            created_action.metadata['policy_or_config_uuid'],
+            str(self.assignment_configuration.uuid),
+        )
+        self.assertNotIn('policy_uuid', created_action.metadata)
         self.assertEqual(created_action.metadata['state_after'], created_assignment.state)
 
         # Assert that an async task was enqueued for each of the updated and created assignments
@@ -712,6 +726,53 @@ class TestAssignmentAllocationAndCancellation(TestCase):
                 created_assignment,
             )
         ], any_order=True)
+
+    @mock.patch('enterprise_access.apps.content_assignments.api.send_email_for_new_assignment')
+    @mock.patch(
+        'enterprise_access.apps.content_assignments.api.create_pending_enterprise_learner_for_assignment_task'
+    )
+    @mock.patch(
+        'enterprise_access.apps.content_assignments.api.get_and_cache_content_metadata',
+        return_value=mock.MagicMock(),
+    )
+    def test_allocate_assignments_audit_policy_uuid_when_policy_exists(
+        self,
+        mock_get_and_cache_content_metadata,
+        _mock_pending_learner_task,
+        _mock_new_assignment_email_task,
+    ):
+        """Allocation audit metadata uses policy_uuid when a policy relation exists."""
+        content_key = 'edX+DemoX'
+        content_price_cents = 100
+        learner_email = 'alice@foo.com'
+        admin_lms_user_id = 3
+        assignment_configuration = AssignmentConfigurationFactory.create()
+        policy = AssignedLearnerCreditAccessPolicyFactory.create(
+            assignment_configuration=assignment_configuration,
+            enterprise_customer_uuid=assignment_configuration.enterprise_customer_uuid,
+        )
+        mock_get_and_cache_content_metadata.return_value = {
+            'content_title': 'edx: Demo 101',
+            'content_key': content_key,
+            'course_run_key': 'course-v1:edX+DemoX+2T2023',
+        }
+
+        with self.captureOnCommitCallbacks(execute=True):
+            allocation_results = allocate_assignments(
+                assignment_configuration,
+                [learner_email],
+                content_key,
+                content_price_cents,
+                admin_lms_user_id,
+            )
+
+        created_assignment = allocation_results['created'][0]
+        action = LearnerContentAssignmentAction.objects.get(assignment=created_assignment)
+        self.assertEqual(action.action_type, AssignmentActions.ALLOCATED)
+        self.assertIsNotNone(action.completed_at)
+        self.assertIsNone(action.error_reason)
+        self.assertEqual(action.metadata['policy_uuid'], str(policy.uuid))
+        self.assertNotIn('policy_or_config_uuid', action.metadata)
 
     @mock.patch('enterprise_access.apps.content_assignments.api.send_email_for_new_assignment')
     @mock.patch(

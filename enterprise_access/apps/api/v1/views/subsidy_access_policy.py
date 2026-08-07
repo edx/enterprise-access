@@ -1085,7 +1085,8 @@ class SubsidyAccessPolicyAllocateViewset(UserDetailsFromJwtMixin, PermissionRequ
         # Extracts the LMS admin user ID from the validated serializer data to track and verify
         # who created each Learner Credit (LC) assignment.
         admin_lms_user_id = serializer.data['admin_lms_user_id']
-        actor_lms_user_id = self.lms_user_id or request.user.lms_user_id or admin_lms_user_id
+        # lms_user_id sourced from decoded JWT via UserDetailsFromJwtMixin.
+        actor_lms_user_id = self.lms_user_id or admin_lms_user_id
         correlation_id = str(uuid4())
         # For Having a control on the automated email generated while assigning a course
         suppress_email = serializer.data.get('suppress_email', False)

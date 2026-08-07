@@ -12,6 +12,7 @@ from uuid import uuid4
 from django.db import transaction
 from django.db.models import Q, Sum
 from django.db.models.functions import Lower
+from django.utils import timezone
 
 from enterprise_access.apps.content_assignments.content_metadata_api import (
     get_content_metadata_for_assignments,
@@ -88,23 +89,29 @@ def _create_assignment_action(
 ):
     """Persist a single audit action row for the given assignment."""
     policy = assignment.assignment_configuration.policy
-    policy_uuid = str(policy.uuid) if policy else str(assignment.assignment_configuration.uuid)
+    metadata = {
+        'correlation_id': correlation_id,
+        'allocation_batch_id': str(assignment.allocation_batch_id),
+        'state_after': assignment.state,
+    }
+    if policy:
+        metadata['policy_uuid'] = str(policy.uuid)
+    else:
+        # Some test/setup paths allocate before a policy relation exists on the configuration.
+        metadata['policy_or_config_uuid'] = str(assignment.assignment_configuration.uuid)
 
     return LearnerContentAssignmentAction.objects.create(
         assignment=assignment,
         action_type=action_type,
+        completed_at=timezone.now(),
+        error_reason=None,
         actor_lms_user_id=actor_lms_user_id,
         actor_type=AssignmentActorTypes.ADMIN,
         source=source,
         enterprise_customer_uuid=assignment.assignment_configuration.enterprise_customer_uuid,
         learner_lms_user_id=assignment.lms_user_id,
         learner_email=assignment.learner_email,
-        metadata={
-            'correlation_id': correlation_id,
-            'allocation_batch_id': str(assignment.allocation_batch_id),
-            'policy_uuid': policy_uuid,
-            'state_after': assignment.state,
-        },
+        metadata=metadata,
     )
 
 
