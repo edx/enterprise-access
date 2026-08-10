@@ -1,0 +1,40 @@
+.pylintrc-duplicates
+  s_c533cb63958690::t_6822f59143cfcf 8
+  s_c533cb63958690::t_6adcd30a64c854 1-7,9-14,17
+  s_c533cb63958690::t_0f079eef56aa74 15-16,18-19
+Makefile
+  s_c533cb63958690::t_f7c3344c7ad828 87
+  s_c533cb63958690::t_0ff2c3aa4d2b8f 85-86
+  s_c533cb63958690::t_9faf77a6e2f501 88
+enterprise_access/apps/subsidy_request/tasks.py
+  s_c533cb63958690::t_4cb573f9a4e4b3 371-372
+  s_c533cb63958690::t_8457536d3c8936 389-390
+  s_c533cb63958690::t_25b6d0b2c21034 15-20
+enterprise_access/apps/api_client/base_oauth.py
+  s_c533cb63958690::t_433d9f7bc7629e 31-47
+enterprise_access/apps/api_client/license_manager_client.py
+  s_c533cb63958690::t_4ae763066c979f 153-158
+enterprise_access/apps/api_client/lms_client.py
+  s_c533cb63958690::t_a3bf122b909f9d 114-119
+.github/workflows/ci.yml
+  s_c533cb63958690::t_ca0fe50d371fff 58-59
+enterprise_access/apps/content_assignments/tasks.py
+  s_c533cb63958690::t_ca98d74ff4b676 464-465
+  s_c533cb63958690::t_505e58dbaab083 57-70
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.12",
+  "base_commit_sha": "3123a84479da069091b82d3734891fc160f34fb1",
+  "prompts": {},
+  "sessions": {
+    "s_c533cb63958690": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "de374382-07ba-489b-83e6-f22db89fa622",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Alexander Dusenbery <adusenbery@2u.com>"
+    }
+  }
+}

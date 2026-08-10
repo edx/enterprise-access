@@ -1,0 +1,38 @@
+enterprise_access/apps/customer_billing/tests/test_migrations.py
+  f63c823f897a1971 384-387,390-396,400-406,409-415,419-425,429-435,438-444,449-455,459-461
+enterprise_access/apps/customer_billing/tests/test_tasks.py
+  f63c823f897a1971 21,233-340,549-559,853-860,1080-1087
+enterprise_access/apps/customer_billing/tasks.py
+  f63c823f897a1971 319-357
+enterprise_access/settings/base.py
+  f63c823f897a1971 541
+docs/customer-billing/subscription-and-renewal-lifecycle.rst
+  f63c823f897a1971 9,22,41-42,49-53,67,91-92,103,105-106,116,119-125,127-128,134-136,138,140,142,144-149,156,161,163,165,167-186,188,190-215,224,226-246,252-261,314,345-349
+enterprise_access/apps/customer_billing/stripe_event_handlers.py
+  f63c823f897a1971 30,756-763
+enterprise_access/apps/customer_billing/tests/test_stripe_event_handlers.py
+  f63c823f897a1971 574-641
+enterprise_access/settings/test.py
+  f63c823f897a1971 62
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "85c1e99ce7e4d5797768a5f168f23dd22031ac95",
+  "prompts": {
+    "f63c823f897a1971": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b4b407bc-2d18-4e82-af93-d2a0d4ac157e",
+        "model": "claude-opus-4-5-20251101"
+      },
+      "human_author": "Alexander Dusenbery",
+      "messages": [],
+      "total_additions": 500,
+      "total_deletions": 136,
+      "accepted_lines": 436,
+      "overriden_lines": 0,
+      "messages_url": "https://usegitai.com/cas/a8bd0b77a7d833d730da6f110fc2cec19127b54d1b70ab2f2a28a305372fd85a"
+    }
+  }
+}

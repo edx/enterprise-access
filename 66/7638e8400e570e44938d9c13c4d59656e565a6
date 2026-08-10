@@ -1,0 +1,24 @@
+enterprise_access/apps/customer_billing/tasks.py
+  f63c823f897a1971 338,340-341,344-345,354
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.5",
+  "base_commit_sha": "667638e8400e570e44938d9c13c4d59656e565a6",
+  "prompts": {
+    "f63c823f897a1971": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b4b407bc-2d18-4e82-af93-d2a0d4ac157e",
+        "model": "claude-opus-4-5-20251101"
+      },
+      "human_author": "Alexander Dusenbery",
+      "messages": [],
+      "total_additions": 6,
+      "total_deletions": 2,
+      "accepted_lines": 6,
+      "overriden_lines": 0,
+      "messages_url": "https://usegitai.com/cas/3171cbe8fbcda561a69bf5787890884af76f112d16f46cf685ca946aa47e236c"
+    }
+  }
+}

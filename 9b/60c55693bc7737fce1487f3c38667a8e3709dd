@@ -1,0 +1,24 @@
+docs/customer-billing/customer-billing-app-reference.rst
+  s_b41d880cacb2e3::t_bceb75cccc972d 1-224
+docs/customer-billing/subscription-and-renewal-lifecycle.rst
+  s_b41d880cacb2e3::t_c5540b2584fc86 365-384
+  s_b41d880cacb2e3::t_9cc96307a33098 67-77
+  s_b41d880cacb2e3::t_cab152b40a9c51 91-97
+  s_b41d880cacb2e3::t_8c577f4e272206 154-162,166
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.10",
+  "base_commit_sha": "9b60c55693bc7737fce1487f3c38667a8e3709dd",
+  "prompts": {},
+  "sessions": {
+    "s_b41d880cacb2e3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7dfacd58-c9cc-4648-bf6c-7754075c45ac",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Alexander Dusenbery <adusenbery@2u.com>"
+    }
+  }
+}

@@ -1,0 +1,22 @@
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.6",
+  "base_commit_sha": "8c280d1e9655f5173b08182a5a73dcb95725b58f",
+  "prompts": {
+    "312efd6481b05b10": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ee0eb681-7f7a-4352-9152-b47e3c248ce3",
+        "model": "claude-opus-4-5-20251101"
+      },
+      "human_author": "Alexander Dusenbery",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 2,
+      "accepted_lines": 0,
+      "overriden_lines": 0,
+      "messages_url": "https://usegitai.com/cas/286573e94028d916ac75c75ca302d2eb89e43caa5947d2d01fe1dd2a9c26694b"
+    }
+  }
+}

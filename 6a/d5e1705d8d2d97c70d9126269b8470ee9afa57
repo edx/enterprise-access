@@ -1,0 +1,23 @@
+enterprise_access/apps/customer_billing/models.py
+  s_691b8245aa6a1c::t_e603d0dd494a0c 173
+  s_691b8245aa6a1c::t_2bdfa41970759d 175,181
+enterprise_access/apps/customer_billing/tests/test_api.py
+  s_691b8245aa6a1c::t_9a3b5e43b3e25e 212
+  s_691b8245aa6a1c::t_8ec568c69dce9d 161
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "6ad5e1705d8d2d97c70d9126269b8470ee9afa57",
+  "prompts": {},
+  "sessions": {
+    "s_691b8245aa6a1c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "50792d9c-1b90-4cb3-ba90-4891f7a2c26d",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Alexander Dusenbery <adusenbery@2u.com>"
+    }
+  }
+}

@@ -1,0 +1,22 @@
+enterprise_access/settings/base.py
+  s_86d48036210968::t_9ff0e42cef1e0a 633-637
+  s_86d48036210968::t_9ba5ced2ab9676 638
+enterprise_access/settings/test.py
+  s_86d48036210968::t_dd17f4bc356378 90-99
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "d6f3851cc4f818e5db4de95a45b147697b07ffa0",
+  "prompts": {},
+  "sessions": {
+    "s_86d48036210968": {
+      "agent_id": {
+        "tool": "github-copilot-cli",
+        "id": "eeeb8d28-eff6-4971-9a94-b144d5086b56",
+        "model": "claude-haiku-4.5"
+      },
+      "human_author": "Alexander Dusenbery <adusenbery@2u.com>"
+    }
+  }
+}

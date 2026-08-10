@@ -1,0 +1,20 @@
+enterprise_access/apps/customer_billing/models.py
+  s_e5e4549d90a8f2::t_930f39fa1ca01f 213-214,218-242
+  s_e5e4549d90a8f2::t_474cc826637b0a 212,215-217
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "0aa85b0ec5ba45bced67bd83abf539e280779b10",
+  "prompts": {},
+  "sessions": {
+    "s_e5e4549d90a8f2": {
+      "agent_id": {
+        "tool": "github-copilot-cli",
+        "id": "371a4f9c-16d6-4410-a3ff-6e6fb729a658",
+        "model": "claude-sonnet-4.6"
+      },
+      "human_author": "Alexander Dusenbery <adusenbery@2u.com>"
+    }
+  }
+}

@@ -1,0 +1,24 @@
+enterprise_access/apps/customer_billing/tests/test_stripe_event_handlers.py
+  ef4eca78bd7b2c07 34,288-331
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "4ec42c5f89559456207ca1463fe820a2c9e4cc4d",
+  "prompts": {
+    "ef4eca78bd7b2c07": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9b0f9c8e-c302-4b38-b01f-6bb80cbb89a4",
+        "model": "claude-opus-4-5-20251101"
+      },
+      "human_author": "Alexander Dusenbery",
+      "messages": [],
+      "total_additions": 46,
+      "total_deletions": 1,
+      "accepted_lines": 45,
+      "overriden_lines": 1,
+      "messages_url": "https://usegitai.com/cas/355f189419f97dfd9fbd43e6aa1820486b7bbff6b967a890430d216ad38b92c7"
+    }
+  }
+}

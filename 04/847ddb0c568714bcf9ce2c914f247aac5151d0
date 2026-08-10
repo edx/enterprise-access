@@ -1,0 +1,39 @@
+docs/architecture-overview.md
+  4f7a75152ce3fd3b 1-259
+docs/learner-credit-architecture.md
+  4f7a75152ce3fd3b 1-494
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "04847ddb0c568714bcf9ce2c914f247aac5151d0",
+  "prompts": {
+    "4f7a75152ce3fd3b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "edf3467a-79ee-47a2-b0b0-131441a4343e",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Alexander Dusenbery",
+      "messages": [],
+      "total_additions": 784,
+      "total_deletions": 31,
+      "accepted_lines": 752,
+      "overriden_lines": 0,
+      "messages_url": "https://usegitai.com/cas/d89aea5dad7c589074740e635f503522c5d4e641fa2f3b13cc6c57fcb952b019"
+    },
+    "e7985781b62a5095": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f01c5b38-4b27-40f9-aa2d-e7e65c899c4f",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": null,
+      "messages": [],
+      "total_additions": 2,
+      "total_deletions": 1,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    }
+  }
+}

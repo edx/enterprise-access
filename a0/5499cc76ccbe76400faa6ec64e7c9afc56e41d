@@ -1,0 +1,26 @@
+docs/developing-with-ai.md
+  e95e46a5445665ab 1,3-4,6,8-10,12,14,16-19,21,23-25,27,29-33,35,37-40
+.gitignore
+  e95e46a5445665ab 169-170
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.6",
+  "base_commit_sha": "a05499cc76ccbe76400faa6ec64e7c9afc56e41d",
+  "prompts": {
+    "e95e46a5445665ab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "baaaee21-33e3-4be5-8e3d-141b80adb2ac",
+        "model": "claude-opus-4-5-20251101"
+      },
+      "human_author": "Alexander Dusenbery",
+      "messages": [],
+      "total_additions": 41,
+      "total_deletions": 64,
+      "accepted_lines": 41,
+      "overriden_lines": 0,
+      "messages_url": "https://usegitai.com/cas/0781789c50241f15c800b65bdf0c4318a72c5de3e23e1bf8095dce344a4ddca8"
+    }
+  }
+}

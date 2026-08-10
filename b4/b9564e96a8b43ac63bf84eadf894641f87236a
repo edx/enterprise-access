@@ -1,0 +1,22 @@
+enterprise_access/apps/customer_billing/tasks.py
+  s_8d3fe0ec76e852::t_f81c6ba649e9c9 889
+enterprise_access/apps/customer_billing/tests/test_tasks.py
+  s_8d3fe0ec76e852::t_5f83b849219133 1073,1078
+  s_8d3fe0ec76e852::t_2965275f578736 1219
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.21",
+  "base_commit_sha": "b4b9564e96a8b43ac63bf84eadf894641f87236a",
+  "prompts": {},
+  "sessions": {
+    "s_8d3fe0ec76e852": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6fdd2790-1ba0-4a25-ab77-6e9e852560da",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "shravani-sonata-gottapu <gshravani-sonata@2u.com>"
+    }
+  }
+}

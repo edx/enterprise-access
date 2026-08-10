@@ -1,0 +1,24 @@
+CLAUDE.md
+  e95e46a5445665ab 22-32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.6",
+  "base_commit_sha": "b58e0a2cc06b4bc23622ec3c2a68502a3aa27540",
+  "prompts": {
+    "e95e46a5445665ab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "baaaee21-33e3-4be5-8e3d-141b80adb2ac",
+        "model": "claude-opus-4-5-20251101"
+      },
+      "human_author": "Alexander Dusenbery",
+      "messages": [],
+      "total_additions": 11,
+      "total_deletions": 2,
+      "accepted_lines": 11,
+      "overriden_lines": 0,
+      "messages_url": "https://usegitai.com/cas/984ad751bdb7101bdeeefca1c357ac34492455d96ed7a429507f83817194b8a6"
+    }
+  }
+}

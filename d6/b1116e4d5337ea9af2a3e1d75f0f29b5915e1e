@@ -1,0 +1,25 @@
+enterprise_access/apps/customer_billing/tests/test_stripe_event_handlers.py
+  ef4eca78bd7b2c07 30,36,267,2346-2347
+enterprise_access/apps/customer_billing/stripe_event_handlers.py
+  ef4eca78bd7b2c07 41-46,174,176-177,182,188-189,194,199-200,205-210
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.8",
+  "base_commit_sha": "d6b1116e4d5337ea9af2a3e1d75f0f29b5915e1e",
+  "prompts": {
+    "ef4eca78bd7b2c07": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9b0f9c8e-c302-4b38-b01f-6bb80cbb89a4",
+        "model": "claude-opus-4-5-20251101"
+      },
+      "human_author": "Alexander Dusenbery",
+      "messages": [],
+      "total_additions": 28,
+      "total_deletions": 16,
+      "accepted_lines": 26,
+      "overriden_lines": 0
+    }
+  }
+}

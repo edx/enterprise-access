@@ -1,0 +1,25 @@
+enterprise_access/apps/api_client/lms_client.py
+  s_f46d5e0f948408::t_fc6e1cf892fadf 610-644
+enterprise_access/apps/content_assignments/tests/test_tasks.py
+  s_f46d5e0f948408::t_01b788b10d76d9 259
+  s_f46d5e0f948408::t_4bd5f64f60fe9c 221-258,260-287
+  s_f46d5e0f948408::t_667a6a47adef1b 90-97
+enterprise_access/apps/content_assignments/tasks.py
+  s_f46d5e0f948408::t_5de872a916e47d 370-387
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.13",
+  "base_commit_sha": "1cd627009fbe470d4259aa9a1e0a32ff4702e032",
+  "prompts": {},
+  "sessions": {
+    "s_f46d5e0f948408": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7632db1d-dd31-40dd-9e8a-5d429994ac48",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "rgopalrao-sonata-png <rgopalrao-sonata@2u.com>"
+    }
+  }
+}
