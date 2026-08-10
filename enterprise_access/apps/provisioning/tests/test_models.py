@@ -670,10 +670,20 @@ class TestGetCreateCatalogStepCatalogQueryId(TestCase):
             workflow_record_uuid=self.workflow.uuid,
             input_data={},
         )
-        self.assertTrue(settings.PRODUCT_ID_TO_CATALOG_QUERY_ID_MAPPING)
-        product_id, expected_catalog_query_id = next(iter(settings.PRODUCT_ID_TO_CATALOG_QUERY_ID_MAPPING.items()))
+        # Create an SspProduct that maps the slug to a catalog_query_id
+        ssp_slug = 'test-slug'
+        expected_catalog_query_id = 42
+        SspProduct.objects.create(
+            slug=ssp_slug,
+            stripe_price_lookup_key='test-lookup',
+            catalog_query_id=expected_catalog_query_id,
+            catalog_query_uuid='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+            license_manager_product_id_paid=None,
+            license_manager_product_id_trial=None,
+            is_active=True,
+        )
         workflow_input = mock.Mock()
-        workflow_input.create_trial_subscription_plan_input = mock.Mock(product_id=product_id)
+        workflow_input.create_trial_subscription_plan_input = mock.Mock(ssp_product_slug=ssp_slug)
         # pylint: disable=protected-access
         result = step._get_catalog_query_id(workflow_input)
         self.assertEqual(result, expected_catalog_query_id)

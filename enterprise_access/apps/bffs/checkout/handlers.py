@@ -33,6 +33,7 @@ from enterprise_access.apps.customer_billing.stripe_api import (
     get_stripe_payment_method,
     get_stripe_subscription
 )
+from enterprise_access.apps.customer_billing.utils import get_default_ssp_price_lookup_key
 from enterprise_access.utils import cents_to_dollars
 
 logger = logging.getLogger(__name__)
@@ -169,8 +170,7 @@ class CheckoutContextHandler(CheckoutIntentAwareHandlerMixin, BaseHandler):
             Dict containing default lookup key and list of price objects
         """
         try:
-            # remember that this function eventually invokes price schema
-            # validation, it may raise a StripePricingError
+            # remember that this function eventually invokes price schema validation
             pricing_data = get_ssp_product_pricing()
 
             # Format the pricing data according to our API response schema
@@ -189,7 +189,7 @@ class CheckoutContextHandler(CheckoutIntentAwareHandlerMixin, BaseHandler):
                 })
 
             return {
-                'default_by_lookup_key': settings.DEFAULT_SSP_PRICE_LOOKUP_KEY,
+                'default_by_lookup_key': get_default_ssp_price_lookup_key(),
                 'prices': prices
             }
         except Exception as exc:  # pylint: disable=broad-except
@@ -199,7 +199,7 @@ class CheckoutContextHandler(CheckoutIntentAwareHandlerMixin, BaseHandler):
                 developer_message=f"Could not load pricing data: {exc}",
             )
             return {
-                'default_by_lookup_key': settings.DEFAULT_SSP_PRICE_LOOKUP_KEY,
+                'default_by_lookup_key': get_default_ssp_price_lookup_key(),
                 'prices': []
             }
 
@@ -210,13 +210,13 @@ class CheckoutContextHandler(CheckoutIntentAwareHandlerMixin, BaseHandler):
         Returns:
             Dict containing constraints for form fields
         """
-        # Get quantity constraints from SSP_PRODUCTS setting
-        quantity_constraints = {'min': 5, 'max': 30}  # Default values
-        for product_config in settings.SSP_PRODUCTS.values():
-            if 'quantity_range' in product_config:
-                min_val, max_val = product_config['quantity_range']
-                quantity_constraints = {'min': min_val, 'max': max_val}
-                break
+        # Quantity constraints default (can be overridden in settings)
+        default_range = getattr(settings, 'DEFAULT_SSP_QUANTITY_RANGE', [5, 30])
+        try:
+            min_val, max_val = default_range
+            quantity_constraints = {'min': min_val, 'max': max_val}
+        except (TypeError, ValueError):
+            quantity_constraints = {'min': 5, 'max': 30}
         return {
             'quantity': quantity_constraints,
             'enterprise_slug': {

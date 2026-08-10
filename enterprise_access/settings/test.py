@@ -99,9 +99,6 @@ KAFKA_TOPICS = [
 ################### End Kafka Related Settings ##############################
 
 ### SSP Tests ###
-PRODUCT_ID_TO_CATALOG_QUERY_ID_MAPPING = {
-    '1': 42,
-}
 SSP_PRODUCT_BACKFILL_DATA = [
     {
         'slug': 'teams-yearly',

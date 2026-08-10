@@ -337,23 +337,24 @@ class GetCreateCatalogStep(AbstractWorkflowStep):
 
     def _get_catalog_query_id(self, workflow_input=None):
         """
-        If not provided in the workflow input, helps infer the catalog_query_id
-        based on subscription plan product id.
+        If not provided in the workflow input, infers the catalog_query_id
+        from SspProduct using ssp_product_slug.
         """
         catalog_query_id = getattr(self.input_object, 'catalog_query_id', None)
         if catalog_query_id is not None:
             return int(catalog_query_id)
 
-        # Need to get product_id from subscription plan input to infer catalog_query_id
-        product_id = str(workflow_input.create_trial_subscription_plan_input.product_id)
+        plan_input = workflow_input.create_trial_subscription_plan_input
+        ssp_slug = getattr(plan_input, 'ssp_product_slug', None)
 
-        if product_id and product_id in settings.PRODUCT_ID_TO_CATALOG_QUERY_ID_MAPPING:
-            return settings.PRODUCT_ID_TO_CATALOG_QUERY_ID_MAPPING[product_id]
-        else:
-            raise CreateCatalogStepException(
-                f"Cannot infer catalog_query_id: product_id {product_id} "
-                f"not found in mapping: {settings.PRODUCT_ID_TO_CATALOG_QUERY_ID_MAPPING}"
-            )
+        if ssp_slug:
+            prod = SspProduct.objects.filter(slug=ssp_slug, is_active=True).first()
+            if prod and prod.catalog_query_id:
+                return int(prod.catalog_query_id)
+
+        raise CreateCatalogStepException(
+            f"Cannot infer catalog_query_id: ssp_product_slug {ssp_slug!r} not resolvable via SspProduct"
+        )
 
     def get_workflow_record(self):
         return ProvisionNewCustomerWorkflow.objects.filter(

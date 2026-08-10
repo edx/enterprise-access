@@ -208,7 +208,7 @@ class TestCheckoutContextHandler(APITest):
         # Assert
         self.assertIn('quantity', constraints)
         self.assertEqual(constraints['quantity']['min'], 5)
-        self.assertEqual(constraints['quantity']['max'], 30)
+        self.assertEqual(constraints['quantity']['max'], 50)
         self.assertIn('enterprise_slug', constraints)
         self.assertIn('pattern', constraints['enterprise_slug'])
         self.assertTrue(constraints['enterprise_slug']['pattern'].startswith('^'))
