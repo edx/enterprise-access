@@ -13,7 +13,7 @@ import stripe
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import AnonymousUser
-from django.test import RequestFactory
+from django.test import RequestFactory, override_settings
 from django.utils import timezone
 from pytz import UTC
 
@@ -212,6 +212,19 @@ class TestCheckoutContextHandler(APITest):
         self.assertIn('enterprise_slug', constraints)
         self.assertIn('pattern', constraints['enterprise_slug'])
         self.assertTrue(constraints['enterprise_slug']['pattern'].startswith('^'))
+
+    @override_settings(DEFAULT_SSP_QUANTITY_RANGE=5)
+    def test_get_field_constraints_falls_back_on_malformed_quantity_range(self):
+        """
+        Test that _get_field_constraints falls back to hardcoded defaults
+        when DEFAULT_SSP_QUANTITY_RANGE is not a 2-tuple/list.
+        """
+        context = self._create_context()
+        handler = CheckoutContextHandler(context)
+
+        constraints = handler._get_field_constraints()
+
+        self.assertEqual(constraints['quantity'], {'min': 5, 'max': 30})
 
     def test_get_field_constraints_includes_embargoed_countries(self):
         """

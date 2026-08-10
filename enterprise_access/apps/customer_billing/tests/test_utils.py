@@ -10,7 +10,12 @@ from django.test import TestCase, override_settings
 from django.utils import timezone
 
 from enterprise_access.apps.customer_billing.models import SspProduct
-from enterprise_access.apps.customer_billing.utils import datetime_from_timestamp, get_campaign_id, get_product_type
+from enterprise_access.apps.customer_billing.utils import (
+    datetime_from_timestamp,
+    get_campaign_id,
+    get_default_ssp_price_lookup_key,
+    get_product_type
+)
 
 
 class TestCustomerBillingUtils(TestCase):
@@ -50,6 +55,33 @@ class TestCustomerBillingUtils(TestCase):
         self.assertIsInstance(dt, datetime.datetime)
         self.assertTrue(timezone.is_aware(dt))
         self.assertEqual(dt.date(), expected.date())
+
+
+class TestGetDefaultSspPriceLookupKey(TestCase):
+    """
+    Tests for ``get_default_ssp_price_lookup_key``.
+    """
+
+    @override_settings(SSP_DEFAULT_PRODUCT_SLUG=None)
+    def test_returns_none_when_slug_not_configured(self):
+        """When SSP_DEFAULT_PRODUCT_SLUG is unset, returns None."""
+        self.assertIsNone(get_default_ssp_price_lookup_key())
+
+    @override_settings(SSP_DEFAULT_PRODUCT_SLUG='does-not-exist')
+    def test_returns_none_when_no_matching_product(self):
+        """When no active SspProduct matches the configured slug, returns None."""
+        self.assertIsNone(get_default_ssp_price_lookup_key())
+
+    @override_settings(SSP_DEFAULT_PRODUCT_SLUG='teams-yearly')
+    def test_returns_lookup_key_for_matching_product(self):
+        """
+        When an active SspProduct matches the configured slug, returns its lookup key.
+        Relies on the 'teams-yearly' SspProduct backfilled via SSP_PRODUCT_BACKFILL_DATA.
+        """
+        self.assertEqual(
+            get_default_ssp_price_lookup_key(),
+            'teams_subscription_license_yearly',
+        )
 
 
 class TestGetProductType(TestCase):

@@ -688,6 +688,32 @@ class TestGetCreateCatalogStepCatalogQueryId(TestCase):
         result = step._get_catalog_query_id(workflow_input)
         self.assertEqual(result, expected_catalog_query_id)
 
+    def test_catalog_query_id_unresolvable_slug_raises(self):
+        """When ssp_product_slug does not resolve to an active SspProduct, raise."""
+        step = GetCreateCatalogStep.objects.create(
+            workflow_record_uuid=self.workflow.uuid,
+            input_data={},
+        )
+        workflow_input = mock.Mock()
+        workflow_input.create_trial_subscription_plan_input = mock.Mock(
+            ssp_product_slug='nonexistent-slug',
+        )
+        # pylint: disable=protected-access
+        with self.assertRaises(prov_models.CreateCatalogStepException):
+            step._get_catalog_query_id(workflow_input)
+
+    def test_catalog_query_id_missing_slug_raises(self):
+        """When neither catalog_query_id nor ssp_product_slug are provided, raise."""
+        step = GetCreateCatalogStep.objects.create(
+            workflow_record_uuid=self.workflow.uuid,
+            input_data={},
+        )
+        workflow_input = mock.Mock()
+        workflow_input.create_trial_subscription_plan_input = mock.Mock(ssp_product_slug=None)
+        # pylint: disable=protected-access
+        with self.assertRaises(prov_models.CreateCatalogStepException):
+            step._get_catalog_query_id(workflow_input)
+
 
 @ddt.ddt
 class TestGenerateInputDictSspResolution(TestCase):
