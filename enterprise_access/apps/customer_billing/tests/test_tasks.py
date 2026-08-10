@@ -1070,10 +1070,12 @@ class TestSendPaymentReceiptEmail(TestCase):
         self.checkout_intent.save()
 
         self.invoice_id = 'in_1SNvVOQ60jNALKNUMk8TZucs'
+        self.invoice_number = 'MYSHOP-0001'
         self.payment_intent_id = 'pi_test_payment_intent_123'
         self.payment_method_id = 'pm_test_payment_method_456'
         self.mock_invoice_data = {
             'id': self.invoice_id,
+            'number': self.invoice_number,
             'created': 1761829387,
             'payment_intent': self.payment_intent_id,  # This is a string ID, not an object
         }
@@ -1214,7 +1216,7 @@ class TestSendPaymentReceiptEmail(TestCase):
             'organization': 'Test Enterprise',
             'billing_address': '123 Test St\nSuite 100\nTest City, TS 12345\nUS',
             'enterprise_admin_portal_url': f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/test-enterprise',
-            'receipt_number': 'in_1SNvVOQ60jNALKNUMk8TZucs',
+            'receipt_number': self.invoice_number,
         }
 
         mock_braze.send_campaign_message.assert_called_once_with(
