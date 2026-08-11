@@ -211,12 +211,12 @@ class CheckoutContextHandler(CheckoutIntentAwareHandlerMixin, BaseHandler):
             Dict containing constraints for form fields
         """
         # Quantity constraints default (can be overridden in settings)
-        default_range = getattr(settings, 'DEFAULT_SSP_QUANTITY_RANGE', [5, 30])
+        default_range = getattr(settings, 'DEFAULT_SSP_QUANTITY_RANGE', [5, 50])
         try:
             min_val, max_val = default_range
             quantity_constraints = {'min': min_val, 'max': max_val}
         except (TypeError, ValueError):
-            quantity_constraints = {'min': 5, 'max': 30}
+            quantity_constraints = {'min': 5, 'max': 50}
         return {
             'quantity': quantity_constraints,
             'enterprise_slug': {

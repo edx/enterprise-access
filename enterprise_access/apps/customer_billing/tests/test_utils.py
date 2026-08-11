@@ -3,6 +3,7 @@ Tests for the ``enterprise_access.apps.customer_billing.utils`` module.
 """
 
 import datetime
+from unittest import mock
 from uuid import uuid4
 
 from django.conf import settings
@@ -82,6 +83,15 @@ class TestGetDefaultSspPriceLookupKey(TestCase):
             get_default_ssp_price_lookup_key(),
             'teams_subscription_license_yearly',
         )
+
+    @override_settings(SSP_DEFAULT_PRODUCT_SLUG='teams-yearly')
+    def test_returns_none_on_lookup_error(self):
+        """When resolving the SspProduct raises, returns None instead of propagating."""
+        with mock.patch(
+            'enterprise_access.apps.customer_billing.utils.apps.get_model',
+            side_effect=LookupError('boom'),
+        ):
+            self.assertIsNone(get_default_ssp_price_lookup_key())
 
 
 class TestGetProductType(TestCase):

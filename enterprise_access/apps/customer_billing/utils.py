@@ -35,8 +35,12 @@ def get_default_ssp_price_lookup_key() -> str | None:
     slug = getattr(settings, 'SSP_DEFAULT_PRODUCT_SLUG', None)
     if not slug:
         return None
-    SspProduct = apps.get_model('customer_billing', 'SspProduct')
-    product = SspProduct.objects.filter(slug=slug, is_active=True).only('stripe_price_lookup_key').first()
+    try:
+        SspProduct = apps.get_model('customer_billing', 'SspProduct')
+        product = SspProduct.objects.filter(slug=slug, is_active=True).only('stripe_price_lookup_key').first()
+    except Exception:  # pylint: disable=broad-except
+        logger.exception("Error resolving default SSP price lookup key for slug=%s", slug)
+        return None
     return getattr(product, 'stripe_price_lookup_key', None)
 
 

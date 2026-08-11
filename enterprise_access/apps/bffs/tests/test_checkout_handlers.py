@@ -224,7 +224,7 @@ class TestCheckoutContextHandler(APITest):
 
         constraints = handler._get_field_constraints()
 
-        self.assertEqual(constraints['quantity'], {'min': 5, 'max': 30})
+        self.assertEqual(constraints['quantity'], {'min': 5, 'max': 50})
 
     def test_get_field_constraints_includes_embargoed_countries(self):
         """

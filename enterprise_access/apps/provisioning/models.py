@@ -344,7 +344,7 @@ class GetCreateCatalogStep(AbstractWorkflowStep):
         if catalog_query_id is not None:
             return int(catalog_query_id)
 
-        plan_input = workflow_input.create_trial_subscription_plan_input
+        plan_input = getattr(workflow_input, 'create_trial_subscription_plan_input', None)
         ssp_slug = getattr(plan_input, 'ssp_product_slug', None)
 
         if ssp_slug:

@@ -668,8 +668,6 @@ STRIPE_WEBHOOK_ENDPOINT_SECRET = None
 # Duration of trial period.
 SSP_TRIAL_PERIOD_DAYS = 14
 
-# Placeholder Stripe products, override in prod.
-
 # Enable the customer billing API endpoints under /api/v1/customer-billing/*
 ENABLE_CUSTOMER_BILLING_API = True
 
