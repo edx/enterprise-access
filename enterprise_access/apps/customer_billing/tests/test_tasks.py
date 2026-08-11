@@ -1070,10 +1070,12 @@ class TestSendPaymentReceiptEmail(TestCase):
         self.checkout_intent.save()
 
         self.invoice_id = 'in_1SNvVOQ60jNALKNUMk8TZucs'
+        self.invoice_number = 'MYSHOP-0001'
         self.payment_intent_id = 'pi_test_payment_intent_123'
         self.payment_method_id = 'pm_test_payment_method_456'
         self.mock_invoice_data = {
             'id': self.invoice_id,
+            'number': self.invoice_number,
             'created': 1761829387,
             'payment_intent': self.payment_intent_id,  # This is a string ID, not an object
         }
@@ -1214,7 +1216,7 @@ class TestSendPaymentReceiptEmail(TestCase):
             'organization': 'Test Enterprise',
             'billing_address': '123 Test St\nSuite 100\nTest City, TS 12345\nUS',
             'enterprise_admin_portal_url': f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/test-enterprise',
-            'receipt_number': 'in_1SNvVOQ60jNALKNUMk8TZucs',
+            'receipt_number': self.invoice_number,
         }
 
         mock_braze.send_campaign_message.assert_called_once_with(
@@ -1225,6 +1227,42 @@ class TestSendPaymentReceiptEmail(TestCase):
         # ensure the actual properties are JSON-serializable
         actual_trigger_properties = mock_braze.send_campaign_message.call_args_list[0][1]['trigger_properties']
         json.dumps(actual_trigger_properties)
+
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.get_stripe_payment_method')
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.get_stripe_payment_intent')
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.format_datetime_obj')
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.BrazeApiClient')
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.LmsApiClient')
+    def test_receipt_number_falls_back_to_invoice_id_when_number_missing(
+        self, mock_lms_client, mock_braze_client, mock_format_datetime,
+        mock_get_payment_intent, mock_get_payment_method
+    ):
+        """
+        Test that receipt_number falls back to invoice_id when invoice_data has no 'number'.
+        """
+        mock_format_datetime.return_value = '03 November 2025'
+        mock_get_payment_intent.return_value = self.mock_payment_intent
+        mock_get_payment_method.return_value = self.mock_payment_method
+        mock_lms_client.return_value.get_enterprise_customer_data.return_value = {
+            'admin_users': self.mock_admin_users
+        }
+        mock_braze = mock_braze_client.return_value
+        mock_braze.create_braze_recipient.side_effect = (
+            lambda user_email, lms_user_id: {'external_id': f'braze_{lms_user_id}'}
+        )
+
+        invoice_data_without_number = dict(self.mock_invoice_data)
+        invoice_data_without_number.pop('number')
+
+        send_payment_receipt_email(
+            invoice_id=self.invoice_id,
+            invoice_data=invoice_data_without_number,
+            enterprise_customer_name=self.enterprise_customer_name,
+            enterprise_slug=self.enterprise_slug,
+        )
+
+        actual_properties = mock_braze.send_campaign_message.call_args.kwargs['trigger_properties']
+        self.assertEqual(actual_properties['receipt_number'], self.invoice_id)
 
     @mock.patch('enterprise_access.apps.customer_billing.tasks.get_stripe_payment_method')
     @mock.patch('enterprise_access.apps.customer_billing.tasks.get_stripe_payment_intent')

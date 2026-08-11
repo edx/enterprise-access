@@ -886,7 +886,7 @@ def send_payment_receipt_email(
         total_formatted=total_amount_formatted,
         customer_name=customer_name,
         billing_address=billing_address,
-        receipt_number=invoice_id,
+        receipt_number=invoice_data.get('number') or invoice_id,
     )
 
     send_campaign_message(
