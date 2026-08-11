@@ -52,6 +52,10 @@ class AssignmentActions:
     EXPIRED = 'expired'
     EXPIRED_ACKNOWLEDGED = 'expired_acknowledged'
     REVERSED = 'reversed'
+    ALLOCATED = 'allocated'
+    REALLOCATED = 'reallocated'
+    APPROVED = 'approved'
+    ERRORED = 'errored'
 
     CHOICES = (
         (LEARNER_LINKED, 'Learner linked to customer'),
@@ -63,6 +67,10 @@ class AssignmentActions:
         (EXPIRED, 'Learner assignment expired'),
         (EXPIRED_ACKNOWLEDGED, 'Learner assignment expiration acknowledged by learner'),
         (REVERSED, 'Transaction for this assignment has been reversed'),
+        (ALLOCATED, 'Content allocated to learner'),
+        (REALLOCATED, 'Content reallocated to learner'),
+        (APPROVED, 'Assignment approved'),
+        (ERRORED, 'Assignment encountered an error'),
     )
 
 
@@ -79,6 +87,48 @@ class AssignmentActionErrors:
         (EMAIL_ERROR, 'Email error'),
         (INTERNAL_API_ERROR, 'Internal API error'),
         (ENROLLMENT_ERROR, 'Enrollment error'),
+    )
+
+
+class AssignmentActorTypes:
+    """
+    Types of actors that can trigger assignment actions.
+    """
+    ADMIN = 'admin'
+    LEARNER = 'learner'
+    SYSTEM = 'system'
+
+    CHOICES = (
+        (ADMIN, 'Admin'),
+        (LEARNER, 'Learner'),
+        (SYSTEM, 'System'),
+    )
+
+
+class AssignmentSources:
+    """
+    Originating sources or channels that can trigger assignment actions.
+    """
+    ADMIN_UI_SINGLE = 'admin_ui_single'
+    ADMIN_UI_BULK_CSV = 'admin_ui_bulk_csv'
+    BROWSE_REQUEST_APPROVE = 'browse_request_approve'
+    BROWSE_REQUEST_APPROVE_ALL = 'browse_request_approve_all'
+    DJANGO_ADMIN = 'django_admin'
+    API = 'api'
+    SIGNAL = 'signal'
+    SCHEDULED_JOB = 'scheduled_job'
+    CELERY_TASK = 'celery_task'
+
+    CHOICES = (
+        (ADMIN_UI_SINGLE, 'Admin UI - single assignment'),
+        (ADMIN_UI_BULK_CSV, 'Admin UI - bulk CSV upload'),
+        (BROWSE_REQUEST_APPROVE, 'Browse and request - single approve'),
+        (BROWSE_REQUEST_APPROVE_ALL, 'Browse and request - approve all'),
+        (DJANGO_ADMIN, 'Django admin'),
+        (API, 'API'),
+        (SIGNAL, 'Django signal'),
+        (SCHEDULED_JOB, 'Scheduled job'),
+        (CELERY_TASK, 'Celery task'),
     )
 
 

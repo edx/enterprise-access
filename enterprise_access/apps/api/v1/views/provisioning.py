@@ -16,10 +16,7 @@ from enterprise_access.apps.api import serializers
 from enterprise_access.apps.api_client.license_manager_client import LicenseManagerApiClient
 from enterprise_access.apps.core import constants
 from enterprise_access.apps.customer_billing.models import CheckoutIntent
-from enterprise_access.apps.provisioning.models import (
-    GetCreateFirstPaidSubscriptionPlanStep,
-    ProvisionNewCustomerWorkflow
-)
+from enterprise_access.apps.provisioning.models import ProvisionNewCustomerWorkflow
 from enterprise_access.apps.workflow.exceptions import UnitOfWorkException
 
 logger = logging.getLogger(__name__)
@@ -132,14 +129,27 @@ class ProvisioningCreateView(PermissionRequiredMixin, generics.CreateAPIView):
             top_level_ssp_product_slug,
         )
         workflow = ProvisionNewCustomerWorkflow.objects.create(input_data=workflow_input_dict)
+        logger.info(
+            'Created ProvisionNewCustomerWorkflow (uuid=%s) for enterprise_slug=%s, admin_emails=%s',
+            workflow.uuid, customer_request_data.get('slug'), admin_emails,
+        )
 
         try:
             workflow.execute()
         except UnitOfWorkException as exc:
+            logger.exception(
+                'Provisioning workflow (uuid=%s) failed for enterprise_slug=%s: %s',
+                workflow.uuid, customer_request_data.get('slug'), exc,
+            )
             raise ProvisioningException(
                 detail=f'Error in provisioning workflow: {exc}',
                 code=exc.code,
             ) from exc
+
+        logger.info(
+            'Provisioning workflow (uuid=%s) completed successfully for enterprise_slug=%s',
+            workflow.uuid, customer_request_data.get('slug'),
+        )
 
         response_serializer = serializers.ProvisioningResponseSerializer({
             'enterprise_customer': workflow.customer_output_dict(),
@@ -180,6 +190,7 @@ class SubscriptionPlanOLIUpdateView(PermissionRequiredMixin, APIView):
         """
         serializer = serializers.SubscriptionPlanOLIUpdateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        logger.info('Received SubscriptionPlanOLIUpdate request: %s', serializer.validated_data)
 
         try:
             if serializer.validated_data.get('checkout_intent_uuid'):
@@ -191,41 +202,21 @@ class SubscriptionPlanOLIUpdateView(PermissionRequiredMixin, APIView):
             logger.error(f"CheckoutIntent not found: {kwargs}")
             raise exceptions.NotFound(f"CheckoutIntent {kwargs} not found") from exc
 
-        if not checkout_intent.workflow:
-            logger.error(f"No workflow found for CheckoutIntent {checkout_intent.uuid}")
-            raise exceptions.ValidationError(
-                f"CheckoutIntent {checkout_intent.uuid} has no associated workflow"
-            )
-
-        # Find the subscription plan step
-        subscription_steps = GetCreateFirstPaidSubscriptionPlanStep.objects.filter(
-            workflow_record_uuid=checkout_intent.workflow.uuid
-        )
-        target_product_id = settings.PROVISIONING_PAID_SUBSCRIPTION_PRODUCT_ID
-        is_trial = serializer.validated_data.get('is_trial', False)
-        if is_trial:
-            raise NotImplementedError('Modifying trial plans not supported.')
-
-        # Filter for paid plan based on input
-        subscription_plan_uuid = None
-        for step in subscription_steps:
-            if step.input_data and step.input_data['product_id'] == target_product_id:
-                if step.output_object:
-                    subscription_plan_uuid = step.output_object.uuid
-                    logger.info(
-                        f"Found subscription plan UUID {subscription_plan_uuid} via workflow "
-                        f"for CheckoutIntent {checkout_intent.uuid}"
-                    )
-                    break
-
-        if not subscription_plan_uuid:
+        renewal = checkout_intent.renewals.filter(
+            renewed_subscription_plan_uuid__isnull=False,
+        ).order_by('-effective_date').first()
+        if not renewal or not renewal.renewed_subscription_plan_uuid:
             logger.error(
-                f"No subscription plan found for CheckoutIntent {checkout_intent.uuid} "
-                f"with is_trial={is_trial}"
+                "No renewal with subscription plan found for CheckoutIntent %s", checkout_intent.uuid
             )
             raise exceptions.NotFound(
                 f"No subscription plan found for CheckoutIntent {checkout_intent.uuid}"
             )
+        subscription_plan_uuid = renewal.renewed_subscription_plan_uuid
+        logger.info(
+            "Found subscription plan UUID %s via renewal for CheckoutIntent %s",
+            subscription_plan_uuid, checkout_intent.uuid,
+        )
 
         # Call License Manager API to update the plan
         license_manager_client = LicenseManagerApiClient()
@@ -252,7 +243,7 @@ class SubscriptionPlanOLIUpdateView(PermissionRequiredMixin, APIView):
             return Response(response_serializer.data, status=status.HTTP_200_OK)
 
         except Exception as e:
-            logger.error(
+            logger.exception(
                 f"Failed to update subscription plan {subscription_plan_uuid} "
                 f"with OLI {salesforce_oli}: {str(e)}"
             )

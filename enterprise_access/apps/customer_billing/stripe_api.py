@@ -92,7 +92,24 @@ def create_subscription_checkout_session(
     if enterprise_catalog is not None:
         create_kwargs['subscription_data']['metadata']['enterprise_catalog'] = enterprise_catalog
 
-    return stripe.checkout.Session.create(**create_kwargs).to_dict()
+    logger.info(
+        'Creating Stripe subscription checkout session for lms_user_id=%s, checkout_intent_id=%s, '
+        'enterprise_slug=%s, stripe_price_id=%s',
+        lms_user_id, checkout_intent.id, input_data.get('enterprise_slug'), input_data.get('stripe_price_id'),
+    )
+    try:
+        session = stripe.checkout.Session.create(**create_kwargs).to_dict()
+    except stripe.StripeError:
+        logger.exception(
+            'Stripe error creating checkout session for lms_user_id=%s, checkout_intent_id=%s',
+            lms_user_id, checkout_intent.id,
+        )
+        raise
+    logger.info(
+        'Created Stripe checkout session %s for checkout_intent_id=%s',
+        session.get('id'), checkout_intent.id,
+    )
+    return session
 
 
 def stripe_cache(timeout=settings.DEFAULT_STRIPE_CACHE_TIMEOUT):
@@ -119,7 +136,14 @@ def stripe_cache(timeout=settings.DEFAULT_STRIPE_CACHE_TIMEOUT):
                 return cached_response.value
 
             # If not in cache, call the original function
-            result = func(resource_id, *args, **kwargs)
+            logger.info('Cache miss, calling Stripe API %s for resource_id=%s', func_name, resource_id)
+            try:
+                result = func(resource_id, *args, **kwargs)
+            except stripe.StripeError:
+                logger.exception(
+                    'Stripe error calling %s for resource_id=%s', func_name, resource_id,
+                )
+                raise
 
             # Cache the result
             if result:
@@ -129,6 +153,8 @@ def stripe_cache(timeout=settings.DEFAULT_STRIPE_CACHE_TIMEOUT):
                     django_cache_timeout=timeout,
                 )
                 logger.info(f'Cached Stripe {func_name} data for {resource_id}')
+            else:
+                logger.info(f'Stripe {func_name} returned no result for {resource_id}, not caching')
 
             return result
         return wrapper
