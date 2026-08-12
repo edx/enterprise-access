@@ -64,13 +64,26 @@ class TestGetDefaultSspPriceLookupKey(TestCase):
     """
 
     @override_settings(SSP_DEFAULT_PRODUCT_SLUG=None)
-    def test_returns_none_when_slug_not_configured(self):
-        """When SSP_DEFAULT_PRODUCT_SLUG is unset, returns None."""
-        self.assertIsNone(get_default_ssp_price_lookup_key())
+    def test_falls_back_to_first_active_product_when_slug_not_configured(self):
+        """When SSP_DEFAULT_PRODUCT_SLUG is unset, falls back to the first active SspProduct."""
+        first_active_product = SspProduct.objects.filter(is_active=True).order_by('slug').first()
+        self.assertEqual(
+            get_default_ssp_price_lookup_key(),
+            first_active_product.stripe_price_lookup_key,
+        )
 
     @override_settings(SSP_DEFAULT_PRODUCT_SLUG='does-not-exist')
-    def test_returns_none_when_no_matching_product(self):
-        """When no active SspProduct matches the configured slug, returns None."""
+    def test_falls_back_to_first_active_product_when_no_matching_product(self):
+        """When no active SspProduct matches the configured slug, falls back to the first active SspProduct."""
+        first_active_product = SspProduct.objects.filter(is_active=True).order_by('slug').first()
+        self.assertEqual(
+            get_default_ssp_price_lookup_key(),
+            first_active_product.stripe_price_lookup_key,
+        )
+
+    def test_returns_none_when_no_active_products_exist(self):
+        """When there are no active SspProducts at all, returns None."""
+        SspProduct.objects.update(is_active=False)
         self.assertIsNone(get_default_ssp_price_lookup_key())
 
     @override_settings(SSP_DEFAULT_PRODUCT_SLUG='teams-yearly')

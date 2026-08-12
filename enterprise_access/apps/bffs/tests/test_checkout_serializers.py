@@ -1,6 +1,9 @@
 from django.test import TestCase
 
-from enterprise_access.apps.bffs.checkout.serializers import CheckoutIntentMinimalResponseSerializer
+from enterprise_access.apps.bffs.checkout.serializers import (
+    CheckoutIntentMinimalResponseSerializer,
+    PricingDataSerializer
+)
 
 
 class TestCheckoutIntentMinimalResponseSerializer(TestCase):
@@ -63,3 +66,20 @@ class TestCheckoutIntentMinimalResponseSerializer(TestCase):
         serializer = CheckoutIntentMinimalResponseSerializer(data=payload)
         self.assertFalse(serializer.is_valid())
         self.assertIn('uuid', serializer.errors)   # error must be on uuid, not id
+
+
+class TestPricingDataSerializer(TestCase):
+    """
+    Unit tests for PricingDataSerializer.
+    """
+
+    def test_default_by_lookup_key_string_is_valid(self):
+        """default_by_lookup_key as a normal string must still serialize correctly."""
+        serializer = PricingDataSerializer(
+            data={'default_by_lookup_key': 'teams_subscription_license_yearly', 'prices': []}
+        )
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        self.assertEqual(
+            serializer.validated_data['default_by_lookup_key'],
+            'teams_subscription_license_yearly',
+        )
