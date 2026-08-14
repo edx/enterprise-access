@@ -3,6 +3,7 @@ Tests for the ``enterprise_access.apps.customer_billing.utils`` module.
 """
 
 import datetime
+from unittest import mock
 from uuid import uuid4
 
 from django.conf import settings
@@ -10,7 +11,12 @@ from django.test import TestCase, override_settings
 from django.utils import timezone
 
 from enterprise_access.apps.customer_billing.models import SspProduct
-from enterprise_access.apps.customer_billing.utils import datetime_from_timestamp, get_campaign_id, get_product_type
+from enterprise_access.apps.customer_billing.utils import (
+    datetime_from_timestamp,
+    get_campaign_id,
+    get_default_ssp_price_lookup_key,
+    get_product_type
+)
 
 
 class TestCustomerBillingUtils(TestCase):
@@ -50,6 +56,55 @@ class TestCustomerBillingUtils(TestCase):
         self.assertIsInstance(dt, datetime.datetime)
         self.assertTrue(timezone.is_aware(dt))
         self.assertEqual(dt.date(), expected.date())
+
+
+class TestGetDefaultSspPriceLookupKey(TestCase):
+    """
+    Tests for ``get_default_ssp_price_lookup_key``.
+    """
+
+    @override_settings(SSP_DEFAULT_PRODUCT_SLUG=None)
+    def test_falls_back_to_first_active_product_when_slug_not_configured(self):
+        """When SSP_DEFAULT_PRODUCT_SLUG is unset, falls back to the first active SspProduct."""
+        first_active_product = SspProduct.objects.filter(is_active=True).order_by('slug').first()
+        self.assertEqual(
+            get_default_ssp_price_lookup_key(),
+            first_active_product.stripe_price_lookup_key,
+        )
+
+    @override_settings(SSP_DEFAULT_PRODUCT_SLUG='does-not-exist')
+    def test_falls_back_to_first_active_product_when_no_matching_product(self):
+        """When no active SspProduct matches the configured slug, falls back to the first active SspProduct."""
+        first_active_product = SspProduct.objects.filter(is_active=True).order_by('slug').first()
+        self.assertEqual(
+            get_default_ssp_price_lookup_key(),
+            first_active_product.stripe_price_lookup_key,
+        )
+
+    def test_returns_none_when_no_active_products_exist(self):
+        """When there are no active SspProducts at all, returns None."""
+        SspProduct.objects.update(is_active=False)
+        self.assertIsNone(get_default_ssp_price_lookup_key())
+
+    @override_settings(SSP_DEFAULT_PRODUCT_SLUG='teams-yearly')
+    def test_returns_lookup_key_for_matching_product(self):
+        """
+        When an active SspProduct matches the configured slug, returns its lookup key.
+        Relies on the 'teams-yearly' SspProduct backfilled via SSP_PRODUCT_BACKFILL_DATA.
+        """
+        self.assertEqual(
+            get_default_ssp_price_lookup_key(),
+            'teams_subscription_license_yearly',
+        )
+
+    @override_settings(SSP_DEFAULT_PRODUCT_SLUG='teams-yearly')
+    def test_returns_none_on_lookup_error(self):
+        """When resolving the SspProduct raises, returns None instead of propagating."""
+        with mock.patch(
+            'enterprise_access.apps.customer_billing.utils.apps.get_model',
+            side_effect=LookupError('boom'),
+        ):
+            self.assertIsNone(get_default_ssp_price_lookup_key())
 
 
 class TestGetProductType(TestCase):

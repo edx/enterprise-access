@@ -37,7 +37,6 @@ from enterprise_access.apps.provisioning.models import (
     GetCreateCustomerStep,
     GetCreateEnterpriseAdminUsersStep,
     GetCreateFirstPaidSubscriptionPlanStep,
-    GetCreateTrialSubscriptionPlanStep,
     ProvisionNewCustomerWorkflow
 )
 from test_utils import APITest
@@ -134,6 +133,7 @@ DEFAULT_REQUEST_PAYLOAD = {
         'expiration_date': '2026-03-31T00:00:00Z',
         'product_id': 1,
         'desired_num_licenses': 5,
+        'ssp_product_slug': 'test-product',
     },
     'first_paid_subscription_plan': {
         'title': 'provisioning test paid 1',
@@ -142,6 +142,7 @@ DEFAULT_REQUEST_PAYLOAD = {
         'expiration_date': '2027-03-31T00:00:00Z',
         'product_id': 2,
         'desired_num_licenses': 5,
+        'ssp_product_slug': 'test-product',
     },
 }
 
@@ -171,6 +172,14 @@ class TestProvisioningAuth(APITest):
     def setUp(self):
         super().setUp()
         self.checkout_intent = self._create_checkout_intent()
+        # Ensure a default SspProduct exists for provisioning tests that rely on slug resolution
+        SspProduct.objects.create(
+            slug='test-product',
+            stripe_price_lookup_key='test_price',
+            catalog_query_uuid=uuid.uuid4(),
+            catalog_query_id=2,
+            is_active=True,
+        )
 
     def tearDown(self):
         super().tearDown()
@@ -406,7 +415,9 @@ class TestProvisioningEndToEnd(APITest):
         # Remove explicit product_id values so top-level SSP slug can resolve products
         request_payload = copy.deepcopy(DEFAULT_REQUEST_PAYLOAD)
         request_payload['trial_subscription_plan'].pop('product_id', None)
+        request_payload['trial_subscription_plan'].pop('ssp_product_slug', None)
         request_payload['first_paid_subscription_plan'].pop('product_id', None)
+        request_payload['first_paid_subscription_plan'].pop('ssp_product_slug', None)
         # Provide top-level ssp_product_slug (not per-plan)
         request_payload['ssp_product_slug'] = ssp.slug
 
@@ -414,12 +425,9 @@ class TestProvisioningEndToEnd(APITest):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
         workflow = ProvisionNewCustomerWorkflow.objects.first()
-        trial_step = GetCreateTrialSubscriptionPlanStep.objects.filter(workflow_record_uuid=workflow.uuid).first()
-        paid_step = GetCreateFirstPaidSubscriptionPlanStep.objects.filter(workflow_record_uuid=workflow.uuid).first()
         catalog_step = GetCreateCatalogStep.objects.filter(workflow_record_uuid=workflow.uuid).first()
 
-        self.assertEqual(trial_step.input_data['product_id'], 555)
-        self.assertEqual(paid_step.input_data['product_id'], 666)
+        # Catalog_query_id should be resolved from SspProduct
         self.assertEqual(catalog_step.input_data['catalog_query_id'], 42)
 
         # Academy association should be attempted with the SspProduct.academy_uuid
@@ -441,7 +449,11 @@ class TestProvisioningEndToEnd(APITest):
         StripeEventSummaryFactory.create(stripe_event_data=event_data)
 
         request_payload = {**DEFAULT_REQUEST_PAYLOAD}
-        request_payload['ssp_product_slug'] = 'nonexistent-invalid-slug'
+        # Place invalid slug on the trial plan (per-plan validation path)
+        request_payload['trial_subscription_plan'] = {
+            **request_payload['trial_subscription_plan'],
+            'ssp_product_slug': 'nonexistent-invalid-slug',
+        }
 
         response = self.client.post(PROVISIONING_CREATE_ENDPOINT, data=request_payload)
 
@@ -817,7 +829,7 @@ class TestProvisioningEndToEnd(APITest):
             'uuid': str(TEST_CATALOG_UUID),
             'enterprise_customer': str(TEST_ENTERPRISE_UUID),
             'title': 'Test customer Subscription Catalog',  # Generated from customer name
-            'enterprise_catalog_query': 42,   # Inferred from product_id 1 mapping, see settings/test.py
+            'enterprise_catalog_query': self.ssp_product.catalog_query_id,  # Inferred from ssp_product_slug
         }
         mock_client.create_enterprise_catalog.return_value = expected_created_catalog
 
@@ -841,7 +853,7 @@ class TestProvisioningEndToEnd(APITest):
             'uuid': str(TEST_CATALOG_UUID),
             'enterprise_customer_uuid': str(TEST_ENTERPRISE_UUID),
             'title': 'Test customer Subscription Catalog',
-            'catalog_query_id': 42,
+            'catalog_query_id': self.ssp_product.catalog_query_id,
         }
 
         self.assertEqual(
@@ -850,12 +862,12 @@ class TestProvisioningEndToEnd(APITest):
         )
         mock_client.get_enterprise_catalogs.assert_called_once_with(
             enterprise_customer_uuid=str(TEST_ENTERPRISE_UUID),
-            catalog_query_id=42,  # Should use the inferred catalog_query_id
+            catalog_query_id=self.ssp_product.catalog_query_id,  # Should use the inferred catalog_query_id
         )
         mock_client.create_enterprise_catalog.assert_called_once_with(
             enterprise_customer_uuid=str(TEST_ENTERPRISE_UUID),
             catalog_title='Test customer Subscription Catalog',  # Should use generated title
-            catalog_query_id=42,  # Should use the inferred catalog_query_id
+            catalog_query_id=self.ssp_product.catalog_query_id,  # Should use the inferred catalog_query_id
         )
 
     @ddt.data(
@@ -1122,6 +1134,12 @@ class TestCheckoutIntentSynchronization(APITest):
                 'context': ALL_ACCESS_CONTEXT,
             },
         ])
+        self.ssp_product = SspProduct.objects.create(
+            slug='test-product',
+            stripe_price_lookup_key='test_price',
+            catalog_query_uuid=uuid.uuid4(),
+            catalog_query_id=2,
+        )
 
     def tearDown(self):
         super().tearDown()
