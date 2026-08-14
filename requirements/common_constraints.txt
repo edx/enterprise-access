@@ -25,3 +25,4 @@ elasticsearch<7.14.0
 # Tracking issue: https://github.com/openedx/edx-drf-extensions/issues/561
 social-auth-app-django<6.0.0
 social-auth-core<5.0.0
+
