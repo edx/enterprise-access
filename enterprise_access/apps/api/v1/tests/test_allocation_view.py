@@ -15,6 +15,7 @@ from rest_framework.serializers import ValidationError
 
 from enterprise_access.apps.content_assignments.constants import (
     NUM_DAYS_BEFORE_AUTO_EXPIRATION,
+    AssignmentActions,
     AssignmentAutomaticExpiredReason,
     AssignmentSources,
     LearnerContentAssignmentStateChoices
@@ -819,7 +820,6 @@ class TestSubsidyAccessPolicyAllocationEndToEnd(APITestWithMocks):
             'state': LearnerContentAssignmentStateChoices.ALLOCATED,
             'transaction_uuid': None,
             'uuid': str(foo_record.uuid),
-            'actions': [],
             'earliest_possible_expiration': {
                 'date': (
                     foo_record.allocated_at + timedelta(days=NUM_DAYS_BEFORE_AUTO_EXPIRATION)
@@ -827,7 +827,14 @@ class TestSubsidyAccessPolicyAllocationEndToEnd(APITestWithMocks):
                 'reason': AssignmentAutomaticExpiredReason.NINETY_DAYS_PASSED
             }
         }]
-        self.assertEqual(response_payload['created'], expected_created_records)
+        created_records = response_payload['created']
+        self.assertEqual(len(created_records), 1)
+        created_actions = created_records[0].pop('actions')
+        self.assertEqual(created_records, expected_created_records)
+        self.assertEqual(len(created_actions), 1)
+        self.assertEqual(created_actions[0]['action_type'], AssignmentActions.ALLOCATED)
+        self.assertIsNone(created_actions[0]['error_reason'])
+        self.assertIsNotNone(created_actions[0]['completed_at'])
 
         canceled_record = allocation_records_by_email['canceled@foo.com']
         expired_record = allocation_records_by_email['expired@foo.com']
@@ -844,7 +851,6 @@ class TestSubsidyAccessPolicyAllocationEndToEnd(APITestWithMocks):
                 'state': LearnerContentAssignmentStateChoices.ALLOCATED,
                 'transaction_uuid': None,
                 'uuid': str(canceled_record.uuid),
-                'actions': [],
                 'earliest_possible_expiration': {
                     'date': (
                         canceled_record.allocated_at + timedelta(days=NUM_DAYS_BEFORE_AUTO_EXPIRATION)
@@ -864,7 +870,6 @@ class TestSubsidyAccessPolicyAllocationEndToEnd(APITestWithMocks):
                 'state': LearnerContentAssignmentStateChoices.ALLOCATED,
                 'transaction_uuid': None,
                 'uuid': str(expired_record.uuid),
-                'actions': [],
                 'earliest_possible_expiration': {
                     'date': (
                         expired_record.allocated_at + timedelta(days=NUM_DAYS_BEFORE_AUTO_EXPIRATION)
@@ -873,10 +878,14 @@ class TestSubsidyAccessPolicyAllocationEndToEnd(APITestWithMocks):
                 }
             }
         ]
-        self.assertEqual(
-            sorted(response_payload['updated'], key=itemgetter('uuid')),
-            sorted(expected_updated_records, key=itemgetter('uuid')),
-        )
+        updated_records = sorted(response_payload['updated'], key=itemgetter('uuid'))
+        updated_actions = [record.pop('actions') for record in updated_records]
+        self.assertEqual(updated_records, sorted(expected_updated_records, key=itemgetter('uuid')))
+        for actions in updated_actions:
+            self.assertEqual(len(actions), 1)
+            self.assertEqual(actions[0]['action_type'], AssignmentActions.REALLOCATED)
+            self.assertIsNone(actions[0]['error_reason'])
+            self.assertIsNotNone(actions[0]['completed_at'])
 
         mock_is_subsidy_active.assert_called_once_with()  # No args for PropertyMock
         mock_catalog_inclusion.assert_called_once_with(self.assigned_learner_credit_policy, self.content_key)

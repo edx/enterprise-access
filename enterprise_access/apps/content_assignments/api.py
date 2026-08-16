@@ -80,15 +80,15 @@ def _inexact_email_filter(emails, field_name='email'):
     return email_filter
 
 
-def _create_assignment_action(
+def _build_action_obj(
     assignment,
     action_type,
     actor_lms_user_id,
     source,
     correlation_id,
+    policy,
 ):
-    """Persist a single audit action row for the given assignment."""
-    policy = assignment.assignment_configuration.policy
+    """Return an unsaved LearnerContentAssignmentAction instance."""
     metadata = {
         'correlation_id': correlation_id,
         'allocation_batch_id': str(assignment.allocation_batch_id),
@@ -100,13 +100,13 @@ def _create_assignment_action(
         # Some test/setup paths allocate before a policy relation exists on the configuration.
         metadata['policy_or_config_uuid'] = str(assignment.assignment_configuration.uuid)
 
-    return LearnerContentAssignmentAction.objects.create(
+    return LearnerContentAssignmentAction(
         assignment=assignment,
         action_type=action_type,
         completed_at=timezone.now(),
         error_reason=None,
         actor_lms_user_id=actor_lms_user_id,
-        actor_type=AssignmentActorTypes.ADMIN,
+        actor_type=AssignmentActorTypes.ADMIN if actor_lms_user_id is not None else AssignmentActorTypes.SYSTEM,
         source=source,
         enterprise_customer_uuid=assignment.assignment_configuration.enterprise_customer_uuid,
         learner_lms_user_id=assignment.lms_user_id,
@@ -175,11 +175,44 @@ def _process_existing_assignments(
 def _write_allocation_audit_actions(
     reallocated_assignments, created_assignments, actor_lms_user_id, source, correlation_id,
 ):
-    """Write REALLOCATED and ALLOCATED audit rows for a completed allocation batch."""
+    """
+    Write REALLOCATED and ALLOCATED audit rows for a completed allocation batch.
+
+    Must be called before any prefetch_related('actions') on these assignments
+    to ensure the prefetch cache is not stale.
+    """
+    all_assignments = list(reallocated_assignments) + list(created_assignments)
+    if not all_assignments:
+        return
+
+    # Resolve policy once to avoid N+1 reverse OneToOne traversal per row.
+    policy = all_assignments[0].assignment_configuration.policy
+    actions = []
+
     for assignment in reallocated_assignments:
-        _create_assignment_action(assignment, AssignmentActions.REALLOCATED, actor_lms_user_id, source, correlation_id)
+        actions.append(
+            _build_action_obj(
+                assignment,
+                AssignmentActions.REALLOCATED,
+                actor_lms_user_id,
+                source,
+                correlation_id,
+                policy,
+            )
+        )
     for assignment in created_assignments:
-        _create_assignment_action(assignment, AssignmentActions.ALLOCATED, actor_lms_user_id, source, correlation_id)
+        actions.append(
+            _build_action_obj(
+                assignment,
+                AssignmentActions.ALLOCATED,
+                actor_lms_user_id,
+                source,
+                correlation_id,
+                policy,
+            )
+        )
+
+    LearnerContentAssignmentAction.objects.bulk_create(actions)
 
 
 def create_assignment_configuration(enterprise_customer_uuid, **kwargs):
@@ -460,8 +493,8 @@ def allocate_assignments(
     )
 
     with transaction.atomic():
-        # Bulk update and get a list of refreshed objects
-        updated_assignments = _update_and_refresh_assignments(
+        # 1) Bulk update existing assignments.
+        LearnerContentAssignment.bulk_update(
             existing_assignments_needs_update,
             ASSIGNMENT_REALLOCATION_FIELDS,
         )
@@ -472,7 +505,7 @@ def allocate_assignments(
             if email.lower() not in learner_emails_with_existing_assignments
         }
 
-        # Initialize and save LearnerContentAssignment instances for each of them
+        # 2) Bulk create new assignments without prefetching actions yet.
         created_assignments = _create_new_assignments(
             assignment_configuration,
             learner_emails_for_assignment_creation,
@@ -481,10 +514,24 @@ def allocate_assignments(
             lms_user_ids_by_email,
             allocation_batch_id,
             admin_lms_user_id,
+            prefetch_actions=False,
         )
 
+        # 3) Write audit rows before any prefetch_related('actions') call.
         _write_allocation_audit_actions(
             reallocated_assignments, created_assignments, actor_lms_user_id, source, correlation_id,
+        )
+
+        # 4) Refresh with prefetch so returned assignments include fresh action rows in cache.
+        updated_assignments = list(
+            LearnerContentAssignment.objects.prefetch_related('actions').filter(
+                uuid__in=[record.uuid for record in existing_assignments_needs_update],
+            )
+        )
+        created_assignments = list(
+            LearnerContentAssignment.objects.prefetch_related('actions').filter(
+                uuid__in=[record.uuid for record in created_assignments],
+            )
         )
 
     # Enqueue an asynchronous task to link assigned learners to the customer
@@ -864,6 +911,7 @@ def _create_new_assignments(
     lms_user_ids_by_email,
     allocation_batch_id,
     admin_lms_user_id=None,
+    prefetch_actions=True,
 ):
     """
     Helper to bulk save new LearnerContentAssignment instances.
@@ -908,6 +956,9 @@ def _create_new_assignments(
 
     # Do the bulk creation to save these records
     created_assignments = LearnerContentAssignment.bulk_create(assignments_to_create)
+
+    if not prefetch_actions:
+        return created_assignments
 
     # Return a list of refreshed objects that we just created, along with their prefetched action records
     return list(

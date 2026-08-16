@@ -374,6 +374,10 @@ class TestAssignmentAllocationAndCancellation(TestCase):
     @mock.patch('enterprise_access.apps.content_assignments.api.send_email_for_new_assignment')
     @mock.patch('enterprise_access.apps.content_assignments.api.create_pending_enterprise_learner_for_assignment_task')
     @mock.patch(
+        'enterprise_access.apps.content_assignments.api.LearnerContentAssignmentAction.objects.bulk_create',
+        wraps=LearnerContentAssignmentAction.objects.bulk_create,
+    )
+    @mock.patch(
         'enterprise_access.apps.content_assignments.api.get_and_cache_content_metadata',
         return_value=mock.MagicMock(),
     )
@@ -385,6 +389,7 @@ class TestAssignmentAllocationAndCancellation(TestCase):
     def test_allocate_assignments_happy_path(
         self,
         mock_get_and_cache_content_metadata,
+        mock_bulk_create,
         mock_pending_learner_task,
         mock_new_assignment_email_task,
         is_assigned_course_run,
@@ -705,6 +710,25 @@ class TestAssignmentAllocationAndCancellation(TestCase):
         self.assertNotIn('policy_uuid', created_action.metadata)
         self.assertEqual(created_action.metadata['state_after'], created_assignment.state)
 
+        mock_bulk_create.assert_called_once()
+        created_action_rows = mock_bulk_create.call_args[0][0]
+        self.assertEqual(
+            len(created_action_rows),
+            len(expected_reallocated_assignments) + len(allocation_results['created'])
+        )
+
+        prefetched_created_actions = list(created_assignment.actions.all())
+        self.assertEqual(len(prefetched_created_actions), 1)
+        self.assertEqual(prefetched_created_actions[0].action_type, AssignmentActions.ALLOCATED)
+
+        reallocated_assignment_by_uuid = {
+            assignment.uuid: assignment for assignment in allocation_results['updated']
+        }
+        sample_reallocated_assignment = reallocated_assignment_by_uuid[cancelled_assignment.uuid]
+        prefetched_reallocated_actions = list(sample_reallocated_assignment.actions.all())
+        self.assertEqual(len(prefetched_reallocated_actions), 1)
+        self.assertEqual(prefetched_reallocated_actions[0].action_type, AssignmentActions.REALLOCATED)
+
         # Assert that an async task was enqueued for each of the updated and created assignments
         mock_pending_learner_task.delay.assert_has_calls([
             mock.call(assignment.uuid) for assignment in
@@ -732,12 +756,17 @@ class TestAssignmentAllocationAndCancellation(TestCase):
         'enterprise_access.apps.content_assignments.api.create_pending_enterprise_learner_for_assignment_task'
     )
     @mock.patch(
+        'enterprise_access.apps.content_assignments.api.LearnerContentAssignmentAction.objects.bulk_create',
+        wraps=LearnerContentAssignmentAction.objects.bulk_create,
+    )
+    @mock.patch(
         'enterprise_access.apps.content_assignments.api.get_and_cache_content_metadata',
         return_value=mock.MagicMock(),
     )
     def test_allocate_assignments_audit_policy_uuid_when_policy_exists(
         self,
         mock_get_and_cache_content_metadata,
+        mock_bulk_create,
         _mock_pending_learner_task,
         _mock_new_assignment_email_task,
     ):
@@ -771,8 +800,27 @@ class TestAssignmentAllocationAndCancellation(TestCase):
         self.assertEqual(action.action_type, AssignmentActions.ALLOCATED)
         self.assertIsNotNone(action.completed_at)
         self.assertIsNone(action.error_reason)
+        self.assertEqual(action.actor_type, AssignmentActorTypes.ADMIN)
+        self.assertEqual(action.actor_lms_user_id, 3)
         self.assertEqual(action.metadata['policy_uuid'], str(policy.uuid))
         self.assertNotIn('policy_or_config_uuid', action.metadata)
+
+        mock_bulk_create.assert_called_once()
+        self.assertEqual(len(mock_bulk_create.call_args[0][0]), 1)
+
+        with self.captureOnCommitCallbacks(execute=True):
+            system_results = allocate_assignments(
+                assignment_configuration,
+                ['system-actor@example.com'],
+                content_key,
+                content_price_cents,
+                admin_lms_user_id=None,
+            )
+
+        system_assignment = system_results['created'][0]
+        system_action = LearnerContentAssignmentAction.objects.get(assignment=system_assignment)
+        self.assertEqual(system_action.actor_type, AssignmentActorTypes.SYSTEM)
+        self.assertIsNone(system_action.actor_lms_user_id)
 
     @mock.patch('enterprise_access.apps.content_assignments.api.send_email_for_new_assignment')
     @mock.patch(
