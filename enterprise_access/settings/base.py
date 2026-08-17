@@ -642,16 +642,6 @@ PROVISIONING_DEFAULTS = {
     },
 }
 
-# Add a mapping from product_id to catalog_query_id
-# we type the keys as strings instead of ints and have related
-# code look up by str(the_value) to avoid any complications
-# with loading environment settings from yaml, where the keys
-# may *always* be safely-loaded as strings.
-PRODUCT_ID_TO_CATALOG_QUERY_ID_MAPPING = {
-    '1': 1,  # Product 1 maps to catalog query 1
-    '2': 2,
-    # Add more mappings as needed
-}
 PROVISIONING_PAID_SUBSCRIPTION_PRODUCT_ID = 1
 PROVISIONING_TRIAL_SUBSCRIPTION_PRODUCT_ID = 2
 
@@ -678,27 +668,12 @@ STRIPE_WEBHOOK_ENDPOINT_SECRET = None
 # Duration of trial period.
 SSP_TRIAL_PERIOD_DAYS = 14
 
-# Placeholder Stripe products, override in prod.
-SSP_PRODUCTS = {
-    'quarterly_license_plan': {
-        'stripe_price_id': 'price_1234_replace-me',  # DEPRECATED: Use lookup_key instead
-        'lookup_key': 'teams_subscription_license_quarterly',
-        'quantity_range': (5, 30),
-    },
-    'yearly_license_plan': {
-        'stripe_price_id': 'price_9876_replace-me',  # DEPRECATED: Use lookup_key instead
-        'lookup_key': 'teams_subscription_license_yearly',
-        'quantity_range': (5, 30),
-    },
-}
-
 # Enable the customer billing API endpoints under /api/v1/customer-billing/*
 ENABLE_CUSTOMER_BILLING_API = True
 
 # Enable the billing management API endpoints under /api/v1/billing-management/*
 ENABLE_BILLING_MANAGEMENT_API = False
 
-DEFAULT_SSP_PRICE_LOOKUP_KEY = 'teams_subscription_license_yearly'
 DEFAULT_SSP_QUANTITY_RANGE = [5, 50]
 # Default SSP product slug assigned to new CheckoutIntent records when no product is specified.
 # Override this in environment-specific settings to change the default product.

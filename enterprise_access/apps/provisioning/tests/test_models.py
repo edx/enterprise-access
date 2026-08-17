@@ -670,13 +670,49 @@ class TestGetCreateCatalogStepCatalogQueryId(TestCase):
             workflow_record_uuid=self.workflow.uuid,
             input_data={},
         )
-        self.assertTrue(settings.PRODUCT_ID_TO_CATALOG_QUERY_ID_MAPPING)
-        product_id, expected_catalog_query_id = next(iter(settings.PRODUCT_ID_TO_CATALOG_QUERY_ID_MAPPING.items()))
+        # Create an SspProduct that maps the slug to a catalog_query_id
+        ssp_slug = 'test-slug'
+        expected_catalog_query_id = 42
+        SspProduct.objects.create(
+            slug=ssp_slug,
+            stripe_price_lookup_key='test-lookup',
+            catalog_query_id=expected_catalog_query_id,
+            catalog_query_uuid='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+            license_manager_product_id_paid=None,
+            license_manager_product_id_trial=None,
+            is_active=True,
+        )
         workflow_input = mock.Mock()
-        workflow_input.create_trial_subscription_plan_input = mock.Mock(product_id=product_id)
+        workflow_input.create_trial_subscription_plan_input = mock.Mock(ssp_product_slug=ssp_slug)
         # pylint: disable=protected-access
         result = step._get_catalog_query_id(workflow_input)
         self.assertEqual(result, expected_catalog_query_id)
+
+    def test_catalog_query_id_unresolvable_slug_raises(self):
+        """When ssp_product_slug does not resolve to an active SspProduct, raise."""
+        step = GetCreateCatalogStep.objects.create(
+            workflow_record_uuid=self.workflow.uuid,
+            input_data={},
+        )
+        workflow_input = mock.Mock()
+        workflow_input.create_trial_subscription_plan_input = mock.Mock(
+            ssp_product_slug='nonexistent-slug',
+        )
+        # pylint: disable=protected-access
+        with self.assertRaises(prov_models.CreateCatalogStepException):
+            step._get_catalog_query_id(workflow_input)
+
+    def test_catalog_query_id_missing_slug_raises(self):
+        """When neither catalog_query_id nor ssp_product_slug are provided, raise."""
+        step = GetCreateCatalogStep.objects.create(
+            workflow_record_uuid=self.workflow.uuid,
+            input_data={},
+        )
+        workflow_input = mock.Mock()
+        workflow_input.create_trial_subscription_plan_input = mock.Mock(ssp_product_slug=None)
+        # pylint: disable=protected-access
+        with self.assertRaises(prov_models.CreateCatalogStepException):
+            step._get_catalog_query_id(workflow_input)
 
 
 @ddt.ddt
