@@ -16,6 +16,7 @@ from django.test import TestCase
 from enterprise_access.apps.content_assignments.constants import (
     AssignmentActionErrors,
     AssignmentActions,
+    AssignmentSources,
     LearnerContentAssignmentStateChoices
 )
 from enterprise_access.apps.content_assignments.models import AssignmentConfiguration
@@ -1247,7 +1248,10 @@ class SubsidyAccessPolicyTests(MockPolicyDependenciesMixin, TestCase):
             # assert that the assignments_api.allocate_assignment_for_requests was called with correct parameters
             self.mock_assignments_api.allocate_assignment_for_requests.assert_called_once_with(
                 assignment_configuration,
-                [mock_request]
+                [mock_request],
+                actor_lms_user_id=None,
+                source=AssignmentSources.API,
+                correlation_id=None,
             )
 
 

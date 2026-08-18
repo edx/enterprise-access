@@ -9,6 +9,8 @@ import ddt
 from django.db import DatabaseError
 from django.test import TestCase
 
+from enterprise_access.apps.content_assignments.constants import AssignmentActions, AssignmentSources
+from enterprise_access.apps.content_assignments.models import LearnerContentAssignmentAction
 from enterprise_access.apps.content_assignments.tests.factories import (
     AssignmentConfigurationFactory,
     LearnerContentAssignmentFactory
@@ -408,7 +410,8 @@ class TestApproveLearnerCreditRequests(TestCase):
         self.assertEqual(len(result['failed_approval']), failed_count)
         self.assertIsNone(result['error_message'])
 
-        # Approved requests: state updated, success action created
+        # Approved requests: state updated, success action created, and a corresponding
+        # `approved` LearnerContentAssignmentAction row attributed to the reviewer.
         for req in result['approved']:
             req.refresh_from_db()
             self.assertEqual(req.state, SubsidyRequestStates.APPROVED)
@@ -418,6 +421,12 @@ class TestApproveLearnerCreditRequests(TestCase):
                 recent_action=get_action_choice(SubsidyRequestStates.APPROVED),
                 status=get_user_message_choice(SubsidyRequestStates.APPROVED),
             ).exists())
+            assignment_action = LearnerContentAssignmentAction.objects.get(
+                assignment=req.assignment,
+                action_type=AssignmentActions.APPROVED,
+            )
+            self.assertEqual(assignment_action.actor_lms_user_id, self.reviewer.lms_user_id)
+            self.assertEqual(assignment_action.metadata['request_uuid'], str(req.uuid))
 
         # Failed requests: error action, state unchanged
         for req in result['failed_approval']:
@@ -430,6 +439,45 @@ class TestApproveLearnerCreditRequests(TestCase):
 
         # Notifications only for approved
         self.assertEqual(mock_approve_task.delay.call_count, approved_count)
+
+    @mock.patch('enterprise_access.apps.subsidy_request.api.send_learner_credit_bnr_request_approve_task')
+    @mock.patch('enterprise_access.apps.subsidy_request.api.validate_and_allocate')
+    @mock.patch('enterprise_access.apps.subsidy_request.api.get_policy_for_approval')
+    def test_bulk_approval_shares_correlation_id_across_approved_actions(
+        self, mock_get_policy, mock_validate, _mock_approve_task,
+    ):
+        """A bulk approve-all call writes one `approved` action row per approved request,
+        all sharing the same caller-supplied correlation_id."""
+        mock_get_policy.return_value = self.mock_policy
+        requests = [self._create_request() for _ in range(2)]
+        mock_validate.return_value = self._build_approval_result(requests, approved_count=2)
+        correlation_id = str(uuid4())
+
+        with self.captureOnCommitCallbacks(execute=True):
+            result = subsidy_request_api.approve_learner_credit_requests(
+                requests,
+                policy_uuid=str(self.policy_uuid),
+                reviewer=self.reviewer,
+                source=AssignmentSources.BROWSE_REQUEST_APPROVE_ALL,
+                correlation_id=correlation_id,
+            )
+
+        self.assertEqual(len(result['approved']), 2)
+        for approved_request in result['approved']:
+            action = LearnerContentAssignmentAction.objects.get(
+                assignment=approved_request.assignment,
+                action_type=AssignmentActions.APPROVED,
+            )
+            self.assertEqual(action.metadata['correlation_id'], correlation_id)
+            self.assertEqual(action.actor_lms_user_id, self.reviewer.lms_user_id)
+            self.assertEqual(action.source, AssignmentSources.BROWSE_REQUEST_APPROVE_ALL)
+
+        # validate_and_allocate is called with the same actor/source/correlation_id.
+        mock_validate.assert_called_once()
+        _, call_kwargs = mock_validate.call_args
+        self.assertEqual(call_kwargs['actor_lms_user_id'], self.reviewer.lms_user_id)
+        self.assertEqual(call_kwargs['source'], AssignmentSources.BROWSE_REQUEST_APPROVE_ALL)
+        self.assertEqual(call_kwargs['correlation_id'], correlation_id)
 
     @mock.patch('enterprise_access.apps.subsidy_request.api.send_learner_credit_bnr_request_approve_task')
     @mock.patch('enterprise_access.apps.subsidy_request.api.validate_and_allocate')

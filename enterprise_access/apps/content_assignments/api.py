@@ -573,9 +573,46 @@ def _do_async_tasks_after_assignment_writes(updated_assignments, created_assignm
             logger.info(f'Automated Email {(assignment.uuid)} Failed.')
 
 
+def create_assignment_action(
+    assignment,
+    action_type,
+    actor_lms_user_id,
+    source,
+    correlation_id=None,
+    extra_metadata=None,
+):
+    """
+    Persists a single audit action row for the given assignment.
+    """
+    policy = assignment.assignment_configuration.policy
+    metadata = {
+        'correlation_id': correlation_id,
+        'allocation_batch_id': str(assignment.allocation_batch_id) if assignment.allocation_batch_id else None,
+        'policy_uuid': str(policy.uuid) if policy else None,
+        'state_after': assignment.state,
+    }
+    if extra_metadata:
+        metadata.update(extra_metadata)
+
+    return LearnerContentAssignmentAction.objects.create(
+        assignment=assignment,
+        action_type=action_type,
+        actor_lms_user_id=actor_lms_user_id,
+        actor_type=AssignmentActorTypes.ADMIN,
+        source=source,
+        enterprise_customer_uuid=assignment.assignment_configuration.enterprise_customer_uuid,
+        learner_lms_user_id=assignment.lms_user_id,
+        learner_email=assignment.learner_email,
+        metadata=metadata,
+    )
+
+
 def allocate_assignment_for_requests(
     assignment_configuration,
     learner_credit_requests,
+    actor_lms_user_id=None,
+    source=AssignmentSources.API,
+    correlation_id=None,
 ):
     """
     Creates or reallocates LearnerContentAssignment records in bulk for a batch
@@ -584,6 +621,8 @@ def allocate_assignment_for_requests(
     Args:
         assignment_configuration (AssignmentConfiguration): The config to use.
         learner_credit_requests (list[LearnerCreditRequest]): The requests to process.
+        actor_lms_user_id, source, correlation_id: recorded on the resulting
+            ``allocated``/``reallocated`` ``LearnerContentAssignmentAction`` audit rows.
 
     Returns:
         dict: A map of {request.uuid: assignment_object}.
@@ -644,16 +683,35 @@ def allocate_assignment_for_requests(
             metadata_by_key
         )
 
-    # Map all affected assignments back to their original requests
-    all_affected_assignments = list(updated_assignments) + created_assignments
-    assignments_by_learner_and_course = {
-        (asg.lms_user_id, asg.content_key): asg for asg in all_affected_assignments
-    }
+        # Map all affected assignments back to their original requests
+        all_affected_assignments = list(updated_assignments) + created_assignments
+        assignments_by_learner_and_course = {
+            (asg.lms_user_id, asg.content_key): asg for asg in all_affected_assignments
+        }
 
-    request_to_assignment_map = {
-        req.uuid: assignments_by_learner_and_course.get((req.user.lms_user_id, req.course_id))
-        for req in learner_credit_requests
-    }
+        request_to_assignment_map = {
+            req.uuid: assignments_by_learner_and_course.get((req.user.lms_user_id, req.course_id))
+            for req in learner_credit_requests
+        }
+
+        reallocated_uuids = {asg.uuid for asg in updated_assignments}
+        for request in learner_credit_requests:
+            assignment = request_to_assignment_map.get(request.uuid)
+            if not assignment:
+                continue
+            action_type = (
+                AssignmentActions.REALLOCATED if assignment.uuid in reallocated_uuids
+                else AssignmentActions.ALLOCATED
+            )
+            create_assignment_action(
+                assignment,
+                action_type=action_type,
+                actor_lms_user_id=actor_lms_user_id,
+                source=source,
+                correlation_id=correlation_id,
+                extra_metadata={'request_uuid': str(request.uuid)},
+            )
+
     return request_to_assignment_map
 
 

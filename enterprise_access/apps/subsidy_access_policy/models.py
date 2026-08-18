@@ -22,7 +22,7 @@ from simple_history.models import HistoricalRecords
 
 from enterprise_access.apps.api_client.lms_client import LmsApiClient
 from enterprise_access.apps.content_assignments import api as assignments_api
-from enterprise_access.apps.content_assignments.constants import LearnerContentAssignmentStateChoices
+from enterprise_access.apps.content_assignments.constants import AssignmentSources, LearnerContentAssignmentStateChoices
 from enterprise_access.apps.content_metadata.api import (
     get_and_cache_catalog_content_metadata,
     get_canonical_content_price_from_metadata
@@ -806,7 +806,13 @@ class SubsidyAccessPolicy(TimeStampedModel):
             }
         return self.assignment_request_can_allocate(learner_credit_requests)
 
-    def approve(self, learner_credit_requests):
+    def approve(
+        self,
+        learner_credit_requests,
+        actor_lms_user_id=None,
+        source=AssignmentSources.API,
+        correlation_id=None,
+    ):
         """
         Approves a batch of learner credit requests by allocating assignments for them.
 
@@ -815,6 +821,8 @@ class SubsidyAccessPolicy(TimeStampedModel):
         Args:
             learner_credit_requests (list[LearnerCreditRequest]): A list of valid
                 requests to be approved.
+            actor_lms_user_id, source, correlation_id: passed through to the resulting
+                ``LearnerContentAssignmentAction`` audit rows.
 
         Returns:
             dict: A map of {request.uuid: assignment_object} for all created or
@@ -823,7 +831,10 @@ class SubsidyAccessPolicy(TimeStampedModel):
         # To approve a learner credit request, we need to allocate an assignment and link it to the request.
         return assignments_api.allocate_assignment_for_requests(
             self.assignment_configuration,
-            learner_credit_requests
+            learner_credit_requests,
+            actor_lms_user_id=actor_lms_user_id,
+            source=source,
+            correlation_id=correlation_id,
         )
 
     def can_redeem(
