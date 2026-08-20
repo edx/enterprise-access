@@ -151,6 +151,7 @@ class EnterpriseCustomerSerializer(BaseBffSerializer):
     disable_search = serializers.BooleanField()
     show_integration_warning = serializers.BooleanField()
     enable_learner_credit_message_box = serializers.BooleanField()
+    show_non_production_banner = serializers.BooleanField(required=False, default=False)
 
 
 class EnterpriseCustomerUserSerializer(BaseBffSerializer):

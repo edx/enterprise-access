@@ -3,12 +3,10 @@ Utility functions for customer billing app
 """
 import logging
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Union
+from typing import Union
 
+from django.apps import apps
 from django.conf import settings
-
-if TYPE_CHECKING:
-    from enterprise_access.apps.customer_billing.models import SspProduct
 
 
 def datetime_from_timestamp(timestamp: Union[int, float]) -> datetime:
@@ -25,6 +23,30 @@ def datetime_from_timestamp(timestamp: Union[int, float]) -> datetime:
 
 
 logger = logging.getLogger(__name__)
+
+
+def get_default_ssp_price_lookup_key() -> str | None:
+    """
+    Return the `stripe_price_lookup_key` for the default SSP product as
+    configured by `SSP_DEFAULT_PRODUCT_SLUG` in settings.
+
+    Falls back to the lookup key of the first active `SspProduct` (ordered by
+    slug) if `SSP_DEFAULT_PRODUCT_SLUG` is unset or does not match any active
+    product. Returns None only if there are no active SspProducts at all, or
+    on error.
+    """
+    slug = getattr(settings, 'SSP_DEFAULT_PRODUCT_SLUG', None)
+    try:
+        SspProduct = apps.get_model('customer_billing', 'SspProduct')
+        product = None
+        if slug:
+            product = SspProduct.objects.filter(slug=slug, is_active=True).only('stripe_price_lookup_key').first()
+        if product is None:
+            product = SspProduct.objects.filter(is_active=True).order_by('slug').only('stripe_price_lookup_key').first()
+    except Exception:  # pylint: disable=broad-exception-caught
+        logger.exception("Error resolving default SSP price lookup key for slug=%s", slug)
+        return None
+    return getattr(product, 'stripe_price_lookup_key', None)
 
 
 # Maps (email_type, product_type) → Django settings attribute name
