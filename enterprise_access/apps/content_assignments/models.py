@@ -576,16 +576,20 @@ class LearnerContentAssignment(TimeStampedModel):
             error_reason=None,
         ).order_by('-completed_at').first()
 
-    def add_successful_reminded_action(self):
+    def add_successful_reminded_action(self, actor_lms_user_id=None, actor_type=None, source=None):
         """
         Adds a successful "reminded" LearnerContentAssignmentAction for this assignment record.
         """
         return self.actions.create(
             action_type=AssignmentActions.REMINDED,
             completed_at=timezone.now(),
+            actor_lms_user_id=actor_lms_user_id,
+            actor_type=actor_type or AssignmentActorTypes.SYSTEM,
+            source=source,
+            enterprise_customer_uuid=self.assignment_configuration.enterprise_customer_uuid,
         )
 
-    def add_errored_reminded_action(self, exc):
+    def add_errored_reminded_action(self, exc, actor_lms_user_id=None, actor_type=None, source=None):
         """
         Adds an errored "reminded" LearnerContentAssignmentAction for this assignment record.
         """
@@ -593,6 +597,11 @@ class LearnerContentAssignment(TimeStampedModel):
             action_type=AssignmentActions.REMINDED,
             error_reason=AssignmentActionErrors.EMAIL_ERROR,
             traceback=format_traceback(exc),
+            actor_lms_user_id=actor_lms_user_id,
+            actor_type=actor_type or AssignmentActorTypes.SYSTEM,
+            source=source,
+            enterprise_customer_uuid=self.assignment_configuration.enterprise_customer_uuid,
+            metadata={'error': str(exc)},
         )
 
     def get_last_successful_cancel_action(self):
@@ -605,13 +614,17 @@ class LearnerContentAssignment(TimeStampedModel):
             error_reason=None,
         ).order_by('-completed_at').first()
 
-    def add_successful_cancel_action(self):
+    def add_successful_cancel_action(self, actor_lms_user_id=None, actor_type=None, source=None):
         """
         Adds a successful "cancel" LearnerContentAssignmentAction for this assignment record.
         """
         return self.actions.create(
             action_type=AssignmentActions.CANCELLED,
             completed_at=timezone.now(),
+            actor_lms_user_id=actor_lms_user_id,
+            actor_type=actor_type or AssignmentActorTypes.SYSTEM,
+            source=source,
+            enterprise_customer_uuid=self.assignment_configuration.enterprise_customer_uuid,
         )
 
     def add_errored_cancel_action(self, exc):
@@ -663,16 +676,20 @@ class LearnerContentAssignment(TimeStampedModel):
             error_reason=None,
         ).order_by('-completed_at').first()
 
-    def add_successful_redeemed_action(self):
+    def add_successful_redeemed_action(self, actor_lms_user_id=None, actor_type=None, source=None):
         """
         Adds a successful redeemed LearnerContentAssignmentAction for this assignment record.
         """
         return self.actions.create(
             action_type=AssignmentActions.REDEEMED,
             completed_at=timezone.now(),
+            actor_lms_user_id=actor_lms_user_id,
+            actor_type=actor_type or AssignmentActorTypes.LEARNER,
+            source=source,
+            enterprise_customer_uuid=self.assignment_configuration.enterprise_customer_uuid,
         )
 
-    def add_errored_redeemed_action(self, exc):
+    def add_errored_redeemed_action(self, exc, actor_lms_user_id=None, actor_type=None, source=None):
         """
         Adds an errored redeemed LearnerContentAssignmentAction for this assignment record.
         """
@@ -680,6 +697,11 @@ class LearnerContentAssignment(TimeStampedModel):
             action_type=AssignmentActions.REDEEMED,
             error_reason=AssignmentActionErrors.ENROLLMENT_ERROR,
             traceback=format_traceback(exc),
+            actor_lms_user_id=actor_lms_user_id,
+            actor_type=actor_type or AssignmentActorTypes.SYSTEM,
+            source=source,
+            enterprise_customer_uuid=self.assignment_configuration.enterprise_customer_uuid,
+            metadata={'error': str(exc), 'error_type': type(exc).__name__},
         )
 
     def get_last_successful_acknowledged_cancelled_action(self):

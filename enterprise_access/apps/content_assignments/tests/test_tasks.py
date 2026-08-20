@@ -22,6 +22,8 @@ from enterprise_access.apps.content_assignments.constants import (
     RETIRED_EMAIL_ADDRESS_FORMAT,
     AssignmentActionErrors,
     AssignmentActions,
+    AssignmentActorTypes,
+    AssignmentSources,
     LearnerContentAssignmentStateChoices
 )
 from enterprise_access.apps.content_assignments.content_metadata_api import get_human_readable_date
@@ -585,6 +587,49 @@ class TestBrazeEmailTasks(APITestWithMocks):
                 'action_required_by_timestamp': '2021-01-01T12:00:00Z'
             },
         )
+
+    @mock.patch('enterprise_access.apps.content_assignments.tasks.BrazeCampaignSender')
+    def test_send_reminder_email_for_pending_assignment_propagates_actor_attribution(
+        self,
+        mock_campaign_sender_class,  # pylint: disable=unused-argument
+    ):
+        """
+        Verify that actor_lms_user_id/actor_type/source, passed through the task's payload/kwargs by the
+        producer, survive the async hop and end up on the resulting REMINDED audit action -- this is the
+        fix for actor identity otherwise being lost when the reminder runs on a Celery worker.
+        """
+        assignment = self.assignment_course
+
+        send_reminder_email_for_pending_assignment(
+            assignment.uuid,
+            actor_lms_user_id=999,
+            actor_type=AssignmentActorTypes.ADMIN,
+            source=AssignmentSources.API,
+        )
+
+        reminded_action = assignment.actions.get(action_type=AssignmentActions.REMINDED)
+        assert reminded_action.actor_lms_user_id == 999
+        assert reminded_action.actor_type == AssignmentActorTypes.ADMIN
+        assert reminded_action.source == AssignmentSources.API
+        assert reminded_action.enterprise_customer_uuid == self.assignment_configuration.enterprise_customer_uuid
+
+    @mock.patch('enterprise_access.apps.content_assignments.tasks.BrazeCampaignSender')
+    def test_send_reminder_email_for_pending_assignment_defaults_actor_when_omitted(
+        self,
+        mock_campaign_sender_class,  # pylint: disable=unused-argument
+    ):
+        """
+        Tasks already enqueued (e.g. mid-deploy) by a pre-audit producer won't carry the new actor
+        kwargs. The task must still run and fall back to a SYSTEM actor rather than raising.
+        """
+        assignment = self.assignment_course
+
+        # Called exactly like an already-enqueued, pre-audit task message would be: no actor kwargs.
+        send_reminder_email_for_pending_assignment(assignment.uuid)
+
+        reminded_action = assignment.actions.get(action_type=AssignmentActions.REMINDED)
+        assert reminded_action.actor_lms_user_id is None
+        assert reminded_action.actor_type == AssignmentActorTypes.SYSTEM
 
     @freezegun.freeze_time('2024-06-15 12:00:00')
     @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_client')

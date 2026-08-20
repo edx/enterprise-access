@@ -443,7 +443,8 @@ def send_cancel_email_for_pending_assignment(cancelled_assignment_uuid):
         braze_trigger_properties,
         campaign_uuid,
     )
-    assignment.add_successful_cancel_action()
+    # The CANCELLED audit action is written synchronously by `cancel_assignments()` at cancellation time,
+    # so we don't duplicate it here now that this task's job is solely to send the learner notification.
     logger.info(f'Sent braze campaign cancelled uuid={campaign_uuid} message for assignment {assignment}')
 
 
@@ -503,11 +504,16 @@ class SendReminderEmailTask(BaseAssignmentRetryAndErrorActionTask):
 
 
 @shared_task(base=SendReminderEmailTask)
-def send_reminder_email_for_pending_assignment(assignment_uuid):
+def send_reminder_email_for_pending_assignment(assignment_uuid, actor_lms_user_id=None, actor_type=None, source=None):
     """
     Send email via braze for reminding users of their pending assignment
     Args:
         assignment_uuid: (string) the subsidy request uuid
+        actor_lms_user_id: The lms_user_id of the actor (e.g. admin) who requested the reminder, for audit
+            action attribution. Optional and defaults to None so that tasks already enqueued by an
+            older, pre-audit version of the producer (e.g. mid-deploy) can still be consumed successfully.
+        actor_type: One of ``AssignmentActorTypes``, describing who requested the reminder.
+        source: One of ``AssignmentSources``, describing where the reminder request originated.
     """
     assignment = _get_assignment_or_raise(assignment_uuid)
 
@@ -531,7 +537,11 @@ def send_reminder_email_for_pending_assignment(assignment_uuid):
         braze_trigger_properties,
         campaign_uuid,
     )
-    assignment.add_successful_reminded_action()
+    assignment.add_successful_reminded_action(
+        actor_lms_user_id=actor_lms_user_id,
+        actor_type=actor_type,
+        source=source,
+    )
     logger.info(f'Sent braze campaign reminder uuid={campaign_uuid} message for assignment {assignment}')
 
 

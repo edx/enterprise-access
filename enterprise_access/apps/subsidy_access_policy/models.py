@@ -22,7 +22,11 @@ from simple_history.models import HistoricalRecords
 
 from enterprise_access.apps.api_client.lms_client import LmsApiClient
 from enterprise_access.apps.content_assignments import api as assignments_api
-from enterprise_access.apps.content_assignments.constants import LearnerContentAssignmentStateChoices
+from enterprise_access.apps.content_assignments.constants import (
+    AssignmentActorTypes,
+    AssignmentSources,
+    LearnerContentAssignmentStateChoices
+)
 from enterprise_access.apps.content_metadata.api import (
     get_and_cache_catalog_content_metadata,
     get_canonical_content_price_from_metadata
@@ -1798,7 +1802,12 @@ class AssignedLearnerCreditAccessPolicy(AssignedCreditPolicyMixin, SubsidyAccess
             found_assignment.state = LearnerContentAssignmentStateChoices.ERRORED
             found_assignment.errored_at = localized_utcnow()
             found_assignment.save()
-            found_assignment.add_errored_redeemed_action(exc)
+            found_assignment.add_errored_redeemed_action(
+                exc,
+                actor_lms_user_id=lms_user_id,
+                actor_type=AssignmentActorTypes.LEARNER,
+                source=AssignmentSources.API,
+            )
             raise
         # Migrate assignment to accepted.
         found_assignment.state = LearnerContentAssignmentStateChoices.ACCEPTED
@@ -1812,7 +1821,11 @@ class AssignedLearnerCreditAccessPolicy(AssignedCreditPolicyMixin, SubsidyAccess
         found_assignment.expired_at = None
         found_assignment.transaction_uuid = ledger_transaction.get('uuid')  # uuid should always be in the API response.
         found_assignment.save()
-        found_assignment.add_successful_redeemed_action()
+        found_assignment.add_successful_redeemed_action(
+            actor_lms_user_id=lms_user_id,
+            actor_type=AssignmentActorTypes.LEARNER,
+            source=AssignmentSources.API,
+        )
         return ledger_transaction
 
     def validate_requested_allocation_price(self, content_key, requested_price_cents):
