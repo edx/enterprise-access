@@ -5,6 +5,7 @@ from decimal import Decimal, InvalidOperation
 from urllib.parse import urljoin
 
 from django.conf import settings
+from django_countries.serializer_fields import CountryField
 from django_countries.serializers import CountryFieldMixin
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
@@ -31,6 +32,53 @@ class RecordConflictError(APIException):
     status_code = 422
     default_detail = 'Encountered a conflicting record.'
     default_code = 'record_conflict_error'
+
+
+BILLING_ADDRESS_FIELDS = (
+    'billing_address_country',
+    'billing_address_line_1',
+    'billing_address_line_2',
+    'billing_address_city',
+    'billing_address_state',
+    'billing_address_postal_code',
+)
+BILLING_ADDRESS_REQUIRED_FIELDS = (
+    'billing_address_country',
+    'billing_address_line_1',
+    'billing_address_city',
+    'billing_address_state',
+    'billing_address_postal_code',
+)
+
+
+def _is_billing_address_value_present(value):
+    return value not in (None, '')
+
+
+def validate_billing_address_fields(serializer, attrs):
+    """
+    Require a complete billing address whenever any billing address field is supplied.
+    """
+    final_values = {}
+    for field_name in BILLING_ADDRESS_FIELDS:
+        if field_name in attrs:
+            final_values[field_name] = attrs[field_name]
+        elif serializer.instance is not None:
+            final_values[field_name] = getattr(serializer.instance, field_name)
+        else:
+            final_values[field_name] = None
+
+    if not any(_is_billing_address_value_present(value) for value in final_values.values()):
+        return attrs
+
+    errors = {
+        field_name: 'This field is required when billing address details are provided.'
+        for field_name in BILLING_ADDRESS_REQUIRED_FIELDS
+        if not _is_billing_address_value_present(final_values[field_name])
+    }
+    if errors:
+        raise serializers.ValidationError(errors)
+    return attrs
 
 
 # pylint: disable=abstract-method
@@ -66,6 +114,52 @@ class CustomerBillingCreateCheckoutSessionRequestSerializer(serializers.Serializ
         required=False,
         help_text='The slug of the SSP product representing the plan selection.',
     )
+    billing_address_country = CountryField(
+        required=False,
+        allow_null=True,
+        help_text='Two-letter ISO country code for the billing address.',
+    )
+    billing_address_line_1 = serializers.CharField(
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+        max_length=255,
+        help_text='First line of the billing street address.',
+    )
+    billing_address_line_2 = serializers.CharField(
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+        max_length=255,
+        help_text='Second line of the billing street address (optional).',
+    )
+    billing_address_city = serializers.CharField(
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+        max_length=255,
+        help_text='Billing address city.',
+    )
+    billing_address_state = serializers.CharField(
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+        max_length=255,
+        help_text='Billing address state or province.',
+    )
+    billing_address_postal_code = serializers.CharField(
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+        max_length=20,
+        help_text='Billing address postal code.',
+    )
+
+    def validate(self, attrs):
+        """
+        Require a complete billing address when any billing address field is supplied.
+        """
+        return validate_billing_address_fields(self, attrs)
 
 
 # pylint: disable=abstract-method
@@ -160,7 +254,17 @@ class CheckoutIntentUpdateRequestSerializer(CountryFieldMixin, serializers.Model
         fields = '__all__'
         read_only_fields = [
             field.name for field in CheckoutIntent._meta.get_fields()
-            if field.name not in ('state', 'country', 'terms_metadata')
+            if field.name not in (
+                'state',
+                'country',
+                'billing_address_country',
+                'billing_address_line_1',
+                'billing_address_line_2',
+                'billing_address_city',
+                'billing_address_state',
+                'billing_address_postal_code',
+                'terms_metadata',
+            )
         ]
 
     def validate_state(self, value):
@@ -199,6 +303,13 @@ class CheckoutIntentUpdateRequestSerializer(CountryFieldMixin, serializers.Model
             )
         return value
 
+    def validate(self, attrs):
+        """
+        Perform cross-field validation, including optional billing address completeness.
+        """
+        attrs = super().validate(attrs)
+        return validate_billing_address_fields(self, attrs)
+
 
 class CheckoutIntentCreateRequestSerializer(CountryFieldMixin, serializers.ModelSerializer):
     """
@@ -221,6 +332,12 @@ class CheckoutIntentCreateRequestSerializer(CountryFieldMixin, serializers.Model
                 'enterprise_name',
                 'quantity',
                 'country',
+                'billing_address_country',
+                'billing_address_line_1',
+                'billing_address_line_2',
+                'billing_address_city',
+                'billing_address_state',
+                'billing_address_postal_code',
                 'terms_metadata',
                 'ssp_product'
             ]
@@ -252,7 +369,7 @@ class CheckoutIntentCreateRequestSerializer(CountryFieldMixin, serializers.Model
             raise serializers.ValidationError(
                 {'enterprise_slug': 'enterprise_slug is required when enterprise_name is provided.'}
             )
-        return attrs
+        return validate_billing_address_fields(self, attrs)
 
     def create(self, validated_data):
         """
@@ -266,6 +383,12 @@ class CheckoutIntentCreateRequestSerializer(CountryFieldMixin, serializers.Model
                 slug=validated_data.get('enterprise_slug'),
                 name=validated_data.get('enterprise_name'),
                 country=validated_data.get('country'),
+                billing_address_country=validated_data.get('billing_address_country'),
+                billing_address_line_1=validated_data.get('billing_address_line_1'),
+                billing_address_line_2=validated_data.get('billing_address_line_2'),
+                billing_address_city=validated_data.get('billing_address_city'),
+                billing_address_state=validated_data.get('billing_address_state'),
+                billing_address_postal_code=validated_data.get('billing_address_postal_code'),
                 terms_metadata=validated_data.get('terms_metadata'),
                 ssp_product=ssp_product,
             )

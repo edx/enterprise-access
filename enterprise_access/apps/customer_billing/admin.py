@@ -139,6 +139,17 @@ class CheckoutIntentAdmin(DjangoQLSearchMixin, admin.ModelAdmin):
                 'country',
             )
         }),
+        ('Billing Address', {
+            'fields': (
+                'billing_address_country',
+                'billing_address_line_1',
+                'billing_address_line_2',
+                'billing_address_city',
+                'billing_address_state',
+                'billing_address_postal_code',
+            ),
+            'classes': ('collapse',),
+        }),
         ('Status', {
             'fields': (
                 'uuid',

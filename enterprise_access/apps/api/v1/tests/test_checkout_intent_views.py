@@ -360,6 +360,12 @@ class CheckoutIntentViewSetTestCase(APITest):
             'enterprise_name': 'Test Enterprise post',
             'quantity': 13,
             'country': 'NZ',
+            'billing_address_country': 'US',
+            'billing_address_line_1': '123 Main St',
+            'billing_address_line_2': 'Suite 200',
+            'billing_address_city': 'New York',
+            'billing_address_state': 'NY',
+            'billing_address_postal_code': '10001',
             'terms_metadata': {'version': '1.0', 'accepted_at': '2024-01-15T10:30:00Z'},
             'ssp_product': 'teams-yearly',
         }
@@ -377,6 +383,12 @@ class CheckoutIntentViewSetTestCase(APITest):
         self.assertEqual(response_data['quantity'], 13)
         self.assertEqual(response_data['state'], CheckoutIntentState.CREATED)
         self.assertEqual(response_data['country'], 'NZ')
+        self.assertEqual(response_data['billing_address_country'], 'US')
+        self.assertEqual(response_data['billing_address_line_1'], '123 Main St')
+        self.assertEqual(response_data['billing_address_line_2'], 'Suite 200')
+        self.assertEqual(response_data['billing_address_city'], 'New York')
+        self.assertEqual(response_data['billing_address_state'], 'NY')
+        self.assertEqual(response_data['billing_address_postal_code'], '10001')
         self.assertEqual(response_data['terms_metadata'], {'version': '1.0', 'accepted_at': '2024-01-15T10:30:00Z'})
 
     def test_create_or_update_checkout_intent_success(self):
@@ -391,6 +403,11 @@ class CheckoutIntentViewSetTestCase(APITest):
             'enterprise_name': self.checkout_intent_1.enterprise_name,
             'quantity': 33,
             'country': 'IT',
+            'billing_address_country': 'IT',
+            'billing_address_line_1': 'Via Roma 1',
+            'billing_address_city': 'Rome',
+            'billing_address_state': 'RM',
+            'billing_address_postal_code': '00100',
             'terms_metadata': {'version': '2.0', 'updated': True},
             'ssp_product': 'teams-yearly',
         }
@@ -408,11 +425,47 @@ class CheckoutIntentViewSetTestCase(APITest):
         self.assertEqual(response_data['quantity'], 33)
         self.assertEqual(response_data['state'], CheckoutIntentState.CREATED)
         self.assertEqual(response_data['country'], 'IT')
+        self.assertEqual(response_data['billing_address_country'], 'IT')
+        self.assertEqual(response_data['billing_address_line_1'], 'Via Roma 1')
+        self.assertEqual(response_data['billing_address_city'], 'Rome')
+        self.assertEqual(response_data['billing_address_state'], 'RM')
+        self.assertEqual(response_data['billing_address_postal_code'], '00100')
         self.assertEqual(response_data['terms_metadata'], {'version': '2.0', 'test_mode': True, 'updated': True})
         self.checkout_intent_1.refresh_from_db()
         self.assertEqual(self.checkout_intent_1.quantity, 33)
         self.assertEqual(self.checkout_intent_1.country, 'IT')
+        self.assertEqual(self.checkout_intent_1.billing_address_country, 'IT')
+        self.assertEqual(self.checkout_intent_1.billing_address_line_1, 'Via Roma 1')
+        self.assertEqual(self.checkout_intent_1.billing_address_city, 'Rome')
+        self.assertEqual(self.checkout_intent_1.billing_address_state, 'RM')
+        self.assertEqual(self.checkout_intent_1.billing_address_postal_code, '00100')
         self.assertEqual(self.checkout_intent_1.terms_metadata, {'version': '2.0', 'test_mode': True, 'updated': True})
+
+    def test_create_checkout_intent_requires_complete_billing_address(self):
+        """Test creation fails when only part of the billing address is provided."""
+        other_user = UserFactory()
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE,
+            'context': str(uuid.uuid4()),
+        }], user=other_user)
+
+        response = self.client.post(
+            self.list_url,
+            {
+                'enterprise_slug': 'test-enterprise-billing',
+                'enterprise_name': 'Test Enterprise Billing',
+                'quantity': 5,
+                'billing_address_line_1': '123 Main St',
+                'ssp_product': 'teams-yearly',
+            },
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('billing_address_country', response.data)
+        self.assertIn('billing_address_city', response.data)
+        self.assertIn('billing_address_state', response.data)
+        self.assertIn('billing_address_postal_code', response.data)
 
     @ddt.data(
         # Invalid quantity cases:
@@ -502,6 +555,39 @@ class CheckoutIntentViewSetTestCase(APITest):
         self.checkout_intent_1.refresh_from_db()
         self.assertEqual(self.checkout_intent_1.terms_metadata, new_terms)
         self.assertEqual(self.checkout_intent_1.country, 'AU')
+
+    def test_update_billing_address(self):
+        """Test updating billing address fields via PATCH."""
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE,
+            'context': str(uuid.uuid4()),
+        }])
+
+        response = self.client.patch(
+            self.detail_url_1,
+            {
+                'billing_address_country': 'US',
+                'billing_address_line_1': '77 Massachusetts Ave',
+                'billing_address_city': 'Cambridge',
+                'billing_address_state': 'MA',
+                'billing_address_postal_code': '02139',
+            },
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['billing_address_country'], 'US')
+        self.assertEqual(response.data['billing_address_line_1'], '77 Massachusetts Ave')
+        self.assertEqual(response.data['billing_address_city'], 'Cambridge')
+        self.assertEqual(response.data['billing_address_state'], 'MA')
+        self.assertEqual(response.data['billing_address_postal_code'], '02139')
+
+        self.checkout_intent_1.refresh_from_db()
+        self.assertEqual(self.checkout_intent_1.billing_address_country, 'US')
+        self.assertEqual(self.checkout_intent_1.billing_address_line_1, '77 Massachusetts Ave')
+        self.assertEqual(self.checkout_intent_1.billing_address_city, 'Cambridge')
+        self.assertEqual(self.checkout_intent_1.billing_address_state, 'MA')
+        self.assertEqual(self.checkout_intent_1.billing_address_postal_code, '02139')
 
     @ddt.data(
         # Test that strings are rejected

@@ -3993,6 +3993,14 @@ class CreateCheckoutSessionViewTests(APITest):
     def setUp(self):
         super().setUp()
         self.url = reverse('api:v1:customer-billing-create-checkout-session')
+        SspProduct.objects.get_or_create(
+            slug='quarterly_license_plan',
+            defaults={
+                'stripe_price_lookup_key': 'price_quarterly_0002',
+                'is_active': True,
+                'catalog_query_uuid': uuid.uuid4(),
+            },
+        )
 
     def tearDown(self):
         CheckoutIntent.objects.all().delete()
@@ -4042,7 +4050,12 @@ class CreateCheckoutSessionViewTests(APITest):
                     'company_name': 'Test Co',
                     'quantity': 5,
                     'stripe_price_id': 'price_abc123',
-                    'ssp_product': 'quarterly_license_plan',
+                    'ssp_product_slug': 'quarterly_license_plan',
+                    'billing_address_country': 'US',
+                    'billing_address_line_1': '123 Main St',
+                    'billing_address_city': 'Boston',
+                    'billing_address_state': 'MA',
+                    'billing_address_postal_code': '02110',
                 },
                 format='json',
             )
@@ -4052,4 +4065,40 @@ class CreateCheckoutSessionViewTests(APITest):
             response.data['checkout_session_client_secret'],
             'cs_test_abc_secret_xyz',
         )
+        mock_create_intent.assert_called_once_with(
+            user=self.user,
+            quantity=5,
+            slug='test-slug',
+            name='Test Co',
+            billing_address_country='US',
+            billing_address_line_1='123 Main St',
+            billing_address_line_2=None,
+            billing_address_city='Boston',
+            billing_address_state='MA',
+            billing_address_postal_code='02110',
+            ssp_product=mock.ANY,
+        )
         mock_enterprise_catalog_metadata.assert_called()
+
+    def test_create_checkout_session_requires_complete_billing_address(self):
+        """Billing address fields must be complete when any billing address detail is supplied."""
+        self.set_jwt_cookie()
+
+        response = self.client.post(
+            self.url,
+            data={
+                'admin_email': self.user.email,
+                'enterprise_slug': 'test-slug',
+                'company_name': 'Test Co',
+                'quantity': 5,
+                'stripe_price_id': 'price_abc123',
+                'billing_address_line_1': '123 Main St',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('billing_address_country', response.data)
+        self.assertIn('billing_address_city', response.data)
+        self.assertIn('billing_address_state', response.data)
+        self.assertIn('billing_address_postal_code', response.data)

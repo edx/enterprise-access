@@ -175,6 +175,41 @@ class CheckoutIntentMinimalResponseSerializer(serializers.Serializer):
         required=False,
         allow_null=True,
     )
+    billing_address_country = CountryField(
+        help_text='The billing address country code',
+        required=False,
+        allow_null=True,
+    )
+    billing_address_line_1 = serializers.CharField(
+        help_text='First line of the billing street address',
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+    )
+    billing_address_line_2 = serializers.CharField(
+        help_text='Second line of the billing street address',
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+    )
+    billing_address_city = serializers.CharField(
+        help_text='Billing address city',
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+    )
+    billing_address_state = serializers.CharField(
+        help_text='Billing address state or province',
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+    )
+    billing_address_postal_code = serializers.CharField(
+        help_text='Billing address postal code',
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+    )
     terms_metadata = serializers.JSONField(
         help_text='Metadata relating to the terms and conditions accepted by the user',
         required=False,
