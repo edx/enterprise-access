@@ -10,6 +10,7 @@ from django.db import transaction
 
 from enterprise_access.apps.content_assignments import api as assignments_api
 from enterprise_access.apps.content_assignments.constants import AssignmentActions, AssignmentSources
+from enterprise_access.apps.content_assignments.models import LearnerContentAssignmentAction
 from enterprise_access.apps.subsidy_access_policy.api import get_policy_for_approval, validate_and_allocate
 from enterprise_access.apps.subsidy_access_policy.exceptions import (
     SubisidyAccessPolicyRequestApprovalError,
@@ -135,7 +136,7 @@ def _approve_under_lock(policy, requests_to_process, reviewer, source, correlati
     with transaction.atomic():
         # This call runs inside the outer transaction opened here; any nested
         # savepoint behavior depends on validate_and_allocate() or code it calls.
-        approved_requests_map, failed_requests_by_reason = validate_and_allocate(
+        approved_requests_map, failed_requests_by_reason, pending_allocation_actions = validate_and_allocate(
             policy, requests_to_process,
             actor_lms_user_id=actor_lms_user_id,
             source=source,
@@ -155,7 +156,13 @@ def _approve_under_lock(policy, requests_to_process, reviewer, source, correlati
 
         LearnerCreditRequestActions.bulk_create(actions_to_create)
 
+        # Write the `approved` audit rows first, then the `allocated`/`reallocated` rows
+        # from the allocation that happened underneath validate_and_allocate() — as two
+        # separate, ordered bulk_create calls — so the audit trail reflects the true
+        # sequence of events (a request is approved, which is what triggers allocation).
         _write_approved_assignment_actions(approved_requests, actor_lms_user_id, source, correlation_id)
+        if pending_allocation_actions:
+            LearnerContentAssignmentAction.objects.bulk_create(pending_allocation_actions)
 
         # on_commit registered inside atomic() fires once the outer transaction commits —
         # so notifications never run if we roll back.
@@ -178,10 +185,8 @@ def _write_approved_assignment_actions(approved_requests, actor_lms_user_id, sou
     Writes an ``approved`` ``LearnerContentAssignmentAction`` audit row for each
     approved request, attributing the action to the reviewer who approved it.
     """
-    for request in approved_requests:
-        if not request.assignment:
-            continue
-        assignments_api.create_assignment_action(
+    approved_actions = [
+        assignments_api.build_assignment_action(
             request.assignment,
             action_type=AssignmentActions.APPROVED,
             actor_lms_user_id=actor_lms_user_id,
@@ -189,6 +194,10 @@ def _write_approved_assignment_actions(approved_requests, actor_lms_user_id, sou
             correlation_id=correlation_id,
             extra_metadata={'request_uuid': str(request.uuid)},
         )
+        for request in approved_requests if request.assignment
+    ]
+    if approved_actions:
+        LearnerContentAssignmentAction.objects.bulk_create(approved_actions)
 
 
 def _build_success_action(request):

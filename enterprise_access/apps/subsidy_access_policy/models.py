@@ -825,8 +825,8 @@ class SubsidyAccessPolicy(TimeStampedModel):
                 ``LearnerContentAssignmentAction`` audit rows.
 
         Returns:
-            dict: A map of {request.uuid: assignment_object} for all created or
-                  re-allocated assignments.
+            tuple: (request_to_assignment_map, pending_actions) — see
+                ``assignments_api.allocate_assignment_for_requests`` for details.
         """
         # To approve a learner credit request, we need to allocate an assignment and link it to the request.
         return assignments_api.allocate_assignment_for_requests(

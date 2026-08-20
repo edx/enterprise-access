@@ -295,7 +295,7 @@ class TestApproveLearnerCreditRequests(TestCase):
             for req in approved
         }
         failed_by_reason = {"content_not_in_catalog": failed} if failed else {}
-        return approved_map, failed_by_reason
+        return approved_map, failed_by_reason, []
 
     EXPECTED_RESULT_KEYS = {'approved', 'failed', 'failed_approval', 'error_message'}
 
@@ -706,9 +706,9 @@ class TestApproveLearnerCreditRequests(TestCase):
         """Notifications are registered via on_commit and carry the approved assignment uuid."""
         mock_get_policy.return_value = self.mock_policy
         request = self._create_request()
-        approved_map, _ = self._build_approval_result([request], approved_count=1)
+        approved_map, _, _ = self._build_approval_result([request], approved_count=1)
         expected_assignment_uuid = approved_map[request.uuid]['assignment'].uuid
-        mock_validate.return_value = (approved_map, {})
+        mock_validate.return_value = (approved_map, {}, [])
 
         with self.captureOnCommitCallbacks(execute=False) as callbacks:
             subsidy_request_api.approve_learner_credit_requests(

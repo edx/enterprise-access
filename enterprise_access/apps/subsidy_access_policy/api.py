@@ -68,9 +68,12 @@ def validate_and_allocate(
             ``LearnerContentAssignmentAction`` audit rows.
 
     Returns:
-        A tuple of (approved_requests_map, failed_requests_by_reason) where:
+        A tuple of (approved_requests_map, failed_requests_by_reason, pending_allocation_actions) where:
         - approved_requests_map maps request UUID -> {"request": ..., "assignment": ...}
         - failed_requests_by_reason maps reason string -> list of failed requests
+        - pending_allocation_actions is a list of unsaved ``allocated``/``reallocated``
+          ``LearnerContentAssignmentAction`` instances that the caller must persist
+          (e.g. via ``bulk_create``)
 
     Raises:
         SubisidyAccessPolicyRequestApprovalError: On validation failure, allocation error,
@@ -90,8 +93,9 @@ def validate_and_allocate(
         failed_requests_by_reason = validation_result.get("failed_requests_by_reason", {})
 
         approved_requests_map = {}
+        pending_allocation_actions = []
         if valid_requests:
-            request_to_assignment_map = policy.approve(
+            request_to_assignment_map, pending_allocation_actions = policy.approve(
                 valid_requests,
                 actor_lms_user_id=actor_lms_user_id,
                 source=source,
@@ -108,7 +112,7 @@ def validate_and_allocate(
                     "assignment": assignment,
                 }
 
-        return approved_requests_map, failed_requests_by_reason
+        return approved_requests_map, failed_requests_by_reason, pending_allocation_actions
 
     except (
         AllocationException, PriceValidationError, ValidationError, DatabaseError,
