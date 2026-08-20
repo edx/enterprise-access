@@ -16,6 +16,8 @@ from django.test import TestCase
 from enterprise_access.apps.content_assignments.constants import (
     AssignmentActionErrors,
     AssignmentActions,
+    AssignmentActorTypes,
+    AssignmentSources,
     LearnerContentAssignmentStateChoices
 )
 from enterprise_access.apps.content_assignments.models import AssignmentConfiguration
@@ -1492,7 +1494,7 @@ class AssignedLearnerCreditAccessPolicyTests(MockPolicyDependenciesMixin, TestCa
         },
     )
     @ddt.unpack
-    def test_redeem(
+    def test_redeem(  # pylint: disable=too-many-statements
         self,
         assignment_starting_state,
         assignment_ending_state,
@@ -1592,12 +1594,24 @@ class AssignedLearnerCreditAccessPolicyTests(MockPolicyDependenciesMixin, TestCa
                 redeemed_action = assignment.actions.last()
                 assert redeemed_action.action_type == AssignmentActions.REDEEMED
                 assert not redeemed_action.error_reason
+                # the redeeming learner should be recorded as the actor.
+                assert redeemed_action.actor_lms_user_id == self.lms_user_id
+                assert redeemed_action.actor_type == AssignmentActorTypes.LEARNER
+                assert redeemed_action.source == AssignmentSources.API
+                expected_customer_uuid = self.assignment_configuration.enterprise_customer_uuid
+                assert redeemed_action.enterprise_customer_uuid == expected_customer_uuid
             if fail_subsidy_create_transaction:
                 # sad path should generate a failed redeemed action with populated error_reason and traceback.
                 redeemed_action = assignment.actions.last()
                 assert redeemed_action.action_type == AssignmentActions.REDEEMED
                 assert redeemed_action.error_reason == AssignmentActionErrors.ENROLLMENT_ERROR
                 assert redeemed_action.traceback
+                # the redeeming learner should still be recorded as the actor, and the error captured in metadata.
+                assert redeemed_action.actor_lms_user_id == self.lms_user_id
+                assert redeemed_action.actor_type == AssignmentActorTypes.LEARNER
+                assert redeemed_action.source == AssignmentSources.API
+                assert redeemed_action.metadata.get('error')
+                assert redeemed_action.metadata.get('error_type')
 
     def test_can_allocate_inactive_policy(self):
         """
