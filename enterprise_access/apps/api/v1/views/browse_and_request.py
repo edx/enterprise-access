@@ -3,6 +3,7 @@ Rest API views for the browse and request app.
 """
 import logging
 from collections import Counter
+from uuid import uuid4
 
 from celery import chain
 from django.conf import settings
@@ -46,6 +47,7 @@ from enterprise_access.apps.api.utils import (
 from enterprise_access.apps.api_client.ecommerce_client import EcommerceApiClient
 from enterprise_access.apps.api_client.license_manager_client import LicenseManagerApiClient
 from enterprise_access.apps.content_assignments import api as assignments_api
+from enterprise_access.apps.content_assignments.constants import AssignmentSources
 from enterprise_access.apps.core import constants
 from enterprise_access.apps.subsidy_access_policy.models import SubsidyAccessPolicy
 from enterprise_access.apps.subsidy_request import api as subsidy_request_api
@@ -1054,6 +1056,8 @@ class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
             learner_credit_requests=learner_credit_requests,
             policy_uuid=policy_uuid,
             reviewer=request.user,
+            source=AssignmentSources.BROWSE_REQUEST_APPROVE,
+            correlation_id=str(uuid4()),
         )
         return self._build_approval_response(result, success_status=status.HTTP_200_OK)
 
@@ -1088,6 +1092,8 @@ class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
             learner_credit_requests=learner_credit_requests,
             policy_uuid=policy_uuid,
             reviewer=request.user,
+            source=AssignmentSources.BROWSE_REQUEST_APPROVE_ALL,
+            correlation_id=str(uuid4()),
         )
         return self._build_approval_response(result, success_status=status.HTTP_202_ACCEPTED)
 

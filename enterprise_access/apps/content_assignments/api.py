@@ -87,6 +87,7 @@ def _build_action_obj(
     source,
     correlation_id,
     policy,
+    extra_metadata=None,
 ):
     """Return an unsaved LearnerContentAssignmentAction instance."""
     metadata = {
@@ -99,6 +100,8 @@ def _build_action_obj(
     else:
         # Some test/setup paths allocate before a policy relation exists on the configuration.
         metadata['policy_or_config_uuid'] = str(assignment.assignment_configuration.uuid)
+    if extra_metadata:
+        metadata.update(extra_metadata)
 
     return LearnerContentAssignmentAction(
         assignment=assignment,
@@ -112,6 +115,33 @@ def _build_action_obj(
         learner_lms_user_id=assignment.lms_user_id,
         learner_email=assignment.learner_email,
         metadata=metadata,
+    )
+
+
+def build_assignment_action(
+    assignment,
+    action_type,
+    actor_lms_user_id,
+    source,
+    correlation_id=None,
+    extra_metadata=None,
+):
+    """
+    Returns an unsaved ``LearnerContentAssignmentAction`` for the given assignment.
+
+    Callers are responsible for persisting the returned instance, typically via
+    ``LearnerContentAssignmentAction.objects.bulk_create()`` alongside other action
+    rows so that call order determines write order.
+    """
+    policy = assignment.assignment_configuration.policy
+    return _build_action_obj(
+        assignment,
+        action_type,
+        actor_lms_user_id,
+        source,
+        correlation_id,
+        policy,
+        extra_metadata=extra_metadata,
     )
 
 
@@ -576,6 +606,9 @@ def _do_async_tasks_after_assignment_writes(updated_assignments, created_assignm
 def allocate_assignment_for_requests(
     assignment_configuration,
     learner_credit_requests,
+    actor_lms_user_id=None,
+    source=AssignmentSources.API,
+    correlation_id=None,
 ):
     """
     Creates or reallocates LearnerContentAssignment records in bulk for a batch
@@ -584,9 +617,16 @@ def allocate_assignment_for_requests(
     Args:
         assignment_configuration (AssignmentConfiguration): The config to use.
         learner_credit_requests (list[LearnerCreditRequest]): The requests to process.
+        actor_lms_user_id, source, correlation_id: recorded on the resulting
+            ``allocated``/``reallocated`` ``LearnerContentAssignmentAction`` audit rows.
 
     Returns:
-        dict: A map of {request.uuid: assignment_object}.
+        tuple: (request_to_assignment_map, pending_actions) where request_to_assignment_map
+        is a dict of {request.uuid: assignment_object}, and pending_actions is a list of
+        unsaved ``allocated``/``reallocated`` ``LearnerContentAssignmentAction`` instances
+        that the caller is responsible for persisting (e.g. via ``bulk_create``), so that
+        callers can control write order relative to other audit rows (such as an
+        ``approved`` row) written for the same batch.
     """
     # Set a batch ID to track assignments updated and/or created together.
     allocation_batch_id = uuid4()
@@ -644,17 +684,39 @@ def allocate_assignment_for_requests(
             metadata_by_key
         )
 
-    # Map all affected assignments back to their original requests
-    all_affected_assignments = list(updated_assignments) + created_assignments
-    assignments_by_learner_and_course = {
-        (asg.lms_user_id, asg.content_key): asg for asg in all_affected_assignments
-    }
+        # Map all affected assignments back to their original requests
+        all_affected_assignments = list(updated_assignments) + created_assignments
+        assignments_by_learner_and_course = {
+            (asg.lms_user_id, asg.content_key): asg for asg in all_affected_assignments
+        }
 
-    request_to_assignment_map = {
-        req.uuid: assignments_by_learner_and_course.get((req.user.lms_user_id, req.course_id))
-        for req in learner_credit_requests
-    }
-    return request_to_assignment_map
+        request_to_assignment_map = {
+            req.uuid: assignments_by_learner_and_course.get((req.user.lms_user_id, req.course_id))
+            for req in learner_credit_requests
+        }
+
+        reallocated_uuids = {asg.uuid for asg in updated_assignments}
+        pending_actions = []
+        for request in learner_credit_requests:
+            assignment = request_to_assignment_map.get(request.uuid)
+            if not assignment:
+                continue
+            action_type = (
+                AssignmentActions.REALLOCATED if assignment.uuid in reallocated_uuids
+                else AssignmentActions.ALLOCATED
+            )
+            pending_actions.append(
+                build_assignment_action(
+                    assignment,
+                    action_type=action_type,
+                    actor_lms_user_id=actor_lms_user_id,
+                    source=source,
+                    correlation_id=correlation_id,
+                    extra_metadata={'request_uuid': str(request.uuid)},
+                )
+            )
+
+    return request_to_assignment_map, pending_actions
 
 
 def _deduplicate_learner_emails_to_allocate(learner_emails):
