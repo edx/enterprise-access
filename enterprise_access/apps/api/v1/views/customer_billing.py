@@ -850,6 +850,17 @@ class BillingManagementViewSet(viewsets.ViewSet):
         """
         return SSP_PRODUCT_TYPE_ESSENTIALS if checkout_intent.ssp_product.academy_uuid else SSP_PRODUCT_TYPE_TEAMS
 
+    @staticmethod
+    def _get_academy_title_from_checkout_intent(checkout_intent):
+        """
+        Derive the academy_title from the checkout intent's SSP product.
+
+        Returns None for Teams plans (no academy association) and, via
+        ``SspProduct.academy_title``, gracefully degrades to None if the
+        enterprise-catalog academy lookup fails.
+        """
+        return checkout_intent.ssp_product.academy_title
+
     def _get_active_subscription_for_customer(self, stripe_customer_id):
         """
         Helper method to retrieve the active subscription for a Stripe customer.
@@ -1944,10 +1955,10 @@ class BillingManagementViewSet(viewsets.ViewSet):
                 'product_type': self._get_product_type_from_checkout_intent(checkout_intent),
                 'yearly_amount': yearly_amount,
                 'license_count': license_count,
+                'academy_title': self._get_academy_title_from_checkout_intent(checkout_intent),
             }
 
-            serializer = serializers.StripeSubscriptionResponseSerializer(data=sub_data)
-            serializer.is_valid(raise_exception=True)
+            serializer = serializers.StripeSubscriptionResponseSerializer(sub_data)
             return Response(serializer.data, status=status.HTTP_200_OK)
 
         except Exception as e:  # pylint: disable=broad-except

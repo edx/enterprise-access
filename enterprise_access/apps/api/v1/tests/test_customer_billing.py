@@ -2294,11 +2294,15 @@ class BillingManagementSubscriptionTests(BillingManagementBaseTest):
         # Yearly amount: 50000 (unit_amount) * 5 (quantity) = 250000
         self.assertEqual(sub['yearly_amount'], 250000)
         self.assertEqual(sub['license_count'], 5)
+        self.assertIsNone(sub['academy_title'])
 
-    def test_get_subscription_success_essentials_product_type(self):
+    @mock.patch('enterprise_access.apps.customer_billing.models.get_cached_academy_data')
+    def test_get_subscription_success_essentials_product_type(self, mock_get_cached_academy_data):
         """
-        Test retrieving subscription response includes Essentials product_type for academy-backed products.
+        Test retrieving subscription response includes Essentials product_type and academy_title
+        for academy-backed products.
         """
+        mock_get_cached_academy_data.return_value = {'title': 'AI Academy'}
         essentials_product = SspProduct.objects.create(
             slug='ai-academy-yearly',
             stripe_price_lookup_key='ai_academy_yearly_price_test',
@@ -2365,6 +2369,81 @@ class BillingManagementSubscriptionTests(BillingManagementBaseTest):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         response_data = response.json()
         self.assertEqual(response_data['product_type'], 'Essentials')
+        self.assertEqual(response_data['academy_title'], 'AI Academy')
+
+    @mock.patch('enterprise_access.apps.customer_billing.models.get_cached_academy_data')
+    def test_get_subscription_academy_title_none_on_catalog_failure(self, mock_get_cached_academy_data):
+        """
+        Test academy_title gracefully degrades to None when the academy cache/catalog lookup fails.
+        """
+        mock_get_cached_academy_data.side_effect = Exception('enterprise-catalog unreachable')
+        essentials_product = SspProduct.objects.create(
+            slug='ai-academy-yearly-2',
+            stripe_price_lookup_key='ai_academy_yearly_price_test_2',
+            academy_uuid=uuid.uuid4(),
+            catalog_query_uuid=uuid.uuid4(),
+            is_active=True,
+        )
+        checkout_intent = CheckoutIntent.objects.create(
+            user=self.user,
+            enterprise_uuid=str(uuid.uuid4()),
+            enterprise_name='Essentials Enterprise 2',
+            enterprise_slug='essentials-enterprise-2',
+            stripe_customer_id='cus_essentials_456',
+            state=CheckoutIntentState.PAID,
+            quantity=10,
+            expires_at=timezone.now() + timedelta(hours=1),
+            ssp_product=essentials_product,
+        )
+
+        sub_event_data = StripeEventData.objects.create(
+            event_id='evt_sub_essentials_2',
+            event_type='customer.subscription.updated',
+            checkout_intent=checkout_intent,
+            data={'data': {'object': {}}},
+        )
+        StripeEventSummary.objects.create(
+            stripe_event_data=sub_event_data,
+            event_id='evt_sub_essentials_2',
+            event_type='customer.subscription.updated',
+            checkout_intent=checkout_intent,
+            stripe_event_created_at=timezone.now(),
+            stripe_subscription_id='sub_essentials_test_2',
+            subscription_status='active',
+            subscription_period_start=timezone.now() - timedelta(days=30),
+            subscription_period_end=timezone.now() + timedelta(days=335),
+            currency='usd',
+        )
+
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': str(checkout_intent.enterprise_uuid),
+        }])
+
+        url = reverse('api:v1:billing-management-get-subscription')
+        response = self.client.get(url, {'enterprise_customer_uuid': str(checkout_intent.enterprise_uuid)})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response_data = response.json()
+        self.assertEqual(response_data['product_type'], 'Essentials')
+        self.assertIsNone(response_data['academy_title'])
+
+    def test_get_academy_title_from_checkout_intent_returns_expected_values(self):
+        """
+        Test the academy_title helper returns None for Teams and the academy title for Essentials.
+        """
+        teams_checkout_intent = mock.Mock(ssp_product=mock.Mock(academy_title=None))
+        essentials_checkout_intent = mock.Mock(ssp_product=mock.Mock(academy_title='AI Academy'))
+
+        # pylint: disable=protected-access
+        self.assertIsNone(
+            BillingManagementViewSet._get_academy_title_from_checkout_intent(teams_checkout_intent)
+        )
+        self.assertEqual(
+            BillingManagementViewSet._get_academy_title_from_checkout_intent(essentials_checkout_intent),
+            'AI Academy'
+        )
+        # pylint: enable=protected-access
 
     def test_get_product_type_from_checkout_intent_returns_expected_values(self):
         """

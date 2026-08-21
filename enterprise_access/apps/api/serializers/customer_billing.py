@@ -691,6 +691,9 @@ class StripeSubscriptionResponseSerializer(serializers.Serializer):
         allow_null=True,
         help_text='Total number of licenses/seats in the subscription',
     )
+    academy_title = serializers.ReadOnlyField(
+        help_text='Academy display name for Essentials plans. Null for Teams plans.',
+    )
 
 
 # pylint: disable=abstract-method
