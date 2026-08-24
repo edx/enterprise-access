@@ -844,7 +844,9 @@ def _update_and_refresh_assignments(assignment_records, fields_changed):
 
     # Get a list of refreshed objects that we just updated, along with their prefetched action records
     return list(
-        LearnerContentAssignment.objects.prefetch_related('actions').filter(
+        LearnerContentAssignment.objects.select_related('assignment_configuration').prefetch_related(
+            'actions',
+        ).filter(
             uuid__in=[record.uuid for record in assignment_records],
         )
     )
@@ -1070,7 +1072,12 @@ def cancel_assignments(
             source=source,
         )
         if send_cancel_email_to_learner:
-            send_cancel_email_for_pending_assignment.delay(cancelled_assignment.uuid)
+            send_cancel_email_for_pending_assignment.delay(
+                cancelled_assignment.uuid,
+                actor_lms_user_id=actor_lms_user_id,
+                actor_type=actor_type,
+                source=source,
+            )
 
     return {
         'cancelled': list(set(cancelled_assignments) | already_cancelled_assignments),

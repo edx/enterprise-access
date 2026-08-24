@@ -587,6 +587,8 @@ class LearnerContentAssignment(TimeStampedModel):
             actor_type=actor_type or AssignmentActorTypes.SYSTEM,
             source=source,
             enterprise_customer_uuid=self.assignment_configuration.enterprise_customer_uuid,
+            learner_lms_user_id=self.lms_user_id,
+            learner_email=self.learner_email,
         )
 
     def add_errored_reminded_action(self, exc, actor_lms_user_id=None, actor_type=None, source=None):
@@ -601,6 +603,8 @@ class LearnerContentAssignment(TimeStampedModel):
             actor_type=actor_type or AssignmentActorTypes.SYSTEM,
             source=source,
             enterprise_customer_uuid=self.assignment_configuration.enterprise_customer_uuid,
+            learner_lms_user_id=self.lms_user_id,
+            learner_email=self.learner_email,
             metadata={'error': str(exc)},
         )
 
@@ -625,9 +629,11 @@ class LearnerContentAssignment(TimeStampedModel):
             actor_type=actor_type or AssignmentActorTypes.SYSTEM,
             source=source,
             enterprise_customer_uuid=self.assignment_configuration.enterprise_customer_uuid,
+            learner_lms_user_id=self.lms_user_id,
+            learner_email=self.learner_email,
         )
 
-    def add_errored_cancel_action(self, exc):
+    def add_errored_cancel_action(self, exc, actor_lms_user_id=None, actor_type=None, source=None):
         """
         Adds an errored "cancel" LearnerContentAssignmentAction for this assignment record.
         """
@@ -635,6 +641,13 @@ class LearnerContentAssignment(TimeStampedModel):
             action_type=AssignmentActions.CANCELLED,
             error_reason=AssignmentActionErrors.EMAIL_ERROR,
             traceback=format_traceback(exc),
+            actor_lms_user_id=actor_lms_user_id,
+            actor_type=actor_type or AssignmentActorTypes.SYSTEM,
+            source=source,
+            enterprise_customer_uuid=self.assignment_configuration.enterprise_customer_uuid,
+            learner_lms_user_id=self.lms_user_id,
+            learner_email=self.learner_email,
+            metadata={'error': str(exc)},
         )
 
     def get_last_successful_expiration_action(self):
@@ -687,6 +700,8 @@ class LearnerContentAssignment(TimeStampedModel):
             actor_type=actor_type or AssignmentActorTypes.LEARNER,
             source=source,
             enterprise_customer_uuid=self.assignment_configuration.enterprise_customer_uuid,
+            learner_lms_user_id=self.lms_user_id,
+            learner_email=self.learner_email,
         )
 
     def add_errored_redeemed_action(self, exc, actor_lms_user_id=None, actor_type=None, source=None):
@@ -701,6 +716,8 @@ class LearnerContentAssignment(TimeStampedModel):
             actor_type=actor_type or AssignmentActorTypes.SYSTEM,
             source=source,
             enterprise_customer_uuid=self.assignment_configuration.enterprise_customer_uuid,
+            learner_lms_user_id=self.lms_user_id,
+            learner_email=self.learner_email,
             metadata={'error': str(exc), 'error_type': type(exc).__name__},
         )
 

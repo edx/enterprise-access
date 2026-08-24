@@ -7,6 +7,11 @@ from uuid import uuid4
 from django.test import TestCase
 from django.utils import timezone
 
+from enterprise_access.apps.content_assignments.constants import (
+    AssignmentActions,
+    AssignmentActorTypes,
+    AssignmentSources
+)
 from enterprise_access.apps.content_assignments.models import LearnerContentAssignment
 from enterprise_access.apps.content_assignments.tests.factories import AssignmentConfigurationFactory
 from enterprise_access.apps.subsidy_access_policy.constants import FORCE_ENROLLMENT_KEYWORD
@@ -263,3 +268,9 @@ class ForcedPolicyRedemptionAssignmentTests(BaseForcedRedemptionTestCase):
         self.assertEqual(assignment.learner_email, 'Alice@foo.com')
         mock_send_email.delay.assert_called_once_with(assignment.uuid)
         mock_pending_learner_task.delay.assert_called_once_with(assignment.uuid)
+
+        # A forced redemption is driven by an admin via Django admin, not the learner themselves, so the
+        # audit action must not misattribute the redemption to the learner.
+        redeemed_action = assignment.actions.get(action_type=AssignmentActions.REDEEMED)
+        self.assertEqual(redeemed_action.actor_type, AssignmentActorTypes.ADMIN)
+        self.assertEqual(redeemed_action.source, AssignmentSources.DJANGO_ADMIN)

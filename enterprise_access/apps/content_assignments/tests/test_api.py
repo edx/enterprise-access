@@ -999,7 +999,8 @@ class TestAssignmentAllocationAndCancellation(TestCase):
         self.assertEqual(cancelled_assignment.state, LearnerContentAssignmentStateChoices.CANCELLED)
         self.assertEqual(errored_assignment.state, LearnerContentAssignmentStateChoices.CANCELLED)
         mock_notify.delay.assert_has_calls([
-            mock.call(assignment.uuid) for assignment in (allocated_assignment, errored_assignment)
+            mock.call(assignment.uuid, actor_lms_user_id=None, actor_type=None, source=None)
+            for assignment in (allocated_assignment, errored_assignment)
         ], any_order=True)
 
     @mock.patch('enterprise_access.apps.content_assignments.tasks.send_cancel_email_for_pending_assignment')
@@ -1029,7 +1030,14 @@ class TestAssignmentAllocationAndCancellation(TestCase):
         assert cancel_action.source == AssignmentSources.API
         assert cancel_action.enterprise_customer_uuid == self.assignment_configuration.enterprise_customer_uuid
         assert cancel_action.error_reason is None
-        mock_notify.delay.assert_called_once_with(allocated_assignment.uuid)
+        assert cancel_action.learner_lms_user_id == allocated_assignment.lms_user_id
+        assert cancel_action.learner_email == 'alice@foo.com'
+        mock_notify.delay.assert_called_once_with(
+            allocated_assignment.uuid,
+            actor_lms_user_id=admin_lms_user_id,
+            actor_type=AssignmentActorTypes.ADMIN,
+            source=AssignmentSources.API,
+        )
 
     @mock.patch('enterprise_access.apps.content_assignments.api.send_reminder_email_for_pending_assignment')
     def test_remind_assignments_propagates_actor_attribution_to_async_task(self, mock_reminder_task):

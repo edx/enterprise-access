@@ -463,6 +463,35 @@ class TestBrazeEmailTasks(APITestWithMocks):
         )
         assert mock_braze_client.return_value.send_campaign_message.call_count == 1
 
+    @mock.patch('enterprise_access.apps.content_assignments.tasks.BrazeCampaignSender')
+    def test_send_cancel_email_for_pending_assignment_failure_preserves_actor_attribution(
+        self,
+        mock_campaign_sender_class,
+    ):
+        """
+        When the Braze call fails and retries exhaust, Celery's on_failure() must forward the
+        actor_lms_user_id/actor_type/source kwargs it received into add_errored_cancel_action(),
+        so the resulting errored CANCELLED action still attributes the cancellation to the
+        requesting admin instead of silently defaulting to a SYSTEM actor.
+        """
+        mock_campaign_sender_class.return_value.send_campaign_message.side_effect = Exception('boom')
+        assignment = self.assignment_course
+
+        send_cancel_email_for_pending_assignment.delay(
+            assignment.uuid,
+            actor_lms_user_id=999,
+            actor_type=AssignmentActorTypes.ADMIN,
+            source=AssignmentSources.API,
+        )
+
+        errored_action = assignment.actions.get(
+            action_type=AssignmentActions.CANCELLED,
+            error_reason=AssignmentActionErrors.EMAIL_ERROR,
+        )
+        assert errored_action.actor_lms_user_id == 999
+        assert errored_action.actor_type == AssignmentActorTypes.ADMIN
+        assert errored_action.source == AssignmentSources.API
+
     @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_client')
     @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient')
     @mock.patch('enterprise_access.apps.content_assignments.tasks.LmsApiClient')
@@ -630,6 +659,35 @@ class TestBrazeEmailTasks(APITestWithMocks):
         reminded_action = assignment.actions.get(action_type=AssignmentActions.REMINDED)
         assert reminded_action.actor_lms_user_id is None
         assert reminded_action.actor_type == AssignmentActorTypes.SYSTEM
+
+    @mock.patch('enterprise_access.apps.content_assignments.tasks.BrazeCampaignSender')
+    def test_send_reminder_email_for_pending_assignment_failure_preserves_actor_attribution(
+        self,
+        mock_campaign_sender_class,
+    ):
+        """
+        When the Braze call fails and retries exhaust, Celery's on_failure() must forward the
+        actor_lms_user_id/actor_type/source kwargs it received into add_errored_reminded_action(),
+        so the resulting errored REMINDED action still attributes the reminder to the requesting
+        admin instead of silently defaulting to a SYSTEM actor.
+        """
+        mock_campaign_sender_class.return_value.send_campaign_message.side_effect = Exception('boom')
+        assignment = self.assignment_course
+
+        send_reminder_email_for_pending_assignment.delay(
+            assignment.uuid,
+            actor_lms_user_id=999,
+            actor_type=AssignmentActorTypes.ADMIN,
+            source=AssignmentSources.API,
+        )
+
+        errored_action = assignment.actions.get(
+            action_type=AssignmentActions.REMINDED,
+            error_reason=AssignmentActionErrors.EMAIL_ERROR,
+        )
+        assert errored_action.actor_lms_user_id == 999
+        assert errored_action.actor_type == AssignmentActorTypes.ADMIN
+        assert errored_action.source == AssignmentSources.API
 
     @freezegun.freeze_time('2024-06-15 12:00:00')
     @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_client')

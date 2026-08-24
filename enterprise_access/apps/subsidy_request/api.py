@@ -9,6 +9,7 @@ from typing import Iterable
 from django.db import transaction
 
 from enterprise_access.apps.content_assignments import api as assignments_api
+from enterprise_access.apps.content_assignments.constants import AssignmentActorTypes, AssignmentSources
 from enterprise_access.apps.subsidy_access_policy.api import get_policy_for_approval, validate_and_allocate
 from enterprise_access.apps.subsidy_access_policy.exceptions import (
     SubisidyAccessPolicyRequestApprovalError,
@@ -353,7 +354,13 @@ def cancel_learner_credit_requests(
     # This prevents partial failures where assignments are cancelled but request state isn't updated
     with transaction.atomic():
         # Cancel assignments within the transaction
-        cancel_response = assignments_api.cancel_assignments(assignments_to_cancel, False)
+        cancel_response = assignments_api.cancel_assignments(
+            assignments_to_cancel,
+            False,
+            actor_lms_user_id=reviewer.lms_user_id,
+            actor_type=AssignmentActorTypes.ADMIN,
+            source=AssignmentSources.API,
+        )
 
         if cancel_response.get('non_cancelable'):
             # If any assignments failed to cancel, mark those requests as non_cancelable

@@ -1764,10 +1764,21 @@ class AssignedLearnerCreditAccessPolicy(AssignedCreditPolicyMixin, SubsidyAccess
         ]
         return len(unacknowledged_assignments_uuids) > 0
 
-    def redeem(self, lms_user_id, content_key, all_transactions, metadata=None, **kwargs):
+    def redeem(
+        self, lms_user_id, content_key, all_transactions, metadata=None,
+        actor_lms_user_id=None, actor_type=None, source=None, **kwargs,
+    ):
         """
         Redeem content, but only if there's a matching assignment.  On successful redemption, the assignment state will
         be set to 'accepted', otherwise 'errored'.
+
+        Args:
+            actor_lms_user_id: The lms_user_id of the actor (e.g. admin or system) requesting the redemption, for
+                audit action attribution. Defaults to ``lms_user_id`` (the learner), matching the historical
+                behavior of learner-initiated redemption.
+            actor_type: One of ``AssignmentActorTypes``, describing who requested the redemption. Defaults to
+                ``AssignmentActorTypes.LEARNER``.
+            source: One of ``AssignmentSources``, describing where the redemption request originated.
 
         Returns:
             A ledger transaction.
@@ -1776,6 +1787,8 @@ class AssignedLearnerCreditAccessPolicy(AssignedCreditPolicyMixin, SubsidyAccess
             SubsidyAPIHTTPError if the Subsidy API request failed.
             ValueError if the access method of this policy is invalid.
         """
+        actor_lms_user_id = actor_lms_user_id if actor_lms_user_id is not None else lms_user_id
+        actor_type = actor_type or AssignmentActorTypes.LEARNER
         found_assignment = self.get_assignment(lms_user_id, content_key)
         # The following checks for non-allocated assignments only exist to be defensive against race-conditions, but
         # in practice should never happen if the caller locks the policy and runs can_redeem() before redeem().
@@ -1804,9 +1817,9 @@ class AssignedLearnerCreditAccessPolicy(AssignedCreditPolicyMixin, SubsidyAccess
             found_assignment.save()
             found_assignment.add_errored_redeemed_action(
                 exc,
-                actor_lms_user_id=lms_user_id,
-                actor_type=AssignmentActorTypes.LEARNER,
-                source=AssignmentSources.API,
+                actor_lms_user_id=actor_lms_user_id,
+                actor_type=actor_type,
+                source=source or AssignmentSources.API,
             )
             raise
         # Migrate assignment to accepted.
@@ -1822,9 +1835,9 @@ class AssignedLearnerCreditAccessPolicy(AssignedCreditPolicyMixin, SubsidyAccess
         found_assignment.transaction_uuid = ledger_transaction.get('uuid')  # uuid should always be in the API response.
         found_assignment.save()
         found_assignment.add_successful_redeemed_action(
-            actor_lms_user_id=lms_user_id,
-            actor_type=AssignmentActorTypes.LEARNER,
-            source=AssignmentSources.API,
+            actor_lms_user_id=actor_lms_user_id,
+            actor_type=actor_type,
+            source=source or AssignmentSources.API,
         )
         return ledger_transaction
 
@@ -2276,6 +2289,8 @@ class ForcedPolicyRedemption(TimeStampedModel):
                             FORCE_ENROLLMENT_KEYWORD: True,
                             **extra_metadata,
                         },
+                        actor_type=AssignmentActorTypes.ADMIN,
+                        source=AssignmentSources.DJANGO_ADMIN,
                     )
                     self.transaction_uuid = result['uuid']
                     self.redeemed_at = result['modified']
