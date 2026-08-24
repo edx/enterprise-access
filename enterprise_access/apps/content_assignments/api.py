@@ -684,14 +684,20 @@ def allocate_assignment_for_requests(
             metadata_by_key
         )
 
-        # Map all affected assignments back to their original requests
+        # Map all affected assignments back to their original requests. Fall back to the
+        # learner's email when lms_user_id is unset (e.g. the learner hasn't yet linked an
+        # LMS account) so that requests/assignments without an lms_user_id don't collide on
+        # the same (None, content_key) key.
         all_affected_assignments = list(updated_assignments) + created_assignments
         assignments_by_learner_and_course = {
-            (asg.lms_user_id, asg.content_key): asg for asg in all_affected_assignments
+            (asg.lms_user_id or asg.learner_email.lower(), asg.content_key): asg
+            for asg in all_affected_assignments
         }
 
         request_to_assignment_map = {
-            req.uuid: assignments_by_learner_and_course.get((req.user.lms_user_id, req.course_id))
+            req.uuid: assignments_by_learner_and_course.get(
+                (req.user.lms_user_id or req.user.email.lower(), req.course_id)
+            )
             for req in learner_credit_requests
         }
 
