@@ -1,0 +1,19 @@
+pylintrc
+  s_b1ea0cd3b8da60::t_13e0a6b7c221b2 67,260-261,394-399
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "31fc71f0b43ed6d604e1c06b2749e32d16514a57",
+  "prompts": {},
+  "sessions": {
+    "s_b1ea0cd3b8da60": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "40d3afd4-3183-469a-9935-34ecbe45e283",
+        "model": "claude-opus-5"
+      },
+      "human_author": "rgopalrao-sonata-png <rgopalrao-sonata@2u.com>"
+    }
+  }
+}
