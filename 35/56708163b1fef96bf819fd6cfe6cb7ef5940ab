@@ -1,0 +1,39 @@
+requirements/base.txt
+  s_f25fa66851bbd7::t_76c16a988f9372 33,35,55,161,229,274,358,373,380
+requirements/pip-tools.txt
+  s_f25fa66851bbd7::t_76c16a988f9372 15,23
+requirements/constraints.txt
+  s_f25fa66851bbd7::t_a0ba94ef437b80 30-38
+requirements/doc.txt
+  s_f25fa66851bbd7::t_76c16a988f9372 60,64,91,243,338,431,480,527,536,618,658,669,685,699,724
+requirements/pip.txt
+  s_f25fa66851bbd7::t_76c16a988f9372 9,13,15,18
+requirements/dev.txt
+  s_f25fa66851bbd7::t_76c16a988f9372 50,54,87,157,216,245,335,478,480,532,586,595,694,709,720,736,752,779,787
+requirements/test.txt
+  s_f25fa66851bbd7::t_76c16a988f9372 49,53,78,220,304,384,425,463,472,543,562,572,586,599,624
+requirements/production.txt
+  s_f25fa66851bbd7::t_76c16a988f9372 45,49,72,188,264,268,270,339,459,474,484
+requirements/common_constraints.txt
+  s_f25fa66851bbd7::t_76c16a988f9372 28-44
+requirements/validation.txt
+  s_f25fa66851bbd7::t_76c16a988f9372 62,67,101,298,420,572,628,690,702,816,836,848,869,887,919
+requirements/quality.txt
+  s_f25fa66851bbd7::t_76c16a988f9372 50,54,81,234,324,436,484,531,540,626,645,655,671,686,713
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "3556708163b1fef96bf819fd6cfe6cb7ef5940ab",
+  "prompts": {},
+  "sessions": {
+    "s_f25fa66851bbd7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f97794ca-75b5-463c-9af4-106fa690455e",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "tsunkara-sonata <tsunkara-sonata@2u.com>"
+    }
+  }
+}

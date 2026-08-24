@@ -1,0 +1,14 @@
+requirements/constraints.txt
+  h_4fc975660f2df8 30
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "895b6e6601cb8713fa43a9b8d4718b17bcc1555d",
+  "prompts": {},
+  "humans": {
+    "h_4fc975660f2df8": {
+      "author": "tsunkara-sonata <tsunkara-sonata@2u.com>"
+    }
+  }
+}

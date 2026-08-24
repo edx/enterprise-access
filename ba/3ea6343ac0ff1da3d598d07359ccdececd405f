@@ -1,0 +1,27 @@
+enterprise_access/apps/customer_billing/tests/test_utils.py
+  s_d35b26c5713542::t_23b71140ad7021 13-18
+  s_d35b26c5713542::t_63ccb756b73862 60-76,81-86
+  s_d35b26c5713542::t_7f785d551a6397 77-80
+enterprise_access/apps/provisioning/tests/test_models.py
+  s_d35b26c5713542::t_48a47fa7823115 705-716
+  s_d35b26c5713542::t_66c20fa9427fe7 691-704
+enterprise_access/apps/bffs/tests/test_checkout_handlers.py
+  s_d35b26c5713542::t_aaf10c873fc709 16
+  s_d35b26c5713542::t_7d40de60dbee88 216-228
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.21",
+  "base_commit_sha": "ba3ea6343ac0ff1da3d598d07359ccdececd405f",
+  "prompts": {},
+  "sessions": {
+    "s_d35b26c5713542": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5c5219f0-47ad-46f0-b11f-bd94efc94ae1",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "tsunkara-sonata <tsunkara-sonata@2u.com>"
+    }
+  }
+}

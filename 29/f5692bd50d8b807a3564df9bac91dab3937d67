@@ -1,0 +1,20 @@
+enterprise_access/apps/customer_billing/tests/test_tasks.py
+  s_12733822876cc3::t_e835b68b393cf6 1233-1266
+  s_12733822876cc3::t_551d30d885e72b 1231-1232
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.21",
+  "base_commit_sha": "29f5692bd50d8b807a3564df9bac91dab3937d67",
+  "prompts": {},
+  "sessions": {
+    "s_12733822876cc3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b835dc29-f71c-467b-9789-f3626ced7bbe",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "shravani-sonata-gottapu <gshravani-sonata@2u.com>"
+    }
+  }
+}

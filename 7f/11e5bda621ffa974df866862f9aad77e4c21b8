@@ -1,0 +1,35 @@
+enterprise_access/apps/api/v1/tests/test_provisioning_views.py
+  s_d35b26c5713542::t_59c13958137efa 856,865,870
+  s_d35b26c5713542::t_b994396178f9dc 177-180,182,1137-1142
+  s_d35b26c5713542::t_2987a29be3c323 418,420
+  s_d35b26c5713542::t_6467b385db5341 832
+  s_d35b26c5713542::t_b32d14ba1ff1ee 175-176
+  s_d35b26c5713542::t_20eb0517c1c871 181
+enterprise_access/apps/bffs/checkout/handlers.py
+  s_d35b26c5713542::t_1c0dae5da6a8a0 218
+  s_d35b26c5713542::t_4c57017d803a8f 215-217
+  s_d35b26c5713542::t_08061801e8f3e0 219
+  s_d35b26c5713542::t_719487e39eb8ea 36,173,192,202,213-214
+enterprise_access/apps/bffs/checkout/context.py
+  s_d35b26c5713542::t_968cb3a3953d27 5,27
+enterprise_access/apps/provisioning/models.py
+  s_d35b26c5713542::t_2e99791edb39a6 340-341,347-348,350-357
+enterprise_access/apps/provisioning/tests/test_models.py
+  s_d35b26c5713542::t_bed644325a026e 673-684,686
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.21",
+  "base_commit_sha": "7f11e5bda621ffa974df866862f9aad77e4c21b8",
+  "prompts": {},
+  "sessions": {
+    "s_d35b26c5713542": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5c5219f0-47ad-46f0-b11f-bd94efc94ae1",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "tsunkara-sonata <tsunkara-sonata@2u.com>"
+    }
+  }
+}

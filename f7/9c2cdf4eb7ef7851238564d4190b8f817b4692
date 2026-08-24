@@ -1,0 +1,41 @@
+enterprise_access/apps/customer_billing/tests/test_utils.py
+  s_ebec80b2bb9123::t_73ee495eefe8cc 67-73,76-86
+enterprise_access/apps/bffs/tests/test_checkout_serializers.py
+  s_e832bf2b57ee97::t_1b6cb1dfb61323 69-85
+  s_e832bf2b57ee97::t_096f40e1bd6512 3-6
+enterprise_access/apps/customer_billing/utils.py
+  s_d9097d497dfaf7::t_e1bddd7106965b 46
+  s_ebec80b2bb9123::t_25e7b5e2910a45 33-36,41-45
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "f79c2cdf4eb7ef7851238564d4190b8f817b4692",
+  "prompts": {},
+  "sessions": {
+    "s_d9097d497dfaf7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9cfcf21d-b517-40ee-b61a-2c0c5a8c413b",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "tsunkara-sonata <tsunkara-sonata@2u.com>"
+    },
+    "s_e832bf2b57ee97": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ba3718c9-764a-4819-a936-ba821bcbc0ff",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "tsunkara-sonata <tsunkara-sonata@2u.com>"
+    },
+    "s_ebec80b2bb9123": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0e66e986-48ff-45de-83dd-22318df09b5f",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "tsunkara-sonata <tsunkara-sonata@2u.com>"
+    }
+  }
+}
