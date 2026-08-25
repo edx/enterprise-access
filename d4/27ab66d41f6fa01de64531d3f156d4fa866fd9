@@ -1,0 +1,19 @@
+enterprise_access/apps/api/v1/views/customer_billing.py
+  s_588074ee1891f6::t_4ea8dfc1706493 1947
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.24",
+  "base_commit_sha": "d427ab66d41f6fa01de64531d3f156d4fa866fd9",
+  "prompts": {},
+  "sessions": {
+    "s_588074ee1891f6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e0c801ad-4ca5-4647-b2fb-912255bbef25",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "tsunkara-sonata <tsunkara-sonata@2u.com>"
+    }
+  }
+}
