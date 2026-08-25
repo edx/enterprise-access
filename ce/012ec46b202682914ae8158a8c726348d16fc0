@@ -1,0 +1,24 @@
+enterprise_access/apps/api/serializers/customer_billing.py
+  s_13676d44ca8d9d::t_3d2fd3110ff8f0 694-698
+enterprise_access/apps/api/v1/views/customer_billing.py
+  s_13676d44ca8d9d::t_3a44fa76e217e1 1947
+enterprise_access/apps/api/v1/tests/test_customer_billing.py
+  s_13676d44ca8d9d::t_6f31211ebb2c59 2297,2299-2300,2302-2303,2305
+  s_13676d44ca8d9d::t_d31bdf9b862e50 2372-2373
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.24",
+  "base_commit_sha": "ce012ec46b202682914ae8158a8c726348d16fc0",
+  "prompts": {},
+  "sessions": {
+    "s_13676d44ca8d9d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9ffe171a-702c-4a3a-bfed-886740a79eaa",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": null
+    }
+  }
+}
