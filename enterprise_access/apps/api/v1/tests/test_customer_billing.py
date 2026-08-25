@@ -2294,11 +2294,15 @@ class BillingManagementSubscriptionTests(BillingManagementBaseTest):
         # Yearly amount: 50000 (unit_amount) * 5 (quantity) = 250000
         self.assertEqual(sub['yearly_amount'], 250000)
         self.assertEqual(sub['license_count'], 5)
+        self.assertIsNone(sub['academy_name'])
 
-    def test_get_subscription_success_essentials_product_type(self):
+    @mock.patch('enterprise_access.apps.customer_billing.models.get_cached_academy_data')
+    def test_get_subscription_success_essentials_product_type(self, mock_get_cached_academy_data):
         """
-        Test retrieving subscription response includes Essentials product_type for academy-backed products.
+        Test retrieving subscription response includes Essentials product_type for academy-backed products,
+        along with the academy_name derived from the ssp_product's academy_title.
         """
+        mock_get_cached_academy_data.return_value = {'title': 'AI Academy'}
         essentials_product = SspProduct.objects.create(
             slug='ai-academy-yearly',
             stripe_price_lookup_key='ai_academy_yearly_price_test',
@@ -2365,6 +2369,8 @@ class BillingManagementSubscriptionTests(BillingManagementBaseTest):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         response_data = response.json()
         self.assertEqual(response_data['product_type'], 'Essentials')
+        self.assertEqual(response_data['academy_name'], 'AI Academy')
+        mock_get_cached_academy_data.assert_called_with(essentials_product.academy_uuid)
 
     def test_get_product_type_from_checkout_intent_returns_expected_values(self):
         """

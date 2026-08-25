@@ -1944,6 +1944,7 @@ class BillingManagementViewSet(viewsets.ViewSet):
                 'product_type': self._get_product_type_from_checkout_intent(checkout_intent),
                 'yearly_amount': yearly_amount,
                 'license_count': license_count,
+                'academy_name': checkout_intent.ssp_product.academy_title,
             }
 
             serializer = serializers.StripeSubscriptionResponseSerializer(data=sub_data)

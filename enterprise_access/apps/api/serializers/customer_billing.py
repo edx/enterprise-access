@@ -691,6 +691,11 @@ class StripeSubscriptionResponseSerializer(serializers.Serializer):
         allow_null=True,
         help_text='Total number of licenses/seats in the subscription',
     )
+    academy_name = serializers.CharField(
+        required=False,
+        allow_null=True,
+        help_text='Academy display name for academy-backed (Essentials) products, otherwise null',
+    )
 
 
 # pylint: disable=abstract-method
