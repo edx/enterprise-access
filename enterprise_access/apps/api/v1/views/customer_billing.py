@@ -1944,6 +1944,7 @@ class BillingManagementViewSet(viewsets.ViewSet):
                 'product_type': self._get_product_type_from_checkout_intent(checkout_intent),
                 'yearly_amount': yearly_amount,
                 'license_count': license_count,
+                'academy_name': getattr(checkout_intent.ssp_product, 'academy_title', None),
             }
 
             serializer = serializers.StripeSubscriptionResponseSerializer(data=sub_data)
@@ -2220,6 +2221,7 @@ class BillingManagementViewSet(viewsets.ViewSet):
                 'cancel_at_period_end': updated_subscription.get('cancel_at_period_end', False),
                 'current_period_end': updated_subscription.get('current_period_end'),
                 'product_type': self._get_product_type_from_checkout_intent(checkout_intent),
+                'academy_name': getattr(checkout_intent.ssp_product, 'academy_title', None),
             }
 
             serializer = serializers.StripeSubscriptionResponseSerializer(data=sub_data)
@@ -2362,6 +2364,7 @@ class BillingManagementViewSet(viewsets.ViewSet):
                 'cancel_at_period_end': updated_subscription.get('cancel_at_period_end', False),
                 'current_period_end': updated_subscription.get('current_period_end'),
                 'product_type': self._get_product_type_from_checkout_intent(checkout_intent),
+                'academy_name': getattr(checkout_intent.ssp_product, 'academy_title', None),
             }
 
             serializer = serializers.StripeSubscriptionResponseSerializer(data=sub_data)

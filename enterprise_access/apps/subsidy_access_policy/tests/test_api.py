@@ -73,14 +73,15 @@ class TestValidateAndAllocate(TestCase):
             "valid_requests": [request],
             "failed_requests_by_reason": {},
         }
-        approve.return_value = {request.uuid: assignment}
+        approve.return_value = ({request.uuid: assignment}, [])
 
-        approved_map, failed_by_reason = validate_and_allocate(self.policy, [request])
+        approved_map, failed_by_reason, pending_allocation_actions = validate_and_allocate(self.policy, [request])
 
         self.assertIn(request.uuid, approved_map)
         self.assertEqual(approved_map[request.uuid]["assignment"], assignment)
         self.assertEqual(approved_map[request.uuid]["request"], request)
         self.assertEqual(failed_by_reason, {})
+        self.assertEqual(pending_allocation_actions, [])
 
     @mock.patch.multiple(POLICY_PATH, approve=mock.DEFAULT, can_approve=mock.DEFAULT)
     def test_partial_failure(self, can_approve, approve):
@@ -94,9 +95,9 @@ class TestValidateAndAllocate(TestCase):
             "valid_requests": [valid_request],
             "failed_requests_by_reason": {reason: [failed_request]},
         }
-        approve.return_value = {valid_request.uuid: assignment}
+        approve.return_value = ({valid_request.uuid: assignment}, [])
 
-        approved_map, failed_by_reason = validate_and_allocate(
+        approved_map, failed_by_reason, _ = validate_and_allocate(
             self.policy, [valid_request, failed_request],
         )
 
@@ -118,10 +119,13 @@ class TestValidateAndAllocate(TestCase):
             "failed_requests_by_reason": {reason: [failed_request]},
         }
 
-        approved_map, failed_by_reason = validate_and_allocate(self.policy, [failed_request])
+        approved_map, failed_by_reason, pending_allocation_actions = validate_and_allocate(
+            self.policy, [failed_request],
+        )
 
         self.assertEqual(approved_map, {})
         self.assertEqual(failed_by_reason, {reason: [failed_request]})
+        self.assertEqual(pending_allocation_actions, [])
         approve.assert_not_called()
 
     @mock.patch(f'{POLICY_PATH}.can_approve')
@@ -145,7 +149,7 @@ class TestValidateAndAllocate(TestCase):
             "valid_requests": [request],
             "failed_requests_by_reason": {},
         }
-        approve.return_value = {}  # "forgot" the assignment
+        approve.return_value = ({}, [])  # "forgot" the assignment
 
         with self.assertRaises(SubisidyAccessPolicyRequestApprovalError) as ctx:
             validate_and_allocate(self.policy, [request])

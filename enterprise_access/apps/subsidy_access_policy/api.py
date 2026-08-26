@@ -10,6 +10,7 @@ from requests.exceptions import HTTPError
 from rest_framework import status
 
 from enterprise_access.apps.content_assignments.api import AllocationException
+from enterprise_access.apps.content_assignments.constants import AssignmentSources
 from enterprise_access.apps.subsidy_request.models import LearnerCreditRequest
 
 from .exceptions import ContentPriceNullException, PriceValidationError, SubisidyAccessPolicyRequestApprovalError
@@ -50,6 +51,9 @@ def get_policy_for_approval(policy_uuid):
 def validate_and_allocate(
     policy: SubsidyAccessPolicy,
     learner_credit_requests: Iterable[LearnerCreditRequest],
+    actor_lms_user_id=None,
+    source=AssignmentSources.API,
+    correlation_id=None,
 ) -> tuple:
     """
     Validate requests against the policy and allocate assignments for valid ones.
@@ -60,11 +64,16 @@ def validate_and_allocate(
     Args:
         policy: The SubsidyAccessPolicy to approve against.
         learner_credit_requests: The requests to process.
+        actor_lms_user_id, source, correlation_id: passed through to the resulting
+            ``LearnerContentAssignmentAction`` audit rows.
 
     Returns:
-        A tuple of (approved_requests_map, failed_requests_by_reason) where:
+        A tuple of (approved_requests_map, failed_requests_by_reason, pending_allocation_actions) where:
         - approved_requests_map maps request UUID -> {"request": ..., "assignment": ...}
         - failed_requests_by_reason maps reason string -> list of failed requests
+        - pending_allocation_actions is a list of unsaved ``allocated``/``reallocated``
+          ``LearnerContentAssignmentAction`` instances that the caller must persist
+          (e.g. via ``bulk_create``)
 
     Raises:
         SubisidyAccessPolicyRequestApprovalError: On validation failure, allocation error,
@@ -84,8 +93,14 @@ def validate_and_allocate(
         failed_requests_by_reason = validation_result.get("failed_requests_by_reason", {})
 
         approved_requests_map = {}
+        pending_allocation_actions = []
         if valid_requests:
-            request_to_assignment_map = policy.approve(valid_requests)
+            request_to_assignment_map, pending_allocation_actions = policy.approve(
+                valid_requests,
+                actor_lms_user_id=actor_lms_user_id,
+                source=source,
+                correlation_id=correlation_id,
+            )
             for request in valid_requests:
                 assignment = request_to_assignment_map.get(request.uuid)
                 if not assignment:
@@ -97,7 +112,7 @@ def validate_and_allocate(
                     "assignment": assignment,
                 }
 
-        return approved_requests_map, failed_requests_by_reason
+        return approved_requests_map, failed_requests_by_reason, pending_allocation_actions
 
     except (
         AllocationException, PriceValidationError, ValidationError, DatabaseError,
