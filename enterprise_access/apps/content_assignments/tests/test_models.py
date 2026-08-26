@@ -9,7 +9,13 @@ from django.utils import timezone
 
 from enterprise_access.apps.subsidy_access_policy.tests.factories import AssignedLearnerCreditAccessPolicyFactory
 
-from ..constants import RETIRED_EMAIL_ADDRESS_FORMAT, AssignmentActions, AssignmentActorTypes, AssignmentSources
+from ..constants import (
+    RETIRED_EMAIL_ADDRESS_FORMAT,
+    AssignmentActionErrors,
+    AssignmentActions,
+    AssignmentActorTypes,
+    AssignmentSources
+)
 from ..models import AssignmentConfiguration, LearnerContentAssignmentAction
 from .factories import LearnerContentAssignmentFactory
 
@@ -169,6 +175,87 @@ class TestAssignmentActions(TestCase):
 
         for action_historical_record in action.history.all():
             self.assertIsNotNone(re.match(pattern, action_historical_record.learner_email))
+
+    def test_add_audit_action_with_explicit_actor_type_and_source(self):
+        """
+        Test that add_audit_action creates audit action with explicit actor_type and source.
+        """
+        action = self.assignment.add_audit_action(
+            action_type=AssignmentActions.EXPIRED,
+            actor_type=AssignmentActorTypes.SYSTEM,
+            source=AssignmentSources.SCHEDULED_JOB,
+            metadata={'expiration_reason': 'NINETY_DAYS_PASSED'},
+        )
+
+        self.assertEqual(action.action_type, AssignmentActions.EXPIRED)
+        self.assertEqual(action.actor_type, AssignmentActorTypes.SYSTEM)
+        self.assertEqual(action.source, AssignmentSources.SCHEDULED_JOB)
+        self.assertIsNone(action.error_reason)
+        self.assertIsNotNone(action.completed_at)
+        self.assertEqual(action.metadata.get('expiration_reason'), 'NINETY_DAYS_PASSED')
+        self.assertEqual(action.assignment, self.assignment)
+
+    def test_add_audit_action_with_error(self):
+        """
+        Test that add_audit_action creates audit action with error details.
+        """
+        traceback_str = "Traceback (most recent call last):\n  File \"test.py\", line 1, in <module>"
+        action = self.assignment.add_audit_action(
+            action_type=AssignmentActions.ERRORED,
+            actor_type=AssignmentActorTypes.SYSTEM,
+            source=AssignmentSources.CELERY_TASK,
+            error_reason=AssignmentActionErrors.EMAIL_ERROR,
+            traceback_str=traceback_str,
+        )
+
+        self.assertEqual(action.action_type, AssignmentActions.ERRORED)
+        self.assertEqual(action.error_reason, AssignmentActionErrors.EMAIL_ERROR)
+        self.assertEqual(action.traceback, traceback_str)
+        self.assertIsNone(action.completed_at)  # Error actions don't have completed_at
+
+    def test_add_audit_action_defaults_actor_type_to_system(self):
+        """
+        Test that add_audit_action defaults actor_type to SYSTEM if not provided.
+        """
+        action = self.assignment.add_audit_action(
+            action_type=AssignmentActions.RETIRED,
+            source=AssignmentSources.SCHEDULED_JOB,
+        )
+
+        self.assertEqual(action.actor_type, AssignmentActorTypes.SYSTEM)
+        self.assertIsNone(action.actor_lms_user_id)
+
+    def test_add_audit_action_with_actor_lms_user_id(self):
+        """
+        Test that add_audit_action captures actor_lms_user_id for admin actions.
+        """
+        actor_user_id = 12345
+        action = self.assignment.add_audit_action(
+            action_type=AssignmentActions.REDEEMED,
+            actor_type=AssignmentActorTypes.ADMIN,
+            source=AssignmentSources.DJANGO_ADMIN,
+            actor_lms_user_id=actor_user_id,
+        )
+
+        self.assertEqual(action.actor_lms_user_id, actor_user_id)
+        self.assertEqual(action.actor_type, AssignmentActorTypes.ADMIN)
+
+    def test_add_audit_action_with_none_assignment_configuration(self):
+        """
+        Test that add_audit_action handles None assignment_configuration gracefully.
+        """
+        assignment = LearnerContentAssignmentFactory.create(
+            assignment_configuration=None,
+        )
+
+        action = assignment.add_audit_action(
+            action_type=AssignmentActions.LEARNER_LINKED,
+            actor_type=AssignmentActorTypes.SYSTEM,
+            source=AssignmentSources.SIGNAL,
+        )
+
+        self.assertEqual(action.action_type, AssignmentActions.LEARNER_LINKED)
+        self.assertIsNone(action.enterprise_customer_uuid)
 
 
 class TestLearnerContentAssignmentActionAuditFields(TestCase):

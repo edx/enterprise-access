@@ -56,6 +56,7 @@ class AssignmentActions:
     REALLOCATED = 'reallocated'
     APPROVED = 'approved'
     ERRORED = 'errored'
+    RETIRED = 'retired'
 
     CHOICES = (
         (LEARNER_LINKED, 'Learner linked to customer'),
@@ -71,6 +72,7 @@ class AssignmentActions:
         (REALLOCATED, 'Content reallocated to learner'),
         (APPROVED, 'Assignment approved'),
         (ERRORED, 'Assignment encountered an error'),
+        (RETIRED, 'Learner PII retired/cleared from system'),
     )
 
 

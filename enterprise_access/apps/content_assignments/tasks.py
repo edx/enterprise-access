@@ -20,6 +20,7 @@ from enterprise_access.apps.content_assignments.content_metadata_api import (
 from enterprise_access.tasks import LoggedTaskWithRetry
 from enterprise_access.utils import (
     format_datetime_obj,
+    format_traceback,
     get_automatic_expiration_date_and_reason,
     get_course_run_metadata_for_assignment,
     localized_utcnow
@@ -28,7 +29,11 @@ from enterprise_access.utils import (
 from .constants import (
     BRAZE_TIMESTAMP_FORMAT,
     RETIRED_EMAIL_ADDRESS_FORMAT,
+    AssignmentActionErrors,
+    AssignmentActions,
+    AssignmentActorTypes,
     AssignmentAutomaticExpiredReason,
+    AssignmentSources,
     LearnerContentAssignmentStateChoices
 )
 from .models import AssignmentConfiguration
@@ -364,7 +369,13 @@ class CreatePendingEnterpriseLearnerForAssignmentTaskBase(BaseAssignmentRetryAnd
     Base class for the create_pending_enterprise_learner_for_assignment task.
     """
     def add_errored_action(self, assignment, exc):
-        assignment.add_errored_linked_action(exc)
+        assignment.add_audit_action(
+            action_type=AssignmentActions.LEARNER_LINKED,
+            actor_type=AssignmentActorTypes.SYSTEM,
+            source=AssignmentSources.CELERY_TASK,
+            error_reason=AssignmentActionErrors.INTERNAL_API_ERROR,
+            traceback_str=format_traceback(exc),
+        )
 
 
 @shared_task(base=CreatePendingEnterpriseLearnerForAssignmentTaskBase)
@@ -419,7 +430,13 @@ class SendCancelEmailTask(BaseAssignmentRetryAndErrorActionTask):
     Base class for the ``send_cancel_email_for_pending_assignment`` task.
     """
     def add_errored_action(self, assignment, exc):
-        assignment.add_errored_cancel_action(exc)
+        assignment.add_audit_action(
+            action_type=AssignmentActions.CANCELLED,
+            actor_type=AssignmentActorTypes.SYSTEM,
+            source=AssignmentSources.CELERY_TASK,
+            error_reason=AssignmentActionErrors.EMAIL_ERROR,
+            traceback_str=format_traceback(exc),
+        )
 
 
 @shared_task(base=SendCancelEmailTask)
@@ -453,7 +470,13 @@ class SendExecutiveEducationNudgeTask(BaseAssignmentRetryAndErrorActionTask):
     Base class for the ``send_exec_ed_enrollment_warmer`` task.
     """
     def add_errored_action(self, assignment, exc):
-        assignment.add_errored_reminded_action(exc)
+        assignment.add_audit_action(
+            action_type=AssignmentActions.REMINDED,
+            actor_type=AssignmentActorTypes.SYSTEM,
+            source=AssignmentSources.CELERY_TASK,
+            error_reason=AssignmentActionErrors.EMAIL_ERROR,
+            traceback_str=format_traceback(exc),
+        )
 
 
 @shared_task(base=SendExecutiveEducationNudgeTask)
@@ -492,7 +515,13 @@ class SendReminderEmailTask(BaseAssignmentRetryAndErrorActionTask):
     Base class for the ``send_reminder_email_for_pending_assignment`` task.
     """
     def add_errored_action(self, assignment, exc):
-        assignment.add_errored_reminded_action(exc)
+        assignment.add_audit_action(
+            action_type=AssignmentActions.REMINDED,
+            actor_type=AssignmentActorTypes.SYSTEM,
+            source=AssignmentSources.CELERY_TASK,
+            error_reason=AssignmentActionErrors.EMAIL_ERROR,
+            traceback_str=format_traceback(exc),
+        )
 
     def progress_state_on_failure(self, assignment):
         """
@@ -541,7 +570,13 @@ class SendNotificationEmailTask(BaseAssignmentRetryAndErrorActionTask):
     Base class for the ``send_email_for_new_assignment`` task.
     """
     def add_errored_action(self, assignment, exc):
-        assignment.add_errored_notified_action(exc)
+        assignment.add_audit_action(
+            action_type=AssignmentActions.NOTIFIED,
+            actor_type=AssignmentActorTypes.SYSTEM,
+            source=AssignmentSources.CELERY_TASK,
+            error_reason=AssignmentActionErrors.EMAIL_ERROR,
+            traceback_str=format_traceback(exc),
+        )
 
     def progress_state_on_failure(self, assignment):
         """
@@ -588,7 +623,13 @@ class SendExpirationEmailTask(BaseAssignmentRetryAndErrorActionTask):
     Base class for the ``send_assignment_automatically_expired_email`` task.
     """
     def add_errored_action(self, assignment, exc):
-        assignment.add_errored_expiration_action(exc)
+        assignment.add_audit_action(
+            action_type=AssignmentActions.EXPIRED,
+            actor_type=AssignmentActorTypes.SYSTEM,
+            source=AssignmentSources.CELERY_TASK,
+            error_reason=AssignmentActionErrors.EMAIL_ERROR,
+            traceback_str=format_traceback(exc),
+        )
 
 
 @shared_task(base=SendExpirationEmailTask)
@@ -771,6 +812,12 @@ def clear_pii_for_expired_assignments(dry_run=False):
                 else:
                     assignment.clear_pii()
                     assignment.save()
+                    # Record audit action for PII clearing (system-driven via scheduled task)
+                    assignment.add_audit_action(
+                        action_type=AssignmentActions.RETIRED,
+                        actor_type=AssignmentActorTypes.SYSTEM,
+                        source=AssignmentSources.SCHEDULED_JOB,
+                    )
                     logger.info(
                         '[CLEAR_PII_FOR_EXPIRED_ASSIGNMENTS] Cleared PII for assignment %s',
                         assignment.uuid

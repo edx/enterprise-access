@@ -22,6 +22,8 @@ from enterprise_access.apps.content_assignments.constants import (
     RETIRED_EMAIL_ADDRESS_FORMAT,
     AssignmentActionErrors,
     AssignmentActions,
+    AssignmentActorTypes,
+    AssignmentSources,
     LearnerContentAssignmentStateChoices
 )
 from enterprise_access.apps.content_assignments.content_metadata_api import get_human_readable_date
@@ -713,6 +715,51 @@ class TestBrazeEmailTasks(APITestWithMocks):
     @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.objects')
     @mock.patch('enterprise_access.apps.content_assignments.tasks.LmsApiClient')
     @mock.patch('enterprise_access.apps.content_assignments.tasks.BrazeApiClient')
+    def test_send_email_task_failure_creates_audit_action_with_system_actor(
+        self,
+        mock_braze_client,
+        mock_lms_client,
+        mock_subsidy_model,  # pylint: disable=unused-argument
+    ):
+        """
+        Verify that when an email task fails, it creates an audit action with
+        proper actor_type (SYSTEM) and source (CELERY_TASK).
+        """
+        mock_lms_client.return_value.get_enterprise_customer_data.return_value = self.mock_enterprise_customer_data
+        mock_recipient = {'external_user_id': 1}
+        mock_catalog_client = mock.MagicMock()
+        mock_catalog_client.catalog_content_metadata.return_value = {
+            'count': 1,
+            'results': [self.mock_content_metadata]
+        }
+
+        braze_client_instance = mock_braze_client.return_value
+        braze_client_instance.send_campaign_message.side_effect = Exception('Simulated Braze error')
+
+        admin_email = self.mock_enterprise_customer_data['admin_users'][0]['email']
+        mock_admin_mailto = f"mailto:{admin_email}"
+        braze_client_instance.create_recipient.return_value = mock_recipient
+        braze_client_instance.generate_mailto_link.return_value = mock_admin_mailto
+
+        # Trigger task failure
+        send_email_for_new_assignment.delay(self.assignment_course.uuid)
+
+        # Verify audit action was created with proper fields
+        audit_actions = self.assignment_course.actions.filter(
+            action_type=AssignmentActions.NOTIFIED,
+            error_reason=AssignmentActionErrors.EMAIL_ERROR,
+        )
+        assert audit_actions.exists(), "No error audit action created"
+
+        action = audit_actions.first()
+        assert action.actor_type == AssignmentActorTypes.SYSTEM
+        assert action.source == AssignmentSources.CELERY_TASK
+        assert action.completed_at is None  # Errors don't have completed_at
+        assert action.traceback is not None
+
+    @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.objects')
+    @mock.patch('enterprise_access.apps.content_assignments.tasks.LmsApiClient')
+    @mock.patch('enterprise_access.apps.content_assignments.tasks.BrazeApiClient')
     @ddt.data(
         {'is_assigned_course_run': False},
         {'is_assigned_course_run': True},
@@ -1138,3 +1185,53 @@ class TestClearPiiForExpiredAssignmentsTask(APITestWithMocks):
         self.expired_assignment.refresh_from_db()
         assert self.expired_assignment.learner_email == original_email
         assert result['cleared_count'] == 0
+
+    @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient')
+    @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_client')
+    def test_clear_pii_creates_audit_action(
+        self,
+        mock_subsidy_client,
+        mock_catalog_client,
+    ):
+        """
+        Test that clearing PII creates a RETIRED audit action with system actor and scheduled_job source.
+        """
+        self.expired_assignment.add_successful_expiration_action()
+
+        subsidy_expiry = now() + timedelta(days=365)
+        enrollment_end = now() + timedelta(days=365)
+
+        mock_subsidy_client.retrieve_subsidy.return_value = {
+            'enterprise_customer_uuid': str(self.enterprise_uuid),
+            'expiration_datetime': subsidy_expiry.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            'is_active': True,
+        }
+        mock_catalog_client.return_value.catalog_content_metadata.return_value = {
+            'count': 1,
+            'results': [{
+                'key': TEST_COURSE_KEY,
+                'normalized_metadata': {
+                    'start_date': '2020-01-01 12:00:00Z',
+                    'end_date': '2030-01-01 12:00:00Z',
+                    'enroll_by_date': enrollment_end.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    'content_price': 100,
+                },
+            }],
+        }
+
+        result = clear_pii_for_expired_assignments(dry_run=False)
+
+        self.expired_assignment.refresh_from_db()
+        assert result['cleared_count'] == 1
+
+        # Verify the RETIRED audit action was created
+        retired_actions = self.expired_assignment.actions.filter(
+            action_type=AssignmentActions.RETIRED
+        )
+        assert retired_actions.count() == 1
+
+        retired_action = retired_actions.first()
+        assert retired_action.actor_type == AssignmentActorTypes.SYSTEM
+        assert retired_action.source == AssignmentSources.SCHEDULED_JOB
+        assert retired_action.completed_at is not None
+        assert retired_action.error_reason is None

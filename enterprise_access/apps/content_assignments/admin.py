@@ -5,6 +5,12 @@ from djangoql.admin import DjangoQLSearchMixin
 from simple_history.admin import SimpleHistoryAdmin
 
 from enterprise_access.apps.content_assignments import models
+from enterprise_access.apps.content_assignments.constants import (
+    AssignmentActions,
+    AssignmentActorTypes,
+    AssignmentSources,
+    LearnerContentAssignmentStateChoices
+)
 
 
 @admin.register(models.AssignmentConfiguration)
@@ -98,6 +104,8 @@ class LearnerContentAssignmentAdmin(DjangoQLSearchMixin, SimpleHistoryAdmin):
 
     inlines = [ActionInline]
 
+    actions = ['force_redeem_assignments']
+
     def get_queryset(self, request):
         return super().get_queryset(request).select_related('assignment_configuration')
 
@@ -108,6 +116,42 @@ class LearnerContentAssignmentAdmin(DjangoQLSearchMixin, SimpleHistoryAdmin):
     @admin.display(ordering='enterprise_customer_uuid', description='Enterprise customer uuid')
     def get_enterprise_customer_uuid(self, obj):
         return obj.assignment_configuration.enterprise_customer_uuid
+
+    @admin.action(description='Force redeem selected assignments')
+    def force_redeem_assignments(self, request, queryset):
+        """
+        Admin action to force-redeem selected assignments.
+        Records audit actions with admin actor type and django_admin source.
+        """
+        actor_lms_user_id = getattr(request.user, 'id', None)
+
+        for assignment in queryset:
+            # Record ALLOCATED action if not already in a redeemed/allocated state
+            if assignment.state not in [
+                LearnerContentAssignmentStateChoices.ACCEPTED,
+                LearnerContentAssignmentStateChoices.ERRORED,
+                LearnerContentAssignmentStateChoices.REVERSED,
+            ]:
+                assignment.add_audit_action(
+                    action_type=AssignmentActions.ALLOCATED,
+                    actor_type=AssignmentActorTypes.ADMIN,
+                    source=AssignmentSources.DJANGO_ADMIN,
+                    actor_lms_user_id=actor_lms_user_id,
+                )
+
+            # Record REDEEMED action
+            assignment.add_audit_action(
+                action_type=AssignmentActions.REDEEMED,
+                actor_type=AssignmentActorTypes.ADMIN,
+                source=AssignmentSources.DJANGO_ADMIN,
+                actor_lms_user_id=actor_lms_user_id,
+            )
+
+            # Update assignment state
+            assignment.state = LearnerContentAssignmentStateChoices.ACCEPTED
+            assignment.save()
+
+        self.message_user(request, f'Successfully redeemed {len(queryset)} assignment(s).')
 
 
 @admin.register(models.LearnerContentAssignmentAction)

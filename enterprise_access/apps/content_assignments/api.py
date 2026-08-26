@@ -1339,6 +1339,14 @@ def expire_assignment(
 
         assignment.save()
 
+        # Record audit action for automatic expiration (system-driven)
+        assignment.add_audit_action(
+            action_type=AssignmentActions.EXPIRED,
+            actor_type=AssignmentActorTypes.SYSTEM,
+            source=AssignmentSources.SCHEDULED_JOB,
+            metadata={'expiration_reason': automatic_expiration_reason},
+        )
+
         # Send appropriate expiration email based on whether this is a B&R request or regular assignment
         if credit_request:
             # This is a Browse & Request - send B&R-specific expiration email

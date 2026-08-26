@@ -10,7 +10,12 @@ from django.dispatch import receiver
 from django.utils import timezone
 from openedx_events.enterprise.signals import LEDGER_TRANSACTION_REVERSED
 
-from enterprise_access.apps.content_assignments.constants import LearnerContentAssignmentStateChoices
+from enterprise_access.apps.content_assignments.constants import (
+    AssignmentActions,
+    AssignmentActorTypes,
+    AssignmentSources,
+    LearnerContentAssignmentStateChoices
+)
 from enterprise_access.apps.content_assignments.models import LearnerContentAssignment
 from enterprise_access.apps.core.models import User
 from enterprise_access.apps.subsidy_request.models import (
@@ -44,6 +49,15 @@ def update_assignment_lms_user_id_from_user_email(sender, **kwargs):  # pylint: 
         for assignment in assignments_to_update:
             assignment.lms_user_id = user.lms_user_id
         num_assignments_updated = LearnerContentAssignment.bulk_update(assignments_to_update, ['lms_user_id'])
+
+        # Record audit actions for user-linking (system-driven via signal)
+        for assignment in assignments_to_update:
+            assignment.add_audit_action(
+                action_type=AssignmentActions.LEARNER_LINKED,
+                actor_type=AssignmentActorTypes.SYSTEM,
+                source=AssignmentSources.SIGNAL,
+                actor_lms_user_id=user.lms_user_id,
+            )
 
         # Intentionally not logging PII (email).
         if len(assignments_to_update) > 0:
@@ -86,7 +100,12 @@ def update_assignment_status_for_reversed_transaction(**kwargs):
         assignment_to_update.state = LearnerContentAssignmentStateChoices.REVERSED
         assignment_to_update.reversed_at = timezone.now()
         assignment_to_update.save()
-        assignment_to_update.add_successful_reversal_action()
+        # Record audit action for reversal (system-driven via signal)
+        assignment_to_update.add_audit_action(
+            action_type=AssignmentActions.REVERSED,
+            actor_type=AssignmentActorTypes.SYSTEM,
+            source=AssignmentSources.SIGNAL,
+        )
         logger.info(
             f"LearnerContentAssignment {assignment_to_update.uuid} reversed."
         )
