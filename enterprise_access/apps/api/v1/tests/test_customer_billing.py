@@ -2633,18 +2633,20 @@ class BillingManagementCancelSubscriptionTests(BillingManagementBaseTest):
         self.assertEqual(sub['id'], 'sub_test123')
         self.assertTrue(sub['cancel_at_period_end'])
         self.assertEqual(sub['product_type'], 'Teams')
+        self.assertIsNone(sub['academy_name'])
         mock_sub_modify.assert_called_once_with('sub_test123', cancel_at_period_end=True)
 
+    @mock.patch('enterprise_access.apps.customer_billing.models.get_cached_academy_data')
     @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_ssp_product_pricing')
     @mock.patch('stripe.Subscription.modify')
     @mock.patch('stripe.Subscription.retrieve')
     def test_cancel_subscription_essentials_plan_success(
-        self, mock_sub_retrieve, mock_sub_modify, mock_get_ssp_pricing
+        self, mock_sub_retrieve, mock_sub_modify, mock_get_ssp_pricing, mock_get_cached_academy_data
     ):
         """
         Test successfully cancelling an Essentials plan subscription.
         """
-
+        mock_get_cached_academy_data.return_value = {'title': 'AI Academy'}
         essentials_product = SspProduct.objects.create(
             slug='ai-academy-cancel-yearly',
             stripe_price_lookup_key='ai_academy_cancel_yearly_price_test',
@@ -2711,6 +2713,7 @@ class BillingManagementCancelSubscriptionTests(BillingManagementBaseTest):
         sub = response_data
         self.assertTrue(sub['cancel_at_period_end'])
         self.assertEqual(sub['product_type'], 'Essentials')
+        self.assertEqual(sub['academy_name'], 'AI Academy')
 
     @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_ssp_product_pricing')
     @mock.patch('stripe.Subscription.retrieve')
@@ -3049,18 +3052,20 @@ class BillingManagementReinstateSubscriptionTests(BillingManagementBaseTest):
         self.assertFalse(sub['cancel_at_period_end'])
         self.assertEqual(sub['product_type'], 'Teams')
         self.assertIn('product_type', sub)
+        self.assertIsNone(sub['academy_name'])
         mock_sub_modify.assert_called_once_with('sub_test123', cancel_at_period_end=False)
 
+    @mock.patch('enterprise_access.apps.customer_billing.models.get_cached_academy_data')
     @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_ssp_product_pricing')
     @mock.patch('stripe.Subscription.modify')
     @mock.patch('stripe.Subscription.retrieve')
     def test_reinstate_subscription_essentials_plan_success(
-        self, mock_sub_retrieve, mock_sub_modify, mock_get_ssp_pricing
+        self, mock_sub_retrieve, mock_sub_modify, mock_get_ssp_pricing, mock_get_cached_academy_data
     ):
         """
         Test successfully reinstating an Essentials plan subscription.
         """
-
+        mock_get_cached_academy_data.return_value = {'title': 'AI Academy'}
         essentials_product = SspProduct.objects.create(
             slug='ai-academy-reinstate-yearly',
             stripe_price_lookup_key='ai_academy_reinstate_yearly_price_test',
@@ -3129,6 +3134,7 @@ class BillingManagementReinstateSubscriptionTests(BillingManagementBaseTest):
         sub = response_data
         self.assertFalse(sub['cancel_at_period_end'])
         self.assertEqual(sub['product_type'], 'Essentials')
+        self.assertEqual(sub['academy_name'], 'AI Academy')
 
     @mock.patch('stripe.Subscription.retrieve')
     def test_reinstate_subscription_learner_credit_plan_fails(self, mock_sub_retrieve):
