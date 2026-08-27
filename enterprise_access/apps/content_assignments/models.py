@@ -635,10 +635,16 @@ class LearnerContentAssignment(TimeStampedModel):
 
     def add_errored_cancel_action(self, exc, actor_lms_user_id=None, actor_type=None, source=None):
         """
-        Adds an errored "cancel" LearnerContentAssignmentAction for this assignment record.
+        Adds a "cancel email failed" LearnerContentAssignmentAction for this assignment record.
+
+        This is intentionally recorded as ``CANCEL_EMAIL_FAILED`` rather than an errored
+        ``CANCELLED`` action: the cancellation itself already succeeded and was recorded
+        synchronously by ``add_successful_cancel_action()`` before this (best-effort, async)
+        notification email was even attempted, so a failure here reflects a notification failure,
+        not a failure to cancel.
         """
         return self.actions.create(
-            action_type=AssignmentActions.CANCELLED,
+            action_type=AssignmentActions.CANCEL_EMAIL_FAILED,
             error_reason=AssignmentActionErrors.EMAIL_ERROR,
             traceback=format_traceback(exc),
             actor_lms_user_id=actor_lms_user_id,

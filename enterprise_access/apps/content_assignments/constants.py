@@ -49,6 +49,7 @@ class AssignmentActions:
     REDEEMED = 'redeemed'
     CANCELLED = 'cancelled'
     CANCELLED_ACKNOWLEDGED = 'cancelled_acknowledged'
+    CANCEL_EMAIL_FAILED = 'cancel_email_failed'
     EXPIRED = 'expired'
     EXPIRED_ACKNOWLEDGED = 'expired_acknowledged'
     REVERSED = 'reversed'
@@ -64,6 +65,7 @@ class AssignmentActions:
         (REDEEMED, 'Learner redeemed the assigned content'),
         (CANCELLED, 'Learner assignment cancelled'),
         (CANCELLED_ACKNOWLEDGED, 'Learner assignment cancellation acknowledged by learner'),
+        (CANCEL_EMAIL_FAILED, 'Learner assignment cancellation email failed to send'),
         (EXPIRED, 'Learner assignment expired'),
         (EXPIRED_ACKNOWLEDGED, 'Learner assignment expiration acknowledged by learner'),
         (REVERSED, 'Transaction for this assignment has been reversed'),

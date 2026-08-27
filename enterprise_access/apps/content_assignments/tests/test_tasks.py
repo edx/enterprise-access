@@ -471,8 +471,10 @@ class TestBrazeEmailTasks(APITestWithMocks):
         """
         When the Braze call fails and retries exhaust, Celery's on_failure() must forward the
         actor_lms_user_id/actor_type/source kwargs it received into add_errored_cancel_action(),
-        so the resulting errored CANCELLED action still attributes the cancellation to the
-        requesting admin instead of silently defaulting to a SYSTEM actor.
+        so the resulting CANCEL_EMAIL_FAILED action still attributes the cancellation to the
+        requesting admin instead of silently defaulting to a SYSTEM actor. This action is recorded
+        as CANCEL_EMAIL_FAILED (not a second CANCELLED row) because the cancellation itself already
+        succeeded synchronously; only the best-effort notification email failed.
         """
         mock_campaign_sender_class.return_value.send_campaign_message.side_effect = Exception('boom')
         assignment = self.assignment_course
@@ -485,7 +487,7 @@ class TestBrazeEmailTasks(APITestWithMocks):
         )
 
         errored_action = assignment.actions.get(
-            action_type=AssignmentActions.CANCELLED,
+            action_type=AssignmentActions.CANCEL_EMAIL_FAILED,
             error_reason=AssignmentActionErrors.EMAIL_ERROR,
         )
         assert errored_action.actor_lms_user_id == 999
