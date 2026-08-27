@@ -9,7 +9,11 @@ import ddt
 from django.db import DatabaseError
 from django.test import TestCase
 
-from enterprise_access.apps.content_assignments.constants import AssignmentActions, AssignmentSources
+from enterprise_access.apps.content_assignments.constants import (
+    AssignmentActions,
+    AssignmentActorTypes,
+    AssignmentSources
+)
 from enterprise_access.apps.content_assignments.models import LearnerContentAssignmentAction
 from enterprise_access.apps.content_assignments.tests.factories import (
     AssignmentConfigurationFactory,
@@ -812,6 +816,15 @@ class TestCancelLearnerCreditRequests(TestCase):
 
         # Verify notification task was queued
         mock_cancel_task.delay.assert_called_once()
+
+        # Verify the reviewer's actor attribution was propagated into the assignment cancellation
+        mock_cancel_assignments.assert_called_once_with(
+            [request.assignment],
+            False,
+            actor_lms_user_id=self.reviewer.lms_user_id,
+            actor_type=AssignmentActorTypes.ADMIN,
+            source=AssignmentSources.API,
+        )
 
     @mock.patch('enterprise_access.apps.subsidy_request.api.send_learner_credit_bnr_cancel_notification_task')
     @mock.patch('enterprise_access.apps.subsidy_request.api.assignments_api.cancel_assignments')

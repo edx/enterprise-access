@@ -24,7 +24,8 @@ from ..api import (
     expire_assignment,
     get_allocated_quantity_for_configuration,
     get_assignment_for_learner,
-    get_assignments_for_configuration
+    get_assignments_for_configuration,
+    remind_assignments
 )
 from ..constants import (
     NUM_DAYS_BEFORE_AUTO_EXPIRATION,
@@ -998,8 +999,72 @@ class TestAssignmentAllocationAndCancellation(TestCase):
         self.assertEqual(cancelled_assignment.state, LearnerContentAssignmentStateChoices.CANCELLED)
         self.assertEqual(errored_assignment.state, LearnerContentAssignmentStateChoices.CANCELLED)
         mock_notify.delay.assert_has_calls([
-            mock.call(assignment.uuid) for assignment in (allocated_assignment, errored_assignment)
+            mock.call(assignment.uuid, actor_lms_user_id=None, actor_type=None, source=None)
+            for assignment in (allocated_assignment, errored_assignment)
         ], any_order=True)
+
+    @mock.patch('enterprise_access.apps.content_assignments.tasks.send_cancel_email_for_pending_assignment')
+    def test_cancel_assignments_writes_audit_action_with_admin_actor_attribution(self, mock_notify):
+        """
+        Cancelling an assignment should synchronously write a CANCELLED audit action row
+        attributing the cancellation to the requesting admin, independent of whether the
+        (async, best-effort) learner notification email succeeds.
+        """
+        allocated_assignment = LearnerContentAssignmentFactory.create(
+            assignment_configuration=self.assignment_configuration,
+            learner_email='alice@foo.com',
+            state=LearnerContentAssignmentStateChoices.ALLOCATED,
+        )
+        admin_lms_user_id = 8675309
+
+        cancel_assignments(
+            [allocated_assignment],
+            actor_lms_user_id=admin_lms_user_id,
+            actor_type=AssignmentActorTypes.ADMIN,
+            source=AssignmentSources.API,
+        )
+
+        cancel_action = allocated_assignment.actions.get(action_type=AssignmentActions.CANCELLED)
+        assert cancel_action.actor_lms_user_id == admin_lms_user_id
+        assert cancel_action.actor_type == AssignmentActorTypes.ADMIN
+        assert cancel_action.source == AssignmentSources.API
+        assert cancel_action.enterprise_customer_uuid == self.assignment_configuration.enterprise_customer_uuid
+        assert cancel_action.error_reason is None
+        assert cancel_action.learner_lms_user_id == allocated_assignment.lms_user_id
+        assert cancel_action.learner_email == 'alice@foo.com'
+        mock_notify.delay.assert_called_once_with(
+            allocated_assignment.uuid,
+            actor_lms_user_id=admin_lms_user_id,
+            actor_type=AssignmentActorTypes.ADMIN,
+            source=AssignmentSources.API,
+        )
+
+    @mock.patch('enterprise_access.apps.content_assignments.api.send_reminder_email_for_pending_assignment')
+    def test_remind_assignments_propagates_actor_attribution_to_async_task(self, mock_reminder_task):
+        """
+        Reminding an assignment happens via an async Celery task, so the requesting admin's
+        actor attribution must be passed through the task payload/kwargs to survive the hop.
+        """
+        allocated_assignment = LearnerContentAssignmentFactory.create(
+            assignment_configuration=self.assignment_configuration,
+            learner_email='alice@foo.com',
+            state=LearnerContentAssignmentStateChoices.ALLOCATED,
+        )
+        admin_lms_user_id = 42
+
+        remind_assignments(
+            [allocated_assignment],
+            actor_lms_user_id=admin_lms_user_id,
+            actor_type=AssignmentActorTypes.ADMIN,
+            source=AssignmentSources.API,
+        )
+
+        mock_reminder_task.delay.assert_called_once_with(
+            allocated_assignment.uuid,
+            actor_lms_user_id=admin_lms_user_id,
+            actor_type=AssignmentActorTypes.ADMIN,
+            source=AssignmentSources.API,
+        )
 
 
 @ddt.ddt

@@ -16,6 +16,7 @@ from rest_framework.reverse import reverse
 from enterprise_access.apps.api.serializers import LearnerCreditRequestDeclineSerializer
 from enterprise_access.apps.content_assignments.constants import (
     AssignmentActions,
+    AssignmentActorTypes,
     AssignmentSources,
     LearnerContentAssignmentStateChoices
 )
@@ -3382,8 +3383,14 @@ class TestLearnerCreditRequestViewSet(BaseEnterpriseAccessTestCase):
         assert approved_request.state == SubsidyRequestStates.CANCELLED
         assert approved_request.reviewer == self.user
 
-        # Verify assignment cancellation was called
-        mock_cancel_assignments.assert_called_once_with([assignment], False)
+        # Verify assignment cancellation was called with the requesting admin's actor attribution
+        mock_cancel_assignments.assert_called_once_with(
+            [assignment],
+            False,
+            actor_lms_user_id=self.user.lms_user_id,
+            actor_type=AssignmentActorTypes.ADMIN,
+            source=AssignmentSources.API,
+        )
 
         # Verify successful action record was created
         success_action = LearnerCreditRequestActions.objects.filter(
@@ -3441,8 +3448,14 @@ class TestLearnerCreditRequestViewSet(BaseEnterpriseAccessTestCase):
         approved_request.refresh_from_db()
         assert approved_request.state == SubsidyRequestStates.APPROVED
 
-        # Verify assignment cancellation was called
-        mock_cancel_assignments.assert_called_once_with([assignment], False)
+        # Verify assignment cancellation was called with the requesting admin's actor attribution
+        mock_cancel_assignments.assert_called_once_with(
+            [assignment],
+            False,
+            actor_lms_user_id=self.user.lms_user_id,
+            actor_type=AssignmentActorTypes.ADMIN,
+            source=AssignmentSources.API,
+        )
 
         # Verify error action record was created
         error_action = LearnerCreditRequestActions.objects.filter(
