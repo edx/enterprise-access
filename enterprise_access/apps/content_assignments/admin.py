@@ -11,6 +11,7 @@ from enterprise_access.apps.content_assignments.constants import (
     AssignmentSources,
     LearnerContentAssignmentStateChoices
 )
+from enterprise_access.utils import localized_utcnow
 
 
 @admin.register(models.AssignmentConfiguration)
@@ -150,6 +151,10 @@ class LearnerContentAssignmentAdmin(DjangoQLSearchMixin, SimpleHistoryAdmin):
 
             # Update assignment state
             assignment.state = LearnerContentAssignmentStateChoices.ACCEPTED
+            assignment.accepted_at = localized_utcnow()
+            assignment.errored_at = None
+            assignment.cancelled_at = None
+            assignment.expired_at = None
             assignment.save()
 
         self.message_user(request, f'Successfully redeemed {len(queryset)} assignment(s).')

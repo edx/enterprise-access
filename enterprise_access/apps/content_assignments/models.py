@@ -652,10 +652,13 @@ class LearnerContentAssignment(TimeStampedModel):
 
     def add_successful_expiration_action(self):
         """
-        Adds a successful expiration LearnerContentAssignmentAction for this assignment record.
+        Adds a successful expiration LearnerContentAssignmentAction for this assignment record,
+        recorded once the expiration email has actually been sent (source=celery_task).
         """
         return self.actions.create(
             action_type=AssignmentActions.EXPIRED,
+            actor_type=AssignmentActorTypes.SYSTEM,
+            source=AssignmentSources.CELERY_TASK,
             completed_at=timezone.now(),
         )
 

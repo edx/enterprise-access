@@ -839,6 +839,17 @@ class TestBrazeEmailTasks(APITestWithMocks):
         )
         assert mock_braze_client.return_value.send_campaign_message.call_count == 1
 
+        # Verify the successful-send audit action is recorded with source=celery_task, which
+        # distinguishes "email actually sent" from the scheduled_job state-transition action,
+        # for purposes of gating PII clearing.
+        success_action = assignment.actions.filter(
+            action_type=AssignmentActions.EXPIRED,
+            error_reason=None,
+        ).first()
+        assert success_action is not None
+        assert success_action.actor_type == AssignmentActorTypes.SYSTEM
+        assert success_action.source == AssignmentSources.CELERY_TASK
+
         # Now verify the errored-audit-action path: if the braze call fails, an EXPIRED
         # error audit action should be recorded with the correct actor/source/traceback.
         mock_braze_client.return_value.send_campaign_message.side_effect = Exception('Simulated Braze error')
@@ -1199,9 +1210,18 @@ class TestClearPiiForExpiredAssignmentsTask(APITestWithMocks):
         mock_catalog_client,
     ):
         """
-        Test that PII is NOT cleared if expiration email wasn't successfully sent.
+        Test that PII is NOT cleared if expiration email wasn't successfully sent, even when
+        the state-transition EXPIRED action (source=scheduled_job) already exists. Only the
+        celery_task-sourced EXPIRED action (recorded once the email actually sends) should
+        satisfy the PII-clearing predicate.
         """
-        # Note: NOT adding successful expiration action
+        # Simulate the state-transition audit row written by the expiration job, without the
+        # corresponding "email sent" audit row that add_successful_expiration_action() would add.
+        self.expired_assignment.add_audit_action(
+            action_type=AssignmentActions.EXPIRED,
+            actor_type=AssignmentActorTypes.SYSTEM,
+            source=AssignmentSources.SCHEDULED_JOB,
+        )
         original_email = self.expired_assignment.learner_email
 
         subsidy_expiry = now() + timedelta(days=365)
