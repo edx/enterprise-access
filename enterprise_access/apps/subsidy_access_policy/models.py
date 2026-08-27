@@ -2274,7 +2274,7 @@ class ForcedPolicyRedemption(TimeStampedModel):
             known_lms_user_ids=[self.lms_user_id],
         )
 
-    def force_redeem(self, extra_metadata=None):
+    def force_redeem(self, extra_metadata=None, actor_lms_user_id=None):
         """
         Forces redemption for the requested course run key in the associated policy.
         """
@@ -2300,6 +2300,7 @@ class ForcedPolicyRedemption(TimeStampedModel):
                             FORCE_ENROLLMENT_KEYWORD: True,
                             **extra_metadata,
                         },
+                        actor_lms_user_id=actor_lms_user_id,
                         actor_type=AssignmentActorTypes.ADMIN,
                         source=AssignmentSources.DJANGO_ADMIN,
                     )

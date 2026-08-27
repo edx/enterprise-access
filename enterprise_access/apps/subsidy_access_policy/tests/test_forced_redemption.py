@@ -36,6 +36,8 @@ MOCK_DATETIME_1 = timezone.now()
 
 MOCK_TRANSACTION_UUID_1 = uuid4()
 
+ADMIN_LMS_USER_ID = 98765
+
 
 class BaseForcedRedemptionTestCase(MockPolicyDependenciesMixin, TestCase):
     """
@@ -247,7 +249,7 @@ class ForcedPolicyRedemptionAssignmentTests(BaseForcedRedemptionTestCase):
         )
 
         with self.captureOnCommitCallbacks(execute=True):
-            forced_redemption_record.force_redeem()
+            forced_redemption_record.force_redeem(actor_lms_user_id=ADMIN_LMS_USER_ID)
 
         forced_redemption_record.refresh_from_db()
         self.assertEqual(MOCK_DATETIME_1, forced_redemption_record.redeemed_at)
@@ -274,3 +276,5 @@ class ForcedPolicyRedemptionAssignmentTests(BaseForcedRedemptionTestCase):
         redeemed_action = assignment.actions.get(action_type=AssignmentActions.REDEEMED)
         self.assertEqual(redeemed_action.actor_type, AssignmentActorTypes.ADMIN)
         self.assertEqual(redeemed_action.source, AssignmentSources.DJANGO_ADMIN)
+        self.assertEqual(redeemed_action.actor_lms_user_id, ADMIN_LMS_USER_ID)
+        self.assertNotEqual(redeemed_action.actor_lms_user_id, self.lms_user_id)

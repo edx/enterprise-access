@@ -50,7 +50,8 @@ class ForcedPolicyRedemptionAdminTests(TestCase):
                 'geag_terms_accepted_at': mock.ANY,
                 'geag_data_share_consent': True,
                 'geag_email': 'foo@bar.com',
-            }
+            },
+            actor_lms_user_id=request.user.lms_user_id,
         )
         terms_accepted_value =\
             forced_redemption_obj.force_redeem.call_args_list[0][1]['extra_metadata']['geag_terms_accepted_at']
