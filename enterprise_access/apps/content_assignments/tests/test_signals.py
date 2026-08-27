@@ -116,7 +116,7 @@ class SignalsTests(TestCase):
             action = audit_actions.first()
             assert action.actor_type == AssignmentActorTypes.SYSTEM
             assert action.source == AssignmentSources.SIGNAL
-            assert action.actor_lms_user_id == test_user.lms_user_id
+            assert action.actor_lms_user_id is None  # SYSTEM actors don't have a user ID
             assert action.completed_at is not None
 
 

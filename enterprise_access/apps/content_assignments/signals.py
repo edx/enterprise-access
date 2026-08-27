@@ -56,7 +56,6 @@ def update_assignment_lms_user_id_from_user_email(sender, **kwargs):  # pylint: 
                 action_type=AssignmentActions.LEARNER_LINKED,
                 actor_type=AssignmentActorTypes.SYSTEM,
                 source=AssignmentSources.SIGNAL,
-                actor_lms_user_id=user.lms_user_id,
             )
 
         # Intentionally not logging PII (email).

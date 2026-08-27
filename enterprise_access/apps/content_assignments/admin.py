@@ -123,11 +123,12 @@ class LearnerContentAssignmentAdmin(DjangoQLSearchMixin, SimpleHistoryAdmin):
         Admin action to force-redeem selected assignments.
         Records audit actions with admin actor type and django_admin source.
         """
-        actor_lms_user_id = getattr(request.user, 'id', None)
+        actor_lms_user_id = getattr(request.user, 'lms_user_id', None)
 
         for assignment in queryset:
             # Record ALLOCATED action if not already in a redeemed/allocated state
             if assignment.state not in [
+                LearnerContentAssignmentStateChoices.ALLOCATED,
                 LearnerContentAssignmentStateChoices.ACCEPTED,
                 LearnerContentAssignmentStateChoices.ERRORED,
                 LearnerContentAssignmentStateChoices.REVERSED,

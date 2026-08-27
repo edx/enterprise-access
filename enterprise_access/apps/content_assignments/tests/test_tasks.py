@@ -182,6 +182,8 @@ class TestCreatePendingEnterpriseLearnerForAssignmentTask(APITestWithMocks):
         action = self.assignment.actions.filter(action_type=AssignmentActions.LEARNER_LINKED).first()
         self.assertIn('HTTPError', action.traceback)
         self.assertEqual(action.error_reason, AssignmentActionErrors.INTERNAL_API_ERROR)
+        self.assertEqual(action.actor_type, AssignmentActorTypes.SYSTEM)
+        self.assertEqual(action.source, AssignmentSources.CELERY_TASK)
 
     @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient')
     def test_last_retry_success(self, mock_oauth_client):
@@ -463,6 +465,20 @@ class TestBrazeEmailTasks(APITestWithMocks):
         )
         assert mock_braze_client.return_value.send_campaign_message.call_count == 1
 
+        # Now verify the errored-audit-action path: if the braze call fails, a CANCELLED
+        # error audit action should be recorded with the correct actor/source/traceback.
+        mock_braze_client.return_value.send_campaign_message.side_effect = Exception('Simulated Braze error')
+        send_cancel_email_for_pending_assignment.delay(assignment.uuid)
+
+        errored_action = assignment.actions.filter(
+            action_type=AssignmentActions.CANCELLED,
+            error_reason=AssignmentActionErrors.EMAIL_ERROR,
+        ).first()
+        assert errored_action is not None, "No error audit action created for cancel email failure"
+        assert errored_action.actor_type == AssignmentActorTypes.SYSTEM
+        assert errored_action.source == AssignmentSources.CELERY_TASK
+        assert errored_action.traceback is not None
+
     @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_client')
     @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient')
     @mock.patch('enterprise_access.apps.content_assignments.tasks.LmsApiClient')
@@ -588,6 +604,21 @@ class TestBrazeEmailTasks(APITestWithMocks):
             },
         )
 
+        # Now verify the errored-audit-action path: if the braze call fails, a REMINDED
+        # error audit action should be recorded with the correct actor/source/traceback,
+        # while the assignment state remains unchanged (reminders don't error out the assignment).
+        mock_braze_client.send_campaign_message.side_effect = Exception('Simulated Braze error')
+        send_reminder_email_for_pending_assignment.delay(assignment.uuid)
+
+        errored_action = assignment.actions.filter(
+            action_type=AssignmentActions.REMINDED,
+            error_reason=AssignmentActionErrors.EMAIL_ERROR,
+        ).first()
+        assert errored_action is not None, "No error audit action created for reminder email failure"
+        assert errored_action.actor_type == AssignmentActorTypes.SYSTEM
+        assert errored_action.source == AssignmentSources.CELERY_TASK
+        assert errored_action.traceback is not None
+
     @freezegun.freeze_time('2024-06-15 12:00:00')
     @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_client')
     @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient')
@@ -712,6 +743,7 @@ class TestBrazeEmailTasks(APITestWithMocks):
             action_type=AssignmentActions.NOTIFIED,
         ).exists())
 
+    @mock.patch('enterprise_access.apps.content_assignments.tasks.get_content_metadata_for_assignments')
     @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.objects')
     @mock.patch('enterprise_access.apps.content_assignments.tasks.LmsApiClient')
     @mock.patch('enterprise_access.apps.content_assignments.tasks.BrazeApiClient')
@@ -720,6 +752,7 @@ class TestBrazeEmailTasks(APITestWithMocks):
         mock_braze_client,
         mock_lms_client,
         mock_subsidy_model,  # pylint: disable=unused-argument
+        mock_get_content_metadata,
     ):
         """
         Verify that when an email task fails, it creates an audit action with
@@ -727,10 +760,8 @@ class TestBrazeEmailTasks(APITestWithMocks):
         """
         mock_lms_client.return_value.get_enterprise_customer_data.return_value = self.mock_enterprise_customer_data
         mock_recipient = {'external_user_id': 1}
-        mock_catalog_client = mock.MagicMock()
-        mock_catalog_client.catalog_content_metadata.return_value = {
-            'count': 1,
-            'results': [self.mock_content_metadata]
+        mock_get_content_metadata.return_value = {
+            self.assignment_course.content_key: self.mock_content_metadata
         }
 
         braze_client_instance = mock_braze_client.return_value
@@ -807,6 +838,20 @@ class TestBrazeEmailTasks(APITestWithMocks):
             },
         )
         assert mock_braze_client.return_value.send_campaign_message.call_count == 1
+
+        # Now verify the errored-audit-action path: if the braze call fails, an EXPIRED
+        # error audit action should be recorded with the correct actor/source/traceback.
+        mock_braze_client.return_value.send_campaign_message.side_effect = Exception('Simulated Braze error')
+        send_assignment_automatically_expired_email.delay(assignment.uuid)
+
+        errored_action = assignment.actions.filter(
+            action_type=AssignmentActions.EXPIRED,
+            error_reason=AssignmentActionErrors.EMAIL_ERROR,
+        ).first()
+        assert errored_action is not None, "No error audit action created for expiration email failure"
+        assert errored_action.actor_type == AssignmentActorTypes.SYSTEM
+        assert errored_action.source == AssignmentSources.CELERY_TASK
+        assert errored_action.traceback is not None
 
     @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.objects')
     @mock.patch('enterprise_access.apps.content_assignments.tasks.LmsApiClient')
