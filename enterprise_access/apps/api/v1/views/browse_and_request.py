@@ -3,6 +3,7 @@ Rest API views for the browse and request app.
 """
 import logging
 from collections import Counter
+from uuid import uuid4
 
 from celery import chain
 from django.conf import settings
@@ -1055,6 +1056,8 @@ class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
             learner_credit_requests=learner_credit_requests,
             policy_uuid=policy_uuid,
             reviewer=request.user,
+            source=AssignmentSources.BROWSE_REQUEST_APPROVE,
+            correlation_id=str(uuid4()),
         )
         return self._build_approval_response(result, success_status=status.HTTP_200_OK)
 
@@ -1089,6 +1092,8 @@ class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
             learner_credit_requests=learner_credit_requests,
             policy_uuid=policy_uuid,
             reviewer=request.user,
+            source=AssignmentSources.BROWSE_REQUEST_APPROVE_ALL,
+            correlation_id=str(uuid4()),
         )
         return self._build_approval_response(result, success_status=status.HTTP_202_ACCEPTED)
 

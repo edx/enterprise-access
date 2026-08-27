@@ -15,11 +15,12 @@ from rest_framework.reverse import reverse
 
 from enterprise_access.apps.api.serializers import LearnerCreditRequestDeclineSerializer
 from enterprise_access.apps.content_assignments.constants import (
+    AssignmentActions,
     AssignmentActorTypes,
     AssignmentSources,
     LearnerContentAssignmentStateChoices
 )
-from enterprise_access.apps.content_assignments.models import LearnerContentAssignment
+from enterprise_access.apps.content_assignments.models import LearnerContentAssignment, LearnerContentAssignmentAction
 from enterprise_access.apps.content_assignments.tests.factories import (
     AssignmentConfigurationFactory,
     LearnerContentAssignmentFactory
@@ -2507,6 +2508,26 @@ class TestLearnerCreditRequestViewSet(BaseEnterpriseAccessTestCase):
             )
         )
 
+        # Verify LearnerContentAssignmentAction audit rows were created for both the
+        # approval and the underlying allocation, attributed to the reviewer.
+        approved_action = LearnerContentAssignmentAction.objects.get(
+            assignment=self.user_request_1.assignment,
+            action_type=AssignmentActions.APPROVED,
+        )
+        self.assertEqual(approved_action.actor_lms_user_id, self.user.lms_user_id)
+        self.assertEqual(approved_action.source, AssignmentSources.BROWSE_REQUEST_APPROVE)
+        self.assertEqual(approved_action.metadata['request_uuid'], str(self.user_request_1.uuid))
+
+        allocated_action = LearnerContentAssignmentAction.objects.get(
+            assignment=self.user_request_1.assignment,
+            action_type=AssignmentActions.ALLOCATED,
+        )
+        self.assertEqual(allocated_action.actor_lms_user_id, self.user.lms_user_id)
+        self.assertEqual(allocated_action.source, AssignmentSources.BROWSE_REQUEST_APPROVE)
+        self.assertEqual(
+            allocated_action.metadata['correlation_id'], approved_action.metadata['correlation_id'],
+        )
+
     @ddt.data(
         LearnerContentAssignmentStateChoices.CANCELLED,
         LearnerContentAssignmentStateChoices.EXPIRED,
@@ -3226,6 +3247,27 @@ class TestLearnerCreditRequestViewSet(BaseEnterpriseAccessTestCase):
             'error_message': None,
         }
         mock_approve.assert_called_once()
+        call_kwargs = mock_approve.call_args.kwargs
+        assert call_kwargs['source'] == AssignmentSources.BROWSE_REQUEST_APPROVE_ALL
+        assert call_kwargs['correlation_id'] is not None
+
+    @mock.patch(BNR_VIEW_PATH + '.subsidy_request_api.approve_learner_credit_requests')
+    def test_approve_all_generates_fresh_correlation_id_per_call(self, mock_approve):
+        """Each approve-all request gets its own correlation_id, distinct across calls."""
+        mock_approve.return_value = {
+            'approved': [self.user_request_1],
+            'failed_approval': [],
+            'failed': [],
+            'error_message': None,
+        }
+
+        self._post_approve_all()
+        first_correlation_id = mock_approve.call_args.kwargs['correlation_id']
+
+        self._post_approve_all()
+        second_correlation_id = mock_approve.call_args.kwargs['correlation_id']
+
+        assert first_correlation_id != second_correlation_id
 
     @mock.patch(BNR_VIEW_PATH + '.subsidy_request_api.approve_learner_credit_requests')
     def test_approve_all_partial_failure(self, mock_approve):

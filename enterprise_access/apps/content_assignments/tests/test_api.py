@@ -1429,7 +1429,7 @@ class AllocateAssignmentForRequestsTests(TestCase):
             enterprise_customer_uuid=self.enterprise_customer_uuid,
         )
         with self.captureOnCommitCallbacks(execute=True):
-            result = allocate_assignment_for_requests(self.assignment_config, [request])
+            result, _ = allocate_assignment_for_requests(self.assignment_config, [request])
         assignment = result[request.uuid]
         self.assertIsNotNone(assignment)
         self.assertEqual(assignment.learner_email, self.user.email)
@@ -1475,7 +1475,7 @@ class AllocateAssignmentForRequestsTests(TestCase):
             enterprise_customer_uuid=self.enterprise_customer_uuid,
         )
         with self.captureOnCommitCallbacks(execute=True):
-            result = allocate_assignment_for_requests(self.assignment_config, [request])
+            result, _ = allocate_assignment_for_requests(self.assignment_config, [request])
         assignment = result[request.uuid]
         self.assertEqual(assignment.uuid, existing_assignment.uuid)
         self.assertEqual(assignment.state, LearnerContentAssignmentStateChoices.ALLOCATED)
@@ -1526,7 +1526,7 @@ class AllocateAssignmentForRequestsTests(TestCase):
             enterprise_customer_uuid=self.enterprise_customer_uuid,
         )
         with self.captureOnCommitCallbacks(execute=True):
-            result = allocate_assignment_for_requests(self.assignment_config, [request1, request2])
+            result, _ = allocate_assignment_for_requests(self.assignment_config, [request1, request2])
         assignment1 = result[request1.uuid]
         assignment2 = result[request2.uuid]
         self.assertEqual(assignment1.uuid, existing_assignment.uuid)
@@ -1541,7 +1541,7 @@ class AllocateAssignmentForRequestsTests(TestCase):
     def test_allocate_assignment_no_requests(self, mock_catalog_content_metadata):
         mock_catalog_content_metadata.return_value = {'results': []}
         with self.captureOnCommitCallbacks(execute=True):
-            result = allocate_assignment_for_requests(self.assignment_config, [])
+            result, _ = allocate_assignment_for_requests(self.assignment_config, [])
         self.assertEqual(result, {})
 
     @mock.patch(
@@ -1571,10 +1571,254 @@ class AllocateAssignmentForRequestsTests(TestCase):
             enterprise_customer_uuid=self.enterprise_customer_uuid,
         )
         with self.captureOnCommitCallbacks(execute=True):
-            result = allocate_assignment_for_requests(self.assignment_config, [request])
+            result, _ = allocate_assignment_for_requests(self.assignment_config, [request])
         assignment = result[request.uuid]
         self.assertIsNotNone(assignment)
         self.assertEqual(assignment.learner_email, user_no_lms.email)
         self.assertIsNone(assignment.lms_user_id)
         self.assertEqual(assignment.content_quantity, -self.course_price)
         self.assertEqual(assignment.state, LearnerContentAssignmentStateChoices.ALLOCATED)
+
+    @mock.patch('enterprise_access.apps.content_assignments.api._create_new_assignments_for_requests')
+    @mock.patch(
+        'enterprise_access.apps.api_client.enterprise_catalog_client.'
+        'EnterpriseCatalogApiClient.catalog_content_metadata'
+    )
+    def test_allocate_assignment_for_requests_skips_unmatched_request(
+        self, mock_catalog_content_metadata, mock_create_new_assignments,
+    ):
+        """
+        If a request has no corresponding assignment after the create/update step
+        (e.g. its assignment failed to materialize), it should be skipped rather
+        than raising, and no pending action should be built for it.
+        """
+        mock_catalog_content_metadata.return_value = {
+            'results': [{
+                'key': self.course_id,
+                'title': 'Demo Course',
+                'course_run_key': 'course-v1:edX+DemoX+Demo_Course',
+                'parent_content_key': None,
+                'content_price': self.course_price,
+                'uuid': 'mock-uuid',
+                'content_type': 'courserun',
+            }]
+        }
+        # Simulate the new-assignment creation step producing no assignments,
+        # so the request below has nothing to map to.
+        mock_create_new_assignments.return_value = []
+        request = LearnerCreditRequestFactory(
+            learner_credit_request_config=self.learner_credit_config,
+            user=self.user,
+            course_id=self.course_id,
+            course_price=self.course_price,
+            assignment=None,
+            state=SubsidyRequestStates.REQUESTED,
+            enterprise_customer_uuid=self.enterprise_customer_uuid,
+        )
+        with self.captureOnCommitCallbacks(execute=True):
+            result, pending_actions = allocate_assignment_for_requests(self.assignment_config, [request])
+        self.assertIsNone(result[request.uuid])
+        self.assertEqual(pending_actions, [])
+
+    @mock.patch(
+        'enterprise_access.apps.api_client.enterprise_catalog_client.'
+        'EnterpriseCatalogApiClient.catalog_content_metadata'
+    )
+    def test_allocate_assignment_for_requests_writes_allocated_action(self, mock_catalog_content_metadata):
+        mock_catalog_content_metadata.return_value = {
+            'results': [{
+                'key': self.course_id,
+                'title': 'Demo Course',
+                'course_run_key': 'course-v1:edX+DemoX+Demo_Course',
+                'parent_content_key': None,
+                'content_price': self.course_price,
+                'uuid': 'mock-uuid',
+                'content_type': 'courserun',
+            }]
+        }
+        request = LearnerCreditRequestFactory(
+            learner_credit_request_config=self.learner_credit_config,
+            user=self.user,
+            course_id=self.course_id,
+            course_price=self.course_price,
+            assignment=None,
+            state=SubsidyRequestStates.REQUESTED,
+            enterprise_customer_uuid=self.enterprise_customer_uuid,
+        )
+        admin_lms_user_id = 987
+        correlation_id = str(uuid4())
+        with self.captureOnCommitCallbacks(execute=True):
+            result, pending_actions = allocate_assignment_for_requests(
+                self.assignment_config,
+                [request],
+                actor_lms_user_id=admin_lms_user_id,
+                source=AssignmentSources.BROWSE_REQUEST_APPROVE,
+                correlation_id=correlation_id,
+            )
+        LearnerContentAssignmentAction.objects.bulk_create(pending_actions)
+        assignment = result[request.uuid]
+
+        action = LearnerContentAssignmentAction.objects.get(
+            assignment=assignment, action_type=AssignmentActions.ALLOCATED,
+        )
+        self.assertEqual(action.actor_lms_user_id, admin_lms_user_id)
+        self.assertEqual(action.actor_type, AssignmentActorTypes.ADMIN)
+        self.assertEqual(action.source, AssignmentSources.BROWSE_REQUEST_APPROVE)
+        self.assertEqual(action.learner_lms_user_id, assignment.lms_user_id)
+        self.assertEqual(action.learner_email, assignment.learner_email)
+        self.assertEqual(action.enterprise_customer_uuid, self.assignment_config.enterprise_customer_uuid)
+        self.assertEqual(action.metadata['correlation_id'], correlation_id)
+        self.assertEqual(action.metadata['allocation_batch_id'], str(assignment.allocation_batch_id))
+        self.assertEqual(action.metadata['request_uuid'], str(request.uuid))
+
+    @mock.patch(
+        'enterprise_access.apps.api_client.enterprise_catalog_client.'
+        'EnterpriseCatalogApiClient.catalog_content_metadata'
+    )
+    def test_allocate_assignment_for_requests_defaults_actor_type_to_system(self, mock_catalog_content_metadata):
+        """When no actor_lms_user_id is supplied, the audit row must be attributed to SYSTEM,
+        not ADMIN, matching the convention used elsewhere for actor-less audit rows."""
+        mock_catalog_content_metadata.return_value = {
+            'results': [{
+                'key': self.course_id,
+                'title': 'Demo Course',
+                'course_run_key': 'course-v1:edX+DemoX+Demo_Course',
+                'parent_content_key': None,
+                'content_price': self.course_price,
+                'uuid': 'mock-uuid',
+                'content_type': 'courserun',
+            }]
+        }
+        request = LearnerCreditRequestFactory(
+            learner_credit_request_config=self.learner_credit_config,
+            user=self.user,
+            course_id=self.course_id,
+            course_price=self.course_price,
+            assignment=None,
+            state=SubsidyRequestStates.REQUESTED,
+            enterprise_customer_uuid=self.enterprise_customer_uuid,
+        )
+        with self.captureOnCommitCallbacks(execute=True):
+            result, pending_actions = allocate_assignment_for_requests(
+                self.assignment_config,
+                [request],
+            )
+        LearnerContentAssignmentAction.objects.bulk_create(pending_actions)
+        assignment = result[request.uuid]
+
+        action = LearnerContentAssignmentAction.objects.get(
+            assignment=assignment, action_type=AssignmentActions.ALLOCATED,
+        )
+        self.assertIsNone(action.actor_lms_user_id)
+        self.assertEqual(action.actor_type, AssignmentActorTypes.SYSTEM)
+        self.assertEqual(action.source, AssignmentSources.API)
+
+    @mock.patch(
+        'enterprise_access.apps.api_client.enterprise_catalog_client.'
+        'EnterpriseCatalogApiClient.catalog_content_metadata'
+    )
+    def test_allocate_assignment_for_requests_writes_reallocated_action(self, mock_catalog_content_metadata):
+        mock_catalog_content_metadata.return_value = {
+            'results': [{
+                'key': self.course_id,
+                'title': 'Demo Course',
+                'course_run_key': 'course-v1:edX+DemoX+Demo_Course',
+                'parent_content_key': None,
+                'content_price': self.course_price,
+                'uuid': 'mock-uuid',
+                'content_type': 'courserun',
+            }]
+        }
+        LearnerContentAssignmentFactory(
+            assignment_configuration=self.assignment_config,
+            learner_email=self.user.email,
+            lms_user_id=self.user.lms_user_id,
+            content_key=self.course_id,
+            content_quantity=-500,
+            state=LearnerContentAssignmentStateChoices.CANCELLED,
+        )
+        request = LearnerCreditRequestFactory(
+            learner_credit_request_config=self.learner_credit_config,
+            user=self.user,
+            course_id=self.course_id,
+            course_price=self.course_price,
+            assignment=None,
+            state=SubsidyRequestStates.REQUESTED,
+            enterprise_customer_uuid=self.enterprise_customer_uuid,
+        )
+        admin_lms_user_id = 654
+        correlation_id = str(uuid4())
+        with self.captureOnCommitCallbacks(execute=True):
+            result, pending_actions = allocate_assignment_for_requests(
+                self.assignment_config,
+                [request],
+                actor_lms_user_id=admin_lms_user_id,
+                source=AssignmentSources.BROWSE_REQUEST_APPROVE_ALL,
+                correlation_id=correlation_id,
+            )
+        LearnerContentAssignmentAction.objects.bulk_create(pending_actions)
+        assignment = result[request.uuid]
+
+        action = LearnerContentAssignmentAction.objects.get(
+            assignment=assignment, action_type=AssignmentActions.REALLOCATED,
+        )
+        self.assertEqual(action.actor_lms_user_id, admin_lms_user_id)
+        self.assertEqual(action.source, AssignmentSources.BROWSE_REQUEST_APPROVE_ALL)
+        self.assertEqual(action.metadata['correlation_id'], correlation_id)
+        self.assertEqual(action.metadata['request_uuid'], str(request.uuid))
+
+    @mock.patch(
+        'enterprise_access.apps.api_client.enterprise_catalog_client.'
+        'EnterpriseCatalogApiClient.catalog_content_metadata'
+    )
+    def test_allocate_assignment_for_requests_bulk_shares_correlation_id(self, mock_catalog_content_metadata):
+        mock_catalog_content_metadata.return_value = {
+            'results': [{
+                'key': self.course_id,
+                'title': 'Demo Course',
+                'course_run_key': 'course-v1:edX+DemoX+Demo_Course',
+                'parent_content_key': None,
+                'content_price': self.course_price,
+                'uuid': 'mock-uuid',
+                'content_type': 'courserun',
+            }]
+        }
+        user2 = UserFactory(email='user2@example.com', lms_user_id=456)
+        request1 = LearnerCreditRequestFactory(
+            learner_credit_request_config=self.learner_credit_config,
+            user=self.user,
+            course_id=self.course_id,
+            course_price=self.course_price,
+            assignment=None,
+            state=SubsidyRequestStates.REQUESTED,
+            enterprise_customer_uuid=self.enterprise_customer_uuid,
+        )
+        request2 = LearnerCreditRequestFactory(
+            learner_credit_request_config=self.learner_credit_config,
+            user=user2,
+            course_id=self.course_id,
+            course_price=self.course_price,
+            assignment=None,
+            state=SubsidyRequestStates.REQUESTED,
+            enterprise_customer_uuid=self.enterprise_customer_uuid,
+        )
+        admin_lms_user_id = 111
+        correlation_id = str(uuid4())
+        with self.captureOnCommitCallbacks(execute=True):
+            result, pending_actions = allocate_assignment_for_requests(
+                self.assignment_config,
+                [request1, request2],
+                actor_lms_user_id=admin_lms_user_id,
+                source=AssignmentSources.BROWSE_REQUEST_APPROVE_ALL,
+                correlation_id=correlation_id,
+            )
+        LearnerContentAssignmentAction.objects.bulk_create(pending_actions)
+        assignment1 = result[request1.uuid]
+        assignment2 = result[request2.uuid]
+
+        action1 = LearnerContentAssignmentAction.objects.get(assignment=assignment1)
+        action2 = LearnerContentAssignmentAction.objects.get(assignment=assignment2)
+        self.assertEqual(action1.metadata['correlation_id'], correlation_id)
+        self.assertEqual(action2.metadata['correlation_id'], correlation_id)
+        self.assertEqual(action1.actor_lms_user_id, admin_lms_user_id)
+        self.assertEqual(action2.actor_lms_user_id, admin_lms_user_id)

@@ -9,7 +9,12 @@ from typing import Iterable
 from django.db import transaction
 
 from enterprise_access.apps.content_assignments import api as assignments_api
-from enterprise_access.apps.content_assignments.constants import AssignmentActorTypes, AssignmentSources
+from enterprise_access.apps.content_assignments.constants import (
+    AssignmentActions,
+    AssignmentActorTypes,
+    AssignmentSources
+)
+from enterprise_access.apps.content_assignments.models import LearnerContentAssignmentAction
 from enterprise_access.apps.subsidy_access_policy.api import get_policy_for_approval, validate_and_allocate
 from enterprise_access.apps.subsidy_access_policy.exceptions import (
     SubisidyAccessPolicyRequestApprovalError,
@@ -45,6 +50,8 @@ def approve_learner_credit_requests(
     learner_credit_requests: Iterable[LearnerCreditRequest],
     policy_uuid: str,
     reviewer: object,
+    source: str = AssignmentSources.BROWSE_REQUEST_APPROVE,
+    correlation_id: str = None,
 ) -> dict:
     """
     Bulk approve Learner Credit Requests against a specific policy.
@@ -53,6 +60,17 @@ def approve_learner_credit_requests(
     request state update, and audit trail creation in a single transaction.
     On approval failures, makes a best-effort attempt to record failure
     actions for the affected requests.
+
+    Args:
+        learner_credit_requests: The requests to approve.
+        policy_uuid: The policy to approve against.
+        reviewer: The admin user approving these requests.
+        source: One of ``AssignmentSources.CHOICES``, recorded on the resulting
+            ``LearnerContentAssignmentAction`` audit rows (``approved``, ``allocated``,
+            ``reallocated``). Defaults to a single-request approval source; callers
+            approving in bulk should pass ``AssignmentSources.BROWSE_REQUEST_APPROVE_ALL``.
+        correlation_id: Shared identifier linking together all audit action rows
+            written for this approval batch.
     """
     requests_to_process = [
         req for req in learner_credit_requests
@@ -71,7 +89,7 @@ def approve_learner_credit_requests(
     try:
         policy = get_policy_for_approval(policy_uuid)
         with policy.lock():
-            return _approve_under_lock(policy, requests_to_process, reviewer)
+            return _approve_under_lock(policy, requests_to_process, reviewer, source, correlation_id)
     except SubsidyAccessPolicyLockAttemptFailed as exc:
         error_message = f"Failed to acquire lock for policy {policy_uuid}. Try again later."
         logger.warning("Bulk approval failed for policy %s: lock not acquired.", policy_uuid)
@@ -107,7 +125,7 @@ def approve_learner_credit_requests(
         }
 
 
-def _approve_under_lock(policy, requests_to_process, reviewer):
+def _approve_under_lock(policy, requests_to_process, reviewer, source, correlation_id):
     """
     Perform the full approval flow while the policy lock is held.
 
@@ -117,12 +135,16 @@ def _approve_under_lock(policy, requests_to_process, reviewer):
     approved_requests = []
     failed_requests = []
     actions_to_create = []
+    actor_lms_user_id = getattr(reviewer, 'lms_user_id', None)
 
     with transaction.atomic():
         # This call runs inside the outer transaction opened here; any nested
         # savepoint behavior depends on validate_and_allocate() or code it calls.
-        approved_requests_map, failed_requests_by_reason = validate_and_allocate(
+        approved_requests_map, failed_requests_by_reason, pending_allocation_actions = validate_and_allocate(
             policy, requests_to_process,
+            actor_lms_user_id=actor_lms_user_id,
+            source=source,
+            correlation_id=correlation_id,
         )
 
         approved_requests = _prepare_requests_for_update(approved_requests_map, reviewer)
@@ -138,6 +160,14 @@ def _approve_under_lock(policy, requests_to_process, reviewer):
 
         LearnerCreditRequestActions.bulk_create(actions_to_create)
 
+        # Write the `approved` audit rows first, then the `allocated`/`reallocated` rows
+        # from the allocation that happened underneath validate_and_allocate() — as two
+        # separate, ordered bulk_create calls — so the audit trail reflects the true
+        # sequence of events (a request is approved, which is what triggers allocation).
+        _write_approved_assignment_actions(approved_requests, actor_lms_user_id, source, correlation_id)
+        if pending_allocation_actions:
+            LearnerContentAssignmentAction.objects.bulk_create(pending_allocation_actions)
+
         # on_commit registered inside atomic() fires once the outer transaction commits —
         # so notifications never run if we roll back.
         for request in approved_requests:
@@ -152,6 +182,26 @@ def _approve_under_lock(policy, requests_to_process, reviewer):
         "failed_approval": failed_requests,
         "error_message": None,
     }
+
+
+def _write_approved_assignment_actions(approved_requests, actor_lms_user_id, source, correlation_id):
+    """
+    Writes an ``approved`` ``LearnerContentAssignmentAction`` audit row for each
+    approved request, attributing the action to the reviewer who approved it.
+    """
+    approved_actions = [
+        assignments_api.build_assignment_action(
+            request.assignment,
+            action_type=AssignmentActions.APPROVED,
+            actor_lms_user_id=actor_lms_user_id,
+            source=source,
+            correlation_id=correlation_id,
+            extra_metadata={'request_uuid': str(request.uuid)},
+        )
+        for request in approved_requests if request.assignment
+    ]
+    if approved_actions:
+        LearnerContentAssignmentAction.objects.bulk_create(approved_actions)
 
 
 def _build_success_action(request):

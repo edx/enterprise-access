@@ -810,7 +810,13 @@ class SubsidyAccessPolicy(TimeStampedModel):
             }
         return self.assignment_request_can_allocate(learner_credit_requests)
 
-    def approve(self, learner_credit_requests):
+    def approve(
+        self,
+        learner_credit_requests,
+        actor_lms_user_id=None,
+        source=AssignmentSources.API,
+        correlation_id=None,
+    ):
         """
         Approves a batch of learner credit requests by allocating assignments for them.
 
@@ -819,15 +825,20 @@ class SubsidyAccessPolicy(TimeStampedModel):
         Args:
             learner_credit_requests (list[LearnerCreditRequest]): A list of valid
                 requests to be approved.
+            actor_lms_user_id, source, correlation_id: passed through to the resulting
+                ``LearnerContentAssignmentAction`` audit rows.
 
         Returns:
-            dict: A map of {request.uuid: assignment_object} for all created or
-                  re-allocated assignments.
+            tuple: (request_to_assignment_map, pending_actions) — see
+                ``assignments_api.allocate_assignment_for_requests`` for details.
         """
         # To approve a learner credit request, we need to allocate an assignment and link it to the request.
         return assignments_api.allocate_assignment_for_requests(
             self.assignment_configuration,
-            learner_credit_requests
+            learner_credit_requests,
+            actor_lms_user_id=actor_lms_user_id,
+            source=source,
+            correlation_id=correlation_id,
         )
 
     def can_redeem(

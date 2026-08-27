@@ -1230,7 +1230,7 @@ class SubsidyAccessPolicyTests(MockPolicyDependenciesMixin, TestCase):
             assignment_configuration=assignment_configuration,
         )
 
-        self.mock_assignments_api.allocate_assignment_for_requests.return_value = {mock_request.uuid: assignment}
+        self.mock_assignments_api.allocate_assignment_for_requests.return_value = ({mock_request.uuid: assignment}, [])
 
         # link assignment_configuration to the policy
         policy = self.per_learner_spend_policy
@@ -1243,13 +1243,16 @@ class SubsidyAccessPolicyTests(MockPolicyDependenciesMixin, TestCase):
                 return_value=True
         ):
             result = policy.approve([mock_request])
-            # assert that the result is the created assignment
-            self.assertEqual(result, {mock_request.uuid: assignment})
+            # assert that the result is the created assignment, plus any pending audit actions
+            self.assertEqual(result, ({mock_request.uuid: assignment}, []))
 
             # assert that the assignments_api.allocate_assignment_for_requests was called with correct parameters
             self.mock_assignments_api.allocate_assignment_for_requests.assert_called_once_with(
                 assignment_configuration,
-                [mock_request]
+                [mock_request],
+                actor_lms_user_id=None,
+                source=AssignmentSources.API,
+                correlation_id=None,
             )
 
 
