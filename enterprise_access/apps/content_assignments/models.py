@@ -501,6 +501,68 @@ class LearnerContentAssignment(TimeStampedModel):
         allocation_timeout_expiration = allocation_timeout_expiration.replace(tzinfo=UTC)
         return allocation_timeout_expiration
 
+    def audit_action_fields(
+        self,
+        action_type,
+        actor_type=None,
+        source=None,
+        actor_lms_user_id=None,
+        metadata=None,
+        error_reason=None,
+        traceback_str=None,
+        completed_at=None,
+    ):
+        """
+        Compute the field values for a new audit action row on this assignment. This is the
+        single source of truth for that computation, shared by ``add_audit_action()`` (single-row
+        writes) and any bulk-insert audit-action path (e.g. the user-linking signal handler in
+        signals.py), so those writers can't silently drift apart on field logic over time.
+
+        Args:
+            action_type (str): Type of action (from AssignmentActions constants)
+            actor_type (str): Type of actor (from AssignmentActorTypes - defaults to 'system' if not provided)
+            source (str): Source/channel of action (from AssignmentSources constants)
+            actor_lms_user_id (int): Optional LMS user ID of the actor
+            metadata (dict): Optional arbitrary audit metadata
+            error_reason (str): Optional error reason (from AssignmentActionErrors)
+            traceback_str (str): Optional traceback for errors
+            completed_at (datetime): Optional explicit completion timestamp. Defaults to now()
+                unless error_reason is set, in which case it defaults to None. Callers writing
+                many rows in one batch (e.g. bulk_create) should pass a single shared timestamp
+                so the whole batch is stamped consistently.
+
+        Returns:
+            dict: Keyword arguments suitable for ``LearnerContentAssignmentAction(**fields)`` or
+                ``self.actions.create(**fields)``.
+        """
+        if actor_type is None:
+            actor_type = AssignmentActorTypes.SYSTEM
+
+        if metadata is None:
+            metadata = {}
+
+        if completed_at is None:
+            completed_at = None if error_reason else timezone.now()
+
+        enterprise_customer_uuid = None
+        if self.assignment_configuration:
+            enterprise_customer_uuid = self.assignment_configuration.enterprise_customer_uuid
+
+        return {
+            'action_type': action_type,
+            'actor_type': actor_type,
+            'source': source,
+            'actor_lms_user_id': actor_lms_user_id,
+            'learner_lms_user_id': self.lms_user_id,
+            'learner_email': self.learner_email,
+            'learner_external_key': None,
+            'enterprise_customer_uuid': enterprise_customer_uuid,
+            'completed_at': completed_at,
+            'error_reason': error_reason,
+            'traceback': traceback_str,
+            'metadata': metadata,
+        }
+
     def add_audit_action(
         self,
         action_type,
@@ -515,48 +577,18 @@ class LearnerContentAssignment(TimeStampedModel):
         Add an audit action row for this assignment with explicit actor_type and source.
         This is the primary method for recording system-driven and async mutations.
 
-        Args:
-            action_type (str): Type of action (from AssignmentActions constants)
-            actor_type (str): Type of actor (from AssignmentActorTypes - defaults to 'system' if not provided)
-            source (str): Source/channel of action (from AssignmentSources constants)
-            actor_lms_user_id (int): Optional LMS user ID of the actor
-            metadata (dict): Optional arbitrary audit metadata
-            error_reason (str): Optional error reason (from AssignmentActionErrors)
-            traceback_str (str): Optional traceback for errors
-
         Returns:
             LearnerContentAssignmentAction: The created action row
         """
-        # Default actor_type to SYSTEM if not provided
-        if actor_type is None:
-            actor_type = AssignmentActorTypes.SYSTEM
-
-        # Prepare metadata
-        if metadata is None:
-            metadata = {}
-
-        # Determine completed_at based on whether this is an error
-        completed_at = None if error_reason else timezone.now()
-
-        # Get enterprise_customer_uuid from configuration if available
-        enterprise_customer_uuid = None
-        if self.assignment_configuration:
-            enterprise_customer_uuid = self.assignment_configuration.enterprise_customer_uuid
-
-        return self.actions.create(
+        return self.actions.create(**self.audit_action_fields(
             action_type=action_type,
             actor_type=actor_type,
             source=source,
             actor_lms_user_id=actor_lms_user_id,
-            learner_lms_user_id=self.lms_user_id,
-            learner_email=self.learner_email,
-            learner_external_key=None,
-            enterprise_customer_uuid=enterprise_customer_uuid,
-            completed_at=completed_at,
-            error_reason=error_reason,
-            traceback=traceback_str,
             metadata=metadata,
-        )
+            error_reason=error_reason,
+            traceback_str=traceback_str,
+        ))
 
     def get_last_successful_linked_action(self):
         """
@@ -654,12 +686,21 @@ class LearnerContentAssignment(TimeStampedModel):
 
     def get_last_successful_expiration_action(self):
         """
-        Returns all successful "expired" LearnerContentAssignmentActions for this assignment,
-        or None if no such record exists.
+        Returns the last successful "expiration email sent" LearnerContentAssignmentAction for
+        this assignment, or None if no such record exists.
+
+        Excludes the scheduled_job-sourced EXPIRED row that expire_assignment() writes
+        synchronously at state-transition time (same action_type, different event): without this
+        exclusion, that row could be mistaken for (or race against, by completed_at) the "email
+        successfully sent" row that add_successful_expiration_action() writes later, corrupting
+        both learner-acknowledgment eligibility and PII-clearing eligibility, which both key off
+        this method.
         """
         return self.actions.filter(
             action_type=AssignmentActions.EXPIRED,
             error_reason=None,
+        ).exclude(
+            source=AssignmentSources.SCHEDULED_JOB,
         ).order_by('-completed_at').first()
 
     def add_successful_expiration_action(self):

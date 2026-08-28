@@ -57,22 +57,20 @@ def update_assignment_lms_user_id_from_user_email(sender, **kwargs):  # pylint: 
             assignment.lms_user_id = user.lms_user_id
         num_assignments_updated = LearnerContentAssignment.bulk_update(assignments_to_update, ['lms_user_id'])
 
-        # Record audit actions for user-linking (system-driven via signal)
+        # Record audit actions for user-linking (system-driven via signal). Uses
+        # audit_action_fields() (the same field-computation logic add_audit_action() uses) so this
+        # bulk-insert path can't silently drift from the single-row path, then bulk-creates the
+        # rows directly to avoid one INSERT per assignment when many assignments match this email.
         completed_at = timezone.now()
         actions_to_create = [
             LearnerContentAssignmentAction(
                 assignment=assignment,
-                action_type=AssignmentActions.LEARNER_LINKED,
-                actor_type=AssignmentActorTypes.SYSTEM,
-                source=AssignmentSources.SIGNAL,
-                learner_lms_user_id=assignment.lms_user_id,
-                learner_email=assignment.learner_email,
-                learner_external_key=None,
-                enterprise_customer_uuid=(
-                    assignment.assignment_configuration.enterprise_customer_uuid
-                    if assignment.assignment_configuration else None
-                ),
-                completed_at=completed_at,
+                **assignment.audit_action_fields(
+                    action_type=AssignmentActions.LEARNER_LINKED,
+                    actor_type=AssignmentActorTypes.SYSTEM,
+                    source=AssignmentSources.SIGNAL,
+                    completed_at=completed_at,
+                )
             )
             for assignment in assignments_to_update
         ]

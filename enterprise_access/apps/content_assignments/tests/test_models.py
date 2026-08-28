@@ -178,33 +178,31 @@ class TestAssignmentActions(TestCase):
 
     def test_add_audit_action_with_explicit_actor_type_and_source(self):
         """
-        Test that add_audit_action creates audit action with explicit actor_type and source, and
-        that AUTO_EXPIRED (the state-transition event) is kept distinct from EXPIRED (the
-        successful "expiration email sent" event) in get_last_successful_expiration_action() --
-        the latter must ignore AUTO_EXPIRED rows regardless of relative completed_at ordering.
+        Test that add_audit_action creates audit action with explicit actor_type and source. Also
+        verifies that get_last_successful_expiration_action() excludes the scheduled_job-sourced
+        EXPIRED row (the state-transition event written by expire_assignment()) -- it must only
+        ever surface the celery_task-sourced row (the "expiration email sent" event), regardless
+        of relative completed_at ordering, since both share the same EXPIRED action_type.
         """
-        self.assignment.add_audit_action(
-            action_type=AssignmentActions.AUTO_EXPIRED,
-            actor_type=AssignmentActorTypes.SYSTEM,
-            source=AssignmentSources.SCHEDULED_JOB,
-        )
-        self.assertIsNone(self.assignment.get_last_successful_expiration_action())
-
-        action = self.assignment.add_audit_action(
+        state_transition_action = self.assignment.add_audit_action(
             action_type=AssignmentActions.EXPIRED,
             actor_type=AssignmentActorTypes.SYSTEM,
             source=AssignmentSources.SCHEDULED_JOB,
             metadata={'expiration_reason': 'NINETY_DAYS_PASSED'},
         )
 
-        self.assertEqual(action.action_type, AssignmentActions.EXPIRED)
-        self.assertEqual(action.actor_type, AssignmentActorTypes.SYSTEM)
-        self.assertEqual(action.source, AssignmentSources.SCHEDULED_JOB)
-        self.assertIsNone(action.error_reason)
-        self.assertIsNotNone(action.completed_at)
-        self.assertEqual(action.metadata.get('expiration_reason'), 'NINETY_DAYS_PASSED')
-        self.assertEqual(action.assignment, self.assignment)
-        self.assertEqual(self.assignment.get_last_successful_expiration_action(), action)
+        self.assertEqual(state_transition_action.action_type, AssignmentActions.EXPIRED)
+        self.assertEqual(state_transition_action.actor_type, AssignmentActorTypes.SYSTEM)
+        self.assertEqual(state_transition_action.source, AssignmentSources.SCHEDULED_JOB)
+        self.assertIsNone(state_transition_action.error_reason)
+        self.assertIsNotNone(state_transition_action.completed_at)
+        self.assertEqual(state_transition_action.metadata.get('expiration_reason'), 'NINETY_DAYS_PASSED')
+        self.assertEqual(state_transition_action.assignment, self.assignment)
+        # The state-transition row alone must not satisfy get_last_successful_expiration_action().
+        self.assertIsNone(self.assignment.get_last_successful_expiration_action())
+
+        email_sent_action = self.assignment.add_successful_expiration_action()
+        self.assertEqual(self.assignment.get_last_successful_expiration_action(), email_sent_action)
 
     def test_add_audit_action_with_error(self):
         """

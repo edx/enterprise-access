@@ -1324,14 +1324,14 @@ class TestClearPiiForExpiredAssignmentsTask(APITestWithMocks):
     ):
         """
         Test that PII is NOT cleared if the expiration email wasn't successfully sent, even when
-        the state-transition AUTO_EXPIRED action already exists. AUTO_EXPIRED and EXPIRED are
-        distinct action types precisely so that the presence of the state-transition row alone
+        the scheduled_job-sourced, state-transition EXPIRED action already exists.
+        get_last_successful_expiration_action() excludes that row precisely so its presence alone
         can't satisfy the "email sent" PII-clearing predicate.
         """
         # Simulate the state-transition audit row written by the expiration job, without the
         # corresponding "email sent" audit row that add_successful_expiration_action() would add.
         self.expired_assignment.add_audit_action(
-            action_type=AssignmentActions.AUTO_EXPIRED,
+            action_type=AssignmentActions.EXPIRED,
             actor_type=AssignmentActorTypes.SYSTEM,
             source=AssignmentSources.SCHEDULED_JOB,
         )

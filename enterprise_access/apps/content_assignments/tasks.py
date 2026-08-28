@@ -739,11 +739,10 @@ def _should_clear_pii_for_assignment(assignment, content_metadata):
     Returns:
         bool: True if PII should be cleared, False otherwise
     """
-    # Check if expiration email was successfully sent. EXPIRED is reserved exclusively for that
-    # event (see AssignmentActions.EXPIRED); the earlier, synchronous state transition to the
-    # EXPIRED assignment state is recorded separately as AUTO_EXPIRED, so this check can't be
-    # satisfied by that state-transition row alone. No source filter here: legacy successful
-    # expiration-email rows recorded before ``source`` existed on this action must still count.
+    # get_last_successful_expiration_action() excludes the scheduled_job-sourced state-transition
+    # row (see its docstring), so this can't be satisfied by that row alone -- it requires the
+    # email-sent row. No additional source filter here: legacy successful expiration-email rows
+    # recorded before ``source`` existed on this action must still count.
     if not assignment.get_last_successful_expiration_action():
         logger.info(
             'No successful expiration email sent for assignment %s, skipping PII clearing.',
