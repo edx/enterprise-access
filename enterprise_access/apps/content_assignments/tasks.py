@@ -437,7 +437,7 @@ class SendCancelEmailTask(BaseAssignmentRetryAndErrorActionTask):
         assignment.add_audit_action(
             action_type=AssignmentActions.CANCEL_EMAIL_FAILED,
             actor_type=actor_type,
-            source=source,
+            source=source or AssignmentSources.CELERY_TASK,
             actor_lms_user_id=actor_lms_user_id,
             error_reason=AssignmentActionErrors.EMAIL_ERROR,
             traceback_str=format_traceback(exc),
@@ -534,7 +534,7 @@ class SendReminderEmailTask(BaseAssignmentRetryAndErrorActionTask):
         assignment.add_audit_action(
             action_type=AssignmentActions.REMINDED,
             actor_type=actor_type,
-            source=source,
+            source=source or AssignmentSources.CELERY_TASK,
             actor_lms_user_id=actor_lms_user_id,
             error_reason=AssignmentActionErrors.EMAIL_ERROR,
             traceback_str=format_traceback(exc),

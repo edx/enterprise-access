@@ -9,6 +9,7 @@ from django.db.models.signals import post_save
 from django.dispatch import receiver
 from django.utils import timezone
 from openedx_events.enterprise.signals import LEDGER_TRANSACTION_REVERSED
+from simple_history.utils import bulk_create_with_history
 
 from enterprise_access.apps.content_assignments.constants import (
     AssignmentActions,
@@ -16,7 +17,11 @@ from enterprise_access.apps.content_assignments.constants import (
     AssignmentSources,
     LearnerContentAssignmentStateChoices
 )
-from enterprise_access.apps.content_assignments.models import LearnerContentAssignment
+from enterprise_access.apps.content_assignments.models import (
+    BULK_OPERATION_BATCH_SIZE,
+    LearnerContentAssignment,
+    LearnerContentAssignmentAction
+)
 from enterprise_access.apps.core.models import User
 from enterprise_access.apps.subsidy_request.models import (
     LearnerCreditRequestActionErrorReasons,
@@ -40,9 +45,11 @@ def update_assignment_lms_user_id_from_user_email(sender, **kwargs):  # pylint: 
     """
     user = kwargs['instance']
     if user.lms_user_id:
-        assignments_to_update = LearnerContentAssignment.objects.filter(
-            learner_email__iexact=user.email,
-            lms_user_id=None,
+        assignments_to_update = list(
+            LearnerContentAssignment.objects.filter(
+                learner_email__iexact=user.email,
+                lms_user_id=None,
+            ).select_related('assignment_configuration')
         )
 
         # Update multiple assignments in a history-safe way.
@@ -51,12 +58,29 @@ def update_assignment_lms_user_id_from_user_email(sender, **kwargs):  # pylint: 
         num_assignments_updated = LearnerContentAssignment.bulk_update(assignments_to_update, ['lms_user_id'])
 
         # Record audit actions for user-linking (system-driven via signal)
-        for assignment in assignments_to_update:
-            assignment.add_audit_action(
+        completed_at = timezone.now()
+        actions_to_create = [
+            LearnerContentAssignmentAction(
+                assignment=assignment,
                 action_type=AssignmentActions.LEARNER_LINKED,
                 actor_type=AssignmentActorTypes.SYSTEM,
                 source=AssignmentSources.SIGNAL,
+                learner_lms_user_id=assignment.lms_user_id,
+                learner_email=assignment.learner_email,
+                learner_external_key=None,
+                enterprise_customer_uuid=(
+                    assignment.assignment_configuration.enterprise_customer_uuid
+                    if assignment.assignment_configuration else None
+                ),
+                completed_at=completed_at,
             )
+            for assignment in assignments_to_update
+        ]
+        bulk_create_with_history(
+            actions_to_create,
+            LearnerContentAssignmentAction,
+            batch_size=BULK_OPERATION_BATCH_SIZE,
+        )
 
         # Intentionally not logging PII (email).
         if len(assignments_to_update) > 0:
