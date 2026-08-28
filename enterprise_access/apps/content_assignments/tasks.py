@@ -739,16 +739,12 @@ def _should_clear_pii_for_assignment(assignment, content_metadata):
     Returns:
         bool: True if PII should be cleared, False otherwise
     """
-    # Check if expiration email was successfully sent. The state-transition EXPIRED action
-    # (source=scheduled_job) is created before the email task even runs, so we specifically
-    # require the celery_task-sourced EXPIRED action that's only recorded after the email
-    # send succeeds (see ``send_assignment_automatically_expired_email``).
-    email_sent_action = assignment.actions.filter(
-        action_type=AssignmentActions.EXPIRED,
-        source=AssignmentSources.CELERY_TASK,
-        error_reason=None,
-    ).exists()
-    if not email_sent_action:
+    # Check if expiration email was successfully sent. EXPIRED is reserved exclusively for that
+    # event (see AssignmentActions.EXPIRED); the earlier, synchronous state transition to the
+    # EXPIRED assignment state is recorded separately as AUTO_EXPIRED, so this check can't be
+    # satisfied by that state-transition row alone. No source filter here: legacy successful
+    # expiration-email rows recorded before ``source`` existed on this action must still count.
+    if not assignment.get_last_successful_expiration_action():
         logger.info(
             'No successful expiration email sent for assignment %s, skipping PII clearing.',
             assignment.uuid

@@ -178,8 +178,18 @@ class TestAssignmentActions(TestCase):
 
     def test_add_audit_action_with_explicit_actor_type_and_source(self):
         """
-        Test that add_audit_action creates audit action with explicit actor_type and source.
+        Test that add_audit_action creates audit action with explicit actor_type and source, and
+        that AUTO_EXPIRED (the state-transition event) is kept distinct from EXPIRED (the
+        successful "expiration email sent" event) in get_last_successful_expiration_action() --
+        the latter must ignore AUTO_EXPIRED rows regardless of relative completed_at ordering.
         """
+        self.assignment.add_audit_action(
+            action_type=AssignmentActions.AUTO_EXPIRED,
+            actor_type=AssignmentActorTypes.SYSTEM,
+            source=AssignmentSources.SCHEDULED_JOB,
+        )
+        self.assertIsNone(self.assignment.get_last_successful_expiration_action())
+
         action = self.assignment.add_audit_action(
             action_type=AssignmentActions.EXPIRED,
             actor_type=AssignmentActorTypes.SYSTEM,
@@ -194,6 +204,7 @@ class TestAssignmentActions(TestCase):
         self.assertIsNotNone(action.completed_at)
         self.assertEqual(action.metadata.get('expiration_reason'), 'NINETY_DAYS_PASSED')
         self.assertEqual(action.assignment, self.assignment)
+        self.assertEqual(self.assignment.get_last_successful_expiration_action(), action)
 
     def test_add_audit_action_with_error(self):
         """

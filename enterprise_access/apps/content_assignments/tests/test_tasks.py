@@ -1228,6 +1228,7 @@ class TestBrazeEmailTasks(APITestWithMocks):
         mock_braze_client_class.return_value.generate_mailto_link.assert_called_once_with(expected_recipient_emails)
 
 
+@ddt.ddt
 class TestClearPiiForExpiredAssignmentsTask(APITestWithMocks):
     """
     Tests for clear_pii_for_expired_assignments task.
@@ -1266,16 +1267,25 @@ class TestClearPiiForExpiredAssignmentsTask(APITestWithMocks):
 
     @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient')
     @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_client')
+    @ddt.data(True, False)
     def test_clear_pii_for_expired_assignments_task(
         self,
+        expiration_action_has_source,
         mock_subsidy_client,
         mock_catalog_client,
     ):
         """
         Test that the task clears PII for assignments expired due to 90-day timeout
-        after expiration email has been sent.
+        after expiration email has been sent. Also covers the legacy-data case
+        (expiration_action_has_source=False): a successful EXPIRED action recorded before
+        ``source`` existed on this action (source=None) must still satisfy the PII-clearing
+        predicate, or PII-clearing would silently stop working for assignments that expired
+        prior to the ``source`` field's rollout.
         """
-        self.expired_assignment.add_successful_expiration_action()
+        if expiration_action_has_source:
+            self.expired_assignment.add_successful_expiration_action()
+        else:
+            self.expired_assignment.actions.create(action_type=AssignmentActions.EXPIRED, completed_at=now())
 
         subsidy_expiry = now() + timedelta(days=365)
         enrollment_end = now() + timedelta(days=365)
@@ -1313,15 +1323,15 @@ class TestClearPiiForExpiredAssignmentsTask(APITestWithMocks):
         mock_catalog_client,
     ):
         """
-        Test that PII is NOT cleared if expiration email wasn't successfully sent, even when
-        the state-transition EXPIRED action (source=scheduled_job) already exists. Only the
-        celery_task-sourced EXPIRED action (recorded once the email actually sends) should
-        satisfy the PII-clearing predicate.
+        Test that PII is NOT cleared if the expiration email wasn't successfully sent, even when
+        the state-transition AUTO_EXPIRED action already exists. AUTO_EXPIRED and EXPIRED are
+        distinct action types precisely so that the presence of the state-transition row alone
+        can't satisfy the "email sent" PII-clearing predicate.
         """
         # Simulate the state-transition audit row written by the expiration job, without the
         # corresponding "email sent" audit row that add_successful_expiration_action() would add.
         self.expired_assignment.add_audit_action(
-            action_type=AssignmentActions.EXPIRED,
+            action_type=AssignmentActions.AUTO_EXPIRED,
             actor_type=AssignmentActorTypes.SYSTEM,
             source=AssignmentSources.SCHEDULED_JOB,
         )
