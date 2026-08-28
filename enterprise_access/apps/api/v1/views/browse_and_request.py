@@ -47,7 +47,7 @@ from enterprise_access.apps.api.utils import (
 from enterprise_access.apps.api_client.ecommerce_client import EcommerceApiClient
 from enterprise_access.apps.api_client.license_manager_client import LicenseManagerApiClient
 from enterprise_access.apps.content_assignments import api as assignments_api
-from enterprise_access.apps.content_assignments.constants import AssignmentSources
+from enterprise_access.apps.content_assignments.constants import AssignmentActorTypes, AssignmentSources
 from enterprise_access.apps.core import constants
 from enterprise_access.apps.subsidy_access_policy.models import SubsidyAccessPolicy
 from enterprise_access.apps.subsidy_request import api as subsidy_request_api
@@ -1125,7 +1125,13 @@ class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
 
         try:
             with transaction.atomic():
-                response = assignments_api.cancel_assignments([learner_credit_request.assignment], False)
+                response = assignments_api.cancel_assignments(
+                    [learner_credit_request.assignment],
+                    False,
+                    actor_lms_user_id=request.user.lms_user_id,
+                    actor_type=AssignmentActorTypes.ADMIN,
+                    source=AssignmentSources.API,
+                )
                 if response.get('non_cancelable'):
                     error_msg = (
                         f"Failed to cancel associated assignment with uuid: {learner_credit_request.assignment.uuid}"

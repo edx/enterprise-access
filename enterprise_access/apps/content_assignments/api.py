@@ -912,7 +912,9 @@ def _update_and_refresh_assignments(assignment_records, fields_changed):
 
     # Get a list of refreshed objects that we just updated, along with their prefetched action records
     return list(
-        LearnerContentAssignment.objects.prefetch_related('actions').filter(
+        LearnerContentAssignment.objects.select_related('assignment_configuration').prefetch_related(
+            'actions',
+        ).filter(
             uuid__in=[record.uuid for record in assignment_records],
         )
     )
@@ -1081,7 +1083,13 @@ def _create_new_assignments_for_requests(
     )
 
 
-def cancel_assignments(assignments: Iterable[LearnerContentAssignment], send_cancel_email_to_learner=True) -> dict:
+def cancel_assignments(
+    assignments: Iterable[LearnerContentAssignment],
+    send_cancel_email_to_learner=True,
+    actor_lms_user_id=None,
+    actor_type=None,
+    source=None,
+) -> dict:
     """
     Bulk cancel assignments.
 
@@ -1090,6 +1098,10 @@ def cancel_assignments(assignments: Iterable[LearnerContentAssignment], send_can
 
     Args:
         assignments (list(LearnerContentAssignment)): One or more assignments to cancel.
+        actor_lms_user_id: The lms_user_id of the actor (e.g. admin) requesting the cancellation, used for
+            audit action attribution.
+        actor_type: One of ``AssignmentActorTypes``, describing who requested the cancellation.
+        source: One of ``AssignmentSources``, describing where the cancellation request originated.
 
     Returns:
         A dict representing cancelled and non-cancelable assignments:
@@ -1120,8 +1132,20 @@ def cancel_assignments(assignments: Iterable[LearnerContentAssignment], send_can
 
     cancelled_assignments = _update_and_refresh_assignments(cancelable_assignments, ['state'])
     for cancelled_assignment in cancelled_assignments:
+        # Write the CANCELLED audit action synchronously, as part of the cancellation request itself,
+        # so actor attribution doesn't depend on the (best-effort, async) learner notification email succeeding.
+        cancelled_assignment.add_successful_cancel_action(
+            actor_lms_user_id=actor_lms_user_id,
+            actor_type=actor_type,
+            source=source,
+        )
         if send_cancel_email_to_learner:
-            send_cancel_email_for_pending_assignment.delay(cancelled_assignment.uuid)
+            send_cancel_email_for_pending_assignment.delay(
+                cancelled_assignment.uuid,
+                actor_lms_user_id=actor_lms_user_id,
+                actor_type=actor_type,
+                source=source,
+            )
 
     return {
         'cancelled': list(set(cancelled_assignments) | already_cancelled_assignments),
@@ -1129,7 +1153,12 @@ def cancel_assignments(assignments: Iterable[LearnerContentAssignment], send_can
     }
 
 
-def remind_assignments(assignments: Iterable[LearnerContentAssignment]) -> dict:
+def remind_assignments(
+    assignments: Iterable[LearnerContentAssignment],
+    actor_lms_user_id=None,
+    actor_type=None,
+    source=None,
+) -> dict:
     """
     Bulk remind assignments.
 
@@ -1140,6 +1169,10 @@ def remind_assignments(assignments: Iterable[LearnerContentAssignment]) -> dict:
 
     Args:
         assignments (list(LearnerContentAssignment)): One or more assignments to remind.
+        actor_lms_user_id: The lms_user_id of the actor (e.g. admin) requesting the reminder. Propagated into the
+            async reminder task's payload so actor attribution survives the synchronous request/response cycle.
+        actor_type: One of ``AssignmentActorTypes``, describing who requested the reminder.
+        source: One of ``AssignmentSources``, describing where the reminder request originated.
 
     Returns:
         A dict representing reminded and non-remindable assignments:
@@ -1160,7 +1193,12 @@ def remind_assignments(assignments: Iterable[LearnerContentAssignment]) -> dict:
 
     reminded_assignments = _update_and_refresh_assignments(remindable_assignments, ['state'])
     for reminded_assignment in reminded_assignments:
-        send_reminder_email_for_pending_assignment.delay(reminded_assignment.uuid)
+        send_reminder_email_for_pending_assignment.delay(
+            reminded_assignment.uuid,
+            actor_lms_user_id=actor_lms_user_id,
+            actor_type=actor_type,
+            source=source,
+        )
 
     return {
         'reminded': list(set(reminded_assignments)),

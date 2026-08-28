@@ -838,7 +838,12 @@ class TestAdminAssignmentAuthorizedCRUD(CRUDViewTestMixin, APITest):
             'enterprise_access.apps.content_assignments.api.send_reminder_email_for_pending_assignment'
         ) as mock_remind_task:
             response = self.client.post(remind_url, query_params)
-            mock_remind_task.delay.assert_called_once_with(self.assignment_allocated_post_link.uuid)
+            mock_remind_task.delay.assert_called_once_with(
+                self.assignment_allocated_post_link.uuid,
+                actor_lms_user_id=self.user.lms_user_id,
+                actor_type=AssignmentActorTypes.ADMIN,
+                source=AssignmentSources.API,
+            )
 
         # Verify the API response.
         assert response.status_code == status.HTTP_200_OK
@@ -895,7 +900,12 @@ class TestAdminAssignmentAuthorizedCRUD(CRUDViewTestMixin, APITest):
         # Check that the assignments state were updated.
         self.assignment_allocated_post_link.refresh_from_db()
         assert self.assignment_allocated_post_link.state == LearnerContentAssignmentStateChoices.CANCELLED
-        mock_send_cancel_email.delay.assert_called_once_with(self.assignment_allocated_post_link.uuid)
+        mock_send_cancel_email.delay.assert_called_once_with(
+            self.assignment_allocated_post_link.uuid,
+            actor_lms_user_id=self.user.lms_user_id,
+            actor_type=AssignmentActorTypes.ADMIN,
+            source=AssignmentSources.API,
+        )
 
     @mock.patch('enterprise_access.apps.content_assignments.api.get_content_metadata_for_assignments')
     @mock.patch('enterprise_access.apps.content_assignments.tasks.send_exec_ed_enrollment_warmer.delay')
@@ -1355,8 +1365,16 @@ class TestRemindAllCancelAll(CRUDViewTestMixin, APITest):
             'enterprise_access.apps.content_assignments.api.send_reminder_email_for_pending_assignment'
         ) as mock_remind_task:
             response = self.client.post(remind_url)
+            expected_call_kwargs = {
+                'actor_lms_user_id': self.user.lms_user_id,
+                'actor_type': AssignmentActorTypes.ADMIN,
+                'source': AssignmentSources.API,
+            }
             mock_remind_task.delay.assert_has_calls(
-                [mock.call(assignment_1.uuid), mock.call(assignment_2.uuid)],
+                [
+                    mock.call(assignment_1.uuid, **expected_call_kwargs),
+                    mock.call(assignment_2.uuid, **expected_call_kwargs),
+                ],
                 any_order=True,
             )
 
@@ -1477,8 +1495,16 @@ class TestRemindAllCancelAll(CRUDViewTestMixin, APITest):
             'enterprise_access.apps.content_assignments.tasks.send_cancel_email_for_pending_assignment'
         ) as mock_cancel_task:
             response = self.client.post(cancel_url)
+            expected_call_kwargs = {
+                'actor_lms_user_id': self.user.lms_user_id,
+                'actor_type': AssignmentActorTypes.ADMIN,
+                'source': AssignmentSources.API,
+            }
             mock_cancel_task.delay.assert_has_calls(
-                [mock.call(assignment_1.uuid), mock.call(assignment_2.uuid)],
+                [
+                    mock.call(assignment_1.uuid, **expected_call_kwargs),
+                    mock.call(assignment_2.uuid, **expected_call_kwargs),
+                ],
                 any_order=True,
             )
 
@@ -1600,8 +1626,16 @@ class TestFilteredRemindAllCancelAll(CRUDViewTestMixin, APITest):
             response = self.client.post(cancel_url)
 
             assert response.status_code == status.HTTP_202_ACCEPTED
+            expected_call_kwargs = {
+                'actor_lms_user_id': self.user.lms_user_id,
+                'actor_type': AssignmentActorTypes.ADMIN,
+                'source': AssignmentSources.API,
+            }
             mock_cancel_task.delay.assert_has_calls(
-                [mock.call(assignment.uuid) for assignment in expected_cancelled_assignments],
+                [
+                    mock.call(assignment.uuid, **expected_call_kwargs)
+                    for assignment in expected_cancelled_assignments
+                ],
                 any_order=True,
             )
             assert mock_cancel_task.delay.call_count == len(expected_cancelled_assignments)
@@ -1631,8 +1665,16 @@ class TestFilteredRemindAllCancelAll(CRUDViewTestMixin, APITest):
             response = self.client.post(cancel_url)
 
             assert response.status_code == status.HTTP_202_ACCEPTED
+            expected_call_kwargs = {
+                'actor_lms_user_id': self.user.lms_user_id,
+                'actor_type': AssignmentActorTypes.ADMIN,
+                'source': AssignmentSources.API,
+            }
             mock_cancel_task.delay.assert_has_calls(
-                [mock.call(assignment.uuid) for assignment in expected_cancelled_assignments],
+                [
+                    mock.call(assignment.uuid, **expected_call_kwargs)
+                    for assignment in expected_cancelled_assignments
+                ],
                 any_order=True,
             )
             assert mock_cancel_task.delay.call_count == len(expected_cancelled_assignments)
@@ -1670,7 +1712,15 @@ class TestFilteredRemindAllCancelAll(CRUDViewTestMixin, APITest):
 
             assert response.status_code == status.HTTP_202_ACCEPTED
             mock_remind_task.delay.assert_has_calls(
-                [mock.call(assignment.uuid) for assignment in expected_reminded_assignments],
+                [
+                    mock.call(
+                        assignment.uuid,
+                        actor_lms_user_id=self.user.lms_user_id,
+                        actor_type=AssignmentActorTypes.ADMIN,
+                        source=AssignmentSources.API,
+                    )
+                    for assignment in expected_reminded_assignments
+                ],
                 any_order=True,
             )
             assert mock_remind_task.delay.call_count == len(expected_reminded_assignments)
@@ -1701,7 +1751,15 @@ class TestFilteredRemindAllCancelAll(CRUDViewTestMixin, APITest):
 
             assert response.status_code == status.HTTP_202_ACCEPTED
             mock_remind_task.delay.assert_has_calls(
-                [mock.call(assignment.uuid) for assignment in expected_reminded_assignments],
+                [
+                    mock.call(
+                        assignment.uuid,
+                        actor_lms_user_id=self.user.lms_user_id,
+                        actor_type=AssignmentActorTypes.ADMIN,
+                        source=AssignmentSources.API,
+                    )
+                    for assignment in expected_reminded_assignments
+                ],
                 any_order=True,
             )
             assert mock_remind_task.delay.call_count == len(expected_reminded_assignments)

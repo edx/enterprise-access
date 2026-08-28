@@ -491,9 +491,9 @@ class ForcedPolicyRedemptionAdmin(DjangoQLSearchMixin, SimpleHistoryAdmin):
                 extra_metadata[FORCED_REDEMPTION_CURRENT_TIME_KEY] = timezone.now().strftime(GEAG_DATETIME_FMT)
                 extra_metadata[FORCED_REDEMPTION_DATA_SHARE_CONSENT_KEY] = True
                 extra_metadata[FORCED_REDEMPTION_EMAIL_KEY] = user_record.email
-                obj.force_redeem(extra_metadata=extra_metadata)
+                obj.force_redeem(extra_metadata=extra_metadata, actor_lms_user_id=request.user.lms_user_id)
             else:
-                obj.force_redeem()
+                obj.force_redeem(actor_lms_user_id=request.user.lms_user_id)
         except Exception as exc:  # pylint: disable=broad-except
             message = gettext_lazy("{} Failure reason: {}".format(obj, exc))
             self.message_user(request, message, messages.ERROR)

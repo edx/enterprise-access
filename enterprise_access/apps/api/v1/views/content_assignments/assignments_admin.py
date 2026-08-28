@@ -22,7 +22,9 @@ from enterprise_access.apps.api.serializers.content_assignments.assignment impor
 from enterprise_access.apps.api.v1.views.utils import PaginationWithPageCount
 from enterprise_access.apps.content_assignments import api as assignments_api
 from enterprise_access.apps.content_assignments.constants import (
+    AssignmentActorTypes,
     AssignmentLearnerStates,
+    AssignmentSources,
     LearnerContentAssignmentStateChoices
 )
 from enterprise_access.apps.content_assignments.models import LearnerContentAssignment
@@ -229,7 +231,12 @@ class LearnerContentAssignmentAdminViewSet(
             assignment_configuration__uuid=self.requested_assignment_configuration_uuid,
             uuid__in=serializer.data['assignment_uuids'])
         try:
-            response = assignments_api.cancel_assignments(assignments)
+            response = assignments_api.cancel_assignments(
+                assignments,
+                actor_lms_user_id=request.user.lms_user_id,
+                actor_type=AssignmentActorTypes.ADMIN,
+                source=AssignmentSources.API,
+            )
             if response.get('non_cancelable') or len(assignments) < len(request.data['assignment_uuids']):
                 return Response(status=status.HTTP_422_UNPROCESSABLE_ENTITY)
             return Response(status=status.HTTP_200_OK)
@@ -268,7 +275,12 @@ class LearnerContentAssignmentAdminViewSet(
             return Response(status=status.HTTP_404_NOT_FOUND)
 
         try:
-            response = assignments_api.cancel_assignments(assignments)
+            response = assignments_api.cancel_assignments(
+                assignments,
+                actor_lms_user_id=request.user.lms_user_id,
+                actor_type=AssignmentActorTypes.ADMIN,
+                source=AssignmentSources.API,
+            )
             if non_cancelable_assignments := response.get('non_cancelable'):
                 # This is very unlikely to occur, because we filter down to only the cancelable
                 # assignments before calling `cancel_assignments()`, and that function
@@ -313,7 +325,12 @@ class LearnerContentAssignmentAdminViewSet(
             uuid__in=serializer.data['assignment_uuids'],
         )
         try:
-            response = assignments_api.remind_assignments(assignments)
+            response = assignments_api.remind_assignments(
+                assignments,
+                actor_lms_user_id=request.user.lms_user_id,
+                actor_type=AssignmentActorTypes.ADMIN,
+                source=AssignmentSources.API,
+            )
             if response.get('non_remindable_assignments') or len(assignments) < len(request.data['assignment_uuids']):
                 return Response(status=status.HTTP_422_UNPROCESSABLE_ENTITY)
             return Response(status=status.HTTP_200_OK)
@@ -352,7 +369,12 @@ class LearnerContentAssignmentAdminViewSet(
             return Response(status=status.HTTP_404_NOT_FOUND)
 
         try:
-            response = assignments_api.remind_assignments(assignments)
+            response = assignments_api.remind_assignments(
+                assignments,
+                actor_lms_user_id=request.user.lms_user_id,
+                actor_type=AssignmentActorTypes.ADMIN,
+                source=AssignmentSources.API,
+            )
             if non_remindable_assignments := response.get('non_remindable_assignments'):
                 # This is very unlikely to occur, because we filter down to only the remindable
                 # assignments before calling `remind_assignments()`, and that function

@@ -326,7 +326,7 @@ class BaseAssignmentRetryAndErrorActionTask(LoggedTaskWithRetry):
     that only *one* error action record gets written when a task is retried
     multiple times.
     """
-    def add_errored_action(self, assignment, exc):
+    def add_errored_action(self, assignment, exc, **kwargs):
         """
         Do something here to add a related action with error info.
         """
@@ -353,7 +353,7 @@ class BaseAssignmentRetryAndErrorActionTask(LoggedTaskWithRetry):
 
         assignment = _get_assignment_or_raise(args[0])
         self.progress_state_on_failure(assignment)
-        self.add_errored_action(assignment, exc)
+        self.add_errored_action(assignment, exc, **kwargs)
         if self.request.retries == settings.TASK_MAX_RETRIES:
             # The failure resulted from too many retries.  This fact would be a useful thing to record in a "reason"
             # field on the assignment if one existed.
@@ -368,7 +368,7 @@ class CreatePendingEnterpriseLearnerForAssignmentTaskBase(BaseAssignmentRetryAnd
     """
     Base class for the create_pending_enterprise_learner_for_assignment task.
     """
-    def add_errored_action(self, assignment, exc):
+    def add_errored_action(self, assignment, exc, **kwargs):
         assignment.add_audit_action(
             action_type=AssignmentActions.LEARNER_LINKED,
             actor_type=AssignmentActorTypes.SYSTEM,
@@ -429,23 +429,38 @@ class SendCancelEmailTask(BaseAssignmentRetryAndErrorActionTask):
     """
     Base class for the ``send_cancel_email_for_pending_assignment`` task.
     """
-    def add_errored_action(self, assignment, exc):
+    def add_errored_action(self, assignment, exc, actor_lms_user_id=None, actor_type=None, source=None, **kwargs):
+        # Recorded as CANCEL_EMAIL_FAILED rather than an errored CANCELLED action: the cancellation
+        # itself already succeeded and was recorded synchronously by add_successful_cancel_action()
+        # before this (best-effort, async) notification email was even attempted, so a failure here
+        # reflects a notification failure, not a failure to cancel.
         assignment.add_audit_action(
-            action_type=AssignmentActions.CANCELLED,
-            actor_type=AssignmentActorTypes.SYSTEM,
-            source=AssignmentSources.CELERY_TASK,
+            action_type=AssignmentActions.CANCEL_EMAIL_FAILED,
+            actor_type=actor_type,
+            source=source,
+            actor_lms_user_id=actor_lms_user_id,
             error_reason=AssignmentActionErrors.EMAIL_ERROR,
             traceback_str=format_traceback(exc),
         )
 
 
 @shared_task(base=SendCancelEmailTask)
-def send_cancel_email_for_pending_assignment(cancelled_assignment_uuid):
+def send_cancel_email_for_pending_assignment(
+    cancelled_assignment_uuid, actor_lms_user_id=None, actor_type=None, source=None,  # pylint: disable=unused-argument
+):
     """
     Send email via braze for cancelling pending assignment
 
     Args:
         cancelled_assignment: (string) the cancelled assignment uuid
+        actor_lms_user_id: The lms_user_id of the actor (e.g. admin) who requested the cancellation. Not used
+            directly in this task's body (the successful CANCELLED action is written synchronously by
+            cancel_assignments()), but must be accepted here so that Celery's on_failure() has it available in
+            its ``kwargs`` for audit action attribution if this task's error handling records an errored action.
+            Optional and defaults to None so that tasks already enqueued by an older, pre-audit version of the
+            producer (e.g. mid-deploy) can still be consumed successfully.
+        actor_type: One of ``AssignmentActorTypes``, describing who requested the cancellation.
+        source: One of ``AssignmentSources``, describing where the cancellation request originated.
     """
     assignment = _get_assignment_or_raise(cancelled_assignment_uuid)
 
@@ -460,7 +475,8 @@ def send_cancel_email_for_pending_assignment(cancelled_assignment_uuid):
         braze_trigger_properties,
         campaign_uuid,
     )
-    assignment.add_successful_cancel_action()
+    # The CANCELLED audit action is written synchronously by `cancel_assignments()` at cancellation time,
+    # so we don't duplicate it here now that this task's job is solely to send the learner notification.
     logger.info(f'Sent braze campaign cancelled uuid={campaign_uuid} message for assignment {assignment}')
 
 
@@ -469,7 +485,7 @@ class SendExecutiveEducationNudgeTask(BaseAssignmentRetryAndErrorActionTask):
     """
     Base class for the ``send_exec_ed_enrollment_warmer`` task.
     """
-    def add_errored_action(self, assignment, exc):
+    def add_errored_action(self, assignment, exc, **kwargs):
         assignment.add_audit_action(
             action_type=AssignmentActions.REMINDED,
             actor_type=AssignmentActorTypes.SYSTEM,
@@ -514,11 +530,12 @@ class SendReminderEmailTask(BaseAssignmentRetryAndErrorActionTask):
     """
     Base class for the ``send_reminder_email_for_pending_assignment`` task.
     """
-    def add_errored_action(self, assignment, exc):
+    def add_errored_action(self, assignment, exc, actor_lms_user_id=None, actor_type=None, source=None, **kwargs):
         assignment.add_audit_action(
             action_type=AssignmentActions.REMINDED,
-            actor_type=AssignmentActorTypes.SYSTEM,
-            source=AssignmentSources.CELERY_TASK,
+            actor_type=actor_type,
+            source=source,
+            actor_lms_user_id=actor_lms_user_id,
             error_reason=AssignmentActionErrors.EMAIL_ERROR,
             traceback_str=format_traceback(exc),
         )
@@ -532,11 +549,16 @@ class SendReminderEmailTask(BaseAssignmentRetryAndErrorActionTask):
 
 
 @shared_task(base=SendReminderEmailTask)
-def send_reminder_email_for_pending_assignment(assignment_uuid):
+def send_reminder_email_for_pending_assignment(assignment_uuid, actor_lms_user_id=None, actor_type=None, source=None):
     """
     Send email via braze for reminding users of their pending assignment
     Args:
-        assignment_uuid: (string) the subsidy request uuid
+        assignment_uuid: (string) the LearnerContentAssignment uuid
+        actor_lms_user_id: The lms_user_id of the actor (e.g. admin) who requested the reminder, for audit
+            action attribution. Optional and defaults to None so that tasks already enqueued by an
+            older, pre-audit version of the producer (e.g. mid-deploy) can still be consumed successfully.
+        actor_type: One of ``AssignmentActorTypes``, describing who requested the reminder.
+        source: One of ``AssignmentSources``, describing where the reminder request originated.
     """
     assignment = _get_assignment_or_raise(assignment_uuid)
 
@@ -560,7 +582,11 @@ def send_reminder_email_for_pending_assignment(assignment_uuid):
         braze_trigger_properties,
         campaign_uuid,
     )
-    assignment.add_successful_reminded_action()
+    assignment.add_successful_reminded_action(
+        actor_lms_user_id=actor_lms_user_id,
+        actor_type=actor_type,
+        source=source,
+    )
     logger.info(f'Sent braze campaign reminder uuid={campaign_uuid} message for assignment {assignment}')
 
 
@@ -569,7 +595,7 @@ class SendNotificationEmailTask(BaseAssignmentRetryAndErrorActionTask):
     """
     Base class for the ``send_email_for_new_assignment`` task.
     """
-    def add_errored_action(self, assignment, exc):
+    def add_errored_action(self, assignment, exc, **kwargs):
         assignment.add_audit_action(
             action_type=AssignmentActions.NOTIFIED,
             actor_type=AssignmentActorTypes.SYSTEM,
@@ -622,7 +648,7 @@ class SendExpirationEmailTask(BaseAssignmentRetryAndErrorActionTask):
     """
     Base class for the ``send_assignment_automatically_expired_email`` task.
     """
-    def add_errored_action(self, assignment, exc):
+    def add_errored_action(self, assignment, exc, **kwargs):
         assignment.add_audit_action(
             action_type=AssignmentActions.EXPIRED,
             actor_type=AssignmentActorTypes.SYSTEM,
