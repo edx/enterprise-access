@@ -64,7 +64,17 @@ Key Fields:
 
 * ``enterprise_uuid``: Links to the enterprise customer in downstream systems
 * ``stripe_customer_id``: Links to the Stripe customer record
-* ``state``: Tracks the overall subscription state (CREATED -> PAID -> FULFILLED)
+* ``state``: Tracks the overall subscription state. Full state machine:
+
+  .. code-block:: text
+
+      CREATED → PAID → FULFILLED                  (happy path)
+      CREATED → EXPIRED                           (24-hour timeout, no payment)
+      PAID    → ERRORED_BACKOFFICE                (Salesforce integration failure)
+      PAID    → ERRORED_PROVISIONING              (provisioning workflow failure)
+      PAID    → ERRORED_FULFILLMENT_STALLED       (workflow never started/completed, detected by management command)
+      ERRORED_* → FULFILLED                       (recovery path)
+
 * ``workflow``: Links to the provisioning workflow that created the subscription
 
 **StripeEventData**
@@ -78,6 +88,13 @@ Key Fields:
 * ``event_type``: The type of Stripe event (e.g., 'invoice.paid', 'customer.subscription.updated')
 * ``checkout_intent``: Links the event to the relevant subscription
 * ``data``: Complete JSON payload from Stripe
+* ``handled_at``: Set after all handler logic completes successfully; null means the event was
+  received but not fully processed
+
+``checkout_intent`` is resolved from Stripe subscription metadata. The lookup prefers
+``checkout_intent_uuid`` (UUID field, added post-launch) and falls back to ``checkout_intent_id``
+(integer PK, legacy records). Both are embedded in the Stripe subscription's metadata at checkout
+session creation.
 
 **StripeEventSummary**
 
@@ -134,12 +151,19 @@ subscription details, renewal amount, and management link.
 When the trial period ends, Stripe automatically:
 
 1. Transitions the subscription to ``active`` status
-2. Creates and charges the first invoice (amount > $0), sending an ``invoice.created`` event.
-3. Charges the first invoice (amount > $0), sending an ``invoice.paid`` event.
+2. Creates the first invoice (amount > $0), sending an ``invoice.created`` event.
+3. Charges the invoice, sending an ``invoice.paid`` event.
+
+The two-event split is intentional. ``invoice.created`` pre-links the Stripe invoice ID to the
+``SelfServiceSubscriptionRenewal`` record (matched by subscription ID + invoice period start date).
+``invoice.paid`` then looks up the renewal directly by ``stripe_invoice_id`` rather than re-matching
+by date. If ``invoice.paid`` arrives before ``invoice.created`` (Stripe delivers webhooks
+out-of-order), the handler raises an exception to force a Stripe retry rather than silently
+dropping the renewal.
 
 On ``invoice.paid`` (amount > $0), Enterprise Access:
 
-1. Links the invoice to the corresponding ``SelfServiceSubscriptionRenewal`` (matched by ``stripe_invoice_id``)
+1. Looks up the ``SelfServiceSubscriptionRenewal`` by ``stripe_invoice_id`` (linked during ``invoice.created``)
 2. Calls License Manager's ``/api/v1/provisioning-admins/subscription-plan-renewals/{id}/process/`` endpoint
 3. License Manager processes the renewal from trial -> paid subscription plan
 4. Marks the ``SelfServiceSubscriptionRenewal`` as processed
@@ -337,6 +361,26 @@ Error Scenarios
 * Missing CheckoutIntent records for webhook events
 * Failed renewal processing leaving ``SelfServiceSubscriptionRenewal`` records in unprocessed state
 * Out-of-order webhook delivery (e.g., ``invoice.paid`` before ``invoice.created``)
+
+Management Commands
+-------------------
+
+Operational commands for routine maintenance and data recovery:
+
++------------------------------------+------------------------------------------------------------------+
+| Command                            | Purpose                                                          |
++====================================+==================================================================+
+| ``cleanup_checkout_intents``       | Expire ``CREATED`` intents past ``expires_at``                   |
++------------------------------------+------------------------------------------------------------------+
+| ``mark_stalled_checkout_intents``  | Flag ``PAID`` intents stuck > 3 min as                           |
+|                                    | ``ERRORED_FULFILLMENT_STALLED``                                  |
++------------------------------------+------------------------------------------------------------------+
+| ``fetch_and_handle_stripe_events`` | Backfill/replay Stripe events by fetching from the Stripe API    |
++------------------------------------+------------------------------------------------------------------+
+| ``backfill_subscription_renewals`` | Data migration helper for ``SelfServiceSubscriptionRenewal``     |
++------------------------------------+------------------------------------------------------------------+
+| ``populate_stripe_event_summaries``| Backfill ``StripeEventSummary`` records from existing event data |
++------------------------------------+------------------------------------------------------------------+
 
 Future Considerations
 ---------------------
