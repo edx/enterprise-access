@@ -1377,11 +1377,7 @@ def expire_assignment(
 
         assignment.save()
 
-        # Record audit action for the automatic state transition (system-driven). This is
-        # source=SCHEDULED_JOB, distinct from the source=CELERY_TASK row that
-        # add_successful_expiration_action() writes later once the expiration email actually
-        # sends; get_last_successful_expiration_action() explicitly excludes SCHEDULED_JOB rows
-        # so learner-acknowledgment and PII-clearing eligibility aren't confused by this one.
+        # Record audit action for the automatic state transition (system-driven).
         assignment.add_audit_action(
             action_type=AssignmentActions.EXPIRED,
             actor_type=AssignmentActorTypes.SYSTEM,

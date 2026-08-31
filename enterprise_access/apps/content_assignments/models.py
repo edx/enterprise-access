@@ -513,27 +513,14 @@ class LearnerContentAssignment(TimeStampedModel):
         completed_at=None,
     ):
         """
-        Compute the field values for a new audit action row on this assignment. This is the
-        single source of truth for that computation, shared by ``add_audit_action()`` (single-row
-        writes) and any bulk-insert audit-action path (e.g. the user-linking signal handler in
-        signals.py), so those writers can't silently drift apart on field logic over time.
+        Compute the field values for a new audit action row on this assignment (returns a dict
+        suitable for ``LearnerContentAssignmentAction(**fields)`` or ``self.actions.create(**fields)``).
+        Single source of truth shared by ``add_audit_action()`` and any bulk-insert audit path
+        (e.g. the user-linking signal handler), so those writers can't drift apart over time.
 
-        Args:
-            action_type (str): Type of action (from AssignmentActions constants)
-            actor_type (str): Type of actor (from AssignmentActorTypes - defaults to 'system' if not provided)
-            source (str): Source/channel of action (from AssignmentSources constants)
-            actor_lms_user_id (int): Optional LMS user ID of the actor
-            metadata (dict): Optional arbitrary audit metadata
-            error_reason (str): Optional error reason (from AssignmentActionErrors)
-            traceback_str (str): Optional traceback for errors
-            completed_at (datetime): Optional explicit completion timestamp. Defaults to now()
-                unless error_reason is set, in which case it defaults to None. Callers writing
-                many rows in one batch (e.g. bulk_create) should pass a single shared timestamp
-                so the whole batch is stamped consistently.
-
-        Returns:
-            dict: Keyword arguments suitable for ``LearnerContentAssignmentAction(**fields)`` or
-                ``self.actions.create(**fields)``.
+        ``completed_at``, if not passed explicitly, defaults to now() unless ``error_reason`` is
+        set. Callers writing many rows in one batch should pass a single shared timestamp so the
+        whole batch is stamped consistently.
         """
         if actor_type is None:
             actor_type = AssignmentActorTypes.SYSTEM
@@ -689,12 +676,10 @@ class LearnerContentAssignment(TimeStampedModel):
         Returns the last successful "expiration email sent" LearnerContentAssignmentAction for
         this assignment, or None if no such record exists.
 
-        Excludes the scheduled_job-sourced EXPIRED row that expire_assignment() writes
-        synchronously at state-transition time (same action_type, different event): without this
-        exclusion, that row could be mistaken for (or race against, by completed_at) the "email
-        successfully sent" row that add_successful_expiration_action() writes later, corrupting
-        both learner-acknowledgment eligibility and PII-clearing eligibility, which both key off
-        this method.
+        Excludes the scheduled_job-sourced EXPIRED row expire_assignment() writes at state-
+        transition time: same action_type, different event, and without this exclusion it could
+        race the real "email sent" row on completed_at and corrupt acknowledgment/PII-clearing
+        eligibility, which both key off this method.
         """
         return self.actions.filter(
             action_type=AssignmentActions.EXPIRED,

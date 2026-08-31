@@ -1,6 +1,7 @@
 """ Admin configuration for content_assignment models. """
 
 from django.contrib import admin
+from django.db import transaction
 from djangoql.admin import DjangoQLSearchMixin
 from simple_history.admin import SimpleHistoryAdmin
 
@@ -127,35 +128,37 @@ class LearnerContentAssignmentAdmin(DjangoQLSearchMixin, SimpleHistoryAdmin):
         actor_lms_user_id = getattr(request.user, 'lms_user_id', None)
 
         for assignment in queryset:
-            # Record ALLOCATED action if not already in a redeemed/allocated state
-            if assignment.state not in [
-                LearnerContentAssignmentStateChoices.ALLOCATED,
-                LearnerContentAssignmentStateChoices.ACCEPTED,
-                LearnerContentAssignmentStateChoices.ERRORED,
-                LearnerContentAssignmentStateChoices.REVERSED,
-            ]:
+            # Atomic: if save() fails below, the audit rows it writes first must roll back too.
+            with transaction.atomic():
+                # Record ALLOCATED action if not already in a redeemed/allocated state
+                if assignment.state not in [
+                    LearnerContentAssignmentStateChoices.ALLOCATED,
+                    LearnerContentAssignmentStateChoices.ACCEPTED,
+                    LearnerContentAssignmentStateChoices.ERRORED,
+                    LearnerContentAssignmentStateChoices.REVERSED,
+                ]:
+                    assignment.add_audit_action(
+                        action_type=AssignmentActions.ALLOCATED,
+                        actor_type=AssignmentActorTypes.ADMIN,
+                        source=AssignmentSources.DJANGO_ADMIN,
+                        actor_lms_user_id=actor_lms_user_id,
+                    )
+
+                # Record REDEEMED action
                 assignment.add_audit_action(
-                    action_type=AssignmentActions.ALLOCATED,
+                    action_type=AssignmentActions.REDEEMED,
                     actor_type=AssignmentActorTypes.ADMIN,
                     source=AssignmentSources.DJANGO_ADMIN,
                     actor_lms_user_id=actor_lms_user_id,
                 )
 
-            # Record REDEEMED action
-            assignment.add_audit_action(
-                action_type=AssignmentActions.REDEEMED,
-                actor_type=AssignmentActorTypes.ADMIN,
-                source=AssignmentSources.DJANGO_ADMIN,
-                actor_lms_user_id=actor_lms_user_id,
-            )
-
-            # Update assignment state
-            assignment.state = LearnerContentAssignmentStateChoices.ACCEPTED
-            assignment.accepted_at = localized_utcnow()
-            assignment.errored_at = None
-            assignment.cancelled_at = None
-            assignment.expired_at = None
-            assignment.save()
+                # Update assignment state
+                assignment.state = LearnerContentAssignmentStateChoices.ACCEPTED
+                assignment.accepted_at = localized_utcnow()
+                assignment.errored_at = None
+                assignment.cancelled_at = None
+                assignment.expired_at = None
+                assignment.save()
 
         self.message_user(request, f'Successfully redeemed {len(queryset)} assignment(s).')
 

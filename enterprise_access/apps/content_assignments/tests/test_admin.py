@@ -1,6 +1,8 @@
 """
 Tests for the admin module of the content_assignments app.
 """
+from unittest import mock
+
 import ddt
 from django.contrib.admin.sites import AdminSite
 from django.contrib.messages.storage.fallback import FallbackStorage
@@ -168,3 +170,23 @@ class TestLearnerContentAssignmentAdminActions(TestCase):
                 self.assertEqual(action.actor_type, AssignmentActorTypes.ADMIN)
                 self.assertEqual(action.source, AssignmentSources.DJANGO_ADMIN)
                 self.assertEqual(action.actor_lms_user_id, self.user.lms_user_id)
+
+    def test_force_redeem_rolls_back_audit_rows_if_state_save_fails(self):
+        """
+        The ALLOCATED/REDEEMED audit rows and the state-change save() must be atomic: if save()
+        fails, the audit rows recorded just before it must not persist either, or the audit trail
+        would claim a redemption that never actually happened.
+        """
+        assignment = LearnerContentAssignmentFactory(
+            state=LearnerContentAssignmentStateChoices.CANCELLED,
+        )
+        request = self._build_request()
+        queryset = LearnerContentAssignment.objects.filter(pk=assignment.pk)
+
+        with mock.patch.object(LearnerContentAssignment, 'save', side_effect=Exception('DB boom')):
+            with self.assertRaisesMessage(Exception, 'DB boom'):
+                self.admin.force_redeem_assignments(request, queryset)
+
+        assignment.refresh_from_db()
+        self.assertEqual(assignment.state, LearnerContentAssignmentStateChoices.CANCELLED)
+        self.assertEqual(assignment.actions.count(), 0)

@@ -50,12 +50,8 @@ class AssignmentActions:
     CANCELLED = 'cancelled'
     CANCELLED_ACKNOWLEDGED = 'cancelled_acknowledged'
     CANCEL_EMAIL_FAILED = 'cancel_email_failed'
-    # NOTE: EXPIRED is written by two distinct events sharing this action_type: the synchronous
-    # state transition (source=scheduled_job, in expire_assignment()) and the successful
-    # "expiration email sent" event (source=celery_task, in add_successful_expiration_action()).
-    # get_last_successful_expiration_action() explicitly excludes the scheduled_job-sourced row so
-    # that consumers of "last successful expiration" (acknowledgment logic, PII-clearing) aren't
-    # confused by the two racing on completed_at.
+    # NOTE: two distinct events write EXPIRED (state transition vs. email sent) -- see
+    # LearnerContentAssignment.get_last_successful_expiration_action()'s docstring.
     EXPIRED = 'expired'
     EXPIRED_ACKNOWLEDGED = 'expired_acknowledged'
     REVERSED = 'reversed'
