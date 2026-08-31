@@ -47,11 +47,11 @@ billiard==4.2.4
     # via
     #   -r requirements/validation.txt
     #   celery
-boto3==1.43.82
+boto3==1.43.85
     # via
     #   -r requirements/validation.txt
     #   snowflake-connector-python
-botocore==1.43.82
+botocore==1.43.85
     # via
     #   -r requirements/validation.txt
     #   boto3
@@ -61,7 +61,7 @@ build==1.6.0
     # via
     #   -r requirements/pip-tools.txt
     #   pip-tools
-cachetools==7.1.7
+cachetools==7.1.8
     # via
     #   -r requirements/validation.txt
     #   tox
@@ -129,7 +129,7 @@ colorama==0.4.6
     #   tox
 confluent-kafka[avro,schema-registry]==2.6.1
     # via -r requirements/validation.txt
-coverage[toml]==7.15.4
+coverage[toml]==7.16.0
     # via
     #   -r requirements/validation.txt
     #   pytest-cov
@@ -140,7 +140,6 @@ cryptography==50.0.1
     #   -r requirements/validation.txt
     #   pyjwt
     #   pyopenssl
-    #   secretstorage
     #   snowflake-connector-python
     #   social-auth-core
 ddt==1.7.2
@@ -285,7 +284,7 @@ edx-celeryutils==2.0.0
     # via -r requirements/validation.txt
 edx-django-release-util==1.5.0
     # via -r requirements/validation.txt
-edx-django-utils==8.0.1
+edx-django-utils==8.0.2
     # via
     #   -r requirements/validation.txt
     #   edx-auth-backends
@@ -332,7 +331,7 @@ fastavro==1.12.2
     #   -r requirements/validation.txt
     #   confluent-kafka
     #   openedx-events
-filelock==3.32.4
+filelock==3.32.5
     # via
     #   -r requirements/validation.txt
     #   python-discovery
@@ -359,7 +358,7 @@ iniconfig==2.3.0
     # via
     #   -r requirements/validation.txt
     #   pytest
-isort==8.0.1
+isort==9.0.1
     # via
     #   -r requirements/validation.txt
     #   pylint
@@ -375,11 +374,6 @@ jaraco-functools==4.6.0
     # via
     #   -r requirements/validation.txt
     #   keyring
-jeepney==0.9.0
-    # via
-    #   -r requirements/validation.txt
-    #   keyring
-    #   secretstorage
 jinja2==3.1.6
     # via
     #   -r requirements/validation.txt
@@ -443,6 +437,10 @@ more-itertools==11.1.0
     #   -r requirements/validation.txt
     #   jaraco-classes
     #   jaraco-functools
+mypy-extensions==1.1.0
+    # via
+    #   -r requirements/validation.txt
+    #   isort
 mysqlclient==2.2.8
     # via -r requirements/validation.txt
 nh3==0.3.7
@@ -529,7 +527,7 @@ pyjwt[crypto]==2.13.0
     #   edx-rest-api-client
     #   snowflake-connector-python
     #   social-auth-core
-pylint==4.0.7
+pylint==4.0.8
     # via
     #   -r requirements/validation.txt
     #   edx-lint
@@ -592,7 +590,7 @@ python-dateutil==2.9.0.post0
     #   botocore
     #   celery
     #   freezegun
-python-discovery==1.5.3
+python-discovery==1.6.0
     # via
     #   -r requirements/validation.txt
     #   tox
@@ -618,7 +616,7 @@ pyyaml==6.0.3
     #   drf-yasg
     #   edx-django-release-util
     #   edx-i18n-tools
-readme-renderer==45.0
+readme-renderer==46.0
     # via
     #   -r requirements/validation.txt
     #   twine
@@ -669,10 +667,6 @@ s3transfer==0.19.2
     # via
     #   -r requirements/validation.txt
     #   boto3
-secretstorage==3.5.0
-    # via
-    #   -r requirements/validation.txt
-    #   keyring
 semantic-version==2.10.0
     # via
     #   -r requirements/validation.txt
@@ -733,7 +727,7 @@ tomlkit==0.15.1
     #   edx-lint
     #   pylint
     #   snowflake-connector-python
-tox==4.60.1
+tox==4.61.2
     # via -r requirements/validation.txt
 twine==7.0.0
     # via -r requirements/validation.txt
@@ -776,11 +770,11 @@ vine==5.1.0
     #   amqp
     #   celery
     #   kombu
-virtualenv==21.7.5
+virtualenv==21.7.7
     # via
     #   -r requirements/validation.txt
     #   tox
-wcwidth==0.8.2
+wcwidth==0.8.3
     # via
     #   -r requirements/validation.txt
     #   prompt-toolkit

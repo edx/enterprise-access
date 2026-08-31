@@ -46,17 +46,17 @@ billiard==4.2.4
     # via
     #   -r requirements/base.txt
     #   celery
-boto3==1.43.82
+boto3==1.43.85
     # via
     #   -r requirements/base.txt
     #   snowflake-connector-python
-botocore==1.43.82
+botocore==1.43.85
     # via
     #   -r requirements/base.txt
     #   boto3
     #   s3transfer
     #   snowflake-connector-python
-cachetools==7.1.7
+cachetools==7.1.8
     # via tox
 cattrs==26.1.0
     # via -r requirements/base.txt
@@ -117,7 +117,7 @@ confluent-kafka[avro,schema-registry]==2.6.1
     # via
     #   -c requirements/constraints.txt
     #   -r requirements/base.txt
-coverage[toml]==7.15.4
+coverage[toml]==7.16.0
     # via
     #   -r requirements/test.in
     #   pytest-cov
@@ -258,7 +258,7 @@ edx-celeryutils==2.0.0
     # via -r requirements/base.txt
 edx-django-release-util==1.5.0
     # via -r requirements/base.txt
-edx-django-utils==8.0.1
+edx-django-utils==8.0.2
     # via
     #   -r requirements/base.txt
     #   edx-auth-backends
@@ -301,7 +301,7 @@ fastavro==1.12.2
     #   -r requirements/base.txt
     #   confluent-kafka
     #   openedx-events
-filelock==3.32.4
+filelock==3.32.5
     # via
     #   -r requirements/base.txt
     #   python-discovery
@@ -322,7 +322,7 @@ inflection==0.5.1
     #   drf-yasg
 iniconfig==2.3.0
     # via pytest
-isort==8.0.1
+isort==9.0.1
     # via pylint
 jinja2==3.1.6
     # via
@@ -361,6 +361,8 @@ monotonic==1.6
     # via
     #   -r requirements/base.txt
     #   analytics-python
+mypy-extensions==1.1.0
+    # via isort
 mysqlclient==2.2.8
     # via -r requirements/base.txt
 oauthlib==3.3.1
@@ -422,7 +424,7 @@ pyjwt[crypto]==2.13.0
     #   edx-rest-api-client
     #   snowflake-connector-python
     #   social-auth-core
-pylint==4.0.7
+pylint==4.0.8
     # via
     #   edx-lint
     #   pylint-celery
@@ -469,7 +471,7 @@ python-dateutil==2.9.0.post0
     #   botocore
     #   celery
     #   freezegun
-python-discovery==1.5.3
+python-discovery==1.6.0
     # via
     #   tox
     #   virtualenv
@@ -583,7 +585,7 @@ tomlkit==0.15.1
     #   edx-lint
     #   pylint
     #   snowflake-connector-python
-tox==4.60.1
+tox==4.61.2
     # via -r requirements/test.in
 typing-extensions==4.16.0
     # via
@@ -621,9 +623,9 @@ vine==5.1.0
     #   amqp
     #   celery
     #   kombu
-virtualenv==21.7.5
+virtualenv==21.7.7
     # via tox
-wcwidth==0.8.2
+wcwidth==0.8.3
     # via
     #   -r requirements/base.txt
     #   prompt-toolkit
