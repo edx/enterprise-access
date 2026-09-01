@@ -8,7 +8,12 @@ from django.db import DatabaseError
 from django.test import TestCase
 from django.utils import timezone
 
-from enterprise_access.apps.content_assignments.constants import LearnerContentAssignmentStateChoices
+from enterprise_access.apps.content_assignments.constants import (
+    AssignmentActions,
+    AssignmentActorTypes,
+    AssignmentSources,
+    LearnerContentAssignmentStateChoices
+)
 from enterprise_access.apps.content_assignments.models import LearnerContentAssignment
 from enterprise_access.apps.content_assignments.signals import update_assignment_status_for_reversed_transaction
 from enterprise_access.apps.content_assignments.tests.factories import LearnerContentAssignmentFactory
@@ -85,6 +90,27 @@ class SignalsTests(TestCase):
             assignment.refresh_from_db()
             assert assignment.lms_user_id is None
 
+    def test_update_assignment_lms_user_id_creates_audit_actions(self):
+        """update_assignment_lms_user_id_from_user_email() creates LEARNER_LINKED audit action rows."""
+        assignments = [
+            LearnerContentAssignmentFactory(learner_email=TEST_EMAIL, lms_user_id=None),
+            LearnerContentAssignmentFactory(learner_email=TEST_EMAIL, lms_user_id=None),
+        ]
+        test_user = UserFactory(email=TEST_EMAIL)
+
+        for assignment in assignments:
+            assignment.refresh_from_db()
+            assert assignment.lms_user_id == test_user.lms_user_id
+
+            audit_actions = assignment.actions.filter(action_type=AssignmentActions.LEARNER_LINKED)
+            assert audit_actions.exists(), f"No LEARNER_LINKED action for assignment {assignment.uuid}"
+
+            action = audit_actions.first()
+            assert action.actor_type == AssignmentActorTypes.SYSTEM
+            assert action.source == AssignmentSources.SIGNAL
+            assert action.actor_lms_user_id is None  # SYSTEM actors don't have a user ID
+            assert action.completed_at is not None
+
 
 class TestReversalSignal(TestCase):
     """
@@ -145,3 +171,19 @@ class TestReversalSignal(TestCase):
         assert action.error_reason == LearnerCreditRequestActionErrorReasons.FAILED_REVERSAL
         assert action.status == SubsidyRequestStates.ACCEPTED
         assert "Simulated DB error" in action.traceback
+
+    def test_reversal_creates_audit_action(self):
+        """The reversal signal handler creates a REVERSED audit action row."""
+        update_assignment_status_for_reversed_transaction(
+            ledger_transaction=mock.Mock(uuid=self.assignment.transaction_uuid)
+        )
+        self.assignment.refresh_from_db()
+
+        audit_actions = self.assignment.actions.filter(action_type=AssignmentActions.REVERSED)
+        assert audit_actions.exists(), "No REVERSED audit action created"
+
+        action = audit_actions.first()
+        assert action.actor_type == AssignmentActorTypes.SYSTEM
+        assert action.source == AssignmentSources.SIGNAL
+        assert action.completed_at is not None
+        assert action.error_reason is None

@@ -50,6 +50,8 @@ class AssignmentActions:
     CANCELLED = 'cancelled'
     CANCELLED_ACKNOWLEDGED = 'cancelled_acknowledged'
     CANCEL_EMAIL_FAILED = 'cancel_email_failed'
+    # NOTE: two distinct events write EXPIRED (state transition vs. email sent) -- see
+    # LearnerContentAssignment.get_last_successful_expiration_action()'s docstring.
     EXPIRED = 'expired'
     EXPIRED_ACKNOWLEDGED = 'expired_acknowledged'
     REVERSED = 'reversed'
@@ -57,6 +59,7 @@ class AssignmentActions:
     REALLOCATED = 'reallocated'
     APPROVED = 'approved'
     ERRORED = 'errored'
+    RETIRED = 'retired'
 
     CHOICES = (
         (LEARNER_LINKED, 'Learner linked to customer'),
@@ -73,6 +76,7 @@ class AssignmentActions:
         (REALLOCATED, 'Content reallocated to learner'),
         (APPROVED, 'Assignment approved'),
         (ERRORED, 'Assignment encountered an error'),
+        (RETIRED, 'Learner PII retired/cleared from system'),
     )
 
 

@@ -1375,6 +1375,39 @@ class TestAssignmentExpiration(TestCase):
         mock_bnr_expired_email.delay.assert_called_once_with(credit_request.uuid)
         mock_assignment_expired_email.delay.assert_not_called()
 
+    @mock.patch('enterprise_access.apps.content_assignments.api.send_assignment_automatically_expired_email')
+    def test_expire_assignment_creates_audit_action(self, mock_expired_email):  # pylint: disable=unused-argument
+        """expire_assignment creates an EXPIRED audit action row with actor_type=SYSTEM, source=SCHEDULED_JOB."""
+        enough_days_to_be_expired = NUM_DAYS_BEFORE_AUTO_EXPIRATION + 1
+        assignment = LearnerContentAssignmentFactory.create(
+            assignment_configuration=self.assignment_configuration,
+            state=LearnerContentAssignmentStateChoices.ALLOCATED,
+            learner_email='test@example.com',
+            lms_user_id=12345,
+            allocated_at=delta_t(days=-enough_days_to_be_expired),
+        )
+
+        mock_subsidy_record = {'expiration_datetime': delta_t(days=100, as_string=True)}
+        with mock.patch.object(self.policy, 'subsidy_record', return_value=mock_subsidy_record):
+            expire_assignment(
+                assignment,
+                content_metadata=self.mock_content_metadata('edX+DemoX', 'course-v1:edX+DemoX+T2024', None),
+                modify_assignment=True,
+            )
+
+        assignment.refresh_from_db()
+
+        audit_actions = assignment.actions.filter(action_type=AssignmentActions.EXPIRED)
+        assert audit_actions.exists(), "No EXPIRED audit action created"
+
+        action = audit_actions.first()
+        assert action.actor_type == AssignmentActorTypes.SYSTEM
+        assert action.source == AssignmentSources.SCHEDULED_JOB
+        assert action.completed_at is not None
+        assert action.error_reason is None
+
+        assert assignment.get_last_successful_expiration_action() is None
+
 
 class AllocateAssignmentForRequestsTests(TestCase):
     """

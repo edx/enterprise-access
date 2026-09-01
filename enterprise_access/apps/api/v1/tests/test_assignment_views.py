@@ -507,7 +507,13 @@ class TestAdminAssignmentAuthorizedCRUD(CRUDViewTestMixin, APITest):
             content_quantity=-321,
             content_title='edx: Privacy 101'
         )
-        assignment.add_errored_notified_action(Exception('foo'))
+        assignment.add_audit_action(
+            action_type=AssignmentActions.NOTIFIED,
+            actor_type=AssignmentActorTypes.SYSTEM,
+            source=AssignmentSources.CELERY_TASK,
+            error_reason=AssignmentActionErrors.EMAIL_ERROR,
+            traceback_str='foo',
+        )
 
         # Set the JWT-based auth that we'll use for every request.
         self.set_jwt_cookie([role_context_dict])

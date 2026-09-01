@@ -20,6 +20,7 @@ from enterprise_access.apps.content_assignments.content_metadata_api import (
 from enterprise_access.tasks import LoggedTaskWithRetry
 from enterprise_access.utils import (
     format_datetime_obj,
+    format_traceback,
     get_automatic_expiration_date_and_reason,
     get_course_run_metadata_for_assignment,
     localized_utcnow
@@ -28,7 +29,11 @@ from enterprise_access.utils import (
 from .constants import (
     BRAZE_TIMESTAMP_FORMAT,
     RETIRED_EMAIL_ADDRESS_FORMAT,
+    AssignmentActionErrors,
+    AssignmentActions,
+    AssignmentActorTypes,
     AssignmentAutomaticExpiredReason,
+    AssignmentSources,
     LearnerContentAssignmentStateChoices
 )
 from .models import AssignmentConfiguration
@@ -364,7 +369,13 @@ class CreatePendingEnterpriseLearnerForAssignmentTaskBase(BaseAssignmentRetryAnd
     Base class for the create_pending_enterprise_learner_for_assignment task.
     """
     def add_errored_action(self, assignment, exc, **kwargs):
-        assignment.add_errored_linked_action(exc)
+        assignment.add_audit_action(
+            action_type=AssignmentActions.LEARNER_LINKED,
+            actor_type=AssignmentActorTypes.SYSTEM,
+            source=AssignmentSources.CELERY_TASK,
+            error_reason=AssignmentActionErrors.INTERNAL_API_ERROR,
+            traceback_str=format_traceback(exc),
+        )
 
 
 @shared_task(base=CreatePendingEnterpriseLearnerForAssignmentTaskBase)
@@ -419,11 +430,17 @@ class SendCancelEmailTask(BaseAssignmentRetryAndErrorActionTask):
     Base class for the ``send_cancel_email_for_pending_assignment`` task.
     """
     def add_errored_action(self, assignment, exc, actor_lms_user_id=None, actor_type=None, source=None, **kwargs):
-        assignment.add_errored_cancel_action(
-            exc,
-            actor_lms_user_id=actor_lms_user_id,
+        # Recorded as CANCEL_EMAIL_FAILED rather than an errored CANCELLED action: the cancellation
+        # itself already succeeded and was recorded synchronously by add_successful_cancel_action()
+        # before this (best-effort, async) notification email was even attempted, so a failure here
+        # reflects a notification failure, not a failure to cancel.
+        assignment.add_audit_action(
+            action_type=AssignmentActions.CANCEL_EMAIL_FAILED,
             actor_type=actor_type,
-            source=source,
+            source=source or AssignmentSources.CELERY_TASK,
+            actor_lms_user_id=actor_lms_user_id,
+            error_reason=AssignmentActionErrors.EMAIL_ERROR,
+            traceback_str=format_traceback(exc),
         )
 
 
@@ -469,7 +486,13 @@ class SendExecutiveEducationNudgeTask(BaseAssignmentRetryAndErrorActionTask):
     Base class for the ``send_exec_ed_enrollment_warmer`` task.
     """
     def add_errored_action(self, assignment, exc, **kwargs):
-        assignment.add_errored_reminded_action(exc)
+        assignment.add_audit_action(
+            action_type=AssignmentActions.REMINDED,
+            actor_type=AssignmentActorTypes.SYSTEM,
+            source=AssignmentSources.CELERY_TASK,
+            error_reason=AssignmentActionErrors.EMAIL_ERROR,
+            traceback_str=format_traceback(exc),
+        )
 
 
 @shared_task(base=SendExecutiveEducationNudgeTask)
@@ -508,11 +531,13 @@ class SendReminderEmailTask(BaseAssignmentRetryAndErrorActionTask):
     Base class for the ``send_reminder_email_for_pending_assignment`` task.
     """
     def add_errored_action(self, assignment, exc, actor_lms_user_id=None, actor_type=None, source=None, **kwargs):
-        assignment.add_errored_reminded_action(
-            exc,
-            actor_lms_user_id=actor_lms_user_id,
+        assignment.add_audit_action(
+            action_type=AssignmentActions.REMINDED,
             actor_type=actor_type,
-            source=source,
+            source=source or AssignmentSources.CELERY_TASK,
+            actor_lms_user_id=actor_lms_user_id,
+            error_reason=AssignmentActionErrors.EMAIL_ERROR,
+            traceback_str=format_traceback(exc),
         )
 
     def progress_state_on_failure(self, assignment):
@@ -571,7 +596,13 @@ class SendNotificationEmailTask(BaseAssignmentRetryAndErrorActionTask):
     Base class for the ``send_email_for_new_assignment`` task.
     """
     def add_errored_action(self, assignment, exc, **kwargs):
-        assignment.add_errored_notified_action(exc)
+        assignment.add_audit_action(
+            action_type=AssignmentActions.NOTIFIED,
+            actor_type=AssignmentActorTypes.SYSTEM,
+            source=AssignmentSources.CELERY_TASK,
+            error_reason=AssignmentActionErrors.EMAIL_ERROR,
+            traceback_str=format_traceback(exc),
+        )
 
     def progress_state_on_failure(self, assignment):
         """
@@ -618,7 +649,13 @@ class SendExpirationEmailTask(BaseAssignmentRetryAndErrorActionTask):
     Base class for the ``send_assignment_automatically_expired_email`` task.
     """
     def add_errored_action(self, assignment, exc, **kwargs):
-        assignment.add_errored_expiration_action(exc)
+        assignment.add_audit_action(
+            action_type=AssignmentActions.EXPIRED,
+            actor_type=AssignmentActorTypes.SYSTEM,
+            source=AssignmentSources.CELERY_TASK,
+            error_reason=AssignmentActionErrors.EMAIL_ERROR,
+            traceback_str=format_traceback(exc),
+        )
 
 
 @shared_task(base=SendExpirationEmailTask)
@@ -702,7 +739,8 @@ def _should_clear_pii_for_assignment(assignment, content_metadata):
     Returns:
         bool: True if PII should be cleared, False otherwise
     """
-    # Check if expiration email was successfully sent
+    # No source filter here beyond what get_last_successful_expiration_action() already applies:
+    # legacy rows recorded before ``source`` existed on this action must still count.
     if not assignment.get_last_successful_expiration_action():
         logger.info(
             'No successful expiration email sent for assignment %s, skipping PII clearing.',
@@ -801,6 +839,12 @@ def clear_pii_for_expired_assignments(dry_run=False):
                 else:
                     assignment.clear_pii()
                     assignment.save()
+                    # Record audit action for PII clearing (system-driven via scheduled task)
+                    assignment.add_audit_action(
+                        action_type=AssignmentActions.RETIRED,
+                        actor_type=AssignmentActorTypes.SYSTEM,
+                        source=AssignmentSources.SCHEDULED_JOB,
+                    )
                     logger.info(
                         '[CLEAR_PII_FOR_EXPIRED_ASSIGNMENTS] Cleared PII for assignment %s',
                         assignment.uuid

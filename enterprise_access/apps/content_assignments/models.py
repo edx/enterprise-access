@@ -501,6 +501,82 @@ class LearnerContentAssignment(TimeStampedModel):
         allocation_timeout_expiration = allocation_timeout_expiration.replace(tzinfo=UTC)
         return allocation_timeout_expiration
 
+    def audit_action_fields(
+        self,
+        action_type,
+        actor_type=None,
+        source=None,
+        actor_lms_user_id=None,
+        metadata=None,
+        error_reason=None,
+        traceback_str=None,
+        completed_at=None,
+    ):
+        """
+        Compute the field values for a new audit action row on this assignment (returns a dict
+        suitable for ``LearnerContentAssignmentAction(**fields)`` or ``self.actions.create(**fields)``).
+        Single source of truth shared by ``add_audit_action()`` and any bulk-insert audit path
+        (e.g. the user-linking signal handler), so those writers can't drift apart over time.
+
+        ``completed_at``, if not passed explicitly, defaults to now() unless ``error_reason`` is
+        set. Callers writing many rows in one batch should pass a single shared timestamp so the
+        whole batch is stamped consistently.
+        """
+        if actor_type is None:
+            actor_type = AssignmentActorTypes.SYSTEM
+
+        if metadata is None:
+            metadata = {}
+
+        if completed_at is None:
+            completed_at = None if error_reason else timezone.now()
+
+        enterprise_customer_uuid = None
+        if self.assignment_configuration:
+            enterprise_customer_uuid = self.assignment_configuration.enterprise_customer_uuid
+
+        return {
+            'action_type': action_type,
+            'actor_type': actor_type,
+            'source': source,
+            'actor_lms_user_id': actor_lms_user_id,
+            'learner_lms_user_id': self.lms_user_id,
+            'learner_email': self.learner_email,
+            'learner_external_key': None,
+            'enterprise_customer_uuid': enterprise_customer_uuid,
+            'completed_at': completed_at,
+            'error_reason': error_reason,
+            'traceback': traceback_str,
+            'metadata': metadata,
+        }
+
+    def add_audit_action(
+        self,
+        action_type,
+        actor_type=None,
+        source=None,
+        actor_lms_user_id=None,
+        metadata=None,
+        error_reason=None,
+        traceback_str=None,
+    ):
+        """
+        Add an audit action row for this assignment with explicit actor_type and source.
+        This is the primary method for recording system-driven and async mutations.
+
+        Returns:
+            LearnerContentAssignmentAction: The created action row
+        """
+        return self.actions.create(**self.audit_action_fields(
+            action_type=action_type,
+            actor_type=actor_type,
+            source=source,
+            actor_lms_user_id=actor_lms_user_id,
+            metadata=metadata,
+            error_reason=error_reason,
+            traceback_str=traceback_str,
+        ))
+
     def get_last_successful_linked_action(self):
         """
         Returns the last successful "linked" LearnerContentAssignmentActions for this assignment,
@@ -520,16 +596,6 @@ class LearnerContentAssignment(TimeStampedModel):
             action_type=AssignmentActions.LEARNER_LINKED,
             error_reason=None,
             completed_at=timezone.now(),
-        )
-
-    def add_errored_linked_action(self, exc):
-        """
-        Adds an errored "linked" action for this assignment record, given an exception instance.
-        """
-        return self.actions.create(
-            action_type=AssignmentActions.LEARNER_LINKED,
-            error_reason=AssignmentActionErrors.INTERNAL_API_ERROR,
-            traceback=format_traceback(exc),
         )
 
     def get_last_successful_notified_action(self):
@@ -553,17 +619,6 @@ class LearnerContentAssignment(TimeStampedModel):
             action_type=AssignmentActions.NOTIFIED,
             error_reason=None,
             completed_at=timezone.now(),
-        )
-
-    def add_errored_notified_action(self, exc):
-        """
-        Adds an errored action about the notification of the allocation of this assignment record,
-        given an exception instance.
-        """
-        return self.actions.create(
-            action_type=AssignmentActions.NOTIFIED,
-            error_reason=AssignmentActionErrors.EMAIL_ERROR,
-            traceback=format_traceback(exc),
         )
 
     def get_last_successful_reminded_action(self):
@@ -591,23 +646,6 @@ class LearnerContentAssignment(TimeStampedModel):
             learner_email=self.learner_email,
         )
 
-    def add_errored_reminded_action(self, exc, actor_lms_user_id=None, actor_type=None, source=None):
-        """
-        Adds an errored "reminded" LearnerContentAssignmentAction for this assignment record.
-        """
-        return self.actions.create(
-            action_type=AssignmentActions.REMINDED,
-            error_reason=AssignmentActionErrors.EMAIL_ERROR,
-            traceback=format_traceback(exc),
-            actor_lms_user_id=actor_lms_user_id,
-            actor_type=actor_type or AssignmentActorTypes.SYSTEM,
-            source=source,
-            enterprise_customer_uuid=self.assignment_configuration.enterprise_customer_uuid,
-            learner_lms_user_id=self.lms_user_id,
-            learner_email=self.learner_email,
-            metadata={'error': str(exc)},
-        )
-
     def get_last_successful_cancel_action(self):
         """
         Returns all successful "cancelled" LearnerContentAssignmentActions for this assignment,
@@ -633,56 +671,33 @@ class LearnerContentAssignment(TimeStampedModel):
             learner_email=self.learner_email,
         )
 
-    def add_errored_cancel_action(self, exc, actor_lms_user_id=None, actor_type=None, source=None):
-        """
-        Adds a "cancel email failed" LearnerContentAssignmentAction for this assignment record.
-
-        This is intentionally recorded as ``CANCEL_EMAIL_FAILED`` rather than an errored
-        ``CANCELLED`` action: the cancellation itself already succeeded and was recorded
-        synchronously by ``add_successful_cancel_action()`` before this (best-effort, async)
-        notification email was even attempted, so a failure here reflects a notification failure,
-        not a failure to cancel.
-        """
-        return self.actions.create(
-            action_type=AssignmentActions.CANCEL_EMAIL_FAILED,
-            error_reason=AssignmentActionErrors.EMAIL_ERROR,
-            traceback=format_traceback(exc),
-            actor_lms_user_id=actor_lms_user_id,
-            actor_type=actor_type or AssignmentActorTypes.SYSTEM,
-            source=source,
-            enterprise_customer_uuid=self.assignment_configuration.enterprise_customer_uuid,
-            learner_lms_user_id=self.lms_user_id,
-            learner_email=self.learner_email,
-            metadata={'error': str(exc)},
-        )
-
     def get_last_successful_expiration_action(self):
         """
-        Returns all successful "expired" LearnerContentAssignmentActions for this assignment,
-        or None if no such record exists.
+        Returns the last successful "expiration email sent" LearnerContentAssignmentAction for
+        this assignment, or None if no such record exists.
+
+        Excludes the scheduled_job-sourced EXPIRED row expire_assignment() writes at state-
+        transition time: same action_type, different event, and without this exclusion it could
+        race the real "email sent" row on completed_at and corrupt acknowledgment/PII-clearing
+        eligibility, which both key off this method.
         """
         return self.actions.filter(
             action_type=AssignmentActions.EXPIRED,
             error_reason=None,
+        ).exclude(
+            source=AssignmentSources.SCHEDULED_JOB,
         ).order_by('-completed_at').first()
 
     def add_successful_expiration_action(self):
         """
-        Adds a successful expiration LearnerContentAssignmentAction for this assignment record.
+        Adds a successful expiration LearnerContentAssignmentAction for this assignment record,
+        recorded once the expiration email has actually been sent (source=celery_task).
         """
         return self.actions.create(
             action_type=AssignmentActions.EXPIRED,
+            actor_type=AssignmentActorTypes.SYSTEM,
+            source=AssignmentSources.CELERY_TASK,
             completed_at=timezone.now(),
-        )
-
-    def add_errored_expiration_action(self, exc):
-        """
-        Adds an errored expiration LearnerContentAssignmentAction for this assignment record.
-        """
-        return self.actions.create(
-            action_type=AssignmentActions.EXPIRED,
-            error_reason=AssignmentActionErrors.EMAIL_ERROR,
-            traceback=format_traceback(exc),
         )
 
     def get_last_successful_redeemed_action(self):
@@ -765,15 +780,6 @@ class LearnerContentAssignment(TimeStampedModel):
             completed_at=timezone.now(),
         )
 
-    def add_successful_reversal_action(self):
-        """
-        Adds a successful 'reversed' action for this assignment record.
-        """
-        return self.actions.create(
-            action_type=AssignmentActions.REVERSED,
-            completed_at=timezone.now(),
-        )
-
     @staticmethod
     def _unique_retired_email():
         """
@@ -797,7 +803,7 @@ class LearnerContentAssignment(TimeStampedModel):
         self.history.update(learner_email=retired_email)  # pylint: disable=no-member
         # Bulk-scrub action audit rows directly; intentionally bypasses
         # HistoricalRecords save signal to avoid creating new PII-containing history rows.
-        self.actions.update(learner_email=retired_email)  # pylint: disable=no-member
+        self.actions.update(learner_email=retired_email)
         self.actions.model.history.filter(assignment_id=self.pk).update(  # pylint: disable=no-member
             learner_email=retired_email,
         )
