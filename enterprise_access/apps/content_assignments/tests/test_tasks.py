@@ -942,9 +942,7 @@ class TestBrazeEmailTasks(APITestWithMocks):
         )
         assert mock_braze_client.return_value.send_campaign_message.call_count == 1
 
-        # Verify the successful-send audit action is recorded with source=celery_task, which
-        # distinguishes "email actually sent" from the scheduled_job state-transition action,
-        # for purposes of gating PII clearing.
+        # source=celery_task (see get_last_successful_expiration_action()'s docstring).
         success_action = assignment.actions.filter(
             action_type=AssignmentActions.EXPIRED,
             error_reason=None,

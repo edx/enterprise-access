@@ -17,8 +17,11 @@ from enterprise_access.apps.content_assignments.constants import (
 )
 from enterprise_access.apps.content_assignments.models import LearnerContentAssignment
 from enterprise_access.apps.core.tests.factories import UserFactory
+from enterprise_access.apps.subsidy_access_policy.exceptions import SubsidyAPIHTTPError
+from enterprise_access.apps.subsidy_access_policy.models import AssignedLearnerCreditAccessPolicy
+from enterprise_access.apps.subsidy_access_policy.tests.factories import AssignedLearnerCreditAccessPolicyFactory
 
-from .factories import LearnerContentAssignmentFactory
+from .factories import AssignmentConfigurationFactory, LearnerContentAssignmentFactory
 
 
 @ddt.ddt
@@ -37,6 +40,11 @@ class TestLearnerContentAssignmentAdminActions(TestCase):
         # actually captures as the actor_lms_user_id (not the Django user's own pk).
         self.user = UserFactory(lms_user_id=999)
 
+        self.assignment_configuration = AssignmentConfigurationFactory()
+        self.policy = AssignedLearnerCreditAccessPolicyFactory(
+            assignment_configuration=self.assignment_configuration,
+        )
+
     def _build_request(self):
         """Build a request with a user and message storage attached, as admin actions require."""
         request = self.factory.post('/')
@@ -45,148 +53,214 @@ class TestLearnerContentAssignmentAdminActions(TestCase):
         request._messages = FallbackStorage(request)  # pylint: disable=protected-access
         return request
 
-    def test_force_redeem_assignments_single_assignment(self):
+    def _mock_can_redeem(self, can_redeem=True, reason=None):
+        # Patched at the class level: assignment.assignment_configuration.policy fetches a fresh
+        # instance from the DB on each access, so an instance-level patch on self.policy wouldn't
+        # apply to the object the admin action actually calls into.
+        return mock.patch.object(
+            AssignedLearnerCreditAccessPolicy, 'can_redeem', return_value=(can_redeem, reason, []),
+        )
+
+    def _mock_redeem(self, side_effect=None):
+        return mock.patch.object(AssignedLearnerCreditAccessPolicy, 'redeem', side_effect=side_effect)
+
+    @ddt.data(
+        LearnerContentAssignmentStateChoices.ALLOCATED,
+        LearnerContentAssignmentStateChoices.CANCELLED,
+        LearnerContentAssignmentStateChoices.ERRORED,
+        LearnerContentAssignmentStateChoices.REVERSED,
+        LearnerContentAssignmentStateChoices.EXPIRED,
+    )
+    def test_force_redeem_calls_real_redeem_with_admin_attribution(self, starting_state):
         """
-        Test that force_redeem_assignments creates ALLOCATED and REDEEMED audit actions, for a
-        starting state (CANCELLED) that isn't in the ALLOCATED-row exclusion list.
+        For every non-ACCEPTED starting state, force_redeem_assignments must call the real
+        SubsidyAccessPolicy.redeem() (not a hand-rolled reimplementation), attributing the call to
+        the requesting admin. Non-ALLOCATED starting states are first reset to ALLOCATED locally,
+        recording an ALLOCATED audit row before redemption; ALLOCATED itself needs no reset.
         """
         assignment = LearnerContentAssignmentFactory(
-            state=LearnerContentAssignmentStateChoices.CANCELLED,
+            assignment_configuration=self.assignment_configuration,
+            state=starting_state,
         )
         request = self._build_request()
-
-        # Execute admin action
         queryset = LearnerContentAssignment.objects.filter(pk=assignment.pk)
-        self.admin.force_redeem_assignments(request, queryset)
 
-        # Refresh assignment to get updated state
-        assignment.refresh_from_db()
+        with self._mock_can_redeem() as mock_can_redeem, self._mock_redeem() as mock_redeem:
+            self.admin.force_redeem_assignments(request, queryset)
 
-        # Verify assignment state changed to ACCEPTED
-        self.assertEqual(assignment.state, LearnerContentAssignmentStateChoices.ACCEPTED)
+        mock_can_redeem.assert_called_once_with(
+            assignment.lms_user_id, assignment.content_key, skip_enrollment_deadline_check=True,
+        )
+        mock_redeem.assert_called_once_with(
+            assignment.lms_user_id, assignment.content_key, [],
+            actor_lms_user_id=self.user.lms_user_id,
+            actor_type=AssignmentActorTypes.ADMIN,
+            source=AssignmentSources.DJANGO_ADMIN,
+        )
 
-        # Verify audit actions were created
-        actions = assignment.actions.all()
-        self.assertEqual(actions.count(), 2)
+        allocated_action = assignment.actions.filter(action_type=AssignmentActions.ALLOCATED).first()
+        if starting_state == LearnerContentAssignmentStateChoices.ALLOCATED:
+            self.assertIsNone(allocated_action)
+        else:
+            self.assertIsNotNone(allocated_action)
+            self.assertEqual(allocated_action.actor_type, AssignmentActorTypes.ADMIN)
+            self.assertEqual(allocated_action.source, AssignmentSources.DJANGO_ADMIN)
+            self.assertEqual(allocated_action.actor_lms_user_id, self.user.lms_user_id)
 
-        # Verify ALLOCATED action
-        allocated_action = actions.filter(action_type=AssignmentActions.ALLOCATED).first()
-        self.assertIsNotNone(allocated_action)
-        self.assertEqual(allocated_action.actor_type, AssignmentActorTypes.ADMIN)
-        self.assertEqual(allocated_action.source, AssignmentSources.DJANGO_ADMIN)
-        self.assertEqual(allocated_action.actor_lms_user_id, self.user.lms_user_id)
-
-        # Verify REDEEMED action
-        redeemed_action = actions.filter(action_type=AssignmentActions.REDEEMED).first()
-        self.assertIsNotNone(redeemed_action)
-        self.assertEqual(redeemed_action.actor_type, AssignmentActorTypes.ADMIN)
-        self.assertEqual(redeemed_action.source, AssignmentSources.DJANGO_ADMIN)
-        self.assertEqual(redeemed_action.actor_lms_user_id, self.user.lms_user_id)
-
-    def test_force_redeem_multiple_assignments(self):
+    def test_force_redeem_skips_already_accepted_to_avoid_double_spend(self):
         """
-        Test that force_redeem_assignments works with multiple assignments.
-        """
-        assignments = [
-            LearnerContentAssignmentFactory(state=LearnerContentAssignmentStateChoices.ALLOCATED),
-            LearnerContentAssignmentFactory(state=LearnerContentAssignmentStateChoices.ALLOCATED),
-            LearnerContentAssignmentFactory(state=LearnerContentAssignmentStateChoices.CANCELLED),
-        ]
-        request = self._build_request()
-
-        # Execute admin action on all assignments
-        queryset = LearnerContentAssignment.objects.filter(pk__in=[a.pk for a in assignments])
-        self.admin.force_redeem_assignments(request, queryset)
-
-        # Verify all assignments changed state to ACCEPTED
-        for assignment in assignments:
-            assignment.refresh_from_db()
-            self.assertEqual(assignment.state, LearnerContentAssignmentStateChoices.ACCEPTED)
-
-        # ALLOCATED assignments: ALLOCATED is itself in the exclusion list, so only REDEEMED gets
-        # recorded (1 action). CANCELLED assignments: not excluded, so both get recorded (2).
-        allocated_state_assignments, cancelled_state_assignment = assignments[:2], assignments[2]
-
-        for assignment in allocated_state_assignments:
-            action_types = set(assignment.actions.values_list('action_type', flat=True))
-            self.assertEqual(action_types, {AssignmentActions.REDEEMED})
-
-        cancelled_action_types = set(cancelled_state_assignment.actions.values_list('action_type', flat=True))
-        self.assertEqual(cancelled_action_types, {AssignmentActions.ALLOCATED, AssignmentActions.REDEEMED})
-
-    def test_force_redeem_skips_allocation_for_already_accepted(self):
-        """
-        Test that force_redeem_assignments skips ALLOCATED action for ACCEPTED assignments.
+        An already-ACCEPTED assignment must be skipped entirely (not reset to ALLOCATED and
+        re-redeemed), since that would create a second ledger transaction for a single redemption.
         """
         assignment = LearnerContentAssignmentFactory(
+            assignment_configuration=self.assignment_configuration,
             state=LearnerContentAssignmentStateChoices.ACCEPTED,
         )
         request = self._build_request()
-
-        # Execute admin action
         queryset = LearnerContentAssignment.objects.filter(pk=assignment.pk)
-        self.admin.force_redeem_assignments(request, queryset)
 
-        # Refresh assignment
+        with self._mock_can_redeem() as mock_can_redeem, self._mock_redeem() as mock_redeem:
+            self.admin.force_redeem_assignments(request, queryset)
+
+        mock_can_redeem.assert_not_called()
+        mock_redeem.assert_not_called()
         assignment.refresh_from_db()
-
-        # Verify assignment is still ACCEPTED
         self.assertEqual(assignment.state, LearnerContentAssignmentStateChoices.ACCEPTED)
+        self.assertEqual(assignment.actions.count(), 0)
 
-        # Verify only REDEEMED action was created (no ALLOCATED)
-        actions = assignment.actions.all()
-        allocated_actions = actions.filter(action_type=AssignmentActions.ALLOCATED)
-        redeemed_actions = actions.filter(action_type=AssignmentActions.REDEEMED)
-
-        # No ALLOCATED action should have been created since the assignment was already ACCEPTED
-        self.assertEqual(allocated_actions.count(), 0)
-        self.assertGreaterEqual(redeemed_actions.count(), 1)
-
-    @ddt.data(True, False)
-    def test_force_redeem_action_contains_actor_type_and_source(self, actor_has_lms_user_id):
+    @ddt.data(
+        {'missing_policy': True},
+        {'missing_lms_user_id': True},
+    )
+    def test_force_redeem_reports_failure_without_crashing_batch(self, missing_kwargs):
         """
-        Test that audit actions created by force_redeem have proper actor_type and source. Also
-        covers the missing-actor fallback (actor_has_lms_user_id=False): an internal Django
-        superuser never linked to an LMS user must still succeed, simply recording a null
-        actor_lms_user_id rather than raising.
+        An assignment with no linked policy, or no lms_user_id yet, can't be redeemed -- it must be
+        reported as a failure rather than raising and aborting the rest of the batch.
         """
-        if not actor_has_lms_user_id:
-            self.user.lms_user_id = None
-            self.user.save()
-
+        assignment_configuration = self.assignment_configuration
+        if missing_kwargs.get('missing_policy'):
+            assignment_configuration = AssignmentConfigurationFactory()  # no linked policy
         assignment = LearnerContentAssignmentFactory(
-            state=LearnerContentAssignmentStateChoices.ERRORED,
+            assignment_configuration=assignment_configuration,
+            state=LearnerContentAssignmentStateChoices.CANCELLED,
+            lms_user_id=None if missing_kwargs.get('missing_lms_user_id') else 555,
+        )
+        other_assignment = LearnerContentAssignmentFactory(
+            assignment_configuration=self.assignment_configuration,
+            state=LearnerContentAssignmentStateChoices.CANCELLED,
         )
         request = self._build_request()
+        queryset = LearnerContentAssignment.objects.filter(pk__in=[assignment.pk, other_assignment.pk])
 
-        # Execute admin action
-        queryset = LearnerContentAssignment.objects.filter(pk=assignment.pk)
-        self.admin.force_redeem_assignments(request, queryset)
+        with self._mock_can_redeem() as mock_can_redeem, self._mock_redeem() as mock_redeem:
+            self.admin.force_redeem_assignments(request, queryset)
 
-        # Verify all audit actions have correct metadata
+        # The other, valid assignment in the same batch must still succeed.
+        mock_can_redeem.assert_called_once_with(
+            other_assignment.lms_user_id, other_assignment.content_key, skip_enrollment_deadline_check=True,
+        )
+        mock_redeem.assert_called_once()
         assignment.refresh_from_db()
-        for action in assignment.actions.all():
-            if action.action_type in [AssignmentActions.ALLOCATED, AssignmentActions.REDEEMED]:
-                self.assertEqual(action.actor_type, AssignmentActorTypes.ADMIN)
-                self.assertEqual(action.source, AssignmentSources.DJANGO_ADMIN)
-                self.assertEqual(action.actor_lms_user_id, self.user.lms_user_id)
+        self.assertEqual(assignment.state, LearnerContentAssignmentStateChoices.CANCELLED)
+        self.assertEqual(assignment.actions.count(), 0)
+
+    @ddt.data(
+        {'can_redeem': False},
+        {'redeem_raises': True},
+    )
+    def test_force_redeem_reports_subsidy_failure_without_crashing_batch(self, case):
+        """
+        If can_redeem() rejects the redemption, or redeem() itself raises (e.g. a real subsidy API
+        error), the failure must be reported for that assignment without aborting the rest of the
+        batch, and without leaving stray ALLOCATED-reset side effects for it.
+        """
+        assignment = LearnerContentAssignmentFactory(
+            assignment_configuration=self.assignment_configuration,
+            state=LearnerContentAssignmentStateChoices.CANCELLED,
+        )
+        request = self._build_request()
+        queryset = LearnerContentAssignment.objects.filter(pk=assignment.pk)
+
+        can_redeem = case.get('can_redeem', True)
+        redeem_side_effect = SubsidyAPIHTTPError() if case.get('redeem_raises') else None
+
+        with self._mock_can_redeem(can_redeem=can_redeem, reason='nope') as mock_can_redeem, \
+                self._mock_redeem(side_effect=redeem_side_effect) as mock_redeem:
+            self.admin.force_redeem_assignments(request, queryset)
+
+        mock_can_redeem.assert_called_once()
+        if not can_redeem:
+            mock_redeem.assert_not_called()
+        else:
+            mock_redeem.assert_called_once()
+
+        # Redemption failed either way -- the assignment was reset to ALLOCATED (that part is
+        # local and did succeed), but no REDEEMED action exists since redemption itself failed.
+        assignment.refresh_from_db()
+        self.assertEqual(assignment.state, LearnerContentAssignmentStateChoices.ALLOCATED)
+        self.assertFalse(assignment.actions.filter(action_type=AssignmentActions.REDEEMED).exists())
 
     def test_force_redeem_rolls_back_audit_rows_if_state_save_fails(self):
         """
-        The ALLOCATED/REDEEMED audit rows and the state-change save() must be atomic: if save()
-        fails, the audit rows recorded just before it must not persist either, or the audit trail
-        would claim a redemption that never actually happened.
+        The ALLOCATED-reset audit row and its state-change save() must be atomic: if save() fails,
+        the audit row recorded just before it must not persist either, or the audit trail would
+        claim a redemption step that never actually happened. An unexpected DB error like this one
+        is deliberately allowed to propagate (surfacing as a real error) rather than being
+        swallowed into the per-assignment failure list, which is reserved for expected,
+        recoverable redemption failures (can_redeem rejection, subsidy API errors).
         """
         assignment = LearnerContentAssignmentFactory(
+            assignment_configuration=self.assignment_configuration,
             state=LearnerContentAssignmentStateChoices.CANCELLED,
         )
         request = self._build_request()
         queryset = LearnerContentAssignment.objects.filter(pk=assignment.pk)
 
         with mock.patch.object(LearnerContentAssignment, 'save', side_effect=Exception('DB boom')):
-            with self.assertRaisesMessage(Exception, 'DB boom'):
-                self.admin.force_redeem_assignments(request, queryset)
+            with self._mock_can_redeem() as mock_can_redeem, self._mock_redeem() as mock_redeem:
+                with self.assertRaisesMessage(Exception, 'DB boom'):
+                    self.admin.force_redeem_assignments(request, queryset)
 
+        mock_can_redeem.assert_not_called()
+        mock_redeem.assert_not_called()
         assignment.refresh_from_db()
         self.assertEqual(assignment.state, LearnerContentAssignmentStateChoices.CANCELLED)
         self.assertEqual(assignment.actions.count(), 0)
+
+    def test_force_redeem_requires_change_permission(self):
+        """
+        force_redeem_assignments must be gated by Django's admin action permission system (not
+        exposed to any staff user who merely has view access to the changelist), which requires
+        the @admin.action decorator to declare permissions=[...].
+        """
+        self.assertEqual(
+            list(self.admin.force_redeem_assignments.allowed_permissions),
+            ['change'],
+        )
+
+    def test_force_redeem_falls_back_when_admin_has_no_lms_user_id(self):
+        """
+        Missing-actor fallback: an internal Django superuser never linked to an LMS user must
+        still succeed, simply recording a null actor_lms_user_id on the redeem() call rather than
+        raising. (The has-an-lms_user_id case is already covered by every state in
+        test_force_redeem_calls_real_redeem_with_admin_attribution.)
+        """
+        self.user.lms_user_id = None
+        self.user.save()
+
+        assignment = LearnerContentAssignmentFactory(
+            assignment_configuration=self.assignment_configuration,
+            state=LearnerContentAssignmentStateChoices.ERRORED,
+        )
+        request = self._build_request()
+        queryset = LearnerContentAssignment.objects.filter(pk=assignment.pk)
+
+        with self._mock_can_redeem(), self._mock_redeem() as mock_redeem:
+            self.admin.force_redeem_assignments(request, queryset)
+
+        mock_redeem.assert_called_once_with(
+            assignment.lms_user_id, assignment.content_key, [],
+            actor_lms_user_id=None,
+            actor_type=AssignmentActorTypes.ADMIN,
+            source=AssignmentSources.DJANGO_ADMIN,
+        )
