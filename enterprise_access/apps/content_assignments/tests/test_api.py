@@ -1377,11 +1377,7 @@ class TestAssignmentExpiration(TestCase):
 
     @mock.patch('enterprise_access.apps.content_assignments.api.send_assignment_automatically_expired_email')
     def test_expire_assignment_creates_audit_action(self, mock_expired_email):  # pylint: disable=unused-argument
-        """
-        Test that expire_assignment creates an EXPIRED audit action row (the state-transition
-        event) with proper actor_type and source (SYSTEM and SCHEDULED_JOB).
-        """
-        # Create an assignment eligible for expiration
+        """expire_assignment creates an EXPIRED audit action row with actor_type=SYSTEM, source=SCHEDULED_JOB."""
         enough_days_to_be_expired = NUM_DAYS_BEFORE_AUTO_EXPIRATION + 1
         assignment = LearnerContentAssignmentFactory.create(
             assignment_configuration=self.assignment_configuration,
@@ -1391,7 +1387,6 @@ class TestAssignmentExpiration(TestCase):
             allocated_at=delta_t(days=-enough_days_to_be_expired),
         )
 
-        # Mock subsidy record to be in the future (so timeout is the expiration reason)
         mock_subsidy_record = {'expiration_datetime': delta_t(days=100, as_string=True)}
         with mock.patch.object(self.policy, 'subsidy_record', return_value=mock_subsidy_record):
             expire_assignment(
@@ -1402,20 +1397,15 @@ class TestAssignmentExpiration(TestCase):
 
         assignment.refresh_from_db()
 
-        # Verify audit action was created
         audit_actions = assignment.actions.filter(action_type=AssignmentActions.EXPIRED)
         assert audit_actions.exists(), "No EXPIRED audit action created"
 
-        # Verify action has correct actor_type and source
         action = audit_actions.first()
         assert action.actor_type == AssignmentActorTypes.SYSTEM
         assert action.source == AssignmentSources.SCHEDULED_JOB
         assert action.completed_at is not None
         assert action.error_reason is None
 
-        # expire_assignment() only performs the state transition -- the email hasn't been sent
-        # (or confirmed) at this point, so get_last_successful_expiration_action() (which excludes
-        # scheduled_job-sourced rows) must not be satisfied by this row alone.
         assert assignment.get_last_successful_expiration_action() is None
 
 

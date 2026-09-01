@@ -177,13 +177,7 @@ class TestAssignmentActions(TestCase):
             self.assertIsNotNone(re.match(pattern, action_historical_record.learner_email))
 
     def test_add_audit_action_with_explicit_actor_type_and_source(self):
-        """
-        Test that add_audit_action creates audit action with explicit actor_type and source. Also
-        verifies that get_last_successful_expiration_action() excludes the scheduled_job-sourced
-        EXPIRED row (the state-transition event written by expire_assignment()) -- it must only
-        ever surface the celery_task-sourced row (the "expiration email sent" event), regardless
-        of relative completed_at ordering, since both share the same EXPIRED action_type.
-        """
+        """add_audit_action creates the action; get_last_successful_expiration_action() excludes scheduled_job rows."""
         state_transition_action = self.assignment.add_audit_action(
             action_type=AssignmentActions.EXPIRED,
             actor_type=AssignmentActorTypes.SYSTEM,
@@ -198,16 +192,13 @@ class TestAssignmentActions(TestCase):
         self.assertIsNotNone(state_transition_action.completed_at)
         self.assertEqual(state_transition_action.metadata.get('expiration_reason'), 'NINETY_DAYS_PASSED')
         self.assertEqual(state_transition_action.assignment, self.assignment)
-        # The state-transition row alone must not satisfy get_last_successful_expiration_action().
         self.assertIsNone(self.assignment.get_last_successful_expiration_action())
 
         email_sent_action = self.assignment.add_successful_expiration_action()
         self.assertEqual(self.assignment.get_last_successful_expiration_action(), email_sent_action)
 
     def test_add_audit_action_with_error(self):
-        """
-        Test that add_audit_action creates audit action with error details.
-        """
+        """add_audit_action creates an audit action with error details."""
         traceback_str = "Traceback (most recent call last):\n  File \"test.py\", line 1, in <module>"
         action = self.assignment.add_audit_action(
             action_type=AssignmentActions.ERRORED,
@@ -223,9 +214,7 @@ class TestAssignmentActions(TestCase):
         self.assertIsNone(action.completed_at)  # Error actions don't have completed_at
 
     def test_add_audit_action_defaults_actor_type_to_system(self):
-        """
-        Test that add_audit_action defaults actor_type to SYSTEM if not provided.
-        """
+        """add_audit_action defaults actor_type to SYSTEM if not provided."""
         action = self.assignment.add_audit_action(
             action_type=AssignmentActions.RETIRED,
             source=AssignmentSources.SCHEDULED_JOB,
@@ -235,9 +224,7 @@ class TestAssignmentActions(TestCase):
         self.assertIsNone(action.actor_lms_user_id)
 
     def test_add_audit_action_with_actor_lms_user_id(self):
-        """
-        Test that add_audit_action captures actor_lms_user_id for admin actions.
-        """
+        """add_audit_action captures actor_lms_user_id for admin actions."""
         actor_user_id = 12345
         action = self.assignment.add_audit_action(
             action_type=AssignmentActions.REDEEMED,
@@ -250,9 +237,7 @@ class TestAssignmentActions(TestCase):
         self.assertEqual(action.actor_type, AssignmentActorTypes.ADMIN)
 
     def test_add_audit_action_with_none_assignment_configuration(self):
-        """
-        Test that add_audit_action handles None assignment_configuration gracefully.
-        """
+        """add_audit_action handles None assignment_configuration gracefully."""
         assignment = LearnerContentAssignmentFactory.create(
             assignment_configuration=None,
         )

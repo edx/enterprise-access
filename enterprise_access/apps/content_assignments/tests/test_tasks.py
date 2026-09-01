@@ -465,8 +465,6 @@ class TestBrazeEmailTasks(APITestWithMocks):
         )
         assert mock_braze_client.return_value.send_campaign_message.call_count == 1
 
-        # Now verify the errored-audit-action path: if the braze call fails, a CANCEL_EMAIL_FAILED
-        # error audit action should be recorded with the correct actor/source/traceback.
         mock_braze_client.return_value.send_campaign_message.side_effect = Exception('Simulated Braze error')
         send_cancel_email_for_pending_assignment.delay(assignment.uuid)
 
@@ -484,14 +482,7 @@ class TestBrazeEmailTasks(APITestWithMocks):
         self,
         mock_campaign_sender_class,
     ):
-        """
-        When the Braze call fails and retries exhaust, Celery's on_failure() must forward the
-        actor_lms_user_id/actor_type/source kwargs it received into add_audit_action(), so the
-        resulting CANCEL_EMAIL_FAILED action still attributes the cancellation to the
-        requesting admin instead of silently defaulting to a SYSTEM actor. This action is recorded
-        as CANCEL_EMAIL_FAILED (not a second CANCELLED row) because the cancellation itself already
-        succeeded synchronously; only the best-effort notification email failed.
-        """
+        """on_failure() forwards actor kwargs into the CANCEL_EMAIL_FAILED action instead of defaulting to SYSTEM."""
         mock_campaign_sender_class.return_value.send_campaign_message.side_effect = Exception('boom')
         assignment = self.assignment_course
 
@@ -635,9 +626,6 @@ class TestBrazeEmailTasks(APITestWithMocks):
             },
         )
 
-        # Now verify the errored-audit-action path: if the braze call fails, a REMINDED
-        # error audit action should be recorded with the correct actor/source/traceback,
-        # while the assignment state remains unchanged (reminders don't error out the assignment).
         mock_braze_client.send_campaign_message.side_effect = Exception('Simulated Braze error')
         send_reminder_email_for_pending_assignment.delay(assignment.uuid)
 
@@ -698,12 +686,7 @@ class TestBrazeEmailTasks(APITestWithMocks):
         self,
         mock_campaign_sender_class,
     ):
-        """
-        When the Braze call fails and retries exhaust, Celery's on_failure() must forward the
-        actor_lms_user_id/actor_type/source kwargs it received into add_audit_action(), so the
-        resulting errored REMINDED action still attributes the reminder to the requesting
-        admin instead of silently defaulting to a SYSTEM actor.
-        """
+        """on_failure() forwards actor kwargs into the errored REMINDED action instead of defaulting to SYSTEM."""
         mock_campaign_sender_class.return_value.send_campaign_message.side_effect = Exception('boom')
         assignment = self.assignment_course
 
@@ -857,10 +840,7 @@ class TestBrazeEmailTasks(APITestWithMocks):
         mock_subsidy_model,  # pylint: disable=unused-argument
         mock_get_content_metadata,
     ):
-        """
-        Verify that when an email task fails, it creates an audit action with
-        proper actor_type (SYSTEM) and source (CELERY_TASK).
-        """
+        """When an email task fails, it creates an audit action with actor_type=SYSTEM, source=CELERY_TASK."""
         mock_lms_client.return_value.get_enterprise_customer_data.return_value = self.mock_enterprise_customer_data
         mock_recipient = {'external_user_id': 1}
         mock_get_content_metadata.return_value = {
@@ -875,10 +855,8 @@ class TestBrazeEmailTasks(APITestWithMocks):
         braze_client_instance.create_recipient.return_value = mock_recipient
         braze_client_instance.generate_mailto_link.return_value = mock_admin_mailto
 
-        # Trigger task failure
         send_email_for_new_assignment.delay(self.assignment_course.uuid)
 
-        # Verify audit action was created with proper fields
         audit_actions = self.assignment_course.actions.filter(
             action_type=AssignmentActions.NOTIFIED,
             error_reason=AssignmentActionErrors.EMAIL_ERROR,
@@ -888,7 +866,7 @@ class TestBrazeEmailTasks(APITestWithMocks):
         action = audit_actions.first()
         assert action.actor_type == AssignmentActorTypes.SYSTEM
         assert action.source == AssignmentSources.CELERY_TASK
-        assert action.completed_at is None  # Errors don't have completed_at
+        assert action.completed_at is None
         assert action.traceback is not None
 
     @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.objects')
@@ -942,7 +920,6 @@ class TestBrazeEmailTasks(APITestWithMocks):
         )
         assert mock_braze_client.return_value.send_campaign_message.call_count == 1
 
-        # source=celery_task (see get_last_successful_expiration_action()'s docstring).
         success_action = assignment.actions.filter(
             action_type=AssignmentActions.EXPIRED,
             error_reason=None,
@@ -951,8 +928,6 @@ class TestBrazeEmailTasks(APITestWithMocks):
         assert success_action.actor_type == AssignmentActorTypes.SYSTEM
         assert success_action.source == AssignmentSources.CELERY_TASK
 
-        # Now verify the errored-audit-action path: if the braze call fails, an EXPIRED
-        # error audit action should be recorded with the correct actor/source/traceback.
         mock_braze_client.return_value.send_campaign_message.side_effect = Exception('Simulated Braze error')
         send_assignment_automatically_expired_email.delay(assignment.uuid)
 
@@ -1272,14 +1247,7 @@ class TestClearPiiForExpiredAssignmentsTask(APITestWithMocks):
         mock_subsidy_client,
         mock_catalog_client,
     ):
-        """
-        Test that the task clears PII for assignments expired due to 90-day timeout
-        after expiration email has been sent. Also covers the legacy-data case
-        (expiration_action_has_source=False): a successful EXPIRED action recorded before
-        ``source`` existed on this action (source=None) must still satisfy the PII-clearing
-        predicate, or PII-clearing would silently stop working for assignments that expired
-        prior to the ``source`` field's rollout.
-        """
+        """The task clears PII after the expiration email has sent; legacy source=None rows still count too."""
         if expiration_action_has_source:
             self.expired_assignment.add_successful_expiration_action()
         else:
@@ -1320,14 +1288,7 @@ class TestClearPiiForExpiredAssignmentsTask(APITestWithMocks):
         mock_subsidy_client,
         mock_catalog_client,
     ):
-        """
-        Test that PII is NOT cleared if the expiration email wasn't successfully sent, even when
-        the scheduled_job-sourced, state-transition EXPIRED action already exists.
-        get_last_successful_expiration_action() excludes that row precisely so its presence alone
-        can't satisfy the "email sent" PII-clearing predicate.
-        """
-        # Simulate the state-transition audit row written by the expiration job, without the
-        # corresponding "email sent" audit row that add_successful_expiration_action() would add.
+        """PII is NOT cleared if only the scheduled_job-sourced, state-transition EXPIRED action exists."""
         self.expired_assignment.add_audit_action(
             action_type=AssignmentActions.EXPIRED,
             actor_type=AssignmentActorTypes.SYSTEM,
@@ -1369,9 +1330,7 @@ class TestClearPiiForExpiredAssignmentsTask(APITestWithMocks):
         mock_subsidy_client,
         mock_catalog_client,
     ):
-        """
-        Test that clearing PII creates a RETIRED audit action with system actor and scheduled_job source.
-        """
+        """Clearing PII creates a RETIRED audit action with system actor and scheduled_job source."""
         self.expired_assignment.add_successful_expiration_action()
 
         subsidy_expiry = now() + timedelta(days=365)
@@ -1400,7 +1359,6 @@ class TestClearPiiForExpiredAssignmentsTask(APITestWithMocks):
         self.expired_assignment.refresh_from_db()
         assert result['cleared_count'] == 1
 
-        # Verify the RETIRED audit action was created
         retired_actions = self.expired_assignment.actions.filter(
             action_type=AssignmentActions.RETIRED
         )

@@ -157,6 +157,7 @@ class LearnerContentAssignmentAdmin(DjangoQLSearchMixin, SimpleHistoryAdmin):
                         assignment.cancelled_at = None
                         assignment.expired_at = None
                         assignment.reversed_at = None
+                        assignment.transaction_uuid = None
                         assignment.save()
                         assignment.add_audit_action(
                             action_type=AssignmentActions.ALLOCATED,

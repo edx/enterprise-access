@@ -2,6 +2,7 @@
 Tests for the admin module of the content_assignments app.
 """
 from unittest import mock
+from uuid import uuid4
 
 import ddt
 from django.contrib.admin.sites import AdminSite
@@ -36,8 +37,7 @@ class TestLearnerContentAssignmentAdminActions(TestCase):
         self.admin = LearnerContentAssignmentAdmin(LearnerContentAssignment, self.admin_site)
         self.factory = RequestFactory()
 
-        # Create a mock admin user for the request. lms_user_id is what force_redeem_assignments()
-        # actually captures as the actor_lms_user_id (not the Django user's own pk).
+        # force_redeem_assignments() captures lms_user_id as the actor, not the Django user's pk.
         self.user = UserFactory(lms_user_id=999)
 
         self.assignment_configuration = AssignmentConfigurationFactory()
@@ -54,9 +54,7 @@ class TestLearnerContentAssignmentAdminActions(TestCase):
         return request
 
     def _mock_can_redeem(self, can_redeem=True, reason=None):
-        # Patched at the class level: assignment.assignment_configuration.policy fetches a fresh
-        # instance from the DB on each access, so an instance-level patch on self.policy wouldn't
-        # apply to the object the admin action actually calls into.
+        # Patched at the class level since assignment.assignment_configuration.policy is a fresh instance each access.
         return mock.patch.object(
             AssignedLearnerCreditAccessPolicy, 'can_redeem', return_value=(can_redeem, reason, []),
         )
@@ -72,12 +70,7 @@ class TestLearnerContentAssignmentAdminActions(TestCase):
         LearnerContentAssignmentStateChoices.EXPIRED,
     )
     def test_force_redeem_calls_real_redeem_with_admin_attribution(self, starting_state):
-        """
-        For every non-ACCEPTED starting state, force_redeem_assignments must call the real
-        SubsidyAccessPolicy.redeem() (not a hand-rolled reimplementation), attributing the call to
-        the requesting admin. Non-ALLOCATED starting states are first reset to ALLOCATED locally,
-        recording an ALLOCATED audit row before redemption; ALLOCATED itself needs no reset.
-        """
+        """For every non-ACCEPTED starting state, force_redeem_assignments must call the real redeem()."""
         assignment = LearnerContentAssignmentFactory(
             assignment_configuration=self.assignment_configuration,
             state=starting_state,
@@ -108,10 +101,7 @@ class TestLearnerContentAssignmentAdminActions(TestCase):
             self.assertEqual(allocated_action.actor_lms_user_id, self.user.lms_user_id)
 
     def test_force_redeem_skips_already_accepted_to_avoid_double_spend(self):
-        """
-        An already-ACCEPTED assignment must be skipped entirely (not reset to ALLOCATED and
-        re-redeemed), since that would create a second ledger transaction for a single redemption.
-        """
+        """An already-ACCEPTED assignment must be skipped entirely, not reset and re-redeemed."""
         assignment = LearnerContentAssignmentFactory(
             assignment_configuration=self.assignment_configuration,
             state=LearnerContentAssignmentStateChoices.ACCEPTED,
@@ -133,10 +123,7 @@ class TestLearnerContentAssignmentAdminActions(TestCase):
         {'missing_lms_user_id': True},
     )
     def test_force_redeem_reports_failure_without_crashing_batch(self, missing_kwargs):
-        """
-        An assignment with no linked policy, or no lms_user_id yet, can't be redeemed -- it must be
-        reported as a failure rather than raising and aborting the rest of the batch.
-        """
+        """A missing policy or lms_user_id is reported as a failure without aborting the batch."""
         assignment_configuration = self.assignment_configuration
         if missing_kwargs.get('missing_policy'):
             assignment_configuration = AssignmentConfigurationFactory()  # no linked policy
@@ -155,7 +142,6 @@ class TestLearnerContentAssignmentAdminActions(TestCase):
         with self._mock_can_redeem() as mock_can_redeem, self._mock_redeem() as mock_redeem:
             self.admin.force_redeem_assignments(request, queryset)
 
-        # The other, valid assignment in the same batch must still succeed.
         mock_can_redeem.assert_called_once_with(
             other_assignment.lms_user_id, other_assignment.content_key, skip_enrollment_deadline_check=True,
         )
@@ -169,14 +155,11 @@ class TestLearnerContentAssignmentAdminActions(TestCase):
         {'redeem_raises': True},
     )
     def test_force_redeem_reports_subsidy_failure_without_crashing_batch(self, case):
-        """
-        If can_redeem() rejects the redemption, or redeem() itself raises (e.g. a real subsidy API
-        error), the failure must be reported for that assignment without aborting the rest of the
-        batch, and without leaving stray ALLOCATED-reset side effects for it.
-        """
+        """A can_redeem/redeem() failure is reported without aborting the batch or leaving a stale transaction_uuid."""
         assignment = LearnerContentAssignmentFactory(
             assignment_configuration=self.assignment_configuration,
-            state=LearnerContentAssignmentStateChoices.CANCELLED,
+            state=LearnerContentAssignmentStateChoices.REVERSED,
+            transaction_uuid=uuid4(),
         )
         request = self._build_request()
         queryset = LearnerContentAssignment.objects.filter(pk=assignment.pk)
@@ -194,21 +177,13 @@ class TestLearnerContentAssignmentAdminActions(TestCase):
         else:
             mock_redeem.assert_called_once()
 
-        # Redemption failed either way -- the assignment was reset to ALLOCATED (that part is
-        # local and did succeed), but no REDEEMED action exists since redemption itself failed.
         assignment.refresh_from_db()
         self.assertEqual(assignment.state, LearnerContentAssignmentStateChoices.ALLOCATED)
         self.assertFalse(assignment.actions.filter(action_type=AssignmentActions.REDEEMED).exists())
+        self.assertIsNone(assignment.transaction_uuid)
 
     def test_force_redeem_rolls_back_audit_rows_if_state_save_fails(self):
-        """
-        The ALLOCATED-reset audit row and its state-change save() must be atomic: if save() fails,
-        the audit row recorded just before it must not persist either, or the audit trail would
-        claim a redemption step that never actually happened. An unexpected DB error like this one
-        is deliberately allowed to propagate (surfacing as a real error) rather than being
-        swallowed into the per-assignment failure list, which is reserved for expected,
-        recoverable redemption failures (can_redeem rejection, subsidy API errors).
-        """
+        """The ALLOCATED-reset audit row and its save() must be atomic; the raw error still propagates."""
         assignment = LearnerContentAssignmentFactory(
             assignment_configuration=self.assignment_configuration,
             state=LearnerContentAssignmentStateChoices.CANCELLED,
@@ -228,23 +203,14 @@ class TestLearnerContentAssignmentAdminActions(TestCase):
         self.assertEqual(assignment.actions.count(), 0)
 
     def test_force_redeem_requires_change_permission(self):
-        """
-        force_redeem_assignments must be gated by Django's admin action permission system (not
-        exposed to any staff user who merely has view access to the changelist), which requires
-        the @admin.action decorator to declare permissions=[...].
-        """
+        """force_redeem_assignments must declare permissions=['change'], not be open to view-only staff."""
         self.assertEqual(
             list(self.admin.force_redeem_assignments.allowed_permissions),
             ['change'],
         )
 
     def test_force_redeem_falls_back_when_admin_has_no_lms_user_id(self):
-        """
-        Missing-actor fallback: an internal Django superuser never linked to an LMS user must
-        still succeed, simply recording a null actor_lms_user_id on the redeem() call rather than
-        raising. (The has-an-lms_user_id case is already covered by every state in
-        test_force_redeem_calls_real_redeem_with_admin_attribution.)
-        """
+        """An admin user with no lms_user_id must still succeed, recording a null actor_lms_user_id."""
         self.user.lms_user_id = None
         self.user.save()
 

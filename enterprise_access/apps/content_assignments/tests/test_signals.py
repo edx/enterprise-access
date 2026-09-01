@@ -91,28 +91,20 @@ class SignalsTests(TestCase):
             assert assignment.lms_user_id is None
 
     def test_update_assignment_lms_user_id_creates_audit_actions(self):
-        """
-        Test that `update_assignment_lms_user_id_from_user_email()` creates audit action rows with proper
-        actor_type and source when linking users to assignments.
-        """
-        # Create assignments before user registration
+        """update_assignment_lms_user_id_from_user_email() creates LEARNER_LINKED audit action rows."""
         assignments = [
             LearnerContentAssignmentFactory(learner_email=TEST_EMAIL, lms_user_id=None),
             LearnerContentAssignmentFactory(learner_email=TEST_EMAIL, lms_user_id=None),
         ]
-        # Create user (triggers signal)
         test_user = UserFactory(email=TEST_EMAIL)
 
-        # Verify audit actions were created for each assignment
         for assignment in assignments:
             assignment.refresh_from_db()
             assert assignment.lms_user_id == test_user.lms_user_id
 
-            # Check that audit action was created
             audit_actions = assignment.actions.filter(action_type=AssignmentActions.LEARNER_LINKED)
             assert audit_actions.exists(), f"No LEARNER_LINKED action for assignment {assignment.uuid}"
 
-            # Verify action has correct actor_type and source
             action = audit_actions.first()
             assert action.actor_type == AssignmentActorTypes.SYSTEM
             assert action.source == AssignmentSources.SIGNAL
@@ -181,20 +173,15 @@ class TestReversalSignal(TestCase):
         assert "Simulated DB error" in action.traceback
 
     def test_reversal_creates_audit_action(self):
-        """
-        Test that reversal signal handler creates audit action row with proper
-        actor_type and source.
-        """
+        """The reversal signal handler creates a REVERSED audit action row."""
         update_assignment_status_for_reversed_transaction(
             ledger_transaction=mock.Mock(uuid=self.assignment.transaction_uuid)
         )
         self.assignment.refresh_from_db()
 
-        # Verify audit action was created
         audit_actions = self.assignment.actions.filter(action_type=AssignmentActions.REVERSED)
         assert audit_actions.exists(), "No REVERSED audit action created"
 
-        # Verify action has correct actor_type and source
         action = audit_actions.first()
         assert action.actor_type == AssignmentActorTypes.SYSTEM
         assert action.source == AssignmentSources.SIGNAL
