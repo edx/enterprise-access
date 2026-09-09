@@ -5,11 +5,13 @@ from decimal import Decimal, InvalidOperation
 from urllib.parse import urljoin
 
 from django.conf import settings
+from django.core.cache import cache
 from django_countries.serializers import CountryFieldMixin
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 from rest_framework.exceptions import APIException
 
+from enterprise_access.apps.api_client.enterprise_catalog_client import EnterpriseCatalogApiClient
 from enterprise_access.apps.customer_billing.constants import ALLOWED_CHECKOUT_INTENT_STATE_TRANSITIONS
 from enterprise_access.apps.customer_billing.embargo import get_embargoed_countries
 from enterprise_access.apps.customer_billing.models import (
@@ -710,6 +712,7 @@ class SspEssentialsProductResponseSerializer(serializers.Serializer):
     tags = serializers.SerializerMethodField()
     price = serializers.SerializerMethodField()
     lookup_key = serializers.SerializerMethodField()
+    course_count = serializers.SerializerMethodField()
     slug = serializers.SlugField(read_only=True)
 
     # ── helpers ──────────────────────────────────────────────
@@ -777,3 +780,23 @@ class SspEssentialsProductResponseSerializer(serializers.Serializer):
 
     def get_lookup_key(self, obj):
         return obj.stripe_price_lookup_key
+
+    def get_course_count(self, obj):
+        """Return the cached or fetched course count for the product's catalog query."""
+        catalog_query_uuid = getattr(obj, 'catalog_query_uuid', None)
+        if not catalog_query_uuid:
+            return None
+
+        cache_key = f'academy_course_count_{catalog_query_uuid}'
+        cached_count = cache.get(cache_key)
+        if cached_count is not None:
+            return cached_count
+
+        try:
+            data = EnterpriseCatalogApiClient().get_catalog_query(catalog_query_uuid)
+            course_count = data.get('course_count')
+            if course_count is not None:
+                cache.set(cache_key, course_count, timeout=6 * 3600)
+            return course_count
+        except Exception:  # pylint: disable=broad-exception-caught
+            return None
