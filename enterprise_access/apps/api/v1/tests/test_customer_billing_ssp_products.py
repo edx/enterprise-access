@@ -53,7 +53,9 @@ class CustomerBillingSspProductsTests(APITest):
     @mock.patch('enterprise_access.apps.api.serializers.customer_billing.cache')
     @mock.patch('enterprise_access.apps.api.serializers.customer_billing.EnterpriseCatalogApiClient')
     @ddt.unpack
-    def test_course_count_cache_miss_fetches_and_caches(self, mock_client, mock_cache, catalog_response, expected_count):
+    def test_course_count_cache_miss_fetches_and_caches(
+        self, mock_client, mock_cache, catalog_response, expected_count,
+    ):
         """A missing cache entry fetches, and only caches a course count when the catalog response has one."""
         mock_cache.get.return_value = None
         mock_client.return_value.get_catalog_query.return_value = catalog_response
