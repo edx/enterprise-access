@@ -65,6 +65,7 @@ BRAZE_ENTERPRISE_PROVISION_PAYMENT_RECEIPT_CAMPAIGN = 'test-enterprise-payment-r
 BRAZE_ENTERPRISE_PROVISION_TRIAL_END_SUBSCRIPTION_STARTED_CAMPAIGN = 'test-trial-end-subscription-started-campaign'
 BRAZE_BILLING_ERROR_CAMPAIGN = 'test-billing-error-campaign'
 BRAZE_SSP_SUBSCRIPTION_REINSTATED_CAMPAIGN = 'test-subscription-reinstated-campaign'
+BRAZE_TRIAL_ENDED_CANCELLATION_CAMPAIGN = 'test-trial-ended-cancellation-campaign'
 
 # ============================================================
 # SSP Essentials Braze Campaign Settings (Test)

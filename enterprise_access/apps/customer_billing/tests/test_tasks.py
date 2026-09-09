@@ -35,6 +35,7 @@ from enterprise_access.apps.customer_billing.tasks import (
     send_reinstatement_email_task,
     send_trial_cancellation_email_task,
     send_trial_end_and_subscription_started_email_task,
+    send_trial_ended_cancellation_email_task,
     send_trial_ending_reminder_email_task
 )
 from enterprise_access.apps.customer_billing.tests.utils import AttrDict
@@ -334,6 +335,96 @@ class TestSendTrialCancellationEmailTask(TestCase):
         mock_get_checkout_intent.assert_called_once_with(self.checkout_intent.id)
         call_args = mock_send_cancelation_campaign.call_args[0]
         self.assertIs(call_args[0], mock_checkout_intent)
+
+
+class TestSendTrialEndedCancellationEmailTask(TestCase):
+    """Tests for send_trial_ended_cancellation_email_task."""
+
+    def setUp(self):
+        """Set up test data."""
+        self.user = UserFactory()
+        self.checkout_intent = CheckoutIntent.create_intent(
+            user=self.user,
+            slug="test-enterprise",
+            name="Test Enterprise",
+            quantity=10,
+        )
+        self.checkout_intent.stripe_customer_id = "cus_test_123"
+        self.checkout_intent.save()
+
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
+    def test_send_trial_ended_cancellation_email_task_teams(
+        self, mock_lms_client, mock_braze_client
+    ):
+        """Teams checkout intents route to the shared campaign with product_type='Teams'."""
+        ssp_product = SspProduct.objects.create(
+            slug='teams-trial-ended-test',
+            stripe_price_lookup_key='teams_trial_ended_test_key',
+            catalog_query_uuid=uuid4(),
+            is_active=True,
+        )
+        self.checkout_intent.ssp_product = ssp_product
+        self.checkout_intent.save()
+
+        mock_lms_client.return_value.get_enterprise_customer_data.return_value = {
+            'admin_users': [{'email': 'admin@example.com', 'lms_user_id': 1}]
+        }
+        mock_braze_client.return_value.create_braze_recipient.return_value = {'external_user_id': '1'}
+
+        send_trial_ended_cancellation_email_task(checkout_intent_id=self.checkout_intent.id)
+
+        mock_braze_client.return_value.send_campaign_message.assert_called_once()
+        call_args = mock_braze_client.return_value.send_campaign_message.call_args
+        self.assertEqual(call_args[0][0], settings.BRAZE_TRIAL_ENDED_CANCELLATION_CAMPAIGN)
+        trigger_props = call_args[1]['trigger_properties']
+        self.assertEqual(trigger_props['product_type'], 'Teams')
+
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
+    def test_send_trial_ended_cancellation_email_task_essentials(
+        self, mock_lms_client, mock_braze_client
+    ):
+        """Essentials checkout intents route to the same shared campaign with product_type='Essentials'."""
+        ssp_product = SspProduct.objects.create(
+            slug='essentials-trial-ended-test',
+            stripe_price_lookup_key='essentials_trial_ended_test_key',
+            catalog_query_uuid=uuid4(),
+            academy_uuid=uuid4(),
+            is_active=True,
+        )
+        self.checkout_intent.ssp_product = ssp_product
+        self.checkout_intent.save()
+
+        mock_lms_client.return_value.get_enterprise_customer_data.return_value = {
+            'admin_users': [{'email': 'admin@example.com', 'lms_user_id': 1}]
+        }
+        mock_braze_client.return_value.create_braze_recipient.return_value = {'external_user_id': '1'}
+
+        send_trial_ended_cancellation_email_task(checkout_intent_id=self.checkout_intent.id)
+
+        mock_braze_client.return_value.send_campaign_message.assert_called_once()
+        call_args = mock_braze_client.return_value.send_campaign_message.call_args
+        self.assertEqual(call_args[0][0], settings.BRAZE_TRIAL_ENDED_CANCELLATION_CAMPAIGN)
+        trigger_props = call_args[1]['trigger_properties']
+        self.assertEqual(trigger_props['product_type'], 'Essentials')
+
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
+    def test_send_trial_ended_cancellation_email_braze_exception(
+        self, mock_lms_client, mock_braze_client
+    ):
+        """Braze API exceptions are propagated."""
+        mock_lms_client.return_value.get_enterprise_customer_data.return_value = {
+            'admin_users': [{'email': 'admin@example.com', 'lms_user_id': 1}]
+        }
+        mock_braze_client.return_value.create_braze_recipient.return_value = {'external_user_id': '1'}
+        mock_braze_client.return_value.send_campaign_message.side_effect = Exception('Braze API error')
+
+        with self.assertRaises(Exception) as context:
+            send_trial_ended_cancellation_email_task(checkout_intent_id=self.checkout_intent.id)
+
+        self.assertIn('Braze API error', str(context.exception))
 
 
 class TestSendBillingErrorEmailTask(TestCase):

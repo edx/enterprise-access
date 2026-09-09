@@ -31,6 +31,7 @@ from enterprise_access.apps.customer_billing.tasks import (
     send_reinstatement_email_task,
     send_trial_cancellation_email_task,
     send_trial_end_and_subscription_started_email_task,
+    send_trial_ended_cancellation_email_task,
     send_trial_ending_reminder_email_task
 )
 from enterprise_access.apps.customer_billing.utils import datetime_from_timestamp
@@ -891,17 +892,26 @@ class StripeEventHandler:
         _update_renewal_cancellation_state(checkout_intent, is_canceled=True, subscription_cancel_at=None)
 
         previous_summary = checkout_intent.previous_summary(event, stripe_object_type='subscription')
-        if previous_summary.subscription_status == StripeSubscriptionStatus.ACTIVE:
-            # https://docs.stripe.com/api/subscriptions/object#subscription_object-ended_at
-            ended_at = subscription.get("ended_at") or timezone.now().timestamp()
-            logger.info(
-                "Queuing cancelation finalization email for checkout_intent uuid=%s",
-                checkout_intent.uuid,
-            )
-            send_finalized_cancelation_email_task.delay(
-                checkout_intent_id=checkout_intent.id,
-                ended_at_timestamp=ended_at,
-            )
+        if previous_summary:
+            if previous_summary.subscription_status == StripeSubscriptionStatus.ACTIVE:
+                # https://docs.stripe.com/api/subscriptions/object#subscription_object-ended_at
+                ended_at = subscription.get("ended_at") or timezone.now().timestamp()
+                logger.info(
+                    "Queuing cancelation finalization email for checkout_intent uuid=%s",
+                    checkout_intent.uuid,
+                )
+                send_finalized_cancelation_email_task.delay(
+                    checkout_intent_id=checkout_intent.id,
+                    ended_at_timestamp=ended_at,
+                )
+            elif previous_summary.subscription_status == StripeSubscriptionStatus.TRIALING:
+                logger.info(
+                    "Queuing trial ended cancelation email for checkout_intent uuid=%s",
+                    checkout_intent.uuid,
+                )
+                send_trial_ended_cancellation_email_task.delay(
+                    checkout_intent_id=checkout_intent.id,
+                )
 
 
 def _process_trial_to_paid_renewal(

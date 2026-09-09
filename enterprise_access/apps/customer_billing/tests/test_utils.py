@@ -147,6 +147,7 @@ class TestGetCampaignId(TestCase):
             ('signup_confirmation', 'BRAZE_ENTERPRISE_PROVISION_SIGNUP_CONFIRMATION_CAMPAIGN'),
             ('trial_ending_soon', 'BRAZE_ENTERPRISE_PROVISION_TRIAL_ENDING_SOON_CAMPAIGN'),
             ('trial_cancellation', 'BRAZE_TRIAL_CANCELLATION_CAMPAIGN'),
+            ('trial_ended_cancellation', 'BRAZE_TRIAL_ENDED_CANCELLATION_CAMPAIGN'),
             ('payment_receipt', 'BRAZE_ENTERPRISE_PROVISION_PAYMENT_RECEIPT_CAMPAIGN'),
             ('trial_end_subscription_started', 'BRAZE_ENTERPRISE_PROVISION_TRIAL_END_SUBSCRIPTION_STARTED_CAMPAIGN'),
             ('billing_error', 'BRAZE_BILLING_ERROR_CAMPAIGN'),
@@ -169,6 +170,7 @@ class TestGetCampaignId(TestCase):
             ('signup_confirmation', 'BRAZE_ESSENTIALS_SIGNUP_CONFIRMATION_CAMPAIGN'),
             ('trial_ending_soon', 'BRAZE_ESSENTIALS_TRIAL_ENDING_SOON_CAMPAIGN'),
             ('trial_cancellation', 'BRAZE_ESSENTIALS_TRIAL_CANCELLATION_CAMPAIGN'),
+            ('trial_ended_cancellation', 'BRAZE_TRIAL_ENDED_CANCELLATION_CAMPAIGN'),
             ('payment_receipt', 'BRAZE_ESSENTIALS_PAYMENT_RECEIPT_CAMPAIGN'),
             ('trial_end_subscription_started', 'BRAZE_ESSENTIALS_TRIAL_END_SUBSCRIPTION_STARTED_CAMPAIGN'),
             ('billing_error', 'BRAZE_ESSENTIALS_BILLING_ERROR_CAMPAIGN'),
@@ -189,6 +191,26 @@ class TestGetCampaignId(TestCase):
         )
         result = get_campaign_id('signup_confirmation', teams_product)
         self.assertEqual(result, settings.BRAZE_ENTERPRISE_PROVISION_SIGNUP_CONFIRMATION_CAMPAIGN)
+
+    def test_campaign_routing_for_trial_ended_cancellation(self):
+        """Both teams and essentials products route to the single shared campaign."""
+        teams_product = SspProduct(
+            slug='teams-yearly',
+            stripe_price_lookup_key='teams-yearly-key',
+            catalog_query_uuid=uuid4(),
+            academy_uuid=None,
+        )
+        essentials_product = SspProduct(
+            slug='essentials-monthly',
+            stripe_price_lookup_key='essentials-monthly-key',
+            catalog_query_uuid=uuid4(),
+            academy_uuid=uuid4(),
+        )
+        teams_campaign = get_campaign_id('trial_ended_cancellation', teams_product)
+        essentials_campaign = get_campaign_id('trial_ended_cancellation', essentials_product)
+        self.assertEqual(teams_campaign, settings.BRAZE_TRIAL_ENDED_CANCELLATION_CAMPAIGN)
+        self.assertEqual(essentials_campaign, settings.BRAZE_TRIAL_ENDED_CANCELLATION_CAMPAIGN)
+        self.assertEqual(teams_campaign, essentials_campaign)
 
     def test_raises_value_error_for_unknown_email_type(self):
         """ValueError should be raised for unrecognised email types."""

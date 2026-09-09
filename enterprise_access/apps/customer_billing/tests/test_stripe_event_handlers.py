@@ -1309,6 +1309,77 @@ class TestStripeEventHandler(TestCase):
         self.assertEqual(call_kwargs.get('checkout_intent_id'), self.checkout_intent.id)
         self.assertEqual(call_kwargs.get('ended_at_timestamp'), 1234567890)
 
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.cancel_all_future_plans"
+    )
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_trial_ended_cancellation_email_task"
+    )
+    def test_subscription_deleted_queues_trial_ended_cancellation_email(
+        self, mock_send_trial_ended_email, mock_cancel,
+    ):
+        """Subscription deleted event sends the trial ended cancellation email for TRIALING subscriptions."""
+        subscription_id = "sub_test_trialing_deleted_123"
+        subscription_data = {
+            "id": subscription_id,
+            "status": "canceled",
+            "metadata": self._create_mock_stripe_subscription(self.checkout_intent),
+        }
+
+        # Create prior event with TRIALING status.
+        self._create_existing_event_data_records(
+            subscription_id,
+            subscription_status=StripeSubscriptionStatus.TRIALING,
+        )
+
+        self.checkout_intent.enterprise_uuid = uuid.uuid4()
+        self.checkout_intent.save(update_fields=["enterprise_uuid"])
+
+        mock_event = self._create_mock_stripe_event(
+            "customer.subscription.deleted", subscription_data
+        )
+
+        StripeEventHandler.dispatch(mock_event)
+
+        mock_cancel.assert_called_once_with(self.checkout_intent)
+        mock_send_trial_ended_email.delay.assert_called_once_with(checkout_intent_id=self.checkout_intent.id)
+
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.cancel_all_future_plans"
+    )
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_trial_ended_cancellation_email_task"
+    )
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_finalized_cancelation_email_task"
+    )
+    def test_subscription_deleted_no_previous_summary_sends_no_email(
+        self, mock_send_cancelation_email, mock_send_trial_ended_email, mock_cancel,
+    ):
+        """Subscription deleted event with no prior summary sends no email and does not raise."""
+        subscription_id = "sub_test_no_prior_summary_123"
+        subscription_data = {
+            "id": subscription_id,
+            "status": "canceled",
+            "ended_at": 1234567890,
+            "metadata": self._create_mock_stripe_subscription(self.checkout_intent),
+        }
+
+        # Deliberately do not create any prior StripeEventSummary records.
+
+        self.checkout_intent.enterprise_uuid = uuid.uuid4()
+        self.checkout_intent.save(update_fields=["enterprise_uuid"])
+
+        mock_event = self._create_mock_stripe_event(
+            "customer.subscription.deleted", subscription_data
+        )
+
+        StripeEventHandler.dispatch(mock_event)
+
+        mock_cancel.assert_called_once_with(self.checkout_intent)
+        mock_send_cancelation_email.delay.assert_not_called()
+        mock_send_trial_ended_email.delay.assert_not_called()
+
     @ddt.data(
         # Happy path
         {
