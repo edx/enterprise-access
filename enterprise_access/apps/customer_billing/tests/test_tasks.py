@@ -357,7 +357,7 @@ class TestSendTrialEndedCancellationEmailTask(TestCase):
     def test_send_trial_ended_cancellation_email_task_teams(
         self, mock_lms_client, mock_braze_client
     ):
-        """Teams checkout intents route to the shared campaign with product_type='Teams'."""
+        """Teams checkout intents route to the shared campaign with product_type='teams'."""
         ssp_product = SspProduct.objects.create(
             slug='teams-trial-ended-test',
             stripe_price_lookup_key='teams_trial_ended_test_key',
@@ -378,14 +378,15 @@ class TestSendTrialEndedCancellationEmailTask(TestCase):
         call_args = mock_braze_client.return_value.send_campaign_message.call_args
         self.assertEqual(call_args[0][0], settings.BRAZE_TRIAL_ENDED_CANCELLATION_CAMPAIGN)
         trigger_props = call_args[1]['trigger_properties']
-        self.assertEqual(trigger_props['product_type'], 'Teams')
+        self.assertEqual(trigger_props['product_type'], 'teams')
+        self.assertEqual(trigger_props['product_type_display'], 'Teams')
 
     @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
     @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
     def test_send_trial_ended_cancellation_email_task_essentials(
         self, mock_lms_client, mock_braze_client
     ):
-        """Essentials checkout intents route to the same shared campaign with product_type='Essentials'."""
+        """Essentials checkout intents route to the same shared campaign with product_type='essentials'."""
         ssp_product = SspProduct.objects.create(
             slug='essentials-trial-ended-test',
             stripe_price_lookup_key='essentials_trial_ended_test_key',
@@ -407,7 +408,8 @@ class TestSendTrialEndedCancellationEmailTask(TestCase):
         call_args = mock_braze_client.return_value.send_campaign_message.call_args
         self.assertEqual(call_args[0][0], settings.BRAZE_TRIAL_ENDED_CANCELLATION_CAMPAIGN)
         trigger_props = call_args[1]['trigger_properties']
-        self.assertEqual(trigger_props['product_type'], 'Essentials')
+        self.assertEqual(trigger_props['product_type'], 'essentials')
+        self.assertEqual(trigger_props['product_type_display'], 'Essentials')
 
     @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
     @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")

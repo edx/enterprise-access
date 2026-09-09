@@ -413,12 +413,13 @@ def send_trial_ended_cancellation_email_task(checkout_intent_id: int):
 
     ssp_product = checkout_intent.ssp_product
     campaign_id = get_campaign_id('trial_ended_cancellation', ssp_product)
-    product_type_display = get_product_type(ssp_product).capitalize()
+    product_type = get_product_type(ssp_product)
 
     braze_trigger_properties = _build_common_trigger_properties(
         ssp_product=ssp_product,
         organization_name=checkout_intent.enterprise_name,
-        product_type=product_type_display,
+        product_type=product_type,
+        product_type_display=product_type.capitalize(),
         enterprise_admin_portal_url=f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/{enterprise_slug}',
     )
 

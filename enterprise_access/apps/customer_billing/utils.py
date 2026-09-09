@@ -86,7 +86,7 @@ def get_campaign_id(email_type, ssp_product: 'SspProduct | None' = None):
 
     Args:
         email_type (str): One of 'signup_confirmation', 'trial_ending_soon',
-            'trial_cancellation', 'payment_receipt',
+            'trial_cancellation', 'trial_ended_cancellation', 'payment_receipt',
             'trial_end_subscription_started', 'billing_error',
             'paid_cancellation'.
         ssp_product (SspProduct|None): The CheckoutIntent's product.

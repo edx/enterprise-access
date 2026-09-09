@@ -906,7 +906,7 @@ class StripeEventHandler:
                 )
             elif previous_summary.subscription_status == StripeSubscriptionStatus.TRIALING:
                 logger.info(
-                    "Queuing trial ended cancelation email for checkout_intent uuid=%s",
+                    "Queuing trial ended cancellation email for checkout_intent uuid=%s",
                     checkout_intent.uuid,
                 )
                 send_trial_ended_cancellation_email_task.delay(
