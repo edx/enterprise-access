@@ -1,7 +1,10 @@
 # Core requirements for using this application
 -c constraints.txt
 
+algoliasearch          # Search-only client for the catalog and jobs indexes
 analytics-python
+anthropic              # Optional: the 'claude' pathway model backend. Imported lazily,
+                       # so a deployment using only the 'xpert' backend never loads it.
 cattrs
 celery
 confluent-kafka[avro,schema-registry]
@@ -38,6 +41,7 @@ openedx-events
 pygments
 pymemcache
 pytz
+pyyaml                 # Persona fixture parsing (apps/pathway_eval)
 redis
 rules
 stripe

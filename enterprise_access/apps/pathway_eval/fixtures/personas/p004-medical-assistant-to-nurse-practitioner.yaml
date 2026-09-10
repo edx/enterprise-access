@@ -1,0 +1,51 @@
+# Persona 4 — The PA → NP career advancer
+#
+# Imported from "Learner Rec Persona Testing.xlsx", authored by the product team. Expected-
+# course titles were resolved to catalog course keys against the live index on 2026-09-09; only
+# exact title matches were kept.
+id: p004-medical-assistant-to-nurse-practitioner
+domain: healthcare
+tier: core
+
+inputs:
+  selected_goals: >-
+    I want to become a nurse practitioner
+  free_text: >-
+    Advancing my career
+  known_context: >-
+    I'm a medical assistant with 3 years of experience in a large clinic, primarily in
+    radiology.
+  interested_industries: >-
+    Nursing, healthcare
+
+expected:
+  ground_truth_status: expert_authored
+  expect_no_coverage: false
+  careers: []
+  courses:
+    - key: "HKPolyUx+RSCPEx102x"
+      title: "Interdisciplinary Management of Cardiopulmonary Health and Disease - Cardiac Focus"
+    - key: "SDGAcademyX+GPH001"
+      title: "Global Public Health"
+    - key: "StanfordOnline+CME.20758"
+      title: "To Prescribe or Not To Prescribe? Antibiotics and Outpatient Infections"
+    - key: "StanfordOnline+CME-34506"
+      title: "Identifying and Responding to Developmental Delay in Young Children."
+
+catalog:
+  snapshot_date: 2026-09-09
+
+notes: >-
+  Authored ground truth, with two deliberate omissions.
+  
+  (1) No expected career is recorded: "Nurse Practitioner" has NO exact entry in the Lightcast
+  jobs index -- only 151 qualified variants (Family Practice NP, Orthopedic NP, ...).
+  Substituting one would be inventing ground truth, so the field is left empty.
+  
+  (2) One expected course, "Foundations of Client Care 2: Workplace Safety, Emergency Care,
+  and Infection Control -", could not be resolved; the title appears truncated in the source
+  sheet and the catalog's Osmosis courses are named "Client Care: <topic>"
+  (OsmosisFromElsevier+CC1..CC6). Needs the author to confirm which course was meant.
+  
+  Observed-run note: "all the ones that do have pathways are assistant level, not helpful to
+  progressing this persona's career" -- a level-progression failure, not a relevance failure.

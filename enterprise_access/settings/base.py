@@ -92,6 +92,8 @@ PROJECT_APPS = (
     'enterprise_access.apps.customer_billing',
     'enterprise_access.apps.testimonials',
     'enterprise_access.apps.prompts',
+    'enterprise_access.apps.pathway_eval',
+    'enterprise_access.apps.pathways',
 )
 
 INSTALLED_APPS += THIRD_PARTY_APPS
@@ -186,6 +188,11 @@ REST_FRAMEWORK = {
         'ssp_product': '120/hour',
         'learner_pathways_learning_intent': '100/hour',
         'learner_pathways_recommendation_feedback': '100/hour',
+        'learner_pathways_careers': '100/hour',
+        # Tighter than the others on purpose: a pathway request runs a five-step workflow
+        # with several Algolia searches and, when the re-rank backend is enabled, a paid
+        # model call. The cost per request is an order of magnitude above the others here.
+        'learner_pathways_pathway': '30/hour',
     },
 }
 
@@ -516,6 +523,41 @@ XPERT_LEARNER_PATHWAYS_RAG_TAGS = [
     'discovery',
     'edx-available-course',
 ]
+
+# Algolia search settings (apps/api_client/algolia_client.py).
+# Search-only. The write-scoped ALGOLIA.API_KEY used by enterprise-catalog for indexing
+# must never be configured here.
+ALGOLIA_APP_ID = ''
+# Plain, search-ACL-only key. Used for the jobs/taxonomy index, which secured keys cannot
+# read. NOT for scoped catalog searches -- those use a secured key vended per enterprise
+# by enterprise-catalog.
+ALGOLIA_SEARCH_API_KEY = ''
+ALGOLIA_CATALOG_INDEX_NAME = ''
+ALGOLIA_JOBS_INDEX_NAME = ''
+# Escape hatch for the offline retrieval diagnostic, which has no request and therefore
+# no per-user secured key to vend. Enables searching the catalog index *unscoped* with the
+# plain search key. Must stay False anywhere a learner response could be built from it.
+ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH = False
+
+# Server-side learner pathways pipeline (apps/pathways). Off by default: nothing in
+# production calls these endpoints yet, and rollback is disabling access rather than
+# reverting behaviour. Off means the endpoints 404 -- no other code path is affected.
+LEARNER_PATHWAYS_SERVER_PIPELINE_ENABLED = False
+
+# Which model backend the pathway pipeline issues completions through (apps/pathways/
+# model_backends). 'xpert' routes through the stored, admin-editable prompts and is the
+# default because it is the path already in production. 'claude' is a direct metered call
+# and needs ANTHROPIC_API_KEY plus the `anthropic` package -- selecting it without either
+# raises rather than falling back, so a paid backend is never reached by accident.
+PATHWAYS_MODEL_BACKEND = 'xpert'
+ANTHROPIC_API_KEY = ''
+PATHWAYS_CLAUDE_MODEL = 'claude-sonnet-5'
+
+# The enterprise customer the evaluation harness scopes to (Open Decision 1). Production
+# requests take the customer from the request; this is only for offline runs, which have
+# no request and therefore no secured Algolia key. Scoping by filter needs no secured key
+# because `enterprise_customer_uuids` is facetable.
+PATHWAYS_EVAL_CUSTOMER_UUID = ''
 
 # Braze campaigns for learner credit browse and request(apps.subsidy_request)
 BRAZE_LEARNER_CREDIT_BNR_APPROVED_NOTIFICATION_CAMPAIGN = ''
