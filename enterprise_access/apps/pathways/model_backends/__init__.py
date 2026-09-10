@@ -22,11 +22,14 @@ from enterprise_access.apps.pathways.model_backends.base import (
 )
 from enterprise_access.apps.pathways.model_backends.claude import BACKEND_NAME as CLAUDE_BACKEND
 from enterprise_access.apps.pathways.model_backends.claude import ClaudeBackend
+from enterprise_access.apps.pathways.model_backends.openai import BACKEND_NAME as OPENAI_BACKEND
+from enterprise_access.apps.pathways.model_backends.openai import OpenAIBackend
 from enterprise_access.apps.pathways.model_backends.xpert import BACKEND_NAME as XPERT_BACKEND
 from enterprise_access.apps.pathways.model_backends.xpert import XpertBackend
 
 __all__ = [
     'CLAUDE_BACKEND',
+    'OPENAI_BACKEND',
     'XPERT_BACKEND',
     'ClaudeBackend',
     'ModelBackend',
@@ -35,11 +38,12 @@ __all__ = [
     'ModelBackendRequestError',
     'ModelResponse',
     'ModelResponseParseError',
+    'OpenAIBackend',
     'XpertBackend',
     'get_model_backend',
 ]
 
-BACKEND_NAMES = (XPERT_BACKEND, CLAUDE_BACKEND)
+BACKEND_NAMES = (XPERT_BACKEND, CLAUDE_BACKEND, OPENAI_BACKEND)
 
 
 def get_model_backend(*, prompt_type: str, backend_name: str | None = None) -> ModelBackend:
@@ -64,6 +68,8 @@ def get_model_backend(*, prompt_type: str, backend_name: str | None = None) -> M
         return XpertBackend(prompt_type=prompt_type)
     if name == CLAUDE_BACKEND:
         return ClaudeBackend()
+    if name == OPENAI_BACKEND:
+        return OpenAIBackend()
 
     raise ModelBackendConfigurationError(
         f'{name!r} is not a known model backend. Expected one of {", ".join(BACKEND_NAMES)}.'

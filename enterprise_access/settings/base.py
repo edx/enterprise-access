@@ -550,8 +550,15 @@ LEARNER_PATHWAYS_SERVER_PIPELINE_ENABLED = False
 # and needs ANTHROPIC_API_KEY plus the `anthropic` package -- selecting it without either
 # raises rather than falling back, so a paid backend is never reached by accident.
 PATHWAYS_MODEL_BACKEND = 'xpert'
+
+# Credentials for the two direct metered backends. Both stay empty here and are supplied
+# per-environment (devstack local config, or edx-internal for deployed envs) -- never
+# committed. Selecting a backend without its key raises rather than falling back, so a
+# paid backend is never reached by accident.
 ANTHROPIC_API_KEY = ''
 PATHWAYS_CLAUDE_MODEL = 'claude-sonnet-5'
+OPENAI_API_KEY = ''
+PATHWAYS_OPENAI_MODEL = 'gpt-4o'
 
 # The enterprise customer the evaluation harness scopes to (Open Decision 1). Production
 # requests take the customer from the request; this is only for offline runs, which have

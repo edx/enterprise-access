@@ -1,10 +1,10 @@
 """
 Tests for the model-backend adapter.
 
-The interchangeability tests are the point of the chunk: they assert the two backends are
+The interchangeability tests are the point of the chunk: they assert all three backends are
 substitutable through the same call, which is what makes "compare the models" a query
-rather than a rig. Neither backend touches the network here -- Xpert is patched at the
-domain function, and Claude takes an injected client.
+rather than a rig. Nothing here touches the network -- Xpert is patched at the domain
+function, and the two metered backends take an injected client.
 """
 import json
 from types import SimpleNamespace
@@ -15,12 +15,14 @@ from django.test import TestCase, override_settings
 
 from enterprise_access.apps.pathways.model_backends import (
     CLAUDE_BACKEND,
+    OPENAI_BACKEND,
     XPERT_BACKEND,
     ClaudeBackend,
     ModelBackendConfigurationError,
     ModelBackendRequestError,
     ModelResponse,
     ModelResponseParseError,
+    OpenAIBackend,
     XpertBackend,
     get_model_backend
 )
@@ -41,6 +43,25 @@ def fake_anthropic_message(text='{"ok": true}', *, input_tokens=120, output_toke
         stop_reason=stop_reason,
         usage=SimpleNamespace(input_tokens=input_tokens, output_tokens=output_tokens),
     )
+
+
+def fake_openai_completion(text='{"ok": true}', *, prompt_tokens=90, completion_tokens=30,
+                           model='gpt-4o', finish_reason='stop'):
+    """Build a stand-in for a chat-completions response object."""
+    return SimpleNamespace(
+        choices=[SimpleNamespace(
+            message=SimpleNamespace(content=text), finish_reason=finish_reason,
+        )],
+        model=model,
+        usage=SimpleNamespace(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens),
+    )
+
+
+def fake_openai_client(completion=None, error=None):
+    """A client whose ``chat.completions.create`` returns a completion or raises."""
+    create = (mock.Mock(side_effect=error) if error
+              else mock.Mock(return_value=completion or fake_openai_completion()))
+    return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
 
 
 def fake_client(message=None, error=None):
@@ -252,6 +273,88 @@ class TestClaudeBackend(TestCase):
         self.assertNotIn('learner said something private', message)
 
 
+class TestOpenAIBackend(TestCase):
+    """
+    Tests for ``OpenAIBackend``.
+    """
+
+    def test_a_completion_returns_content_and_token_counts(self):
+        backend = OpenAIBackend(client=fake_openai_client(), api_key='k')
+
+        response = backend.complete(system_prompt='sys', user_content='hi', trace_id='t')
+
+        self.assertEqual(response.content, '{"ok": true}')
+        self.assertEqual(response.backend, OPENAI_BACKEND)
+        self.assertEqual(response.input_tokens, 90)
+        self.assertEqual(response.output_tokens, 30)
+        self.assertEqual(response.total_tokens, 120)
+
+    def test_json_mode_is_requested(self):
+        """
+        Every prompt in this pipeline requires JSON, and OpenAI can enforce it
+        server-side -- which removes a failure mode rather than handling it.
+        """
+        client = fake_openai_client()
+
+        OpenAIBackend(client=client, api_key='k').complete(
+            system_prompt='sys', user_content='hi', trace_id='t',
+        )
+
+        self.assertEqual(
+            client.chat.completions.create.call_args.kwargs['response_format'],
+            {'type': 'json_object'},
+        )
+
+    def test_the_system_and_user_messages_are_sent_separately(self):
+        client = fake_openai_client()
+
+        OpenAIBackend(client=client, api_key='k').complete(
+            system_prompt='be terse', user_content='the payload', trace_id='t',
+        )
+
+        messages = client.chat.completions.create.call_args.kwargs['messages']
+        self.assertEqual(messages[0], {'role': 'system', 'content': 'be terse'})
+        self.assertEqual(messages[1], {'role': 'user', 'content': 'the payload'})
+
+    def test_a_truncated_response_is_visible_in_the_metadata(self):
+        """``length`` is how a silently-cut-off ordering becomes diagnosable."""
+        completion = fake_openai_completion(finish_reason='length')
+        backend = OpenAIBackend(client=fake_openai_client(completion), api_key='k')
+
+        response = backend.complete(system_prompt='', user_content='', trace_id='t')
+
+        self.assertEqual(response.metadata['finish_reason'], 'length')
+
+    def test_a_response_with_no_choices_yields_empty_content_rather_than_raising(self):
+        """The caller already degrades an unusable response; this is that same case."""
+        completion = SimpleNamespace(choices=[], model='gpt-4o', usage=None)
+        backend = OpenAIBackend(client=fake_openai_client(completion), api_key='k')
+
+        response = backend.complete(system_prompt='', user_content='', trace_id='t')
+
+        self.assertEqual(response.content, '')
+        self.assertIsNone(response.input_tokens)
+
+    @override_settings(OPENAI_API_KEY='')
+    def test_a_missing_api_key_is_a_configuration_error(self):
+        with self.assertRaisesRegex(ModelBackendConfigurationError, 'OPENAI_API_KEY'):
+            OpenAIBackend().complete(system_prompt='', user_content='', trace_id='t')
+
+    def test_a_provider_failure_is_a_request_error_naming_only_the_type(self):
+        """The SDK's message can echo the request body, so only its type is reported."""
+        backend = OpenAIBackend(
+            client=fake_openai_client(error=ValueError('learner said something private')),
+            api_key='k',
+        )
+
+        with self.assertRaises(ModelBackendRequestError) as ctx:
+            backend.complete(system_prompt='', user_content='', trace_id='t')
+
+        message = str(ctx.exception)
+        self.assertIn('ValueError', message)
+        self.assertNotIn('learner said something private', message)
+
+
 class TestBackendInterchangeability(TestCase):
     """
     Scenario: Backends are interchangeable.
@@ -268,13 +371,17 @@ class TestBackendInterchangeability(TestCase):
                 system_prompt='s', user_content='u', trace_id='t'),
             ClaudeBackend(client=fake_client(), api_key='k').complete(
                 system_prompt='s', user_content='u', trace_id='t'),
+            OpenAIBackend(client=fake_openai_client(), api_key='k').complete(
+                system_prompt='s', user_content='u', trace_id='t'),
         ]
 
         for response in responses:
             self.assertIsInstance(response.content, str)
             self.assertIsInstance(response.elapsed_ms, int)
             self.assertIn('elapsed_ms', response.to_trace_dict())
-            self.assertIn(response.backend, (XPERT_BACKEND, CLAUDE_BACKEND))
+            self.assertIn(response.backend, (XPERT_BACKEND, CLAUDE_BACKEND, OPENAI_BACKEND))
+            # Every backend's content must survive the same JSON parse.
+            self.assertIsInstance(response.as_json(), dict)
 
     @mock.patch(PATCH_SEND)
     @mock.patch(PATCH_GET_PROMPT)
@@ -308,6 +415,10 @@ class TestGetModelBackend(TestCase):
     @override_settings(PATHWAYS_MODEL_BACKEND='claude')
     def test_the_claude_backend_is_selectable_by_settings_alone(self):
         self.assertIsInstance(get_model_backend(prompt_type=PromptType.LEARNER_INTENT), ClaudeBackend)
+
+    @override_settings(PATHWAYS_MODEL_BACKEND='openai')
+    def test_the_openai_backend_is_selectable_by_settings_alone(self):
+        self.assertIsInstance(get_model_backend(prompt_type=PromptType.LEARNER_INTENT), OpenAIBackend)
 
     @override_settings(PATHWAYS_MODEL_BACKEND='xpert')
     def test_an_explicit_name_overrides_the_setting(self):

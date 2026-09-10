@@ -28,23 +28,16 @@ import json
 import logging
 
 from enterprise_access.apps.pathways.model_backends import ModelBackendError, get_model_backend
+from enterprise_access.apps.pathways.prompts import CANDIDATE_RERANK_SYSTEM_PROMPT
 from enterprise_access.apps.prompts.models import PromptType
 
 logger = logging.getLogger(__name__)
 
-# Used only when the Claude backend is selected. The Xpert backend ignores it and uses its
-# stored, admin-editable row instead -- which is why this is a fallback and not the
-# canonical prompt: a prompt that mattered would belong in the database.
-FALLBACK_SYSTEM_PROMPT = (
-    'You order a list of candidate courses by how well each one prepares a learner for a '
-    'named career. Judge topical relevance only: do not consider difficulty, provider, or '
-    'duplication, which are handled separately.\n\n'
-    'Return JSON only, matching: {"ordered_keys": ["<key>", ...], '
-    '"rationales": {"<key>": "<one sentence on why this course fits the career>"}}\n\n'
-    'Rules: use only keys that appear in the input; include every key you judge relevant, '
-    'most relevant first; omit a key entirely rather than inventing one; keep each '
-    'rationale under 30 words.'
-)
+# The direct backends (claude, openai) take a caller-supplied system prompt and have no
+# database row, so they use the module constant. The Xpert backend ignores this and reads
+# its admin-editable row, seeded by ``prompts/migrations/0003_seed_candidate_rerank_prompt``.
+# See ``apps/pathways/prompts.py`` for why that asymmetry is deliberate.
+FALLBACK_SYSTEM_PROMPT = CANDIDATE_RERANK_SYSTEM_PROMPT
 
 # Descriptions are truncated before they reach the model. The full text is marketing copy
 # whose tail rarely changes a relevance judgement, and 20 untruncated descriptions is a
