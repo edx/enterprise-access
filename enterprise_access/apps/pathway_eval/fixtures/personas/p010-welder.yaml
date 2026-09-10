@@ -1,0 +1,45 @@
+# Trades / edge. The diagnostic's third outcome: the catalog genuinely cannot serve
+# this learner.
+#
+# Verified against the catalog index on 2026-09-09, two ways:
+#   * a "welding" text query returns 2 hits, neither about welding (a Chinese-language
+#     manufacturing internship and a Spanish-language image-reading course);
+#   * facetFilters skill_names:Welding returns exactly 1 course --
+#     TsinghuaX+THU2023102608 (机械制造实习), a Chinese-language general manufacturing
+#     internship carrying Welding as 1 of 11 skills.
+# One tangentially-tagged, non-English course is not a pathway, so expect_no_coverage
+# holds. This is a content-coverage fact, not a retrieval defect.
+#
+# This is the persona that makes "narrow the product to domains we can serve" a
+# measurable decision instead of an argument -- so unlike the other placeholders, its
+# expectation IS the finding, and it is scoreable as-is.
+id: p010-welder
+domain: trades
+tier: edge
+
+inputs:
+  selected_goals: "Get certified as a welder"
+  free_text: >-
+    I want to get into welding and eventually get certified so I can work on
+    structural jobs instead of general labour.
+  known_context: >-
+    Two years of general construction labour. Some hands-on experience with a
+    MIG welder but no certification and no formal instruction.
+  interested_industries: "Construction"
+
+expected:
+  ground_truth_status: expert_authored
+  expect_no_coverage: true
+  careers:
+    - external_id: "ET7A98E5539C2B749C"
+      name: "Welder"
+  courses: []
+
+catalog:
+  snapshot_date: 2026-09-09
+
+notes: >-
+  Marked expert_authored because the claim being asserted is absence, and absence was
+  verified directly against the index rather than judged. The career exists in the
+  Lightcast taxonomy, which is the point: career retrieval will succeed and course
+  retrieval cannot. Any pathway returned for this persona is padding.

@@ -90,6 +90,30 @@ Uses `edx-rbac` for fine-grained permissions with:
 ### 15. Use ddt to parameterize unit tests
 - Improve test DRYness by using the `ddt` packages `@data` and `@unpack` decorators.
 
+### 16. Evaluation harnesses own no domain logic
+- An eval app (`apps/pathway_eval`) loads fixtures, calls production code, scores results, reports
+- Pipeline logic — retrieval, translation, ranking — stays production code elsewhere; if the
+  harness reimplements any of it, the harness is what gets measured
+- Fixtures validate against the **real** request serializer, not a copy of its rules, so a
+  contract change fails at load time rather than mid-run
+- Ground-truth fixtures declare their own provenance in a machine-readable field
+  (`ground_truth_status: placeholder | expert_authored`). Authoring ground truth outlasts
+  building the harness, so "is this a real expectation?" must be queryable — a comment in a
+  fixture cannot keep a placeholder out of a headline metric
+- Incomplete ground truth **loads** and reports itself as unscoreable. It is neither a
+  validation error (it must be visible and chaseable) nor a scored failure
+- Diagnostics name their epistemic limits in the result. Where a credential can only probe
+  rather than enumerate, the outcome is `NOT_FOUND_IN_INDEX`, not "absent" — an over-claimed
+  negative drives the most expensive decisions
+
+### 17. Search clients bind a credential to an index, not to a service
+- Where two indexes need different credentials, make the wrong pairing unconstructable rather
+  than validated: separate methods per index, and no parameter for the credential that must
+  not be used there
+- Guard against a *misconfigured* credential too, not just a miscalled one
+- A degraded mode (unscoped search) requires both a settings flag and an explicit call-site
+  argument, and is never reached by fallback — missing or expired scoping raises
+
 ### Key Takeaways for Implementation:
 - Check permissions early using `@permission_required` decorator
 - Use separate serializers for request/response

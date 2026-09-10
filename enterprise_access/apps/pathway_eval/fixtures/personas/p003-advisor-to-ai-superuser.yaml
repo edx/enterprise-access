@@ -1,0 +1,45 @@
+# Persona 3 — Student success advisor → AI superuser
+#
+# Imported from "Learner Rec Persona Testing.xlsx", authored by the product team. Expected-
+# course titles were resolved to catalog course keys against the live index on 2026-09-09; only
+# exact title matches were kept.
+id: p003-advisor-to-ai-superuser
+domain: technology
+tier: core
+
+inputs:
+  selected_goals: >-
+    Become really good at AI so I can get a better job in my field
+  free_text: >-
+    Everyone is raving about AI and I want to get in on the action
+  known_context: >-
+    18 months as student success advisor at a public 4 year university
+  interested_industries: >-
+    Education, tech, management
+
+expected:
+  ground_truth_status: expert_authored
+  expect_no_coverage: false
+  careers:
+    - external_id: "ETF483B1F2DAC63AB7"
+      name: "Student Success Advisor"
+  courses:
+    - key: "GTx+AI4E102x"
+      title: "Chatbots for Instruction"
+    - key: "edX+BCT-prompt"
+      title: "Try It: Prompt Engineering"
+    - key: "DelftX+AIIP2x"
+      title: "AI in Practice: Applying AI"
+    - key: "Microsoft+WSWAI"
+      title: "AI for Workplace Productivity"
+
+catalog:
+  snapshot_date: 2026-09-09
+
+notes: >-
+  Authored ground truth; all four expected courses resolved exactly. Observed-run note: this
+  learner does not want a career change but the careers page forces one, and the returned
+  courses are "high level scientific courses on artificial intelligence" rather than applied
+  ones. Relevant measurement: 92% of courses tagged with the "Artificial Intelligence" subject
+  carry no skills at all, so the applied AI content that would serve this learner is largely
+  unreachable by skill retrieval.

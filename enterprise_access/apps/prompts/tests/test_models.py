@@ -108,7 +108,14 @@ class XpertLearnerPathwaysSystemPromptTests(TestCase):
         XpertLearnerPathwaysSystemPromptFactory(prompt_type=PromptType.LEARNER_INTENT)
         XpertLearnerPathwaysSystemPromptFactory(prompt_type=PromptType.RECOMMENDATIONS_FEEDBACK)
 
-        self.assertEqual(XpertLearnerPathwaysSystemPrompt.objects.count(), 2)
+        # One row each for the two types created here. Asserted per type rather than as a
+        # table count, because migration 0003 seeds a candidate_rerank row and the
+        # constraint under test is per prompt_type.
+        for prompt_type in (PromptType.LEARNER_INTENT, PromptType.RECOMMENDATIONS_FEEDBACK):
+            self.assertEqual(
+                XpertLearnerPathwaysSystemPrompt.objects.filter(prompt_type=prompt_type).count(),
+                1,
+            )
 
     def test_edits_preserve_history_via_simple_history(self):
         prompt = XpertLearnerPathwaysSystemPromptFactory(

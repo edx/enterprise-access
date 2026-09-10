@@ -38,8 +38,14 @@ from .customer_billing import (
     TransactionsListResponseSerializer
 )
 from .learner_pathways import (
+    CareerCandidateSerializer,
+    CareerDiscoveryRequestSerializer,
+    CareerDiscoveryResponseSerializer,
     LearningIntentRequestSerializer,
     LearningIntentResponseSerializer,
+    PathwayCourseSerializer,
+    PathwayRequestSerializer,
+    PathwayResponseSerializer,
     RecommendationFeedbackRequestSerializer,
     RecommendationFeedbackResponseSerializer
 )
