@@ -12,8 +12,9 @@ from unittest import mock
 
 import ddt
 from django.core.cache import cache as django_cache
-from django.test import TestCase, override_settings
+from django.test import TestCase
 from edx_rest_framework_extensions.auth.jwt.authentication import JwtAuthentication
+from edx_toggles.toggles.testutils import override_waffle_switch
 from rest_framework import permissions, status
 from rest_framework.reverse import reverse
 from rest_framework.test import APIClient
@@ -28,6 +29,7 @@ from enterprise_access.apps.pathways.models import CareerDiscoveryWorkflow, Extr
 from enterprise_access.apps.prompts.api_client import XpertAPIRequestError, XpertResponseMessage
 from enterprise_access.apps.prompts.models import PromptType, XpertLearnerPathwaysSystemPrompt
 from enterprise_access.apps.prompts.tests.factories import XpertLearnerPathwaysSystemPromptFactory
+from enterprise_access.toggles import LEARNER_PATHWAYS_SERVER_PIPELINE
 from test_utils import APITest
 
 PATCH_XPERT_CLIENT = 'enterprise_access.apps.prompts.api.XpertAPIClient'
@@ -95,7 +97,7 @@ class CareerDiscoveryAPITestMixin:
         return self.client.post(self.url, data=body, format='json')
 
 
-@override_settings(LEARNER_PATHWAYS_SERVER_PIPELINE_ENABLED=True)
+@override_waffle_switch(LEARNER_PATHWAYS_SERVER_PIPELINE, True)
 class TestCareerDiscoverySuccess(CareerDiscoveryAPITestMixin, APITest):
     """Tests for a successful career discovery request."""
 
@@ -158,7 +160,7 @@ class TestCareerDiscoverySuccess(CareerDiscoveryAPITestMixin, APITest):
 
 
 @ddt.ddt
-@override_settings(LEARNER_PATHWAYS_SERVER_PIPELINE_ENABLED=True)
+@override_waffle_switch(LEARNER_PATHWAYS_SERVER_PIPELINE, True)
 class TestCareerDiscoveryAuthorization(CareerDiscoveryAPITestMixin, APITest):
     """Authorization and validation tests."""
 
@@ -221,12 +223,12 @@ class TestCareerDiscoveryFeatureFlag(CareerDiscoveryAPITestMixin, APITest):
         # distinguished from a missing one by probing it with a bad body.
         assert self.post_careers({}).status_code == status.HTTP_404_NOT_FOUND
 
-    @override_settings(LEARNER_PATHWAYS_SERVER_PIPELINE_ENABLED=True)
+    @override_waffle_switch(LEARNER_PATHWAYS_SERVER_PIPELINE, True)
     def test_enabled_pipeline_serves_the_endpoint(self):
         assert self.post_careers().status_code == status.HTTP_200_OK
 
 
-@override_settings(LEARNER_PATHWAYS_SERVER_PIPELINE_ENABLED=True)
+@override_waffle_switch(LEARNER_PATHWAYS_SERVER_PIPELINE, True)
 class TestCareerDiscoveryFailures(CareerDiscoveryAPITestMixin, APITest):
     """A failed step returns 500 and leaves the failure on the record."""
 

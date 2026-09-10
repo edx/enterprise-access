@@ -7,7 +7,6 @@ trace that can be inspected -- or re-serialized -- afterwards without re-running
 """
 import logging
 
-from django.conf import settings
 from drf_spectacular.utils import extend_schema
 from edx_rbac.decorators import permission_required
 from edx_rest_framework_extensions.auth.jwt.authentication import JwtAuthentication
@@ -24,6 +23,7 @@ from enterprise_access.apps.api.serializers.learner_pathways import LEARNER_PATH
 from enterprise_access.apps.core import constants
 from enterprise_access.apps.pathways.models import CareerDiscoveryWorkflow, PathwayAssemblyWorkflow
 from enterprise_access.apps.workflow.exceptions import UnitOfWorkException
+from enterprise_access.toggles import learner_pathways_server_pipeline_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +98,7 @@ class CareerDiscoveryViewSet(ViewSet):
         """
         # Checked before validation so a disabled pipeline is indistinguishable from an
         # endpoint that does not exist, whatever the payload.
-        if not settings.LEARNER_PATHWAYS_SERVER_PIPELINE_ENABLED:
+        if not learner_pathways_server_pipeline_enabled():
             raise NotFound()
 
         request_serializer = api_serializers.CareerDiscoveryRequestSerializer(data=request.data)
@@ -198,7 +198,7 @@ class PathwayViewSet(ViewSet):
         and "something broke" lead to different client behaviour, and the catalog
         genuinely has careers with no matching courses.
         """
-        if not settings.LEARNER_PATHWAYS_SERVER_PIPELINE_ENABLED:
+        if not learner_pathways_server_pipeline_enabled():
             raise NotFound()
 
         request_serializer = api_serializers.PathwayRequestSerializer(data=request.data)

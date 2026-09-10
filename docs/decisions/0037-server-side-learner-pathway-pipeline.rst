@@ -194,9 +194,11 @@ deletes.
 
 **Latency is unchanged and unbudgeted.** Steps run inline and synchronously, so a
 learner-facing pathway request costs the same wall clock as today's client-side flow.
-ADR 0025 notes async-via-Celery is envisioned but unbuilt. The endpoints are behind a
-feature flag and unwired from any frontend, so this is not yet a user-facing concern — but
-it needs a budget before it becomes one.
+ADR 0025 notes async-via-Celery is envisioned but unbuilt. The endpoints are behind an
+admin-toggled switch and unwired from any frontend, so this is not yet a user-facing
+concern — but it needs a budget before it becomes one. One measured data point: a live
+five-step assembly run with enrichment disabled took 9.7–15.2 seconds, dominated by the
+single model call.
 
 Consequences
 ============
@@ -208,9 +210,28 @@ Consequences
 * Quality is measurable. ``run_pathway_harness`` produces traces and
   ``report_pathway_harness`` scores them into the three tiers, so a re-score never needs a
   re-run — which matters because a run costs money.
-* The endpoints are gated by ``LEARNER_PATHWAYS_SERVER_PIPELINE_ENABLED`` (default
-  ``False``, so they 404) and by an RBAC role. No MFE calls them; rollback is revoking
-  access, not reverting behaviour.
+* The endpoints are gated by the ``enterprise_access.learner_pathways_server_pipeline``
+  waffle **switch** (off by default, so they 404) and by an RBAC role. No MFE calls them;
+  rollback is flipping the switch, not reverting behaviour.
+* **The gates are switches, not flags, and that is a decision rather than a detail.** A
+  waffle flag is request-scoped: enableable per-user, by percentage, and -- with
+  ``WAFFLE_OVERRIDE`` -- by a ``?flag_name=1`` query string. A switch is one global
+  boolean an administrator sets in Django admin and can never be overridden from a
+  request. Two properties follow. Nobody can enable an unreleased pipeline that spends
+  money per call by crafting a URL. And because a switch needs no request, the harness and
+  the management commands honour the same toggle as the endpoints, which a flag could not
+  express off-request. ``enterprise_access/tests/test_toggles.py`` asserts the type, so
+  this cannot be silently downgraded.
+* **Re-ranking has its own kill switch, with inverted polarity.**
+  ``enterprise_access.learner_pathways_disable_candidate_rerank`` defaults to off, meaning
+  re-ranking runs. An enable-style switch defaulting to off would mean enabling the
+  pipeline yielded pathways with no model input at all -- retrieval order, no error, a
+  well-formed five-course response. That silent degradation has already occurred once in
+  this pipeline (see the ``ordered_keys`` note under Divergences), so it must not be
+  reachable by forgetting a second switch. Turning the kill switch on is a supported
+  degradation for cost, latency or provider failure: deterministic assembly still produces
+  a valid pathway, and it overrides the workflow's own per-run input so it stops harness
+  spend too.
 * **The measured bar is not met.** 23% recall@20 and 0% on technology is far below
   anything worth putting in front of a learner. This ADR records the shape and the
   instrumentation; it does not claim the quality problem is solved. Two Tier 2 numbers

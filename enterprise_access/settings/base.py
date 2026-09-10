@@ -539,10 +539,10 @@ ALGOLIA_JOBS_INDEX_NAME = ''
 # plain search key. Must stay False anywhere a learner response could be built from it.
 ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH = False
 
-# Server-side learner pathways pipeline (apps/pathways). Off by default: nothing in
-# production calls these endpoints yet, and rollback is disabling access rather than
-# reverting behaviour. Off means the endpoints 404 -- no other code path is affected.
-LEARNER_PATHWAYS_SERVER_PIPELINE_ENABLED = False
+# The server-side learner pathways pipeline (apps/pathways) is gated by a waffle switch,
+# `enterprise_access.learner_pathways_server_pipeline`, not by a setting -- so it can be
+# turned on and off in Django admin without a deploy. See `enterprise_access/toggles.py`
+# for the switch definitions and why a switch rather than a flag.
 
 # Which model backend the pathway pipeline issues completions through (apps/pathways/
 # model_backends). 'xpert' routes through the stored, admin-editable prompts and is the

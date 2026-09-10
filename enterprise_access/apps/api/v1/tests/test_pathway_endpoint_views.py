@@ -14,8 +14,9 @@ from unittest import mock
 
 import ddt
 from django.core.cache import cache as django_cache
-from django.test import TestCase, override_settings
+from django.test import TestCase
 from edx_rest_framework_extensions.auth.jwt.authentication import JwtAuthentication
+from edx_toggles.toggles.testutils import override_waffle_switch
 from rest_framework import permissions, status
 from rest_framework.reverse import reverse
 from rest_framework.test import APIClient
@@ -28,6 +29,7 @@ from enterprise_access.apps.core.models import EnterpriseAccessFeatureRole, Ente
 from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.pathways.models import AssemblePathwayStep, PathwayAssemblyWorkflow
 from enterprise_access.apps.prompts.api import PromptError
+from enterprise_access.toggles import LEARNER_PATHWAYS_SERVER_PIPELINE
 from test_utils import APITest
 
 PATCH_SNAPSHOT = 'enterprise_access.apps.pathways.catalog_translation.snapshot_catalog_facets'
@@ -139,7 +141,7 @@ class PathwayAPITestMixin:
         return self.client.post(self.url, data=body, format='json')
 
 
-@override_settings(LEARNER_PATHWAYS_SERVER_PIPELINE_ENABLED=True)
+@override_waffle_switch(LEARNER_PATHWAYS_SERVER_PIPELINE, True)
 class TestPathwaySuccess(PathwayAPITestMixin, APITest):
     """Tests for a successful pathway request."""
 
@@ -221,7 +223,7 @@ class TestPathwaySuccess(PathwayAPITestMixin, APITest):
         assert self.post_pathway().status_code == status.HTTP_200_OK
 
 
-@override_settings(LEARNER_PATHWAYS_SERVER_PIPELINE_ENABLED=True)
+@override_waffle_switch(LEARNER_PATHWAYS_SERVER_PIPELINE, True)
 class TestPathwayNoCoverage(PathwayAPITestMixin, APITest):
     """A career with no catalog coverage is an answer, not an error."""
 
@@ -255,7 +257,7 @@ class TestPathwayNoCoverage(PathwayAPITestMixin, APITest):
 
 
 @ddt.ddt
-@override_settings(LEARNER_PATHWAYS_SERVER_PIPELINE_ENABLED=True)
+@override_waffle_switch(LEARNER_PATHWAYS_SERVER_PIPELINE, True)
 class TestPathwayAuthorization(PathwayAPITestMixin, APITest):
     """Authorization and validation tests."""
 
@@ -297,7 +299,7 @@ class TestPathwayAuthorization(PathwayAPITestMixin, APITest):
         assert self.client.get(self.url).status_code == status.HTTP_405_METHOD_NOT_ALLOWED
 
 
-@override_settings(LEARNER_PATHWAYS_SERVER_PIPELINE_ENABLED=True)
+@override_waffle_switch(LEARNER_PATHWAYS_SERVER_PIPELINE, True)
 class TestPathwayFailures(PathwayAPITestMixin, APITest):
     """A broken dependency is a 500, and never a silently empty pathway."""
 
@@ -324,16 +326,16 @@ class TestPathwayFailures(PathwayAPITestMixin, APITest):
 class TestPathwayFeatureFlag(PathwayAPITestMixin, APITest):
     """The endpoint 404s while the pipeline is disabled."""
 
-    @override_settings(LEARNER_PATHWAYS_SERVER_PIPELINE_ENABLED=False)
+    @override_waffle_switch(LEARNER_PATHWAYS_SERVER_PIPELINE, False)
     def test_disabled_pipeline_returns_404(self):
         assert self.post_pathway().status_code == status.HTTP_404_NOT_FOUND
 
-    @override_settings(LEARNER_PATHWAYS_SERVER_PIPELINE_ENABLED=False)
+    @override_waffle_switch(LEARNER_PATHWAYS_SERVER_PIPELINE, False)
     def test_disabled_pipeline_returns_404_for_an_invalid_payload_too(self):
         """A disabled endpoint must be indistinguishable from one that does not exist."""
         assert self.post_pathway({}).status_code == status.HTTP_404_NOT_FOUND
 
-    @override_settings(LEARNER_PATHWAYS_SERVER_PIPELINE_ENABLED=True)
+    @override_waffle_switch(LEARNER_PATHWAYS_SERVER_PIPELINE, True)
     def test_enabled_pipeline_serves_the_endpoint(self):
         assert self.post_pathway().status_code == status.HTTP_200_OK
 

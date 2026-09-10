@@ -9,6 +9,7 @@ from unittest import mock
 from uuid import uuid4
 
 from django.test import TestCase
+from edx_toggles.toggles.testutils import override_waffle_switch
 
 from enterprise_access.apps.pathways.models import (
     AssemblePathwayInput,
@@ -32,6 +33,7 @@ from enterprise_access.apps.pathways.models import (
 )
 from enterprise_access.apps.prompts.api import PromptError
 from enterprise_access.apps.prompts.api_client import XpertAPIError
+from enterprise_access.toggles import LEARNER_PATHWAYS_DISABLE_CANDIDATE_RERANK
 
 PATCH_RETRIEVE = 'enterprise_access.apps.pathways.course_retrieval.retrieve_candidate_courses'
 PATCH_RERANK = 'enterprise_access.apps.pathways.reranking.rerank_candidates'
@@ -214,6 +216,22 @@ class TestRerankCandidatesStep(TestCase):
         ))
 
         self.assertTrue(RerankCandidatesStep.should_execute(accumulated, workflow))
+
+    @override_waffle_switch(LEARNER_PATHWAYS_DISABLE_CANDIDATE_RERANK, True)
+    def test_the_admin_kill_switch_stops_it_even_when_the_caller_asked_for_it(self):
+        """
+        The administrator switch overrides the workflow's own ``enabled`` input.
+
+        That ordering is the point of the switch: the harness and any other offline
+        caller supply their own input, so a toggle that only narrowed the request path
+        would not actually stop paid model calls.
+        """
+        workflow = mock.Mock(input_data={RerankCandidatesInput.KEY: {'enabled': True}})
+        accumulated = Accumulator(retrieve_candidates_output=RetrieveCandidatesOutput(
+            courses=[CourseCandidate(key='A+1')],
+        ))
+
+        self.assertFalse(RerankCandidatesStep.should_execute(accumulated, workflow))
 
     @mock.patch(PATCH_RERANK)
     def test_the_model_trace_is_persisted_on_the_output(self, mock_rerank):

@@ -25,6 +25,7 @@ from enterprise_access.apps.prompts.api_client import XpertAPIError
 from enterprise_access.apps.workflow.exceptions import UnitOfWorkException
 from enterprise_access.apps.workflow.models import AbstractWorkflow, AbstractWorkflowStep
 from enterprise_access.apps.workflow.serialization import BaseInputOutput
+from enterprise_access.toggles import learner_pathways_candidate_rerank_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -855,7 +856,17 @@ class RerankCandidatesStep(AbstractWorkflowStep):
 
     @classmethod
     def should_execute(cls, accumulated_output, workflow):
-        """Run only when enabled and there are candidates to order."""
+        """
+        Run only when the switch is on, the caller asked for it, and there is something
+        to order.
+
+        The administrator switch is checked *first* and independently of the workflow's
+        own ``enabled`` input, so turning it off stops paid model calls for every caller
+        at once -- including harness runs, which supply their own input and would
+        otherwise ignore it.
+        """
+        if not learner_pathways_candidate_rerank_enabled():
+            return False
         rerank_input = (workflow.input_data or {}).get(RerankCandidatesInput.KEY) or {}
         if not rerank_input.get('enabled', True):
             return False
