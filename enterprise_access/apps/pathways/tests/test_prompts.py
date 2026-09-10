@@ -13,7 +13,7 @@ from django.test import TestCase
 
 from enterprise_access.apps.pathways.prompts import CANDIDATE_RERANK_OUTPUT_SCHEMA, CANDIDATE_RERANK_SYSTEM_PROMPT
 from enterprise_access.apps.pathways.reranking import FALLBACK_SYSTEM_PROMPT, parse_rerank_response
-from enterprise_access.apps.prompts.api import build_system_prompt
+from enterprise_access.apps.prompts.api import build_system_prompt, compose_system_prompt
 from enterprise_access.apps.prompts.models import PromptType, XpertLearnerPathwaysSystemPrompt
 
 
@@ -28,7 +28,34 @@ class TestCandidateRerankPromptDefaults(TestCase):
         automatically. The Xpert path reads its database row instead, which is the
         deliberate asymmetry.
         """
-        self.assertEqual(FALLBACK_SYSTEM_PROMPT, CANDIDATE_RERANK_SYSTEM_PROMPT)
+        self.assertTrue(FALLBACK_SYSTEM_PROMPT.startswith(CANDIDATE_RERANK_SYSTEM_PROMPT.strip()))
+
+    def test_the_direct_backends_are_sent_the_output_schema(self):
+        """
+        Regression test for a live defect: the fallback used to be the prompt text alone.
+        The text asks for JSON but never names ``ordered_keys`` -- that field name only
+        exists in the schema -- so gpt-4o returned a valid ranking under field names of
+        its own choosing and the parser discarded all of it.
+
+        The Xpert path never had the bug, because ``build_system_prompt`` appends the
+        schema from the database row. The direct backends have no row, so they must
+        append it from the constant.
+        """
+        self.assertIn('EXPECTED OUTPUT SCHEMA', FALLBACK_SYSTEM_PROMPT)
+        self.assertIn('ordered_keys', FALLBACK_SYSTEM_PROMPT)
+        self.assertIn('rationales', FALLBACK_SYSTEM_PROMPT)
+
+    def test_both_prompt_paths_compose_identically(self):
+        """
+        The direct backends and the Xpert row must produce the same string from the same
+        text and schema, or a prompt validated on one backend is not the prompt the other
+        sends.
+        """
+        composed = compose_system_prompt(
+            CANDIDATE_RERANK_SYSTEM_PROMPT, CANDIDATE_RERANK_OUTPUT_SCHEMA,
+        )
+
+        self.assertEqual(FALLBACK_SYSTEM_PROMPT, composed)
 
     def test_the_prompt_tells_the_model_what_not_to_optimise_for(self):
         """

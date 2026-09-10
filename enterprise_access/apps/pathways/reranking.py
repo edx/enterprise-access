@@ -28,7 +28,8 @@ import json
 import logging
 
 from enterprise_access.apps.pathways.model_backends import ModelBackendError, get_model_backend
-from enterprise_access.apps.pathways.prompts import CANDIDATE_RERANK_SYSTEM_PROMPT
+from enterprise_access.apps.pathways.prompts import CANDIDATE_RERANK_OUTPUT_SCHEMA, CANDIDATE_RERANK_SYSTEM_PROMPT
+from enterprise_access.apps.prompts.api import compose_system_prompt
 from enterprise_access.apps.prompts.models import PromptType
 
 logger = logging.getLogger(__name__)
@@ -37,7 +38,15 @@ logger = logging.getLogger(__name__)
 # database row, so they use the module constant. The Xpert backend ignores this and reads
 # its admin-editable row, seeded by ``prompts/migrations/0003_seed_candidate_rerank_prompt``.
 # See ``apps/pathways/prompts.py`` for why that asymmetry is deliberate.
-FALLBACK_SYSTEM_PROMPT = CANDIDATE_RERANK_SYSTEM_PROMPT
+#
+# The schema is appended here, exactly as ``build_system_prompt`` appends it on the Xpert
+# path. Without it the prompt asks for JSON but never names ``ordered_keys``, so the model
+# invents its own field names and ``parse_rerank_response`` reads none of them. A live
+# gpt-4o run on 2026-09-10 did precisely that: a valid, well-reasoned ranking, returned
+# under different keys, discarded in full and logged only as "no ordered_keys list".
+FALLBACK_SYSTEM_PROMPT = compose_system_prompt(
+    CANDIDATE_RERANK_SYSTEM_PROMPT, CANDIDATE_RERANK_OUTPUT_SCHEMA,
+)
 
 # Descriptions are truncated before they reach the model. The full text is marketing copy
 # whose tail rarely changes a relevance judgement, and 20 untruncated descriptions is a
