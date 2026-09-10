@@ -1,13 +1,14 @@
 """
 customer billing serializers
 """
+import logging
 from decimal import Decimal, InvalidOperation
 from urllib.parse import urljoin
 
 from django.conf import settings
-from django.core.cache import cache
 from django_countries.serializers import CountryFieldMixin
 from drf_spectacular.utils import extend_schema_field
+from edx_django_utils.cache import TieredCache
 from rest_framework import serializers
 from rest_framework.exceptions import APIException
 
@@ -21,6 +22,11 @@ from enterprise_access.apps.customer_billing.models import (
     SspProduct,
     StripeEventSummary
 )
+from enterprise_access.cache_utils import versioned_cache_key
+
+logger = logging.getLogger(__name__)
+
+COURSE_COUNT_CACHE_KEY_PREFIX = 'academy_course_count'
 
 
 class RecordConflictError(APIException):
@@ -787,16 +793,19 @@ class SspEssentialsProductResponseSerializer(serializers.Serializer):
         if not catalog_query_uuid:
             return None
 
-        cache_key = f'academy_course_count_{catalog_query_uuid}'
-        cached_count = cache.get(cache_key)
-        if cached_count is not None:
-            return cached_count
+        cache_key = versioned_cache_key(COURSE_COUNT_CACHE_KEY_PREFIX, str(catalog_query_uuid))
+        cached_response = TieredCache.get_cached_response(cache_key)
+        if cached_response.is_found:
+            return cached_response.value
 
         try:
             data = EnterpriseCatalogApiClient().get_catalog_query(catalog_query_uuid)
             course_count = data.get('course_count')
             if course_count is not None:
-                cache.set(cache_key, course_count, timeout=6 * 3600)
+                TieredCache.set_all_tiers(
+                    cache_key, course_count, django_cache_timeout=settings.ACADEMY_DATA_CACHE_TIMEOUT,
+                )
             return course_count
         except Exception:  # pylint: disable=broad-exception-caught
+            logger.warning('Failed to fetch course count for catalog query %s', catalog_query_uuid, exc_info=True)
             return None
