@@ -10,7 +10,6 @@ from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 from rest_framework.exceptions import APIException
 
-from enterprise_access.apps.customer_billing.academy_api import get_cached_course_count
 from enterprise_access.apps.customer_billing.constants import ALLOWED_CHECKOUT_INTENT_STATE_TRANSITIONS
 from enterprise_access.apps.customer_billing.embargo import get_embargoed_countries
 from enterprise_access.apps.customer_billing.models import (
@@ -780,8 +779,6 @@ class SspEssentialsProductResponseSerializer(serializers.Serializer):
     def get_lookup_key(self, obj):
         return obj.stripe_price_lookup_key
 
-    def get_course_count(self, obj):
+    def get_course_count(self, obj):  # pylint: disable=unused-argument
         """Return the cached or fetched course count for the product's catalog query."""
-        if not getattr(obj, 'catalog_query_uuid', None):
-            return None
-        return get_cached_course_count(obj.catalog_query_uuid)
+        return None
