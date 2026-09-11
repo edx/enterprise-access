@@ -376,7 +376,7 @@ class TestSendTrialEndedCancellationEmailTask(TestCase):
 
         mock_braze_client.return_value.send_campaign_message.assert_called_once()
         call_args = mock_braze_client.return_value.send_campaign_message.call_args
-        self.assertEqual(call_args[0][0], settings.BRAZE_TRIAL_ENDED_CANCELLATION_CAMPAIGN)
+        self.assertEqual(call_args[0][0], settings.BRAZE_ENTERPRISE_PROVISION_TRIAL_END_SUBSCRIPTION_ENDED_CAMPAIGN)
         trigger_props = call_args[1]['trigger_properties']
         self.assertEqual(trigger_props['product_type'], 'teams')
         self.assertEqual(trigger_props['product_type_display'], 'Teams')
@@ -406,7 +406,7 @@ class TestSendTrialEndedCancellationEmailTask(TestCase):
 
         mock_braze_client.return_value.send_campaign_message.assert_called_once()
         call_args = mock_braze_client.return_value.send_campaign_message.call_args
-        self.assertEqual(call_args[0][0], settings.BRAZE_TRIAL_ENDED_CANCELLATION_CAMPAIGN)
+        self.assertEqual(call_args[0][0], settings.BRAZE_ENTERPRISE_PROVISION_TRIAL_END_SUBSCRIPTION_ENDED_CAMPAIGN)
         trigger_props = call_args[1]['trigger_properties']
         self.assertEqual(trigger_props['product_type'], 'essentials')
         self.assertEqual(trigger_props['product_type_display'], 'Essentials')
