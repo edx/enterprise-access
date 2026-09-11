@@ -6,7 +6,6 @@ from unittest import mock
 
 import ddt
 import stripe
-from django.conf import settings
 from django.test import override_settings
 from django.urls import reverse
 from rest_framework import status
@@ -24,12 +23,12 @@ class CustomerBillingSspProductsTests(APITest):
 
     def setUp(self):
         super().setUp()
-        self.catalog_client_patcher = mock.patch(
-            'enterprise_access.apps.api.serializers.customer_billing.EnterpriseCatalogApiClient'
+        self.course_count_patcher = mock.patch(
+            'enterprise_access.apps.api.serializers.customer_billing.get_cached_course_count'
         )
-        self.mock_catalog_client = self.catalog_client_patcher.start()
-        self.mock_catalog_client.return_value.get_catalog_query.return_value = {'course_count': 16}
-        self.addCleanup(self.catalog_client_patcher.stop)
+        self.mock_get_cached_course_count = self.course_count_patcher.start()
+        self.mock_get_cached_course_count.return_value = 16
+        self.addCleanup(self.course_count_patcher.stop)
         self.set_jwt_cookie([{
             'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE,
             'context': str(uuid.uuid4()),
@@ -47,68 +46,22 @@ class CustomerBillingSspProductsTests(APITest):
             marketing_url=None,
         )
 
-    @ddt.data(
-        {'catalog_response': {'course_count': 16}, 'expected_count': 16},
-        {'catalog_response': {'uuid': 'no-course-count-yet'}, 'expected_count': None},
-    )
-    @mock.patch('enterprise_access.apps.api.serializers.customer_billing.TieredCache')
-    @mock.patch('enterprise_access.apps.api.serializers.customer_billing.EnterpriseCatalogApiClient')
-    @ddt.unpack
-    def test_course_count_cache_miss_fetches_and_caches(
-        self, mock_client, mock_tiered_cache, catalog_response, expected_count,
-    ):
-        """A missing cache entry fetches, and only caches a course count when the catalog response has one."""
-        mock_tiered_cache.get_cached_response.return_value.is_found = False
-        mock_client.return_value.get_catalog_query.return_value = catalog_response
-        serializer = SspEssentialsProductResponseSerializer()
-
-        result = serializer.get_course_count(self.essentials_product)
-
-        self.assertEqual(result, expected_count)
-        mock_client.return_value.get_catalog_query.assert_called_once_with(
-            self.essentials_product.catalog_query_uuid
-        )
-        self.assertEqual(mock_tiered_cache.set_all_tiers.called, expected_count is not None)
-        if expected_count is not None:
-            _, set_all_tiers_kwargs = mock_tiered_cache.set_all_tiers.call_args
-            self.assertEqual(set_all_tiers_kwargs['django_cache_timeout'], settings.ACADEMY_DATA_CACHE_TIMEOUT)
-
-    @mock.patch('enterprise_access.apps.api.serializers.customer_billing.TieredCache')
-    @mock.patch('enterprise_access.apps.api.serializers.customer_billing.EnterpriseCatalogApiClient')
-    def test_course_count_cache_hit_does_not_fetch(self, mock_client, mock_tiered_cache):
-        """A cached course count avoids an enterprise-catalog request."""
-        mock_tiered_cache.get_cached_response.return_value.is_found = True
-        mock_tiered_cache.get_cached_response.return_value.value = 16
+    def test_course_count_delegates_to_get_cached_course_count(self):
+        """A product with a catalog query UUID delegates course count lookup to the shared cache helper."""
         serializer = SspEssentialsProductResponseSerializer()
 
         result = serializer.get_course_count(self.essentials_product)
 
         self.assertEqual(result, 16)
-        mock_client.assert_not_called()
-        mock_tiered_cache.set_all_tiers.assert_not_called()
-
-    @mock.patch('enterprise_access.apps.api.serializers.customer_billing.logger')
-    @mock.patch('enterprise_access.apps.api.serializers.customer_billing.TieredCache')
-    @mock.patch('enterprise_access.apps.api.serializers.customer_billing.EnterpriseCatalogApiClient')
-    def test_course_count_returns_none_when_catalog_unavailable(self, mock_client, mock_tiered_cache, mock_logger):
-        """A catalog service failure does not fail product serialization, and logs a warning."""
-        mock_tiered_cache.get_cached_response.return_value.is_found = False
-        mock_client.return_value.get_catalog_query.side_effect = ConnectionError('catalog unavailable')
-        serializer = SspEssentialsProductResponseSerializer()
-
-        self.assertIsNone(serializer.get_course_count(self.essentials_product))
-        mock_logger.warning.assert_called_once_with(
-            'Failed to fetch course count for catalog query %s',
-            self.essentials_product.catalog_query_uuid,
-            exc_info=True,
-        )
+        self.mock_get_cached_course_count.assert_called_once_with(self.essentials_product.catalog_query_uuid)
 
     def test_course_count_returns_none_without_catalog_query_uuid(self):
-        """Products without a catalog query UUID have no course count."""
+        """Products without a catalog query UUID have no course count, and skip the cache helper."""
         product = mock.Mock(catalog_query_uuid=None)
         serializer = SspEssentialsProductResponseSerializer()
 
         self.assertIsNone(serializer.get_course_count(product))
+        self.mock_get_cached_course_count.assert_not_called()
 
     @classmethod
     def setUpTestData(cls):

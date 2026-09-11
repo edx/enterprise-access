@@ -4,7 +4,7 @@ from uuid import uuid4
 
 from django.test import TestCase
 
-from enterprise_access.apps.customer_billing.academy_api import get_cached_academy_data
+from enterprise_access.apps.customer_billing.academy_api import get_cached_academy_data, get_cached_course_count
 
 
 class TestGetCachedAcademyData(TestCase):
@@ -51,4 +51,58 @@ class TestGetCachedAcademyData(TestCase):
 
     def test_empty_string_uuid_returns_none(self):
         result = get_cached_academy_data('')
+        self.assertIsNone(result)
+
+
+class TestGetCachedCourseCount(TestCase):
+    """Tests for get_cached_course_count()."""
+
+    def setUp(self):
+        self.catalog_query_uuid = uuid4()
+        self.catalog_query_data = {
+            'uuid': str(self.catalog_query_uuid),
+            'course_count': 16,
+        }
+
+    @mock.patch('enterprise_access.apps.customer_billing.academy_api.TieredCache')
+    @mock.patch('enterprise_access.apps.customer_billing.academy_api.EnterpriseCatalogApiClient')
+    def test_cache_miss_fetches_and_caches(self, mock_client_class, mock_cache):
+        mock_cache.get_cached_response.return_value.is_found = False
+        mock_client_class.return_value.get_catalog_query.return_value = self.catalog_query_data
+
+        result = get_cached_course_count(self.catalog_query_uuid)
+
+        self.assertEqual(result, 16)
+        mock_client_class.return_value.get_catalog_query.assert_called_once_with(self.catalog_query_uuid)
+        mock_cache.set_all_tiers.assert_called_once()
+
+    @mock.patch('enterprise_access.apps.customer_billing.academy_api.TieredCache')
+    @mock.patch('enterprise_access.apps.customer_billing.academy_api.EnterpriseCatalogApiClient')
+    def test_cache_hit_skips_fetch(self, mock_client_class, mock_cache):
+        mock_cache.get_cached_response.return_value.is_found = True
+        mock_cache.get_cached_response.return_value.value = 16
+
+        result = get_cached_course_count(self.catalog_query_uuid)
+
+        self.assertEqual(result, 16)
+        mock_client_class.return_value.get_catalog_query.assert_not_called()
+        mock_cache.set_all_tiers.assert_not_called()
+
+    @mock.patch('enterprise_access.apps.customer_billing.academy_api.TieredCache')
+    @mock.patch('enterprise_access.apps.customer_billing.academy_api.EnterpriseCatalogApiClient')
+    def test_client_exception_propagates(self, mock_client_class, mock_cache):
+        mock_cache.get_cached_response.return_value.is_found = False
+        mock_client_class.return_value.get_catalog_query.side_effect = ConnectionError('catalog unavailable')
+
+        with self.assertRaises(ConnectionError):
+            get_cached_course_count(self.catalog_query_uuid)
+
+        mock_cache.set_all_tiers.assert_not_called()
+
+    def test_none_uuid_returns_none(self):
+        result = get_cached_course_count(None)
+        self.assertIsNone(result)
+
+    def test_empty_string_uuid_returns_none(self):
+        result = get_cached_course_count('')
         self.assertIsNone(result)

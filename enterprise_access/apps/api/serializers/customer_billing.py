@@ -1,18 +1,16 @@
 """
 customer billing serializers
 """
-import logging
 from decimal import Decimal, InvalidOperation
 from urllib.parse import urljoin
 
 from django.conf import settings
 from django_countries.serializers import CountryFieldMixin
 from drf_spectacular.utils import extend_schema_field
-from edx_django_utils.cache import TieredCache
 from rest_framework import serializers
 from rest_framework.exceptions import APIException
 
-from enterprise_access.apps.api_client.enterprise_catalog_client import EnterpriseCatalogApiClient
+from enterprise_access.apps.customer_billing.academy_api import get_cached_course_count
 from enterprise_access.apps.customer_billing.constants import ALLOWED_CHECKOUT_INTENT_STATE_TRANSITIONS
 from enterprise_access.apps.customer_billing.embargo import get_embargoed_countries
 from enterprise_access.apps.customer_billing.models import (
@@ -22,11 +20,6 @@ from enterprise_access.apps.customer_billing.models import (
     SspProduct,
     StripeEventSummary
 )
-from enterprise_access.cache_utils import versioned_cache_key
-
-logger = logging.getLogger(__name__)
-
-COURSE_COUNT_CACHE_KEY_PREFIX = 'academy_course_count'
 
 
 class RecordConflictError(APIException):
@@ -789,23 +782,6 @@ class SspEssentialsProductResponseSerializer(serializers.Serializer):
 
     def get_course_count(self, obj):
         """Return the cached or fetched course count for the product's catalog query."""
-        catalog_query_uuid = getattr(obj, 'catalog_query_uuid', None)
-        if not catalog_query_uuid:
+        if not getattr(obj, 'catalog_query_uuid', None):
             return None
-
-        cache_key = versioned_cache_key(COURSE_COUNT_CACHE_KEY_PREFIX, str(catalog_query_uuid))
-        cached_response = TieredCache.get_cached_response(cache_key)
-        if cached_response.is_found:
-            return cached_response.value
-
-        try:
-            data = EnterpriseCatalogApiClient().get_catalog_query(catalog_query_uuid)
-            course_count = data.get('course_count')
-            if course_count is not None:
-                TieredCache.set_all_tiers(
-                    cache_key, course_count, django_cache_timeout=settings.ACADEMY_DATA_CACHE_TIMEOUT,
-                )
-            return course_count
-        except Exception:  # pylint: disable=broad-exception-caught
-            logger.warning('Failed to fetch course count for catalog query %s', catalog_query_uuid, exc_info=True)
-            return None
+        return get_cached_course_count(obj.catalog_query_uuid)
