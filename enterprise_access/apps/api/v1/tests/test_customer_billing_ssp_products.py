@@ -24,7 +24,8 @@ class CustomerBillingSspProductsTests(APITest):
     def setUp(self):
         super().setUp()
         self.course_count_patcher = mock.patch(
-            'enterprise_access.apps.api.serializers.customer_billing.get_cached_course_count'
+            'enterprise_access.apps.api.serializers.customer_billing.get_cached_course_count',
+            create=True,
         )
         self.mock_get_cached_course_count = self.course_count_patcher.start()
         self.mock_get_cached_course_count.return_value = 16
@@ -46,14 +47,12 @@ class CustomerBillingSspProductsTests(APITest):
             marketing_url=None,
         )
 
-    def test_course_count_delegates_to_get_cached_course_count(self):
-        """A product with a catalog query UUID delegates course count lookup to the shared cache helper."""
+    def test_course_count_returns_none(self):
+        """Course count is not yet implemented and always returns None, regardless of catalog query UUID."""
         serializer = SspEssentialsProductResponseSerializer()
 
-        result = serializer.get_course_count(self.essentials_product)
-
-        self.assertEqual(result, 16)
-        self.mock_get_cached_course_count.assert_called_once_with(self.essentials_product.catalog_query_uuid)
+        self.assertIsNone(serializer.get_course_count(self.essentials_product))
+        self.mock_get_cached_course_count.assert_not_called()
 
     def test_course_count_returns_none_without_catalog_query_uuid(self):
         """Products without a catalog query UUID have no course count, and skip the cache helper."""
@@ -139,7 +138,7 @@ class CustomerBillingSspProductsTests(APITest):
         )
         self.assertEqual(essentials_payload['tags'], ['ai', 'leadership'])
         self.assertEqual(essentials_payload['price'], '149.00')
-        self.assertEqual(essentials_payload['course_count'], 16)
+        self.assertIsNone(essentials_payload['course_count'])
 
         mock_get_all_stripe_prices.assert_called_once()
 
