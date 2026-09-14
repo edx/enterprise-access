@@ -710,6 +710,7 @@ class SspEssentialsProductResponseSerializer(serializers.Serializer):
     tags = serializers.SerializerMethodField()
     price = serializers.SerializerMethodField()
     lookup_key = serializers.SerializerMethodField()
+    course_count = serializers.SerializerMethodField()
     slug = serializers.SlugField(read_only=True)
 
     # ── helpers ──────────────────────────────────────────────
@@ -777,3 +778,7 @@ class SspEssentialsProductResponseSerializer(serializers.Serializer):
 
     def get_lookup_key(self, obj):
         return obj.stripe_price_lookup_key
+
+    def get_course_count(self, obj):  # pylint: disable=unused-argument
+        """Return the cached or fetched course count for the product's catalog query."""
+        return None

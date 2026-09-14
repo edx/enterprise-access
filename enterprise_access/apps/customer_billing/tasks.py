@@ -382,6 +382,58 @@ def _send_cancelation_campaign(checkout_intent, ending_timestamp, campaign_ident
 
 
 @shared_task(base=LoggedTaskWithRetry)
+def send_trial_ended_cancellation_email_task(checkout_intent_id: int):
+    """
+    Send Braze email notification when a trial subscription ends after being cancelled.
+
+    Supports both Teams and Essentials via a single shared Braze campaign,
+    disambiguated by the ``product_type`` trigger property.
+
+    Args:
+        checkout_intent_id (int): ID of the CheckoutIntent record
+
+    Raises:
+        BrazeClientError: If there's an error communicating with Braze
+        Exception: For any other unexpected errors during email sending
+    """
+    checkout_intent = _get_checkout_intent_with_product(checkout_intent_id)
+    enterprise_slug = checkout_intent.enterprise_slug
+
+    admin_users = get_enterprise_admins(enterprise_slug, raise_if_empty=True)
+    braze_client = BrazeApiClient()
+    recipients = prepare_admin_braze_recipients(
+        braze_client, admin_users, enterprise_slug, raise_if_empty=True,
+    )
+
+    logger.info(
+        "Sending trial ended cancellation email for CheckoutIntent %s (enterprise slug: %s)",
+        checkout_intent.id,
+        enterprise_slug,
+    )
+
+    ssp_product = checkout_intent.ssp_product
+    campaign_id = get_campaign_id('trial_ended_cancellation', ssp_product)
+    product_type = get_product_type(ssp_product)
+
+    braze_trigger_properties = _build_common_trigger_properties(
+        ssp_product=ssp_product,
+        organization_name=checkout_intent.enterprise_name,
+        product_type=product_type,
+        product_type_display=product_type.capitalize(),
+        enterprise_admin_portal_url=f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/{enterprise_slug}',
+    )
+
+    send_campaign_message(
+        braze_client,
+        campaign_id,
+        recipients=recipients,
+        trigger_properties=braze_trigger_properties,
+        organization_name=checkout_intent.enterprise_name,
+        email_description='trial ended cancellation email',
+    )
+
+
+@shared_task(base=LoggedTaskWithRetry)
 def send_billing_error_email_task(checkout_intent_id: int):
     """
     Send Braze email notification when a subscription encounters a billing error
