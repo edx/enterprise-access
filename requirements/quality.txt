@@ -47,11 +47,11 @@ billiard==4.2.4
     # via
     #   -r requirements/test.txt
     #   celery
-boto3==1.43.88
+boto3==1.43.92
     # via
     #   -r requirements/test.txt
     #   snowflake-connector-python
-botocore==1.43.88
+botocore==1.43.92
     # via
     #   -r requirements/test.txt
     #   boto3
@@ -61,7 +61,7 @@ cachetools==7.1.8
     # via
     #   -r requirements/test.txt
     #   tox
-cattrs==26.1.0
+cattrs==26.2.0
     # via -r requirements/test.txt
 celery==5.6.3
     # via
@@ -192,7 +192,7 @@ django-celery-results==2.6.0
     # via -r requirements/test.txt
 django-cors-headers==4.9.0
     # via -r requirements/test.txt
-django-countries==9.0.0
+django-countries==9.1.0
     # via -r requirements/test.txt
 django-crispy-forms==2.7
     # via
@@ -231,7 +231,7 @@ django-waffle==5.0.0
     #   edx-toggles
 djangoql==0.19.1
     # via -r requirements/test.txt
-djangorestframework==3.18.0
+djangorestframework==3.18.1
     # via
     #   -r requirements/test.txt
     #   djangorestframework-csv
@@ -321,7 +321,7 @@ fastavro==1.12.2
     #   -r requirements/test.txt
     #   confluent-kafka
     #   openedx-events
-filelock==3.32.5
+filelock==3.32.6
     # via
     #   -r requirements/test.txt
     #   python-discovery
@@ -437,7 +437,7 @@ packaging==26.3
     #   snowflake-connector-python
     #   tox
     #   twine
-platformdirs==4.11.7
+platformdirs==4.11.8
     # via
     #   -r requirements/test.txt
     #   pylint
@@ -507,7 +507,7 @@ pylint-plugin-utils==0.9.0
     #   pylint-django
 pymemcache==4.0.0
     # via -r requirements/test.txt
-pymongo==4.18.0
+pymongo==4.18.1
     # via
     #   -r requirements/test.txt
     #   edx-opaque-keys
@@ -546,7 +546,7 @@ python-discovery==1.6.0
     #   -r requirements/test.txt
     #   tox
     #   virtualenv
-python-slugify==8.0.4
+python-slugify==9.0.0
     # via
     #   -r requirements/test.txt
     #   code-annotations
@@ -672,7 +672,7 @@ tomlkit==0.15.1
     #   edx-lint
     #   pylint
     #   snowflake-connector-python
-tox==4.61.2
+tox==4.61.4
     # via -r requirements/test.txt
 twine==7.0.0
     # via -r requirements/quality.in
@@ -714,7 +714,7 @@ vine==5.1.0
     #   amqp
     #   celery
     #   kombu
-virtualenv==21.7.8
+virtualenv==21.7.9
     # via
     #   -r requirements/test.txt
     #   tox

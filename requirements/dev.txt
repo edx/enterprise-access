@@ -47,17 +47,17 @@ billiard==4.2.4
     # via
     #   -r requirements/validation.txt
     #   celery
-boto3==1.43.88
+boto3==1.43.92
     # via
     #   -r requirements/validation.txt
     #   snowflake-connector-python
-botocore==1.43.88
+botocore==1.43.92
     # via
     #   -r requirements/validation.txt
     #   boto3
     #   s3transfer
     #   snowflake-connector-python
-build==1.6.0
+build==1.6.1
     # via
     #   -r requirements/pip-tools.txt
     #   pip-tools
@@ -65,7 +65,7 @@ cachetools==7.1.8
     # via
     #   -r requirements/validation.txt
     #   tox
-cattrs==26.1.0
+cattrs==26.2.0
     # via -r requirements/validation.txt
 celery==5.6.3
     # via
@@ -201,7 +201,7 @@ django-celery-results==2.6.0
     # via -r requirements/validation.txt
 django-cors-headers==4.9.0
     # via -r requirements/validation.txt
-django-countries==9.0.0
+django-countries==9.1.0
     # via -r requirements/validation.txt
 django-crispy-forms==2.7
     # via
@@ -242,7 +242,7 @@ django-waffle==5.0.0
     #   edx-toggles
 djangoql==0.19.1
     # via -r requirements/validation.txt
-djangorestframework==3.18.0
+djangorestframework==3.18.1
     # via
     #   -r requirements/validation.txt
     #   djangorestframework-csv
@@ -332,7 +332,7 @@ fastavro==1.12.2
     #   -r requirements/validation.txt
     #   confluent-kafka
     #   openedx-events
-filelock==3.32.5
+filelock==3.32.6
     # via
     #   -r requirements/validation.txt
     #   python-discovery
@@ -481,7 +481,7 @@ path==16.16.0
     # via edx-i18n-tools
 pip-tools==7.5.3
     # via -r requirements/pip-tools.txt
-platformdirs==4.11.7
+platformdirs==4.11.8
     # via
     #   -r requirements/validation.txt
     #   pylint
@@ -555,7 +555,7 @@ pylint-plugin-utils==0.9.0
     #   pylint-django
 pymemcache==4.0.0
     # via -r requirements/validation.txt
-pymongo==4.18.0
+pymongo==4.18.1
     # via
     #   -r requirements/validation.txt
     #   edx-opaque-keys
@@ -576,7 +576,7 @@ pyproject-hooks==1.2.0
     #   -r requirements/pip-tools.txt
     #   build
     #   pip-tools
-pyright==1.1.411
+pyright==1.1.414
     # via -r requirements/dev.in
 pytest==9.1.1
     # via
@@ -601,7 +601,7 @@ python-discovery==1.6.0
     #   -r requirements/validation.txt
     #   tox
     #   virtualenv
-python-slugify==8.0.4
+python-slugify==9.0.0
     # via
     #   -r requirements/validation.txt
     #   code-annotations
@@ -737,7 +737,7 @@ tomlkit==0.15.1
     #   edx-lint
     #   pylint
     #   snowflake-connector-python
-tox==4.61.2
+tox==4.61.4
     # via -r requirements/validation.txt
 twine==7.0.0
     # via -r requirements/validation.txt
@@ -780,7 +780,7 @@ vine==5.1.0
     #   amqp
     #   celery
     #   kombu
-virtualenv==21.7.8
+virtualenv==21.7.9
     # via
     #   -r requirements/validation.txt
     #   tox
