@@ -62,7 +62,6 @@ input[type=text],input[type=number]{font:inherit;padding:9px 12px;border:1px sol
   font-weight:600;font-size:14px}
 .btn:disabled{opacity:.45;cursor:not-allowed}
 .btn-quiet{background:transparent;color:var(--ink);border:1px solid var(--line)}
-  border-top:1px solid var(--line-soft)}
 
 /* ---- review layout ---- */
 .grid{display:grid;grid-template-columns:minmax(0,1fr) 248px;gap:22px;align-items:start}
@@ -160,11 +159,10 @@ input[type=text],input[type=number]{font:inherit;padding:9px 12px;border:1px sol
 .hint{font-size:12px;color:var(--ink-faint);line-height:1.5}
 
 /* ---- program card ---- */
+.pgrid{display:grid;grid-template-columns:1fr 1fr;gap:0}
 @media (max-width:640px){.pgrid{grid-template-columns:1fr}}
+.pcol+.pcol{border-left:1px solid var(--line-soft)}
 @media (max-width:640px){.pcol+.pcol{border-left:none;border-top:1px solid var(--line-soft)}}
-  color:var(--ink-soft);font-weight:700;margin-bottom:11px;padding-bottom:8px;
-  border-bottom:1px solid var(--line-soft)}
-  color:var(--ink)}
 
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:22px;background:var(--ink);
   color:#fff;padding:9px 16px;border-radius:4px;font-size:13.5px;font-weight:500;

@@ -629,6 +629,9 @@
           progress.goal = data.goal;
           progress.goal_set = true;
           askingGoal = false;
+          // The item was fetched before this screen was shown; start its clock now, or the
+          // first rating records however long the reviewer spent reading the instructions.
+          startedAt = Date.now();
           paintMeter();
           render();
         }).catch(function () {
