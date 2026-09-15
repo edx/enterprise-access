@@ -82,3 +82,42 @@ reviewers should rate pathways without being handed the Django admin.
 The file is produced by the offline measurement scripts. Program matches in the same file are
 ignored — those are reviewed separately. Re-running upserts by `item_id`; pass
 `--deactivate-missing` to retire items that have dropped out of a newer queue.
+
+## The surface
+
+Mounted at `/pathway-review/`, session-authenticated, staff-facing. Plain Django views rather
+than DRF viewsets: this is an internal HTML tool for named reviewers, not a customer-facing
+API, so it needs neither the enterprise-scoped role machinery nor a published schema.
+
+| Route | Does |
+| --- | --- |
+| `GET /pathway-review/` | the bench page |
+| `GET api/next/` | the next pathway for this reviewer, plus their progress |
+| `POST api/vote/` | record one judgement |
+| `POST api/goal/` | set this reviewer's own goal |
+| `GET api/leaderboard/` | who has reviewed the most, and which families they covered |
+
+Every route answers **404**, not 403, when the gate fails. The bench is meant to be invisible
+to people who may not use it, and a 403 still tells you it is there.
+
+### Queue order lives on the server
+
+`selectors.next_item_for` orders by least-reviewed, then tier, then reach. The earlier
+prototype balanced its own queue in the browser, which meant shipping every reviewer's votes
+to every other reviewer — the opposite of the independence a two-rater design depends on. The
+browser is now told only which item to rate next.
+
+### What the leaderboard may say
+
+Families reviewed, never verdicts. Seeing *that* a colleague rated Project Manager is
+harmless; seeing *how* they rated it would let the next reviewer anchor on it and would
+contaminate the inter-rater agreement the study exists to measure. `test_views` asserts the
+response body contains no verdict text.
+
+### Reading the controls
+
+`selectors.control_performance` scores each reviewer against the seeded controls — how many
+they saw and how many they caught. It is deliberately not surfaced in the bench: it exists so
+"who reviewed the most" can be read next to "who was actually reading", which is the whole
+point of planting them. A leaderboard rewards volume, and volume is exactly what the controls
+keep honest.
