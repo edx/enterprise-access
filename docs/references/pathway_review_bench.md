@@ -1,0 +1,84 @@
+# Pathway review bench
+
+An internal surface where staff reviewers judge assembled career pathways, so that approved
+ones can be used as worked examples for the recommendation pipeline. This document covers the
+data layer; the reviewer UI is a separate change.
+
+## What it is, and what it deliberately is not
+
+The bench collects human judgements. Following the eval-harness pattern
+(`architecture-patterns.md` #16), **it owns no pipeline logic** — ladders are assembled by the
+pathway pipeline and loaded here as fixtures. Nothing in `apps/pathway_review` retrieves,
+ranks or assembles. If it did, the bench would be measuring itself.
+
+It also carries no dependency on the `pathways` or `pathway_eval` apps, which is why this work
+can live on a branch off `main` while the pipeline is still in review.
+
+## Blinding is a database boundary, not a build step
+
+Roughly one in ten queue items is a **seeded control**: a real ladder with two rungs swapped
+for courses from an unrelated career. Reviewers who approve them were not reading, which is
+the only way to tell a careful reviewer from a fast one when the output is consensus data.
+
+That only works if reviewers cannot tell which items are planted. Two columns on
+`PathwayReviewItem` therefore never reach a browser:
+
+| Column | Holds | Served? |
+| --- | --- | --- |
+| `payload` | courses, per-rung alternates, descriptions | yes — this column only |
+| `pool` | `reach` / `tail` / `control` | never |
+| `control_key` | which rungs were corrupted | never |
+
+`tier` exists for queue ordering and deliberately does **not** separate controls from real
+items: controls share the reach tier so they interleave.
+
+Each item's `payload` is self-contained, descriptions included, so the bench can serve one
+pathway per request rather than shipping the whole queue to the browser.
+
+## Sampling, and why `weight` exists
+
+Items come from two pools that must not be averaged together:
+
+* **reach** — a census of the highest-traffic pathway families. `weight` is 1.0.
+* **tail** — a stratified probability sample of everything else, allocated disproportionately
+  across the level mixes so the rarer flat shapes have enough n to say anything. `weight`
+  undoes that allocation when estimating a catalog-wide rate.
+
+A mean taken over both pools without `weight` is wrong, and wrong in the flattering direction:
+the reach pool holds the families with the deepest catalog coverage.
+
+## A verdict that is not positive owes an explanation
+
+`PathwayReviewVote.clean()` rejects a `needs_work` or `bad` verdict with empty notes. A
+downvote with no diagnosis cannot be acted on — it tells you the accuracy and nothing about
+what to change. `skip` is exempt: "I can't judge this" is a legitimate answer, and forcing
+prose there would push reviewers into guessing rather than skipping.
+
+`replacements` is the field that separates the two failure modes. A course key means the
+ranker had better content in that rung and missed it; an empty string means the reviewer found
+nothing usable, so the catalog is the problem. Those need different fixes and must never be
+summed together.
+
+## Access
+
+Two independent gates, both required (`pathway_review/permissions.py`):
+
+1. the `enterprise_access.pathway_review_bench` waffle flag, so the surface can be switched
+   off without a deploy;
+2. the `pathway_review.add_pathwayreviewvote` model permission, granted to a reviewer group
+   in Django admin.
+
+The model permission is used rather than an edx-rbac feature role because the bench has no
+enterprise-customer scope — the roles in `core.constants` answer "which customer is this user
+an admin of", which is not the question. It is not gated on `is_staff` either: curriculum
+reviewers should rate pathways without being handed the Django admin.
+
+## Loading the queue
+
+```bash
+./manage.py load_pathway_review_queue --path /path/to/r1_review_queue.json
+```
+
+The file is produced by the offline measurement scripts. Program matches in the same file are
+ignored — those are reviewed separately. Re-running upserts by `item_id`; pass
+`--deactivate-missing` to retire items that have dropped out of a newer queue.
