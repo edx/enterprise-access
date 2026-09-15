@@ -16,6 +16,7 @@ import functools
 import json
 
 from django.contrib.auth.decorators import login_required
+from django.db import IntegrityError, transaction
 from django.http import Http404, JsonResponse
 from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_POST
@@ -32,6 +33,17 @@ from enterprise_access.apps.pathway_review.permissions import can_review_pathway
 
 MAX_NOTES = 1200
 MAX_GOAL = 2000
+MAX_SECONDS = 60 * 60 * 6
+
+
+def as_list(value):
+    """Coerce client input to a list; anything else is dropped rather than stored."""
+    return value if isinstance(value, list) else []
+
+
+def as_dict(value):
+    """Coerce client input to a dict; anything else is dropped rather than stored."""
+    return value if isinstance(value, dict) else {}
 
 
 def review_access_required(view):
@@ -97,19 +109,31 @@ def submit_vote(request):
             {'error': 'Say what was wrong, or how you would fix it.'}, status=400,
         )
 
+    try:
+        seconds = max(0, min(MAX_SECONDS, int(body.get('seconds') or 0)))
+    except (TypeError, ValueError):
+        seconds = 0
+
     if PathwayReviewVote.objects.filter(item=item, reviewer=request.user).exists():
         return JsonResponse({'error': 'You have already rated this pathway.'}, status=409)
 
-    PathwayReviewVote.objects.create(
-        item=item,
-        reviewer=request.user,
-        verdict=verdict,
-        dropped_steps=body.get('drops') or [],
-        replacements=body.get('swaps') or {},
-        reasons=body.get('reasons') or [],
-        notes=notes,
-        seconds=max(0, int(body.get('seconds') or 0)),
-    )
+    try:
+        # The check above is the fast path; the unique constraint is the authority. A second
+        # tab or a double-click can slip between the two, and an IntegrityError raised outside
+        # its own atomic block would poison the surrounding transaction.
+        with transaction.atomic():
+            PathwayReviewVote.objects.create(
+                item=item,
+                reviewer=request.user,
+                verdict=verdict,
+                dropped_steps=as_list(body.get('drops')),
+                replacements=as_dict(body.get('swaps')),
+                reasons=as_list(body.get('reasons')),
+                notes=notes,
+                seconds=seconds,
+            )
+    except IntegrityError:
+        return JsonResponse({'error': 'You have already rated this pathway.'}, status=409)
     return JsonResponse({'progress': selectors.progress_for(request.user)})
 
 

@@ -2,6 +2,7 @@
 Tests for the pathway review bench views.
 """
 import json
+from unittest import mock
 
 import ddt
 from django.contrib.auth import get_user_model
@@ -197,3 +198,74 @@ class GoalAndLeaderboardTests(BenchTestCase):
         raw = response.content.decode()
         self.assertNotIn('verdict', raw)
         self.assertNotIn('not this job', raw)
+
+
+class MalformedInputTests(BenchTestCase):
+    """ A client sending nonsense should get a 4xx, never a 500. """
+
+    def setUp(self):
+        super().setUp()
+        self.item = PathwayReviewItemFactory(item_id='L0200')
+
+    def test_non_numeric_seconds_is_ignored_rather_than_fatal(self):
+        response = self.post('pathway_review:submit-vote', {
+            'item': 'L0200', 'verdict': Verdict.GOOD, 'seconds': 'ages',
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(PathwayReviewVote.objects.get().seconds, 0)
+
+    def test_absurd_seconds_is_clamped(self):
+        self.post('pathway_review:submit-vote', {
+            'item': 'L0200', 'verdict': Verdict.GOOD, 'seconds': 10 ** 9,
+        })
+        self.assertLessEqual(PathwayReviewVote.objects.get().seconds, 60 * 60 * 6)
+
+    def test_wrongly_shaped_drops_and_swaps_are_dropped(self):
+        response = self.post('pathway_review:submit-vote', {
+            'item': 'L0200', 'verdict': Verdict.GOOD,
+            'drops': 'three', 'swaps': ['not', 'a', 'map'], 'reasons': 7,
+        })
+        self.assertEqual(response.status_code, 200)
+        vote = PathwayReviewVote.objects.get()
+        self.assertEqual(vote.dropped_steps, [])
+        self.assertEqual(vote.replacements, {})
+        self.assertEqual(vote.reasons, [])
+
+    def test_malformed_json_body(self):
+        response = self.client.post(
+            reverse('pathway_review:submit-vote'), data='{nope', content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 400)
+
+
+class AdminTests(TestCase):
+    """ The queue changelist annotates a vote count; make sure it actually renders. """
+
+    def test_item_changelist_renders(self):
+        admin_user = UserFactory(is_staff=True, is_superuser=True)
+        self.client.force_login(admin_user)
+        item = PathwayReviewItemFactory(item_id='L0300')
+        PathwayReviewVoteFactory(item=item, reviewer=UserFactory())
+
+        response = self.client.get('/admin/pathway_review/pathwayreviewitem/')
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('L0300', response.content.decode())
+
+
+class ConcurrentVoteTests(BenchTestCase):
+    """ The unique constraint is the authority, and hitting it must not break the request. """
+
+    def test_losing_the_race_returns_409_not_500(self):
+        """Simulates a second tab slipping past the exists() check."""
+        item = PathwayReviewItemFactory(item_id='L0400')
+        with mock.patch(
+            'enterprise_access.apps.pathway_review.views.PathwayReviewVote.objects.filter'
+        ) as mocked:
+            mocked.return_value.exists.return_value = False
+            PathwayReviewVoteFactory(item=item, reviewer=self.user)
+            response = self.post('pathway_review:submit-vote', {
+                'item': 'L0400', 'verdict': Verdict.GOOD,
+            })
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(PathwayReviewVote.objects.filter(item=item).count(), 1)

@@ -118,8 +118,16 @@ response body contains no verdict text.
 
 ### Reading the controls
 
-`selectors.control_performance` scores each reviewer against the seeded controls — how many
-they saw and how many they caught. It is deliberately not surfaced in the bench: it exists so
-"who reviewed the most" can be read next to "who was actually reading", which is the whole
-point of planting them. A leaderboard rewards volume, and volume is exactly what the controls
-keep honest.
+```bash
+./manage.py report_pathway_review_controls
+```
+
+Scores each reviewer against the seeded controls — how many they saw, and how many they
+caught. "Caught" means they did not wave the item through: any verdict other than `good`, or
+a drop landing on a rung that was actually corrupted.
+
+It is deliberately a command rather than a panel in the bench: it exists so "who reviewed the
+most" can be read next to "who was actually reading". A leaderboard rewards volume, and volume
+is exactly what the controls keep honest. Someone who passed the controls needs their other
+ratings treated with suspicion rather than merely discounted — consensus gold data cannot
+detect them, because their ratings look like agreement.
