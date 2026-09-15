@@ -97,7 +97,9 @@ API, so it needs neither the enterprise-scoped role machinery nor a published sc
 | `POST api/goal/` | set this reviewer's own goal |
 | `GET api/leaderboard/` | who has reviewed the most, and which families they covered |
 
-Every route answers **404**, not 403, when the gate fails. The bench is meant to be invisible
+Every route answers **404**, not 403, when the gate fails — except the page itself for a
+signed-out visitor, which redirects to SSO so a reviewer following a link does not hit a dead
+end. The bench is meant to be invisible
 to people who may not use it, and a 403 still tells you it is there.
 
 ### Queue order lives on the server

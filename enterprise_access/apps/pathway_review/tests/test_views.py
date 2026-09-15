@@ -56,6 +56,17 @@ class AccessTests(BenchTestCase):
         self.client.force_login(UserFactory())
         self.assertEqual(self.client.get(reverse(route)).status_code, 404)
 
+    def test_anonymous_page_request_goes_to_login(self):
+        """A reviewer following a link while logged out should reach SSO, not a dead end."""
+        self.client.logout()
+        response = self.client.get(reverse('pathway_review:bench'))
+        self.assertEqual(response.status_code, 302)
+
+    @ddt.data('pathway_review:next-item', 'pathway_review:leaderboard')
+    def test_anonymous_api_requests_are_hidden(self, route):
+        self.client.logout()
+        self.assertEqual(self.client.get(reverse(route)).status_code, 404)
+
 
 class NextItemTests(BenchTestCase):
     """ Which pathway a reviewer is handed, and what the response is allowed to contain. """

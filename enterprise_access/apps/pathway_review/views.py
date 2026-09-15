@@ -8,11 +8,14 @@ app and adds one route to the root urlconf.
 
 Every entry point answers 404 rather than 403 when the gate fails. The instruction is that
 the bench is only visible to people who may use it, and a 403 still tells you it is there.
+The one exception is the page itself when nobody is signed in: a reviewer following a link
+while logged out should reach SSO, not a dead end, so that case redirects to login.
 """
 
 import functools
 import json
 
+from django.contrib.auth.decorators import login_required
 from django.http import Http404, JsonResponse
 from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_POST
@@ -51,6 +54,7 @@ def serialize_item(item):
     return dict(item.payload, id=item.item_id, mix=item.mix)
 
 
+@login_required
 @review_access_required
 def bench(request):
     """The review bench page itself."""
