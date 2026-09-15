@@ -73,6 +73,22 @@ enterprise-customer scope — the roles in `core.constants` answer "which custom
 an admin of", which is not the question. It is not gated on `is_staff` either: curriculum
 reviewers should rate pathways without being handed the Django admin.
 
+## The interface is deliberately untranslated
+
+The repo's convention is to wrap user-facing strings for translation — both admin templates
+under `templates/subsidy_access_policy/` use `{% trans %}`, and `make validate_translations`
+runs in CI. The bench does not follow it, on purpose.
+
+Every reviewer is a member of 2U's curriculum staff, and the queue itself is filtered to
+`language:"English"` before a pathway ever reaches one — the thing being judged is English
+course metadata, in English, by English-speaking colleagues. Wrapping roughly a hundred
+strings across the template, the views and 700 lines of JavaScript would add real noise for
+nobody. Extraction confirms the position is consistent rather than accidental: `makemessages`
+across both the `django` and `djangojs` domains pulls nothing out of this app.
+
+If the bench is ever pointed at a non-English catalogue or opened to reviewers outside that
+group, this is the decision to revisit first.
+
 ## Loading the queue
 
 ```bash
