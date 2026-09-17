@@ -181,13 +181,18 @@ class EnterpriseCatalogApiClient(BaseOAuthClient):
         """
         Resolve a CatalogQuery UUID to its integer ID in enterprise-catalog.
         """
+        return int(self.get_catalog_query(catalog_query_uuid).get('id'))
+
+    @backoff.on_exception(wait_gen=backoff.expo, exception=autoretry_for_exceptions)
+    def get_catalog_query(self, catalog_query_uuid):
+        """Fetch catalog query details by UUID from enterprise-catalog."""
         endpoint = urljoin(
             settings.ENTERPRISE_CATALOG_URL,
             f'api/v1/catalog-queries/{catalog_query_uuid}/',
         )
         response = self.client.get(endpoint)
         response.raise_for_status()
-        return int(response.json().get('id'))
+        return response.json()
 
 
 class EnterpriseCatalogApiV1Client(EnterpriseCatalogApiClient):

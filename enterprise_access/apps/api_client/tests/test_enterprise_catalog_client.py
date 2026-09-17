@@ -760,3 +760,21 @@ class TestEnterpriseCatalogApiClientGetCatalogQueryId(TestCase):
         mock_oauth_client.return_value.get.assert_called_with(
             f'http://enterprise-catalog.example.com/api/v1/catalog-queries/{catalog_query_uuid}/'
         )
+
+    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient')
+    def test_get_catalog_query(self, mock_oauth_client):
+        """Ensure catalog query details are returned from enterprise-catalog."""
+        catalog_query_uuid = uuid4()
+        expected = {'uuid': str(catalog_query_uuid), 'course_count': 16}
+        mock_resp = mock.Mock()
+        mock_resp.json.return_value = expected
+        mock_resp.raise_for_status = mock.Mock()
+        mock_oauth_client.return_value.get.return_value = mock_resp
+
+        client = EnterpriseCatalogApiClient()
+        result = client.get_catalog_query(catalog_query_uuid)
+
+        self.assertEqual(result, expected)
+        mock_oauth_client.return_value.get.assert_called_with(
+            f'http://enterprise-catalog.example.com/api/v1/catalog-queries/{catalog_query_uuid}/'
+        )

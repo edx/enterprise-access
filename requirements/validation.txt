@@ -61,12 +61,12 @@ billiard==4.2.4
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
     #   celery
-boto3==1.43.85
+boto3==1.43.92
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
     #   snowflake-connector-python
-botocore==1.43.85
+botocore==1.43.92
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -78,7 +78,7 @@ cachetools==7.1.8
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
     #   tox
-cattrs==26.1.0
+cattrs==26.2.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -158,7 +158,7 @@ coverage[toml]==7.16.0
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
     #   pytest-cov
-crispy-bootstrap5==2026.3
+crispy-bootstrap5==2026.9
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -168,6 +168,7 @@ cryptography==50.0.1
     #   -r requirements/test.txt
     #   pyjwt
     #   pyopenssl
+    #   secretstorage
     #   snowflake-connector-python
     #   social-auth-core
 ddt==1.7.2
@@ -235,7 +236,7 @@ django-cors-headers==4.9.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
-django-countries==9.0.0
+django-countries==9.1.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -296,7 +297,7 @@ djangoql==0.19.1
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
-djangorestframework==3.18.0
+djangorestframework==3.18.1
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -368,7 +369,7 @@ edx-django-utils==8.0.2
     #   edx-rest-api-client
     #   edx-toggles
     #   openedx-events
-edx-drf-extensions==10.7.0
+edx-drf-extensions==10.8.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -407,7 +408,7 @@ factory-boy==3.3.3
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
-faker==40.37.0
+faker==40.38.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -418,7 +419,7 @@ fastavro==1.12.2
     #   -r requirements/test.txt
     #   confluent-kafka
     #   openedx-events
-filelock==3.32.5
+filelock==3.32.6
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -468,6 +469,11 @@ jaraco-functools==4.6.0
     # via
     #   -r requirements/quality.txt
     #   keyring
+jeepney==0.9.0
+    # via
+    #   -r requirements/quality.txt
+    #   keyring
+    #   secretstorage
 jinja2==3.1.6
     # via
     #   -r requirements/quality.txt
@@ -570,7 +576,7 @@ packaging==26.3
     #   snowflake-connector-python
     #   tox
     #   twine
-platformdirs==4.11.5
+platformdirs==4.11.8
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -654,7 +660,7 @@ pymemcache==4.0.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
-pymongo==4.17.0
+pymongo==4.18.1
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -706,7 +712,7 @@ python-discovery==1.6.0
     #   -r requirements/test.txt
     #   tox
     #   virtualenv
-python-slugify==8.0.4
+python-slugify==9.0.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -792,6 +798,10 @@ s3transfer==0.19.2
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
     #   boto3
+secretstorage==3.5.0
+    # via
+    #   -r requirements/quality.txt
+    #   keyring
 semantic-version==2.10.0
     # via
     #   -r requirements/quality.txt
@@ -812,7 +822,7 @@ snowballstemmer==3.1.1
     # via
     #   -r requirements/quality.txt
     #   pydocstyle
-snowflake-connector-python==4.7.2
+snowflake-connector-python==4.7.3
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -844,7 +854,7 @@ stevedore==5.9.1
     #   code-annotations
     #   edx-django-utils
     #   edx-opaque-keys
-stripe==15.6.0
+stripe==15.6.1
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -865,7 +875,7 @@ tomlkit==0.15.1
     #   edx-lint
     #   pylint
     #   snowflake-connector-python
-tox==4.61.2
+tox==4.61.4
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -915,7 +925,7 @@ vine==5.1.0
     #   amqp
     #   celery
     #   kombu
-virtualenv==21.7.7
+virtualenv==21.7.9
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
