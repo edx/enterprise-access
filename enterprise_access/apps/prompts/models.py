@@ -18,6 +18,7 @@ class PromptType(models.TextChoices):
     """Valid ``prompt_type`` values for ``XpertLearnerPathwaysSystemPrompt``."""
     LEARNER_INTENT = 'learner_intent', 'Learner Intent'
     RECOMMENDATIONS_FEEDBACK = 'recommendations_feedback', 'Recommendations Feedback'
+    CANDIDATE_RERANK = 'candidate_rerank', 'Candidate Re-rank'
 
 
 class BaseSystemPrompt(TimeStampedModel):

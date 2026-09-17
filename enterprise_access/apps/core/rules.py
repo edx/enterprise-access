@@ -509,6 +509,14 @@ has_learner_pathways_recommendation_feedback_access = (
     has_learner_pathways_learning_intent_access
 )
 
+has_learner_pathways_career_discovery_access = (
+    has_learner_pathways_learning_intent_access
+)
+
+has_learner_pathways_pathway_access = (
+    has_learner_pathways_learning_intent_access
+)
+
 ###############################################
 # Map permissions to consolidated predicates. #
 ###############################################
@@ -658,4 +666,16 @@ rules.add_perm(
 rules.add_perm(
     constants.LEARNER_PATHWAYS_RECOMMENDATION_FEEDBACK_PERMISSION,
     has_learner_pathways_recommendation_feedback_access,
+)
+
+# Grants permission to discover careers via the Learner Pathways API.
+rules.add_perm(
+    constants.LEARNER_PATHWAYS_CAREER_DISCOVERY_PERMISSION,
+    has_learner_pathways_career_discovery_access,
+)
+
+# Grants permission to assemble a pathway via the Learner Pathways API.
+rules.add_perm(
+    constants.LEARNER_PATHWAYS_PATHWAY_PERMISSION,
+    has_learner_pathways_pathway_access,
 )
