@@ -12,6 +12,12 @@ rather than a change to ``apps/workflow/``: provisioning is live, and it must be
 impossible for this feature to alter its behaviour. If the pattern proves out, upstreaming
 it into ``apps/workflow/`` is a later conversation with that code's owner.
 """
+# Subclassing costs us a copy of the parent's step loop: ``AbstractWorkflow.process_input``
+# runs it in one monolithic method, so there is no seam ``process_input`` below could reuse
+# without editing that method -- which is exactly what this module declines to do. pylint
+# only honours a duplicate-code disable at module scope, so it has to sit here rather than
+# on the method. Drop it if the pattern is ever upstreamed.
+# pylint: disable=duplicate-code
 import logging
 from typing import Optional
 
