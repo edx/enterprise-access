@@ -109,6 +109,40 @@ def get_and_cache_transactions_for_learner(subsidy_uuid, lms_user_id):
     return result
 
 
+def get_subsidy_transactions_export(subsidy_uuid, search=None, start_date=None, end_date=None, **kwargs):
+    """
+    Fetch a CSV export of Learner Credit spent transactions for a subsidy from enterprise-subsidy.
+
+    Arguments:
+        subsidy_uuid (str|UUID): The subsidy whose spent transactions should be exported.
+        search (str, optional): Free-text search filter, forwarded as-is to enterprise-subsidy.
+        start_date (str, optional): Only include transactions created on/after this date/datetime.
+        end_date (str, optional): Only include transactions created on/before this date/datetime.
+
+    Returns:
+        requests.Response: the raw CSV response from enterprise-subsidy, including its
+        ``Content-Disposition`` header.
+
+    Raises:
+        SubsidyAPIHTTPError: if the Subsidy API request failed.
+    """
+    client = get_versioned_subsidy_client()
+    query_params = {'subsidy_uuid': str(subsidy_uuid), **kwargs}
+    if search:
+        query_params['search'] = search
+    if start_date:
+        query_params['start_date'] = str(start_date)
+    if end_date:
+        query_params['end_date'] = str(end_date)
+
+    try:
+        response = client.client.get(client.TRANSACTIONS_ENDPOINT + 'export/', params=query_params)
+        response.raise_for_status()
+    except requests.exceptions.RequestException as exc:
+        raise SubsidyAPIHTTPError('HTTPError occurred in Subsidy API request.') from exc
+    return response
+
+
 def get_redemptions_by_content_and_policy_for_learner(policies, lms_user_id):
     """
     Returns a mapping of content keys to a mapping of policy uuids to lists of transactions
