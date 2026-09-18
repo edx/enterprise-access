@@ -927,6 +927,44 @@ class TestStripeEventHandler(TestCase):
         mock_trial_email_task.delay.assert_not_called()
 
     @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_reinstatement_email_task"
+    )
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_paid_reinstatement_email_task"
+    )
+    def test_subscription_updated_no_reinstatement_email_for_other_status(
+        self, mock_paid_email_task, mock_trial_email_task,
+    ):
+        """Test that no reinstatement email is sent when the reinstated subscription is neither trialing nor active."""
+        subscription_id = "sub_test_past_due_reinstate_123"
+
+        # Create prior event WITH cancel_at set (subscription was scheduled for cancellation)
+        _, prior_summary = self._create_existing_event_data_records(
+            subscription_id,
+            subscription_status=StripeSubscriptionStatus.PAST_DUE,
+        )
+        prior_summary.subscription_cancel_at = timezone.now() + timedelta(days=7)
+        prior_summary.save()
+
+        # Create new event WITHOUT cancel_at (cancellation reversed), but still past_due.
+        subscription_data = {
+            "id": subscription_id,
+            "status": "past_due",
+            # No cancel_at field - cancellation was reversed
+            "metadata": self._create_mock_stripe_subscription(self.checkout_intent),
+        }
+
+        mock_event = self._create_mock_stripe_event(
+            "customer.subscription.updated", subscription_data
+        )
+
+        StripeEventHandler.dispatch(mock_event)
+
+        # Neither reinstatement email applies to a past_due subscription.
+        mock_paid_email_task.delay.assert_not_called()
+        mock_trial_email_task.delay.assert_not_called()
+
+    @mock.patch(
         "enterprise_access.apps.customer_billing.stripe_event_handlers.send_trial_cancellation_email_task"
     )
     @mock.patch(
