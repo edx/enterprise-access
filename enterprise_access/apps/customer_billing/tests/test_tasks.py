@@ -31,6 +31,7 @@ from enterprise_access.apps.customer_billing.tasks import (
     send_enterprise_provision_signup_confirmation_email,
     send_finalized_cancelation_email_task,
     send_paid_cancellation_email_task,
+    send_paid_reinstatement_email_task,
     send_payment_receipt_email,
     send_reinstatement_email_task,
     send_trial_cancellation_email_task,
@@ -806,7 +807,7 @@ class TestSendReinstatementEmailTask(TestCase):
         mock_braze_instance.send_campaign_message.assert_called_once()
         call_args = mock_braze_instance.send_campaign_message.call_args
         self.assertEqual(
-            call_args[0][0], settings.BRAZE_SSP_SUBSCRIPTION_REINSTATED_CAMPAIGN
+            call_args[0][0], settings.BRAZE_ENTERPRISE_SSP_TRIAL_SUBSCRIPTION_REINSTATED_CAMPAIGN
         )
 
         recipients = call_args[1]["recipients"]
@@ -889,6 +890,107 @@ class TestSendReinstatementEmailTask(TestCase):
         with mock.patch('enterprise_access.apps.customer_billing.tasks.BrazeApiClient') as mock_braze_client:
             mock_braze_client.return_value = mock.Mock()
             send_reinstatement_email_task(checkout_intent_id=42)
+
+        mock_get_checkout_intent.assert_called_once_with(42)
+        mock_send_campaign.assert_called_once()
+
+
+class TestSendPaidReinstatementEmailTask(TestCase):
+    """Tests for send_paid_reinstatement_email_task."""
+
+    def setUp(self):
+        """Set up test data."""
+        self.user = UserFactory()
+        self.checkout_intent = CheckoutIntent.create_intent(
+            user=self.user,
+            slug="test-enterprise",
+            name="Test Enterprise",
+            quantity=10,
+        )
+        self.checkout_intent.stripe_customer_id = "cus_test_123"
+        self.checkout_intent.save()
+
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.tasks.BrazeApiClient"
+    )
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
+    def test_send_paid_reinstatement_email_success(
+        self, mock_lms_client, mock_braze_client
+    ):
+        """Test successful paid reinstatement email send."""
+        mock_lms_instance = mock_lms_client.return_value
+        mock_lms_instance.get_enterprise_customer_data.return_value = {
+            "admin_users": [
+                {"email": "admin1@example.com", "lms_user_id": 123},
+                {"email": "admin2@example.com", "lms_user_id": 456},
+            ]
+        }
+
+        mock_braze_instance = mock_braze_client.return_value
+        mock_braze_instance.create_braze_recipient.side_effect = [
+            {"external_user_id": "123"},
+            {"external_user_id": "456"},
+        ]
+
+        send_paid_reinstatement_email_task(
+            checkout_intent_id=self.checkout_intent.id,
+        )
+
+        mock_braze_instance.send_campaign_message.assert_called_once()
+        call_args = mock_braze_instance.send_campaign_message.call_args
+        self.assertEqual(
+            call_args[0][0], settings.BRAZE_ENTERPRISE_SSP_PAID_SUBSCRIPTION_REINSTATED_CAMPAIGN
+        )
+
+        recipients = call_args[1]["recipients"]
+        self.assertEqual(len(recipients), 2)
+
+        trigger_props = call_args[1]["trigger_properties"]
+        self.assertIn("enterprise_admin_portal_url", trigger_props)
+        self.assertEqual(
+            trigger_props["enterprise_admin_portal_url"],
+            f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/test-enterprise'
+        )
+
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.tasks.BrazeApiClient"
+    )
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
+    def test_send_paid_reinstatement_email_no_admin_users(
+        self, mock_lms_client, mock_braze_client
+    ):
+        """Test that exception is raised when no admin users are found."""
+        mock_lms_instance = mock_lms_client.return_value
+        mock_lms_instance.get_enterprise_customer_data.return_value = {
+            "admin_users": []
+        }
+
+        with self.assertRaisesRegex(Exception, 'No admin users'):
+            send_paid_reinstatement_email_task(
+                checkout_intent_id=self.checkout_intent.id,
+            )
+
+        mock_braze_client.return_value.send_campaign_message.assert_not_called()
+
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.send_campaign_message')
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.prepare_admin_braze_recipients')
+    @mock.patch('enterprise_access.apps.customer_billing.tasks.get_enterprise_admins')
+    @mock.patch('enterprise_access.apps.customer_billing.tasks._get_checkout_intent_with_product')
+    def test_paid_reinstatement_uses_checkout_helper(
+        self, mock_get_checkout_intent, mock_get_admins, mock_prepare, mock_send_campaign
+    ):
+        """Ensure the task fetches the CheckoutIntent via the helper function."""
+        mock_checkout = mock.Mock()
+        mock_checkout.enterprise_slug = 'test-enterprise'
+        mock_checkout.enterprise_name = 'Test Enterprise'
+        mock_get_checkout_intent.return_value = mock_checkout
+
+        mock_get_admins.return_value = [{'email': 'admin@test.com', 'lms_user_id': 1}]
+        mock_prepare.return_value = [{'external_user_id': 'braze_1'}]
+
+        with mock.patch('enterprise_access.apps.customer_billing.tasks.BrazeApiClient') as mock_braze_client:
+            mock_braze_client.return_value = mock.Mock()
+            send_paid_reinstatement_email_task(checkout_intent_id=42)
 
         mock_get_checkout_intent.assert_called_once_with(42)
         mock_send_campaign.assert_called_once()

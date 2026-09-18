@@ -886,6 +886,47 @@ class TestStripeEventHandler(TestCase):
         mock_email_task.delay.assert_not_called()
 
     @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_reinstatement_email_task"
+    )
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_paid_reinstatement_email_task"
+    )
+    def test_subscription_updated_sends_paid_reinstatement_email_for_paid_subscription(
+        self, mock_paid_email_task, mock_trial_email_task,
+    ):
+        """Test that the paid reinstatement email is sent when the reinstated subscription is paid (active)."""
+        subscription_id = "sub_test_paid_reinstate_123"
+
+        # Create prior event WITH cancel_at set (paid subscription was scheduled for cancellation)
+        _, prior_summary = self._create_existing_event_data_records(
+            subscription_id,
+            subscription_status=StripeSubscriptionStatus.ACTIVE,
+        )
+        prior_summary.subscription_cancel_at = timezone.now() + timedelta(days=7)
+        prior_summary.save()
+
+        # Create new event WITHOUT cancel_at (paid subscription reinstated/un-cancelled)
+        subscription_data = {
+            "id": subscription_id,
+            "status": "active",
+            # No cancel_at field - cancellation was reversed
+            "metadata": self._create_mock_stripe_subscription(self.checkout_intent),
+        }
+
+        mock_event = self._create_mock_stripe_event(
+            "customer.subscription.updated", subscription_data
+        )
+
+        StripeEventHandler.dispatch(mock_event)
+
+        # Paid subscriptions get the paid reinstatement email, not the trial one.
+        mock_paid_email_task.delay.assert_called_once()
+        self.assertEqual(
+            mock_paid_email_task.delay.call_args.kwargs.get('checkout_intent_id'), self.checkout_intent.id,
+        )
+        mock_trial_email_task.delay.assert_not_called()
+
+    @mock.patch(
         "enterprise_access.apps.customer_billing.stripe_event_handlers.send_trial_cancellation_email_task"
     )
     @mock.patch(
