@@ -817,9 +817,12 @@ class TestStripeEventHandler(TestCase):
         mock_email_task.delay.assert_not_called()
 
     @mock.patch(
-        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_reinstatement_email_task"
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_trial_reinstatement_email_task"
     )
-    def test_subscription_updated_sends_email_when_reinstated(self, mock_email_task):
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_paid_reinstatement_email_task"
+    )
+    def test_subscription_updated_sends_email_when_reinstated(self, mock_paid_email_task, mock_email_task):
         """Test that subscription_updated sends reinstatement email when cancel_at is cleared."""
         subscription_id = "sub_test_reinstate_123"
         trial_end_timestamp = int((timezone.now() + timedelta(days=14)).timestamp())
@@ -848,12 +851,13 @@ class TestStripeEventHandler(TestCase):
 
         StripeEventHandler.dispatch(mock_event)
 
-        # Ensure the task was queued with the expected identifiers.
+        # Ensure the trial task was queued with the expected identifiers, and the paid task was not.
         mock_email_task.delay.assert_called_once()
         self.assertEqual(mock_email_task.delay.call_args.kwargs.get('checkout_intent_id'), self.checkout_intent.id)
+        mock_paid_email_task.delay.assert_not_called()
 
     @mock.patch(
-        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_reinstatement_email_task"
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_trial_reinstatement_email_task"
     )
     def test_subscription_updated_no_reinstatement_email_when_never_cancelled(self, mock_email_task):
         """Test that we don't send reinstatement email if cancel_at was already None."""
@@ -886,7 +890,7 @@ class TestStripeEventHandler(TestCase):
         mock_email_task.delay.assert_not_called()
 
     @mock.patch(
-        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_reinstatement_email_task"
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_trial_reinstatement_email_task"
     )
     @mock.patch(
         "enterprise_access.apps.customer_billing.stripe_event_handlers.send_paid_reinstatement_email_task"
@@ -927,7 +931,7 @@ class TestStripeEventHandler(TestCase):
         mock_trial_email_task.delay.assert_not_called()
 
     @mock.patch(
-        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_reinstatement_email_task"
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_trial_reinstatement_email_task"
     )
     @mock.patch(
         "enterprise_access.apps.customer_billing.stripe_event_handlers.send_paid_reinstatement_email_task"

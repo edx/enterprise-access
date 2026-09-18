@@ -505,6 +505,9 @@ def _send_reinstatement_campaign(checkout_intent_id: int, campaign_id: str, emai
     """
     Shared logic for sending a Braze reinstatement email for a given campaign.
 
+    Not itself a Celery task; must be called from one (e.g. send_trial_reinstatement_email_task,
+    send_paid_reinstatement_email_task).
+
     Args:
         checkout_intent_id (int): ID of the CheckoutIntent record
         campaign_id (str): Braze campaign UUID to trigger
@@ -544,7 +547,7 @@ def _send_reinstatement_campaign(checkout_intent_id: int, campaign_id: str, emai
 
 
 @shared_task(base=LoggedTaskWithRetry)
-def send_reinstatement_email_task(checkout_intent_id: int):
+def send_trial_reinstatement_email_task(checkout_intent_id: int):
     """
     Send Braze email notification when a trial subscription is reinstated after a scheduled cancellation.
 

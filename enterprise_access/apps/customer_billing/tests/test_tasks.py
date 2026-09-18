@@ -33,11 +33,11 @@ from enterprise_access.apps.customer_billing.tasks import (
     send_paid_cancellation_email_task,
     send_paid_reinstatement_email_task,
     send_payment_receipt_email,
-    send_reinstatement_email_task,
     send_trial_cancellation_email_task,
     send_trial_end_and_subscription_started_email_task,
     send_trial_ended_cancellation_email_task,
-    send_trial_ending_reminder_email_task
+    send_trial_ending_reminder_email_task,
+    send_trial_reinstatement_email_task
 )
 from enterprise_access.apps.customer_billing.tests.utils import AttrDict
 from enterprise_access.utils import format_datetime_obj
@@ -764,7 +764,7 @@ class TestSendCancelationCampaignHelper(TestCase):
 
 
 class TestSendReinstatementEmailTask(TestCase):
-    """Tests for send_reinstatement_email_task."""
+    """Tests for send_trial_reinstatement_email_task."""
 
     def setUp(self):
         """Set up test data."""
@@ -800,7 +800,7 @@ class TestSendReinstatementEmailTask(TestCase):
             {"external_user_id": "456"},
         ]
 
-        send_reinstatement_email_task(
+        send_trial_reinstatement_email_task(
             checkout_intent_id=self.checkout_intent.id,
         )
 
@@ -844,7 +844,7 @@ class TestSendReinstatementEmailTask(TestCase):
         )
 
         with self.assertRaises(Exception) as context:
-            send_reinstatement_email_task(
+            send_trial_reinstatement_email_task(
                 checkout_intent_id=self.checkout_intent.id,
             )
 
@@ -864,7 +864,7 @@ class TestSendReinstatementEmailTask(TestCase):
         }
 
         with self.assertRaisesRegex(Exception, 'No admin users'):
-            send_reinstatement_email_task(
+            send_trial_reinstatement_email_task(
                 checkout_intent_id=self.checkout_intent.id,
             )
 
@@ -889,7 +889,7 @@ class TestSendReinstatementEmailTask(TestCase):
         # Patch BrazeApiClient instantiation to avoid requiring real settings
         with mock.patch('enterprise_access.apps.customer_billing.tasks.BrazeApiClient') as mock_braze_client:
             mock_braze_client.return_value = mock.Mock()
-            send_reinstatement_email_task(checkout_intent_id=42)
+            send_trial_reinstatement_email_task(checkout_intent_id=42)
 
         mock_get_checkout_intent.assert_called_once_with(42)
         mock_send_campaign.assert_called_once()

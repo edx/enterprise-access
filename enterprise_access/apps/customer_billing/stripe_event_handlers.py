@@ -29,11 +29,11 @@ from enterprise_access.apps.customer_billing.tasks import (
     send_paid_cancellation_email_task,
     send_paid_reinstatement_email_task,
     send_payment_receipt_email,
-    send_reinstatement_email_task,
     send_trial_cancellation_email_task,
     send_trial_end_and_subscription_started_email_task,
     send_trial_ended_cancellation_email_task,
-    send_trial_ending_reminder_email_task
+    send_trial_ending_reminder_email_task,
+    send_trial_reinstatement_email_task
 )
 from enterprise_access.apps.customer_billing.utils import datetime_from_timestamp
 from enterprise_access.apps.track.segment import track_event
@@ -847,8 +847,9 @@ class StripeEventHandler:
                 f"Subscription {subscription['id']} was reinstated (cancellation reversed). "
                 f"Processing reinstatement notification for checkout_intent uuid={checkout_intent.uuid}"
             )
+            # Other statuses (e.g. past_due, paused, unpaid) are intentionally not notified.
             if current_status == StripeSubscriptionStatus.TRIALING:
-                send_reinstatement_email_task.delay(checkout_intent_id=checkout_intent.id)
+                send_trial_reinstatement_email_task.delay(checkout_intent_id=checkout_intent.id)
             elif current_status == StripeSubscriptionStatus.ACTIVE:
                 send_paid_reinstatement_email_task.delay(checkout_intent_id=checkout_intent.id)
 
