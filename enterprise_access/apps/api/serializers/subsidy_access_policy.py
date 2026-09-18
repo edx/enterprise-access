@@ -958,3 +958,32 @@ class GroupMemberWithAggregatesRequestSerializer(serializers.Serializer):
                 "Can only support one param of the following at a time: `page` or `traverse_pagination`"
             )
         return attrs
+
+
+class TransactionsExportRequestSerializer(serializers.Serializer):
+    """
+    Request Serializer to validate ``export_transactions`` endpoint GET data.
+
+    For view: SubsidyAccessPolicyTransactionsViewset.export_transactions
+    """
+    enterprise_customer_uuid = serializers.UUIDField(
+        required=True,
+        help_text='The enterprise customer for which to export Learner Credit spent transactions.',
+    )
+    subsidy_uuid = serializers.UUIDField(
+        required=True,
+        help_text='The subsidy whose spent transactions should be exported.',
+    )
+    search = serializers.CharField(
+        required=False,
+        max_length=320,
+        help_text='Free-text search filter, forwarded as-is to the Subsidy API.',
+    )
+    start_date = serializers.CharField(
+        required=False,
+        help_text='Only include transactions created on/after this date/datetime, forwarded to the Subsidy API.',
+    )
+    end_date = serializers.CharField(
+        required=False,
+        help_text='Only include transactions created on/before this date/datetime, forwarded to the Subsidy API.',
+    )

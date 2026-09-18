@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
+from django.http import StreamingHttpResponse
 from django.utils.functional import cached_property
 from drf_spectacular.utils import extend_schema
 from edx_enterprise_subsidy_client import EnterpriseSubsidyAPIClient
@@ -33,6 +34,7 @@ from enterprise_access.apps.content_assignments.api import AllocationException
 from enterprise_access.apps.content_assignments.constants import AssignmentSources
 from enterprise_access.apps.content_metadata.api import get_and_cache_content_metadata
 from enterprise_access.apps.core.constants import (
+    REQUESTS_ADMIN_ACCESS_PERMISSION,
     SUBSIDY_ACCESS_POLICY_ALLOCATION_PERMISSION,
     SUBSIDY_ACCESS_POLICY_READ_PERMISSION,
     SUBSIDY_ACCESS_POLICY_REDEMPTION_PERMISSION,
@@ -71,7 +73,8 @@ from enterprise_access.apps.subsidy_access_policy.models import (
 )
 from enterprise_access.apps.subsidy_access_policy.subsidy_api import (
     get_and_cache_subsidy_learners_aggregate_data,
-    get_redemptions_by_content_and_policy_for_learner
+    get_redemptions_by_content_and_policy_for_learner,
+    get_subsidy_transactions_export
 )
 from enterprise_access.apps.subsidy_access_policy.utils import sort_subsidy_access_policies_for_redemption
 from enterprise_access.apps.subsidy_request.constants import LC_NON_RE_REQUESTABLE_STATES
@@ -86,6 +89,7 @@ SUBSIDY_ACCESS_POLICY_REDEMPTION_API_TAG = 'Subsidy Access Policy Redemption'
 SUBSIDY_ACCESS_POLICY_ALLOCATION_API_TAG = 'Subsidy Access Policy Allocation'
 GROUP_MEMBER_DATA_WITH_AGGREGATES_API_TAG = 'Group Member Data With Aggregates'
 DELETE_POLICY_GROUP_ASSOCIATION_API_TAG = 'Delete Policy Group Association'
+TRANSACTIONS_EXPORT_API_TAG = 'Transactions Export'
 
 
 def group_members_with_aggregates_next_page(current_url):
@@ -450,6 +454,16 @@ class SubsidyAccessPolicyLockedException(APIException):
 class AllocationRequestException(APIException):
     status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
     default_detail = 'Could not allocate'
+
+
+class TransactionsExportError(APIException):
+    """
+    Raised when the Subsidy API export request fails, so the gateway endpoint can return a clean 502 payload
+    instead of leaking the downstream traceback.
+    """
+    status_code = status.HTTP_502_BAD_GATEWAY
+    default_detail = 'Failed to export transactions from the Subsidy API.'
+    default_code = 'transactions_export_error'
 
 
 class SubsidyAccessPolicyRedeemViewset(UserDetailsFromJwtMixin, PermissionRequiredMixin, viewsets.GenericViewSet):
@@ -1346,3 +1360,76 @@ class SubsidyAccessPolicyGroupViewset(UserDetailsFromJwtMixin, PermissionRequire
         except PolicyGroupAssociation.DoesNotExist:
             return Response(None, status=status.HTTP_404_NOT_FOUND)
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class SubsidyAccessPolicyTransactionsViewset(PermissionRequiredMixin, viewsets.GenericViewSet):
+    """
+    Viewset that gateways/proxies Learner Credit spent-transaction exports from the enterprise-subsidy service.
+    """
+    permission_classes = (permissions.IsAuthenticated,)
+    authentication_classes = (JwtAuthentication, authentication.SessionAuthentication)
+
+    def get_permission_required(self):
+        return [REQUESTS_ADMIN_ACCESS_PERMISSION]
+
+    def get_permission_object(self):
+        """
+        Returns the enterprise uuid to verify that the requesting user possesses the enterprise admin/operator role.
+        """
+        return self.validated_export_params['enterprise_customer_uuid']
+
+    def get_queryset(self):
+        """
+        Required by Django Generic Viewsets, since this data is fetched remotely there is no internal queryset.
+        """
+
+    @extend_schema(
+        tags=[TRANSACTIONS_EXPORT_API_TAG],
+        summary='Export Learner Credit spent transactions as a CSV report.',
+        parameters=[serializers.TransactionsExportRequestSerializer],
+        responses={
+            status.HTTP_200_OK: None,
+            status.HTTP_400_BAD_REQUEST: None,
+            status.HTTP_502_BAD_GATEWAY: None,
+        },
+    )
+    def export_transactions(self, request):
+        """
+        Proxies a CSV export of Learner Credit spent transactions from the enterprise-subsidy service.
+
+        Params:
+            enterprise_customer_uuid: (required) The enterprise customer for which to export transactions.
+            subsidy_uuid: (required) The subsidy whose spent transactions should be exported.
+            search: (Optional) Free-text search filter, forwarded to enterprise-subsidy.
+            start_date: (Optional) Only include transactions created on/after this date/datetime.
+            end_date: (Optional) Only include transactions created on/before this date/datetime.
+        """
+        validated_data = self.validated_export_params
+
+        try:
+            subsidy_response = get_subsidy_transactions_export(
+                subsidy_uuid=validated_data['subsidy_uuid'],
+                enterprise_customer_uuid=validated_data['enterprise_customer_uuid'],
+                search=validated_data.get('search'),
+                start_date=validated_data.get('start_date'),
+                end_date=validated_data.get('end_date'),
+            )
+        except SubsidyAPIHTTPError as exc:
+            logger.exception(f'{exc} when exporting transactions from subsidy API')
+            raise TransactionsExportError(detail=exc.error_payload()) from exc
+
+        response = StreamingHttpResponse(
+            subsidy_response.iter_content(chunk_size=8192),
+            content_type='text/csv',
+        )
+        response['Content-Disposition'] = subsidy_response.headers.get(
+            'Content-Disposition',
+            f'attachment; filename="spent_report_{validated_data["subsidy_uuid"]}.csv"',
+        )
+        return response
+
+    @cached_property
+    def validated_export_params(self):
+        request_serializer = serializers.TransactionsExportRequestSerializer(data=self.request.query_params)
+        request_serializer.is_valid(raise_exception=True)
+        return request_serializer.validated_data
