@@ -819,6 +819,8 @@ class TestSendReinstatementEmailTask(TestCase):
             trigger_props["enterprise_admin_portal_url"],
             f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/test-enterprise'
         )
+        self.assertEqual(trigger_props["product_type"], "teams")
+        self.assertEqual(trigger_props["product_type_display"], "Teams")
 
     @mock.patch(
         "enterprise_access.apps.customer_billing.tasks.BrazeApiClient"
@@ -951,6 +953,8 @@ class TestSendPaidReinstatementEmailTask(TestCase):
             trigger_props["enterprise_admin_portal_url"],
             f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/test-enterprise'
         )
+        self.assertEqual(trigger_props["product_type"], "teams")
+        self.assertEqual(trigger_props["product_type_display"], "Teams")
 
     @mock.patch(
         "enterprise_access.apps.customer_billing.tasks.BrazeApiClient"
