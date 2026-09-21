@@ -38,15 +38,15 @@ backoff==1.10.0
     # via
     #   -r requirements/base.txt
     #   analytics-python
-billiard==4.3.0
+billiard==4.2.4
     # via
     #   -r requirements/base.txt
     #   celery
-boto3==1.43.97
+boto3==1.43.92
     # via
     #   -r requirements/base.txt
     #   snowflake-connector-python
-botocore==1.43.97
+botocore==1.43.92
     # via
     #   -r requirements/base.txt
     #   boto3
@@ -91,7 +91,7 @@ click-plugins==1.1.1.2
     # via
     #   -r requirements/base.txt
     #   celery
-click-repl==0.4.0
+click-repl==0.3.0
     # via
     #   -r requirements/base.txt
     #   celery
@@ -233,7 +233,7 @@ edx-django-utils==8.0.2
     #   edx-rest-api-client
     #   edx-toggles
     #   openedx-events
-edx-drf-extensions==10.9.0
+edx-drf-extensions==10.8.0
     # via
     #   -r requirements/base.txt
     #   edx-rbac
@@ -261,17 +261,17 @@ fastavro==1.12.2
     #   -r requirements/base.txt
     #   confluent-kafka
     #   openedx-events
-filelock==3.32.7
+filelock==3.32.6
     # via
     #   -r requirements/base.txt
     #   snowflake-connector-python
-gevent==26.9.0
+gevent==26.8.0
     # via -r requirements/production.in
-greenlet==3.5.6
+greenlet==3.5.5
     # via gevent
 gunicorn==26.2.0
     # via -r requirements/production.in
-idna==3.20
+idna==3.19
     # via
     #   -r requirements/base.txt
     #   requests
@@ -316,7 +316,7 @@ monotonic==1.6
     # via
     #   -r requirements/base.txt
     #   analytics-python
-mysqlclient==2.3.0
+mysqlclient==2.2.8
     # via
     #   -r requirements/base.txt
     #   -r requirements/production.in
@@ -335,7 +335,7 @@ packaging==26.3
     #   drf-yasg
     #   kombu
     #   snowflake-connector-python
-platformdirs==4.11.10
+platformdirs==4.11.8
     # via
     #   -r requirements/base.txt
     #   snowflake-connector-python
@@ -357,7 +357,7 @@ pycparser==3.0
     #   cffi
 pygments==2.21.0
     # via -r requirements/base.txt
-pyjwt[crypto]==2.14.0
+pyjwt[crypto]==2.13.0
     # via
     #   -r requirements/base.txt
     #   drf-jwt
@@ -455,7 +455,7 @@ six==1.17.0
     #   edx-django-release-util
     #   edx-rbac
     #   python-dateutil
-snowflake-connector-python==4.7.4
+snowflake-connector-python==4.7.3
     # via -r requirements/base.txt
 social-auth-app-django==5.9.0
     # via
@@ -494,14 +494,13 @@ typing-extensions==4.16.0
     # via
     #   -r requirements/base.txt
     #   cattrs
-    #   click-repl
     #   django-countries
     #   edx-opaque-keys
     #   pyopenssl
     #   referencing
     #   snowflake-connector-python
     #   stripe
-tzdata==2026.4
+tzdata==2026.3
     # via
     #   -r requirements/base.txt
     #   kombu
@@ -514,7 +513,7 @@ uritemplate==4.2.0
     #   -r requirements/base.txt
     #   drf-spectacular
     #   drf-yasg
-urllib3==2.8.0
+urllib3==2.7.0
     # via
     #   -r requirements/base.txt
     #   botocore
@@ -525,7 +524,7 @@ vine==5.1.0
     #   amqp
     #   celery
     #   kombu
-wcwidth==0.8.4
+wcwidth==0.8.3
     # via
     #   -r requirements/base.txt
     #   prompt-toolkit

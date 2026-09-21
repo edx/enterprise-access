@@ -16,7 +16,7 @@ pip-tools==7.5.3
     # via
     #   -c requirements/constraints.txt
     #   -r requirements/pip-tools.in
-pyproject-hooks==1.3.3
+pyproject-hooks==1.2.0
     # via
     #   build
     #   pip-tools
