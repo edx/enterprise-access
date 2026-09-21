@@ -28,11 +28,11 @@ avro==1.12.2
     # via confluent-kafka
 backoff==1.10.0
     # via analytics-python
-billiard==4.2.4
+billiard==4.3.0
     # via celery
-boto3==1.43.92
+boto3==1.43.97
     # via snowflake-connector-python
-botocore==1.43.92
+botocore==1.43.97
     # via
     #   boto3
     #   s3transfer
@@ -68,7 +68,7 @@ click-didyoumean==0.3.1
     # via celery
 click-plugins==1.1.1.2
     # via celery
-click-repl==0.3.0
+click-repl==0.4.0
     # via celery
 code-annotations==3.0.0
     # via edx-toggles
@@ -200,7 +200,7 @@ edx-django-utils==8.0.2
     #   edx-rest-api-client
     #   edx-toggles
     #   openedx-events
-edx-drf-extensions==10.8.0
+edx-drf-extensions==10.9.0
     # via
     #   -r requirements/base.in
     #   edx-rbac
@@ -226,9 +226,9 @@ fastavro==1.12.2
     #   -r requirements/base.in
     #   confluent-kafka
     #   openedx-events
-filelock==3.32.6
+filelock==3.32.7
     # via snowflake-connector-python
-idna==3.19
+idna==3.20
     # via
     #   requests
     #   snowflake-connector-python
@@ -256,7 +256,7 @@ markupsafe==3.0.3
     # via jinja2
 monotonic==1.6
     # via analytics-python
-mysqlclient==2.2.8
+mysqlclient==2.3.0
     # via -r requirements/base.in
 oauthlib==3.3.1
     # via
@@ -271,7 +271,7 @@ packaging==26.3
     #   drf-yasg
     #   kombu
     #   snowflake-connector-python
-platformdirs==4.11.8
+platformdirs==4.11.10
     # via snowflake-connector-python
 ply==3.11
     # via djangoql
@@ -283,7 +283,7 @@ pycparser==3.0
     # via cffi
 pygments==2.21.0
     # via -r requirements/base.in
-pyjwt[crypto]==2.13.0
+pyjwt[crypto]==2.14.0
     # via
     #   drf-jwt
     #   edx-auth-backends
@@ -355,7 +355,7 @@ six==1.17.0
     #   edx-django-release-util
     #   edx-rbac
     #   python-dateutil
-snowflake-connector-python==4.7.3
+snowflake-connector-python==4.7.4
     # via -r requirements/base.in
 social-auth-app-django==5.9.0
     # via
@@ -386,13 +386,14 @@ tomlkit==0.15.1
 typing-extensions==4.16.0
     # via
     #   cattrs
+    #   click-repl
     #   django-countries
     #   edx-opaque-keys
     #   pyopenssl
     #   referencing
     #   snowflake-connector-python
     #   stripe
-tzdata==2026.3
+tzdata==2026.4
     # via kombu
 tzlocal==5.4.4
     # via celery
@@ -400,7 +401,7 @@ uritemplate==4.2.0
     # via
     #   drf-spectacular
     #   drf-yasg
-urllib3==2.7.0
+urllib3==2.8.0
     # via
     #   botocore
     #   requests
@@ -409,7 +410,7 @@ vine==5.1.0
     #   amqp
     #   celery
     #   kombu
-wcwidth==0.8.3
+wcwidth==0.8.4
     # via prompt-toolkit
 
 # The following packages are considered to be unsafe in a requirements file:
