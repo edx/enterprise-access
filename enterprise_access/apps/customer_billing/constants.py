@@ -153,3 +153,7 @@ STRIPE_CANCELED_STATUSES = [
 
 CHECKOUT_LIFECYCLE_STATE_MONITORING_KEY = 'ssp_ci_lifecycle_change'
 CHECKOUT_LIFECYCLE_IS_ERROR_MONITORING_KEY = 'ssp_ci_lifecycle_is_error'
+
+# Feature flag to bypass Salesforce and directly trigger provisioning
+# from the invoice.paid webhook handler.
+BYPASS_SALESFORCE_PROVISIONING_FLAG = 'customer_billing.bypass_salesforce_for_provisioning'

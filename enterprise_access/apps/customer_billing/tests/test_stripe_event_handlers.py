@@ -11,7 +11,7 @@ from unittest import mock
 import ddt
 import stripe
 from django.contrib.auth.models import AbstractUser
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.utils import timezone
 
 from enterprise_access.apps.core.tests.factories import UserFactory
@@ -48,6 +48,7 @@ from enterprise_access.apps.provisioning.models import (
     GetCreateTrialSubscriptionPlanStep
 )
 from enterprise_access.apps.provisioning.tests.factories import ProvisionNewCustomerWorkflowFactory
+from enterprise_access.apps.workflow.exceptions import UnitOfWorkException
 
 
 def _rand_numeric_string():
@@ -416,6 +417,169 @@ class TestStripeEventHandler(TestCase):
         self.assertEqual(event_data.summary.stripe_subscription_id, 'sub_salesforce_paid_001')
         self.assertEqual(event_data.summary.invoice_quantity, 6)
         self.assertEqual(event_data.summary.invoice_currency, 'usd')
+
+    def _trial_invoice_paid_event(self, stripe_customer_id):
+        """Build a trial-path (``invoice.total == 0``) invoice.paid event for ``self.checkout_intent``."""
+        self.checkout_intent.stripe_customer_id = stripe_customer_id
+        self.checkout_intent.save()
+
+        invoice_data = _build_salesforce_style_invoice_data(
+            invoice_id='in_bypass_test_001',
+            subscription_id='sub_bypass_test_001',
+            customer_id=stripe_customer_id,
+            customer_email=self.user.email,
+            customer_name='Test User',
+            checkout_intent_id=self.checkout_intent.id,
+            checkout_intent_uuid=self.checkout_intent.uuid,
+            enterprise_customer_slug='test-enterprise',
+            enterprise_customer_name='Test Enterprise',
+            lms_user_id=str(self.user.lms_user_id),
+            catalog_title='Open Courses',
+            catalog_query_id=30,
+            period_start=int(timezone.now().timestamp()),
+            total=0,
+            amount_paid=0,
+        )
+        return self._create_mock_stripe_event('invoice.paid', invoice_data)
+
+    @override_settings(ALLOW_SALESFORCE_BYPASS=True)
+    @mock.patch(
+        'enterprise_access.apps.customer_billing.stripe_event_handlers.bypass_salesforce_for_provisioning_enabled'
+    )
+    @mock.patch('enterprise_access.apps.provisioning.models.ProvisionNewCustomerWorkflow.objects.create')
+    @mock.patch('enterprise_access.apps.provisioning.models.ProvisionNewCustomerWorkflow.generate_input_dict')
+    def test_invoice_paid_bypasses_salesforce_when_enabled(
+        self,
+        mock_generate_input_dict,
+        mock_workflow_create,
+        mock_flag_enabled,
+    ):
+        """When the waffle flag and setting are both on, provisioning is triggered directly."""
+        mock_flag_enabled.return_value = True
+        mock_workflow = ProvisionNewCustomerWorkflowFactory.build()
+        mock_workflow.save()
+        mock_workflow.execute = mock.Mock()
+        mock_workflow_create.return_value = mock_workflow
+
+        mock_event = self._trial_invoice_paid_event('cus_bypass_enabled')
+
+        StripeEventHandler.dispatch(mock_event)
+
+        mock_generate_input_dict.assert_called_once()
+        call_args = mock_generate_input_dict.call_args.args
+        self.assertEqual(call_args[0]['slug'], self.checkout_intent.enterprise_slug)
+        self.assertEqual(call_args[1], [self.user.email])
+        self.assertEqual(call_args[-1], self.checkout_intent.ssp_product.slug)
+
+        mock_workflow_create.assert_called_once_with(input_data=mock_generate_input_dict.return_value)
+        mock_workflow.execute.assert_called_once()
+
+        self.checkout_intent.refresh_from_db()
+        self.assertEqual(self.checkout_intent.state, CheckoutIntentState.FULFILLED)
+        self.assertEqual(self.checkout_intent.workflow, mock_workflow)
+
+    @mock.patch(
+        'enterprise_access.apps.customer_billing.stripe_event_handlers.bypass_salesforce_for_provisioning_enabled'
+    )
+    @mock.patch('enterprise_access.apps.provisioning.models.ProvisionNewCustomerWorkflow.objects.create')
+    def test_invoice_paid_does_not_bypass_salesforce_when_setting_disabled(
+        self,
+        mock_workflow_create,
+        mock_flag_enabled,
+    ):
+        """Even with the waffle flag on, the hard settings guard must also be enabled."""
+        mock_flag_enabled.return_value = True
+
+        mock_event = self._trial_invoice_paid_event('cus_bypass_setting_off')
+
+        StripeEventHandler.dispatch(mock_event)
+
+        mock_workflow_create.assert_not_called()
+        self.checkout_intent.refresh_from_db()
+        self.assertEqual(self.checkout_intent.state, CheckoutIntentState.PAID)
+
+    @override_settings(ALLOW_SALESFORCE_BYPASS=True)
+    @mock.patch(
+        'enterprise_access.apps.customer_billing.stripe_event_handlers.bypass_salesforce_for_provisioning_enabled'
+    )
+    @mock.patch('enterprise_access.apps.provisioning.models.ProvisionNewCustomerWorkflow.objects.create')
+    def test_invoice_paid_does_not_bypass_salesforce_when_flag_disabled(
+        self,
+        mock_workflow_create,
+        mock_flag_enabled,
+    ):
+        """Even with the setting on, the waffle flag must also be enabled."""
+        mock_flag_enabled.return_value = False
+
+        mock_event = self._trial_invoice_paid_event('cus_bypass_flag_off')
+
+        StripeEventHandler.dispatch(mock_event)
+
+        mock_workflow_create.assert_not_called()
+        self.checkout_intent.refresh_from_db()
+        self.assertEqual(self.checkout_intent.state, CheckoutIntentState.PAID)
+
+    @mock.patch('enterprise_access.apps.provisioning.models.ProvisionNewCustomerWorkflow.objects.create')
+    def test_invoice_paid_does_not_bypass_salesforce_when_mark_as_paid_raises(self, mock_workflow_create):
+        """If ``mark_as_paid`` raises a ValueError, provisioning must not be triggered."""
+        self.checkout_intent.state = CheckoutIntentState.PAID
+        self.checkout_intent.stripe_customer_id = 'cus_original'
+        self.checkout_intent.save()
+
+        invoice_data = _build_salesforce_style_invoice_data(
+            invoice_id='in_bypass_mismatch_001',
+            subscription_id='sub_bypass_mismatch_001',
+            customer_id='cus_mismatched',
+            customer_email=self.user.email,
+            customer_name='Test User',
+            checkout_intent_id=self.checkout_intent.id,
+            checkout_intent_uuid=self.checkout_intent.uuid,
+            enterprise_customer_slug='test-enterprise',
+            enterprise_customer_name='Test Enterprise',
+            lms_user_id=str(self.user.lms_user_id),
+            catalog_title='Open Courses',
+            catalog_query_id=30,
+            period_start=int(timezone.now().timestamp()),
+            total=0,
+            amount_paid=0,
+        )
+        mock_event = self._create_mock_stripe_event('invoice.paid', invoice_data)
+
+        StripeEventHandler.dispatch(mock_event)
+
+        mock_workflow_create.assert_not_called()
+        self.checkout_intent.refresh_from_db()
+        self.assertEqual(self.checkout_intent.stripe_customer_id, 'cus_original')
+
+    @override_settings(ALLOW_SALESFORCE_BYPASS=True)
+    @mock.patch(
+        'enterprise_access.apps.customer_billing.stripe_event_handlers.bypass_salesforce_for_provisioning_enabled'
+    )
+    @mock.patch('enterprise_access.apps.provisioning.models.ProvisionNewCustomerWorkflow.objects.create')
+    @mock.patch('enterprise_access.apps.provisioning.models.ProvisionNewCustomerWorkflow.generate_input_dict')
+    def test_invoice_paid_bypass_marks_provisioning_error_on_workflow_failure(
+        self,
+        mock_generate_input_dict,
+        mock_workflow_create,
+        mock_flag_enabled,
+    ):
+        """If the bypassed workflow fails, the checkout intent is marked as errored, not fulfilled."""
+        mock_flag_enabled.return_value = True
+        mock_workflow = ProvisionNewCustomerWorkflowFactory.build()
+        mock_workflow.save()
+        mock_workflow.execute = mock.Mock()
+        mock_workflow_create.return_value = mock_workflow
+        mock_workflow.execute.side_effect = UnitOfWorkException('boom')
+
+        mock_event = self._trial_invoice_paid_event('cus_bypass_workflow_error')
+
+        StripeEventHandler.dispatch(mock_event)
+
+        mock_generate_input_dict.assert_called_once()
+        self.checkout_intent.refresh_from_db()
+        self.assertEqual(self.checkout_intent.state, CheckoutIntentState.ERRORED_PROVISIONING)
+        self.assertIn('boom', self.checkout_intent.last_provisioning_error)
+        self.assertEqual(self.checkout_intent.workflow, mock_workflow)
 
     @ddt.data(
         # Happy path: correct parent type at lines.data[0].parent.type
