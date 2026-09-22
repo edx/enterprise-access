@@ -4,8 +4,7 @@
         validation_requirements doc_requirements production-requirements static shell \
         test coverage isort_check isort style lint quality pii_check validate \
         migrate html_coverage upgrade extract_translation dummy_translations \
-        compile_translations fake_translations  pull_translations \
-        push_translations \
+        compile_translations fake_translations pull_translations \
         detect_changed_source_translations validate_translations check_keywords \
         dev.pull dev.up dev.down dev.stop dev.makemigrations dev.shell dev.logs \
         dev.restart-container dev.attach \
@@ -146,11 +145,10 @@ compile_translations: # compile translation files, outputting .po files for each
 
 fake_translations: ## generate and compile dummy translation files
 
-pull_translations: ## pull translations from Transifex
-	tx pull -t -a -f --mode reviewed
-
-push_translations: ## push source translation files (.po) from Transifex
-	tx push -s
+pull_translations: ## pull translations from edx/openedx-translations via atlas (OEP-58)
+	find enterprise_access/conf/locale -mindepth 1 -maxdepth 1 -type d -exec rm -r {} \;
+	atlas pull $(ATLAS_OPTIONS) translations/enterprise-access/enterprise_access/conf/locale:enterprise_access/conf/locale
+	python manage.py compilemessages
 
 detect_changed_source_translations: ## check if translation files are up-to-date
 	cd enterprise_access && i18n_tool changed
