@@ -1978,6 +1978,64 @@ class TestSubsidyAccessPolicyCanRedeemView(BaseCanRedeemTestMixin, APITestWithMo
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert response.json() == {"content_key": ["This field is required."]}
 
+    @mock.patch('enterprise_access.apps.api.v1.views.subsidy_access_policy.LmsApiClient', return_value=mock.MagicMock())
+    @mock.patch('enterprise_access.apps.subsidy_access_policy.subsidy_api.get_versioned_subsidy_client')
+    def test_can_redeem_unreachable_subsidy_does_not_block_other_policies(self, mock_get_client, _mock_lms_client):
+        """
+        A policy whose subsidy no longer resolves must not take down can-redeem for the whole
+        customer: the other policies are still evaluated, and a redeemable one is resolved.
+
+        Regression test for the soft-deleted-subsidy incident, in which one unreachable subsidy
+        produced a 422 that the learner portal then reported as "not enough funds".
+        """
+        test_content_key = "course-v1:edX+Privacy101+3T2020"
+        stale_policy = PerLearnerEnrollmentCapLearnerCreditAccessPolicyFactory(
+            enterprise_customer_uuid=self.enterprise_uuid,
+            spend_limit=500000,
+        )
+        # policies are sorted by subsidy expiration and balance before being evaluated,
+        # so the subsidy record needs to be comparable rather than a bare Mock.
+        self.redeemable_policy.subsidy_client.retrieve_subsidy.return_value = {
+            'uuid': str(self.redeemable_policy.subsidy_uuid),
+            'is_active': True,
+            'current_balance': 500000,
+            'expiration_datetime': '2099-01-01T00:00:00Z',
+        }
+        content_metadata = {
+            'content_uuid': str(uuid4()),
+            'content_key': test_content_key,
+            'source': 'edX',
+            'content_price': 29900,
+        }
+        self.mock_get_content_metadata.return_value = content_metadata
+
+        def fake_list_subsidy_transactions(subsidy_uuid=None, **kwargs):
+            if subsidy_uuid == stale_policy.subsidy_uuid:
+                raise HTTPError(
+                    'Fake HTTP Error Message',
+                    response=MockResponse({'detail': 'foobar'}, status.HTTP_403_FORBIDDEN),
+                )
+            return {'results': [], 'aggregates': {'total_quantity': 0}, 'next': None}
+
+        mock_get_client.return_value.list_subsidy_transactions.side_effect = fake_list_subsidy_transactions
+
+        with mock.patch(
+            'enterprise_access.apps.subsidy_access_policy.content_metadata_api.get_and_cache_content_metadata',
+            return_value=content_metadata,
+        ):
+            response = self.client.get(
+                self.subsidy_access_policy_can_redeem_endpoint,
+                {'content_key': test_content_key},
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        response_list = response.json()
+        assert len(response_list) == 1
+        assert response_list[0]["can_redeem"] is True
+        # the stale policy is excluded outright, so the healthy policy must be the resolved one
+        assert response_list[0]["redeemable_subsidy_access_policy"]["uuid"] == str(self.redeemable_policy.uuid)
+        assert response_list[0]["reasons"] == []
+
     @mock.patch('enterprise_access.apps.subsidy_access_policy.subsidy_api.get_and_cache_transactions_for_learner')
     def test_can_redeem_policy(self, mock_transactions_cache_for_learner):
         """

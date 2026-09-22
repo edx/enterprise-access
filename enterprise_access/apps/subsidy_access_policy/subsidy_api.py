@@ -21,6 +21,28 @@ REQUEST_CACHE_NAMESPACE = 'subsidy_access_policy'
 
 CACHE_MISS = object()
 
+# HTTP status codes from the subsidy service that mean *one specific subsidy* is unusable
+# (missing, soft-deleted, or otherwise inaccessible), as opposed to the subsidy service as
+# a whole being unhealthy.  Note that enterprise-subsidy answers a request for a subsidy it
+# cannot find with a 403 rather than a 404, because its RBAC context is derived from the
+# subsidy record itself and cannot be resolved without it.
+UNREACHABLE_SUBSIDY_STATUS_CODES = (403, 404)
+
+
+def _indicates_unreachable_subsidy(exc):
+    """
+    Returns True if the given ``SubsidyAPIHTTPError`` indicates that a single subsidy is
+    unusable, rather than a broader failure of the subsidy service.
+
+    We deliberately do *not* treat other statuses (5xx, and anything else) this way: those
+    are plausibly transient, and silently excluding policies because of a blip would tell
+    learners that content is unavailable when it is not.
+    """
+    error_response = exc.error_response
+    if error_response is None:
+        return False
+    return error_response.status_code in UNREACHABLE_SUBSIDY_STATUS_CODES
+
 
 class TransactionPolicyMismatchError(Exception):
     """
@@ -130,16 +152,48 @@ def get_redemptions_by_content_and_policy_for_learner(policies, lms_user_id):
     with a policy uuid that’s *not* currently associated with the subsidy we requested transactions for,
     we don’t want it the mapping, because we’ll later compute aggregates for the policies’
     spend caps and learner limits based on that mapping.
+
+    If any individual subsidy is unreachable (see ``_indicates_unreachable_subsidy()``), that
+    subsidy is skipped and its uuid is returned to the caller, so that the caller can exclude
+    the affected policies from redemption entirely.  We deliberately exclude those policies
+    rather than treating them as having no transactions: this mapping feeds per-learner spend
+    caps and enrollment limits, so an empty transaction list would under-count spend and could
+    allow policies on the same subsidy to over-redeem.
+
+    Returns:
+        tuple of (dict, set): the content_key -> {policy: [transactions]} mapping described
+        above, and the set of subsidy uuids that could not be reached.
     """
     policies_by_subsidy_uuid = defaultdict(set)
     for policy in policies:
         policies_by_subsidy_uuid[policy.subsidy_uuid].add(policy)
 
     result = defaultdict(lambda: defaultdict(list))
+    unreachable_subsidy_uuids = set()
 
     for subsidy_uuid, policies_with_subsidy in policies_by_subsidy_uuid.items():
         logger.info(f'Fetching learner transactions for subsidy {subsidy_uuid} via policies {policies_with_subsidy}')
-        transactions_in_subsidy = get_and_cache_transactions_for_learner(subsidy_uuid, lms_user_id)['transactions']
+        try:
+            transactions_in_subsidy = get_and_cache_transactions_for_learner(
+                subsidy_uuid, lms_user_id,
+            )['transactions']
+        except SubsidyAPIHTTPError as exc:
+            if not _indicates_unreachable_subsidy(exc):
+                raise
+            unreachable_subsidy_uuids.add(subsidy_uuid)
+            # Logged at ERROR because this is nearly always a misconfiguration that silently
+            # blocks learners: a policy still pointing at a subsidy that no longer resolves.
+            # It is also the only signal distinguishing that case from a genuine permissions
+            # regression, so it needs to stay visible.
+            logger.error(
+                'Subsidy %s is unreachable (status %s); excluding its policies %s from redemption '
+                'for lms_user_id %s. Check whether the subsidy record still exists.',
+                subsidy_uuid,
+                exc.error_response.status_code,
+                sorted(str(policy.uuid) for policy in policies_with_subsidy),
+                lms_user_id,
+            )
+            continue
         for redemption in transactions_in_subsidy:
             transaction_uuid = redemption['uuid']
             content_key = redemption['content_key']
@@ -160,7 +214,7 @@ def get_redemptions_by_content_and_policy_for_learner(policies, lms_user_id):
                     f"Found policy uuid {subsidy_access_policy_uuid} that is no longer tied to this subsidy."
                 )
 
-    return result
+    return result, unreachable_subsidy_uuids
 
 
 def get_tiered_cache_subsidy_record(subsidy_uuid, *cache_key_args):
