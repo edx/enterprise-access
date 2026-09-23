@@ -73,10 +73,25 @@ class TestBuildCourseQuery(TestCase):
     Tests for ``build_course_query``.
     """
 
-    def test_the_career_name_leads(self):
+    def test_the_skills_lead_and_the_career_name_is_absent(self):
+        """
+        Reversed on 2026-09-23. Courses do not describe themselves by job title -- of 1,000
+        courses examined, none carried the queried title in their own -- and querying on
+        skills instead moved 17 of 127 careers out of a "bad" verdict, p≈0.006.
+        """
         query = build_course_query(career_name='Data Analyst', boost_terms=['Python', 'SQL'])
 
-        self.assertTrue(query.startswith('Data Analyst'))
+        self.assertEqual(query, 'Python SQL')
+        self.assertNotIn('Data Analyst', query)
+
+    def test_the_career_name_is_the_fallback_when_no_skills_resolved(self):
+        """
+        A career whose skills all fail to resolve must still retrieve something; an empty
+        query returns the whole catalog in relevance order, which is worse than the name.
+        """
+        query = build_course_query(career_name='Data Analyst', boost_terms=[])
+
+        self.assertEqual(query, 'Data Analyst')
 
     def test_the_query_is_capped_on_a_word_boundary(self):
         """
@@ -84,7 +99,7 @@ class TestBuildCourseQuery(TestCase):
         competing for ranking signal.
         """
         query = build_course_query(
-            career_name='A B C D E', boost_terms=['F G H I J K L M N O P'],
+            career_name='ignored', boost_terms=['F G H I J K L M N O P Q R'],
         )
 
         words = query.split()
@@ -167,6 +182,26 @@ class TestRetrieveCandidateCourses(TestCase):
         )
 
         self.assertEqual(client.calls[0]['hitsPerPage'], CANDIDATE_HITS_PER_PAGE)
+
+    def test_the_query_words_are_sent_as_optional(self):
+        """
+        The index ANDs every word, so a multi-skill query filters to nothing unless the
+        words are optional. ``removeWordsIfNoResults`` only relaxes *after* returning
+        nothing, which makes the query a filter that occasionally gives up; the measured
+        improvement in 2026-09-23's arms came from relaxing it from the start, so the query
+        ranks by how many of the career's skills a course matches.
+        """
+        client = FakeAlgoliaClient([hits('A', 'B', 'C', levels=['Introductory', 'Intermediate'])])
+
+        retrieve_candidate_courses(
+            career_name='Data Analyst',
+            translation=translation(boost=['Python', 'SQL']),
+            customer_uuid=CUSTOMER_UUID,
+            allow_unscoped=True,
+            algolia_client=client,
+        )
+
+        self.assertEqual(client.calls[0]['optionalWords'], 'Python SQL')
 
     def test_the_query_is_relaxed_because_the_index_ands_every_word(self):
         client = FakeAlgoliaClient([hits('A+1')])

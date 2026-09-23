@@ -38,7 +38,15 @@ from enterprise_access.apps.pathways.pathway_assembly import LEVEL_ORDER, PATHWA
 logger = logging.getLogger(__name__)
 
 # The window ``pathway_assembly`` selects five courses out of. See (1) above.
-CANDIDATE_HITS_PER_PAGE = 20
+#
+# Widened 20 -> 50 on 2026-09-23. Depth alone buys nothing: an arm retrieving 50 and
+# assembling in relevance order scored the same as one retrieving 12 (bad 33.1% vs 34.6%,
+# course-level on-topic 38.1% vs 39.1%, identical "good" count over 127 careers). It is the
+# re-ranker that turns the extra depth into better pathways -- the same 50 candidates, model
+# selected, moved "good" 8.7% -> 15.0% and "bad" 34.6% -> 19.7%. So this constant is only
+# worth its latency while ``rerank_candidates`` runs; if the kill switch is ever thrown,
+# 50 unranked candidates are no better than 20.
+CANDIDATE_HITS_PER_PAGE = 50
 
 # Everything the re-ranker and the assembler need, and nothing else. Descriptions are the
 # bulk of a course record, so they are requested here and nowhere upstream.
@@ -61,6 +69,14 @@ CUSTOMER_FACET = 'enterprise_customer_uuids'
 SKILL_NAMES_FACET = 'skill_names'
 
 REMOVE_WORDS_IF_NO_RESULTS = 'allOptional'
+
+# ``removeWordsIfNoResults`` only relaxes the AND *after* it has returned nothing, which
+# makes the query a filter that occasionally gives up. ``optionalWords`` relaxes it from the
+# start, so the query ranks by how many of the career's skills a course matches instead of
+# demanding all of them. With a skills-led query that distinction is the whole point -- the
+# measured arms above used ``optionalWords``. ``removeWordsIfNoResults`` is kept as a
+# belt-and-braces fallback for the no-skills case, where the query is the career name.
+USE_OPTIONAL_WORDS = True
 
 # Strict skill values become hard facet filters, so the budget is tight -- each one can
 # only narrow. Boosts are optional filters and cost nothing but ranking signal.
@@ -92,13 +108,38 @@ MIN_RUNGS_SPANNED = 2
 
 def build_course_query(*, career_name: str, boost_terms: list[str]) -> str:
     """
-    Build the text query for course retrieval.
+    Build the text query for course retrieval, from the career's SKILLS.
 
-    The career name leads because it is the one phrase a learner would recognise; skill
-    terms follow to broaden it. Truncated at ``MAX_QUERY_WORDS`` on a word boundary.
+    Changed on 2026-09-23, reversing the previous construction in which the career name
+    led. The career name is now a fallback used only when no skill terms resolved.
+
+    The reasoning that put the career name first -- that it is the one phrase a learner
+    would recognise -- turned out to describe the learner, not the catalog. Courses do not
+    describe themselves by job title: across 1,000 courses examined on the enterprise
+    catalog, **not one** carried the queried job title in its own title, and only 7.8%
+    contained the query's words anywhere in their text.
+
+    Measured over 127 careers, each retrieval arm judged pathway-by-pathway:
+
+        query                       bad      course on-topic   pathways with nothing on topic
+        career name (was)          48.0%          28.8%                    45
+        skills (now)               34.6%          37.8%                    20
+        full job title             48.8%          28.0%                    41
+        career name UNION skills   47.2%          27.7%                    42
+
+    Net 17 careers moved out of "bad", p≈0.006 paired. Two negative results are worth
+    keeping, because both are tempting: the full job title is no better than the truncated
+    name, and the *union* of both queries is no better than the name alone -- name-matched
+    hits rank first and fill the pathway before any skill match is reached, so adding the
+    skill query without removing the name buys nothing.
+
+    Truncated at ``MAX_QUERY_WORDS`` on a word boundary. Pair with ``OPTIONAL_WORDS``: the
+    index ANDs every word, so a four-skill query filters to nothing unless the words are
+    optional.
     """
+    parts = list(boost_terms) or [career_name]
     words: list[str] = []
-    for part in [career_name, *boost_terms]:
+    for part in parts:
         for word in (part or '').split():
             if len(words) >= MAX_QUERY_WORDS:
                 return ' '.join(words)
@@ -215,6 +256,8 @@ def retrieve_candidate_courses(
                 strict_skills=strict_skills, customer_uuid=customer_uuid,
             ),
         }
+        if USE_OPTIONAL_WORDS and query:
+            params['optionalWords'] = query
         if optional_filters:
             params['optionalFilters'] = optional_filters
         response = client.search_catalog_index(
