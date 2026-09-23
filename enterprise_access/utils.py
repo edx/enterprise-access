@@ -109,6 +109,7 @@ def _get_course_run_ended_date(content_metadata):
     Return the datetime when all known course runs have ended, or None if not all known runs are complete.
     """
     # Import here to avoid circular import
+    # pylint: disable=import-outside-toplevel
     from enterprise_access.apps.content_assignments.content_metadata_api import parse_datetime_string
 
     if not content_metadata:
@@ -157,6 +158,8 @@ def _get_catalog_agnostic_content_metadata_for_assignment(assignment):
     """
     Fetch content metadata without relying on the assignment's active policy catalog.
     """
+    # Import here to avoid circular import
+    # pylint: disable=import-outside-toplevel
     from enterprise_access.apps.content_metadata.api import get_and_cache_content_metadata
 
     content_identifiers = []

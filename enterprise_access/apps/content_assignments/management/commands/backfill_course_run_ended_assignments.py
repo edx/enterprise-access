@@ -9,14 +9,14 @@ from django.core.management.base import BaseCommand
 from enterprise_access.apps.content_assignments.api import expire_assignment
 from enterprise_access.apps.content_assignments.constants import (
     AssignmentAutomaticExpiredReason,
-    LearnerContentAssignmentStateChoices,
+    LearnerContentAssignmentStateChoices
 )
 from enterprise_access.apps.content_assignments.content_metadata_api import get_content_metadata_for_assignments
 from enterprise_access.apps.content_assignments.models import AssignmentConfiguration
 from enterprise_access.utils import (
     _get_catalog_agnostic_content_metadata_for_assignment,
     get_automatic_expiration_date_and_reason,
-    localized_utcnow,
+    localized_utcnow
 )
 
 logger = logging.getLogger(__name__)

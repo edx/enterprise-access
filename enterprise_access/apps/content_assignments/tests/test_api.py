@@ -15,7 +15,6 @@ from enterprise_access.apps.subsidy_request.tests.factories import (
     LearnerCreditRequestConfigurationFactory,
     LearnerCreditRequestFactory
 )
-
 from enterprise_access.utils import get_automatic_expiration_date_and_reason
 
 from ..api import (
@@ -1218,10 +1217,8 @@ class TestAssignmentExpiration(TestCase):
         mock_expired_email.delay.assert_called_once_with(assignment.uuid)
 
     @mock.patch('enterprise_access.apps.content_assignments.api.send_assignment_automatically_expired_email')
-    @mock.patch('enterprise_access.apps.content_assignments.api.get_and_cache_content_metadata')
     def test_expire_assignment_when_all_known_course_runs_have_ended(
         self,
-        mock_get_and_cache_content_metadata,
         mock_expired_email,
     ):
         """
@@ -1253,21 +1250,25 @@ class TestAssignmentExpiration(TestCase):
         }
 
         mock_subsidy_record = {'expiration_datetime': delta_t(days=100, as_string=True)}
-        with mock.patch.object(self.policy, 'subsidy_record', return_value=mock_subsidy_record):
+        # Patched on the class (not the `self.policy` instance) because `assignment.refresh_from_db()`
+        # below clears the assignment's cached `assignment_configuration`/`policy` relations, so a
+        # later `.policy` lookup returns a freshly-queried instance that an instance-level patch
+        # wouldn't cover.
+        with mock.patch.object(type(self.policy), 'subsidy_record', return_value=mock_subsidy_record):
             expire_assignment(
                 assignment,
                 content_metadata=content_metadata,
                 modify_assignment=True,
             )
 
-        assignment.refresh_from_db()
+            assignment.refresh_from_db()
 
-        self.assertEqual(assignment.state, LearnerContentAssignmentStateChoices.EXPIRED)
-        self.assertEqual(
-            get_automatic_expiration_date_and_reason(assignment, content_metadata)['reason'],
-            'COURSE_RUN_ENDED',
-        )
-        mock_expired_email.delay.assert_called_once_with(assignment.uuid)
+            self.assertEqual(assignment.state, LearnerContentAssignmentStateChoices.EXPIRED)
+            self.assertEqual(
+                get_automatic_expiration_date_and_reason(assignment, content_metadata)['reason'],
+                'COURSE_RUN_ENDED',
+            )
+            mock_expired_email.delay.assert_called_once_with(assignment.uuid)
 
     @mock.patch('enterprise_access.apps.content_assignments.api.send_assignment_automatically_expired_email')
     def test_does_not_expire_assignment_when_a_run_is_still_active(self, mock_expired_email):
@@ -1298,23 +1299,35 @@ class TestAssignmentExpiration(TestCase):
         }
 
         mock_subsidy_record = {'expiration_datetime': delta_t(days=100, as_string=True)}
-        with mock.patch.object(self.policy, 'subsidy_record', return_value=mock_subsidy_record):
+        # Patched on the class (not the `self.policy` instance) because `assignment.refresh_from_db()`
+        # below clears the assignment's cached `assignment_configuration`/`policy` relations, so a
+        # later `.policy` lookup returns a freshly-queried instance that an instance-level patch
+        # wouldn't cover.
+        with mock.patch.object(type(self.policy), 'subsidy_record', return_value=mock_subsidy_record):
             expire_assignment(
                 assignment,
                 content_metadata=content_metadata,
                 modify_assignment=True,
             )
 
-        assignment.refresh_from_db()
+            assignment.refresh_from_db()
 
-        self.assertEqual(assignment.state, LearnerContentAssignmentStateChoices.ALLOCATED)
-        self.assertIsNone(get_automatic_expiration_date_and_reason(assignment, content_metadata)['date'])
-        mock_expired_email.delay.assert_not_called()
+            self.assertEqual(assignment.state, LearnerContentAssignmentStateChoices.ALLOCATED)
+            # A still-active run means COURSE_RUN_ENDED shouldn't be the expiration reason. Note that
+            # `date`/`reason` here will still reflect the 90-day allocation timeout fallback, which is
+            # unrelated to course run status.
+            self.assertNotEqual(
+                get_automatic_expiration_date_and_reason(assignment, content_metadata)['reason'],
+                'COURSE_RUN_ENDED',
+            )
+            mock_expired_email.delay.assert_not_called()
 
     @mock.patch('enterprise_access.apps.content_assignments.api.send_assignment_automatically_expired_email')
-    @mock.patch('enterprise_access.apps.content_assignments.content_metadata_api.get_and_cache_content_metadata')
+    @mock.patch('enterprise_access.apps.content_metadata.api.get_and_cache_content_metadata')
+    @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient')
     def test_expire_assignment_when_course_runs_ended_without_active_catalog_metadata(
         self,
+        mock_catalog_client,
         mock_get_and_cache_content_metadata,
         mock_expired_email,
     ):
@@ -1334,6 +1347,9 @@ class TestAssignmentExpiration(TestCase):
         )
         assignment.add_successful_notified_action()
 
+        # Simulate the active catalog no longer containing metadata for this content.
+        mock_catalog_client.return_value.catalog_content_metadata.return_value = {'count': 0, 'results': []}
+
         mock_get_and_cache_content_metadata.return_value = {
             'key': course_key,
             'normalized_metadata': {'enroll_by_date': None},
@@ -1342,7 +1358,8 @@ class TestAssignmentExpiration(TestCase):
             },
         }
 
-        with mock.patch.object(self.policy, 'subsidy_record', return_value={'expiration_datetime': delta_t(days=100, as_string=True)}):
+        subsidy_record = {'expiration_datetime': delta_t(days=100, as_string=True)}
+        with mock.patch.object(self.policy, 'subsidy_record', return_value=subsidy_record):
             expiration = get_automatic_expiration_date_and_reason(assignment)
 
         self.assertEqual(expiration['reason'], 'COURSE_RUN_ENDED')
