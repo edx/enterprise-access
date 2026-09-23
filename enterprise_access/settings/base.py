@@ -92,6 +92,7 @@ PROJECT_APPS = (
     'enterprise_access.apps.customer_billing',
     'enterprise_access.apps.testimonials',
     'enterprise_access.apps.prompts',
+    'enterprise_access.apps.pathway_review',
 )
 
 INSTALLED_APPS += THIRD_PARTY_APPS
