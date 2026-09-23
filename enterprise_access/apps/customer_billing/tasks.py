@@ -382,6 +382,58 @@ def _send_cancelation_campaign(checkout_intent, ending_timestamp, campaign_ident
 
 
 @shared_task(base=LoggedTaskWithRetry)
+def send_trial_ended_cancellation_email_task(checkout_intent_id: int):
+    """
+    Send Braze email notification when a trial subscription ends after being cancelled.
+
+    Supports both Teams and Essentials via a single shared Braze campaign,
+    disambiguated by the ``product_type`` trigger property.
+
+    Args:
+        checkout_intent_id (int): ID of the CheckoutIntent record
+
+    Raises:
+        BrazeClientError: If there's an error communicating with Braze
+        Exception: For any other unexpected errors during email sending
+    """
+    checkout_intent = _get_checkout_intent_with_product(checkout_intent_id)
+    enterprise_slug = checkout_intent.enterprise_slug
+
+    admin_users = get_enterprise_admins(enterprise_slug, raise_if_empty=True)
+    braze_client = BrazeApiClient()
+    recipients = prepare_admin_braze_recipients(
+        braze_client, admin_users, enterprise_slug, raise_if_empty=True,
+    )
+
+    logger.info(
+        "Sending trial ended cancellation email for CheckoutIntent %s (enterprise slug: %s)",
+        checkout_intent.id,
+        enterprise_slug,
+    )
+
+    ssp_product = checkout_intent.ssp_product
+    campaign_id = get_campaign_id('trial_ended_cancellation', ssp_product)
+    product_type = get_product_type(ssp_product)
+
+    braze_trigger_properties = _build_common_trigger_properties(
+        ssp_product=ssp_product,
+        organization_name=checkout_intent.enterprise_name,
+        product_type=product_type,
+        product_type_display=product_type.capitalize(),
+        enterprise_admin_portal_url=f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/{enterprise_slug}',
+    )
+
+    send_campaign_message(
+        braze_client,
+        campaign_id,
+        recipients=recipients,
+        trigger_properties=braze_trigger_properties,
+        organization_name=checkout_intent.enterprise_name,
+        email_description='trial ended cancellation email',
+    )
+
+
+@shared_task(base=LoggedTaskWithRetry)
 def send_billing_error_email_task(checkout_intent_id: int):
     """
     Send Braze email notification when a subscription encounters a billing error
@@ -449,16 +501,17 @@ def send_billing_error_email_task(checkout_intent_id: int):
     )
 
 
-@shared_task(base=LoggedTaskWithRetry)
-def send_reinstatement_email_task(checkout_intent_id: int):
+def _send_reinstatement_campaign(checkout_intent_id: int, campaign_id: str, email_description: str):
     """
-    Send Braze email notification when a subscription is reinstated after a scheduled cancellation.
+    Shared logic for sending a Braze reinstatement email for a given campaign.
 
-    This task handles sending a confirmation email to enterprise admins when their
-    subscription cancellation is reversed (i.e., the subscription is restored).
+    Not itself a Celery task; must be called from one (e.g. send_trial_reinstatement_email_task,
+    send_paid_reinstatement_email_task).
 
     Args:
         checkout_intent_id (int): ID of the CheckoutIntent record
+        campaign_id (str): Braze campaign UUID to trigger
+        email_description (str): Human-readable description used for logging
     """
     checkout_intent = _get_checkout_intent_with_product(checkout_intent_id)
     enterprise_slug = checkout_intent.enterprise_slug
@@ -469,19 +522,25 @@ def send_reinstatement_email_task(checkout_intent_id: int):
         braze_client, admin_users, enterprise_slug, raise_if_empty=True,
     )
 
-    campaign_id = settings.BRAZE_SSP_SUBSCRIPTION_REINSTATED_CAMPAIGN
     logger.info(
-        "Sending reinstatement email for CheckoutIntent %s (enterprise slug: %s). "
+        "Sending %s for CheckoutIntent %s (enterprise slug: %s). "
         "Campaign ID: %r (type: %s)",
+        email_description,
         checkout_intent_id,
         enterprise_slug,
         campaign_id,
         type(campaign_id).__name__,
     )
 
-    braze_trigger_properties = {
-        "enterprise_admin_portal_url": f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/{enterprise_slug}',
-    }
+    product_type = get_product_type(checkout_intent.ssp_product)
+
+    braze_trigger_properties = _build_common_trigger_properties(
+        ssp_product=checkout_intent.ssp_product,
+        organization_name=checkout_intent.enterprise_name,
+        product_type=product_type,
+        product_type_display=product_type.capitalize(),
+        enterprise_admin_portal_url=f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/{enterprise_slug}',
+    )
 
     send_campaign_message(
         braze_client,
@@ -489,7 +548,43 @@ def send_reinstatement_email_task(checkout_intent_id: int):
         recipients=recipients,
         trigger_properties=braze_trigger_properties,
         organization_name=checkout_intent.enterprise_name,
-        email_description='subscription reinstatement email',
+        email_description=email_description,
+    )
+
+
+@shared_task(base=LoggedTaskWithRetry)
+def send_trial_reinstatement_email_task(checkout_intent_id: int):
+    """
+    Send Braze email notification when a trial subscription is reinstated after a scheduled cancellation.
+
+    This task handles sending a confirmation email to enterprise admins when their
+    trial subscription cancellation is reversed (i.e., the trial is restored).
+
+    Args:
+        checkout_intent_id (int): ID of the CheckoutIntent record
+    """
+    _send_reinstatement_campaign(
+        checkout_intent_id,
+        settings.BRAZE_ENTERPRISE_SSP_TRIAL_SUBSCRIPTION_REINSTATED_CAMPAIGN,
+        'trial subscription reinstatement email',
+    )
+
+
+@shared_task(base=LoggedTaskWithRetry)
+def send_paid_reinstatement_email_task(checkout_intent_id: int):
+    """
+    Send Braze email notification when a paid subscription is reinstated after a scheduled cancellation.
+
+    This task handles sending a confirmation email to enterprise admins when their
+    paid subscription cancellation is reversed (i.e., the subscription is restored).
+
+    Args:
+        checkout_intent_id (int): ID of the CheckoutIntent record
+    """
+    _send_reinstatement_campaign(
+        checkout_intent_id,
+        settings.BRAZE_ENTERPRISE_SSP_PAID_SUBSCRIPTION_REINSTATED_CAMPAIGN,
+        'paid subscription reinstatement email',
     )
 
 

@@ -27,11 +27,13 @@ from enterprise_access.apps.customer_billing.tasks import (
     send_billing_error_email_task,
     send_finalized_cancelation_email_task,
     send_paid_cancellation_email_task,
+    send_paid_reinstatement_email_task,
     send_payment_receipt_email,
-    send_reinstatement_email_task,
     send_trial_cancellation_email_task,
     send_trial_end_and_subscription_started_email_task,
-    send_trial_ending_reminder_email_task
+    send_trial_ended_cancellation_email_task,
+    send_trial_ending_reminder_email_task,
+    send_trial_reinstatement_email_task
 )
 from enterprise_access.apps.customer_billing.utils import datetime_from_timestamp
 from enterprise_access.apps.track.segment import track_event
@@ -845,7 +847,11 @@ class StripeEventHandler:
                 f"Subscription {subscription['id']} was reinstated (cancellation reversed). "
                 f"Processing reinstatement notification for checkout_intent uuid={checkout_intent.uuid}"
             )
-            send_reinstatement_email_task.delay(checkout_intent_id=checkout_intent.id)
+            # Other statuses (e.g. past_due, paused, unpaid) are intentionally not notified.
+            if current_status == StripeSubscriptionStatus.TRIALING:
+                send_trial_reinstatement_email_task.delay(checkout_intent_id=checkout_intent.id)
+            elif current_status == StripeSubscriptionStatus.ACTIVE:
+                send_paid_reinstatement_email_task.delay(checkout_intent_id=checkout_intent.id)
 
         # Everything belows handles a subscription state change. If the status
         # hasn't changed, we're all done.
@@ -891,17 +897,26 @@ class StripeEventHandler:
         _update_renewal_cancellation_state(checkout_intent, is_canceled=True, subscription_cancel_at=None)
 
         previous_summary = checkout_intent.previous_summary(event, stripe_object_type='subscription')
-        if previous_summary.subscription_status == StripeSubscriptionStatus.ACTIVE:
-            # https://docs.stripe.com/api/subscriptions/object#subscription_object-ended_at
-            ended_at = subscription.get("ended_at") or timezone.now().timestamp()
-            logger.info(
-                "Queuing cancelation finalization email for checkout_intent uuid=%s",
-                checkout_intent.uuid,
-            )
-            send_finalized_cancelation_email_task.delay(
-                checkout_intent_id=checkout_intent.id,
-                ended_at_timestamp=ended_at,
-            )
+        if previous_summary:
+            if previous_summary.subscription_status == StripeSubscriptionStatus.ACTIVE:
+                # https://docs.stripe.com/api/subscriptions/object#subscription_object-ended_at
+                ended_at = subscription.get("ended_at") or timezone.now().timestamp()
+                logger.info(
+                    "Queuing cancelation finalization email for checkout_intent uuid=%s",
+                    checkout_intent.uuid,
+                )
+                send_finalized_cancelation_email_task.delay(
+                    checkout_intent_id=checkout_intent.id,
+                    ended_at_timestamp=ended_at,
+                )
+            elif previous_summary.subscription_status == StripeSubscriptionStatus.TRIALING:
+                logger.info(
+                    "Queuing trial ended cancellation email for checkout_intent uuid=%s",
+                    checkout_intent.uuid,
+                )
+                send_trial_ended_cancellation_email_task.delay(
+                    checkout_intent_id=checkout_intent.id,
+                )
 
 
 def _process_trial_to_paid_renewal(

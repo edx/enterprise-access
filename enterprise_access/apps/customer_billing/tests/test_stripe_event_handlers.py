@@ -817,9 +817,12 @@ class TestStripeEventHandler(TestCase):
         mock_email_task.delay.assert_not_called()
 
     @mock.patch(
-        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_reinstatement_email_task"
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_trial_reinstatement_email_task"
     )
-    def test_subscription_updated_sends_email_when_reinstated(self, mock_email_task):
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_paid_reinstatement_email_task"
+    )
+    def test_subscription_updated_sends_email_when_reinstated(self, mock_paid_email_task, mock_email_task):
         """Test that subscription_updated sends reinstatement email when cancel_at is cleared."""
         subscription_id = "sub_test_reinstate_123"
         trial_end_timestamp = int((timezone.now() + timedelta(days=14)).timestamp())
@@ -848,12 +851,13 @@ class TestStripeEventHandler(TestCase):
 
         StripeEventHandler.dispatch(mock_event)
 
-        # Ensure the task was queued with the expected identifiers.
+        # Ensure the trial task was queued with the expected identifiers, and the paid task was not.
         mock_email_task.delay.assert_called_once()
         self.assertEqual(mock_email_task.delay.call_args.kwargs.get('checkout_intent_id'), self.checkout_intent.id)
+        mock_paid_email_task.delay.assert_not_called()
 
     @mock.patch(
-        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_reinstatement_email_task"
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_trial_reinstatement_email_task"
     )
     def test_subscription_updated_no_reinstatement_email_when_never_cancelled(self, mock_email_task):
         """Test that we don't send reinstatement email if cancel_at was already None."""
@@ -884,6 +888,85 @@ class TestStripeEventHandler(TestCase):
 
         # Should NOT send reinstatement email since cancel_at was never set
         mock_email_task.delay.assert_not_called()
+
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_trial_reinstatement_email_task"
+    )
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_paid_reinstatement_email_task"
+    )
+    def test_subscription_updated_sends_paid_reinstatement_email_for_paid_subscription(
+        self, mock_paid_email_task, mock_trial_email_task,
+    ):
+        """Test that the paid reinstatement email is sent when the reinstated subscription is paid (active)."""
+        subscription_id = "sub_test_paid_reinstate_123"
+
+        # Create prior event WITH cancel_at set (paid subscription was scheduled for cancellation)
+        _, prior_summary = self._create_existing_event_data_records(
+            subscription_id,
+            subscription_status=StripeSubscriptionStatus.ACTIVE,
+        )
+        prior_summary.subscription_cancel_at = timezone.now() + timedelta(days=7)
+        prior_summary.save()
+
+        # Create new event WITHOUT cancel_at (paid subscription reinstated/un-cancelled)
+        subscription_data = {
+            "id": subscription_id,
+            "status": "active",
+            # No cancel_at field - cancellation was reversed
+            "metadata": self._create_mock_stripe_subscription(self.checkout_intent),
+        }
+
+        mock_event = self._create_mock_stripe_event(
+            "customer.subscription.updated", subscription_data
+        )
+
+        StripeEventHandler.dispatch(mock_event)
+
+        # Paid subscriptions get the paid reinstatement email, not the trial one.
+        mock_paid_email_task.delay.assert_called_once()
+        self.assertEqual(
+            mock_paid_email_task.delay.call_args.kwargs.get('checkout_intent_id'), self.checkout_intent.id,
+        )
+        mock_trial_email_task.delay.assert_not_called()
+
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_trial_reinstatement_email_task"
+    )
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_paid_reinstatement_email_task"
+    )
+    def test_subscription_updated_no_reinstatement_email_for_other_status(
+        self, mock_paid_email_task, mock_trial_email_task,
+    ):
+        """Test that no reinstatement email is sent when the reinstated subscription is neither trialing nor active."""
+        subscription_id = "sub_test_past_due_reinstate_123"
+
+        # Create prior event WITH cancel_at set (subscription was scheduled for cancellation)
+        _, prior_summary = self._create_existing_event_data_records(
+            subscription_id,
+            subscription_status=StripeSubscriptionStatus.PAST_DUE,
+        )
+        prior_summary.subscription_cancel_at = timezone.now() + timedelta(days=7)
+        prior_summary.save()
+
+        # Create new event WITHOUT cancel_at (cancellation reversed), but still past_due.
+        subscription_data = {
+            "id": subscription_id,
+            "status": "past_due",
+            # No cancel_at field - cancellation was reversed
+            "metadata": self._create_mock_stripe_subscription(self.checkout_intent),
+        }
+
+        mock_event = self._create_mock_stripe_event(
+            "customer.subscription.updated", subscription_data
+        )
+
+        StripeEventHandler.dispatch(mock_event)
+
+        # Neither reinstatement email applies to a past_due subscription.
+        mock_paid_email_task.delay.assert_not_called()
+        mock_trial_email_task.delay.assert_not_called()
 
     @mock.patch(
         "enterprise_access.apps.customer_billing.stripe_event_handlers.send_trial_cancellation_email_task"
@@ -1308,6 +1391,77 @@ class TestStripeEventHandler(TestCase):
         call_kwargs = mock_send_cancelation_email.delay.call_args.kwargs
         self.assertEqual(call_kwargs.get('checkout_intent_id'), self.checkout_intent.id)
         self.assertEqual(call_kwargs.get('ended_at_timestamp'), 1234567890)
+
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.cancel_all_future_plans"
+    )
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_trial_ended_cancellation_email_task"
+    )
+    def test_subscription_deleted_queues_trial_ended_cancellation_email(
+        self, mock_send_trial_ended_email, mock_cancel,
+    ):
+        """Subscription deleted event sends the trial ended cancellation email for TRIALING subscriptions."""
+        subscription_id = "sub_test_trialing_deleted_123"
+        subscription_data = {
+            "id": subscription_id,
+            "status": "canceled",
+            "metadata": self._create_mock_stripe_subscription(self.checkout_intent),
+        }
+
+        # Create prior event with TRIALING status.
+        self._create_existing_event_data_records(
+            subscription_id,
+            subscription_status=StripeSubscriptionStatus.TRIALING,
+        )
+
+        self.checkout_intent.enterprise_uuid = uuid.uuid4()
+        self.checkout_intent.save(update_fields=["enterprise_uuid"])
+
+        mock_event = self._create_mock_stripe_event(
+            "customer.subscription.deleted", subscription_data
+        )
+
+        StripeEventHandler.dispatch(mock_event)
+
+        mock_cancel.assert_called_once_with(self.checkout_intent)
+        mock_send_trial_ended_email.delay.assert_called_once_with(checkout_intent_id=self.checkout_intent.id)
+
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.cancel_all_future_plans"
+    )
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_trial_ended_cancellation_email_task"
+    )
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_finalized_cancelation_email_task"
+    )
+    def test_subscription_deleted_no_previous_summary_sends_no_email(
+        self, mock_send_cancelation_email, mock_send_trial_ended_email, mock_cancel,
+    ):
+        """Subscription deleted event with no prior summary sends no email and does not raise."""
+        subscription_id = "sub_test_no_prior_summary_123"
+        subscription_data = {
+            "id": subscription_id,
+            "status": "canceled",
+            "ended_at": 1234567890,
+            "metadata": self._create_mock_stripe_subscription(self.checkout_intent),
+        }
+
+        # Deliberately do not create any prior StripeEventSummary records.
+
+        self.checkout_intent.enterprise_uuid = uuid.uuid4()
+        self.checkout_intent.save(update_fields=["enterprise_uuid"])
+
+        mock_event = self._create_mock_stripe_event(
+            "customer.subscription.deleted", subscription_data
+        )
+
+        StripeEventHandler.dispatch(mock_event)
+
+        mock_cancel.assert_called_once_with(self.checkout_intent)
+        mock_send_cancelation_email.delay.assert_not_called()
+        mock_send_trial_ended_email.delay.assert_not_called()
 
     @ddt.data(
         # Happy path
