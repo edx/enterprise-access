@@ -4,12 +4,30 @@ Tests for the subsidy_api module.
 import uuid
 from unittest import mock
 
+import ddt
+import requests
 from django.test import TestCase
 
+from ..exceptions import SubsidyAPIHTTPError
 from ..subsidy_api import get_and_cache_transactions_for_learner, get_redemptions_by_content_and_policy_for_learner
 from .factories import PerLearnerSpendCapLearnerCreditAccessPolicyFactory
 
 
+def _subsidy_api_http_error(status_code=None):
+    """
+    Builds a ``SubsidyAPIHTTPError`` whose underlying response carries ``status_code``, in the
+    same ``raise ... from`` shape that ``get_and_cache_transactions_for_learner()`` produces.
+    A ``status_code`` of None yields an error with no response attached at all.
+    """
+    response = mock.Mock(status_code=status_code) if status_code else None
+    cause = requests.exceptions.HTTPError(response=response)
+    try:
+        raise SubsidyAPIHTTPError('HTTPError occurred in Subsidy API request.') from cause
+    except SubsidyAPIHTTPError as exc:
+        return exc
+
+
+@ddt.ddt
 class TransactionsForLearnerTests(TestCase):
     """
     Tests the ``get_and_cache_transactions_for_learner`` function.
@@ -138,7 +156,7 @@ class TransactionsForLearnerTests(TestCase):
             {'transactions': mock_cake_transactions, 'aggregates': {}},
         ]
 
-        result = get_redemptions_by_content_and_policy_for_learner(
+        result, unreachable_subsidy_uuids = get_redemptions_by_content_and_policy_for_learner(
             [cherry_policy, apple_policy, german_chocolate_policy],
             123,
         )
@@ -151,3 +169,76 @@ class TransactionsForLearnerTests(TestCase):
             },
             result,
         )
+        self.assertEqual(set(), unreachable_subsidy_uuids)
+
+    @ddt.data(403, 404)
+    @mock.patch('enterprise_access.apps.subsidy_access_policy.subsidy_api.get_and_cache_transactions_for_learner')
+    def test_unreachable_subsidy_is_isolated(self, status_code, mock_transaction_cache):
+        """
+        A subsidy that no longer resolves should be skipped and reported back to the caller,
+        while every other subsidy for the customer is still processed normally.
+
+        This is the enterprise-access side of the soft-deleted-subsidy incident: prior to this,
+        one unreachable subsidy failed the entire can-redeem request for the customer.
+        """
+        healthy_subsidy_uuid = uuid.uuid4()
+        unreachable_subsidy_uuid = uuid.uuid4()
+
+        healthy_policy = PerLearnerSpendCapLearnerCreditAccessPolicyFactory(subsidy_uuid=healthy_subsidy_uuid)
+        stale_policy = PerLearnerSpendCapLearnerCreditAccessPolicyFactory(subsidy_uuid=unreachable_subsidy_uuid)
+
+        healthy_transactions = [
+            {
+                'uuid': 'alpha',
+                'content_key': 'content-1',
+                'subsidy_access_policy_uuid': str(healthy_policy.uuid),
+            },
+        ]
+
+        def fake_transactions(subsidy_uuid, _lms_user_id):
+            if subsidy_uuid == unreachable_subsidy_uuid:
+                raise _subsidy_api_http_error(status_code)
+            return {'transactions': healthy_transactions, 'aggregates': {}}
+
+        mock_transaction_cache.side_effect = fake_transactions
+
+        result, unreachable_subsidy_uuids = get_redemptions_by_content_and_policy_for_learner(
+            [healthy_policy, stale_policy],
+            123,
+        )
+
+        self.assertEqual({'content-1': {healthy_policy: [healthy_transactions[0]]}}, result)
+        self.assertEqual({unreachable_subsidy_uuid}, unreachable_subsidy_uuids)
+
+    @ddt.data(500, 502, 504, None)
+    @mock.patch('enterprise_access.apps.subsidy_access_policy.subsidy_api.get_and_cache_transactions_for_learner')
+    def test_non_isolating_errors_still_propagate(self, status_code, mock_transaction_cache):
+        """
+        Errors that do not identify a specific subsidy as unusable are plausibly transient, and
+        must keep failing loudly.  Swallowing them would tell learners that content is unavailable
+        on the strength of a blip.
+        """
+        policy = PerLearnerSpendCapLearnerCreditAccessPolicyFactory(subsidy_uuid=uuid.uuid4())
+        mock_transaction_cache.side_effect = _subsidy_api_http_error(status_code)
+
+        with self.assertRaises(SubsidyAPIHTTPError):
+            get_redemptions_by_content_and_policy_for_learner([policy], 123)
+
+    @mock.patch('enterprise_access.apps.subsidy_access_policy.subsidy_api.get_and_cache_transactions_for_learner')
+    def test_all_subsidies_unreachable_yields_no_redemptions(self, mock_transaction_cache):
+        """
+        When every subsidy is unreachable the caller gets an empty mapping and the full set of
+        subsidy uuids, so it can exclude all of the affected policies rather than 500-ing.
+        """
+        first_subsidy_uuid = uuid.uuid4()
+        second_subsidy_uuid = uuid.uuid4()
+        policies = [
+            PerLearnerSpendCapLearnerCreditAccessPolicyFactory(subsidy_uuid=first_subsidy_uuid),
+            PerLearnerSpendCapLearnerCreditAccessPolicyFactory(subsidy_uuid=second_subsidy_uuid),
+        ]
+        mock_transaction_cache.side_effect = _subsidy_api_http_error(403)
+
+        result, unreachable_subsidy_uuids = get_redemptions_by_content_and_policy_for_learner(policies, 123)
+
+        self.assertEqual({}, result)
+        self.assertEqual({first_subsidy_uuid, second_subsidy_uuid}, unreachable_subsidy_uuids)
