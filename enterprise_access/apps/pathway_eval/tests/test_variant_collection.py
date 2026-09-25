@@ -260,7 +260,7 @@ class TestCheckpointAndResume(TestCase):
     """
     Scenario: An interrupted collection keeps what it paid for, and resumes past it.
 
-    Found necessary on the first real run, which hung on a network call 40 minutes in.
+    Found necessary on the first real run, which hung on a network call after two careers.
     """
 
     def setUp(self):
