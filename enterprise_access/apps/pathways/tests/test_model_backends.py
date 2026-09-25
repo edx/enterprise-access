@@ -500,6 +500,34 @@ class TestBackendTemperature(TestCase):
         self.assertEqual(client.messages.create.call_args.kwargs['temperature'], 0)
 
 
+class TestBackendTimeout(TestCase):
+    """
+    Scenario: A dropped connection cannot hold a call for the SDK's ten-minute default.
+    """
+
+    @override_settings(PATHWAYS_MODEL_TIMEOUT_SECONDS=60)
+    def test_openai_builds_its_client_with_the_configured_timeout(self):
+        fake_sdk = mock.Mock()
+        fake_sdk.OpenAI.return_value = fake_openai_client()
+        with mock.patch.dict('sys.modules', {'openai': fake_sdk}):
+            OpenAIBackend(api_key='k').complete(system_prompt='s', user_content='u', trace_id='t')
+
+        fake_sdk.OpenAI.assert_called_once_with(api_key='k', timeout=60)
+
+    @override_settings(PATHWAYS_MODEL_TIMEOUT_SECONDS=60)
+    def test_claude_builds_its_client_with_the_configured_timeout(self):
+        fake_sdk = mock.Mock()
+        fake_sdk.Anthropic.return_value = fake_client()
+        with mock.patch.dict('sys.modules', {'anthropic': fake_sdk}):
+            ClaudeBackend(api_key='k').complete(system_prompt='s', user_content='u', trace_id='t')
+
+        fake_sdk.Anthropic.assert_called_once_with(api_key='k', timeout=60)
+
+    def test_an_explicit_timeout_overrides_the_setting(self):
+        self.assertEqual(OpenAIBackend(api_key='k', timeout=5).timeout, 5)
+        self.assertEqual(ClaudeBackend(api_key='k', timeout=5).timeout, 5)
+
+
 @ddt.ddt
 class TestGetDirectBackend(TestCase):
     """

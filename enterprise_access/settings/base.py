@@ -577,6 +577,14 @@ PATHWAYS_VARIANT_MODEL = ''
 PATHWAYS_JUDGE_BACKEND = 'openai'
 PATHWAYS_JUDGE_MODEL = 'gpt-5.4-mini'
 
+# Per-attempt timeout, in seconds, for the direct model backends. The OpenAI and Anthropic
+# SDKs default to 600s, so a dropped connection held a call -- and the request or batch
+# around it -- for ten minutes per attempt; a 125-career collection stalled three times in
+# its first 18 careers that way (2026-09-25). 60s is ~3x the slowest call measured then (a
+# 50-candidate re-rank, 22s; median selection and judge calls ~1s), and the SDKs' own
+# retries (two, by default) then recover a transient drop in about three minutes at worst.
+PATHWAYS_MODEL_TIMEOUT_SECONDS = 60
+
 # The enterprise customer the evaluation harness scopes to (Open Decision 1). Production
 # requests take the customer from the request; this is only for offline runs, which have
 # no request and therefore no secured Algolia key. Scoping by filter needs no secured key

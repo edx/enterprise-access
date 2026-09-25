@@ -48,12 +48,15 @@ class OpenAIBackend(ModelBackend):
 
     def __init__(self, *, model: str | None = None, api_key: str | None = None,
                  max_tokens: int = DEFAULT_MAX_TOKENS, temperature: float | None = None,
-                 client=None):
+                 timeout: float | None = None, client=None):
         self.model = model or settings.PATHWAYS_OPENAI_MODEL
         self.max_tokens = max_tokens
         # ``None`` sends no temperature, which is the provider default and what every
         # existing caller gets. The pathway judge pins 0 so its verdicts are repeatable.
         self.temperature = temperature
+        # Explicit because the SDK default is 600s per attempt; see
+        # PATHWAYS_MODEL_TIMEOUT_SECONDS for the measurement behind the value.
+        self.timeout = timeout if timeout is not None else settings.PATHWAYS_MODEL_TIMEOUT_SECONDS
         self._api_key = api_key or settings.OPENAI_API_KEY
         # Injected in tests so nothing here needs the package or the network.
         self._client = client
@@ -75,7 +78,7 @@ class OpenAIBackend(ModelBackend):
                 'used. Install it, or select another backend via PATHWAYS_MODEL_BACKEND.'
             ) from exc
 
-        self._client = openai.OpenAI(api_key=self._api_key)
+        self._client = openai.OpenAI(api_key=self._api_key, timeout=self.timeout)
         return self._client
 
     def _complete(self, *, system_prompt: str, user_content: str, trace_id: str) -> ModelResponse:

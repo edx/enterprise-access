@@ -42,11 +42,14 @@ class ClaudeBackend(ModelBackend):
 
     def __init__(self, *, model: str | None = None, api_key: str | None = None,
                  max_tokens: int = DEFAULT_MAX_TOKENS, temperature: float | None = None,
-                 client=None):
+                 timeout: float | None = None, client=None):
         self.model = model or settings.PATHWAYS_CLAUDE_MODEL
         self.max_tokens = max_tokens
         # See ``OpenAIBackend.__init__``: ``None`` keeps the provider default.
         self.temperature = temperature
+        # Explicit because the SDK default is 600s per attempt; see
+        # PATHWAYS_MODEL_TIMEOUT_SECONDS for the measurement behind the value.
+        self.timeout = timeout if timeout is not None else settings.PATHWAYS_MODEL_TIMEOUT_SECONDS
         self._api_key = api_key or settings.ANTHROPIC_API_KEY
         # Injected in tests so nothing here needs the package or the network.
         self._client = client
@@ -68,7 +71,7 @@ class ClaudeBackend(ModelBackend):
                 'used. Install it, or select the xpert backend via PATHWAYS_MODEL_BACKEND.'
             ) from exc
 
-        self._client = anthropic.Anthropic(api_key=self._api_key)
+        self._client = anthropic.Anthropic(api_key=self._api_key, timeout=self.timeout)
         return self._client
 
     def _complete(self, *, system_prompt: str, user_content: str, trace_id: str) -> ModelResponse:
