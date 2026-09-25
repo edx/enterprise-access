@@ -47,9 +47,13 @@ class OpenAIBackend(ModelBackend):
     name = BACKEND_NAME
 
     def __init__(self, *, model: str | None = None, api_key: str | None = None,
-                 max_tokens: int = DEFAULT_MAX_TOKENS, client=None):
+                 max_tokens: int = DEFAULT_MAX_TOKENS, temperature: float | None = None,
+                 client=None):
         self.model = model or settings.PATHWAYS_OPENAI_MODEL
         self.max_tokens = max_tokens
+        # ``None`` sends no temperature, which is the provider default and what every
+        # existing caller gets. The pathway judge pins 0 so its verdicts are repeatable.
+        self.temperature = temperature
         self._api_key = api_key or settings.OPENAI_API_KEY
         # Injected in tests so nothing here needs the package or the network.
         self._client = client
@@ -78,20 +82,24 @@ class OpenAIBackend(ModelBackend):
         """Issue one chat-completions request."""
         client = self._get_client()
 
+        request = {
+            'model': self.model,
+            # ``max_completion_tokens``, not the deprecated ``max_tokens``: gpt-5-family
+            # models reject ``max_tokens`` outright (HTTP 400, "Unsupported parameter"),
+            # and gpt-4o accepts either -- both verified live 2026-09-25. For a reasoning
+            # model the cap includes its reasoning tokens.
+            'max_completion_tokens': self.max_tokens,
+            'response_format': {'type': 'json_object'},
+            'messages': [
+                {'role': 'system', 'content': system_prompt},
+                {'role': 'user', 'content': user_content},
+            ],
+        }
+        if self.temperature is not None:
+            request['temperature'] = self.temperature
+
         try:
-            completion = client.chat.completions.create(
-                model=self.model,
-                # ``max_completion_tokens``, not the deprecated ``max_tokens``: gpt-5-family
-                # models reject ``max_tokens`` outright (HTTP 400, "Unsupported parameter"),
-                # and gpt-4o accepts either -- both verified live 2026-09-25. For a reasoning
-                # model the cap includes its reasoning tokens.
-                max_completion_tokens=self.max_tokens,
-                response_format={'type': 'json_object'},
-                messages=[
-                    {'role': 'system', 'content': system_prompt},
-                    {'role': 'user', 'content': user_content},
-                ],
-            )
+            completion = client.chat.completions.create(**request)
         except ModelBackendConfigurationError:
             raise
         except Exception as exc:

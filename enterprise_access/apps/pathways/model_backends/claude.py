@@ -41,9 +41,12 @@ class ClaudeBackend(ModelBackend):
     name = BACKEND_NAME
 
     def __init__(self, *, model: str | None = None, api_key: str | None = None,
-                 max_tokens: int = DEFAULT_MAX_TOKENS, client=None):
+                 max_tokens: int = DEFAULT_MAX_TOKENS, temperature: float | None = None,
+                 client=None):
         self.model = model or settings.PATHWAYS_CLAUDE_MODEL
         self.max_tokens = max_tokens
+        # See ``OpenAIBackend.__init__``: ``None`` keeps the provider default.
+        self.temperature = temperature
         self._api_key = api_key or settings.ANTHROPIC_API_KEY
         # Injected in tests so nothing here needs the package or the network.
         self._client = client
@@ -72,13 +75,17 @@ class ClaudeBackend(ModelBackend):
         """Issue one Messages API request."""
         client = self._get_client()
 
+        request = {
+            'model': self.model,
+            'max_tokens': self.max_tokens,
+            'system': system_prompt,
+            'messages': [{'role': 'user', 'content': user_content}],
+        }
+        if self.temperature is not None:
+            request['temperature'] = self.temperature
+
         try:
-            message = client.messages.create(
-                model=self.model,
-                max_tokens=self.max_tokens,
-                system=system_prompt,
-                messages=[{'role': 'user', 'content': user_content}],
-            )
+            message = client.messages.create(**request)
         except ModelBackendConfigurationError:
             raise
         except Exception as exc:

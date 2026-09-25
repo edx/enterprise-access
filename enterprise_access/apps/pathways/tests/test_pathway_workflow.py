@@ -5,21 +5,29 @@ The end-to-end tests here exercise the whole five-step chain against patched ext
 which is the only place the conditional-skip behaviour and the accumulated-output
 plumbing are checked together.
 """
+import json
 from unittest import mock
 from uuid import uuid4
 
 from django.test import TestCase
 from edx_toggles.toggles.testutils import override_waffle_switch
 
+from enterprise_access.apps.pathways.model_backends import ModelBackendRequestError
 from enterprise_access.apps.pathways.models import (
     AssemblePathwayInput,
     AssemblePathwayOutput,
     AssemblePathwayStep,
     AssemblePathwayStepException,
+    BuildVariantsInput,
+    BuildVariantsOutput,
+    BuildVariantsStep,
     CourseCandidate,
     EnrichRationaleInput,
     EnrichRationaleStep,
     EnrichRationaleStepException,
+    JudgePathwaysInput,
+    JudgePathwaysOutput,
+    JudgePathwaysStep,
     PathwayAssemblyWorkflow,
     PathwayCourse,
     RerankCandidatesInput,
@@ -31,6 +39,7 @@ from enterprise_access.apps.pathways.models import (
     RetrieveCandidatesStepException,
     TranslateToCatalogOutput
 )
+from enterprise_access.apps.pathways.tests.test_reranking import FakeBackend
 from enterprise_access.apps.prompts.api import PromptError
 from enterprise_access.apps.prompts.api_client import XpertAPIError
 from enterprise_access.toggles import LEARNER_PATHWAYS_DISABLE_CANDIDATE_RERANK
@@ -39,6 +48,8 @@ PATCH_RETRIEVE = 'enterprise_access.apps.pathways.course_retrieval.retrieve_cand
 PATCH_RERANK = 'enterprise_access.apps.pathways.reranking.rerank_candidates'
 PATCH_SNAPSHOT = 'enterprise_access.apps.pathways.catalog_translation.snapshot_catalog_facets'
 PATCH_ENRICH = 'enterprise_access.apps.pathways.models.pathways_api.enrich_rationales'
+PATCH_JUDGE = 'enterprise_access.apps.pathways.models.judging.judge_pathway'
+PATCH_VARIANT_BACKEND = 'enterprise_access.apps.pathways.pathway_variants.get_variant_backend'
 
 CUSTOMER_UUID = '417306cb-b24a-4d06-b83c-fb2a61d7fb96'
 
@@ -93,6 +104,16 @@ def translation_output():
     return TranslateToCatalogOutput(strict=[], boost=[], unresolved=[], resolution_rate=1.0)
 
 
+def judge_result(verdict='good', keys=(), error=''):
+    """What ``judging.judge_pathway`` returns."""
+    return {
+        'verdict': verdict if not error else '', 'reason': 'Fits.' if not error else '',
+        'on_topic': {key: True for key in keys}, 'fabricated_keys': [],
+        'unjudged_keys': [], 'error': error, 'n_on_topic': len(keys), 'n_courses': len(keys),
+        'trace': {'backend': 'openai', 'model': 'gpt-5.4-mini', 'elapsed_ms': 3},
+    }
+
+
 class TestCourseCandidate(TestCase):
     """
     Tests for ``CourseCandidate``.
@@ -120,6 +141,19 @@ class TestCourseCandidate(TestCase):
 
         self.assertLess(len(candidate.full_description), 10000)
         self.assertLess(len(candidate.short_description), 10000)
+
+    def test_skill_tags_are_kept_for_the_judge_blanks_dropped_and_capped(self):
+        candidate = CourseCandidate.from_hit({
+            'key': 'A+1', 'skill_names': [' Welding ', '', None] + [f'S{n}' for n in range(20)],
+        })
+
+        self.assertEqual(candidate.skill_names[0], 'Welding')
+        self.assertEqual(len(candidate.skill_names), 10)
+
+    def test_a_candidate_persisted_before_skill_tags_existed_still_loads(self):
+        candidate = CourseCandidate.from_dict({'key': 'A+1', 'title': 'Old'})
+
+        self.assertEqual(candidate.skill_names, [])
 
 
 class TestRetrieveCandidatesStep(TestCase):
@@ -453,10 +487,8 @@ class TestEnrichRationaleStep(TestCase):
             step.execute(accumulated_output=Accumulator())
 
 
-class TestPathwayAssemblyWorkflow(TestCase):
-    """
-    End-to-end tests for the five-step workflow.
-    """
+class PathwayWorkflowMixin:
+    """Builds a workflow and patches its externals, for the end-to-end test classes."""
 
     def _workflow(self, **kwargs):
         kwargs.setdefault('career_name', 'Welder')
@@ -482,6 +514,12 @@ class TestPathwayAssemblyWorkflow(TestCase):
         })
         return snapshot, retrieve, rerank_patch, enrich_patch
 
+
+class TestPathwayAssemblyWorkflow(PathwayWorkflowMixin, TestCase):
+    """
+    End-to-end tests for the five-step workflow.
+    """
+
     def test_a_pathway_is_produced_end_to_end(self):
         snapshot, retrieve, rerank, enrich = self._patches()
         workflow = self._workflow()
@@ -495,11 +533,16 @@ class TestPathwayAssemblyWorkflow(TestCase):
         self.assertEqual(pathway['violations'], [])
 
     def test_every_step_is_inspectable_afterwards(self):
-        """Scenario: The composition is inspectable afterwards."""
-        snapshot, retrieve, rerank, enrich = self._patches()
-        workflow = self._workflow()
+        """
+        Scenario: The composition is inspectable afterwards.
 
-        with snapshot, retrieve, rerank, enrich:
+        The experiment steps skip unless asked for, so this run asks for both -- with the
+        free variant arm and a patched judge -- to reach every step.
+        """
+        snapshot, retrieve, rerank, enrich = self._patches()
+        workflow = self._workflow(variant_sizes=[3], judge_enabled=True)
+
+        with snapshot, retrieve, rerank, enrich, mock.patch(PATCH_JUDGE, return_value=judge_result()):
             workflow.execute()
 
         for step_class in PathwayAssemblyWorkflow.steps:
@@ -605,3 +648,254 @@ class TestPathwayAssemblyWorkflow(TestCase):
 
         rationales = {c['key']: c['rationale'] for c in workflow.pathway()['courses']}
         self.assertEqual(rationales.get('A+3'), 'start here')
+
+
+class TestPathwayExperimentInputs(TestCase):
+    """
+    Scenario: A run's experiment request is normalised before it is persisted.
+    """
+
+    def _inputs(self, **kwargs):
+        data = PathwayAssemblyWorkflow.generate_input_dict(career_name='Welder', **kwargs)
+        return data[BuildVariantsInput.KEY], data[JudgePathwaysInput.KEY]
+
+    def test_by_default_nothing_is_requested(self):
+        variants, judge = self._inputs()
+
+        self.assertEqual((variants['sizes'], variants['strategies']), ([], []))
+        self.assertFalse(judge['enabled'])
+
+    def test_sizes_alone_run_the_free_ranked_arm(self):
+        variants, _ = self._inputs(variant_sizes=[4, 2, 4])
+
+        self.assertEqual(variants['sizes'], [2, 4])
+        self.assertEqual(variants['strategies'], ['ranked_cut'])
+
+    def test_strategies_alone_run_every_size(self):
+        variants, _ = self._inputs(variant_strategies=['model_sized'])
+
+        self.assertEqual(variants['sizes'], [2, 3, 4, 5])
+
+    def test_an_invalid_size_is_refused_before_anything_is_persisted(self):
+        with self.assertRaises(ValueError):
+            self._inputs(variant_sizes=[7])
+
+
+class TestBuildVariantsStep(TestCase):
+    """
+    Tests for ``BuildVariantsStep``.
+    """
+
+    def _step(self, **input_data):
+        data = {'career_name': 'Welder', 'career_skills': ['Welding'], **input_data}
+        return BuildVariantsStep.objects.create(workflow_record_uuid=uuid4(), input_data=data)
+
+    @staticmethod
+    def _accumulated(hits=None, rerank=None):
+        return Accumulator(**{
+            RetrieveCandidatesOutput.KEY: RetrieveCandidatesOutput(
+                courses=[
+                    CourseCandidate.from_hit(hit)
+                    for hit in (spanning_hits() if hits is None else hits)
+                ],
+            ),
+            RerankCandidatesOutput.KEY: rerank,
+        })
+
+    def test_it_is_skipped_when_no_strategy_was_requested(self):
+        workflow = mock.Mock(input_data={BuildVariantsInput.KEY: {'sizes': [3], 'strategies': []}})
+
+        self.assertFalse(BuildVariantsStep.should_execute(self._accumulated(), workflow))
+
+    def test_it_is_skipped_when_there_are_no_candidates(self):
+        workflow = mock.Mock(input_data={BuildVariantsInput.KEY: {'strategies': ['ranked_cut']}})
+
+        self.assertFalse(BuildVariantsStep.should_execute(self._accumulated(hits=[]), workflow))
+
+    def test_the_ranked_arm_follows_the_rerank_order(self):
+        rerank = RerankCandidatesOutput(ordered_keys=['C+1', 'B+2'], executed=True)
+        step = self._step(sizes=[2], strategies=['ranked_cut'])
+
+        output = step.process_input(accumulated_output=self._accumulated(rerank=rerank))
+
+        variant = output.variants[0]
+        self.assertEqual(variant.label, 'ranked_cut:2')
+        self.assertEqual(sorted(course.key for course in variant.courses), ['B+2', 'C+1'])
+        self.assertTrue(variant.complete)
+        self.assertEqual(variant.violations, [])
+
+    def test_a_failed_model_arm_is_recorded_beside_the_arms_that_worked(self):
+        failing = mock.Mock()
+        failing.complete.side_effect = ModelBackendRequestError('down')
+        step = self._step(sizes=[2], strategies=['ranked_cut', 'model_pick'])
+
+        with mock.patch(PATCH_VARIANT_BACKEND, return_value=failing):
+            output = step.process_input(accumulated_output=self._accumulated())
+
+        ranked, picked = output.variants
+        self.assertTrue(ranked.complete)
+        self.assertEqual(picked.courses, [])
+        self.assertIn('ModelBackendRequestError', picked.error)
+        self.assertEqual(picked.violations, [])
+
+    def test_a_model_arm_records_its_trace(self):
+        backend = FakeBackend(content=json.dumps({'keys': ['A+1', 'B+1', 'C+1']}))
+        step = self._step(strategies=['model_sized'])
+
+        with mock.patch(PATCH_VARIANT_BACKEND, return_value=backend):
+            output = step.process_input(accumulated_output=self._accumulated())
+
+        variant = output.variants[0]
+        self.assertEqual(variant.label, 'model_sized:2-5')
+        self.assertIsNone(variant.requested_size)
+        self.assertEqual((variant.model, variant.input_tokens), ('fake-1', 10))
+        self.assertIn(str(step.uuid), backend.calls[0]['trace_id'])
+
+    def test_output_round_trips_through_the_database(self):
+        step = self._step(sizes=[2, 3], strategies=['ranked_cut'])
+        output = step.process_input(accumulated_output=self._accumulated())
+
+        restored = BuildVariantsOutput.from_dict(output.to_dict())
+
+        self.assertEqual([v.label for v in restored.variants], ['ranked_cut:2', 'ranked_cut:3'])
+
+
+class TestJudgePathwaysStep(TestCase):
+    """
+    Tests for ``JudgePathwaysStep``.
+    """
+
+    def _step(self):
+        return JudgePathwaysStep.objects.create(
+            workflow_record_uuid=uuid4(),
+            input_data={'career_name': 'Welder', 'career_skills': ['Welding'], 'enabled': True},
+        )
+
+    @staticmethod
+    def _accumulated(default_keys=('A+1', 'A+2', 'B+1', 'B+2', 'C+1'), variants=()):
+        courses = [CourseCandidate.from_hit(hit) for hit in spanning_hits()]
+        return Accumulator(**{
+            RetrieveCandidatesOutput.KEY: RetrieveCandidatesOutput(courses=courses),
+            AssemblePathwayOutput.KEY: AssemblePathwayOutput(
+                courses=[PathwayCourse(key=key) for key in default_keys],
+                complete=bool(default_keys),
+            ),
+            BuildVariantsOutput.KEY: BuildVariantsOutput.from_dict({'variants': [
+                {'label': label, 'strategy': label.split(':')[0],
+                 'courses': [{'key': key} for key in keys]}
+                for label, keys in variants
+            ]}),
+        })
+
+    def test_it_is_skipped_unless_enabled(self):
+        workflow = mock.Mock(input_data={JudgePathwaysInput.KEY: {'enabled': False}})
+
+        self.assertFalse(JudgePathwaysStep.should_execute(self._accumulated(), workflow))
+
+    def test_it_is_skipped_when_nothing_is_long_enough_to_judge(self):
+        workflow = mock.Mock(input_data={JudgePathwaysInput.KEY: {'enabled': True}})
+        accumulated = self._accumulated(default_keys=(), variants=[('model_sized:2-5', ['A+1'])])
+
+        self.assertFalse(JudgePathwaysStep.should_execute(accumulated, workflow))
+
+    def test_the_delivered_pathway_and_each_variant_are_judged_with_course_details(self):
+        step = self._step()
+        accumulated = self._accumulated(variants=[('ranked_cut:2', ['A+1', 'B+1'])])
+
+        with mock.patch(PATCH_JUDGE, return_value=judge_result(keys=['A+1'])) as mock_judge:
+            output = step.process_input(accumulated_output=accumulated)
+
+        self.assertEqual([j.label for j in output.judgements], ['default', 'ranked_cut:2'])
+        courses_sent = mock_judge.call_args_list[1].kwargs['courses']
+        self.assertEqual(courses_sent[0]['short_description'], 'short')
+        self.assertIn(':ranked_cut:2', mock_judge.call_args_list[1].kwargs['trace_id'])
+        self.assertEqual(output.judgements[0].model, 'gpt-5.4-mini')
+
+    def test_an_identical_course_list_reuses_the_verdict_instead_of_paying_twice(self):
+        step = self._step()
+        default = ('A+1', 'A+2', 'B+1', 'B+2', 'C+1')
+        accumulated = self._accumulated(variants=[('ranked_cut:5', list(default))])
+
+        with mock.patch(PATCH_JUDGE, return_value=judge_result()) as mock_judge:
+            output = step.process_input(accumulated_output=accumulated)
+
+        self.assertEqual(mock_judge.call_count, 1)
+        self.assertEqual(output.judgements[1].same_as, 'default')
+        self.assertEqual(output.judgements[1].verdict, 'good')
+
+    def test_a_failed_judgement_is_recorded_and_not_reused(self):
+        step = self._step()
+        default = ('A+1', 'A+2', 'B+1', 'B+2', 'C+1')
+        accumulated = self._accumulated(variants=[('ranked_cut:5', list(default))])
+
+        with mock.patch(PATCH_JUDGE, return_value=judge_result(error='judge request failed')) as mock_judge:
+            output = step.process_input(accumulated_output=accumulated)
+
+        self.assertEqual(mock_judge.call_count, 2)
+        self.assertEqual(output.judgements[0].error, 'judge request failed')
+        self.assertEqual(output.judgements[1].same_as, '')
+
+    def test_a_variant_below_two_courses_is_not_judged(self):
+        step = self._step()
+        accumulated = self._accumulated(variants=[('model_sized:2-5', ['A+1'])])
+
+        with mock.patch(PATCH_JUDGE, return_value=judge_result()):
+            output = step.process_input(accumulated_output=accumulated)
+
+        self.assertEqual([j.label for j in output.judgements], ['default'])
+
+    def test_output_round_trips_through_the_database(self):
+        step = self._step()
+        with mock.patch(PATCH_JUDGE, return_value=judge_result(keys=['A+1'])):
+            output = step.process_input(accumulated_output=self._accumulated())
+
+        restored = JudgePathwaysOutput.from_dict(output.to_dict())
+
+        self.assertEqual(restored.judgements[0].on_topic, {'A+1': True})
+
+
+class TestPathwayExperimentsEndToEnd(PathwayWorkflowMixin, TestCase):
+    """
+    Scenario: Experiments run beside the delivered pathway without changing it.
+    """
+
+    def test_variants_and_judgements_never_change_the_delivered_pathway(self):
+        snapshot, retrieve, rerank, enrich = self._patches()
+        plain = self._workflow()
+        with snapshot, retrieve, rerank, enrich:
+            plain.execute()
+
+        snapshot, retrieve, rerank, enrich = self._patches()
+        experimented = self._workflow(variant_sizes=[2, 3], judge_enabled=True)
+        with snapshot, retrieve, rerank, enrich, mock.patch(PATCH_JUDGE, return_value=judge_result()):
+            experimented.execute()
+
+        self.assertEqual(
+            [c['key'] for c in plain.pathway()['courses']],
+            [c['key'] for c in experimented.pathway()['courses']],
+        )
+
+    def test_variants_carry_their_judgement(self):
+        snapshot, retrieve, rerank, enrich = self._patches()
+        workflow = self._workflow(variant_sizes=[2], judge_enabled=True)
+
+        with snapshot, retrieve, rerank, enrich, mock.patch(PATCH_JUDGE, return_value=judge_result()):
+            workflow.execute()
+
+        variants = workflow.variants()
+        self.assertEqual([v['label'] for v in variants], ['ranked_cut:2'])
+        self.assertEqual(variants[0]['judgement']['verdict'], 'good')
+        self.assertEqual(workflow.default_judgement()['label'], 'default')
+
+    def test_a_run_without_experiments_leaves_no_experiment_records(self):
+        snapshot, retrieve, rerank, enrich = self._patches()
+        workflow = self._workflow()
+
+        with snapshot, retrieve, rerank, enrich, mock.patch(PATCH_JUDGE) as mock_judge:
+            workflow.execute()
+
+        mock_judge.assert_not_called()
+        self.assertFalse(BuildVariantsStep.objects.filter(workflow_record_uuid=workflow.uuid).exists())
+        self.assertFalse(JudgePathwaysStep.objects.filter(workflow_record_uuid=workflow.uuid).exists())
+        self.assertEqual(workflow.variants(), [])
+        self.assertIsNone(workflow.default_judgement())

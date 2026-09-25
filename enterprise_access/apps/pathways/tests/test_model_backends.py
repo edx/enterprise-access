@@ -24,6 +24,7 @@ from enterprise_access.apps.pathways.model_backends import (
     ModelResponseParseError,
     OpenAIBackend,
     XpertBackend,
+    get_direct_backend,
     get_model_backend
 )
 from enterprise_access.apps.prompts.api import PromptError
@@ -456,3 +457,74 @@ class TestGetModelBackend(TestCase):
         self.assertIsInstance(
             get_model_backend(prompt_type=PromptType.LEARNER_INTENT), XpertBackend,
         )
+
+
+class TestBackendTemperature(TestCase):
+    """
+    Scenario: A temperature is sent only when a caller pins one.
+
+    Every existing caller passes none and must keep the provider default; the pathway
+    judge pins 0 so its verdicts repeat.
+    """
+
+    def test_openai_sends_no_temperature_by_default(self):
+        client = fake_openai_client()
+        OpenAIBackend(client=client, api_key='k').complete(
+            system_prompt='s', user_content='u', trace_id='t',
+        )
+
+        self.assertNotIn('temperature', client.chat.completions.create.call_args.kwargs)
+
+    def test_openai_sends_a_pinned_temperature(self):
+        client = fake_openai_client()
+        OpenAIBackend(client=client, api_key='k', temperature=0).complete(
+            system_prompt='s', user_content='u', trace_id='t',
+        )
+
+        self.assertEqual(client.chat.completions.create.call_args.kwargs['temperature'], 0)
+
+    def test_claude_sends_no_temperature_by_default(self):
+        client = fake_client()
+        ClaudeBackend(client=client, api_key='k').complete(
+            system_prompt='s', user_content='u', trace_id='t',
+        )
+
+        self.assertNotIn('temperature', client.messages.create.call_args.kwargs)
+
+    def test_claude_sends_a_pinned_temperature(self):
+        client = fake_client()
+        ClaudeBackend(client=client, api_key='k', temperature=0).complete(
+            system_prompt='s', user_content='u', trace_id='t',
+        )
+
+        self.assertEqual(client.messages.create.call_args.kwargs['temperature'], 0)
+
+
+@ddt.ddt
+class TestGetDirectBackend(TestCase):
+    """
+    Scenario: Prompts defined in code run only on backends that send them.
+    """
+
+    def test_openai_is_returned_with_the_requested_model_and_temperature(self):
+        backend = get_direct_backend(backend_name='openai', model='gpt-x', temperature=0)
+
+        self.assertIsInstance(backend, OpenAIBackend)
+        self.assertEqual(backend.model, 'gpt-x')
+        self.assertEqual(backend.temperature, 0)
+
+    @override_settings(PATHWAYS_CLAUDE_MODEL='claude-default')
+    def test_a_blank_model_falls_back_to_the_backend_default(self):
+        backend = get_direct_backend(backend_name=' Claude ', model='')
+
+        self.assertIsInstance(backend, ClaudeBackend)
+        self.assertEqual(backend.model, 'claude-default')
+
+    def test_xpert_is_refused_because_it_would_substitute_its_stored_prompt(self):
+        with self.assertRaisesRegex(ModelBackendConfigurationError, 'stored prompts'):
+            get_direct_backend(backend_name='xpert')
+
+    @ddt.data('', 'gpt', None)
+    def test_an_unknown_name_is_refused(self, name):
+        with self.assertRaises(ModelBackendConfigurationError):
+            get_direct_backend(backend_name=name)

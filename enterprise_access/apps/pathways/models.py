@@ -25,7 +25,14 @@ from attrs import define, field, make_class, validators
 from django.utils.functional import cached_property
 
 from enterprise_access.apps.pathways import api as pathways_api
-from enterprise_access.apps.pathways import catalog_translation, course_retrieval, pathway_assembly, reranking
+from enterprise_access.apps.pathways import (
+    catalog_translation,
+    course_retrieval,
+    judging,
+    pathway_assembly,
+    pathway_variants,
+    reranking
+)
 from enterprise_access.apps.prompts import api as prompts_api
 from enterprise_access.apps.prompts.api_client import XpertAPIError
 from enterprise_access.apps.workflow.exceptions import UnitOfWorkException
@@ -213,6 +220,11 @@ CONVERSATION_ID_PREFIX = 'enterprise-access:career-discovery'
 # several kilobytes of marketing HTML, and five of them in one step record turns a
 # trace into a blob; the re-ranker only needs enough to judge topical fit.
 CANDIDATE_DESCRIPTION_CHARS = 1200
+
+# Skill tags kept per candidate. The judge was calibrated seeing a course's first eight, and
+# the September 2026 analysis recorded ten; ten keeps both possible without storing the
+# long tail some courses carry.
+CANDIDATE_SKILL_NAMES = 10
 
 _is_str = validators.instance_of(str)
 _is_int = validators.instance_of(int)
@@ -629,11 +641,15 @@ class CourseCandidate(BaseInputOutput):
     level_type: str = field(default='', validator=_is_str)
     partner: str = field(default='', validator=_is_str)
     language: str = field(default='', validator=_is_str)
+    # Defaulted, so candidate sets persisted before this field existed still load. Read by
+    # the pathway judge, which was calibrated seeing each course's skill tags.
+    skill_names: list[str] = field(factory=list, validator=_is_str_list)
 
     @classmethod
     def from_hit(cls, hit):
         """Build a candidate from a raw catalog hit."""
         candidate = pathway_assembly.Candidate.from_hit(hit)
+        raw_skills = hit.get('skill_names') or []
         return cls(
             key=candidate.key,
             title=candidate.title,
@@ -642,6 +658,9 @@ class CourseCandidate(BaseInputOutput):
             level_type=candidate.level_type,
             partner=candidate.partner,
             language=candidate.language,
+            skill_names=[
+                name.strip() for name in raw_skills if isinstance(name, str) and name.strip()
+            ][:CANDIDATE_SKILL_NAMES],
         )
 
     def to_assembly_hit(self):
@@ -1043,6 +1062,312 @@ class EnrichRationaleStep(AbstractWorkflowStep):
         )
 
 
+# ---------------------------------------------------------------------------------------
+# Pathway experiments: size variants, and the judge that scores them. Both steps are opt-in
+# and skip when not asked for -- no step record, a null output -- so a run that requests
+# neither is step for step the run it was before they existed. Neither can change what is
+# delivered: variants sit beside the pathway, and the judge only records.
+# ---------------------------------------------------------------------------------------
+
+VARIANT_TRACE_PREFIX = 'enterprise-access:pathway-variant'
+JUDGE_TRACE_PREFIX = 'enterprise-access:pathway-judge'
+
+_is_int_list = validators.deep_iterable(
+    member_validator=validators.instance_of(int),
+    iterable_validator=validators.instance_of(list),
+)
+
+
+@define
+class BuildVariantsInput(BaseInputOutput):
+    """
+    Which size variants to build, and the career they are for.
+
+    Empty ``strategies`` means no variants, and the step skips. ``sizes`` are normalised
+    by ``PathwayAssemblyWorkflow.generate_input_dict`` before they are persisted, so the
+    stored input is what actually ran.
+    """
+    KEY = 'build_variants_input'
+
+    career_name: str = field(default='', validator=_is_str)
+    career_skills: list[str] = field(factory=list, validator=_is_str_list)
+    sizes: list[int] = field(factory=list, validator=_is_int_list)
+    strategies: list[str] = field(factory=list, validator=_is_str_list)
+
+
+@define
+class PathwayVariant(BaseInputOutput):
+    """
+    One size variant: its courses, whether it reached its size, and what building it cost.
+
+    ``dropped`` and ``fabricated_keys`` record what a model asked for that the rules
+    refused, so an arm that looks short can be told apart from one that was cut short.
+    ``requested_size`` is ``None`` for ``model_sized``, where the model chose the length.
+    """
+    KEY = 'pathway_variant'
+
+    label: str = field(validator=_is_str)
+    strategy: str = field(validator=_is_str)
+    requested_size: int | None = field(default=None)
+    courses: list[PathwayCourse] = field(factory=list)
+    complete: bool = field(default=False, validator=validators.instance_of(bool))
+    level_mix: dict = field(factory=dict)
+    violations: list[str] = field(factory=list, validator=_is_str_list)
+    dropped: dict = field(factory=dict)
+    fabricated_keys: list[str] = field(factory=list, validator=_is_str_list)
+    error: str = field(default='', validator=_is_str)
+    backend: str = field(default='', validator=_is_str)
+    model: str = field(default='', validator=_is_str)
+    input_tokens: int | None = field(default=None)
+    output_tokens: int | None = field(default=None)
+    elapsed_ms: int = field(default=0, validator=_is_int)
+
+
+@define
+class BuildVariantsOutput(BaseInputOutput):
+    """Every requested variant, in strategy then size order."""
+    KEY = 'build_variants_output'
+
+    variants: list[PathwayVariant] = field(factory=list)
+
+
+@define
+class JudgePathwaysInput(BaseInputOutput):
+    """
+    Whether to judge, and what the judge needs to know about the career.
+
+    ``enabled`` defaults to ``False``: every judgement is a paid model call, so the judge
+    has to be asked for.
+    """
+    KEY = 'judge_pathways_input'
+
+    career_name: str = field(default='', validator=_is_str)
+    career_skills: list[str] = field(factory=list, validator=_is_str_list)
+    enabled: bool = field(default=False, validator=validators.instance_of(bool))
+
+
+@define
+class PathwayJudgement(BaseInputOutput):
+    """
+    One judged pathway, keyed by ``label``: ``default`` for the delivered pathway, or a
+    variant's label.
+
+    ``same_as`` names an earlier label with the identical course list, whose verdict was
+    reused rather than paid for twice -- ``ranked_cut:5`` often matches another arm.
+    """
+    KEY = 'pathway_judgement'
+
+    label: str = field(validator=_is_str)
+    verdict: str = field(default='', validator=_is_str)
+    reason: str = field(default='', validator=_is_str)
+    on_topic: dict = field(factory=dict)
+    n_on_topic: int = field(default=0, validator=_is_int)
+    n_courses: int = field(default=0, validator=_is_int)
+    fabricated_keys: list[str] = field(factory=list, validator=_is_str_list)
+    unjudged_keys: list[str] = field(factory=list, validator=_is_str_list)
+    same_as: str = field(default='', validator=_is_str)
+    error: str = field(default='', validator=_is_str)
+    backend: str = field(default='', validator=_is_str)
+    model: str = field(default='', validator=_is_str)
+    input_tokens: int | None = field(default=None)
+    output_tokens: int | None = field(default=None)
+    elapsed_ms: int = field(default=0, validator=_is_int)
+
+
+@define
+class JudgePathwaysOutput(BaseInputOutput):
+    """One judgement per pathway long enough to judge."""
+    KEY = 'judge_pathways_output'
+
+    judgements: list[PathwayJudgement] = field(factory=list)
+
+
+class BuildVariantsStepException(UnitOfWorkException):
+    """Raised when pathway size variants could not be built."""
+
+
+class JudgePathwaysStepException(UnitOfWorkException):
+    """Raised when pathways could not be put to the judge."""
+
+
+class BuildVariantsStep(AbstractWorkflowStep):
+    """
+    Builds the requested size variants from the delivered pathway's candidate window.
+
+    Reads the same relevance order assembly does -- the re-rank order when it ran,
+    retrieval order when it did not -- so every arm starts from identical candidates and a
+    difference between arms is a difference in method. See ``pathway_variants`` for the
+    three strategies.
+
+    Skipped unless variants were requested and there are candidates to build from. A
+    failed model arm is recorded on its variant rather than raised, so it cannot cost the
+    run its other arms or its delivered pathway.
+
+    .. no_pii: This model has no PII
+    """
+    exception_class = BuildVariantsStepException
+    input_class = BuildVariantsInput
+    output_class = BuildVariantsOutput
+
+    @classmethod
+    def should_execute(cls, accumulated_output, workflow):
+        """Run only when a strategy was requested and there are candidates."""
+        variants_input = (workflow.input_data or {}).get(BuildVariantsInput.KEY) or {}
+        if not variants_input.get('strategies'):
+            return False
+        candidates_output = getattr(accumulated_output, RetrieveCandidatesOutput.KEY, None)
+        return bool(candidates_output and candidates_output.courses)
+
+    def process_input(self, accumulated_output=None, **kwargs):
+        candidates_output = getattr(accumulated_output, RetrieveCandidatesOutput.KEY, None)
+        if candidates_output is None:
+            raise self.exception_class(
+                'Cannot build variants without a candidate set; '
+                f'{RetrieveCandidatesStep.__name__} must run first.'
+            )
+
+        rerank_output = getattr(accumulated_output, RerankCandidatesOutput.KEY, None)
+        ordered = AssemblePathwayStep.order_candidates(candidates_output.courses, rerank_output)
+        input_object = self.input_object
+        try:
+            variants = pathway_variants.build_variants(
+                career_name=input_object.career_name,
+                career_skills=input_object.career_skills,
+                ordered_candidates=[candidate.to_dict() for candidate in ordered],
+                sizes=input_object.sizes or pathway_variants.DEFAULT_VARIANT_SIZES,
+                strategies=input_object.strategies,
+                trace_prefix=f'{VARIANT_TRACE_PREFIX}:{self.uuid}',
+            )
+        except ValueError as exc:
+            raise self.exception_class(str(exc)) from exc
+
+        return self.output_class(variants=[self.to_output(variant) for variant in variants])
+
+    @staticmethod
+    def to_output(variant):
+        """Persistable form of a ``pathway_variants.Variant``."""
+        trace = variant.trace or {}
+        return PathwayVariant(
+            label=variant.label,
+            strategy=variant.strategy,
+            requested_size=variant.requested_size,
+            courses=[
+                PathwayCourse(
+                    key=course.key,
+                    title=course.title,
+                    level_type=course.level_type,
+                    partner=course.partner,
+                )
+                for course in variant.courses
+            ],
+            complete=variant.is_complete,
+            level_mix=variant.realised_level_mix,
+            # A variant that failed outright has nothing to gate; one that came back short
+            # does, and the size violation is exactly the finding worth keeping.
+            violations=variant.violations() if variant.courses else [],
+            dropped=dict(variant.dropped),
+            fabricated_keys=list(variant.fabricated_keys),
+            error=variant.error,
+            backend=trace.get('backend', '') or '',
+            model=trace.get('model', '') or '',
+            input_tokens=trace.get('input_tokens'),
+            output_tokens=trace.get('output_tokens'),
+            elapsed_ms=trace.get('elapsed_ms', 0) or 0,
+        )
+
+
+class JudgePathwaysStep(AbstractWorkflowStep):
+    """
+    Scores the delivered pathway and every variant with the analysis's judge.
+
+    Records only. Nothing downstream reads a verdict to decide what to deliver, which is
+    what keeps the verdicts usable as measurement -- see ``judging``.
+
+    Skipped unless enabled and there is at least one pathway of two or more courses (the
+    rubric judges two to five). A judgement that fails is recorded with its error, not
+    raised: losing a score is a much smaller loss than losing the run.
+
+    .. no_pii: This model has no PII
+    """
+    exception_class = JudgePathwaysStepException
+    input_class = JudgePathwaysInput
+    output_class = JudgePathwaysOutput
+
+    @classmethod
+    def should_execute(cls, accumulated_output, workflow):
+        """Run only when enabled and something is long enough to judge."""
+        judge_input = (workflow.input_data or {}).get(JudgePathwaysInput.KEY) or {}
+        if not judge_input.get('enabled', False):
+            return False
+        return bool(cls.targets(accumulated_output))
+
+    @staticmethod
+    def targets(accumulated_output):
+        """``(label, courses)`` for the delivered pathway and each judgeable variant."""
+        targets = []
+        assembly_output = getattr(accumulated_output, AssemblePathwayOutput.KEY, None)
+        if assembly_output and assembly_output.complete:
+            targets.append((pathway_variants.DEFAULT_PATHWAY_LABEL, assembly_output.courses))
+        variants_output = getattr(accumulated_output, BuildVariantsOutput.KEY, None)
+        for variant in (variants_output.variants if variants_output else []):
+            if len(variant.courses) >= pathway_variants.MIN_PATHWAY_SIZE:
+                targets.append((variant.label, variant.courses))
+        return targets
+
+    def process_input(self, accumulated_output=None, **kwargs):
+        candidates_output = getattr(accumulated_output, RetrieveCandidatesOutput.KEY, None)
+        details = {
+            candidate.key: candidate.to_dict()
+            for candidate in (candidates_output.courses if candidates_output else [])
+        }
+
+        judgements, judged_by_keys = [], {}
+        for label, courses in self.targets(accumulated_output):
+            keys = tuple(course.key for course in courses)
+            if keys in judged_by_keys:
+                earlier = judged_by_keys[keys]
+                judgements.append(PathwayJudgement.from_dict({
+                    **earlier.to_dict(), 'label': label, 'same_as': earlier.label,
+                }))
+                continue
+
+            result = judging.judge_pathway(
+                career_name=self.input_object.career_name,
+                career_skills=self.input_object.career_skills,
+                courses=[
+                    details.get(course.key) or {
+                        'key': course.key, 'title': course.title, 'level_type': course.level_type,
+                    }
+                    for course in courses
+                ],
+                trace_id=f'{JUDGE_TRACE_PREFIX}:{self.uuid}:{label}',
+            )
+            trace = result.get('trace') or {}
+            judgement = PathwayJudgement(
+                label=label,
+                verdict=result['verdict'],
+                reason=result['reason'],
+                on_topic=dict(result['on_topic']),
+                n_on_topic=result['n_on_topic'],
+                n_courses=result['n_courses'],
+                fabricated_keys=list(result['fabricated_keys']),
+                unjudged_keys=list(result['unjudged_keys']),
+                error=result['error'],
+                backend=trace.get('backend', '') or '',
+                model=trace.get('model', '') or '',
+                input_tokens=trace.get('input_tokens'),
+                output_tokens=trace.get('output_tokens'),
+                elapsed_ms=trace.get('elapsed_ms', 0) or 0,
+            )
+            judgements.append(judgement)
+            if not judgement.error:
+                # Only a real verdict is worth reusing; a failed call should be retried
+                # for the next identical list, not copied onto it.
+                judged_by_keys[keys] = judgement
+
+        return self.output_class(judgements=judgements)
+
+
 class PathwayAssemblyWorkflow(AbstractConditionalWorkflow):
     """
     Selected career in, five ordered courses out.
@@ -1054,6 +1379,10 @@ class PathwayAssemblyWorkflow(AbstractConditionalWorkflow):
     base for: the facet-search refinement inside ``TranslateToCatalogStep``, and
     ``RerankCandidatesStep`` as a whole.
 
+    Two more are opt-in experiments that skip unless asked for: ``BuildVariantsStep``
+    builds pathways of other sizes beside the delivered five, and ``JudgePathwaysStep``
+    scores the delivered pathway and each variant. Neither changes what is delivered.
+
     .. no_pii: Stores no user identifier. ``input_data`` holds a career name and skill
         terms, which are not linked to a user record.
     """
@@ -1063,14 +1392,28 @@ class PathwayAssemblyWorkflow(AbstractConditionalWorkflow):
         RetrieveCandidatesStep,
         RerankCandidatesStep,
         AssemblePathwayStep,
+        BuildVariantsStep,
+        JudgePathwaysStep,
         EnrichRationaleStep,
     ]
 
     @classmethod
     def generate_input_dict(cls, *, career_name, career_skills=None, skills_required=None,
                             skills_preferred=None, customer_uuid='', allow_unscoped=False,
-                            rerank_enabled=True, enrich_enabled=True, learner_profile=None):
-        """Build ``input_data`` for a pathway run."""
+                            rerank_enabled=True, enrich_enabled=True, learner_profile=None,
+                            variant_sizes=None, variant_strategies=None, judge_enabled=False):
+        """
+        Build ``input_data`` for a pathway run.
+
+        ``variant_sizes`` / ``variant_strategies`` request size variants: sizes alone run
+        the free ``ranked_cut`` arm, strategies alone run every size from 2 to 5, and
+        neither runs none. Both are normalised here so the persisted input is exactly what
+        ran.
+
+        Raises:
+            ValueError: A size outside 2-5 or an unknown strategy.
+        """
+        sizes, strategies = pathway_variants.resolve_variant_request(variant_sizes, variant_strategies)
         return {
             SnapshotCatalogFacetsInput.KEY: {'allow_unscoped': allow_unscoped},
             TranslateToCatalogInput.KEY: {
@@ -1089,6 +1432,17 @@ class PathwayAssemblyWorkflow(AbstractConditionalWorkflow):
                 'enabled': rerank_enabled,
             },
             AssemblePathwayInput.KEY: {},
+            BuildVariantsInput.KEY: {
+                'career_name': career_name,
+                'career_skills': list(career_skills or []),
+                'sizes': sizes,
+                'strategies': strategies,
+            },
+            JudgePathwaysInput.KEY: {
+                'career_name': career_name,
+                'career_skills': list(career_skills or []),
+                'enabled': bool(judge_enabled),
+            },
             EnrichRationaleInput.KEY: {
                 'selected_career': career_name,
                 'learner_profile': dict(learner_profile or {}),
@@ -1121,3 +1475,34 @@ class PathwayAssemblyWorkflow(AbstractConditionalWorkflow):
             for course in output.get('courses') or []
         ]
         return merged
+
+    def judgements(self):
+        """
+        Judge results keyed by label (``default`` or a variant's), or empty if not judged.
+
+        Read from persisted output, like ``pathway``, so a finished run can be re-read
+        without re-executing -- or re-paying for -- anything.
+        """
+        output = (self.output_data or {}).get(JudgePathwaysOutput.KEY) or {}
+        return {
+            judgement.get('label'): judgement
+            for judgement in output.get('judgements') or []
+            if judgement.get('label')
+        }
+
+    def default_judgement(self):
+        """The delivered pathway's judgement, or ``None``."""
+        return self.judgements().get(pathway_variants.DEFAULT_PATHWAY_LABEL)
+
+    def variants(self):
+        """
+        The size variants, each carrying its ``judgement`` (``None`` when not judged).
+
+        Empty when none were requested or the variant step was skipped.
+        """
+        output = (self.output_data or {}).get(BuildVariantsOutput.KEY) or {}
+        judgements = self.judgements()
+        return [
+            {**variant, 'judgement': judgements.get(variant.get('label'))}
+            for variant in output.get('variants') or []
+        ]

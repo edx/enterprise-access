@@ -316,3 +316,31 @@ class TestValidatePathway(TestCase):
         assembly = assemble_pathway(hits_spanning_levels())
 
         self.assertEqual(validate_pathway(assembly.courses), [])
+
+
+class TestValidatePathwaySizeRules(TestCase):
+    """
+    Scenario: The size gate defaults to exactly five, and variants can name their own.
+    """
+
+    def _courses(self, count):
+        return [Candidate(key=f'A+{n}', partner=f'P{n}', language='English') for n in range(count)]
+
+    def test_an_expected_size_replaces_five(self):
+        self.assertEqual(validate_pathway(self._courses(3), expected_size=3), [])
+        self.assertIn('exactly 3 courses, got 2', validate_pathway(self._courses(2), expected_size=3)[0])
+
+    def test_a_size_range_accepts_anything_within_it(self):
+        for count in (2, 3, 5):
+            self.assertEqual(validate_pathway(self._courses(count), size_range=(2, 5)), [])
+
+    def test_a_size_range_rejects_anything_outside_it(self):
+        self.assertIn('2 to 5 courses, got 1', validate_pathway(self._courses(1), size_range=(2, 5))[0])
+        self.assertIn('2 to 5 courses, got 6', validate_pathway(self._courses(6), size_range=(2, 5))[0])
+
+    def test_the_other_gates_still_apply_to_a_variant(self):
+        courses = self._courses(2) + [Candidate(key='A+0', partner='P9', language='English')]
+
+        violations = validate_pathway(courses, expected_size=3)
+
+        self.assertEqual(violations, ["'A+0' appears more than once"])

@@ -55,6 +55,9 @@ class CellResult:
     unfilled_rungs: list = field(default_factory=list)
     rationale_count: int = 0
     enrichment_error: str = ''
+    # Pathway experiments. Empty / None unless the harness was asked for them.
+    variants: list = field(default_factory=list)
+    judgement: dict | None = None
     skipped_reason: str = ''
     error: str = ''
 
@@ -79,6 +82,8 @@ class CellResult:
             'unfilled_rungs': list(self.unfilled_rungs),
             'rationale_count': self.rationale_count,
             'enrichment_error': self.enrichment_error,
+            'variants': list(self.variants),
+            'judgement': self.judgement,
             'skipped_reason': self.skipped_reason,
             'error': self.error,
         }
@@ -118,7 +123,8 @@ class PathwayHarness:
 
     def __init__(self, *, runs: int = 1, career_modes=CAREER_MODES, max_calls: int | None = None,
                  dry_run: bool = False, customer_uuid: str = '', allow_unscoped: bool = False,
-                 rerank_enabled: bool = True, enrich_enabled: bool = True):
+                 rerank_enabled: bool = True, enrich_enabled: bool = True,
+                 variant_sizes=(), variant_strategies=(), judge_enabled: bool = False):
         self.runs = runs
         self.career_modes = tuple(career_modes)
         self.budget = HarnessBudget(max_calls=max_calls)
@@ -127,6 +133,12 @@ class PathwayHarness:
         self.allow_unscoped = allow_unscoped
         self.rerank_enabled = rerank_enabled
         self.enrich_enabled = enrich_enabled
+        # Passed straight through to the pathway workflow, which applies the defaults and
+        # rejects bad values. ``max_calls`` still counts workflow executions: the model
+        # calls these add are reported by the command, not charged here.
+        self.variant_sizes = list(variant_sizes or [])
+        self.variant_strategies = list(variant_strategies or [])
+        self.judge_enabled = judge_enabled
         self._last_intent: dict = {}
         self._last_profile: dict = {}
 
@@ -275,6 +287,9 @@ class PathwayHarness:
                 rerank_enabled=self.rerank_enabled,
                 enrich_enabled=self.enrich_enabled,
                 learner_profile=self._last_profile,
+                variant_sizes=self.variant_sizes,
+                variant_strategies=self.variant_strategies,
+                judge_enabled=self.judge_enabled,
             ),
         )
         workflow.execute()
@@ -291,6 +306,9 @@ class PathwayHarness:
         enrichment = (workflow.output_data or {}).get('enrich_rationale_output') or {}
         cell.rationale_count = len(enrichment.get('reasons') or {})
         cell.enrichment_error = enrichment.get('error') or ''
+
+        cell.variants = workflow.variants()
+        cell.judgement = workflow.default_judgement()
 
     @staticmethod
     def career_skill_names(career) -> list:

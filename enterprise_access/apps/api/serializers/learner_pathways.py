@@ -3,6 +3,8 @@ Request and response serializers for the Learner Pathways API.
 """
 from rest_framework import serializers
 
+from enterprise_access.apps.pathways.pathway_variants import MAX_PATHWAY_SIZE, MIN_PATHWAY_SIZE, VARIANT_STRATEGIES
+
 LEARNER_PATHWAYS_API_TAG = 'Learner Pathways'
 
 
@@ -117,6 +119,31 @@ class PathwayRequestSerializer(serializers.Serializer):  # pylint: disable=abstr
     # pathway, just explained more generically.
     learner_profile = serializers.DictField(required=False, default=dict)
 
+    # Pathway experiments, off unless the ``learner_pathways_pathway_experiments`` switch is
+    # on (the view rejects them otherwise): the model-selected variants and the judge each
+    # cost extra paid model calls, on a learner-facing endpoint. None of them changes the
+    # delivered ``courses``.
+    variant_sizes = serializers.ListField(
+        child=serializers.IntegerField(min_value=MIN_PATHWAY_SIZE, max_value=MAX_PATHWAY_SIZE),
+        required=False, default=list,
+        help_text='Build pathway variants of these sizes (2-5) beside the delivered pathway.',
+    )
+    variant_strategies = serializers.ListField(
+        child=serializers.ChoiceField(choices=VARIANT_STRATEGIES),
+        required=False, default=list,
+        help_text='How to build the variants. Sizes alone default to ranked_cut; '
+                  'strategies alone default to every size from 2 to 5.',
+    )
+    judge = serializers.BooleanField(
+        required=False, default=False,
+        help_text='Score the delivered pathway and every variant with the model judge.',
+    )
+
+    def requests_experiments(self) -> bool:
+        """Whether the validated request asks for any experiment field."""
+        data = self.validated_data
+        return bool(data.get('variant_sizes') or data.get('variant_strategies') or data.get('judge'))
+
 
 class PathwayCourseSerializer(serializers.Serializer):  # pylint: disable=abstract-method
     """
@@ -133,6 +160,45 @@ class PathwayCourseSerializer(serializers.Serializer):  # pylint: disable=abstra
     rationale = serializers.CharField(allow_blank=True)
 
 
+class PathwayJudgementSerializer(serializers.Serializer):  # pylint: disable=abstract-method
+    """
+    Serializes one model-judge result.
+
+    ``verdict`` is ``good``, ``weak`` or ``bad``, or blank with ``error`` set when the
+    judgement failed. ``same_as`` names an earlier pathway with the identical courses whose
+    verdict was reused.
+    """
+    label = serializers.CharField()
+    verdict = serializers.CharField(allow_blank=True)
+    reason = serializers.CharField(allow_blank=True)
+    on_topic = serializers.DictField(child=serializers.BooleanField())
+    n_on_topic = serializers.IntegerField()
+    n_courses = serializers.IntegerField()
+    same_as = serializers.CharField(allow_blank=True)
+    error = serializers.CharField(allow_blank=True)
+    model = serializers.CharField(allow_blank=True)
+
+
+class PathwayVariantSerializer(serializers.Serializer):  # pylint: disable=abstract-method
+    """
+    Serializes one pathway size variant: an experiment, never the delivered pathway.
+
+    ``requested_size`` is null for ``model_sized``, where the model chose the length.
+    ``complete`` is false when a variant came back short of its size -- it is never padded.
+    """
+    label = serializers.CharField()
+    strategy = serializers.CharField()
+    requested_size = serializers.IntegerField(allow_null=True)
+    courses = PathwayCourseSerializer(many=True)
+    complete = serializers.BooleanField()
+    level_mix = serializers.DictField(child=serializers.IntegerField())
+    violations = serializers.ListField(child=serializers.CharField())
+    dropped = serializers.DictField(child=serializers.IntegerField())
+    fabricated_keys = serializers.ListField(child=serializers.CharField())
+    error = serializers.CharField(allow_blank=True)
+    judgement = PathwayJudgementSerializer(allow_null=True)
+
+
 class PathwayResponseSerializer(serializers.Serializer):  # pylint: disable=abstract-method
     """
     Serializes the HTTP 200 response for the pathway endpoint.
@@ -145,3 +211,7 @@ class PathwayResponseSerializer(serializers.Serializer):  # pylint: disable=abst
     workflow_uuid = serializers.UUIDField()
     courses = PathwayCourseSerializer(many=True)
     unfilled_rungs = serializers.ListField(child=serializers.CharField(), required=False)
+    # Present only when the request asked for experiments, so the default response is
+    # unchanged for every existing client.
+    variants = PathwayVariantSerializer(many=True, required=False)
+    judgement = PathwayJudgementSerializer(required=False)

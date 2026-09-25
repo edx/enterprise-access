@@ -73,7 +73,9 @@ LEARNER_PATHWAYS_SERVER_PIPELINE = WaffleSwitch(
 # .. toggle_description: Kill switch for the model-backed candidate re-ranking step of
 #     the learner pathways pipeline. Default False, meaning re-ranking runs. Turn it ON
 #     to stop the pipeline issuing paid model calls while leaving pathways working:
-#     re-ranking is the only step that calls an external model, and skipping it is a
+#     re-ranking is the only step on the default path that calls a metered model (the
+#     opt-in pathway experiments have their own switch, learner_pathways_pathway_
+#     experiments), and skipping it is a
 #     supported degradation rather than a failure, because deterministic assembly still
 #     produces a valid five-course pathway from the unordered candidate set. Use it as a
 #     cost or latency control, or if a model provider is failing.
@@ -81,6 +83,23 @@ LEARNER_PATHWAYS_SERVER_PIPELINE = WaffleSwitch(
 # .. toggle_creation_date: 2026-09-10
 LEARNER_PATHWAYS_DISABLE_CANDIDATE_RERANK = WaffleSwitch(
     f'{ENTERPRISE_ACCESS_NAMESPACE}.learner_pathways_disable_candidate_rerank',
+    __name__,
+)
+
+# .. toggle_name: enterprise_access.learner_pathways_pathway_experiments
+# .. toggle_implementation: WaffleSwitch
+# .. toggle_default: False
+# .. toggle_description: Lets callers of the learner pathways pathway endpoint request
+#     pathway size variants (``variant_sizes`` / ``variant_strategies``) and model-judge
+#     scores (``judge``). Off by default, because the model-selected variants and the judge
+#     each issue extra paid model calls per request, and the endpoint is learner-facing.
+#     With it off, a request carrying those fields is rejected with HTTP 400 rather than
+#     silently ignored. The evaluation commands do not read it: they bound their own spend
+#     with ``--max-calls`` and ``--dry-run``.
+# .. toggle_use_cases: open_edx
+# .. toggle_creation_date: 2026-09-25
+LEARNER_PATHWAYS_PATHWAY_EXPERIMENTS = WaffleSwitch(
+    f'{ENTERPRISE_ACCESS_NAMESPACE}.learner_pathways_pathway_experiments',
     __name__,
 )
 
@@ -98,3 +117,8 @@ def learner_pathways_candidate_rerank_enabled():
     this module has to know about the polarity.
     """
     return not LEARNER_PATHWAYS_DISABLE_CANDIDATE_RERANK.is_enabled()
+
+
+def learner_pathways_pathway_experiments_enabled():
+    """Return whether API callers may request pathway size variants and judge scores."""
+    return LEARNER_PATHWAYS_PATHWAY_EXPERIMENTS.is_enabled()
