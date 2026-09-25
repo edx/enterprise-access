@@ -225,6 +225,7 @@ class TestSubsidyAccessPolicyAllocationView(APITestWithMocks):
         AssignedLearnerCreditAccessPolicy, 'catalog_contains_content_key',
         autospec=True, return_value=True
     )
+    @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiV1Client', autospec=True)
     @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient', autospec=True)
     @ddt.data(
         # (suppress_email value, should_send_email expectation)
@@ -238,6 +239,7 @@ class TestSubsidyAccessPolicyAllocationView(APITestWithMocks):
         suppress_email_value,
         should_send_email,
         mock_catalog_client,
+        mock_catalog_v1_client,
         mock_catalog_inclusion,  # pylint: disable=unused-argument
         mock_is_subsidy_active,  # pylint: disable=unused-argument
         mock_subsidy_balance,  # pylint: disable=unused-argument
@@ -256,6 +258,7 @@ class TestSubsidyAccessPolicyAllocationView(APITestWithMocks):
         When suppress_email=False or not provided: Email should be sent
         """
         mock_catalog_client.return_value.catalog_content_metadata.return_value = self.mock_catalog_result
+        mock_catalog_v1_client.return_value.content_metadata.return_value = None
 
         mock_subsidy_record.return_value = {
             'uuid': str(uuid4()),
@@ -317,10 +320,12 @@ class TestSubsidyAccessPolicyAllocationView(APITestWithMocks):
         AssignedLearnerCreditAccessPolicy, 'catalog_contains_content_key',
         autospec=True, return_value=True
     )
+    @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiV1Client', autospec=True)
     @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient', autospec=True)
     def test_allocate_suppress_email_multiple_learners(
         self,
         mock_catalog_client,
+        mock_catalog_v1_client,
         mock_catalog_inclusion,  # pylint: disable=unused-argument
         mock_is_subsidy_active,  # pylint: disable=unused-argument
         mock_subsidy_balance,  # pylint: disable=unused-argument
@@ -336,6 +341,7 @@ class TestSubsidyAccessPolicyAllocationView(APITestWithMocks):
         When suppress_email=True, no emails should be sent to any learners.
         """
         mock_catalog_client.return_value.catalog_content_metadata.return_value = self.mock_catalog_result
+        mock_catalog_v1_client.return_value.content_metadata.return_value = None
 
         mock_subsidy_record.return_value = {
             'uuid': str(uuid4()),
@@ -371,10 +377,12 @@ class TestSubsidyAccessPolicyAllocationView(APITestWithMocks):
         'enterprise_access.apps.api.v1.views.subsidy_access_policy.assignments_api.allocate_assignments',
         autospec=True,
     )
+    @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiV1Client', autospec=True)
     @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient', autospec=True)
     @mock.patch('enterprise_access.apps.api.v1.views.subsidy_access_policy.uuid4')
     def test_allocate_happy_path(
-        self, mock_uuid4, mock_catalog_client, mock_allocate, mock_subsidy_record, mock_can_allocate
+        self, mock_uuid4, mock_catalog_client, mock_catalog_v1_client, mock_allocate, mock_subsidy_record,
+        mock_can_allocate
     ):
         """
         Tests that we can successfully call the allocate view
@@ -390,6 +398,7 @@ class TestSubsidyAccessPolicyAllocationView(APITestWithMocks):
 
         # Mock results from the catalog content metadata API endpoint.
         mock_catalog_client.return_value.catalog_content_metadata.return_value = self.mock_catalog_result
+        mock_catalog_v1_client.return_value.content_metadata.return_value = None
 
         # Mock results from the subsidy record.
         mock_subsidy_record.return_value = {
@@ -699,10 +708,12 @@ class TestSubsidyAccessPolicyAllocationEndToEnd(APITestWithMocks):
         autospec=True,
     )
     @mock.patch('enterprise_access.apps.content_assignments.api.send_email_for_new_assignment', autospec=True)
+    @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiV1Client', autospec=True)
     @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient', autospec=True)
     def test_allocate_happy_path_e2e(
         self,
         mock_catalog_client,
+        mock_catalog_v1_client,
         mock_email,   # pylint: disable=unused-argument
         mock_pending_learner_task,
         mock_get_and_cache_content_metadata,
@@ -730,6 +741,7 @@ class TestSubsidyAccessPolicyAllocationEndToEnd(APITestWithMocks):
 
         # Mock results from the catalog content metadata API endpoint.
         mock_catalog_client.return_value.catalog_content_metadata.return_value = self.mock_catalog_result
+        mock_catalog_v1_client.return_value.content_metadata.return_value = None
 
         # Mock results from the subsidy record.
         mock_subsidy_record.return_value = {
@@ -1187,10 +1199,12 @@ class TestSubsidyAccessPolicyAllocationEndToEnd(APITestWithMocks):
         'enterprise_access.apps.content_assignments.api.create_pending_enterprise_learner_for_assignment_task'
     )
     @mock.patch('enterprise_access.apps.content_assignments.api.send_email_for_new_assignment')
+    @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiV1Client', autospec=True)
     @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient', autospec=True)
     def test_allocate_too_much_existing_allocation_e2e(
         self,
         mock_catalog_client,
+        mock_catalog_v1_client,
         mock_email,   # pylint: disable=unused-argument
         mock_pending_learner_task,
         mock_get_and_cache_content_metadata,  # pylint: disable=unused-argument
@@ -1231,6 +1245,7 @@ class TestSubsidyAccessPolicyAllocationEndToEnd(APITestWithMocks):
 
         # Mock results from the catalog content metadata API endpoint.
         mock_catalog_client.return_value.catalog_content_metadata.return_value = self.mock_catalog_result
+        mock_catalog_v1_client.return_value.content_metadata.return_value = None
 
         allocate_url = _allocation_url(self.assigned_learner_credit_policy.uuid)
         allocate_payload = {

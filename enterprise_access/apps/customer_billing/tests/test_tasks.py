@@ -403,7 +403,8 @@ class TestSendTrialEndedCancellationEmailTask(TestCase):
         }
         mock_braze_client.return_value.create_braze_recipient.return_value = {'external_user_id': '1'}
 
-        send_trial_ended_cancellation_email_task(checkout_intent_id=self.checkout_intent.id)
+        with mock.patch.object(SspProduct, 'academy_title', new_callable=mock.PropertyMock, return_value='AI Academy'):
+            send_trial_ended_cancellation_email_task(checkout_intent_id=self.checkout_intent.id)
 
         mock_braze_client.return_value.send_campaign_message.assert_called_once()
         call_args = mock_braze_client.return_value.send_campaign_message.call_args
