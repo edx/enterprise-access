@@ -24,7 +24,8 @@ from enterprise_access.apps.pathways.model_backends.base import (
     ModelBackend,
     ModelBackendConfigurationError,
     ModelBackendRequestError,
-    ModelResponse
+    ModelResponse,
+    shared_sdk_client
 )
 
 logger = logging.getLogger(__name__)
@@ -78,7 +79,11 @@ class OpenAIBackend(ModelBackend):
                 'used. Install it, or select another backend via PATHWAYS_MODEL_BACKEND.'
             ) from exc
 
-        self._client = openai.OpenAI(api_key=self._api_key, timeout=self.timeout)
+        # Shared, never discarded: see ``shared_sdk_client`` for the deadlock this avoids.
+        self._client = shared_sdk_client(
+            (openai, self._api_key, self.timeout),
+            lambda: openai.OpenAI(api_key=self._api_key, timeout=self.timeout),
+        )
         return self._client
 
     def _complete(self, *, system_prompt: str, user_content: str, trace_id: str) -> ModelResponse:

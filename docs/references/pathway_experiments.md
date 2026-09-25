@@ -111,9 +111,10 @@ request carrying them gets HTTP 400 rather than having them silently ignored.
   beside its baseline.
 - **For long runs, pass `--checkpoint runs.jsonl`.** Each career is appended the moment it
   finishes, and `--resume` then carries completed careers over, neither re-running nor
-  re-charging them. Errors and budget skips are retried. The first real collection hung
-  after two careers, on a network call that never returned (most likely a DNS lookup, which
-  no socket timeout covers), which is why this exists.
+  re-charging them. Errors and budget skips are retried. The first real collection stalled
+  repeatedly, which is why this exists. The stalls turned out to be a logging deadlock
+  triggered by discarded SDK clients (now fixed by sharing one client per configuration; see
+  `shared_sdk_client`), not the network hangs they first looked like.
 
 ### Persona harness
 

@@ -18,7 +18,8 @@ from enterprise_access.apps.pathways.model_backends.base import (
     ModelBackend,
     ModelBackendConfigurationError,
     ModelBackendRequestError,
-    ModelResponse
+    ModelResponse,
+    shared_sdk_client
 )
 
 logger = logging.getLogger(__name__)
@@ -71,7 +72,11 @@ class ClaudeBackend(ModelBackend):
                 'used. Install it, or select the xpert backend via PATHWAYS_MODEL_BACKEND.'
             ) from exc
 
-        self._client = anthropic.Anthropic(api_key=self._api_key, timeout=self.timeout)
+        # Shared, never discarded: see ``shared_sdk_client`` for the deadlock this avoids.
+        self._client = shared_sdk_client(
+            (anthropic, self._api_key, self.timeout),
+            lambda: anthropic.Anthropic(api_key=self._api_key, timeout=self.timeout),
+        )
         return self._client
 
     def _complete(self, *, system_prompt: str, user_content: str, trace_id: str) -> ModelResponse:

@@ -523,6 +523,32 @@ class TestBackendTimeout(TestCase):
 
         fake_sdk.Anthropic.assert_called_once_with(api_key='k', timeout=60)
 
+    def test_backends_with_the_same_configuration_share_one_sdk_client(self):
+        """
+        A client built per call was discarded per call, and its finalizer's logging could
+        deadlock against Django's signal lock. A shared client is never discarded.
+        """
+        fake_sdk = mock.Mock()
+        fake_sdk.OpenAI.return_value = fake_openai_client()
+        with mock.patch.dict('sys.modules', {'openai': fake_sdk}):
+            for _ in range(3):
+                OpenAIBackend(api_key='shared', timeout=7).complete(
+                    system_prompt='s', user_content='u', trace_id='t',
+                )
+
+        fake_sdk.OpenAI.assert_called_once_with(api_key='shared', timeout=7)
+
+    def test_a_different_timeout_or_key_gets_its_own_client(self):
+        fake_sdk = mock.Mock()
+        fake_sdk.Anthropic.side_effect = lambda **kwargs: fake_client()
+        with mock.patch.dict('sys.modules', {'anthropic': fake_sdk}):
+            for key, timeout in (('a', 1), ('a', 2), ('b', 1), ('a', 1)):
+                ClaudeBackend(api_key=key, timeout=timeout).complete(
+                    system_prompt='s', user_content='u', trace_id='t',
+                )
+
+        self.assertEqual(fake_sdk.Anthropic.call_count, 3)
+
     def test_an_explicit_timeout_overrides_the_setting(self):
         self.assertEqual(OpenAIBackend(api_key='k', timeout=5).timeout, 5)
         self.assertEqual(ClaudeBackend(api_key='k', timeout=5).timeout, 5)
