@@ -305,6 +305,18 @@ class TestOpenAIBackend(TestCase):
             {'type': 'json_object'},
         )
 
+    def test_output_is_capped_with_max_completion_tokens(self):
+        """gpt-5-family models reject the deprecated ``max_tokens`` with an HTTP 400."""
+        client = fake_openai_client()
+
+        OpenAIBackend(client=client, api_key='k', max_tokens=123).complete(
+            system_prompt='sys', user_content='hi', trace_id='t',
+        )
+
+        kwargs = client.chat.completions.create.call_args.kwargs
+        self.assertEqual(kwargs['max_completion_tokens'], 123)
+        self.assertNotIn('max_tokens', kwargs)
+
     def test_the_system_and_user_messages_are_sent_separately(self):
         client = fake_openai_client()
 

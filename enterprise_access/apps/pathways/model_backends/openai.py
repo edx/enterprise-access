@@ -81,7 +81,11 @@ class OpenAIBackend(ModelBackend):
         try:
             completion = client.chat.completions.create(
                 model=self.model,
-                max_tokens=self.max_tokens,
+                # ``max_completion_tokens``, not the deprecated ``max_tokens``: gpt-5-family
+                # models reject ``max_tokens`` outright (HTTP 400, "Unsupported parameter"),
+                # and gpt-4o accepts either -- both verified live 2026-09-25. For a reasoning
+                # model the cap includes its reasoning tokens.
+                max_completion_tokens=self.max_tokens,
                 response_format={'type': 'json_object'},
                 messages=[
                     {'role': 'system', 'content': system_prompt},
