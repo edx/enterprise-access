@@ -6,7 +6,7 @@
 #
 2u-enterprise-subsidy-client==2.2.1
     # via -r requirements/validation.txt
-amqp==5.3.1
+amqp==5.4.0
     # via
     #   -r requirements/validation.txt
     #   kombu
@@ -47,11 +47,11 @@ billiard==4.3.0
     # via
     #   -r requirements/validation.txt
     #   celery
-boto3==1.43.97
+boto3==1.43.102
     # via
     #   -r requirements/validation.txt
     #   snowflake-connector-python
-botocore==1.43.97
+botocore==1.43.102
     # via
     #   -r requirements/validation.txt
     #   boto3
@@ -154,7 +154,7 @@ dictdiffer==0.10.0
     # via
     #   -r requirements/validation.txt
     #   pytest-dictsdiff
-diff-cover==10.5.1
+diff-cover==10.6.0
     # via -r requirements/dev.in
 dill==0.4.1
     # via
@@ -232,7 +232,7 @@ django-object-actions==5.1.2
     # via -r requirements/validation.txt
 django-simple-history==3.13.0
     # via -r requirements/validation.txt
-django-test-migrations==1.6.0
+django-test-migrations==1.7.0
     # via -r requirements/validation.txt
 django-waffle==5.0.0
     # via
@@ -312,7 +312,7 @@ edx-opaque-keys[django]==4.0.0
     #   openedx-events
 edx-rbac==3.0.0
     # via -r requirements/validation.txt
-edx-rest-api-client==7.0.0
+edx-rest-api-client==7.1.0
     # via
     #   -r requirements/validation.txt
     #   2u-enterprise-subsidy-client
@@ -483,7 +483,7 @@ path==16.16.0
     # via edx-i18n-tools
 pip-tools==7.5.3
     # via -r requirements/pip-tools.txt
-platformdirs==4.11.10
+platformdirs==4.11.12
     # via
     #   -r requirements/validation.txt
     #   pylint
@@ -511,7 +511,7 @@ psutil==7.2.2
     # via
     #   -r requirements/validation.txt
     #   edx-django-utils
-pycodestyle==2.14.0
+pycodestyle==2.15.0
     # via -r requirements/validation.txt
 pycparser==3.0
     # via
@@ -526,7 +526,7 @@ pygments==2.21.0
     #   pytest
     #   readme-renderer
     #   rich
-pyjwt[crypto]==2.14.0
+pyjwt[crypto]==2.15.0
     # via
     #   -r requirements/validation.txt
     #   drf-jwt
@@ -535,7 +535,7 @@ pyjwt[crypto]==2.14.0
     #   edx-rest-api-client
     #   snowflake-connector-python
     #   social-auth-core
-pylint==4.0.8
+pylint==4.0.9
     # via
     #   -r requirements/validation.txt
     #   edx-lint
@@ -557,7 +557,7 @@ pylint-plugin-utils==0.9.0
     #   pylint-django
 pymemcache==4.0.0
     # via -r requirements/validation.txt
-pymongo==4.18.1
+pymongo==4.18.2
     # via
     #   -r requirements/validation.txt
     #   edx-opaque-keys
@@ -603,7 +603,7 @@ python-discovery==1.6.1
     #   -r requirements/validation.txt
     #   tox
     #   virtualenv
-python-slugify==9.0.0
+python-slugify==9.1.1
     # via
     #   -r requirements/validation.txt
     #   code-annotations
@@ -611,7 +611,7 @@ python3-openid==3.2.0
     # via
     #   -r requirements/validation.txt
     #   social-auth-core
-pytz==2026.3.post1
+pytz==2026.4
     # via
     #   -r requirements/validation.txt
     #   drf-yasg
@@ -697,7 +697,7 @@ snowballstemmer==3.1.1
     # via
     #   -r requirements/validation.txt
     #   pydocstyle
-snowflake-connector-python==4.7.4
+snowflake-connector-python==4.7.5
     # via -r requirements/validation.txt
 social-auth-app-django==5.9.0
     # via
@@ -739,7 +739,7 @@ tomlkit==0.15.1
     #   edx-lint
     #   pylint
     #   snowflake-connector-python
-tox==4.61.5
+tox==4.64.2
     # via -r requirements/validation.txt
 twine==7.0.0
     # via -r requirements/validation.txt
@@ -749,7 +749,6 @@ typing-extensions==4.16.0
     #   cattrs
     #   click-repl
     #   django-countries
-    #   django-test-migrations
     #   edx-opaque-keys
     #   pyopenssl
     #   pyright
@@ -783,11 +782,11 @@ vine==5.1.0
     #   amqp
     #   celery
     #   kombu
-virtualenv==21.7.12
+virtualenv==21.12.1
     # via
     #   -r requirements/validation.txt
     #   tox
-wcwidth==0.8.4
+wcwidth==0.9.1
     # via
     #   -r requirements/validation.txt
     #   prompt-toolkit

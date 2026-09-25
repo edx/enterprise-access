@@ -8,7 +8,7 @@
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
-amqp==5.3.1
+amqp==5.4.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -59,12 +59,12 @@ billiard==4.3.0
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
     #   celery
-boto3==1.43.97
+boto3==1.43.102
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
     #   snowflake-connector-python
-botocore==1.43.97
+botocore==1.43.102
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -280,7 +280,7 @@ django-simple-history==3.13.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
-django-test-migrations==1.6.0
+django-test-migrations==1.7.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -391,7 +391,7 @@ edx-rbac==3.0.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
-edx-rest-api-client==7.0.0
+edx-rest-api-client==7.1.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -578,7 +578,7 @@ packaging==26.3
     #   snowflake-connector-python
     #   tox
     #   twine
-platformdirs==4.11.10
+platformdirs==4.11.12
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -608,7 +608,7 @@ psutil==7.2.2
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
     #   edx-django-utils
-pycodestyle==2.14.0
+pycodestyle==2.15.0
     # via -r requirements/quality.txt
 pycparser==3.0
     # via
@@ -624,7 +624,7 @@ pygments==2.21.0
     #   pytest
     #   readme-renderer
     #   rich
-pyjwt[crypto]==2.14.0
+pyjwt[crypto]==2.15.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -634,7 +634,7 @@ pyjwt[crypto]==2.14.0
     #   edx-rest-api-client
     #   snowflake-connector-python
     #   social-auth-core
-pylint==4.0.8
+pylint==4.0.9
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -662,7 +662,7 @@ pymemcache==4.0.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
-pymongo==4.18.1
+pymongo==4.18.2
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -714,7 +714,7 @@ python-discovery==1.6.1
     #   -r requirements/test.txt
     #   tox
     #   virtualenv
-python-slugify==9.0.0
+python-slugify==9.1.1
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -724,7 +724,7 @@ python3-openid==3.2.0
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
     #   social-auth-core
-pytz==2026.3.post1
+pytz==2026.4
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -822,7 +822,7 @@ snowballstemmer==3.1.1
     # via
     #   -r requirements/quality.txt
     #   pydocstyle
-snowflake-connector-python==4.7.4
+snowflake-connector-python==4.7.5
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -875,7 +875,7 @@ tomlkit==0.15.1
     #   edx-lint
     #   pylint
     #   snowflake-connector-python
-tox==4.61.5
+tox==4.64.2
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -888,7 +888,6 @@ typing-extensions==4.16.0
     #   cattrs
     #   click-repl
     #   django-countries
-    #   django-test-migrations
     #   edx-opaque-keys
     #   pyopenssl
     #   referencing
@@ -926,12 +925,12 @@ vine==5.1.0
     #   amqp
     #   celery
     #   kombu
-virtualenv==21.7.12
+virtualenv==21.12.1
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
     #   tox
-wcwidth==0.8.4
+wcwidth==0.9.1
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
