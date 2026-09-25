@@ -15,6 +15,13 @@ from enterprise_access.apps.pathway_eval.harness import CAREER_MODES, PathwayHar
 from enterprise_access.apps.pathway_eval.personas import PersonaValidationError, load_personas
 from enterprise_access.apps.pathway_eval.retrieval_diagnostic import validate_customer_uuid
 from enterprise_access.apps.pathways.course_retrieval import eval_customer_uuid
+from enterprise_access.apps.pathways.pathway_variants import (
+    MAX_PATHWAY_SIZE,
+    MIN_PATHWAY_SIZE,
+    VARIANT_STRATEGIES,
+    estimated_model_calls,
+    resolve_variant_request
+)
 
 
 class Command(BaseCommand):
@@ -70,6 +77,22 @@ class Command(BaseCommand):
             help='Disable the per-course rationale step. Pathways still ship, unexplained.',
         )
         parser.add_argument(
+            '--variant-size', action='append', dest='variant_sizes', type=int,
+            help=f'Also build a pathway variant of this size ({MIN_PATHWAY_SIZE}-'
+                 f'{MAX_PATHWAY_SIZE}). Repeatable. Alone, uses the free ranked_cut strategy.',
+        )
+        parser.add_argument(
+            '--variant-strategy', action='append', dest='variant_strategies',
+            choices=VARIANT_STRATEGIES,
+            help='How to build variants. Repeatable. Alone, builds every size from 2 to 5. '
+                 'model_pick and model_sized issue paid model calls.',
+        )
+        parser.add_argument(
+            '--judge', action='store_true',
+            help='Score the delivered pathway and every variant with the model judge '
+                 '(one paid call per distinct pathway).',
+        )
+        parser.add_argument(
             '--max-calls', type=int,
             help='Stop before exceeding this many workflow executions. Checked before '
                  'each cell, so the limit is never overshot.',
@@ -104,6 +127,15 @@ class Command(BaseCommand):
         if options['runs'] < 1:
             raise CommandError('--runs must be at least 1.')
 
+        try:
+            variant_sizes, variant_strategies = resolve_variant_request(
+                options.get('variant_sizes'), options.get('variant_strategies'),
+            )
+        except ValueError as exc:
+            raise CommandError(str(exc)) from exc
+        options['resolved_variant_sizes'] = variant_sizes
+        options['resolved_variant_strategies'] = variant_strategies
+
         harness = PathwayHarness(
             runs=options['runs'],
             career_modes=tuple(options.get('career_modes') or CAREER_MODES),
@@ -113,6 +145,9 @@ class Command(BaseCommand):
             allow_unscoped=options['unscoped'],
             rerank_enabled=not options['no_rerank'],
             enrich_enabled=not options['no_enrich'],
+            variant_sizes=variant_sizes,
+            variant_strategies=variant_strategies,
+            judge_enabled=options['judge'],
         )
 
         result = harness.run(personas)
@@ -139,6 +174,15 @@ class Command(BaseCommand):
             ))
         if not options['no_rerank'] and not options['dry_run']:
             write('  model re-rank: enabled (paid calls)')
+        extra_calls = estimated_model_calls(
+            sizes=options['resolved_variant_sizes'],
+            strategies=options['resolved_variant_strategies'],
+            judge_enabled=options['judge'],
+        )
+        if options['resolved_variant_strategies'] or options['judge']:
+            write(f'  experiments: strategies={options["resolved_variant_strategies"] or "none"} '
+                  f'sizes={options["resolved_variant_sizes"] or "none"} judge={options["judge"]} '
+                  f'-- up to {extra_calls} extra model call(s) per cell, not counted by --max-calls')
         write('=' * 78)
 
         for cell in cells:
@@ -191,6 +235,10 @@ class Command(BaseCommand):
                 'enrich_enabled': not options['no_enrich'],
                 'dry_run': options['dry_run'],
                 'model_backend': settings.PATHWAYS_MODEL_BACKEND,
+                'variant_sizes': options['resolved_variant_sizes'],
+                'variant_strategies': options['resolved_variant_strategies'],
+                'judge_enabled': options['judge'],
+                'judge_model': settings.PATHWAYS_JUDGE_MODEL if options['judge'] else '',
             },
             'calls_made': result['calls_made'],
             'budget_exhausted': result['budget_exhausted'],

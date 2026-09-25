@@ -44,8 +44,10 @@ from .learner_pathways import (
     LearningIntentRequestSerializer,
     LearningIntentResponseSerializer,
     PathwayCourseSerializer,
+    PathwayJudgementSerializer,
     PathwayRequestSerializer,
     PathwayResponseSerializer,
+    PathwayVariantSerializer,
     RecommendationFeedbackRequestSerializer,
     RecommendationFeedbackResponseSerializer
 )

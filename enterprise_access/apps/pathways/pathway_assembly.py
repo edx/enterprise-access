@@ -282,7 +282,9 @@ def assemble_pathway(hits, *, level_quota=None, max_per_partner: int = MAX_PER_P
 
 def validate_pathway(courses, *, customer_catalog_keys=None,
                      max_per_partner: int = MAX_PER_PARTNER,
-                     supported_language: str = SUPPORTED_LANGUAGE):
+                     supported_language: str = SUPPORTED_LANGUAGE,
+                     expected_size: int = PATHWAY_SIZE,
+                     size_range: tuple[int, int] | None = None):
     """
     Apply the Tier 1 correctness gates and return a list of violation strings.
 
@@ -293,12 +295,22 @@ def validate_pathway(courses, *, customer_catalog_keys=None,
     ``customer_catalog_keys`` is optional because proving catalog membership needs a
     browse-scoped key (Open Decision 6); when it is not supplied that gate is skipped
     rather than assumed to pass.
+
+    The size gate defaults to Decision 3's exactly-five. ``expected_size`` and
+    ``size_range`` exist for the size variants in ``pathway_variants``, which are built
+    under the relaxed two-to-five definition; every other gate applies to them unchanged.
     """
     violations = []
 
-    if len(courses) != PATHWAY_SIZE:
+    if size_range is not None:
+        low, high = size_range
+        if not low <= len(courses) <= high:
+            violations.append(
+                f'a pathway must contain {low} to {high} courses, got {len(courses)}'
+            )
+    elif len(courses) != expected_size:
         violations.append(
-            f'a pathway must contain exactly {PATHWAY_SIZE} courses, got {len(courses)}'
+            f'a pathway must contain exactly {expected_size} courses, got {len(courses)}'
         )
 
     keys = [course.key for course in courses]

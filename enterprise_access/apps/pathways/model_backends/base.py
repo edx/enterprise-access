@@ -12,11 +12,47 @@ same rule ``prompts/api.py`` already follows. Token counts and elapsed time are 
 log and are the only things worth logging anyway.
 """
 import logging
+import threading
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
+
+# One SDK client per configuration, shared by every backend instance in the process.
+#
+# Backends are constructed per call (``get_model_backend``, ``get_direct_backend``), and each
+# used to build its own SDK client and discard it after one request. Two costs, one of them
+# severe:
+#
+# * A discarded OpenAI client closes its HTTP pool in ``__del__``, and that close emits
+#   httpcore debug log records. edx's logging filter resolves the current user on every
+#   record, which sends a Django signal, and Django clears dead signal receivers while
+#   holding a non-reentrant lock. When the garbage collector happened to run inside that
+#   lock, the finalizer's log record tried to take the same lock on the same thread and the
+#   process deadlocked -- idle, forever. Found with py-spy on 2026-09-25, after a variant
+#   collection stalled five times in 63 careers; every stall had been misread as a network
+#   hang. It needs DEBUG logging for httpcore to trigger, which local settings enable.
+# * Every call paid a fresh DNS lookup and TLS handshake.
+#
+# The SDK clients are thread-safe and meant to be reused, so a client that is never thrown
+# away removes the finalizer from the picture and the handshake from every call.
+_SHARED_SDK_CLIENTS: dict = {}
+_SHARED_SDK_CLIENTS_LOCK = threading.Lock()
+
+
+def shared_sdk_client(key, build):
+    """
+    The process-wide SDK client for ``key``, built once by calling ``build()``.
+
+    ``key`` must capture everything the client is configured with -- the SDK module, the
+    credential and the timeout -- so two backends share a client only when either could
+    have built the other's.
+    """
+    with _SHARED_SDK_CLIENTS_LOCK:
+        if key not in _SHARED_SDK_CLIENTS:
+            _SHARED_SDK_CLIENTS[key] = build()
+        return _SHARED_SDK_CLIENTS[key]
 
 
 class ModelBackendError(Exception):

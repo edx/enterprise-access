@@ -12,7 +12,7 @@ from edx_rbac.decorators import permission_required
 from edx_rest_framework_extensions.auth.jwt.authentication import JwtAuthentication
 from rest_framework import permissions, status
 from rest_framework.decorators import action
-from rest_framework.exceptions import APIException, NotFound
+from rest_framework.exceptions import APIException, NotFound, ValidationError
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
@@ -23,7 +23,10 @@ from enterprise_access.apps.api.serializers.learner_pathways import LEARNER_PATH
 from enterprise_access.apps.core import constants
 from enterprise_access.apps.pathways.models import CareerDiscoveryWorkflow, PathwayAssemblyWorkflow
 from enterprise_access.apps.workflow.exceptions import UnitOfWorkException
-from enterprise_access.toggles import learner_pathways_server_pipeline_enabled
+from enterprise_access.toggles import (
+    learner_pathways_pathway_experiments_enabled,
+    learner_pathways_server_pipeline_enabled
+)
 
 logger = logging.getLogger(__name__)
 
@@ -205,6 +208,15 @@ class PathwayViewSet(ViewSet):
         request_serializer.is_valid(raise_exception=True)
         validated = request_serializer.validated_data
 
+        experiments = request_serializer.requests_experiments()
+        if experiments and not learner_pathways_pathway_experiments_enabled():
+            # Rejected rather than ignored: a caller that asked for variants and silently
+            # got none would read their absence as a result.
+            raise ValidationError({
+                'detail': 'Pathway experiments (variant_sizes, variant_strategies, judge) '
+                          'are not enabled.',
+            })
+
         workflow = PathwayAssemblyWorkflow.objects.create(
             input_data=PathwayAssemblyWorkflow.generate_input_dict(
                 career_name=validated['career_name'],
@@ -212,6 +224,9 @@ class PathwayViewSet(ViewSet):
                 skills_required=validated.get('skills_required') or [],
                 skills_preferred=validated.get('skills_preferred') or [],
                 learner_profile=validated.get('learner_profile') or {},
+                variant_sizes=validated.get('variant_sizes') or [],
+                variant_strategies=validated.get('variant_strategies') or [],
+                judge_enabled=validated.get('judge', False),
             ),
         )
         logger.info('Created PathwayAssemblyWorkflow (uuid=%s)', workflow.uuid)
@@ -225,9 +240,13 @@ class PathwayViewSet(ViewSet):
             ) from exc
 
         assembled = workflow.pathway() or {}
-        response_serializer = api_serializers.PathwayResponseSerializer({
+        response_data = {
             'workflow_uuid': workflow.uuid,
             'courses': assembled.get('courses') or [],
             'unfilled_rungs': assembled.get('unfilled_rungs') or [],
-        })
+        }
+        if experiments:
+            response_data['variants'] = workflow.variants()
+            response_data['judgement'] = workflow.default_judgement()
+        response_serializer = api_serializers.PathwayResponseSerializer(response_data)
         return Response(response_serializer.data, status=status.HTTP_200_OK)

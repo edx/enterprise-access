@@ -74,11 +74,13 @@ def fake_career_workflow(candidates, uuid='c-uuid', intent=None):
     return cls, instance
 
 
-def fake_pathway_workflow(output, uuid='p-uuid'):
+def fake_pathway_workflow(output, uuid='p-uuid', variants=None, judgement=None):
     """A stand-in PathwayAssemblyWorkflow class."""
     instance = mock.Mock()
     instance.uuid = uuid
     instance.output_data = {'assemble_pathway_output': output}
+    instance.variants.return_value = list(variants or [])
+    instance.default_judgement.return_value = judgement
     cls = mock.Mock()
     cls.objects.create.return_value = instance
     cls.generate_input_dict.return_value = {}
@@ -179,13 +181,14 @@ class TestHarnessRun(TestCase):
         self.career_instance = None
         self.pathway_instance = None
 
-    def _run(self, harness, personas, candidates=None, output=None):
+    def _run(self, harness, personas, candidates=None, output=None, variants=None, judgement=None):
         """Run the harness with both workflow classes patched, and keep the stand-ins."""
         career_cls, self.career_instance = fake_career_workflow(
             candidates if candidates is not None else self.candidates,
         )
         pathway_cls, self.pathway_instance = fake_pathway_workflow(
             output if output is not None else pathway_output(),
+            variants=variants, judgement=judgement,
         )
         with mock.patch(PATCH_CAREER_WORKFLOW, career_cls), \
                 mock.patch(PATCH_PATHWAY_WORKFLOW, pathway_cls):
@@ -287,6 +290,29 @@ class TestHarnessRun(TestCase):
         self.assertEqual(cell.course_keys, ['A+1', 'B+2'])
         self.assertTrue(cell.complete)
         self.assertEqual(cell.unfilled_rungs, ['Advanced'])
+
+    def test_experiment_requests_reach_the_pathway_workflow(self):
+        self._run(
+            PathwayHarness(career_modes=(CAREER_MODE_AUTO,), variant_sizes=[2, 3],
+                           variant_strategies=['model_pick'], judge_enabled=True),
+            [make_persona()],
+        )
+
+        kwargs = self.pathway_cls.generate_input_dict.call_args.kwargs
+        self.assertEqual(kwargs['variant_sizes'], [2, 3])
+        self.assertEqual(kwargs['variant_strategies'], ['model_pick'])
+        self.assertTrue(kwargs['judge_enabled'])
+
+    def test_variants_and_the_judgement_are_recorded_on_the_cell(self):
+        variants = [{'label': 'ranked_cut:2', 'courses': [], 'judgement': {'verdict': 'weak'}}]
+        result = self._run(
+            PathwayHarness(career_modes=(CAREER_MODE_AUTO,)), [make_persona()],
+            variants=variants, judgement={'label': 'default', 'verdict': 'good'},
+        )
+
+        cell = result['cells'][0].to_dict()
+        self.assertEqual(cell['variants'], variants)
+        self.assertEqual(cell['judgement']['verdict'], 'good')
 
     def test_tier_one_violations_survive_onto_the_cell(self):
         result = self._run(
@@ -411,6 +437,32 @@ class TestRunPathwayHarnessCommand(TestCase):
         self.assertIn('cells', payload)
         self.assertIn('run_config', payload)
         self.assertEqual(payload['cells'][0]['persona_id'], 'p001-test')
+
+    def test_a_variant_size_outside_two_to_five_is_a_command_error(self):
+        with self.assertRaisesRegex(CommandError, 'between 2 and 5'):
+            self.call(dry_run=True, variant_sizes=[9])
+
+    def test_a_run_reports_what_the_experiments_add_to_the_cost(self):
+        career_cls, _ = fake_career_workflow([])
+        with mock.patch(PATCH_CAREER_WORKFLOW, career_cls):
+            output = self.call(dry_run=True, variant_strategies=['model_pick'], judge=True)
+
+        # model_pick at four sizes is 4 calls; judging the delivered pathway and four
+        # variants is up to 5 more.
+        self.assertIn('up to 9 extra model call(s) per cell', output)
+        self.assertIn('not counted by --max-calls', output)
+
+    def test_the_export_records_the_resolved_experiment_request(self):
+        career_cls, _ = fake_career_workflow([])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / 'traces.json'
+            with mock.patch(PATCH_CAREER_WORKFLOW, career_cls):
+                self.call(dry_run=True, variant_sizes=[3], output_json=str(path))
+            config = json.loads(path.read_text())['run_config']
+
+        self.assertEqual(config['variant_sizes'], [3])
+        self.assertEqual(config['variant_strategies'], ['ranked_cut'])
+        self.assertFalse(config['judge_enabled'])
 
     def test_the_command_says_it_produces_traces_not_a_verdict(self):
         """

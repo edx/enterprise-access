@@ -560,6 +560,32 @@ PATHWAYS_CLAUDE_MODEL = 'claude-sonnet-5'
 OPENAI_API_KEY = ''
 PATHWAYS_OPENAI_MODEL = 'gpt-4o'
 
+# The pathway experiments (apps/pathways/pathway_variants.py and judging.py). Both send a
+# prompt defined in code, so both need a direct backend -- 'openai' or 'claude', never
+# 'xpert', which would substitute its stored prompt (see get_direct_backend).
+#
+# Variant selection defaults to the re-rank's own backend and model, so the model-selected
+# arms differ from the ranked arm in method only, not in model. Blank means "same as
+# PATHWAYS_MODEL_BACKEND", which fails loudly per run if that is 'xpert'.
+PATHWAYS_VARIANT_BACKEND = ''
+PATHWAYS_VARIANT_MODEL = ''
+
+# The judge is a measuring instrument, so it is pinned to the model the analysis
+# calibrated it on (gpt-5.4-mini, temperature 0, against human-curated programs in
+# September 2026) rather than following whichever model builds the pathways. A judge that
+# changed with the pipeline could not tell a better pipeline from a more lenient judge.
+PATHWAYS_JUDGE_BACKEND = 'openai'
+PATHWAYS_JUDGE_MODEL = 'gpt-5.4-mini'
+
+# Per-attempt timeout, in seconds, for the direct model backends. The OpenAI and Anthropic
+# SDKs default to 600s, so a dropped connection would hold a call -- and the learner request
+# or batch around it -- for ten minutes per attempt. 60s is ~3x the slowest call measured on
+# 2026-09-25 (a 50-candidate re-rank, 22s; median selection and judge calls ~1s), and the
+# SDKs' own retries (two, by default) then recover a transient drop in about three minutes
+# at worst. (The collection stalls first blamed on slow calls were a logging deadlock -- see
+# ``shared_sdk_client`` in apps/pathways/model_backends/base.py.)
+PATHWAYS_MODEL_TIMEOUT_SECONDS = 60
+
 # The enterprise customer the evaluation harness scopes to (Open Decision 1). Production
 # requests take the customer from the request; this is only for offline runs, which have
 # no request and therefore no secured Algolia key. Scoping by filter needs no secured key

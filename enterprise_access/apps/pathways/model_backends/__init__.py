@@ -40,6 +40,7 @@ __all__ = [
     'ModelResponseParseError',
     'OpenAIBackend',
     'XpertBackend',
+    'get_direct_backend',
     'get_model_backend',
 ]
 
@@ -73,4 +74,38 @@ def get_model_backend(*, prompt_type: str, backend_name: str | None = None) -> M
 
     raise ModelBackendConfigurationError(
         f'{name!r} is not a known model backend. Expected one of {", ".join(BACKEND_NAMES)}.'
+    )
+
+
+def get_direct_backend(*, backend_name: str, model: str | None = None,
+                       temperature: float | None = None) -> ModelBackend:
+    """
+    Return a backend that sends the caller's system prompt verbatim.
+
+    For the pathway experiments (``pathway_variants``, ``judging``), whose prompts live in
+    code rather than in an admin-editable row. The Xpert backend is refused rather than
+    accepted: it reads the stored prompt for a ``prompt_type`` and does not send the
+    caller's, so an experiment routed through it would silently run a *different* prompt --
+    the re-rank one -- and record the result as if it were the prompt under test.
+
+    Args:
+        backend_name: ``openai`` or ``claude``.
+        model: Overrides the backend's configured default model.
+        temperature: Passed through; ``None`` keeps the provider default.
+
+    Raises:
+        ModelBackendConfigurationError: For ``xpert`` or an unknown name.
+    """
+    name = (backend_name or '').strip().lower()
+    if name == OPENAI_BACKEND:
+        return OpenAIBackend(model=model or None, temperature=temperature)
+    if name == CLAUDE_BACKEND:
+        return ClaudeBackend(model=model or None, temperature=temperature)
+    if name == XPERT_BACKEND:
+        raise ModelBackendConfigurationError(
+            'The xpert backend serves stored prompts only, so it cannot run a prompt '
+            'defined in code. Configure openai or claude for this call.'
+        )
+    raise ModelBackendConfigurationError(
+        f'{name!r} is not a direct model backend. Expected {OPENAI_BACKEND} or {CLAUDE_BACKEND}.'
     )

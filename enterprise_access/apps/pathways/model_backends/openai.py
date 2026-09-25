@@ -24,7 +24,8 @@ from enterprise_access.apps.pathways.model_backends.base import (
     ModelBackend,
     ModelBackendConfigurationError,
     ModelBackendRequestError,
-    ModelResponse
+    ModelResponse,
+    shared_sdk_client
 )
 
 logger = logging.getLogger(__name__)
@@ -47,9 +48,16 @@ class OpenAIBackend(ModelBackend):
     name = BACKEND_NAME
 
     def __init__(self, *, model: str | None = None, api_key: str | None = None,
-                 max_tokens: int = DEFAULT_MAX_TOKENS, client=None):
+                 max_tokens: int = DEFAULT_MAX_TOKENS, temperature: float | None = None,
+                 timeout: float | None = None, client=None):
         self.model = model or settings.PATHWAYS_OPENAI_MODEL
         self.max_tokens = max_tokens
+        # ``None`` sends no temperature, which is the provider default and what every
+        # existing caller gets. The pathway judge pins 0 so its verdicts are repeatable.
+        self.temperature = temperature
+        # Explicit because the SDK default is 600s per attempt; see
+        # PATHWAYS_MODEL_TIMEOUT_SECONDS for the measurement behind the value.
+        self.timeout = timeout if timeout is not None else settings.PATHWAYS_MODEL_TIMEOUT_SECONDS
         self._api_key = api_key or settings.OPENAI_API_KEY
         # Injected in tests so nothing here needs the package or the network.
         self._client = client
@@ -71,27 +79,35 @@ class OpenAIBackend(ModelBackend):
                 'used. Install it, or select another backend via PATHWAYS_MODEL_BACKEND.'
             ) from exc
 
-        self._client = openai.OpenAI(api_key=self._api_key)
+        # Shared, never discarded: see ``shared_sdk_client`` for the deadlock this avoids.
+        self._client = shared_sdk_client(
+            (openai, self._api_key, self.timeout),
+            lambda: openai.OpenAI(api_key=self._api_key, timeout=self.timeout),
+        )
         return self._client
 
     def _complete(self, *, system_prompt: str, user_content: str, trace_id: str) -> ModelResponse:
         """Issue one chat-completions request."""
         client = self._get_client()
 
+        request = {
+            'model': self.model,
+            # ``max_completion_tokens``, not the deprecated ``max_tokens``: gpt-5-family
+            # models reject ``max_tokens`` outright (HTTP 400, "Unsupported parameter"),
+            # and gpt-4o accepts either -- both verified live 2026-09-25. For a reasoning
+            # model the cap includes its reasoning tokens.
+            'max_completion_tokens': self.max_tokens,
+            'response_format': {'type': 'json_object'},
+            'messages': [
+                {'role': 'system', 'content': system_prompt},
+                {'role': 'user', 'content': user_content},
+            ],
+        }
+        if self.temperature is not None:
+            request['temperature'] = self.temperature
+
         try:
-            completion = client.chat.completions.create(
-                model=self.model,
-                # ``max_completion_tokens``, not the deprecated ``max_tokens``: gpt-5-family
-                # models reject ``max_tokens`` outright (HTTP 400, "Unsupported parameter"),
-                # and gpt-4o accepts either -- both verified live 2026-09-25. For a reasoning
-                # model the cap includes its reasoning tokens.
-                max_completion_tokens=self.max_tokens,
-                response_format={'type': 'json_object'},
-                messages=[
-                    {'role': 'system', 'content': system_prompt},
-                    {'role': 'user', 'content': user_content},
-                ],
-            )
+            completion = client.chat.completions.create(**request)
         except ModelBackendConfigurationError:
             raise
         except Exception as exc:

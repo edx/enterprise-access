@@ -29,7 +29,7 @@ from enterprise_access.apps.core.models import EnterpriseAccessFeatureRole, Ente
 from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.pathways.models import AssemblePathwayStep, PathwayAssemblyWorkflow
 from enterprise_access.apps.prompts.api import PromptError
-from enterprise_access.toggles import LEARNER_PATHWAYS_SERVER_PIPELINE
+from enterprise_access.toggles import LEARNER_PATHWAYS_PATHWAY_EXPERIMENTS, LEARNER_PATHWAYS_SERVER_PIPELINE
 from test_utils import APITest
 
 PATCH_SNAPSHOT = 'enterprise_access.apps.pathways.catalog_translation.snapshot_catalog_facets'
@@ -40,6 +40,7 @@ PATCH_RERANK = 'enterprise_access.apps.pathways.reranking.rerank_candidates'
 # tests would reach a real Algolia client.
 PATCH_REFINE = 'enterprise_access.apps.pathways.catalog_translation.refine_unmatched_skills'
 PATCH_ENRICH = 'enterprise_access.apps.pathways.models.pathways_api.enrich_rationales'
+PATCH_JUDGE = 'enterprise_access.apps.pathways.models.judging.judge_pathway'
 
 _PATHWAY_URL_NAME = 'api:v1:pathway-pathway'
 
@@ -338,6 +339,68 @@ class TestPathwayFeatureFlag(PathwayAPITestMixin, APITest):
     @override_waffle_switch(LEARNER_PATHWAYS_SERVER_PIPELINE, True)
     def test_enabled_pipeline_serves_the_endpoint(self):
         assert self.post_pathway().status_code == status.HTTP_200_OK
+
+
+def judge_result(verdict='good'):
+    return {
+        'verdict': verdict, 'reason': 'Fits.', 'on_topic': {}, 'fabricated_keys': [],
+        'unjudged_keys': [], 'error': '', 'n_on_topic': 0, 'n_courses': 0,
+        'trace': {'backend': 'openai', 'model': 'gpt-5.4-mini', 'elapsed_ms': 1},
+    }
+
+
+@ddt.ddt
+@override_waffle_switch(LEARNER_PATHWAYS_SERVER_PIPELINE, True)
+class TestPathwayExperiments(PathwayAPITestMixin, APITest):
+    """
+    Scenario: Callers can request size variants and judge scores, behind a switch.
+    """
+
+    def test_experiment_fields_are_rejected_while_the_switch_is_off(self):
+        """Rejected rather than ignored, so an absence of variants is never read as a result."""
+        for extra in ({'variant_sizes': [3]}, {'variant_strategies': ['ranked_cut']}, {'judge': True}):
+            response = self.post_pathway({**_VALID_PAYLOAD, **extra})
+            assert response.status_code == status.HTTP_400_BAD_REQUEST, extra
+            assert 'not enabled' in str(response.data)
+
+    def test_the_default_response_is_unchanged_when_nothing_is_requested(self):
+        with override_waffle_switch(LEARNER_PATHWAYS_PATHWAY_EXPERIMENTS, True):
+            response = self.post_pathway()
+
+        assert response.status_code == status.HTTP_200_OK
+        assert 'variants' not in response.data
+        assert 'judgement' not in response.data
+
+    def test_requested_variants_are_returned_beside_the_delivered_pathway(self):
+        with override_waffle_switch(LEARNER_PATHWAYS_PATHWAY_EXPERIMENTS, True):
+            response = self.post_pathway({**_VALID_PAYLOAD, 'variant_sizes': [2, 3]})
+
+        assert response.status_code == status.HTTP_200_OK
+        assert len(response.data['courses']) == 5
+        assert [v['label'] for v in response.data['variants']] == ['ranked_cut:2', 'ranked_cut:3']
+        variant = response.data['variants'][0]
+        assert len(variant['courses']) == 2
+        assert variant['complete'] is True
+        assert variant['judgement'] is None
+        assert response.data['judgement'] is None
+
+    def test_judge_scores_are_returned_when_asked_for(self):
+        with override_waffle_switch(LEARNER_PATHWAYS_PATHWAY_EXPERIMENTS, True), \
+                mock.patch(PATCH_JUDGE, return_value=judge_result()):
+            response = self.post_pathway({**_VALID_PAYLOAD, 'variant_sizes': [2], 'judge': True})
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['judgement']['label'] == 'default'
+        assert response.data['judgement']['verdict'] == 'good'
+        assert response.data['variants'][0]['judgement']['verdict'] == 'good'
+
+    @ddt.data({'variant_sizes': [1]}, {'variant_sizes': [6]}, {'variant_strategies': ['best_of_n']},
+              {'variant_sizes': 'three'})
+    def test_invalid_experiment_values_are_rejected(self, extra):
+        with override_waffle_switch(LEARNER_PATHWAYS_PATHWAY_EXPERIMENTS, True):
+            response = self.post_pathway({**_VALID_PAYLOAD, **extra})
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
 
 
 class TestPathwayRouteConfig(TestCase):

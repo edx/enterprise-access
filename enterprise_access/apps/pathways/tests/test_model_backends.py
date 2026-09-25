@@ -24,6 +24,7 @@ from enterprise_access.apps.pathways.model_backends import (
     ModelResponseParseError,
     OpenAIBackend,
     XpertBackend,
+    get_direct_backend,
     get_model_backend
 )
 from enterprise_access.apps.prompts.api import PromptError
@@ -456,3 +457,128 @@ class TestGetModelBackend(TestCase):
         self.assertIsInstance(
             get_model_backend(prompt_type=PromptType.LEARNER_INTENT), XpertBackend,
         )
+
+
+class TestBackendTemperature(TestCase):
+    """
+    Scenario: A temperature is sent only when a caller pins one.
+
+    Every existing caller passes none and must keep the provider default; the pathway
+    judge pins 0 so its verdicts repeat.
+    """
+
+    def test_openai_sends_no_temperature_by_default(self):
+        client = fake_openai_client()
+        OpenAIBackend(client=client, api_key='k').complete(
+            system_prompt='s', user_content='u', trace_id='t',
+        )
+
+        self.assertNotIn('temperature', client.chat.completions.create.call_args.kwargs)
+
+    def test_openai_sends_a_pinned_temperature(self):
+        client = fake_openai_client()
+        OpenAIBackend(client=client, api_key='k', temperature=0).complete(
+            system_prompt='s', user_content='u', trace_id='t',
+        )
+
+        self.assertEqual(client.chat.completions.create.call_args.kwargs['temperature'], 0)
+
+    def test_claude_sends_no_temperature_by_default(self):
+        client = fake_client()
+        ClaudeBackend(client=client, api_key='k').complete(
+            system_prompt='s', user_content='u', trace_id='t',
+        )
+
+        self.assertNotIn('temperature', client.messages.create.call_args.kwargs)
+
+    def test_claude_sends_a_pinned_temperature(self):
+        client = fake_client()
+        ClaudeBackend(client=client, api_key='k', temperature=0).complete(
+            system_prompt='s', user_content='u', trace_id='t',
+        )
+
+        self.assertEqual(client.messages.create.call_args.kwargs['temperature'], 0)
+
+
+class TestBackendTimeout(TestCase):
+    """
+    Scenario: A dropped connection cannot hold a call for the SDK's ten-minute default.
+    """
+
+    @override_settings(PATHWAYS_MODEL_TIMEOUT_SECONDS=60)
+    def test_openai_builds_its_client_with_the_configured_timeout(self):
+        fake_sdk = mock.Mock()
+        fake_sdk.OpenAI.return_value = fake_openai_client()
+        with mock.patch.dict('sys.modules', {'openai': fake_sdk}):
+            OpenAIBackend(api_key='k').complete(system_prompt='s', user_content='u', trace_id='t')
+
+        fake_sdk.OpenAI.assert_called_once_with(api_key='k', timeout=60)
+
+    @override_settings(PATHWAYS_MODEL_TIMEOUT_SECONDS=60)
+    def test_claude_builds_its_client_with_the_configured_timeout(self):
+        fake_sdk = mock.Mock()
+        fake_sdk.Anthropic.return_value = fake_client()
+        with mock.patch.dict('sys.modules', {'anthropic': fake_sdk}):
+            ClaudeBackend(api_key='k').complete(system_prompt='s', user_content='u', trace_id='t')
+
+        fake_sdk.Anthropic.assert_called_once_with(api_key='k', timeout=60)
+
+    def test_backends_with_the_same_configuration_share_one_sdk_client(self):
+        """
+        A client built per call was discarded per call, and its finalizer's logging could
+        deadlock against Django's signal lock. A shared client is never discarded.
+        """
+        fake_sdk = mock.Mock()
+        fake_sdk.OpenAI.return_value = fake_openai_client()
+        with mock.patch.dict('sys.modules', {'openai': fake_sdk}):
+            for _ in range(3):
+                OpenAIBackend(api_key='shared', timeout=7).complete(
+                    system_prompt='s', user_content='u', trace_id='t',
+                )
+
+        fake_sdk.OpenAI.assert_called_once_with(api_key='shared', timeout=7)
+
+    def test_a_different_timeout_or_key_gets_its_own_client(self):
+        fake_sdk = mock.Mock()
+        fake_sdk.Anthropic.side_effect = lambda **kwargs: fake_client()
+        with mock.patch.dict('sys.modules', {'anthropic': fake_sdk}):
+            for key, timeout in (('a', 1), ('a', 2), ('b', 1), ('a', 1)):
+                ClaudeBackend(api_key=key, timeout=timeout).complete(
+                    system_prompt='s', user_content='u', trace_id='t',
+                )
+
+        self.assertEqual(fake_sdk.Anthropic.call_count, 3)
+
+    def test_an_explicit_timeout_overrides_the_setting(self):
+        self.assertEqual(OpenAIBackend(api_key='k', timeout=5).timeout, 5)
+        self.assertEqual(ClaudeBackend(api_key='k', timeout=5).timeout, 5)
+
+
+@ddt.ddt
+class TestGetDirectBackend(TestCase):
+    """
+    Scenario: Prompts defined in code run only on backends that send them.
+    """
+
+    def test_openai_is_returned_with_the_requested_model_and_temperature(self):
+        backend = get_direct_backend(backend_name='openai', model='gpt-x', temperature=0)
+
+        self.assertIsInstance(backend, OpenAIBackend)
+        self.assertEqual(backend.model, 'gpt-x')
+        self.assertEqual(backend.temperature, 0)
+
+    @override_settings(PATHWAYS_CLAUDE_MODEL='claude-default')
+    def test_a_blank_model_falls_back_to_the_backend_default(self):
+        backend = get_direct_backend(backend_name=' Claude ', model='')
+
+        self.assertIsInstance(backend, ClaudeBackend)
+        self.assertEqual(backend.model, 'claude-default')
+
+    def test_xpert_is_refused_because_it_would_substitute_its_stored_prompt(self):
+        with self.assertRaisesRegex(ModelBackendConfigurationError, 'stored prompts'):
+            get_direct_backend(backend_name='xpert')
+
+    @ddt.data('', 'gpt', None)
+    def test_an_unknown_name_is_refused(self, name):
+        with self.assertRaises(ModelBackendConfigurationError):
+            get_direct_backend(backend_name=name)
