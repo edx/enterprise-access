@@ -17,9 +17,12 @@ from django.core.management.base import CommandError
 from django.test import TestCase
 
 from enterprise_access.apps.pathway_eval.variant_collection import (
+    NO_CAREER,
     CareerRun,
     VariantCollector,
+    append_checkpoint,
     load_career_names,
+    load_checkpoint,
     lookup_career,
     summarise,
     write_csv
@@ -253,6 +256,77 @@ class TestVariantCollector(TestCase):
         self.assertIn('retrieval broke', runs[1].error)
 
 
+class TestCheckpointAndResume(TestCase):
+    """
+    Scenario: An interrupted collection keeps what it paid for, and resumes past it.
+
+    Found necessary on the first real run, which hung on a network call 40 minutes in.
+    """
+
+    def setUp(self):
+        super().setUp()
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        self.path = Path(tmpdir.name) / 'checkpoint.jsonl'
+
+    def test_final_runs_are_those_worth_keeping(self):
+        self.assertTrue(CareerRun('a', pathway=assembly()).is_final)
+        self.assertTrue(CareerRun('a', skipped_reason=NO_CAREER).is_final)
+        self.assertFalse(CareerRun('a', error='boom').is_final)
+        self.assertFalse(CareerRun('a', skipped_reason='max calls reached').is_final)
+        self.assertFalse(CareerRun('a', skipped_reason='dry run').is_final)
+
+    def test_a_run_round_trips_through_the_checkpoint(self):
+        run = CareerRun('Welder', career_name='Welder', pathway=assembly(),
+                        variants=[variant('ranked_cut:2', ['A+1', 'B+1'], 'good')])
+        append_checkpoint(self.path, run)
+
+        restored = load_checkpoint(self.path)['Welder']
+
+        self.assertEqual(restored.to_dict(), run.to_dict())
+
+    def test_errors_are_not_resumed_and_later_lines_win(self):
+        append_checkpoint(self.path, CareerRun('A', error='timeout'))
+        append_checkpoint(self.path, CareerRun('B', pathway=assembly(keys=('X+1',))))
+        append_checkpoint(self.path, CareerRun('B', pathway=assembly(keys=('Y+1',))))
+
+        done = load_checkpoint(self.path)
+
+        self.assertNotIn('A', done)
+        self.assertEqual(done['B'].pathway['courses'][0]['key'], 'Y+1')
+
+    def test_a_torn_last_line_is_skipped_not_fatal(self):
+        append_checkpoint(self.path, CareerRun('A', pathway=assembly()))
+        with open(self.path, 'a', encoding='utf-8') as handle:
+            handle.write('{"requested_name": "B", "pathw')
+
+        self.assertEqual(list(load_checkpoint(self.path)), ['A'])
+
+    def test_a_missing_checkpoint_resumes_nothing(self):
+        self.assertEqual(load_checkpoint(self.path), {})
+
+    def test_each_completed_career_is_handed_over_as_it_finishes(self):
+        cls, _ = fake_workflow_class()
+        seen = []
+        collector = VariantCollector(lookup=lambda name: None if name == 'Nobody' else dict(CAREER))
+        with mock.patch(PATCH_WORKFLOW, cls):
+            collector.run(['Welder', 'Nobody'], on_run=seen.append)
+
+        self.assertEqual([run.requested_name for run in seen], ['Welder', 'Nobody'])
+
+    def test_resumed_careers_are_carried_over_not_rerun_or_charged(self):
+        cls, _ = fake_workflow_class()
+        prior = CareerRun('Welder', career_name='Welder', pathway=assembly())
+        collector = VariantCollector(lookup=lambda name: dict(CAREER, name=name))
+        with mock.patch(PATCH_WORKFLOW, cls):
+            result = collector.run(['Welder', 'Data Analyst'], done={'Welder': prior})
+
+        self.assertIs(result['runs'][0], prior)
+        self.assertEqual(result['resumed'], 1)
+        self.assertEqual(cls.objects.create.call_count, 1)
+        self.assertEqual(result['calls_charged'], collector.calls_per_career)
+
+
 class TestExports(TestCase):
     """
     Scenario: Every pathway lands in one flat row beside its baseline.
@@ -323,6 +397,34 @@ class TestCollectPathwayVariantsCommand(TestCase):
         self.assertIn('DRY RUN', output)
         self.assertIn('up to 10 paid model call(s) per career; 20 for the whole list', output)
         self.assertIn('SKIPPED  (dry run)', output)
+
+    def test_resume_without_a_checkpoint_is_a_command_error(self):
+        with self.assertRaisesRegex(CommandError, '--resume needs --checkpoint'):
+            self.call(career=['Welder'], resume=True, dry_run=True)
+
+    def test_a_checkpointed_collection_resumes_where_it_stopped(self):
+        cls, _ = fake_workflow_class()
+        with tempfile.TemporaryDirectory() as tmpdir, \
+                mock.patch(PATCH_WORKFLOW, cls), \
+                mock.patch(PATCH_LOOKUP, side_effect=lambda name: dict(CAREER, name=name)):
+            checkpoint = Path(tmpdir) / 'nested' / 'checkpoint.jsonl'
+            self.call(career=['Welder'], checkpoint=str(checkpoint))
+            output = self.call(career=['Welder', 'Data Analyst'], checkpoint=str(checkpoint),
+                               resume=True, output_json=str(Path(tmpdir) / 'runs.json'))
+            payload = json.loads((Path(tmpdir) / 'runs.json').read_text())
+            lines = checkpoint.read_text().splitlines()
+
+        self.assertEqual(cls.objects.create.call_count, 2)
+        self.assertIn('resumed from checkpoint (not re-run, not charged): 1', output)
+        self.assertEqual([run['requested_name'] for run in payload['runs']], ['Welder', 'Data Analyst'])
+        self.assertEqual(len(lines), 2)
+
+    def test_a_dry_run_writes_no_checkpoint(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            checkpoint = Path(tmpdir) / 'checkpoint.jsonl'
+            self.call(career=['Welder'], checkpoint=str(checkpoint), dry_run=True)
+
+            self.assertFalse(checkpoint.exists())
 
     def test_limit_trims_the_list(self):
         output = self.call(career=['A', 'B', 'C'], limit=2, dry_run=True)

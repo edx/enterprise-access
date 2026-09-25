@@ -6,6 +6,7 @@ they do for ``run_pathway_harness``: the limit is checked before each career, ag
 upper bound of what that career can cost, so it is never overshot.
 """
 import json
+from functools import partial
 from pathlib import Path
 
 from django.conf import settings
@@ -14,7 +15,9 @@ from django.core.management.base import BaseCommand, CommandError
 from enterprise_access.apps.pathway_eval.retrieval_diagnostic import validate_customer_uuid
 from enterprise_access.apps.pathway_eval.variant_collection import (
     VariantCollector,
+    append_checkpoint,
     load_career_names,
+    load_checkpoint,
     summarise,
     write_csv
 )
@@ -92,6 +95,16 @@ class Command(BaseCommand):
             '--dry-run', action='store_true',
             help='Report the plan and its cost bound, and issue no calls.',
         )
+        parser.add_argument(
+            '--checkpoint',
+            help='Append each career to this JSON-lines file the moment it finishes, so an '
+                 'interrupted collection keeps what it has already paid for.',
+        )
+        parser.add_argument(
+            '--resume', action='store_true',
+            help='Carry over the careers already completed in --checkpoint instead of '
+                 're-running them. Errors and budget skips are retried.',
+        )
         parser.add_argument('--output-json', help='Write every run in full to this path.')
         parser.add_argument('--output-csv', help='Write one row per pathway to this path.')
 
@@ -116,6 +129,14 @@ class Command(BaseCommand):
             names = names[:options['limit']]
         if not names:
             raise CommandError('No careers given; use --career or --careers-file.')
+        if options['resume'] and not options.get('checkpoint'):
+            raise CommandError('--resume needs --checkpoint.')
+        done = load_checkpoint(options['checkpoint']) if options['resume'] else {}
+        on_run = None
+        if options.get('checkpoint') and not options['dry_run']:
+            checkpoint = Path(options['checkpoint'])
+            checkpoint.parent.mkdir(parents=True, exist_ok=True)
+            on_run = partial(append_checkpoint, checkpoint)
 
         try:
             collector = VariantCollector(
@@ -132,7 +153,7 @@ class Command(BaseCommand):
         except ValueError as exc:
             raise CommandError(str(exc)) from exc
 
-        result = collector.run(names)
+        result = collector.run(names, done=done, on_run=on_run)
         self._render(result, collector, customer_uuid, options)
 
         if options.get('output_json'):
@@ -181,6 +202,8 @@ class Command(BaseCommand):
                 mean = row['courses'] / row['pathways'] if row['pathways'] else 0
                 write(f'  {row["label"]:<18} {row["pathways"]:>8} {row["complete"]:>8} {mean:>8.2f} '
                       f'{row["good"]:>5} {row["weak"]:>5} {row["bad"]:>5} {row["unjudged"]:>8}')
+        if result.get('resumed'):
+            write(f'  resumed from checkpoint (not re-run, not charged): {result["resumed"]}')
         write(f'  model calls charged (upper bound): {result["calls_charged"]}')
         if result['budget_exhausted']:
             write(self.style.WARNING('  --max-calls was reached; the remaining careers were not started.'))
@@ -203,6 +226,7 @@ class Command(BaseCommand):
             },
             'calls_charged': result['calls_charged'],
             'budget_exhausted': result['budget_exhausted'],
+            'resumed': result.get('resumed', 0),
             'summary': summarise(result['runs']),
             'runs': [run.to_dict() for run in result['runs']],
         }

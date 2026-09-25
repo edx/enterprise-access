@@ -109,6 +109,10 @@ request carrying them gets HTTP 400 rather than having them silently ignored.
   re-rank 1, `model_pick` 4, `model_sized` 1, and up to 10 judgements.
 - **The CSV** has one row per pathway, with the delivered pathway first, so every variant sits
   beside its baseline.
+- **For long runs, pass `--checkpoint runs.jsonl`.** Each career is appended the moment it
+  finishes, and `--resume` then carries completed careers over, neither re-running nor
+  re-charging them. Errors and budget skips are retried. The first real collection hung 40
+  minutes in, on a DNS lookup no socket timeout covers, which is why this exists.
 
 ### Persona harness
 

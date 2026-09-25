@@ -14,8 +14,9 @@ against an upper bound of the model calls that career can issue, and ``dry_run``
 none.
 """
 import csv
+import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 
 from enterprise_access.apps.api_client.algolia_client import AlgoliaSearchClient
 from enterprise_access.apps.pathways import api as pathways_api
@@ -29,6 +30,12 @@ from enterprise_access.apps.pathways.pathway_variants import (
 from enterprise_access.apps.workflow.exceptions import UnitOfWorkException
 
 logger = logging.getLogger(__name__)
+
+# Skips that would recur identically on a re-run, so a resumed collection keeps them rather
+# than asking again. Errors and budget skips are NOT here: those are worth retrying.
+NO_CAREER = 'no career with this exact name in the jobs index'
+NO_SKILLS = 'career carries no skills'
+FINAL_SKIPS = (NO_CAREER, NO_SKILLS)
 
 # Careers are looked up by FILTERING on the ``name`` facet, not by text search. A text
 # search for "Data Analyst" ranks "Reference Data Analyst", "Data Analyst Consultant" and
@@ -128,6 +135,26 @@ class CareerRun:
             'error': self.error,
         }
 
+    @classmethod
+    def from_dict(cls, data: dict) -> 'CareerRun':
+        """Rebuild a run from ``to_dict`` output, ignoring keys it does not know."""
+        known = {f.name for f in fields(cls)}
+        return cls(**{key: value for key, value in data.items() if key in known})
+
+    @property
+    def is_final(self) -> bool:
+        """
+        Whether a resumed collection should keep this run rather than redo it.
+
+        True for a career whose workflow ran, or whose skip would recur identically. False
+        for errors and budget or dry-run skips, which a re-run might well get past.
+        """
+        if self.error:
+            return False
+        if self.skipped_reason:
+            return self.skipped_reason in FINAL_SKIPS
+        return self.pathway is not None
+
     def pathway_rows(self) -> list[dict]:
         """
         One flat row per pathway -- the delivered one, then each variant -- for CSV.
@@ -218,18 +245,29 @@ class VariantCollector:
         )
         return calls + int(self.rerank_enabled) + int(self.enrich_enabled)
 
-    def run(self, names) -> dict:
+    def run(self, names, *, done=None, on_run=None) -> dict:
         """
         Collect every career in ``names``.
 
-        Returns ``runs``, ``calls_charged`` and ``budget_exhausted``. The budget is checked
-        before a career's workflow starts, against the upper bound of what it can cost, and
-        charged only for careers that reach the workflow -- the lookup is a free search, so
-        a career skipped there costs nothing. A career that fails is recorded and the batch
-        continues.
+        Args:
+            done: Runs from an earlier, interrupted collection, keyed by requested name.
+                A career found here is carried over as-is -- not re-run, not re-charged.
+            on_run: Called with each run this invocation completes, as soon as it
+                completes, so a checkpoint survives a crash or a hang mid-batch.
+
+        Returns ``runs``, ``calls_charged``, ``budget_exhausted`` and ``resumed``. The
+        budget is checked before a career's workflow starts, against the upper bound of
+        what it can cost, and charged only for careers that reach the workflow -- the lookup
+        is a free search, so a career skipped there costs nothing. A career that fails is
+        recorded and the batch continues.
         """
-        runs, charged, exhausted = [], 0, False
+        done = done or {}
+        runs, charged, exhausted, resumed = [], 0, False, 0
         for name in names:
+            if name in done:
+                runs.append(done[name])
+                resumed += 1
+                continue
             run = CareerRun(requested_name=name)
             runs.append(run)
             if self.dry_run:
@@ -240,11 +278,13 @@ class VariantCollector:
                 run.skipped_reason = 'max calls reached'
                 continue
             career = self.resolve(run)
-            if career is None:
-                continue
-            charged += self.calls_per_career
-            self.execute(run, career)
-        return {'runs': runs, 'calls_charged': charged, 'budget_exhausted': exhausted}
+            if career is not None:
+                charged += self.calls_per_career
+                self.execute(run, career)
+            if on_run is not None:
+                on_run(run)
+        return {'runs': runs, 'calls_charged': charged, 'budget_exhausted': exhausted,
+                'resumed': resumed}
 
     def resolve(self, run: CareerRun) -> dict | None:
         """Look the career up, or record on ``run`` why it cannot run and return ``None``."""
@@ -255,12 +295,12 @@ class VariantCollector:
             run.error = f'career lookup failed ({type(exc).__name__}): {exc}'
             return None
         if career is None:
-            run.skipped_reason = 'no career with this exact name in the jobs index'
+            run.skipped_reason = NO_CAREER
             return None
         if not career.get('skills'):
             # The pathway endpoint refuses a skill-less career for the same reason: a
             # pathway built from no skills is a keyword search.
-            run.skipped_reason = 'career carries no skills'
+            run.skipped_reason = NO_SKILLS
             return None
         return career
 
@@ -295,6 +335,44 @@ class VariantCollector:
         run.pathway = (workflow.output_data or {}).get(AssemblePathwayOutput.KEY)
         run.judgement = workflow.default_judgement()
         run.variants = workflow.variants()
+
+
+def append_checkpoint(path, run: CareerRun) -> None:
+    """
+    Append one run to a JSON-lines checkpoint and flush it to disk.
+
+    One line per run, written the moment the run finishes: a collection killed or hung
+    mid-batch loses at most the career in flight, never the ones already paid for.
+    """
+    with open(path, 'a', encoding='utf-8') as handle:
+        handle.write(json.dumps(run.to_dict(), sort_keys=True) + '\n')
+        handle.flush()
+
+
+def load_checkpoint(path) -> dict:
+    """
+    The final runs recorded in a checkpoint, keyed by requested name.
+
+    Later lines win. A line that does not parse -- the tail of a write the process died
+    during -- is skipped with a warning rather than failing the resume.
+    """
+    done = {}
+    try:
+        with open(path, encoding='utf-8') as handle:
+            lines = handle.read().splitlines()
+    except FileNotFoundError:
+        return done
+    for number, line in enumerate(lines, 1):
+        if not line.strip():
+            continue
+        try:
+            run = CareerRun.from_dict(json.loads(line))
+        except (ValueError, TypeError):
+            logger.warning('Skipping unreadable checkpoint line %d in %s.', number, path)
+            continue
+        if run.is_final:
+            done[run.requested_name] = run
+    return done
 
 
 def summarise(runs) -> list[dict]:
