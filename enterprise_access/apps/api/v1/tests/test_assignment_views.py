@@ -106,6 +106,17 @@ class CRUDViewTestMixin:
         # Start in an unauthenticated state.
         self.client.logout()
 
+        # Prevent the catalog-agnostic content metadata fallback (used by
+        # ``get_automatic_expiration_date_and_reason``) from making real HTTP/OAuth calls
+        # when a serialized assignment's content key isn't found in its policy's catalog.
+        catalog_agnostic_client_patcher = mock.patch(
+            'enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiV1Client',
+            autospec=True,
+        )
+        mock_catalog_agnostic_client = catalog_agnostic_client_patcher.start()
+        mock_catalog_agnostic_client.return_value.content_metadata.return_value = None
+        self.addCleanup(catalog_agnostic_client_patcher.stop)
+
         self.now = localized_utcnow()
 
         self.content_metadata_one = {
