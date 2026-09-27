@@ -23,7 +23,7 @@ from simple_history.models import HistoricalRecords
 from simple_history.utils import bulk_update_with_history
 
 from enterprise_access.apps.customer_billing import stripe_api
-from enterprise_access.apps.customer_billing.academy_api import get_cached_academy_data
+from enterprise_access.apps.customer_billing.academy_api import get_cached_academy_data, get_cached_course_count
 from enterprise_access.apps.customer_billing.constants import ALLOWED_CHECKOUT_INTENT_STATE_TRANSITIONS
 
 from .constants import INTENT_RESERVATION_DURATION_MINUTES, CheckoutIntentState
@@ -166,6 +166,15 @@ class SspProduct(TimeStampedModel):
     def academy_tags(self):
         """Academy competency tags. None for non-Academy products."""
         return self._academy_data.get('tags') if self._academy_data else None
+
+    @property
+    def course_count(self):
+        """Number of courses in this product's enterprise-catalog CatalogQuery. None if it can't be fetched."""
+        try:
+            return get_cached_course_count(self.catalog_query_uuid)
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.warning('Failed to fetch course count for catalog query %s', self.catalog_query_uuid)
+            return None
 
     @property
     def enterprise_catalog_metadata(self):

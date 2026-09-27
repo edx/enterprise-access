@@ -59,8 +59,7 @@ def get_cached_course_count(catalog_query_uuid, timeout=None):
     if cached.is_found:
         return cached.value
 
-    data = EnterpriseCatalogApiClient().get_catalog_query(catalog_query_uuid)
-    course_count = data.get('course_count')
+    course_count = EnterpriseCatalogApiClient().get_catalog_query_course_count(catalog_query_uuid)
 
     cache_timeout_value = timeout if timeout is not None else settings.ACADEMY_DATA_CACHE_TIMEOUT
     TieredCache.set_all_tiers(cache_key, course_count, django_cache_timeout=cache_timeout_value)

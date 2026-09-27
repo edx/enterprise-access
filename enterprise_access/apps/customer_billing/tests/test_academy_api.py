@@ -59,21 +59,17 @@ class TestGetCachedCourseCount(TestCase):
 
     def setUp(self):
         self.catalog_query_uuid = uuid4()
-        self.catalog_query_data = {
-            'uuid': str(self.catalog_query_uuid),
-            'course_count': 16,
-        }
 
     @mock.patch('enterprise_access.apps.customer_billing.academy_api.TieredCache')
     @mock.patch('enterprise_access.apps.customer_billing.academy_api.EnterpriseCatalogApiClient')
     def test_cache_miss_fetches_and_caches(self, mock_client_class, mock_cache):
         mock_cache.get_cached_response.return_value.is_found = False
-        mock_client_class.return_value.get_catalog_query.return_value = self.catalog_query_data
+        mock_client_class.return_value.get_catalog_query_course_count.return_value = 16
 
         result = get_cached_course_count(self.catalog_query_uuid)
 
         self.assertEqual(result, 16)
-        mock_client_class.return_value.get_catalog_query.assert_called_once_with(self.catalog_query_uuid)
+        mock_client_class.return_value.get_catalog_query_course_count.assert_called_once_with(self.catalog_query_uuid)
         mock_cache.set_all_tiers.assert_called_once()
 
     @mock.patch('enterprise_access.apps.customer_billing.academy_api.TieredCache')
@@ -85,14 +81,15 @@ class TestGetCachedCourseCount(TestCase):
         result = get_cached_course_count(self.catalog_query_uuid)
 
         self.assertEqual(result, 16)
-        mock_client_class.return_value.get_catalog_query.assert_not_called()
+        mock_client_class.return_value.get_catalog_query_course_count.assert_not_called()
         mock_cache.set_all_tiers.assert_not_called()
 
     @mock.patch('enterprise_access.apps.customer_billing.academy_api.TieredCache')
     @mock.patch('enterprise_access.apps.customer_billing.academy_api.EnterpriseCatalogApiClient')
     def test_client_exception_propagates(self, mock_client_class, mock_cache):
         mock_cache.get_cached_response.return_value.is_found = False
-        mock_client_class.return_value.get_catalog_query.side_effect = ConnectionError('catalog unavailable')
+        mock_get_count = mock_client_class.return_value.get_catalog_query_course_count
+        mock_get_count.side_effect = ConnectionError('catalog unavailable')
 
         with self.assertRaises(ConnectionError):
             get_cached_course_count(self.catalog_query_uuid)
