@@ -194,12 +194,13 @@ class EnterpriseCatalogApiClient(BaseOAuthClient):
         response.raise_for_status()
         return response.json()
 
-    @backoff.on_exception(wait_gen=backoff.expo, exception=autoretry_for_exceptions)
+    @backoff.on_exception(wait_gen=backoff.expo, exception=autoretry_for_exceptions, max_tries=2)
     def get_catalog_query_course_count(self, catalog_query_uuid):
         """
         Fetch the number of courses in a CatalogQuery from enterprise-catalog.
 
         Uses the course-count endpoint, which requires authentication only (no enterprise or provisioning role).
+        Retries are capped because this is called synchronously from the public ssp-products endpoint.
         """
         endpoint = urljoin(
             settings.ENTERPRISE_CATALOG_URL,

@@ -170,11 +170,7 @@ class SspProduct(TimeStampedModel):
     @property
     def course_count(self):
         """Number of courses in this product's enterprise-catalog CatalogQuery. None if it can't be fetched."""
-        try:
-            return get_cached_course_count(self.catalog_query_uuid)
-        except Exception:  # pylint: disable=broad-exception-caught
-            logger.warning('Failed to fetch course count for catalog query %s', self.catalog_query_uuid)
-            return None
+        return get_cached_course_count(self.catalog_query_uuid)
 
     @property
     def enterprise_catalog_metadata(self):

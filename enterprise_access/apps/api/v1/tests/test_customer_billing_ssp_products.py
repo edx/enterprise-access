@@ -46,20 +46,6 @@ class CustomerBillingSspProductsTests(APITest):
             marketing_url=None,
         )
 
-    def test_course_count_uses_product_catalog_query_uuid(self):
-        """Course count is fetched for the catalog query configured on the SspProduct."""
-        serializer = SspEssentialsProductResponseSerializer()
-
-        self.assertEqual(serializer.get_course_count(self.essentials_product), 16)
-        self.mock_get_cached_course_count.assert_called_once_with(self.essentials_product.catalog_query_uuid)
-
-    def test_course_count_returns_none_on_catalog_failure(self):
-        """Catalog failures while fetching the course count return None rather than raising."""
-        self.mock_get_cached_course_count.side_effect = Exception('catalog unavailable')
-        serializer = SspEssentialsProductResponseSerializer()
-
-        self.assertIsNone(serializer.get_course_count(self.essentials_product))
-
     @classmethod
     def setUpTestData(cls):
         """Create class-level fixtures that are not mutated by tests."""
@@ -446,6 +432,7 @@ class CustomerBillingSspProductsTests(APITest):
         self.assertEqual(response.data['lookup_key'], 'ai_academy_yearly_price')
         # Pricing is not populated on retrieve in current view implementation
         self.assertIsNone(response.data['price'])
+        self.assertEqual(response.data['course_count'], 16)
 
     @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_all_stripe_prices')
     @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.stripe.Price.list')
