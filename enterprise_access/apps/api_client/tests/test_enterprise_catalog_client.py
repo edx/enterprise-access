@@ -11,6 +11,7 @@ from django.conf import settings
 from django.test import RequestFactory, TestCase
 from faker import Faker
 from requests import Response
+from requests.exceptions import ConnectionError as RequestsConnectionError
 from requests.exceptions import HTTPError
 
 from enterprise_access.apps.api_client.enterprise_catalog_client import (
@@ -778,3 +779,32 @@ class TestEnterpriseCatalogApiClientGetCatalogQueryId(TestCase):
         mock_oauth_client.return_value.get.assert_called_with(
             f'http://enterprise-catalog.example.com/api/v1/catalog-queries/{catalog_query_uuid}/'
         )
+
+    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient')
+    def test_get_catalog_query_course_count(self, mock_oauth_client):
+        """Ensure the course count is read from the catalog query course-count endpoint."""
+        catalog_query_uuid = uuid4()
+        mock_resp = mock.Mock()
+        mock_resp.json.return_value = {'uuid': str(catalog_query_uuid), 'course_count': 93}
+        mock_resp.raise_for_status = mock.Mock()
+        mock_oauth_client.return_value.get.return_value = mock_resp
+
+        client = EnterpriseCatalogApiClient()
+        result = client.get_catalog_query_course_count(catalog_query_uuid)
+
+        self.assertEqual(result, 93)
+        mock_oauth_client.return_value.get.assert_called_with(
+            f'http://enterprise-catalog.example.com/api/v1/catalog-queries/{catalog_query_uuid}/course-count/'
+        )
+
+    @mock.patch('backoff._sync.time.sleep')
+    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient')
+    def test_get_catalog_query_course_count_retries_are_bounded(self, mock_oauth_client, _mock_sleep):
+        """Connection errors are retried a bounded number of times, then raised."""
+        mock_oauth_client.return_value.get.side_effect = RequestsConnectionError('catalog unavailable')
+
+        client = EnterpriseCatalogApiClient()
+        with self.assertRaises(RequestsConnectionError):
+            client.get_catalog_query_course_count(uuid4())
+
+        self.assertEqual(mock_oauth_client.return_value.get.call_count, 2)
