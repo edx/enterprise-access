@@ -7,6 +7,7 @@ cast on them and says how many it affected; and the page is behind the same perm
 adding an item by hand.
 """
 import json
+from unittest import mock
 
 import ddt
 from django.contrib.auth.models import Permission
@@ -95,6 +96,15 @@ class ParseAndValidateTests(TestCase):
         broken['courses'][1] = {'step': 2, 'level': 'Intermediate', 'key': 'X+2'}
 
         self.assertIn('course 2 is missing title', validate([broken])[0])
+
+    def test_a_record_that_is_not_an_object_is_named(self):
+        self.assertEqual(validate(['not a record']), ['Record 1 is not an object.'])
+
+    def test_a_course_that_is_not_an_object_is_named(self):
+        broken = record()
+        broken['courses'][1] = 'not a course'
+
+        self.assertIn('course 2 is not an object', validate([broken])[0])
 
     def test_a_repeated_id_is_caught(self):
         self.assertIn('repeats the id of record 1', validate([record(), record()])[0])
@@ -239,6 +249,13 @@ class UploadPageTests(TestCase):
         response = self.upload('{not json', dry_run='')
 
         self.assertContains(response, 'not valid JSON')
+        self.assertFalse(PathwayReviewItem.objects.exists())
+
+    def test_a_file_too_large_to_be_a_queue_is_refused_before_it_is_read(self):
+        with mock.patch('enterprise_access.apps.pathway_review.forms.MAX_UPLOAD_BYTES', 8):
+            response = self.upload(dry_run='')
+
+        self.assertContains(response, 'the limit is')
         self.assertFalse(PathwayReviewItem.objects.exists())
 
     def test_retiring_items_with_votes_warns(self):
