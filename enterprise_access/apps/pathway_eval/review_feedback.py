@@ -854,7 +854,7 @@ def _course_details(keys, candidates_by_key, fallback: dict | None = None) -> li
 
 def replay_career(run: dict, *, strategies, shapes, career_skills, career_description: str = '',
                   family_titles=(), family_size: int = 0, policy=None, rubrics=(RUBRIC_V1,),
-                  variant_backend=None, judge_backend=None) -> dict:
+                  variant_backend=None, judge_backend=None, single_ecosystem: bool = False) -> dict:
     """
     Re-run selection and judging on one career's stored window, without retrieval or re-rank.
 
@@ -888,7 +888,8 @@ def replay_career(run: dict, *, strategies, shapes, career_skills, career_descri
         'family_titles': list(family_titles or []),
         'family_size': int(family_size or 0),
     }
-    build_optional = contract_kwargs(pathway_variants.build_variants, {'policy': policy, **context})
+    build_optional = contract_kwargs(pathway_variants.build_variants,
+                                     {'policy': policy, 'single_ecosystem': single_ecosystem, **context})
     for rubric in rubrics:
         # Checked before the arms run, so a judge that cannot take the rubric costs no arm calls.
         contract_kwargs(judging.judge_pathway, {'rubric': rubric, **context})

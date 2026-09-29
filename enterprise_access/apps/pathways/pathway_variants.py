@@ -74,6 +74,7 @@ from dataclasses import dataclass, field
 
 from django.conf import settings
 
+from enterprise_access.apps.pathways.ecosystems import ECOSYSTEM_DROP, EcosystemTracker
 from enterprise_access.apps.pathways.judging import normalise_rubrics
 from enterprise_access.apps.pathways.model_backends import ModelBackendError, get_direct_backend
 from enterprise_access.apps.pathways.pathway_assembly import (
@@ -491,7 +492,8 @@ def place_seats(candidates, shape, seats=(), *, max_per_partner: int = MAX_PER_P
     return placement
 
 
-def ranked_cut(candidates, size: int, *, max_per_partner: int = MAX_PER_PARTNER) -> Variant:
+def ranked_cut(candidates, size: int, *, max_per_partner: int = MAX_PER_PARTNER,
+               single_ecosystem: bool = False) -> Variant:
     """
     Take the ``size`` most relevant eligible candidates, honouring the provider cap.
 
@@ -499,15 +501,22 @@ def ranked_cut(candidates, size: int, *, max_per_partner: int = MAX_PER_PARTNER)
         candidates: Eligible ``pathway_assembly.Candidate`` objects in relevance order --
             the re-rank order when it ran, retrieval order otherwise.
         size: How many courses to take.
+        single_ecosystem: Refuse a course that would leave the pathway spanning two vendors'
+            products. See ``ecosystems``.
     """
     chosen, per_partner, skipped_for_cap = [], {}, 0
+    stack = EcosystemTracker(single_ecosystem)
     for candidate in candidates:
         if len(chosen) >= size:
             break
         if candidate.partner and per_partner.get(candidate.partner, 0) >= max_per_partner:
             skipped_for_cap += 1
             continue
+        if stack.refuses(candidate):
+            stack.refuse()
+            continue
         chosen.append(candidate)
+        stack.take(candidate)
         if candidate.partner:
             per_partner[candidate.partner] = per_partner.get(candidate.partner, 0) + 1
 
@@ -515,11 +524,12 @@ def ranked_cut(candidates, size: int, *, max_per_partner: int = MAX_PER_PARTNER)
         strategy=STRATEGY_RANKED_CUT,
         requested_size=size,
         courses=_in_taught_order(chosen),
-        dropped={'provider_cap': skipped_for_cap} if skipped_for_cap else {},
+        dropped={**({'provider_cap': skipped_for_cap} if skipped_for_cap else {}), **stack.dropped},
     )
 
 
-def shape_cut(candidates, shape, *, max_per_partner: int = MAX_PER_PARTNER, seats=()) -> Variant:
+def shape_cut(candidates, shape, *, max_per_partner: int = MAX_PER_PARTNER, seats=(),
+              single_ecosystem: bool = False) -> Variant:
     """
     Fill each rung's quota from the relevance order, honouring the provider cap.
 
@@ -534,6 +544,8 @@ def shape_cut(candidates, shape, *, max_per_partner: int = MAX_PER_PARTNER, seat
         seats: Editorial seats (see ``place_seats``). They are placed first, and count
             against their rung's quota and their provider's cap; the rest of each rung is
             filled as without them.
+        single_ecosystem: Refuse a course that would leave the pathway spanning two vendors'
+            products. Seats are placed before it applies, so an editorial rule still wins.
     """
     placement = place_seats(candidates, shape, seats, max_per_partner=max_per_partner)
     seated_keys = {candidate.key for candidate in placement.seated}
@@ -548,6 +560,7 @@ def shape_cut(candidates, shape, *, max_per_partner: int = MAX_PER_PARTNER, seat
     )
 
     chosen, per_partner, skipped_for_cap = list(placement.seated), dict(placement.per_partner), 0
+    stack = EcosystemTracker(single_ecosystem, placement.seated)
     for level in rung_order:
         taken = 0
         for candidate in by_rung[level]:
@@ -556,12 +569,17 @@ def shape_cut(candidates, shape, *, max_per_partner: int = MAX_PER_PARTNER, seat
             if candidate.partner and per_partner.get(candidate.partner, 0) >= max_per_partner:
                 skipped_for_cap += 1
                 continue
+            if stack.refuses(candidate):
+                stack.refuse()
+                continue
             chosen.append(candidate)
+            stack.take(candidate)
             taken += 1
             if candidate.partner:
                 per_partner[candidate.partner] = per_partner.get(candidate.partner, 0) + 1
 
     dropped = {'provider_cap': skipped_for_cap} if skipped_for_cap else {}
+    dropped.update(stack.dropped)
     if placement.rejected:
         dropped['seat_rejected'] = placement.rejected
     return Variant(
@@ -575,7 +593,7 @@ def shape_cut(candidates, shape, *, max_per_partner: int = MAX_PER_PARTNER, seat
 
 
 def apply_selection(candidates, keys, *, max_size: int, max_per_partner: int = MAX_PER_PARTNER,
-                    level_quota: dict | None = None, seated=()):
+                    level_quota: dict | None = None, seated=(), single_ecosystem: bool = False):
     """
     Turn a model's chosen keys into courses, enforcing every rule the model was told.
 
@@ -588,10 +606,14 @@ def apply_selection(candidates, keys, *, max_size: int, max_per_partner: int = M
     in ``courses``, and they count toward ``max_size``, their rung's quota and their
     provider's cap exactly as a chosen course would. A key naming one is dropped as
     ``already_seated``: it cannot be chosen twice.
+
+    With ``single_ecosystem``, a key whose course would leave the pathway spanning two vendors'
+    products is dropped as ``other_ecosystem``, whatever the model returned. See ``ecosystems``.
     """
     by_key = {candidate.key: candidate for candidate in candidates}
     remaining = dict(level_quota) if level_quota is not None else None
     chosen, seen, per_partner = list(seated), set(), {}
+    stack = EcosystemTracker(single_ecosystem, seated)
     seated_keys = {candidate.key for candidate in seated}
     for candidate in seated:
         if remaining is not None and candidate.level_type in remaining:
@@ -621,6 +643,9 @@ def apply_selection(candidates, keys, *, max_size: int, max_per_partner: int = M
         if candidate.partner and per_partner.get(candidate.partner, 0) >= max_per_partner:
             drop('provider_cap')
             continue
+        if stack.refuses(candidate):
+            drop(ECOSYSTEM_DROP)
+            continue
         if len(chosen) >= max_size:
             drop('over_size')
             continue
@@ -630,6 +655,7 @@ def apply_selection(candidates, keys, *, max_size: int, max_per_partner: int = M
                 continue
             remaining[candidate.level_type] -= 1
         chosen.append(candidate)
+        stack.take(candidate)
         if candidate.partner:
             per_partner[candidate.partner] = per_partner.get(candidate.partner, 0) + 1
 
@@ -782,7 +808,8 @@ REPAIRABLE_DROPS = ('provider_cap', 'over_level_quota', 'already_seated', 'dupli
 def model_select(*, strategy: str, requested_size: int | None, career_name: str,
                  career_skills: list[str], candidate_dicts: list[dict], eligible: list,
                  trace_id: str, backend=None, shape: tuple | None = None, seats=(),
-                 career_description: str = '', family_titles=(), family_size: int = 0) -> Variant:
+                 career_description: str = '', family_titles=(), family_size: int = 0,
+                 single_ecosystem: bool = False) -> Variant:
     """
     Ask a model to choose a pathway from the candidate window.
 
@@ -870,7 +897,7 @@ def model_select(*, strategy: str, requested_size: int | None, career_name: str,
 
     courses, dropped, fabricated = apply_selection(
         eligible, keys, max_size=requested_size or MAX_PATHWAY_SIZE, level_quota=level_quota,
-        seated=placement.seated,
+        seated=placement.seated, single_ecosystem=single_ecosystem,
     )
     if fabricated:
         logger.warning('Variant selection returned %d key(s) absent from the candidates; dropped.',
@@ -882,13 +909,14 @@ def model_select(*, strategy: str, requested_size: int | None, career_name: str,
             variant, backend=model_backend, trace_id=trace_id, eligible=eligible, candidate_dicts=candidate_dicts,
             level_quota=level_quota, requested_size=requested_size, career_name=career_name,
             career_skills=career_skills, career_description=career_description, family_titles=family_titles,
-            family_size=family_size,
+            family_size=family_size, single_ecosystem=single_ecosystem,
         )
     return variant
 
 
 def _repair_shape_pick(variant, *, backend, trace_id, eligible, candidate_dicts, level_quota, requested_size,
-                       career_name, career_skills, career_description, family_titles, family_size):
+                       career_name, career_skills, career_description, family_titles, family_size,
+                       single_ecosystem=False):
     """
     Ask once more for the places the code had to refuse, with the rules now impossible to break.
 
@@ -914,7 +942,8 @@ def _repair_shape_pick(variant, *, backend, trace_id, eligible, candidate_dicts,
             return False
         return not (candidate.partner and per_partner.get(candidate.partner, 0) >= MAX_PER_PARTNER)
 
-    allowed = [candidate for candidate in eligible if allowed_now(candidate)]
+    stack = EcosystemTracker(single_ecosystem, chosen)
+    allowed = [candidate for candidate in eligible if allowed_now(candidate) and not stack.refuses(candidate)]
     variant.repair = {'attempted': False, 'added': 0}
     if not allowed:
         variant.repair['error'] = 'no candidate left that the rules allow'
@@ -944,6 +973,7 @@ def _repair_shape_pick(variant, *, backend, trace_id, eligible, candidate_dicts,
         return
     courses, dropped, fabricated = apply_selection(
         allowed, keys, max_size=requested_size or MAX_PATHWAY_SIZE, level_quota=level_quota, seated=chosen,
+        single_ecosystem=single_ecosystem,
     )
     variant.repair.update({
         'added': len(courses) - len(chosen), 'dropped': dropped, 'fabricated_keys': fabricated,
@@ -1001,7 +1031,7 @@ def plan_shape_seats(*, policy, shape: tuple, ordered_candidates: list[dict], ca
 def build_variants(*, career_name: str, career_skills: list[str], ordered_candidates: list[dict],
                    sizes, strategies, trace_prefix: str, backend=None, shapes=(), policy=None,
                    career_description: str = '', family_titles=(), family_size: int = 0,
-                   seat_planner=None) -> list[Variant]:
+                   seat_planner=None, single_ecosystem: bool = False) -> list[Variant]:
     """
     Build every requested variant from one candidate window.
 
@@ -1051,12 +1081,13 @@ def build_variants(*, career_name: str, career_skills: list[str], ordered_candid
         if error:
             return Variant(strategy=strategy, requested_size=sum(shape), shape=shape, error=error)
         if strategy == STRATEGY_SHAPE_CUT:
-            return shape_cut(eligible, shape, seats=seats)
+            return shape_cut(eligible, shape, seats=seats, single_ecosystem=single_ecosystem)
         return model_select(
             strategy=strategy,
             requested_size=sum(shape),
             shape=shape,
             seats=seats,
+            single_ecosystem=single_ecosystem,
             career_name=career_name,
             career_skills=career_skills,
             career_description=career_description,
@@ -1071,7 +1102,7 @@ def build_variants(*, career_name: str, career_skills: list[str], ordered_candid
     variants = []
     for strategy in strategies:
         if strategy == STRATEGY_RANKED_CUT:
-            variants.extend(ranked_cut(eligible, size) for size in sizes)
+            variants.extend(ranked_cut(eligible, size, single_ecosystem=single_ecosystem) for size in sizes)
             continue
         if strategy in SHAPE_STRATEGIES:
             variants.extend(shape_variant(strategy, shape) for shape in shapes)
@@ -1081,6 +1112,7 @@ def build_variants(*, career_name: str, career_skills: list[str], ordered_candid
             variants.append(model_select(
                 strategy=strategy,
                 requested_size=size,
+                single_ecosystem=single_ecosystem,
                 career_name=career_name,
                 career_skills=career_skills,
                 candidate_dicts=ordered_candidates,

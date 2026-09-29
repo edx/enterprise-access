@@ -13,6 +13,7 @@ from unittest import mock
 import ddt
 from django.test import TestCase, override_settings
 
+from enterprise_access.apps.pathways.ecosystems import ecosystems_of
 from enterprise_access.apps.pathways.model_backends import (
     ModelBackendConfigurationError,
     ModelBackendRequestError,
@@ -1158,3 +1159,107 @@ class TestShapePickV2Repair(TestCase):
         self.assertEqual(len(backend.calls), 1)
         self.assertFalse(variant.is_complete)
         self.assertEqual(variant.repair, {})
+
+
+# A window whose rungs offer a Microsoft course, a Google one, and a vendor-free one.
+STACK_WINDOW = [
+    candidate('MS+1', partner='Microsoft', title='Data Analysis with Power BI'),
+    candidate('GC+1', partner='Google Cloud', title='Analytics on BigQuery'),
+    candidate('NEU+1', partner='Adelaide', title='Foundations of Data Analysis'),
+    candidate('MS+2', level='Intermediate', partner='Microsoft', title='Azure Data Engineering'),
+    candidate('AWS+1', level='Intermediate', partner='Amazon', title='Data Warehousing on AWS'),
+    candidate('NEU+2', level='Intermediate', partner='Delft', title='Statistics for Analysts'),
+]
+
+
+class TestEcosystemsOf(TestCase):
+    """
+    Scenario: a course belongs to the ecosystem it TEACHES, not the one that published it.
+    """
+
+    def test_a_product_in_the_title_places_the_course(self):
+        self.assertEqual(ecosystems_of('Data Analysis with Power BI'), frozenset({'Microsoft'}))
+        self.assertEqual(ecosystems_of('Analytics on BigQuery'), frozenset({'Google'}))
+
+    def test_a_skill_tag_places_it_too(self):
+        self.assertEqual(ecosystems_of('Cloud Foundations', ['Amazon Web Services']), frozenset({'Amazon'}))
+
+    def test_a_vendor_free_course_belongs_to_none(self):
+        self.assertEqual(ecosystems_of('Foundations of Data Analysis', ['Statistics']), frozenset())
+
+    def test_the_publisher_alone_does_not_place_it(self):
+        """IBM publishes plenty that teaches nothing of IBM's; the byline is not the subject."""
+        self.assertEqual(ecosystems_of('Project Management Basics', ['Project Management']), frozenset())
+
+    def test_a_course_naming_two_belongs_to_both(self):
+        self.assertEqual(ecosystems_of('Azure and AWS compared'), frozenset({'Microsoft', 'Amazon'}))
+
+
+@ddt.ddt
+class TestSingleEcosystem(TestCase):
+    """
+    Scenario: a pathway may teach one vendor's products or none, never two.
+
+    Bench round 2: pathways spanning two were rated good 25% of the time against 69% for the
+    rest, and drew four times the corrections.
+    """
+
+    def keys_for(self, arm, **kwargs):
+        window = eligible(STACK_WINDOW)
+        if arm == 'ranked_cut':
+            return keys_of(ranked_cut(window, 3, **kwargs))
+        return keys_of(shape_cut(window, (2, 1, 0), **kwargs))
+
+    @staticmethod
+    def spanned(keys):
+        by_key = {c['key']: c for c in STACK_WINDOW}
+        return frozenset().union(*[ecosystems_of(by_key[k]['title']) for k in keys]) if keys else frozenset()
+
+    @ddt.data('ranked_cut', 'shape_cut')
+    def test_without_the_rule_a_pathway_may_span_two(self, arm):
+        self.assertGreaterEqual(len(self.spanned(self.keys_for(arm))), 2)
+
+    @ddt.data('ranked_cut', 'shape_cut')
+    def test_with_the_rule_the_second_ecosystem_is_refused(self, arm):
+        chosen = self.keys_for(arm, single_ecosystem=True)
+
+        self.assertNotIn('GC+1', chosen)
+        self.assertEqual(sorted(chosen), ['MS+1', 'MS+2', 'NEU+1'])
+
+    def test_a_refusal_is_counted(self):
+        variant = ranked_cut(eligible(STACK_WINDOW), 3, single_ecosystem=True)
+
+        self.assertEqual(variant.dropped.get('other_ecosystem'), 1)
+
+    def test_a_vendor_free_pathway_is_never_refused_anything(self):
+        neutral = [c for c in STACK_WINDOW if c['key'].startswith('NEU')]
+        variant = ranked_cut(eligible(neutral), 2, single_ecosystem=True)
+
+        self.assertEqual(len(variant.courses), 2)
+        self.assertEqual(variant.dropped, {})
+
+    def test_a_model_pick_is_held_to_it_whatever_it_returned(self):
+        courses, dropped, _ = apply_selection(
+            eligible(STACK_WINDOW), ['MS+1', 'GC+1', 'MS+2'], max_size=5, single_ecosystem=True,
+        )
+
+        self.assertEqual([c.key for c in courses], ['MS+1', 'MS+2'])
+        self.assertEqual(dropped.get('other_ecosystem'), 1)
+
+    def test_a_course_naming_two_leaves_the_pathway_free_to_choose(self):
+        window = [candidate('BOTH+1', title='Azure and AWS compared'),
+                  candidate('AWS+9', level='Intermediate', partner='Amazon', title='Data Warehousing on AWS')]
+        courses, dropped, _ = apply_selection(
+            eligible(window), ['BOTH+1', 'AWS+9'], max_size=5, single_ecosystem=True,
+        )
+
+        self.assertEqual([c.key for c in courses], ['BOTH+1', 'AWS+9'])
+        self.assertEqual(dropped, {})
+
+    def test_an_editorial_seat_settles_which_ecosystem_the_rest_must_match(self):
+        seats = [{'key': 'GC+1', 'level': 'Introductory', 'rule': 'flagship', 'reason': ''}]
+        variant = shape_cut(eligible(STACK_WINDOW), (2, 1, 0), seats=seats, single_ecosystem=True)
+
+        self.assertIn('GC+1', keys_of(variant))
+        self.assertNotIn('MS+1', keys_of(variant))
+        self.assertNotIn('MS+2', keys_of(variant))

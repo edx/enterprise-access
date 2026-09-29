@@ -41,6 +41,9 @@ class Command(BaseCommand):
                                  'the review shapes.')
         parser.add_argument('--editorial-snapshot',
                             help='An editorial policy snapshot (JSON), loaded with EditorialPolicy.from_dict.')
+        parser.add_argument('--single-ecosystem', action='store_true',
+                            help="Refuse a course that would leave a pathway spanning two vendors' "
+                                 'products (see pathways.ecosystems).')
         parser.add_argument('--career-context',
                             help='The review queue (queue.json): each career\'s description and family titles, '
                                  'passed to the arms and the judge.')
@@ -156,6 +159,7 @@ class Command(BaseCommand):
 
         return {
             'strategies': strategies, 'shapes': shapes, 'rubrics': rubrics, 'policy': policy,
+            'single_ecosystem': options['single_ecosystem'],
             'snapshot': snapshot, 'contexts': contexts,
             'bound': review_feedback.replay_call_bound(strategies=strategies, shapes=shapes, rubrics=rubrics),
         }
@@ -209,6 +213,7 @@ class Command(BaseCommand):
                 career_description=context.get('career_description', ''),
                 family_titles=context.get('family_titles', ()), family_size=context.get('family_size', 0),
                 policy=plan['policy'], rubrics=plan['rubrics'],
+                single_ecosystem=plan['single_ecosystem'],
             )
         except Exception as exc:  # pylint: disable=broad-except
             return 'ERROR', f'replay failed ({type(exc).__name__}): {exc}', None
@@ -226,6 +231,7 @@ class Command(BaseCommand):
         write('SHAPE REVIEW REPLAY' + ('  (DRY RUN -- no lookups, no calls)' if options['dry_run'] else ''))
         write(f'  careers: {n_runs}  strategies: {plan["strategies"]}  rubrics: {plan["rubrics"]}  '
               f'editorial policy: {"yes" if plan["policy"] is not None else "no"}  '
+              f'single ecosystem: {"yes" if plan["single_ecosystem"] else "no"}  '
               f'career context: {"yes" if plan["contexts"] else "no"}')
         write(f'  shapes: {plan["shapes"]}')
         write(f'  up to {plan["bound"]} paid call(s) per career; {plan["bound"] * n_runs} for the whole list')
