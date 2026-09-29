@@ -143,6 +143,32 @@ count of drops. So a kept course has an optional **Suggest** button.
 For analysis, a suggestion widens the set of acceptable answers for a rung. It is a softer
 signal than a replacement, and nothing that counts drops or swaps should read it as one.
 
+## Starting a round: the queue upload
+
+A round of review begins with a file produced offline — pathways are assembled, judged and
+chosen elsewhere, and the bench only puts them in front of people. Loading that file used to
+need a shell, which meant the people who run a round could not start one.
+
+The item list in the Django admin now has **Upload a queue file**. Both doors — the page and
+`load_pathway_review_queue` — call `queue_loading.load_queue`, so a file cannot come to mean two
+different things depending on who loads it.
+
+Three properties make it safe to hand to someone who cannot inspect the database afterwards:
+
+- **All or nothing.** Every record is checked first, and a file with one bad record loads none
+  of it. Each problem names the record by position and id, because whoever fixes it is fixing a
+  generator, not a pathway. A half-loaded queue would otherwise be discovered by a reviewer,
+  mid-round, as a pathway that renders wrong.
+- **It can be rehearsed.** *Preview only* is ticked when the page opens: the upload runs in full,
+  reports exactly what it would change, and rolls back. Loading for real takes unticking it.
+- **Nothing is deleted.** Items the file leaves out stay active unless *Retire items this file
+  leaves out* is ticked, and retiring only stops them being served — the pathway and every vote
+  cast on it are kept. If any retired item already carries votes, the page says how many, since
+  that is how an in-flight round would be cut short by mistake.
+
+The page sits under the item model, so it is governed by the permission that already governs
+adding one, and it is reachable only by staff who have it.
+
 ## Access
 
 Two independent gates, both required (`pathway_review/permissions.py`):
