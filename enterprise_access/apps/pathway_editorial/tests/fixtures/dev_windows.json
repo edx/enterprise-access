@@ -1,0 +1,3354 @@
+{
+ "_source": "Captured 2026-09-29 from learner_pathways/shape-review/checkpoint.jsonl (bench round 1): the stored candidate windows, in relevance order, for four dev careers. career_skills come from lookup_career(name) against the English jobs index. Operations Manager keeps every description. The other windows keep descriptions only where the title could make the course AI (the seeded title terms plus Machine Learning, Agent, Agents, Intelligent) and for the review evidence courses; the rest are blanked, which cannot change plan_seats under the seeded AI topic because a course outside the topic is never text-checked.",
+ "careers": {
+  "Operations Manager": {
+   "external_id": "ETFDE2EC77DDCB5B2C",
+   "career_skills": [
+    "Six Sigma Methodology",
+    "Operations Management",
+    "Retail Management",
+    "Financial Management",
+    "Guitars",
+    "Inventory Management",
+    "Business Performance Management",
+    "Training And Development",
+    "Dynamic Business Process Management",
+    "Operations",
+    "Customer Satisfaction",
+    "Lean Manufacturing",
+    "Auditing",
+    "Continuous Improvement Process",
+    "Security Requirements Analysis",
+    "Employee Engagement",
+    "Public Speaking",
+    "Performance Appraisal",
+    "Corrective And Preventive Action (CAPA)",
+    "Accountability"
+   ],
+   "candidates": [
+    {
+     "key": "IIMBx+OM101.1x",
+     "title": "Operations Management",
+     "level_type": "Intermediate",
+     "partner": "Indian Institute of Management Bangalore",
+     "language": "English",
+     "skill_names": [
+      "Lean Manufacturing",
+      "Business Operations",
+      "Operations",
+      "Supply Chain",
+      "Operations Management",
+      "Quality Assurance",
+      "Productivity Improvement"
+     ],
+     "short_description": "<p>Understand key aspects of business operations and lean management including capacity, productivity, quality, and supply chain.</p>",
+     "full_description": "<p>Have you ever wondered about the right methods to improve productivity, configure your supply chain or address the demand on hand?</p>\n<p>In recent years, businesses have strived to improve productivity and quality, reduce costs and delivery times, and embrace flexibility and innovation. These strategies are part of the Operations Management (OM) activities that service and manufacturing organizations engage in.</p>\n<p><strong>Operations Management</strong> helps you to understand the role of OM in a firm and to develop abilities to structure and solve operations related problems. The course will empower you with skills to address important aspects of business operations including capacity, productivity, quality, and supply chain.</p>\n<p>You will understand how operations in an organization are configured and factors that can potentially drive the complexity of managing such operations. We will also introduce concepts like estimating capacity, identifying bottlenecks, and de-bottlenecking.</p>\n<p>Throughout the course, you will join us in discussions on productivity improvement methods, development of quality assurance systems and configuration of supply chains.</p>\n<p>The cours"
+    },
+    {
+     "key": "ISCEA+ISC-AI01",
+     "title": "AI and Gen-AI for Supply Chain Management",
+     "level_type": "Intermediate",
+     "partner": "International Supply Chain Education Alliance",
+     "language": "English",
+     "skill_names": [
+      "Supply Chain Management",
+      "Computer Vision",
+      "Case Study",
+      "Management",
+      "Supply Chain Planning",
+      "Innovation",
+      "Supply Chain Optimization",
+      "Artificial Intelligence",
+      "Demand Forecasting",
+      "Data Quality"
+     ],
+     "short_description": "<p><span lang=\"EN\">Learn the fundamentals, applications, and use cases for supply chain transformation with AI and Gen-AI.</span></p>",
+     "full_description": "<p><span lang=\"EN\">Supply chain management is instrumental and strategically important for an organization’s success. With the advent of digital technologies, cloud, and especially AI and Gen AI, there are novel ways to serve customers, enhance profitability, and save costs by adopting these disruptive technologies. At the same time, innovation in the supply chain process is recommended to harness the power of AI and Gen AI.</span><span lang=\"EN\"></span><span lang=\"EN\"></span></p>\n<p>This course \"AI and Gen AI for Supply Chain Transformation\" is designed to provide learners with a comprehensive understanding of the role of AI and Gen AI in transforming supply chain management. The course covers the fundamentals of supply chain management, associated processes, data, analytics, teams, and technologies for managing the supply chain.<span lang=\"EN\"></span><span lang=\"EN\"></span></p>\n<p>The course will cover topics such as machine learning, deep learning, natural language processing, and computer vision, and how these technologies are used in supply chain management. The course will then delve into the applications of AI and Gen AI in supply chain management, including demand forecasti"
+    },
+    {
+     "key": "ISCEA+CSCA03",
+     "title": "Supply Chain Management Tools and Techniques",
+     "level_type": "Introductory",
+     "partner": "International Supply Chain Education Alliance",
+     "language": "English",
+     "skill_names": [
+      "Supply Chain",
+      "Supply Chain Analysis",
+      "Continuous Improvement Process",
+      "Life-Cycle Assessment",
+      "Lean Manufacturing",
+      "Operations",
+      "Supply Chain Management",
+      "Sales Order",
+      "Planning",
+      "Six Sigma Methodology"
+     ],
+     "short_description": "<p>Learn skills and tools that support supply chain operation, including Aggregate Planning, Sales Order Fulfillment, Lean, Sustainability and Team Dynamics ​- part of the ISCEA CSCA - Certified Supply Chain Analyst - Internationally Recognized Certificate</p>",
+     "full_description": "<p>This course is part of the edX Professional Certificate program <a href=\"https://www.edx.org/professional-certificate/certified-supply-chain-analyst-csca\">Certified Supply Chain Analyst (CSCA)</a>, offered by ISCEA. This course prepares you for the ISCEA Certified Supply Chain Analyst (CSCA) Exam on edX and is a requirement for becoming ISCEA certified. To become an ISCEA Certified Supply Chain Analyst (CSCA), you must complete all three preparatory courses and successfully pass the CSCA Exam.</p>\n<p>Supply chains are complex and keeping them both operating and improving is a great challenge. This course is designed to provide a broad set of tools currently used in the industry to make their supply chains efficient and competitive.</p>\n<p>From the operations perspective, the course provides an introduction to Sales Order Fulfillment and Aggregate Planning, along with the planning strategies to produce what the market demands.</p>\n<p>From the continuous improvement perspective, the course explains the importance of Lean and Six Sigma and sustainability in the supply chain; including life cycle analysis and environmental considerations. The course concludes with team dynamics, cov"
+    },
+    {
+     "key": "ISCEA+CLSSYB01",
+     "title": "Introduction to Lean Six Sigma for Sustainable and Resilient Supply Chains",
+     "level_type": "Introductory",
+     "partner": "International Supply Chain Education Alliance",
+     "language": "English",
+     "skill_names": [
+      "Lean Six Sigma Yellow Belt",
+      "Lean Six Sigma",
+      "Supply Chain",
+      "Lean Manufacturing",
+      "Production Management",
+      "Decision Making",
+      "Define Measure Analyze Improve And Control (DMAIC)",
+      "Six Sigma Methodology",
+      "Supply Chain Management",
+      "Operational Performance Management"
+     ],
+     "short_description": "<p>Become a Lean Six Sigma Yellow Belt, well versed in the techniques of Six Sigma, its metrics, and methodologies including but not limited to DMAIC (Define, Measure, Analyze, Improve, and Control), RCA (Root Cause Analysis), SIPOC (Suppliers, Inputs, Processes, Outputs, and Customers), and applications of Lean Six Sigma in Supply Chain Process Improvement.</p>\n<p>Part of ISCEA CLSSYB - Certified Lean Six Sigma Yellow Belt Certification and a stepping-stone to the Green and Black Belt Lean Six Sigma Certifications.</p>",
+     "full_description": "<p>Lean Six Sigma Training can minimize the risks of failure in organizations' Six Sigma initiatives, lean practices, and operational performance. Lean Six Sigma training benefits individuals who may be working with current or future organizations implementing Six Sigma. Employers look to Lean Six Sigma Yellow Belts to participate as core members of Six Sigma projects within the company and require that Yellow Belts are well versed in Lean Six Sigma Supply Chain Techniques, Six Sigma Tools and Methodologies, How to Analyze/Control/Define, Relevant Knowledge Management, Quality Standards, Cost of Poor Quality, Sustainable Supply Chain Processes, and Process Improvement Projects that build Supply Chain resilience.</p>\n<p>This course is part of the edX Professional Certificate program Lean Six Sigma for Sustainable Supply Chain (CLSSYB), offered by ISCEA. Lean Six Sigma decision-making within the supply chain process impacts areas of operation management, logistics management, lean management, production management, and risk management in business models.</p>\n<p>CLSSYB-certified professionals are more likely to lead successful lean thinking, generate competitive advantage and profitab"
+    },
+    {
+     "key": "ISCEA+CPLM02",
+     "title": "Logistics Core Functions",
+     "level_type": "Intermediate",
+     "partner": "International Supply Chain Education Alliance",
+     "language": "English",
+     "skill_names": [
+      "Supply Chain",
+      "Logistics Management",
+      "Transportation Management",
+      "Management",
+      "Operations",
+      "Warehousing",
+      "Packaging Material Handling",
+      "Inventory Management",
+      "Procurement Management",
+      "Procurement"
+     ],
+     "short_description": "<p>Learn the core functions that drive efficient and effective logistics operations. Core functions encompass inventory management, warehousing, transportation, distribution, and procurement management.</p>",
+     "full_description": "<p dir=\"ltr\">This course is designed to equip logistics professionals, supply chain managers, and aspiring industry leaders with the tools and knowledge to optimize logistics operations, reduce costs, and improve overall supply chain performance. </p>\n\n<p>****<p dir=\"ltr\"></p></p>\n<p>Explore Inventory Management, delving into trade-offs, inventory types, and cost implications. </p>\n<p>****<p dir=\"ltr\"></p></p>\n<p>Warehouse management topics include packaging, material handling, and safety considerations, as well as techniques to measure and enhance warehouse performance.</p>\n<p>****<p dir=\"ltr\"></p></p>\n<p>Dive into Transportation Management, examining the role of transportation in the economy and its impact on business. </p>\n<p>****<p dir=\"ltr\"></p></p>\n<p>In the Distribution Management module, discover the critical role of distribution in the modern economy. </p>\n<p>****<p dir=\"ltr\"></p></p>\n<p>The course also covers Procurement Management, emphasizing its strategic importance in supply chains. <p dir=\"ltr\"></p><p dir=\"ltr\"></p></p>\n<p>Whether you're looking to elevate your career or gain a competitive edge, this course is your gateway to mastering the fundamentals of Logistics M"
+    },
+    {
+     "key": "TUMx+QPLS4x",
+     "title": "Lean Six Sigma: Green Belt Sustainability Project",
+     "level_type": "Intermediate",
+     "partner": "Technical University of Munich",
+     "language": "English",
+     "skill_names": [
+      "Lean Six Sigma",
+      "Business Process",
+      "Customer Satisfaction",
+      "Project Sponsorship",
+      "Six Sigma Green Belt",
+      "Lean Six Sigma Yellow Belt",
+      "Lean Six Sigma Green Belt",
+      "Blended Learning",
+      "Six Sigma Methodology",
+      "Operational Excellence"
+     ],
+     "short_description": "<p><span lang=\"EN\">Implement a Lean Six Sigma improvement project along with the DMAIC phases, from its identification to the evaluation of its result, to earn the TUM Lean Six Sigma Green Belt certification.</span></p>",
+     "full_description": "<p>Every employee is involved in business processes to create products or services. The causes of decreasing customer satisfaction and increasing quality costs are often unknown, so derived solutions often only address symptoms. Six Sigma methods and tools enable a systematic solution of typical process problems and lead to sustainable operational excellence.</p>\n<p>Go from Yellow to Green Belt in this project-based Lean Six Sigma course. With the TUM Yellow Belt, you have mastered the body of knowledge of our Green Belt (according to the American Society for Quality standards). Our Green Belt certification requires the implementation of a Six Sigma project (as recommended by the International Society of Six Sigma Professionals), just as the driving experience is necessary to obtain a driver’s license.</p>\n<p>To earn the TUM Lean Six Sigma Green Belt certification, you will implement a predefined standard project on environmental littering. The goal: “Improve the cleanliness of areas around selected places in your hometown and control the sustainability of your measures.” This project topic supports the <a href=\"https://sdgs.un.org/goals\">United Nations Sustainability Goal #11: Sus"
+    },
+    {
+     "key": "Microsoft+MS-133",
+     "title": "CRM Operations with Microsoft",
+     "level_type": "Introductory",
+     "partner": "Microsoft",
+     "language": "English",
+     "skill_names": [
+      "Customer Data Management",
+      "Power BI",
+      "Sales Operations",
+      "Microsoft Excel",
+      "Sales",
+      "Management",
+      "Customer Relationship Management",
+      "Data Duplication Management",
+      "Microsoft Dynamics 365",
+      "User Roles"
+     ],
+     "short_description": "<p>Master Microsoft Dynamics 365 CRM operations—automate sales processes, manage customer data, build dashboards, and integrate with the Microsoft ecosystem.</p>",
+     "full_description": "<p>Microsoft Dynamics 365 is a leading customer relationship management platform, but its power comes from proper operations management. This course is for CRM administrators, sales operations analysts, and business users who need to configure, maintain, and optimize Dynamics 365 for their teams. You will start with core data management: creating and managing accounts, contacts, leads, opportunities, and activities. The curriculum covers how to design business process flows that guide sales and service teams through consistent stages. You will learn to automate routine tasks using Power Automate—for example, automatically assigning leads based on territory, sending follow-up emails, or updating opportunity stages. A significant module focuses on dashboards and reporting: building interactive charts, using the Power BI integration, and creating personalized views for different roles. You will also explore security and compliance: managing user roles, field-level security, and audit logs. Advanced topics include integrating Dynamics 365 with Outlook, Teams, Excel, and SharePoint for seamless collaboration. Hands-on exercises include configuring a lead-to-cash process, creating an aut"
+    },
+    {
+     "key": "ISCEA+CPSP03",
+     "title": "Advanced Procurement & Emerging Technologies",
+     "level_type": "Intermediate",
+     "partner": "International Supply Chain Education Alliance",
+     "language": "English",
+     "skill_names": [
+      "Emerging Technologies",
+      "Cost Benefit Analysis",
+      "Demand Planning",
+      "Global Sourcing",
+      "Machine Learning",
+      "Supply Chain",
+      "Offshoring",
+      "Procurement",
+      "Parametric Modeling",
+      "Break-Even Analysis"
+     ],
+     "short_description": "<p><span lang=\"EN\">Equip yourself with the tools, strategies, and technologies driving the future of procurement and supply chain management.</span></p>",
+     "full_description": "<p><span lang=\"EN\">This course is designed for procurement professionals who want to stay ahead in a fast-changing global landscape. Learners will explore strategic procurement practices, emerging technologies, and global trends that are transforming the procurement function into a future-ready business enabler.</span></p>\n<p>The course begins with global sourcing strategies, including offshoring, nearshoring, Incoterms, and the role of free trade agreements. It also covers service procurement, helping learners navigate outsourcing decisions, break-even analysis, and supplier management for services.</p>\n<p>Sustainable procurement is a core focus, with guidance on integrating environmental and social criteria into supplier selection, specifications, and performance metrics. Learners will also dive into advanced cost analysis methods, including parametric modeling, engineering estimates, and total cost of ownership approaches.</p>\n<p>Technology in procurement is explored in depth—from spend analysis and supplier management systems to Source-to-Pay (S2P) platforms and reverse auctions. The course also covers Artificial Intelligence and Generative AI in procurement, revealing how mach"
+    },
+    {
+     "key": "TUMx+QPLS1x",
+     "title": "Six Sigma Part 1: Define and Measure",
+     "level_type": "Introductory",
+     "partner": "Technical University of Munich",
+     "language": "English",
+     "skill_names": [
+      "Lean Manufacturing",
+      "Lean Six Sigma",
+      "Statistics",
+      "Six Sigma Yellow Belt",
+      "Case Study",
+      "Six Sigma Green Belt",
+      "Lean Six Sigma Green Belt",
+      "Process Improvement",
+      "Six Sigma Methodology",
+      "Quality Management"
+     ],
+     "short_description": "<p>An introduction to the Six Sigma methodology and the DMAIC cycle for process improvement with a focus on the Define and Measure phases, including basic statistics for understanding sampling plans and calculating process capability.</p>",
+     "full_description": "<p>In this first course of the Six Sigma Program, you will understand the background and meaning of Six Sigma and the five steps of the DMAIC process improvement flow: Define, Measure, Analyze, Improve, and Control. Discuss what \"Quality\" means and how to identify the Voice of the Customer.</p>\n<p>You will learn how to set an improvement project goal, calculate process yield, and identify Critical-to-Quality parameters.</p>\n<p>You will learn how to map a process and to use the necessary statistical techniques to establish the baseline performance of a process and to calculate the process capability.</p>\n<p>To complement the lectures, we provide interactive exercises, which allow learners to see the statistics \"in action.\" Learners then master the statistical concepts by completing practice problems. These are then reinforced using interactive case studies, which illustrate the application of the statistics in quality improvement situations.</p>\n<p>Upon successful completion of this program, learners will earn the TUM Lean and Six Sigma Yellow Belt certification, confirming mastery of Lean Six Sigma fundamentals to a Green Belt level. The material is based on the American Society fo"
+    },
+    {
+     "key": "Microsoft+MS-AI-134",
+     "title": "Building Intelligent Troubleshooting Agents",
+     "level_type": "Advanced",
+     "partner": "Microsoft",
+     "language": "English",
+     "skill_names": [
+      "Agentic AI",
+      "Artificial Intelligence",
+      "Incident Response",
+      "Automation",
+      "Tool Calling",
+      "Microsoft Azure",
+      "Persistent Memory",
+      "Multi-Agent Systems",
+      "Goal-Oriented",
+      "Operations Management"
+     ],
+     "short_description": "<p>Build production-grade agentic AI to automate incident response. Use the Microsoft Agent Framework and Azure AI Foundry to implement reasoning loops, secure tool-calling, multi-agent workflows, and safety guardrails.</p>",
+     "full_description": "<p>Resolving complex, multi-system incidents at scale is no longer a job for static scripts or basic chat assistants. It calls for autonomous agents that reason about a problem, act on live systems safely, and adapt as conditions change.</p>\n<p>You start by building a goal-oriented reasoning loop that turns an unstructured alert into ordered diagnostic steps. You then expose external diagnostics as secure, typed tools over the Model Context Protocol, kept inside non-root, read-only sandboxes.</p>\n<p>Next you orchestrate specialised agents that hand work off cleanly and share a persistent memory of past incidents. Finally you make the system production-ready: you instrument it with Azure Monitor and Application Insights, measure Task Adherence and Groundedness in Azure AI Foundry, and defend it with content safety filters and human approval for risky actions.</p>\n<p>This advanced, build-first course is for technical individual contributors such as AI developers and support engineers, and for technical leaders such as operations managers and automation strategists, who want to expand into agentic AI. You finish with a portfolio-ready capstone, the Contoso Self-Healing Incident Respon"
+    },
+    {
+     "key": "DartmouthX+DT-DA.2X",
+     "title": "Simulation for Digital Transformation",
+     "level_type": "Intermediate",
+     "partner": "Dartmouth College",
+     "language": "English",
+     "skill_names": [
+      "Prescriptive Analytics",
+      "Random Variables",
+      "Resource Allocation",
+      "Critical Thinking",
+      "Innovation",
+      "Uncertainty Modeling",
+      "Simulations",
+      "Scheduling",
+      "Trustworthiness",
+      "Workflow Management"
+     ],
+     "short_description": "<p><span lang=\"EN\">With Dartmouth Engineering, discover how to tackle complex challenges with Simulation for Digital Transformation. Learn to use Python and SimPy to model, analyze, and optimize systems, empowering you to make data-driven decisions and lead impactful digital transformation initiatives.</span></p>",
+     "full_description": "<p><span lang=\"EN\">Welcome to Thayer School of Engineering at Dartmouth’s Simulation for Digital Transformation. This in-depth course will equip you with the skills and tools needed to model, analyze, and optimize complex systems, helping organizations navigate uncertainty and make impactful, data-driven decisions. As part of the Digital Transformation for Data Analytics Certificate, this course focuses on discrete event simulation and other techniques essential for addressing the challenges of modern digital transformation.</span></p>\n<p>Simulation plays a critical role in bridging predictive and prescriptive analytics by forecasting outcomes and identifying optimal actions to achieve desired results. Whether improving operational workflows, optimizing resource allocation, or designing better customer experiences, simulation provides the foundation for informed decision-making in dynamic environments.</p>\n<p>This course introduces you to the fundamentals of simulation, starting with the key concepts of probability and uncertainty modeling. You’ll learn to generate random variables using techniques like the inversion and rejection methods, building robust models that reflect real-w"
+    },
+    {
+     "key": "AlaskaX+SPRT1x",
+     "title": "Sport Business Foundations",
+     "level_type": "Introductory",
+     "partner": "University of Alaska Fairbanks",
+     "language": "English",
+     "skill_names": [
+      "Governance",
+      "Sales",
+      "Operations Management",
+      "Marketing",
+      "Facility Management",
+      "Athletic Administration",
+      "Management",
+      "Sports Management",
+      "Public Relations",
+      "Leadership"
+     ],
+     "short_description": "<p>Kick off your sport management career. This course explores the variety of career pathways within the field of sport management — from youth and collegiate sport to international and major league — and will help you identify your personal strengths within sport leadership. Discover real job opportunities and learn how to network with professionals in the field – this is where you break into the industry.</p>",
+     "full_description": "<p>Most people want to work in a career they are passionate about which is what draws many people to the highly competitive field of sport business, or what is commonly known as sports management. This course is rooted in traditional business foundations as they apply to the sport business realm and is taught by professionals who are all working in, or have worked in, the sport business field in connection to sports teams, sporting events, and athletic administration. </p>\n<p>This course is an introduction to career opportunities and pathways, professional development, and opportunities within the sport management field, and is the first course in a professional certificate in sport business management. (It is not, however, a standalone sport management program or sports management degree program.)</p>\n<p>Course participants will learn about the complexity and intricacies within the landscape of the sports industry. Professional Sports, International sport, collegiate sport, and interscholastic sport will all be covered. Students will explore their own interests and strengths to create a baseline understanding of the sports industry as a whole and set the stage for a career path to"
+    },
+    {
+     "key": "Microsoft+MS-AI-120",
+     "title": "AI for Customer Service Professionals",
+     "level_type": "Intermediate",
+     "partner": "Microsoft",
+     "language": "English",
+     "skill_names": [
+      "Chatbot",
+      "Sentiment Analysis",
+      "Artificial Intelligence",
+      "Help Desk Support",
+      "Data Privacy",
+      "Net Promoter Score",
+      "Prioritization",
+      "Fallback",
+      "Conversational AI",
+      "Customer Service"
+     ],
+     "short_description": "<p>Transform customer support with AI. Learn to implement chatbots, analyze sentiment, automate ticketing, and boost CSAT—without deep technical skills.</p>",
+     "full_description": "<p>Customer service is being reinvented by conversational AI, sentiment analysis, and intelligent routing. This course is designed for team leads, operations managers, and support agents who want to harness AI to reduce response times and increase satisfaction. You will start by understanding the difference between rule-based chatbots and generative AI agents (like those powered by LLMs). The curriculum covers how to design effective conversational flows, handle fallback scenarios, and ensure seamless handoff to human agents. You will learn to use AI for real-time sentiment detection during live chats, automatically escalating frustrated customers to senior staff. Another module focuses on AI-assisted knowledge management—automatically suggesting articles to agents or surfacing answers directly to customers. You will also explore post-interaction analytics: topic clustering to identify common pain points, and predictive NPS (Net Promoter Score) based on conversation patterns. Ethical considerations include transparency (customers knowing they talk to a bot) and data privacy. Hands-on exercises include configuring a no-code chatbot for a sample helpdesk and using a sentiment analysi"
+    },
+    {
+     "key": "RWTHx+BAI002x",
+     "title": "Basics of Data Science",
+     "level_type": "Intermediate",
+     "partner": "RWTH Aachen University",
+     "language": "English",
+     "skill_names": [
+      "Data Analysis",
+      "Python (Programming Language)",
+      "Data Management",
+      "Data Preprocessing",
+      "Text Mining",
+      "Process Mining",
+      "Big Data",
+      "Supervised Learning",
+      "Ethical Standards And Conduct",
+      "Scalability"
+     ],
+     "short_description": "<p>\"Basics of Data Science\" gives a comprehensible overview of many fundamental concepts and tools of data science, including data quality and data preprocessing, supervised and unsupervised learning techniques including their evaluation, frequent itemsets and association rules, sequence mining, process mining, text mining, and responsible data science.</p>",
+     "full_description": "<p><strong>Explore the Fundamentals of Data Science with our Online Course!</strong></p>\n<p>\"Basics of Data Science\" is designed to provide participants with a comprehensive overview of the fundamental challenges, concepts and tools of data science. The content can be organized in three main areas of data science:</p>\n<p>Initially, a brief overview is given to <strong>data science infrastructure</strong> concerned with volume and velocity. Topics include instrumentation, big data infrastructures and distributed systems, databases and data management. The main challenge is to make things scalable and instant.</p>\n<p>The main focus of the course is on <strong>data analysis</strong> concerned with extracting knowledge from data. Key topics covered are data exploration and visualization, data preprocessing, data quality issues and transformations, various supervised learning techniques with a focus on their evaluation, unsupervised learning, clustering, pattern mining, process mining and text mining. The main challenge of data analysis is to provide answers to known and unknown unknowns.</p>\n<p>Finally, data science affects <strong>people, organizations, and society</strong>. The cours"
+    },
+    {
+     "key": "NYIF+YFSX.2.0",
+     "title": "Personal Financial Management",
+     "level_type": "Introductory",
+     "partner": "New York Institute of Finance",
+     "language": "English",
+     "skill_names": [
+      "Personal Finance",
+      "Goal Setting",
+      "Financial Literacy",
+      "Money Management",
+      "Financial Management"
+     ],
+     "short_description": "<p>Master the Art of Money Management with our Personal Financial Management Micro-Certificate. Learn to budget, save, and make informed financial decisions—from setting goals to understanding credit and debt. Build lifelong financial confidence.</p>",
+     "full_description": "<p><strong>Master the Art of Money Management</strong> with our Personal Financial Management Micro-Certificate—an engaging, practical program designed to build lasting financial confidence in students. Whether you're just starting to handle your own finances or want to strengthen your understanding of personal money matters, this course offers the essential tools you need.</p>\n<p>Through real-world examples and interactive lessons, students will learn the fundamentals of financial literacy, including how to create a personal budget, set realistic savings goals, and make informed decisions about spending. The program also covers essential topics such as understanding credit, managing debt responsibly, and the importance of long-term financial planning.</p>\n<p>By breaking down complex financial concepts into accessible and relatable content, this course empowers students to take charge of their financial future with clarity and confidence. It’s not just about numbers—it’s about building habits, setting priorities, and making smart choices that support lifelong well-being and independence.</p>\n<p>This Micro-Certificate is ideal for high school students preparing for financial indepen"
+    },
+    {
+     "key": "AlaskaX+GRANT3x",
+     "title": "Grant Award Management",
+     "level_type": "Introductory",
+     "partner": "University of Alaska Fairbanks",
+     "language": "English",
+     "skill_names": [
+      "Strategic Planning",
+      "Refining",
+      "Communication",
+      "Proposal Writing",
+      "Proposal Development",
+      "Financial Statements",
+      "Workflow Management",
+      "Management",
+      "Accounting Software",
+      "Proposal Management"
+     ],
+     "short_description": "<p>You've secured a grant, congratulations! Now what? This course considers the post-award phase of grant proposal management and the grant management process. We discuss how to develop a stronger relationship with funders through effective communication about impacts accomplished and what that will mean for future support, if needed. These efforts bring us back to strategic planning for sustainability of your program.</p>",
+     "full_description": "<p dir=\"ltr\">Once you have reached the point in the grant process where you have successfully secured funding, the journey has only just begun. This course is designed to introduce you to essential skills and knowledge to create an effective grant management system, maximize their impact, and build sustainable relationships with funders.</p>\n<p dir=\"ltr\">\n\nManaging grant resources is more than simply budgeting, although that is an important aspect of it. From allocating resources strategically, creating an accounting system, to writing impactful reports that showcase how your project allocations have positively impacted communities, grant reporting, financial reporting, financial management, and understanding these reporting requirements isn't just about paperwork and spreadsheets—it's about building credibility for future grants and funded projects. This online, self-paced course covers strategies for cultivating these partnerships when you reach certain milestones, leveraging successful project outcomes and final reporting to strengthen ties and potentially open doors to additional funding opportunities for grant seekers. Building credibility with stakeholders through demonstrate"
+    },
+    {
+     "key": "IDBx+IDB28.3x",
+     "title": "Creative Enterprises",
+     "level_type": "Introductory",
+     "partner": "Inter-American Development Bank",
+     "language": "English",
+     "skill_names": [
+      "Financial Management",
+      "English Language",
+      "Latin",
+      "Entrepreneurship"
+     ],
+     "short_description": "<p>Are you thinking about starting a business in the creative industry? Are you taking your first steps toward entrepreneurship? If so, this course is for you.</p>",
+     "full_description": "<p>Launching a creative enterprise calls for fundamental entrepreneurial skills: it is essential to possess the knowledge and expertise required to meet the challenges of creating and keeping a business viable.</p>\n<p>Thus, throughout this 3-module course, you will learn about specific methodologies to strengthen entrepreneurial abilities, review key financial management concepts for a business, and discover platforms and funding options for creative enterprises, among other topics.</p>\n<p>Discover the landscape of creative enterprises across Latin America and the Caribbean, the obstacles entrepreneurs faced, the ways they have overcome them, and the opportunities they have seized.</p>\n<p>The translation of this course into English was made possible thanks to funding from the <strong><a href=\"https://www.competecaribbean.org/\" rel=\"noopener\" target=\"_blank\">Compete Caribbean Partnership Facility</a></strong> , a private sector development program jointly funded by the Inter-American Development Bank (IDB), the United Kingdom Foreign Commonwealth &amp; Development Office (FCDO), the Caribbean Development Bank (CDB), and the Government of Canada.</p>\n<p>This is a <strong>self-paced c"
+    },
+    {
+     "key": "MindEdge+6",
+     "title": "Nonprofit Skills®: Board Fundamentals",
+     "level_type": "Intermediate",
+     "partner": "MindEdge",
+     "language": "English",
+     "skill_names": [
+      "Strategic Planning",
+      "Leadership",
+      "Communication",
+      "Case Study",
+      "Fundraising",
+      "Financial Management"
+     ],
+     "short_description": "<p>Nonprofit board members come from a variety of different backgrounds, but all of them share a commitment to the mission and vision of their organization. The Nonprofit Skills® Board Fundamentals course provides learners with the critical knowledge and skills required to serve on a nonprofit board. The content covers key topics including legal obligations, financial management, strategic planning, public communication, fundraising, leadership oversight, and measuring progress.</p>",
+     "full_description": "<p>Nonprofit board members come from a variety of different backgrounds, but all of them share a commitment to the mission and vision of their organization. The Nonprofit Skills® Board Fundamentals course provides learners with the critical knowledge and skills required to serve on a nonprofit board. The content covers key topics including legal obligations, financial management, strategic planning, public communication, fundraising, leadership oversight, and measuring progress. Each self-paced module includes interactive activities, case studies, readings, and videos with advice from experts in the field. Learners will complete the course with a comprehensive understanding of how nonprofit board members effectively meet the needs of their organization.</p>"
+    }
+   ]
+  },
+  "Project Manager": {
+   "external_id": "ET6DC0C7447DC6E327",
+   "career_skills": [
+    "Project Performance",
+    "Project Management Professional Certification",
+    "Project Management",
+    "Project Scoping",
+    "Project Planning",
+    "Microsoft Project",
+    "Project Risk Management",
+    "Construction Management",
+    "Project Documentation",
+    "Subcontracting",
+    "Project Management Institute (PMI) Methodology",
+    "Geotechnical Engineering",
+    "Environmental Engineering",
+    "SWOT Analysis",
+    "Public Finance",
+    "Flux (React.js)",
+    "Role-Based Access Control (RBAC)",
+    "Presentations",
+    "Agile Methodology",
+    "Scrum (Software Development)"
+   ],
+   "candidates": [
+    {
+     "key": "RITx+PM9001x",
+     "title": "Project Management Life Cycle",
+     "level_type": "Intermediate",
+     "partner": "Rochester Institute of Technology",
+     "language": "English",
+     "skill_names": [
+      "Project Selection",
+      "Earned Value Management",
+      "Project Implementation",
+      "Project Planning",
+      "Project Management Life Cycle",
+      "Project Management",
+      "Planning",
+      "Case Study",
+      "Project Initiation Documentation",
+      "Project Documentation"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "USMx+PMPREP01",
+     "title": "Project Management Principles",
+     "level_type": "Introductory",
+     "partner": "The University of Maryland, College Park",
+     "language": "English",
+     "skill_names": [
+      "Project Management Institute (PMI) Methodology",
+      "Coordinating",
+      "Accounting",
+      "Ability To Meet Deadlines",
+      "Marketing",
+      "Planning",
+      "Communication",
+      "Project Management",
+      "Agile Methodology",
+      "Agile Project Management"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "IBM+PRM100EN",
+     "title": "Project Management Basics",
+     "level_type": "Introductory",
+     "partner": "IBM",
+     "language": "English",
+     "skill_names": [
+      "Project Management Institute (PMI) Methodology",
+      "Agile Methodology",
+      "Artificial Intelligence",
+      "Project Management"
+     ],
+     "short_description": "<p>Start your project management journey learning the core principles of project management and valuable insights from industry experts. Ideal for beginners. No prior experience required.</p>",
+     "full_description": "<p>The global economy will need 25 million more project managers by 2030 (Project Management Institute). Demand for skilled practitioners is booming. If you’re just starting your project management journey, this course provides the ideal introduction to this in-demand field. It’s specifically designed for beginners, career starters, or career switchers, and no prior experience is required. </p>\n<p>What do project managers do? Project managers plan, organize, and oversee projects to ensure they are completed on time, within budget, and meet the desired objectives. </p>\n<p>In this course, you’ll explore the core principles of project management, its benefits, and the challenges faced by professionals in the field. You’ll discover how current trends, such as remote work, Agile practices, and artificial intelligence, are reshaping the way projects are managed today. Plus, you’ll learn about the diverse career paths available in project management, and look at roles across various industries, skill requirements, and experience levels. </p>\n<p>Throughout the course, you’ll access lectures, interviews with experienced project managers, readings, activities, and quizzes to build a solid ap"
+    },
+    {
+     "key": "AdelaideX+Project101x",
+     "title": "Introduction to Project Management",
+     "level_type": "Introductory",
+     "partner": "Adelaide University",
+     "language": "English",
+     "skill_names": [
+      "Project Management",
+      "Scheduling",
+      "Project Risk Management",
+      "Management",
+      "People Management",
+      "Leadership",
+      "Project Planning"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "SkillUp-EdTech+PRM201EN",
+     "title": "Project Lifecycle and Risk Management",
+     "level_type": "Introductory",
+     "partner": "SkillUp EdTech LLC",
+     "language": "English",
+     "skill_names": [
+      "Information Sharing",
+      "Risk Register",
+      "Systems Development Life Cycle",
+      "Risk Management",
+      "Project Management Institute (PMI) Methodology",
+      "Project Management",
+      "Project Management Life Cycle"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "GTx+PMF1000xII",
+     "title": "Project Management Fundamentals: Triple Constraints (Scope, Schedule, and Cost)",
+     "level_type": "Introductory",
+     "partner": "The Georgia Institute of Technology",
+     "language": "English",
+     "skill_names": [
+      "Scope Management",
+      "Scheduling",
+      "Critical Path Method (CPM) Scheduling",
+      "Optimization Software",
+      "Stakeholder Management",
+      "Influencing Skills",
+      "Earned Value Management",
+      "Planning",
+      "Refining",
+      "Business Objectives"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "AdelaideX+RiskX",
+     "title": "Risk Management for Projects",
+     "level_type": "Introductory",
+     "partner": "Adelaide University",
+     "language": "English",
+     "skill_names": [
+      "Project Management",
+      "Project Risk Management",
+      "Risk Management",
+      "Management",
+      "Upskilling",
+      "Contingency Planning"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "IDBx+IDB34.2x",
+     "title": "Risk Management in Development Projects",
+     "level_type": "Intermediate",
+     "partner": "Inter-American Development Bank",
+     "language": "English",
+     "skill_names": [
+      "Project Management Body Of Knowledge (PMBOK) Methodology",
+      "Risk Management",
+      "Case Study",
+      "Project Management Institute (PMI) Methodology",
+      "Bank Risk Management",
+      "Project Risk Management"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "USMx+PMCOMM01",
+     "title": "Effective Communication for Program and Project Stakeholders and Teams",
+     "level_type": "Introductory",
+     "partner": "The University of Maryland, College Park",
+     "language": "English",
+     "skill_names": [
+      "Scrum (Software Development)",
+      "Project Management Institute (PMI) Methodology",
+      "Communication",
+      "Leadership",
+      "Effective Communication",
+      "Agile Project Management",
+      "Project Management Professional Certification",
+      "Project Management",
+      "Project Management Body Of Knowledge (PMBOK) Methodology",
+      "Project Stakeholders"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "USMx+PMCOMM04",
+     "title": "Designing Project Information Hubs for Program and Project Performance",
+     "level_type": "Introductory",
+     "partner": "The University of Maryland, College Park",
+     "language": "English",
+     "skill_names": [
+      "Project Management Institute (PMI) Methodology",
+      "Project Communications",
+      "Information Management",
+      "Project Management Body Of Knowledge (PMBOK) Methodology",
+      "Strategic Objectives",
+      "Planning",
+      "PMI Agile Certified Practitioner",
+      "Communication Channels",
+      "Sharpening",
+      "Project Management"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "USMx+PMCOMM05",
+     "title": "Storytelling That Delivers Program and Project Outcomes",
+     "level_type": "Introductory",
+     "partner": "The University of Maryland, College Park",
+     "language": "English",
+     "skill_names": [
+      "Communication Certificates",
+      "Agile Projects",
+      "Project Management Institute (PMI) Methodology",
+      "Project Management Body Of Knowledge (PMBOK) Methodology",
+      "Persuasive Communication",
+      "Scrum (Software Development)",
+      "PMI Agile Certified Practitioner",
+      "Project Management",
+      "Communication",
+      "Project Management Certification"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "IBM+CD0116EN",
+     "title": "Agile and Scrum Fundamentals",
+     "level_type": "Introductory",
+     "partner": "IBM",
+     "language": "English",
+     "skill_names": [
+      "Agile Methodology",
+      "Lean Manufacturing",
+      "Kanban Principles",
+      "Project Management",
+      "Github",
+      "Software Development",
+      "Iterative And Incremental Development",
+      "Scrum (Software Development)",
+      "User Story",
+      "Planning"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "USMx+ENCE627.1X",
+     "title": "Developing the Risk Management Plan with Expert Judgement",
+     "level_type": "Intermediate",
+     "partner": "The University of Maryland, College Park",
+     "language": "English",
+     "skill_names": [
+      "Risk Register",
+      "Mitigation",
+      "Project Management",
+      "Cognitive Psychology",
+      "Project Risk Management",
+      "Economics",
+      "Planning",
+      "Risk Management",
+      "Risk Management Planning"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "DelftX+MEP201x",
+     "title": "Project Management: Mastering Complexity",
+     "level_type": "Advanced",
+     "partner": "Delft University of Technology",
+     "language": "English",
+     "skill_names": [
+      "International Studies",
+      "Management Styles",
+      "Project Finance",
+      "Management",
+      "Teamwork",
+      "Project Management",
+      "Project Performance",
+      "Scale (Map)",
+      "Benchmarking",
+      "Finance"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "USMx+ENCE627.3X",
+     "title": "Strategic Decisions for Project Leaders: Exploiting Risk and Opportunity",
+     "level_type": "Intermediate",
+     "partner": "The University of Maryland, College Park",
+     "language": "English",
+     "skill_names": [
+      "Utility Theories",
+      "Management",
+      "Decision Science",
+      "Strategic Decision Making",
+      "Project Management",
+      "Economics",
+      "Project Risk Management",
+      "Decision Making Software",
+      "Decision Theories"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "IBM+PRM321EN",
+     "title": "Capstone for Project Management",
+     "level_type": "Advanced",
+     "partner": "IBM",
+     "language": "English",
+     "skill_names": [
+      "Sprint Backlogs",
+      "Work Breakdown Structure",
+      "Burn Down Charts",
+      "Project Management",
+      "User Story",
+      "Risk Register",
+      "Communications Management"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "USMx+PGPM661.3x",
+     "title": "The Program Management Office (PMO) - The Strategy Execution Arm",
+     "level_type": "Advanced",
+     "partner": "The University of Maryland, College Park",
+     "language": "English",
+     "skill_names": [
+      "Portfolio Management",
+      "Resource Allocation",
+      "Leadership",
+      "Risk-Based Testing",
+      "Project Management Office (PMO)",
+      "Strategy Execution",
+      "Investment Decisions",
+      "Project Management",
+      "Project Performance",
+      "Program Management"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "USMx+AHA04",
+     "title": "Core Project Management Process",
+     "level_type": "Introductory",
+     "partner": "The University of Maryland, College Park",
+     "language": "English",
+     "skill_names": [
+      "Project Controls",
+      "Stakeholder Management",
+      "Lean Startup Methodology",
+      "Innovation",
+      "Project Implementation",
+      "Design Thinking",
+      "Adaptability",
+      "Effective Communication",
+      "Project Management",
+      "Agile Projects"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "USMx+PMPREP03",
+     "title": "Determining Ways of Working for Technical Project Management",
+     "level_type": "Introductory",
+     "partner": "The University of Maryland, College Park",
+     "language": "English",
+     "skill_names": [
+      "Project Management Institute (PMI) Methodology",
+      "Critical Path Method (CPM) Scheduling",
+      "Project Planning",
+      "Procurement",
+      "Earned Value Management",
+      "Quality Improvement",
+      "Project Management",
+      "Agile Methodology",
+      "Management",
+      "Procurement Management"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "SkillUp-EdTech+PRM231EN",
+     "title": "Project Communications, Stakeholders & Leadership",
+     "level_type": "Introductory",
+     "partner": "SkillUp EdTech LLC",
+     "language": "English",
+     "skill_names": [
+      "Communication",
+      "Leadership",
+      "Project Communications",
+      "Stakeholder Engagement",
+      "Project Management Institute (PMI) Methodology",
+      "Project Management",
+      "Stakeholder Management"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "IBM+CS0131EN",
+     "title": "Software Engineering Basics for Everyone",
+     "level_type": "Introductory",
+     "partner": "IBM",
+     "language": "English",
+     "skill_names": [
+      "Sales",
+      "Software Engineering",
+      "Software Development Life Cycle",
+      "Marketing",
+      "Safety Assurance",
+      "Project Management",
+      "Software Development Methodologies",
+      "Agile Methodology",
+      "Scrum (Software Development)",
+      "User Experience (UX)"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "RITx+PM9002x",
+     "title": "Best Practices for Project Management Success",
+     "level_type": "Intermediate",
+     "partner": "Rochester Institute of Technology",
+     "language": "English",
+     "skill_names": [
+      "Management",
+      "Leadership",
+      "Project Management",
+      "Case Study",
+      "Business Success"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "USMx+PMCOMM03",
+     "title": "Managing Conflicts on Projects with Cultural and Emotional Intelligence",
+     "level_type": "Introductory",
+     "partner": "The University of Maryland, College Park",
+     "language": "English",
+     "skill_names": [
+      "Emotional Intelligence",
+      "Capability Maturity Model",
+      "Problem Solving",
+      "Communication Process",
+      "Storyboarding",
+      "Conflict Resolution",
+      "Influencing Skills",
+      "Persuasive Communication",
+      "Conflict Management",
+      "Logo Design"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "ISCEA+CLSSYB02",
+     "title": "Lean Six Sigma Program and Project Management",
+     "level_type": "Introductory",
+     "partner": "International Supply Chain Education Alliance",
+     "language": "English",
+     "skill_names": [
+      "Lean Six Sigma",
+      "Change Management",
+      "Supply Chain",
+      "Lean Manufacturing",
+      "Management",
+      "Project Management",
+      "Lean Six Sigma Yellow Belt",
+      "Process Improvement",
+      "Customer Service",
+      "Risk Management"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "USMx+ENCE607.3x",
+     "title": "Agile Innovation and Problem Solving Skills",
+     "level_type": "Advanced",
+     "partner": "The University of Maryland, College Park",
+     "language": "English",
+     "skill_names": [
+      "Business Valuation",
+      "Disruptive Innovation",
+      "Empathy",
+      "Creative Thinking",
+      "Innovation",
+      "Certified Scrum Master",
+      "Thinking Processes",
+      "Scrum (Software Development)",
+      "Test-Driven Development (TDD)",
+      "Business Modeling"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "USMx+ENCE607.5x",
+     "title": "Agile Process, Project, and Program Controls",
+     "level_type": "Advanced",
+     "partner": "The University of Maryland, College Park",
+     "language": "English",
+     "skill_names": [
+      "Project Delivery",
+      "Team Processes",
+      "Benefits Management",
+      "Earned Value Management",
+      "Certified Scrum Master",
+      "Scrum (Software Development)",
+      "Return On Investment",
+      "Project Management Body Of Knowledge (PMBOK) Methodology",
+      "Sprint Retrospectives",
+      "Product Roadmaps"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "RITx+PM9003x",
+     "title": "International Project Management",
+     "level_type": "Advanced",
+     "partner": "Rochester Institute of Technology",
+     "language": "English",
+     "skill_names": [
+      "Ethical Standards And Conduct",
+      "Communication",
+      "Gender Studies",
+      "Project Management",
+      "Case Study",
+      "Relationship Building",
+      "Environmental Protocols",
+      "Collaborative Software",
+      "Communication Channels"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "SkillUp-EdTech+AI0282EN",
+     "title": "Generative AI: Supercharge Your Product Management Career",
+     "level_type": "Intermediate",
+     "partner": "SkillUp EdTech LLC",
+     "language": "English",
+     "skill_names": [
+      "Product Design",
+      "Ethical Standards And Conduct",
+      "Ideation",
+      "Product Management",
+      "Artificial Intelligence",
+      "Generative Artificial Intelligence",
+      "DALL-E 3",
+      "Project Management",
+      "ChatGPT"
+     ],
+     "short_description": "<p>Build the hands-on skills you need to harness generative AI for ideation, product design, development, launch, and delivery.</p>",
+     "full_description": "<p>Generative AI (GenAI) has become the power tool of the successful product manager. This course gives you the AI skills you need to stand out in the project management domain. </p>\n<p>During this course, you’ll discover how you can use generative AI tools, frameworks, and platforms to significantly increase or “supercharge” your overall product management effectiveness. You’ll learn how to harness the power of generative AI to ideate, design, develop, launch, and deliver products customers love and need while keeping ethical considerations in mind. Plus, you’ll get hands-on using GenAI tools such as ChatGPT, Gemini, Copilot, and DALL-E in labs and a final project, giving you plenty to talk about in interviews. </p>\n<p>Enroll now and build the AI skills businesses are looking for in a product manager today.</p>"
+    },
+    {
+     "key": "SkillUp-EdTech+PRM131EN",
+     "title": "Project Initiation and Planning",
+     "level_type": "Introductory",
+     "partner": "SkillUp EdTech LLC",
+     "language": "English",
+     "skill_names": [
+      "Project Charter",
+      "Planning",
+      "Business Case",
+      "Project Initiation Documentation",
+      "Management",
+      "Project Management",
+      "Project Management Institute (PMI) Methodology",
+      "Project Scoping"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "USMx+PMCOMM02",
+     "title": "Persuasion and Presence for Program and Project Managers",
+     "level_type": "Introductory",
+     "partner": "The University of Maryland, College Park",
+     "language": "English",
+     "skill_names": [
+      "Project Management Institute (PMI) Methodology",
+      "Collaborative Software",
+      "Persuasive Communication",
+      "Project Management Body Of Knowledge (PMBOK) Methodology",
+      "Logo Design",
+      "Communication",
+      "Project Management",
+      "Balancing (Ledger/Billing)",
+      "Project Management Certification",
+      "Agile Methodology"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "USMx+ENCE607.1x",
+     "title": "Applied Scrum for Agile Project Management",
+     "level_type": "Advanced",
+     "partner": "The University of Maryland, College Park",
+     "language": "English",
+     "skill_names": [
+      "Extreme Programming",
+      "Lean Manufacturing",
+      "Certified Scrum Master",
+      "Agile Software Development",
+      "Scrum (Software Development)",
+      "Sprint Planning",
+      "Kanban Principles",
+      "Agile Project Management",
+      "Agile Certification",
+      "Project Management"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "USMx+PMPREP04",
+     "title": "Gaining Business Acumen for Project Managers",
+     "level_type": "Introductory",
+     "partner": "The University of Maryland, College Park",
+     "language": "English",
+     "skill_names": [
+      "Surveying",
+      "Project Management Institute (PMI) Methodology",
+      "Organizational Strategy",
+      "Timelines",
+      "Planning",
+      "Business Acumen",
+      "Project Management",
+      "Compliance Management",
+      "Management",
+      "Project Management Professional Certification"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "USMx+ENCE607.4x",
+     "title": "Agile Leadership Principles and Practices",
+     "level_type": "Advanced",
+     "partner": "The University of Maryland, College Park",
+     "language": "English",
+     "skill_names": [
+      "Leadership Styles",
+      "Innovation",
+      "Certified Scrum Master",
+      "Emotional Intelligence",
+      "Communication",
+      "Scrum (Software Development)",
+      "Command Controls",
+      "Creativity",
+      "Decision Making",
+      "Learning Agility"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "USMx+ENCE627.2X",
+     "title": "Risk Models for Project Managers: Monte Carlo and Beyond",
+     "level_type": "Intermediate",
+     "partner": "The University of Maryland, College Park",
+     "language": "English",
+     "skill_names": [
+      "Numerical Analysis",
+      "Quantitative Modeling",
+      "Schedule Risk Analysis",
+      "Probability Distribution",
+      "Decision Making",
+      "Reliability",
+      "Management",
+      "Forecasting",
+      "Random Variables",
+      "Project Management"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "IDBx+IDB6.1x",
+     "title": "Project Management for Development",
+     "level_type": "Intermediate",
+     "partner": "Inter-American Development Bank",
+     "language": "English",
+     "skill_names": [
+      "Social Development",
+      "Project Management",
+      "Management",
+      "Project Management Institute (PMI) Methodology"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "IBM+PRM175EN",
+     "title": "Job Search, Resume, and Interview Prep for Project Managers",
+     "level_type": "Introductory",
+     "partner": "IBM",
+     "language": "English",
+     "skill_names": [
+      "Project Management Institute (PMI) Methodology",
+      "Project Management"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "USMx+EVPM01",
+     "title": "Stakeholder Outreach: Effective Communication of Complex Environmental Threats",
+     "level_type": "Intermediate",
+     "partner": "The University of Maryland, College Park",
+     "language": "English",
+     "skill_names": [
+      "Employee Engagement",
+      "Advocacy",
+      "Active Listening",
+      "Data Visualization",
+      "Relationship Building",
+      "Persuasive Communication",
+      "Communication Strategies",
+      "Effective Communication",
+      "Communication Process",
+      "Workplace Communication"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "USMx+CMAN-2",
+     "title": "Project Delivery Methods and Contracts in Construction Management",
+     "level_type": "Intermediate",
+     "partner": "The University of Maryland, College Park",
+     "language": "English",
+     "skill_names": [
+      "Project Cycle Management",
+      "Construction Management",
+      "Project Delivery",
+      "Project Risk Management",
+      "Construction",
+      "Investigation"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "USMx+CMAN-1",
+     "title": "The Industry and Profession in Construction Management",
+     "level_type": "Intermediate",
+     "partner": "The University of Maryland, College Park",
+     "language": "English",
+     "skill_names": [
+      "Construction Management",
+      "Communication",
+      "Civil Engineering",
+      "Project Management",
+      "Planning",
+      "Construction",
+      "Infrastructure"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "UPValenciaX+ISC101.3x",
+     "title": "IT Fundamentals for Business Professionals: Software development",
+     "level_type": "Introductory",
+     "partner": "Universitat Politècnica de València",
+     "language": "English",
+     "skill_names": [
+      "Information Technology",
+      "Project Management",
+      "Software Project Management",
+      "Software Development",
+      "Coding Standards and Governance",
+      "Information Systems",
+      "User Interface (UI)",
+      "Telecommunications"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "Microsoft+COPF",
+     "title": "Copilot Foundations for Productivity",
+     "level_type": "Introductory",
+     "partner": "Microsoft",
+     "language": "English",
+     "skill_names": [
+      "Project Management",
+      "Microsoft 365",
+      "Artificial Intelligence",
+      "Content Creation",
+      "Microsoft Copilot",
+      "Workflow Management"
+     ],
+     "short_description": "<p>Learn the fundamentals of Microsoft Copilot to boost productivity. Explore its integration across apps, automate tasks, and gain essential AI skills to enhance your efficiency and advance your career in today’s tech-driven workplace.</p>",
+     "full_description": "<p>As AI tools continue to revolutionize the workplace, understanding how to harness their power is key to staying competitive. This course is designed for professionals seeking to enhance their productivity and gain valuable AI skills using Microsoft Copilot. By mastering the foundational aspects of Copilot, you’ll learn to streamline workflows, automate tasks, and create high-quality content across Microsoft 365 apps, positioning yourself for career advancement in an increasingly tech-driven environment.</p>\n<p>This course is ideal for professionals across various industries who want to boost their productivity and incorporate AI-driven tools into their daily tasks. Whether you’re an administrative professional, business analyst, project manager, or anyone looking to work smarter and faster, mastering Microsoft Copilot will set you apart in today’s fast-evolving work environment.</p>\n<p>As AI tools continue to play a central role in the workplace, gaining proficiency in Microsoft Copilot offers a clear advantage. By completing this course, you’ll develop a foundational understanding of how AI can optimize your workflow, improve collaboration, and enhance content creation across M"
+    },
+    {
+     "key": "Microsoft+MS-AI-146",
+     "title": "AI Driven Healthcare-Project Management",
+     "level_type": "Introductory",
+     "partner": "Microsoft",
+     "language": "English",
+     "skill_names": [
+      "General Data Protection Regulation (GDPR)",
+      "Innovation",
+      "Governance",
+      "Data Masking",
+      "Project Scoping",
+      "Change Management",
+      "Medical Devices",
+      "Lifecycle Management",
+      "Triage",
+      "Data Science"
+     ],
+     "short_description": "<p>Learn to manage healthcare AI projects effectively—bridging clinical needs, regulatory compliance, and technical execution to deliver safe, impactful AI solutions.</p>",
+     "full_description": "<p>Artificial intelligence is transforming patient care, yet executing successful AI projects in highly regulated medical environments requires a unique blend of technical governance and clinical strategy. Designed specifically for project managers, clinical leads, and health IT professionals, this course bridges the gap between complex data science and frontline clinical workflows.</p>\n<p>Whether you operate within large hospital systems, pharmaceutical giants, or fast-paced digital health startups, this program equips you with the framework to oversee AI initiatives from inception to post-deployment monitoring.</p>\n<p>Throughout the course, you will learn to tackle critical healthcare challenges:</p>\n<ul>\n<li><strong>Strategic Project Scoping:</strong> Define clinical requirements that address genuine medical pain points, such as diagnosis support, patient triage, and operational efficiency.</li>\n<li><strong>Regulatory &amp; Compliance Mastery:</strong> Confidently navigate rigorous FDA and CE-MDR pathways for Software as a Medical Device (SaMD), while maintaining data privacy under strict HIPAA and GDPR standards.</li>\n<li><strong>Risk &amp; Lifecycle Management:</strong> Manage"
+    },
+    {
+     "key": "Microsoft+DAPM365",
+     "title": "Draft, analyze, and present with Microsoft 365 Copilot",
+     "level_type": "Introductory",
+     "partner": "Microsoft",
+     "language": "English",
+     "skill_names": [
+      "Project Management",
+      "Presentations",
+      "Microsoft 365",
+      "Artificial Intelligence",
+      "Microsoft Copilot",
+      "Workflow Management",
+      "Visual Workplaces",
+      "Data-Driven Decision Making"
+     ],
+     "short_description": "<p>Learn to draft, analyze, and present using Microsoft 365 Copilot. Enhance productivity, automate tasks, and create professional documents and presentations with AI-driven tools to advance your career and stay ahead in the modern workplace.</p>\n<p>This course is ideal for professionals in any industry looking to improve productivity, enhance document creation, and make better data-driven decisions using Microsoft 365 Copilot. Whether you're a business analyst, project manager, marketer, or anyone seeking to boost your career, this course will help you master essential AI tools in the Microsoft 365 suite.</p>\n<p>By the end of this course, you’ll have the skills to draft, analyze, and present with ease, using Microsoft 365 Copilot to automate tasks and elevate your work output. Master these tools and set yourself up for success in today’s fast-paced, AI-driven work environment.</p>",
+     "full_description": "<p>In an increasingly digital workplace, mastering AI-driven tools is crucial for career growth. This course is designed to help professionals harness the power of Microsoft 365 Copilot to streamline their workflows, enhance productivity, and create high-quality documents and presentations.</p>"
+    },
+    {
+     "key": "USMx+PMPREP02",
+     "title": "Managing People with Power Skills",
+     "level_type": "Introductory",
+     "partner": "The University of Maryland, College Park",
+     "language": "English",
+     "skill_names": [
+      "Emotional Intelligence",
+      "Expectation Management",
+      "Project Management Institute (PMI) Methodology",
+      "Project Stakeholders",
+      "Health Information Technology",
+      "Negotiation",
+      "Active Listening",
+      "Project Management",
+      "Interpersonal Communications",
+      "Agile Methodology"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "USMx+ENCE607.2x",
+     "title": "Sprint Planning for Faster Agile Team Delivery",
+     "level_type": "Advanced",
+     "partner": "The University of Maryland, College Park",
+     "language": "English",
+     "skill_names": [
+      "Agile Methodology",
+      "Innovation",
+      "PMI Agile Certified Practitioner",
+      "Certified Scrum Master",
+      "Sprint Backlogs",
+      "Agile Certification",
+      "Project Management Institute (PMI) Methodology",
+      "Project Management Professional Certification",
+      "Scrum (Software Development)",
+      "Planning"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "DelftX+IIES01x",
+     "title": "Technology of Intelligent and Integrated Energy Systems",
+     "level_type": "Intermediate",
+     "partner": "Delft University of Technology",
+     "language": "English",
+     "skill_names": [
+      "Natural Gas",
+      "Thermodynamic Systems",
+      "Thermal Systems",
+      "Electric Power Systems",
+      "Energy Technology",
+      "Project Management",
+      "Energy Hubs",
+      "Research Experiences",
+      "Systems Design",
+      "Systems Integration"
+     ],
+     "short_description": "<p>Design an integrated energy system recognizing the role of intelligent use of various technologies including renewable energy sources, energy storage, electric vehicles, thermal systems, interconnected multi-carrier grids, and energy hubs.</p>",
+     "full_description": "<p>This course will teach you how to design an integrated energy system considering various existing and up-and-coming technologies, such as renewable energy sources, energy storage, electric vehicles, thermal systems, interconnected multi-carrier grids that include natural gas and hydrogen, and energy hubs. A special emphasis is placed on exploiting the synergies between different technologies in intelligent ways, to help the transition of the energy sector from fossil fuels to sustainable sources of energy. Intelligent operation and control are considered in this course as an essential part of the design. Learners apply the knowledge in an open-ended design project to see how they can use their newly gained skills to create a sustainable future for their city/neighborhood/ building.</p>\n<p>This course has been developed by experts from TU Delft with decades of research experience and covers the key energy technologies and their synergies. The academic concepts are complemented with industry perspectives presented by guest experts from energy-related companies.</p>\n<p>This course is aimed at professionals in the energy industry who want to broaden their perspective and discover th"
+    },
+    {
+     "key": "Microsoft+EM365",
+     "title": "Microsoft 365 Copilot Chat for Career Growth",
+     "level_type": "Introductory",
+     "partner": "Microsoft",
+     "language": "English",
+     "skill_names": [
+      "Project Management",
+      "Microsoft 365",
+      "Artificial Intelligence",
+      "Workflow Management",
+      "Microsoft Copilot"
+     ],
+     "short_description": "<p>Learn to leverage Microsoft 365 Copilot and Business Chat to boost productivity, streamline workflows, and enhance collaboration. Gain hands-on skills to apply AI-driven tools in real-world business scenarios and advance your career.</p>",
+     "full_description": "<p>In today’s fast-paced work environment, AI-driven tools are transforming the way professionals collaborate, create, and communicate. This course is designed for career-focused individuals looking to enhance their productivity and efficiency using Microsoft 365 Copilot and Business Chat. </p>\n<p>This course is ideal for professionals, business analysts, project managers, and anyone looking to integrate AI-driven solutions into their daily work. Whether you're aiming for career advancement or improving workplace efficiency, this training will equip you with the skills needed to thrive in an AI-powered world.</p>\n<p>By the end of this course, you'll have a solid understanding of how to use Microsoft 365 Copilot and Business Chat effectively, making you a valuable asset in any organization.</p>"
+    },
+    {
+     "key": "GTx+PMF1000xI",
+     "title": "Project Management Fundamentals: Project Charter- Business Case",
+     "level_type": "Introductory",
+     "partner": "The Georgia Institute of Technology",
+     "language": "English",
+     "skill_names": [
+      "Return On Investment",
+      "Project Charter",
+      "Organizational Strategy",
+      "Research",
+      "Project Implementation",
+      "SMART Criteria",
+      "Business Case",
+      "Persuasive Communication",
+      "Business Valuation",
+      "Market Analysis"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "IPL+PL417",
+     "title": "Change Management For Modern Managers",
+     "level_type": "Introductory",
+     "partner": "Institute of Product Leadership (IPL)",
+     "language": "English",
+     "skill_names": [
+      "Organizational Change Management",
+      "Organizational Leadership",
+      "Communication",
+      "Project Management",
+      "Psychology",
+      "Case Study",
+      "Change Management"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "SkillUp-EdTech+PRM323EN",
+     "title": "Capstone Project for Scrum Masters",
+     "level_type": "Advanced",
+     "partner": "SkillUp EdTech LLC",
+     "language": "English",
+     "skill_names": [
+      "User Story",
+      "Burn Down Charts",
+      "Agile Project Management",
+      "Agile Methodology",
+      "Sprint Retrospectives",
+      "Workflow Management",
+      "Project Management",
+      "Collaboration",
+      "Scrum (Software Development)",
+      "Sprint Backlogs"
+     ],
+     "short_description": "",
+     "full_description": ""
+    }
+   ]
+  },
+  "Program Manager": {
+   "external_id": "ETCCC0F1F4193CB7D7",
+   "career_skills": [
+    "Program Management",
+    "Project Management Professional Certification",
+    "Project Management",
+    "Systems Analysis",
+    "Product Design",
+    "Project Management Institute (PMI) Methodology",
+    "Earned Value Management",
+    "Stakeholder Management",
+    "Microsoft Project",
+    "Certified Scrum Master",
+    "Planning",
+    "Project Management Office (PMO)",
+    "Impact Assessment",
+    "FastTrack",
+    "Risk Management",
+    "Distance Learning",
+    "Master Of Business Administration (MBA)",
+    "Accountability",
+    "Corrective And Preventive Action (CAPA)",
+    "Leadership"
+   ],
+   "candidates": [
+    {
+     "key": "USMx+PGPM661.1x",
+     "title": "Program Management Fundamentals – Governing with Excellence to Drive Strategic Change",
+     "level_type": "Advanced",
+     "partner": "The University of Maryland, College Park",
+     "language": "English",
+     "skill_names": [
+      "Program Lifecycle Phase",
+      "Digital Transformation",
+      "Mechanics",
+      "Portfolio Management",
+      "Work Breakdown Structure",
+      "Leadership",
+      "Customer Service",
+      "Door Hinges",
+      "Program Management"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "USMx+PGPM661.2x",
+     "title": "The Program Manager – Applying Power Skills and Digital Enablers to Create Continual Change",
+     "level_type": "Advanced",
+     "partner": "The University of Maryland, College Park",
+     "language": "English",
+     "skill_names": [
+      "Organizational Transformation",
+      "Leadership",
+      "Communication",
+      "Time Management",
+      "Program Management"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "USMx+PMPREP02",
+     "title": "Managing People with Power Skills",
+     "level_type": "Introductory",
+     "partner": "The University of Maryland, College Park",
+     "language": "English",
+     "skill_names": [
+      "Emotional Intelligence",
+      "Expectation Management",
+      "Project Management Institute (PMI) Methodology",
+      "Project Stakeholders",
+      "Health Information Technology",
+      "Negotiation",
+      "Active Listening",
+      "Project Management",
+      "Interpersonal Communications",
+      "Agile Methodology"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "USMx+PMCOMM01",
+     "title": "Effective Communication for Program and Project Stakeholders and Teams",
+     "level_type": "Introductory",
+     "partner": "The University of Maryland, College Park",
+     "language": "English",
+     "skill_names": [
+      "Scrum (Software Development)",
+      "Project Management Institute (PMI) Methodology",
+      "Communication",
+      "Leadership",
+      "Effective Communication",
+      "Agile Project Management",
+      "Project Management Professional Certification",
+      "Project Management",
+      "Project Management Body Of Knowledge (PMBOK) Methodology",
+      "Project Stakeholders"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "USMx+PMCOMM02",
+     "title": "Persuasion and Presence for Program and Project Managers",
+     "level_type": "Introductory",
+     "partner": "The University of Maryland, College Park",
+     "language": "English",
+     "skill_names": [
+      "Project Management Institute (PMI) Methodology",
+      "Collaborative Software",
+      "Persuasive Communication",
+      "Project Management Body Of Knowledge (PMBOK) Methodology",
+      "Logo Design",
+      "Communication",
+      "Project Management",
+      "Balancing (Ledger/Billing)",
+      "Project Management Certification",
+      "Agile Methodology"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "USMx+PGPM661.4x",
+     "title": "Creating an Organizational Change Management Framework - Transforming Strategy Execution to Realize Program Value",
+     "level_type": "Advanced",
+     "partner": "The University of Maryland, College Park",
+     "language": "English",
+     "skill_names": [
+      "Benefits Realization Management",
+      "Courage",
+      "Organizational Change Management",
+      "Trenching",
+      "Management",
+      "Strategy Execution",
+      "Business Strategies",
+      "Mergers And Acquisitions",
+      "Project Management",
+      "Enterprise Risk Management (ERM)"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "USMx+PMCOMM04",
+     "title": "Designing Project Information Hubs for Program and Project Performance",
+     "level_type": "Introductory",
+     "partner": "The University of Maryland, College Park",
+     "language": "English",
+     "skill_names": [
+      "Project Management Institute (PMI) Methodology",
+      "Project Communications",
+      "Information Management",
+      "Project Management Body Of Knowledge (PMBOK) Methodology",
+      "Strategic Objectives",
+      "Planning",
+      "PMI Agile Certified Practitioner",
+      "Communication Channels",
+      "Sharpening",
+      "Project Management"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "USMx+PMCOMM03",
+     "title": "Managing Conflicts on Projects with Cultural and Emotional Intelligence",
+     "level_type": "Introductory",
+     "partner": "The University of Maryland, College Park",
+     "language": "English",
+     "skill_names": [
+      "Emotional Intelligence",
+      "Capability Maturity Model",
+      "Problem Solving",
+      "Communication Process",
+      "Storyboarding",
+      "Conflict Resolution",
+      "Influencing Skills",
+      "Persuasive Communication",
+      "Conflict Management",
+      "Logo Design"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "USMx+ENCE607.5x",
+     "title": "Agile Process, Project, and Program Controls",
+     "level_type": "Advanced",
+     "partner": "The University of Maryland, College Park",
+     "language": "English",
+     "skill_names": [
+      "Project Delivery",
+      "Team Processes",
+      "Benefits Management",
+      "Earned Value Management",
+      "Certified Scrum Master",
+      "Scrum (Software Development)",
+      "Return On Investment",
+      "Project Management Body Of Knowledge (PMBOK) Methodology",
+      "Sprint Retrospectives",
+      "Product Roadmaps"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "USMx+PGPM661.3x",
+     "title": "The Program Management Office (PMO) - The Strategy Execution Arm",
+     "level_type": "Advanced",
+     "partner": "The University of Maryland, College Park",
+     "language": "English",
+     "skill_names": [
+      "Portfolio Management",
+      "Resource Allocation",
+      "Leadership",
+      "Risk-Based Testing",
+      "Project Management Office (PMO)",
+      "Strategy Execution",
+      "Investment Decisions",
+      "Project Management",
+      "Project Performance",
+      "Program Management"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "USMx+PMCOMM05",
+     "title": "Storytelling That Delivers Program and Project Outcomes",
+     "level_type": "Introductory",
+     "partner": "The University of Maryland, College Park",
+     "language": "English",
+     "skill_names": [
+      "Communication Certificates",
+      "Agile Projects",
+      "Project Management Institute (PMI) Methodology",
+      "Project Management Body Of Knowledge (PMBOK) Methodology",
+      "Persuasive Communication",
+      "Scrum (Software Development)",
+      "PMI Agile Certified Practitioner",
+      "Project Management",
+      "Communication",
+      "Project Management Certification"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "SkillUp-EdTech+AI0289EN",
+     "title": "Generative AI: A Game Changer for Program Managers",
+     "level_type": "Intermediate",
+     "partner": "SkillUp EdTech LLC",
+     "language": "English",
+     "skill_names": [
+      "Stakeholder Analysis",
+      "Governance",
+      "Program Management",
+      "Ethical AI",
+      "Business Case",
+      "Risk Management",
+      "Artificial Intelligence",
+      "Program Lifecycle Phase",
+      "Risk Mitigation",
+      "Responsible AI"
+     ],
+     "short_description": "<p>Gain hands-on experience creating program deliverables with Generative AI (GenAI) tools. Explore AI-driven stakeholder analysis, risk management, governance, and lifecycle delivery.</p>",
+     "full_description": "<p>Generative AI (GenAI) is a program manager’s power tool, enabling them to make smarter decisions, reduce risks, and drive strategic value more effectively. Professionals who know how to get the most out of GenAI instantly stand out to recruiters!</p>\n<p>In this course, you’ll explore how GenAI can transform program management tasks, and look at how it aligns with the latest edition of PMI’s Standard for Program Management.</p>\n<p>You’ll learn how AI can help you negotiate the program lifecycle across three key phases. For the Program Definition phase, you’ll learn how AI enhances stakeholder analysis, business case validation, and benefits identification. In the Program Delivery phase, you’ll see how AI-driven governance, risk management, and real-time insights optimize execution. Then, in the Program Closure phase, you’ll learn how AI facilitates lessons learned analysis, impact assessments, and knowledge transfer.</p>\n<p>Additionally, you’ll explore ethical AI implementation, risk mitigation strategies, and responsible AI governance in program management. Plus, you’ll get hands-on experience using GenAI tools to create key deliverables essential for program success. And you’ll"
+    },
+    {
+     "key": "USMx+CMAN-1",
+     "title": "The Industry and Profession in Construction Management",
+     "level_type": "Intermediate",
+     "partner": "The University of Maryland, College Park",
+     "language": "English",
+     "skill_names": [
+      "Construction Management",
+      "Communication",
+      "Civil Engineering",
+      "Project Management",
+      "Planning",
+      "Construction",
+      "Infrastructure"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "IPL+PL417",
+     "title": "Change Management For Modern Managers",
+     "level_type": "Introductory",
+     "partner": "Institute of Product Leadership (IPL)",
+     "language": "English",
+     "skill_names": [
+      "Organizational Change Management",
+      "Organizational Leadership",
+      "Communication",
+      "Project Management",
+      "Psychology",
+      "Case Study",
+      "Change Management"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "Microsoft+COPF",
+     "title": "Copilot Foundations for Productivity",
+     "level_type": "Introductory",
+     "partner": "Microsoft",
+     "language": "English",
+     "skill_names": [
+      "Project Management",
+      "Microsoft 365",
+      "Artificial Intelligence",
+      "Content Creation",
+      "Microsoft Copilot",
+      "Workflow Management"
+     ],
+     "short_description": "<p>Learn the fundamentals of Microsoft Copilot to boost productivity. Explore its integration across apps, automate tasks, and gain essential AI skills to enhance your efficiency and advance your career in today’s tech-driven workplace.</p>",
+     "full_description": "<p>As AI tools continue to revolutionize the workplace, understanding how to harness their power is key to staying competitive. This course is designed for professionals seeking to enhance their productivity and gain valuable AI skills using Microsoft Copilot. By mastering the foundational aspects of Copilot, you’ll learn to streamline workflows, automate tasks, and create high-quality content across Microsoft 365 apps, positioning yourself for career advancement in an increasingly tech-driven environment.</p>\n<p>This course is ideal for professionals across various industries who want to boost their productivity and incorporate AI-driven tools into their daily tasks. Whether you’re an administrative professional, business analyst, project manager, or anyone looking to work smarter and faster, mastering Microsoft Copilot will set you apart in today’s fast-evolving work environment.</p>\n<p>As AI tools continue to play a central role in the workplace, gaining proficiency in Microsoft Copilot offers a clear advantage. By completing this course, you’ll develop a foundational understanding of how AI can optimize your workflow, improve collaboration, and enhance content creation across M"
+    },
+    {
+     "key": "Microsoft+DAPM365",
+     "title": "Draft, analyze, and present with Microsoft 365 Copilot",
+     "level_type": "Introductory",
+     "partner": "Microsoft",
+     "language": "English",
+     "skill_names": [
+      "Project Management",
+      "Presentations",
+      "Microsoft 365",
+      "Artificial Intelligence",
+      "Microsoft Copilot",
+      "Workflow Management",
+      "Visual Workplaces",
+      "Data-Driven Decision Making"
+     ],
+     "short_description": "<p>Learn to draft, analyze, and present using Microsoft 365 Copilot. Enhance productivity, automate tasks, and create professional documents and presentations with AI-driven tools to advance your career and stay ahead in the modern workplace.</p>\n<p>This course is ideal for professionals in any industry looking to improve productivity, enhance document creation, and make better data-driven decisions using Microsoft 365 Copilot. Whether you're a business analyst, project manager, marketer, or anyone seeking to boost your career, this course will help you master essential AI tools in the Microsoft 365 suite.</p>\n<p>By the end of this course, you’ll have the skills to draft, analyze, and present with ease, using Microsoft 365 Copilot to automate tasks and elevate your work output. Master these tools and set yourself up for success in today’s fast-paced, AI-driven work environment.</p>",
+     "full_description": "<p>In an increasingly digital workplace, mastering AI-driven tools is crucial for career growth. This course is designed to help professionals harness the power of Microsoft 365 Copilot to streamline their workflows, enhance productivity, and create high-quality documents and presentations.</p>"
+    },
+    {
+     "key": "Microsoft+MS-AI-146",
+     "title": "AI Driven Healthcare-Project Management",
+     "level_type": "Introductory",
+     "partner": "Microsoft",
+     "language": "English",
+     "skill_names": [
+      "General Data Protection Regulation (GDPR)",
+      "Innovation",
+      "Governance",
+      "Data Masking",
+      "Project Scoping",
+      "Change Management",
+      "Medical Devices",
+      "Lifecycle Management",
+      "Triage",
+      "Data Science"
+     ],
+     "short_description": "<p>Learn to manage healthcare AI projects effectively—bridging clinical needs, regulatory compliance, and technical execution to deliver safe, impactful AI solutions.</p>",
+     "full_description": "<p>Artificial intelligence is transforming patient care, yet executing successful AI projects in highly regulated medical environments requires a unique blend of technical governance and clinical strategy. Designed specifically for project managers, clinical leads, and health IT professionals, this course bridges the gap between complex data science and frontline clinical workflows.</p>\n<p>Whether you operate within large hospital systems, pharmaceutical giants, or fast-paced digital health startups, this program equips you with the framework to oversee AI initiatives from inception to post-deployment monitoring.</p>\n<p>Throughout the course, you will learn to tackle critical healthcare challenges:</p>\n<ul>\n<li><strong>Strategic Project Scoping:</strong> Define clinical requirements that address genuine medical pain points, such as diagnosis support, patient triage, and operational efficiency.</li>\n<li><strong>Regulatory &amp; Compliance Mastery:</strong> Confidently navigate rigorous FDA and CE-MDR pathways for Software as a Medical Device (SaMD), while maintaining data privacy under strict HIPAA and GDPR standards.</li>\n<li><strong>Risk &amp; Lifecycle Management:</strong> Manage"
+    },
+    {
+     "key": "IBM+CD0116EN",
+     "title": "Agile and Scrum Fundamentals",
+     "level_type": "Introductory",
+     "partner": "IBM",
+     "language": "English",
+     "skill_names": [
+      "Agile Methodology",
+      "Lean Manufacturing",
+      "Kanban Principles",
+      "Project Management",
+      "Github",
+      "Software Development",
+      "Iterative And Incremental Development",
+      "Scrum (Software Development)",
+      "User Story",
+      "Planning"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "USMx+ENCE607.1x",
+     "title": "Applied Scrum for Agile Project Management",
+     "level_type": "Advanced",
+     "partner": "The University of Maryland, College Park",
+     "language": "English",
+     "skill_names": [
+      "Extreme Programming",
+      "Lean Manufacturing",
+      "Certified Scrum Master",
+      "Agile Software Development",
+      "Scrum (Software Development)",
+      "Sprint Planning",
+      "Kanban Principles",
+      "Agile Project Management",
+      "Agile Certification",
+      "Project Management"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "RITx+PM9001x",
+     "title": "Project Management Life Cycle",
+     "level_type": "Intermediate",
+     "partner": "Rochester Institute of Technology",
+     "language": "English",
+     "skill_names": [
+      "Project Selection",
+      "Earned Value Management",
+      "Project Implementation",
+      "Project Planning",
+      "Project Management Life Cycle",
+      "Project Management",
+      "Planning",
+      "Case Study",
+      "Project Initiation Documentation",
+      "Project Documentation"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "RITx+PM9002x",
+     "title": "Best Practices for Project Management Success",
+     "level_type": "Intermediate",
+     "partner": "Rochester Institute of Technology",
+     "language": "English",
+     "skill_names": [
+      "Management",
+      "Leadership",
+      "Project Management",
+      "Case Study",
+      "Business Success"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "AdelaideX+Project101x",
+     "title": "Introduction to Project Management",
+     "level_type": "Introductory",
+     "partner": "Adelaide University",
+     "language": "English",
+     "skill_names": [
+      "Project Management",
+      "Scheduling",
+      "Project Risk Management",
+      "Management",
+      "People Management",
+      "Leadership",
+      "Project Planning"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "SkillUp-EdTech+PRM231EN",
+     "title": "Project Communications, Stakeholders & Leadership",
+     "level_type": "Introductory",
+     "partner": "SkillUp EdTech LLC",
+     "language": "English",
+     "skill_names": [
+      "Communication",
+      "Leadership",
+      "Project Communications",
+      "Stakeholder Engagement",
+      "Project Management Institute (PMI) Methodology",
+      "Project Management",
+      "Stakeholder Management"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "USMx+ENCE607.4x",
+     "title": "Agile Leadership Principles and Practices",
+     "level_type": "Advanced",
+     "partner": "The University of Maryland, College Park",
+     "language": "English",
+     "skill_names": [
+      "Leadership Styles",
+      "Innovation",
+      "Certified Scrum Master",
+      "Emotional Intelligence",
+      "Communication",
+      "Scrum (Software Development)",
+      "Command Controls",
+      "Creativity",
+      "Decision Making",
+      "Learning Agility"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "USMx+EVPM01",
+     "title": "Stakeholder Outreach: Effective Communication of Complex Environmental Threats",
+     "level_type": "Intermediate",
+     "partner": "The University of Maryland, College Park",
+     "language": "English",
+     "skill_names": [
+      "Employee Engagement",
+      "Advocacy",
+      "Active Listening",
+      "Data Visualization",
+      "Relationship Building",
+      "Persuasive Communication",
+      "Communication Strategies",
+      "Effective Communication",
+      "Communication Process",
+      "Workplace Communication"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "USMx+PMPREP03",
+     "title": "Determining Ways of Working for Technical Project Management",
+     "level_type": "Introductory",
+     "partner": "The University of Maryland, College Park",
+     "language": "English",
+     "skill_names": [
+      "Project Management Institute (PMI) Methodology",
+      "Critical Path Method (CPM) Scheduling",
+      "Project Planning",
+      "Procurement",
+      "Earned Value Management",
+      "Quality Improvement",
+      "Project Management",
+      "Agile Methodology",
+      "Management",
+      "Procurement Management"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "SkillUp-EdTech+PRM201EN",
+     "title": "Project Lifecycle and Risk Management",
+     "level_type": "Introductory",
+     "partner": "SkillUp EdTech LLC",
+     "language": "English",
+     "skill_names": [
+      "Information Sharing",
+      "Risk Register",
+      "Systems Development Life Cycle",
+      "Risk Management",
+      "Project Management Institute (PMI) Methodology",
+      "Project Management",
+      "Project Management Life Cycle"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "IBM+PRM100EN",
+     "title": "Project Management Basics",
+     "level_type": "Introductory",
+     "partner": "IBM",
+     "language": "English",
+     "skill_names": [
+      "Project Management Institute (PMI) Methodology",
+      "Agile Methodology",
+      "Artificial Intelligence",
+      "Project Management"
+     ],
+     "short_description": "<p>Start your project management journey learning the core principles of project management and valuable insights from industry experts. Ideal for beginners. No prior experience required.</p>",
+     "full_description": "<p>The global economy will need 25 million more project managers by 2030 (Project Management Institute). Demand for skilled practitioners is booming. If you’re just starting your project management journey, this course provides the ideal introduction to this in-demand field. It’s specifically designed for beginners, career starters, or career switchers, and no prior experience is required. </p>\n<p>What do project managers do? Project managers plan, organize, and oversee projects to ensure they are completed on time, within budget, and meet the desired objectives. </p>\n<p>In this course, you’ll explore the core principles of project management, its benefits, and the challenges faced by professionals in the field. You’ll discover how current trends, such as remote work, Agile practices, and artificial intelligence, are reshaping the way projects are managed today. Plus, you’ll learn about the diverse career paths available in project management, and look at roles across various industries, skill requirements, and experience levels. </p>\n<p>Throughout the course, you’ll access lectures, interviews with experienced project managers, readings, activities, and quizzes to build a solid ap"
+    },
+    {
+     "key": "USMx+ENCE627.3X",
+     "title": "Strategic Decisions for Project Leaders: Exploiting Risk and Opportunity",
+     "level_type": "Intermediate",
+     "partner": "The University of Maryland, College Park",
+     "language": "English",
+     "skill_names": [
+      "Utility Theories",
+      "Management",
+      "Decision Science",
+      "Strategic Decision Making",
+      "Project Management",
+      "Economics",
+      "Project Risk Management",
+      "Decision Making Software",
+      "Decision Theories"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "USMx+ENCE627.2X",
+     "title": "Risk Models for Project Managers: Monte Carlo and Beyond",
+     "level_type": "Intermediate",
+     "partner": "The University of Maryland, College Park",
+     "language": "English",
+     "skill_names": [
+      "Numerical Analysis",
+      "Quantitative Modeling",
+      "Schedule Risk Analysis",
+      "Probability Distribution",
+      "Decision Making",
+      "Reliability",
+      "Management",
+      "Forecasting",
+      "Random Variables",
+      "Project Management"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "USMx+ENES608.3",
+     "title": "Product Design, Prototyping, and Testing",
+     "level_type": "Introductory",
+     "partner": "The University of Maryland, College Park",
+     "language": "English",
+     "skill_names": [
+      "Wireframing",
+      "Concurrent Engineering",
+      "Manufacturing Processes",
+      "New Product Development",
+      "Product Design",
+      "Planning",
+      "Concept Testing",
+      "Product Management",
+      "Prototyping",
+      "Engineering Design Process"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "USMx+PMPREP04",
+     "title": "Gaining Business Acumen for Project Managers",
+     "level_type": "Introductory",
+     "partner": "The University of Maryland, College Park",
+     "language": "English",
+     "skill_names": [
+      "Surveying",
+      "Project Management Institute (PMI) Methodology",
+      "Organizational Strategy",
+      "Timelines",
+      "Planning",
+      "Business Acumen",
+      "Project Management",
+      "Compliance Management",
+      "Management",
+      "Project Management Professional Certification"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "DelftX+MEP201x",
+     "title": "Project Management: Mastering Complexity",
+     "level_type": "Advanced",
+     "partner": "Delft University of Technology",
+     "language": "English",
+     "skill_names": [
+      "International Studies",
+      "Management Styles",
+      "Project Finance",
+      "Management",
+      "Teamwork",
+      "Project Management",
+      "Project Performance",
+      "Scale (Map)",
+      "Benchmarking",
+      "Finance"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "IBM+PRM321EN",
+     "title": "Capstone for Project Management",
+     "level_type": "Advanced",
+     "partner": "IBM",
+     "language": "English",
+     "skill_names": [
+      "Sprint Backlogs",
+      "Work Breakdown Structure",
+      "Burn Down Charts",
+      "Project Management",
+      "User Story",
+      "Risk Register",
+      "Communications Management"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "ISCEA+CLSSYB02",
+     "title": "Lean Six Sigma Program and Project Management",
+     "level_type": "Introductory",
+     "partner": "International Supply Chain Education Alliance",
+     "language": "English",
+     "skill_names": [
+      "Lean Six Sigma",
+      "Change Management",
+      "Supply Chain",
+      "Lean Manufacturing",
+      "Management",
+      "Project Management",
+      "Lean Six Sigma Yellow Belt",
+      "Process Improvement",
+      "Customer Service",
+      "Risk Management"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "USMx+ENES680.1x",
+     "title": "Lean Product Portfolios: Beyond Value Stream Mapping",
+     "level_type": "Intermediate",
+     "partner": "The University of Maryland, College Park",
+     "language": "English",
+     "skill_names": [
+      "Banking",
+      "Product Lifecycle Management",
+      "Value Creation",
+      "Medical Records",
+      "Customer Centricity",
+      "User Research",
+      "Lean Principles",
+      "Product Management",
+      "Go-to-Market Strategy",
+      "New Product Development"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "CodeSignal+249",
+     "title": "Acing the Product Management Interview",
+     "level_type": "Intermediate",
+     "partner": "CodeSignal",
+     "language": "English",
+     "skill_names": [
+      "Product Strategy",
+      "Product Management",
+      "Product Design",
+      "Communication"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "SkillUp-EdTech+AI0282EN",
+     "title": "Generative AI: Supercharge Your Product Management Career",
+     "level_type": "Intermediate",
+     "partner": "SkillUp EdTech LLC",
+     "language": "English",
+     "skill_names": [
+      "Product Design",
+      "Ethical Standards And Conduct",
+      "Ideation",
+      "Product Management",
+      "Artificial Intelligence",
+      "Generative Artificial Intelligence",
+      "DALL-E 3",
+      "Project Management",
+      "ChatGPT"
+     ],
+     "short_description": "<p>Build the hands-on skills you need to harness generative AI for ideation, product design, development, launch, and delivery.</p>",
+     "full_description": "<p>Generative AI (GenAI) has become the power tool of the successful product manager. This course gives you the AI skills you need to stand out in the project management domain. </p>\n<p>During this course, you’ll discover how you can use generative AI tools, frameworks, and platforms to significantly increase or “supercharge” your overall product management effectiveness. You’ll learn how to harness the power of generative AI to ideate, design, develop, launch, and deliver products customers love and need while keeping ethical considerations in mind. Plus, you’ll get hands-on using GenAI tools such as ChatGPT, Gemini, Copilot, and DALL-E in labs and a final project, giving you plenty to talk about in interviews. </p>\n<p>Enroll now and build the AI skills businesses are looking for in a product manager today.</p>"
+    },
+    {
+     "key": "IBM+PRM175EN",
+     "title": "Job Search, Resume, and Interview Prep for Project Managers",
+     "level_type": "Introductory",
+     "partner": "IBM",
+     "language": "English",
+     "skill_names": [
+      "Project Management Institute (PMI) Methodology",
+      "Project Management"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "USMx+ENCE627.1X",
+     "title": "Developing the Risk Management Plan with Expert Judgement",
+     "level_type": "Intermediate",
+     "partner": "The University of Maryland, College Park",
+     "language": "English",
+     "skill_names": [
+      "Risk Register",
+      "Mitigation",
+      "Project Management",
+      "Cognitive Psychology",
+      "Project Risk Management",
+      "Economics",
+      "Planning",
+      "Risk Management",
+      "Risk Management Planning"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "RITx+PM9003x",
+     "title": "International Project Management",
+     "level_type": "Advanced",
+     "partner": "Rochester Institute of Technology",
+     "language": "English",
+     "skill_names": [
+      "Ethical Standards And Conduct",
+      "Communication",
+      "Gender Studies",
+      "Project Management",
+      "Case Study",
+      "Relationship Building",
+      "Environmental Protocols",
+      "Collaborative Software",
+      "Communication Channels"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "SkillUp-EdTech+PRM131EN",
+     "title": "Project Initiation and Planning",
+     "level_type": "Introductory",
+     "partner": "SkillUp EdTech LLC",
+     "language": "English",
+     "skill_names": [
+      "Project Charter",
+      "Planning",
+      "Business Case",
+      "Project Initiation Documentation",
+      "Management",
+      "Project Management",
+      "Project Management Institute (PMI) Methodology",
+      "Project Scoping"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "USMx+AHA04",
+     "title": "Core Project Management Process",
+     "level_type": "Introductory",
+     "partner": "The University of Maryland, College Park",
+     "language": "English",
+     "skill_names": [
+      "Project Controls",
+      "Stakeholder Management",
+      "Lean Startup Methodology",
+      "Innovation",
+      "Project Implementation",
+      "Design Thinking",
+      "Adaptability",
+      "Effective Communication",
+      "Project Management",
+      "Agile Projects"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "UPValenciaX+ISC101.3x",
+     "title": "IT Fundamentals for Business Professionals: Software development",
+     "level_type": "Introductory",
+     "partner": "Universitat Politècnica de València",
+     "language": "English",
+     "skill_names": [
+      "Information Technology",
+      "Project Management",
+      "Software Project Management",
+      "Software Development",
+      "Coding Standards and Governance",
+      "Information Systems",
+      "User Interface (UI)",
+      "Telecommunications"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "DelftX+IIES01x",
+     "title": "Technology of Intelligent and Integrated Energy Systems",
+     "level_type": "Intermediate",
+     "partner": "Delft University of Technology",
+     "language": "English",
+     "skill_names": [
+      "Natural Gas",
+      "Thermodynamic Systems",
+      "Thermal Systems",
+      "Electric Power Systems",
+      "Energy Technology",
+      "Project Management",
+      "Energy Hubs",
+      "Research Experiences",
+      "Systems Design",
+      "Systems Integration"
+     ],
+     "short_description": "<p>Design an integrated energy system recognizing the role of intelligent use of various technologies including renewable energy sources, energy storage, electric vehicles, thermal systems, interconnected multi-carrier grids, and energy hubs.</p>",
+     "full_description": "<p>This course will teach you how to design an integrated energy system considering various existing and up-and-coming technologies, such as renewable energy sources, energy storage, electric vehicles, thermal systems, interconnected multi-carrier grids that include natural gas and hydrogen, and energy hubs. A special emphasis is placed on exploiting the synergies between different technologies in intelligent ways, to help the transition of the energy sector from fossil fuels to sustainable sources of energy. Intelligent operation and control are considered in this course as an essential part of the design. Learners apply the knowledge in an open-ended design project to see how they can use their newly gained skills to create a sustainable future for their city/neighborhood/ building.</p>\n<p>This course has been developed by experts from TU Delft with decades of research experience and covers the key energy technologies and their synergies. The academic concepts are complemented with industry perspectives presented by guest experts from energy-related companies.</p>\n<p>This course is aimed at professionals in the energy industry who want to broaden their perspective and discover th"
+    },
+    {
+     "key": "IBM+CS0131EN",
+     "title": "Software Engineering Basics for Everyone",
+     "level_type": "Introductory",
+     "partner": "IBM",
+     "language": "English",
+     "skill_names": [
+      "Sales",
+      "Software Engineering",
+      "Software Development Life Cycle",
+      "Marketing",
+      "Safety Assurance",
+      "Project Management",
+      "Software Development Methodologies",
+      "Agile Methodology",
+      "Scrum (Software Development)",
+      "User Experience (UX)"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "DelftX+WMCRM1x",
+     "title": "Waste Management and Critical Raw Materials",
+     "level_type": "Introductory",
+     "partner": "Delft University of Technology",
+     "language": "English",
+     "skill_names": [
+      "Economics",
+      "Beryllium",
+      "Electronics",
+      "Waste Management",
+      "Product Design",
+      "Environmental Issue",
+      "Resilience",
+      "Integrated Circuits",
+      "Economic Development",
+      "Circular Economy"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "GTx+PMF1000xII",
+     "title": "Project Management Fundamentals: Triple Constraints (Scope, Schedule, and Cost)",
+     "level_type": "Introductory",
+     "partner": "The Georgia Institute of Technology",
+     "language": "English",
+     "skill_names": [
+      "Scope Management",
+      "Scheduling",
+      "Critical Path Method (CPM) Scheduling",
+      "Optimization Software",
+      "Stakeholder Management",
+      "Influencing Skills",
+      "Earned Value Management",
+      "Planning",
+      "Refining",
+      "Business Objectives"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "Microsoft+EM365",
+     "title": "Microsoft 365 Copilot Chat for Career Growth",
+     "level_type": "Introductory",
+     "partner": "Microsoft",
+     "language": "English",
+     "skill_names": [
+      "Project Management",
+      "Microsoft 365",
+      "Artificial Intelligence",
+      "Workflow Management",
+      "Microsoft Copilot"
+     ],
+     "short_description": "<p>Learn to leverage Microsoft 365 Copilot and Business Chat to boost productivity, streamline workflows, and enhance collaboration. Gain hands-on skills to apply AI-driven tools in real-world business scenarios and advance your career.</p>",
+     "full_description": "<p>In today’s fast-paced work environment, AI-driven tools are transforming the way professionals collaborate, create, and communicate. This course is designed for career-focused individuals looking to enhance their productivity and efficiency using Microsoft 365 Copilot and Business Chat. </p>\n<p>This course is ideal for professionals, business analysts, project managers, and anyone looking to integrate AI-driven solutions into their daily work. Whether you're aiming for career advancement or improving workplace efficiency, this training will equip you with the skills needed to thrive in an AI-powered world.</p>\n<p>By the end of this course, you'll have a solid understanding of how to use Microsoft 365 Copilot and Business Chat effectively, making you a valuable asset in any organization.</p>"
+    },
+    {
+     "key": "AdelaideX+RiskX",
+     "title": "Risk Management for Projects",
+     "level_type": "Introductory",
+     "partner": "Adelaide University",
+     "language": "English",
+     "skill_names": [
+      "Project Management",
+      "Project Risk Management",
+      "Risk Management",
+      "Management",
+      "Upskilling",
+      "Contingency Planning"
+     ],
+     "short_description": "",
+     "full_description": ""
+    }
+   ]
+  },
+  "Software Engineer": {
+   "external_id": "ET6850661D6AE5FA86",
+   "career_skills": [
+    "Electrical Engineering",
+    "C++ (Programming Language)",
+    "C (Programming Language)",
+    "Software Engineering",
+    "Java (Programming Language)",
+    "C# (Programming Language)",
+    "Software Development",
+    "JavaScript (Programming Language)",
+    "Git (Version Control System)",
+    "Angular (Web Framework)",
+    "Agile Methodology",
+    "Object-Oriented Programming (OOP)",
+    "React.js (Javascript Library)",
+    "Computer Science",
+    "Node.js (Javascript Library)",
+    "Docker (Software)",
+    "Bitmap",
+    "Computer Engineering",
+    "Software Design",
+    "Public Key Certificates"
+   ],
+   "candidates": [
+    {
+     "key": "IBM+CS0131EN",
+     "title": "Software Engineering Basics for Everyone",
+     "level_type": "Introductory",
+     "partner": "IBM",
+     "language": "English",
+     "skill_names": [
+      "Sales",
+      "Software Engineering",
+      "Software Development Life Cycle",
+      "Marketing",
+      "Safety Assurance",
+      "Project Management",
+      "Software Development Methodologies",
+      "Agile Methodology",
+      "Scrum (Software Development)",
+      "User Experience (UX)"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "CodeSignal+68",
+     "title": "AI Interviews - Software Design, Architecture, and More",
+     "level_type": "Intermediate",
+     "partner": "CodeSignal",
+     "language": "English",
+     "skill_names": [
+      "CI/CD",
+      "Agile Methodology",
+      "Version Control",
+      "Artificial Intelligence",
+      "DevOps",
+      "Scalability",
+      "Software Design",
+      "Cloud Infrastructure",
+      "Software Development",
+      "Systems Design"
+     ],
+     "short_description": "<p>Prepare for technical interviews focused on software design, architecture, performance, security, networking, and development practices. Practice explaining core concepts and making tradeoffs in realistic interview scenarios.</p>",
+     "full_description": "<p>This intermediate course path helps you build interview readiness for software engineering roles that require discussion of system design, architecture, and practical engineering decisions. You will practice topics commonly covered in technical interviews, including scalability, reliability, cloud infrastructure, data management, and security. The path also covers software development methods and tools, including Agile practices, design patterns, CI/CD, version control, and development paradigms. Along the way, you will work through scenario-based prompts that strengthen your ability to explain concepts clearly and justify technical choices. This path is designed for learners preparing for software engineering, backend engineering, DevOps, or system design interviews who already have some programming and software development experience.</p>"
+    },
+    {
+     "key": "IBM+AI0274EN",
+     "title": "Mastering Generative AI for Software Development",
+     "level_type": "Intermediate",
+     "partner": "IBM",
+     "language": "English",
+     "skill_names": [
+      "Artificial Intelligence",
+      "Software Quality (SQA/SQC)",
+      "Software Engineering",
+      "Code Refactoring",
+      "Software Development Life Cycle",
+      "Workflow Management",
+      "Code Generation",
+      "Ethical Standards And Conduct",
+      "Generative Artificial Intelligence",
+      "Automation"
+     ],
+     "short_description": "<p>Build job-ready AI skills for software development, automate coding, optimize design, detect bugs, and create AI-powered solutions while considering ethics.</p>",
+     "full_description": "<p>Do you want to enhance your software development career by leveraging the power of generative AI? This course explores the transformative applications of generative AI across the entire software development lifecycle. </p>\n<p>The course teaches how generative AI-based tools enable code generation, scripting, and program creation, boosting developer productivity and automating repetitive tasks. You will learn how to train and fine-tune these models for specific software development needs, from generating custom code snippets to creating intelligent applications. </p>\n<p>You will gain hands-on experience building static websites and prototypes using AI, accelerating the design process and fostering innovation. The course covers techniques for AI-assisted design and architecture, allowing you to explore new creative possibilities and optimize software structure. </p>\n<p>You will also discover how generative AI can be used for bug detection, code refactoring, and program optimization, leading to improved code quality and maintainability. The course provides insights into the ethical considerations, challenges, and limitations of using generative AI in software development, emphasizi"
+    },
+    {
+     "key": "AI+genai1x",
+     "title": "Agile with AI",
+     "level_type": "Introductory",
+     "partner": "Pragmatic AI Labs",
+     "language": "English",
+     "skill_names": [
+      "Pair Programming",
+      "Artificial Intelligence",
+      "Software Engineering",
+      "DevOps",
+      "Prompt Engineering",
+      "Workflow Management",
+      "Software Development",
+      "Generative Artificial Intelligence",
+      "Agile Methodology"
+     ],
+     "short_description": "<p>Revolutionize your software development with generative AI. Learn to harness AI pair programming, prompt engineering, and DevOps best practices for unparalleled productivity and innovation.</p>",
+     "full_description": "<p>In this cutting-edge course, you'll discover how to:</p>\n<ul>\n<li>Leverage the power of generative AI to rapidly prototype and iterate on ideas</li>\n<li>Apply prompt engineering techniques to guide AI models towards desired outputs</li>\n<li>Utilize AI pair programming tools to boost developer productivity and creativity</li>\n<li>Integrate generative AI seamlessly into your DevOps workflow for maximum impact</li>\n</ul>\n<p>Whether you're a seasoned software engineer or just starting your coding journey, this course will equip you with the skills and knowledge to push the boundaries of what's possible with AI-powered software development. Get ready to transform the way you build software and stay ahead of the curve in this exciting new era of AI-driven innovation.</p>"
+    },
+    {
+     "key": "DelftX+GSE101x",
+     "title": "Global Software Development",
+     "level_type": "Introductory",
+     "partner": "Delft University of Technology",
+     "language": "English",
+     "skill_names": [
+      "Outsourcing",
+      "Software Engineering",
+      "Organizational Skills",
+      "Virtual Teams",
+      "Software Development"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "IBM+CD0285EN",
+     "title": "DevOps and Software Engineering Capstone Project",
+     "level_type": "Intermediate",
+     "partner": "IBM",
+     "language": "English",
+     "skill_names": [
+      "CI/CD",
+      "Agile Methodology",
+      "Python (Programming Language)",
+      "DevOps",
+      "Kubernetes",
+      "Continuous Integration",
+      "Microservices",
+      "Github",
+      "OpenShift",
+      "Cloud-Native Computing"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "Codio+cpp3.1",
+     "title": "C++ Programming: Object-Oriented Design",
+     "level_type": "Introductory",
+     "partner": "Codio",
+     "language": "English",
+     "skill_names": [
+      "Object-Oriented Design",
+      "Computer Science",
+      "Polymorphism",
+      "Encapsulation (Networking)",
+      "C++ (Programming Language)"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "HarvardX+CS50P",
+     "title": "CS50's Introduction to Programming with Python",
+     "level_type": "Introductory",
+     "partner": "Harvard University",
+     "language": "English",
+     "skill_names": [
+      "Web Development",
+      "SQL (Programming Language)",
+      "JavaScript (Programming Language)",
+      "Debugging",
+      "Data Science",
+      "Personal Computers",
+      "Boolean Expression",
+      "Regular Expressions",
+      "Unit Testing",
+      "C (Programming Language)"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "UC3Mx+IT.1.2x",
+     "title": "Introduction to Java Programming: Writing Good Code",
+     "level_type": "Introductory",
+     "partner": "Universidad Carlos III de Madrid",
+     "language": "English",
+     "skill_names": [
+      "Java (Programming Language)",
+      "Ethical Standards And Conduct",
+      "Software Engineering",
+      "Addressing Ethical Concerns",
+      "Computational Thinking",
+      "Case Study",
+      "Computer Science",
+      "Smartphone Operation"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "HarvardX+CS50x",
+     "title": "CS50's Introduction to Computer Science",
+     "level_type": "Introductory",
+     "partner": "Harvard University",
+     "language": "English",
+     "skill_names": [
+      "HyperText Markup Language (HTML)",
+      "Security Software",
+      "Finance",
+      "Forensic Sciences",
+      "SQL (Programming Language)",
+      "JavaScript (Programming Language)",
+      "Cryptography",
+      "C (Programming Language)",
+      "Cascading Style Sheets (CSS)",
+      "Python (Programming Language)"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "Codio+cpp1.1",
+     "title": "C++ Programming: Basic Skills",
+     "level_type": "Introductory",
+     "partner": "Codio",
+     "language": "English",
+     "skill_names": [
+      "Computer Science",
+      "C++ (Programming Language)"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "Codio+cpp2.1",
+     "title": "C++ Programming: Intermediate Concepts",
+     "level_type": "Introductory",
+     "partner": "Codio",
+     "language": "English",
+     "skill_names": [
+      "Computer Science",
+      "C++ (Programming Language)"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "Codio+CPP-DSA-1",
+     "title": "C++: Algorithms",
+     "level_type": "Intermediate",
+     "partner": "Codio",
+     "language": "English",
+     "skill_names": [
+      "Object-Oriented Programming (OOP)",
+      "Data Structures",
+      "Algorithm Design",
+      "Algorithms",
+      "C++ (Programming Language)"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "CodeSignal+5",
+     "title": "Mastering Algorithms and Data Structures in Python",
+     "level_type": "Intermediate",
+     "partner": "CodeSignal",
+     "language": "English",
+     "skill_names": [
+      "Software Engineering",
+      "Sorting",
+      "Algorithms",
+      "Linked Lists",
+      "Data Structures",
+      "Problem Solving",
+      "Python (Programming Language)"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "Codio+CPP-DSA-2",
+     "title": "C++: Linear Data Structures and Trees",
+     "level_type": "Intermediate",
+     "partner": "Codio",
+     "language": "English",
+     "skill_names": [
+      "Object-Oriented Programming (OOP)",
+      "Balancing (Ledger/Billing)",
+      "Data Structures",
+      "Algorithms",
+      "C++ (Programming Language)"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "Codio+CPP-DSA-3",
+     "title": "C++: Non-Linear Data Structures",
+     "level_type": "Intermediate",
+     "partner": "Codio",
+     "language": "English",
+     "skill_names": [
+      "Object-Oriented Programming (OOP)",
+      "Data Structures",
+      "Algorithms",
+      "C++ (Programming Language)"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "Microsoft+MS-CC-116",
+     "title": "Finding Your Software Developer Role",
+     "level_type": "Introductory",
+     "partner": "Microsoft",
+     "language": "English",
+     "skill_names": [
+      "Programming Languages",
+      "Leadership",
+      "Software Development",
+      "Timelines",
+      "Full Stack Development",
+      "Software Quality (SQA/SQC)",
+      "Communication",
+      "Quality Assurance",
+      "Software Engineering",
+      "Front End (Software Engineering)"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "edX+EDX-RapidAI",
+     "title": "Vibe Coding: Rapid Prototyping with AI",
+     "level_type": "Intermediate",
+     "partner": "edX",
+     "language": "English",
+     "skill_names": [
+      "Curiosity",
+      "Artificial Intelligence",
+      "Prototyping",
+      "User Experience (UX)",
+      "Rapid Prototyping",
+      "Generative Artificial Intelligence",
+      "Software Engineering"
+     ],
+     "short_description": "<p>Leverage generative AI for rapid prototyping. Through hands-on exercises, you will learn how to effectively utilize AI tools to accelerate the prototyping process.</p>",
+     "full_description": "<p>Who is this for?<br />\nDesigners: Product designers, UX/UI designers, and other design professionals seeking to accelerate their prototyping process.<br />\nEngineers: Software engineers, hardware engineers, and other engineers interested in exploring the potential of generative AI for rapid prototyping.<br />\nEntrepreneurs: Innovators and entrepreneurs looking to quickly validate their ideas and bring their products to market faster.<br />\nAnyone interested in generative AI: Individuals with a curiosity about generative AI and its potential to transform the way we create and innovate.</p>"
+    },
+    {
+     "key": "GTx+JAVAAI101",
+     "title": "Generative AI Coding Readiness Check (Java)",
+     "level_type": "Introductory",
+     "partner": "The Georgia Institute of Technology",
+     "language": "English",
+     "skill_names": [
+      "Software Engineering",
+      "AI-Generated Code",
+      "Prompt Engineering",
+      "Java (Programming Language)",
+      "Debugging",
+      "Auditing",
+      "Software Development",
+      "Domain Knowledge",
+      "Artificial Intelligence",
+      "Generative Artificial Intelligence"
+     ],
+     "short_description": "<p>Kickstart your path to becoming a high-impact, AI-native software engineer. Build the skills to direct and evaluate Generative AI effectively in software development through Java diagnostics, prompt engineering, debugging, testing, and critique of AI-generated code.</p>",
+     "full_description": "<p>We believe that as AI continues to advance and automate what has historically been human work, your domain knowledge is what actually sets you apart. AI is as effective as the combination of its underlying capabilities and the instructions you give it. Good directions unlock more of what the model already knows. So, it performs best when you speak the exact technical language, frameworks, and logic of the field you're in. <strong>Deep fundamentals aren't being replaced; they are your superpower for writing high-level prompts and auditing complex outputs.</strong> To build a solid career in tech, you should periodically audit your own skill readiness as the problems you target and concepts you'll apply increase in complexity. <strong>We created this course as the first readiness check in your journey to become a high-impact AI-native software engineer</strong>.</p>\n<p>This self-paced course helps learners with foundational Java experience assess their preparedness for AI-assisted software development through guided diagnostics, practical exercises, and structured software evaluation activities.</p>\n<p>Through the course, learners will practice:</p>\n<ul>\n<li>Evaluating AI-generate"
+    },
+    {
+     "key": "DelftX+UnixTx",
+     "title": "Unix Tools: Data, Software and Production Engineering",
+     "level_type": "Intermediate",
+     "partner": "Delft University of Technology",
+     "language": "English",
+     "skill_names": [
+      "Command-Line Interface",
+      "DevOps",
+      "Prototyping",
+      "Unix Tools",
+      "File Systems",
+      "Unix",
+      "Workflow Management",
+      "Production Engineering",
+      "Log Files",
+      "Supercomputing"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "AI+mlops2x",
+     "title": "DevOps, DataOps, MLOps",
+     "level_type": "Introductory",
+     "partner": "Pragmatic AI Labs",
+     "language": "English",
+     "skill_names": [
+      "DataOps",
+      "Artificial Intelligence",
+      "Software Engineering",
+      "DevOps",
+      "GitHub Copilot",
+      "Machine Learning",
+      "MLOps (Machine Learning Operations)",
+      "Operations",
+      "Rust (Programming Language)"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "Microsoft+MS-AI-133",
+     "title": "Applied ML & AI",
+     "level_type": "Advanced",
+     "partner": "Microsoft",
+     "language": "English",
+     "skill_names": [
+      "Autoscaling",
+      "Accountability",
+      "Artificial Intelligence",
+      "Scalability",
+      "Feature Engineering",
+      "MLOps (Machine Learning Operations)",
+      "Machine Learning",
+      "Automation",
+      "Microsoft Azure",
+      "Software Engineering"
+     ],
+     "short_description": "<p>Build production-grade machine learning systems on Azure. Architect automated Machine Learning pipelines, optimize models with HyperDrive, deploy scalable scoring endpoints, and monitor for drift using Responsible AI and MLOps practices.</p>",
+     "full_description": "<p>A machine learning model that works in a notebook is not a model your organisation can rely on. The gap between a local prototype and a governed, scalable production system is where most Machine Learning projects stall, and closing it takes engineering skills that data science training rarely covers.</p>\n<p>This advanced course closes that gap on Azure. You begin by rebuilding monolithic code into reusable, component-based Azure Machine Learning pipelines with the SDK v2, automating ingestion, feature engineering, and training. You then run automated hyperparameter optimisation with HyperDrive, using Bayesian sampling and early-termination policies to find the best model without wasting compute.</p>\n<p>Next you take that model into production, packaging it into a containerised managed online endpoint with auto-scaling and load-balancing to hold availability under load. Finally you add accountability: the Responsible AI Dashboard and SHAP for interpretability and fairness, and Application Insights for continuous drift monitoring that triggers retraining before accuracy decays.</p>\n<p>This course is for technical individual contributors, including data analysts, software engineers"
+    },
+    {
+     "key": "AI+cloud4x",
+     "title": "Cloud Machine Learning Engineering and MLOps",
+     "level_type": "Introductory",
+     "partner": "Pragmatic AI Labs",
+     "language": "English",
+     "skill_names": [
+      "Applied Machine Learning",
+      "Software Engineering",
+      "Machine Learning",
+      "Scalability",
+      "Continuous Delivery",
+      "MLOps (Machine Learning Operations)",
+      "Application Programming Interface (API)",
+      "Artificial Intelligence",
+      "Automated Machine Learning"
+     ],
+     "short_description": "<p>Unleash the power of machine learning with engineering best practices, AutoML, and emerging technologies.</p>",
+     "full_description": "<ul>\n<li>Discover the principles of machine learning engineering and its role in building scalable, intelligent systems.</li>\n<li>Learn to develop machine learning applications using software engineering best practices and continuous delivery pipelines.</li>\n<li>Explore AutoML technologies for efficient model training with minimal coding effort.</li>\n<li>Gain hands-on experience with open-source and cloud-based AutoML solutions like Ludwig and Cloud AutoML.</li>\n<li>Dive into emerging topics such as MLOps, edge machine learning, and AI APIs for cutting-edge applications.</li>\n</ul>"
+    },
+    {
+     "key": "Microsoft+MS-101",
+     "title": "Python Data Science Foundations with Azure Notebooks",
+     "level_type": "Intermediate",
+     "partner": "Microsoft",
+     "language": "English",
+     "skill_names": [
+      "Software Engineering",
+      "Experimentation",
+      "Scripting",
+      "Azure Machine Learning",
+      "Pandas (Python Package)",
+      "Scalability",
+      "NumPy (Python Package)",
+      "Scikit-Learn (Python Package)",
+      "Data Manipulation",
+      "Microsoft Azure"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "Codio+intro-os-1",
+     "title": "Introduction to Operating Systems 1: Virtualization",
+     "level_type": "Intermediate",
+     "partner": "Codio",
+     "language": "English",
+     "skill_names": [
+      "Virtualization",
+      "Operating Systems",
+      "Scheduling",
+      "C (Programming Language)"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "StanfordOnline+SOE.YCSCS1",
+     "title": "Compilers",
+     "level_type": "Introductory",
+     "partner": "Stanford University",
+     "language": "English",
+     "skill_names": [
+      "Parsing",
+      "Runtime Systems",
+      "Program Optimization",
+      "Object-Oriented Programming (OOP)",
+      "Lexical Analysis",
+      "Semantics",
+      "Code Generation",
+      "C++ (Programming Language)",
+      "Programming Languages",
+      "Syntax"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "AI+rust4x",
+     "title": "Rust for DevOps",
+     "level_type": "Introductory",
+     "partner": "Pragmatic AI Labs",
+     "language": "English",
+     "skill_names": [
+      "CI/CD",
+      "Workflow Management",
+      "Chaos Engineering",
+      "Serverless Computing",
+      "Resilience",
+      "Exception Handling",
+      "Rust (Programming Language)",
+      "Docker (Software)",
+      "Cron",
+      "Github"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "CodeSignal+410",
+     "title": "Interviewer Training for Software Engineers",
+     "level_type": "Introductory",
+     "partner": "CodeSignal",
+     "language": "English",
+     "skill_names": [
+      "Software Engineering",
+      "Behavioral Interviewing"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "Microsoft+MS-108",
+     "title": "SQL and Data Querying for Business Insights",
+     "level_type": "Intermediate",
+     "partner": "Microsoft",
+     "language": "English",
+     "skill_names": [
+      "Relational Databases",
+      "Business Intelligence",
+      "SQL (Programming Language)",
+      "Window Function",
+      "Microsoft Azure",
+      "Transact-SQL",
+      "Operations Analytics",
+      "Outliers",
+      "Data Import/Export",
+      "Time Series"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "IBM+MALINTRO1.0",
+     "title": "Malware Analysis and Assembly Language Introduction",
+     "level_type": "Introductory",
+     "partner": "IBM",
+     "language": "English",
+     "skill_names": [
+      "Assembly Language",
+      "Malware Analysis",
+      "Human Readable",
+      "Information Gathering",
+      "Machine Assembly",
+      "C++ (Programming Language)",
+      "C (Programming Language)",
+      "Debugging"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "Microsoft+MS-CC-123",
+     "title": "Preparing For AI Engineer Interviews and Assignments",
+     "level_type": "Introductory",
+     "partner": "Microsoft",
+     "language": "English",
+     "skill_names": [
+      "Artificial Intelligence",
+      "Machine Learning",
+      "Systems Design",
+      "Software Engineering",
+      "Communication",
+      "Data Science",
+      "Problem Solving"
+     ],
+     "short_description": "<p>Prepare for AI Engineer interviews with a structured, end-to-end approach. This course covers technical concepts, problem-solving strategies, and communication skills needed to succeed across coding, machine learning, system design, and behavioral rounds.</p>",
+     "full_description": "<p>AI Engineer interviews demand more than technical knowledge—they require the ability to apply concepts under pressure, communicate decisions clearly, and demonstrate real-world engineering judgment. Preparing for AI Engineer Interviews provides a comprehensive, structured pathway to help candidates navigate this process with confidence.</p>\n<p>Participants begin by understanding how the AI Engineer role is defined and evaluated, including how it differs from adjacent roles such as Data Scientist and Software Engineer. The course then moves into the core components of interviews, covering machine learning fundamentals, coding challenges, and system design, with an emphasis on structured problem-solving and clear articulation of trade-offs.</p>\n<p>Beyond technical preparation, the course focuses on one of the most critical and often overlooked skills: communicating experience. Learners will develop the ability to present past projects effectively, explain technical decisions, and demonstrate impact in a way that resonates with interviewers.</p>\n<p>Finally, participants will build a personalized interview preparation strategy, incorporating mock interviews, targeted practice, and a"
+    },
+    {
+     "key": "Microsoft+MS-CC-127",
+     "title": "Preparing For Data Scientist Interviews and Assignments",
+     "level_type": "Introductory",
+     "partner": "Microsoft",
+     "language": "English",
+     "skill_names": [
+      "Data Analysis",
+      "Machine Learning",
+      "Statistics",
+      "Communication",
+      "Software Engineering",
+      "SQL (Programming Language)",
+      "Analytical Method",
+      "Business Continuity Planning",
+      "Data Science",
+      "Analytical Thinking"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "UCDavis+CRS1129",
+     "title": "Probability for Machine Learning",
+     "level_type": "Intermediate",
+     "partner": "University of California, Davis",
+     "language": "English",
+     "skill_names": [
+      "Forecasting",
+      "Performance Metric",
+      "Data Modeling",
+      "Algebra",
+      "Software Engineering",
+      "Uncertainty Modeling",
+      "Machine Learning",
+      "Intelligent Systems",
+      "Algorithms",
+      "Mathematics"
+     ],
+     "short_description": "<p><strong>Master probability fundamentals for machine learning.</strong> Explore probability rules, distributions, Bayes’ Theorem, and evaluation metrics like ROC and precision-recall curves. Build the skills to interpret uncertainty, model data, and make confident, data-driven decisions in ML applications.</p>",
+     "full_description": "<p><strong>Master probability to unlock machine learning’s full potential.</strong></p>\n<p>Probability is at the heart of every machine learning algorithm. Whether you’re classifying emails, predicting medical outcomes, or designing recommendation systems, understanding uncertainty is key to building smarter models. This course introduces probability step by step, showing you how core concepts translate into real-world ML applications.</p>\n<p>You’ll start with foundational rules and terminology, building a solid base for reasoning about uncertainty. From there, you’ll explore Bayes’ Theorem, probability distributions, and conditional probabilities—powerful tools that help algorithms “learn” from data. Along the way, you’ll discover how measures like ROC curves and precision-recall curves evaluate model performance, helping you choose the best approach for your data.</p>\n<p>Designed for learners worldwide, this course blends clear explanations, visual examples, and practice opportunities to make probability concepts engaging and practical. No advanced math background is required—just curiosity and basic familiarity with algebra or data analysis.</p>\n<p>By the end of this course, you"
+    },
+    {
+     "key": "HarvardX+TinyML3",
+     "title": "Deploying TinyML",
+     "level_type": "Intermediate",
+     "partner": "Harvard University",
+     "language": "English",
+     "skill_names": [
+      "Electrical Engineering",
+      "Machine Learning",
+      "Computer Science",
+      "Image Recognition",
+      "Deep Learning",
+      "Embedded Systems",
+      "Microcontrollers",
+      "ARM Architecture",
+      "Speech Recognition",
+      "Computer Vision"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "DelftX+QCST1x",
+     "title": "Machine Learning for Semiconductor Quantum Devices",
+     "level_type": "Advanced",
+     "partner": "Delft University of Technology",
+     "language": "English",
+     "skill_names": [
+      "Machine Learning",
+      "Artificial Intelligence",
+      "Computer Science",
+      "Physics",
+      "Quantum Computing",
+      "Quantum Dots",
+      "Research",
+      "Semiconductors",
+      "Data Analysis",
+      "Electrical Engineering"
+     ],
+     "short_description": "<p>Learn how to deploy artificial intelligence to control and calibrate semiconductor quantum computing chips</p>",
+     "full_description": "<p>Quantum computing is a fast-growing technology and semiconductor chips are one of the most promising platforms for quantum devices.<br />\nThe current bottleneck for scaling is the ability to control semiconductor computing chips quickly and efficiently.</p>\n<p>This course, aimed at students with experience equivalent to a master’s degree in physics, computer science or electrical engineering introduces hands-on machine learning examples for the application of machine learning in the field of semiconductor quantum devices. Examples include coarse tuning into the correct quantum dot regime, specific charge state tuning, fine tuning and unsupervised quantum dot data analysis.</p>\n<p>After the completion of the course students will be able to</p>\n<ol>\n<li>assess the suitability of machine learning for specific qubit tuning or control task and</li>\n<li>implement a machine learning prototype that is ready to be embedded into their experimental or theoretical quantum research and engineering workflow.</li>\n</ol>\n<p>This course is authored by experts from the QuTech research center at Delft University of Technology. In the center, scientists and engineers work together to drive research"
+    },
+    {
+     "key": "LouvainX+Louv25.1x",
+     "title": "Modeling and Simulation of Multibody Systems - Part I",
+     "level_type": "Advanced",
+     "partner": "Université catholique de Louvain",
+     "language": "English",
+     "skill_names": [
+      "Kinematics",
+      "Numerical Analysis",
+      "Motion Control Systems",
+      "Computer Simulation",
+      "Go (Programming Language)",
+      "Animations",
+      "MATLAB",
+      "Morphology",
+      "Basic Math",
+      "Python (Programming Language)"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "LouvainX+Louv25.2x",
+     "title": "Modeling and Simulation of Multibody Systems - Part II",
+     "level_type": "Advanced",
+     "partner": "Université catholique de Louvain",
+     "language": "English",
+     "skill_names": [
+      "Kinematics",
+      "Human Musculoskeletal System",
+      "Numerical Analysis",
+      "Motion Control Systems",
+      "Computer Simulation",
+      "Animations",
+      "Morphology",
+      "MATLAB",
+      "Basic Math",
+      "Inverse Kinematics"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "HarvardX+PH525.4x",
+     "title": "High-Dimensional Data Analysis",
+     "level_type": "Advanced",
+     "partner": "Harvard University",
+     "language": "English",
+     "skill_names": [
+      "Data Analysis",
+      "Matrix Algebra",
+      "Case Study",
+      "Prediction",
+      "Multidimensional Scaling",
+      "Data Visualization",
+      "Mathematics",
+      "Forecasting",
+      "Hierarchical Clustering",
+      "R (Programming Language)"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "HarvardX+PH525.2x",
+     "title": "Introduction to Linear Models and Matrix Algebra",
+     "level_type": "Intermediate",
+     "partner": "Harvard University",
+     "language": "English",
+     "skill_names": [
+      "Data Analysis",
+      "Design of Experiments (DOE)",
+      "Matrix Algebra",
+      "Bioconductor (Bioinformatics Software)",
+      "Software Engineering",
+      "Case Study",
+      "Statistical Inference",
+      "Linear Model",
+      "R (Programming Language)",
+      "Algebra"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "HarvardX+PH525.6x",
+     "title": "Case Studies in Functional Genomics",
+     "level_type": "Advanced",
+     "partner": "Harvard University",
+     "language": "English",
+     "skill_names": [
+      "Data Analysis",
+      "DNA Methylation",
+      "Exploratory Data Analysis",
+      "Matrix Algebra",
+      "Open-Source Software",
+      "Case Study",
+      "R (Programming Language)",
+      "Functional Genomics",
+      "Data Warehousing",
+      "Biology"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "HarvardX+PH525.5x",
+     "title": "Introduction to Bioconductor",
+     "level_type": "Intermediate",
+     "partner": "Harvard University",
+     "language": "English",
+     "skill_names": [
+      "Data Analysis",
+      "Next-Generation Sequencing",
+      "Matrix Algebra",
+      "Bioconductor (Bioinformatics Software)",
+      "Software Engineering",
+      "Case Study",
+      "Statistical Inference",
+      "Linear Model",
+      "DNA Sequencing",
+      "Functional Genomics"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "HarvardX+PH525.7x",
+     "title": "Advanced Bioconductor",
+     "level_type": "Advanced",
+     "partner": "Harvard University",
+     "language": "English",
+     "skill_names": [
+      "Data Analysis",
+      "Matrix Algebra",
+      "Case Study",
+      "Graphical User Interface",
+      "Data Integration",
+      "Transcription Factors",
+      "R (Programming Language)",
+      "Functional Genomics",
+      "Data Warehousing",
+      "Biology"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "HarvardX+PH525.3x",
+     "title": "Statistical Inference and Modeling for High-throughput Experiments",
+     "level_type": "Intermediate",
+     "partner": "Harvard University",
+     "language": "English",
+     "skill_names": [
+      "Data Analysis",
+      "Exploratory Data Analysis",
+      "Matrix Algebra",
+      "Next-Generation Sequencing",
+      "Case Study",
+      "Research",
+      "R (Programming Language)",
+      "Functional Genomics",
+      "Data Warehousing",
+      "Statistical Modeling"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "HarvardX+PH525.1x",
+     "title": "Statistics and R",
+     "level_type": "Intermediate",
+     "partner": "Harvard University",
+     "language": "English",
+     "skill_names": [
+      "Data Analysis",
+      "Matrix Algebra",
+      "Bioconductor (Bioinformatics Software)",
+      "Software Engineering",
+      "Case Study",
+      "Statistical Inference",
+      "Linear Model",
+      "Statistical Analysis",
+      "R (Programming Language)",
+      "Functional Genomics"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "AlaskaX+MINING1x",
+     "title": "Mining Engineering Principles: Exploration to Innovation",
+     "level_type": "Introductory",
+     "partner": "University of Alaska Fairbanks",
+     "language": "English",
+     "skill_names": [
+      "Mining Engineering",
+      "Augmented Reality",
+      "Robotics",
+      "Case Study",
+      "Operations",
+      "Civil Engineering",
+      "Internet Of Things (IoT)",
+      "Sustainable Development",
+      "Electrical Engineering",
+      "Data Analysis"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "DelftX+PUP01x",
+     "title": "Pre-University Physics",
+     "level_type": "Introductory",
+     "partner": "Delft University of Technology",
+     "language": "English",
+     "skill_names": [
+      "Aerospace Engineering",
+      "Applied Physics",
+      "Physics",
+      "Mechanical Engineering",
+      "Electrical Engineering"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "EPFLx+EE-100Bx",
+     "title": "Electrotechnique I",
+     "level_type": "Introductory",
+     "partner": "École polytechnique fédérale de Lausanne",
+     "language": "English",
+     "skill_names": [
+      "Current Source",
+      "French Language",
+      "Inductors",
+      "Calculations",
+      "Electricity",
+      "Voltage",
+      "Electrical Networks",
+      "Electric Power Distribution",
+      "Electrical Engineering"
+     ],
+     "short_description": "",
+     "full_description": ""
+    },
+    {
+     "key": "CodeSignal+535",
+     "title": "Building a 12-Factor Agents App in Python",
+     "level_type": "Advanced",
+     "partner": "CodeSignal",
+     "language": "English",
+     "skill_names": [
+      "Software Engineering",
+      "Scalability",
+      "RESTful API",
+      "Language Models",
+      "Application Programming Interface (API)",
+      "Management",
+      "Python (Programming Language)"
+     ],
+     "short_description": "<p>Build a production-oriented agentic application in Python using the 12-Factor Agents methodology, from structured tool use and stateless execution to persistent APIs and human-in-the-loop workflows.</p>",
+     "full_description": "<p>This advanced course path explores the 12-Factor Agents methodology for creating maintainable, scalable, and reliable agentic applications in Python. You will learn how targeted language model integration works alongside established software engineering practices. You will develop structured outputs, validated tool schemas, explicit execution loops, context management, and error-driven self-correction. You will also create stateless reducer-style agents that externalize prompts and unify execution with business state. Finally, you will expose agents through REST APIs, orchestrate background tasks, persist state in a database, and implement pause-and-resume controls. The path is designed for experienced Python developers building agent services that support multiple interfaces and human-in-the-loop workflows.</p>"
+    }
+   ]
+  }
+ }
+}
