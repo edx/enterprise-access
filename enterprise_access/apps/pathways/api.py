@@ -80,8 +80,15 @@ REMOVE_WORDS_IF_NO_RESULTS = 'allOptional'
 
 # The only jobs-index attributes this pipeline consumes. ``external_id`` is the Lightcast
 # job identifier and is the career's identity everywhere downstream -- names are neither
-# unique nor stable in the taxonomy.
-CAREER_ATTRIBUTES = ['external_id', 'name', 'skills', 'industry_names']
+# unique nor stable in the taxonomy. ``description`` is Lightcast's prose account of the
+# work, read by the pathway experiments (the second selection prompt and judge rubric); it
+# is carried on the career internally and is not part of the careers endpoint's response.
+CAREER_ATTRIBUTES = ['external_id', 'name', 'skills', 'industry_names', 'description']
+
+# A career description is kept to this many characters. Lightcast's run to a few hundred;
+# the cap only keeps an outlier from bloating a persisted step, as the course descriptions'
+# cap does. Its consumers show fewer still.
+CAREER_DESCRIPTION_CHARS = 1200
 
 # Separators that only ever appear in a parsing artifact ("SQL & Python", "Excel +
 # Tableau"), never in a Lightcast skill name. Filtering on one boosts nothing and spends
@@ -214,6 +221,7 @@ def career_candidate_from_hit(hit: dict[str, Any]) -> dict[str, Any] | None:
         return None
 
     raw_skills = hit.get('skills') or []
+    description = hit.get('description')
     return {
         'external_id': external_id,
         'name': name,
@@ -221,6 +229,7 @@ def career_candidate_from_hit(hit: dict[str, Any]) -> dict[str, Any] | None:
             skill.get('name') for skill in raw_skills if isinstance(skill, dict)
         ),
         'industries': coerce_name_list(hit.get('industry_names')),
+        'description': description.strip()[:CAREER_DESCRIPTION_CHARS] if isinstance(description, str) else '',
     }
 
 

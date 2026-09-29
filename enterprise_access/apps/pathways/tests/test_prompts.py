@@ -7,10 +7,12 @@ other test in this app mocks the model response, which means those tests encode 
 assumption about its shape -- and an assumption that is wrong fails identically in all of
 them.
 """
+import hashlib
 import json
 
 from django.test import TestCase
 
+from enterprise_access.apps.pathways import judging, pathway_variants, prompts
 from enterprise_access.apps.pathways.prompts import CANDIDATE_RERANK_OUTPUT_SCHEMA, CANDIDATE_RERANK_SYSTEM_PROMPT
 from enterprise_access.apps.pathways.reranking import FALLBACK_SYSTEM_PROMPT, parse_rerank_response
 from enterprise_access.apps.prompts.api import build_system_prompt, compose_system_prompt
@@ -219,3 +221,162 @@ class TestSeededCandidateRerankPrompt(TestCase):
         )
 
         self.assertIn('Edit freely', prompt.notes)
+
+
+# SHA-256 of each experiment instrument's text as it stood before the v2 prompts were added
+# (``git show HEAD:enterprise_access/apps/pathways/prompts.py``, plus the uncommitted shape
+# sentence). A failure here means a calibrated or measured prompt changed under its own name:
+# revert it and add the change as a new constant instead.
+V1_TEXT_DIGESTS = {
+    'CANDIDATE_RERANK_SYSTEM_PROMPT': '2aba48a126d1cff8de150f94f5b96e1d69f99cf05e432c1d49df0d7d814886c5',
+    'PATHWAY_SELECTION_SYSTEM_PROMPT': '7c1395124f1a08ecc9b64d2a349a62e0c3b42f9029ba8575be8b9debccf0aca6',
+    'SELECTION_EXACT_SIZE_INSTRUCTION': '8caac7f4546adecbd5eb4cfd067671a35d38c098c765021d0ae28b3ce5269edd',
+    'SELECTION_MODEL_SIZED_INSTRUCTION': '33c1cbbd4eb79b4f7318fe598b7681417530915f8737b9c56c63facf8b657f99',
+    'SELECTION_SHAPE_INSTRUCTION': 'c3c6b4fdbf1e39a209d7bd93d1ead820a3a88d2ba1fc289dc1c33e8dfb2c1c65',
+    'PATHWAY_JUDGE_SYSTEM_PROMPT': 'a089fc64eff2177570b8639db210e686484f99edc3cbf34fdc64af8b6b840b57',
+}
+V1_SCHEMA_DIGESTS = {
+    'PATHWAY_JUDGE_OUTPUT_SCHEMA': 'c9150c7b3dfa511f85ac7e6d05a0f84856ff9019f8a82d88f75f66820933b04c',
+    'PATHWAY_SELECTION_OUTPUT_SCHEMA': 'b4525be2610e62c2371283afb3fe0256cd5ea80a6d92f975547614ef520f9798',
+    'CANDIDATE_RERANK_OUTPUT_SCHEMA': 'b522024e5db3a7bc36eb31785fbdd92d67d8dd61510cac14da6c010d31229cdc',
+}
+# The system prompts the v1 arms and the v1 judge actually send, composed with their schemas.
+V1_COMPOSED_DIGESTS = {
+    'judge': '383eac77cb03477c3a1360bf71388c39f84df0bd9720d5b1bec940e042a1a0e1',
+    'model_pick:3': '7ab646bf23a18009fc60dfdaca06e03e653840756961d2a18d805f469129c8d4',
+    'model_sized': '46d9771fca085a45f04d542fdd6184992b4d4ca1aacae556327af6319764095d',
+    'shape_pick:2/2/1': '774bcccc10f0ad7d8f4c21ae9f97311da3d514521b388f67f2322d7ca3e24d66',
+}
+
+# Names the v2 rules must not lean on: they are general rules, not a list of exceptions.
+NAMED_THINGS = (
+    'IBM', 'Microsoft', 'Google', 'Amazon', 'AWS', 'Salesforce', 'Excel', 'Python', 'SQL',
+    'Tableau', 'Harvard', 'MIT', 'edX', 'Analyst', 'Nurse', 'Project Manager', 'Engineer',
+)
+
+
+def _digest(text):
+    return hashlib.sha256(text.encode('utf-8')).hexdigest()
+
+
+class TestV1InstrumentsAreUnchanged(TestCase):
+    """
+    Scenario: Adding v2 prompts leaves every v1 prompt byte-identical.
+
+    The v1 selection prompt is what ``model_pick``, ``model_sized`` and ``shape_pick`` were
+    measured with, and the v1 judge is the calibrated instrument; changing either would make
+    every earlier result incomparable without saying so.
+    """
+
+    def test_the_v1_prompt_texts_are_byte_identical(self):
+        for name, digest in V1_TEXT_DIGESTS.items():
+            with self.subTest(name):
+                self.assertEqual(_digest(getattr(prompts, name)), digest)
+
+    def test_the_v1_output_schemas_are_unchanged(self):
+        for name, digest in V1_SCHEMA_DIGESTS.items():
+            with self.subTest(name):
+                self.assertEqual(_digest(json.dumps(getattr(prompts, name), sort_keys=True)), digest)
+
+    def test_the_composed_v1_system_prompts_are_unchanged(self):
+        composed = {
+            'judge': judging.JUDGE_SYSTEM_PROMPT,
+            'model_pick:3': pathway_variants.selection_system_prompt(3),
+            'model_sized': pathway_variants.selection_system_prompt(None),
+            'shape_pick:2/2/1': pathway_variants.selection_system_prompt(5, (2, 2, 1)),
+        }
+        for name, digest in V1_COMPOSED_DIGESTS.items():
+            with self.subTest(name):
+                self.assertEqual(_digest(composed[name]), digest)
+
+
+class TestSelectionPromptV2(TestCase):
+    """
+    Scenario: The second selection prompt keeps v1's frame and adds general rules.
+    """
+
+    def test_it_is_a_separate_constant(self):
+        self.assertNotEqual(prompts.PATHWAY_SELECTION_SYSTEM_PROMPT_V2, prompts.PATHWAY_SELECTION_SYSTEM_PROMPT)
+
+    def test_it_keeps_v1s_frame(self):
+        v2 = prompts.PATHWAY_SELECTION_SYSTEM_PROMPT_V2
+        for kept in (
+            '{size_instruction}',
+            'Choose for what a course TEACHES, not for whether its title resembles the job title.',
+            'Pick at most 2 courses from any one provider',
+            'Use ONLY keys that appear in the',
+            'Never invent, correct or reformat a key.',
+            'Return the chosen keys in the order they should be taken',
+            'Return JSON only, with no prose before or after it.',
+        ):
+            with self.subTest(kept):
+                self.assertIn(kept, v2)
+
+    def test_it_states_the_five_rules_and_the_fixed_courses(self):
+        v2 = ' '.join(prompts.PATHWAY_SELECTION_SYSTEM_PROMPT_V2.split())
+        for rule in (
+            "transferable skills over one vendor's product or one institution's own practice",
+            'unless the career is defined by that tool',
+            'Never choose two courses that cover the same ground',
+            'leading people, specialist depth, or individual contribution',
+            'later courses should build on earlier ones and stay on the same programming language',
+            'one a broad foundation and the other a more focused course',
+            'already_chosen are fixed and count toward the pathway',
+            'a whole family of job titles',
+        ):
+            with self.subTest(rule):
+                self.assertIn(rule.lower(), v2.lower())
+
+    def test_it_names_no_course_provider_or_career(self):
+        for name in NAMED_THINGS:
+            with self.subTest(name):
+                self.assertNotIn(name, prompts.PATHWAY_SELECTION_SYSTEM_PROMPT_V2)
+
+    def test_its_size_slot_takes_the_shape_sentence(self):
+        rendered = prompts.PATHWAY_SELECTION_SYSTEM_PROMPT_V2.format(size_instruction='<SIZE>')
+
+        self.assertIn('\n<SIZE>\n', rendered)
+
+
+class TestJudgePromptV2(TestCase):
+    """
+    Scenario: The v2 rubric is a new instrument on v1's scale, judging quality only.
+    """
+
+    def test_it_is_a_separate_constant_on_the_same_verdict_scale(self):
+        self.assertNotEqual(prompts.PATHWAY_JUDGE_SYSTEM_PROMPT_V2, prompts.PATHWAY_JUDGE_SYSTEM_PROMPT)
+        self.assertEqual(
+            prompts.PATHWAY_JUDGE_OUTPUT_SCHEMA_V2['properties']['verdict'],
+            prompts.PATHWAY_JUDGE_OUTPUT_SCHEMA['properties']['verdict'],
+        )
+
+    def test_the_schema_asks_for_exactly_the_fields_the_parser_reads(self):
+        course = prompts.PATHWAY_JUDGE_OUTPUT_SCHEMA_V2['properties']['courses']['items']
+
+        self.assertEqual(set(course['properties']), {'key', 'on_topic', *judging.V2_FLAG_ORDER})
+        self.assertEqual(set(course['required']), set(course['properties']))
+        for flag in prompts.PATHWAY_JUDGE_V2_BOOLEAN_FLAGS:
+            self.assertEqual(course['properties'][flag], {'type': 'boolean'})
+        self.assertEqual(course['properties']['redundant_with']['type'], 'string')
+
+    def test_the_prompt_names_every_flag_and_keeps_v1s_topical_test(self):
+        v2 = prompts.PATHWAY_JUDGE_SYSTEM_PROMPT_V2
+        for phrase in ('on_topic', *judging.V2_FLAG_ORDER, 'Being introductory is NOT a reason',
+                       'Be willing to say bad', 'Return only the requested JSON.'):
+            with self.subTest(phrase):
+                self.assertIn(phrase, v2)
+
+    def test_it_explains_the_pathway_serves_a_family(self):
+        self.assertIn('ONE pathway has to\nserve', prompts.PATHWAY_JUDGE_SYSTEM_PROMPT_V2)
+
+    def test_it_judges_quality_not_business_policy(self):
+        v2 = ' '.join(prompts.PATHWAY_JUDGE_SYSTEM_PROMPT_V2.split())
+
+        self.assertIn('Judge teaching quality and fit only', v2)
+        for name in NAMED_THINGS + ('AI', 'artificial intelligence', 'region'):
+            with self.subTest(name):
+                self.assertNotIn(name, v2)
+
+    def test_the_composed_prompt_carries_the_v2_schema(self):
+        self.assertTrue(judging.JUDGE_SYSTEM_PROMPT_V2.startswith(prompts.PATHWAY_JUDGE_SYSTEM_PROMPT_V2))
+        self.assertIn('"redundant_with"', judging.JUDGE_SYSTEM_PROMPT_V2)

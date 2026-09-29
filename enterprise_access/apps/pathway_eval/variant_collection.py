@@ -12,6 +12,10 @@ Like the harness it produces traces, not conclusions, and every run stays inspec
 workflow record. Cost is bounded the same way: ``max_calls`` is checked before each career
 against an upper bound of the model calls that career can issue, and ``dry_run`` issues
 none.
+
+Two opt-ins reach the workflow unchanged: an editorial policy (the active one, or a fixed
+snapshot of one) and the judge rubrics to score under. The career's Lightcast description,
+read at lookup, is passed along for the arms and rubric that show it.
 """
 import csv
 import json
@@ -20,11 +24,19 @@ from dataclasses import dataclass, field, fields
 
 from enterprise_access.apps.api_client.algolia_client import AlgoliaSearchClient
 from enterprise_access.apps.pathways import api as pathways_api
-from enterprise_access.apps.pathways.models import AssemblePathwayOutput, PathwayAssemblyWorkflow
+from enterprise_access.apps.pathways.judging import RUBRIC_V1, RUBRIC_V2, normalise_rubrics
+from enterprise_access.apps.pathways.models import (
+    AssemblePathwayOutput,
+    AssemblePathwayStep,
+    PathwayAssemblyWorkflow,
+    RerankCandidatesOutput,
+    RetrieveCandidatesOutput
+)
 from enterprise_access.apps.pathways.pathway_assembly import LEVEL_ORDER
 from enterprise_access.apps.pathways.pathway_variants import (
     DEFAULT_PATHWAY_LABEL,
     estimated_model_calls,
+    resolve_shape_request,
     resolve_variant_request
 )
 from enterprise_access.apps.workflow.exceptions import UnitOfWorkException
@@ -117,8 +129,16 @@ class CareerRun:
     pathway: dict | None = None
     judgement: dict | None = None
     variants: list = field(default_factory=list)
+    #: The candidate window in the relevance order the variants were built from. Recorded
+    #: only when asked for, since it is most of a run's size.
+    candidates: list = field(default_factory=list)
     skipped_reason: str = ''
     error: str = ''
+    #: What the workflow was told about the career, as the lookup found it.
+    career_description: str = ''
+    career_skills: list = field(default_factory=list)
+    #: The delivered pathway's v2 judgement, when the collection judged under v2.
+    judgement_v2: dict | None = None
 
     def to_dict(self) -> dict:
         """Plain dict for JSON export."""
@@ -130,9 +150,13 @@ class CareerRun:
             'workflow_uuid': str(self.workflow_uuid or ''),
             'pathway': self.pathway,
             'judgement': self.judgement,
+            'judgement_v2': self.judgement_v2,
             'variants': list(self.variants),
+            'candidates': list(self.candidates),
             'skipped_reason': self.skipped_reason,
             'error': self.error,
+            'career_description': self.career_description,
+            'career_skills': list(self.career_skills),
         }
 
     @classmethod
@@ -166,17 +190,20 @@ class CareerRun:
         if self.pathway is not None:
             rows.append(self._row(
                 label=DEFAULT_PATHWAY_LABEL, strategy=DEFAULT_PATHWAY_LABEL, requested_size=5,
-                pathway=self.pathway, judgement=self.judgement,
+                pathway=self.pathway, judgement=self.judgement, judgement_v2=self.judgement_v2,
             ))
         for variant in self.variants:
             rows.append(self._row(
                 label=variant.get('label', ''), strategy=variant.get('strategy', ''),
                 requested_size=variant.get('requested_size'), pathway=variant,
-                judgement=variant.get('judgement'),
+                judgement=variant.get('judgement'), shape=variant.get('shape', ''),
+                judgement_v2=variant.get('judgement_v2'),
             ))
         return rows
 
-    def _row(self, *, label, strategy, requested_size, pathway, judgement) -> dict:
+    def _row(self, *, label, strategy, requested_size, pathway, judgement, shape='',
+             judgement_v2=None) -> dict:
+        """One pathway as a flat CSV row, with its v1 and (when judged) v2 verdicts."""
         courses = pathway.get('courses') or []
         mix = pathway.get('level_mix') or {}
         judgement = judgement or {}
@@ -187,6 +214,7 @@ class CareerRun:
             'label': label,
             'strategy': strategy,
             'requested_size': '' if requested_size is None else requested_size,
+            'shape': shape or '',
             'size': len(courses),
             'complete': bool(pathway.get('complete')),
             'level_mix': '/'.join(str(mix.get(level, 0)) for level in LEVEL_ORDER),
@@ -198,13 +226,19 @@ class CareerRun:
             'course_titles': ' | '.join(course.get('title', '') for course in courses),
             'violations': '; '.join(pathway.get('violations') or []),
             'error': pathway.get('error', '') or judgement.get('error', ''),
+            'seats': ' | '.join(
+                f"{seat.get('key', '')} ({seat.get('rule', '')})" for seat in pathway.get('seats') or []
+            ),
+            'verdict_v2': (judgement_v2 or {}).get('verdict', ''),
         }
 
 
+# ``seats`` and ``verdict_v2`` are appended rather than placed beside their kin, so a reader
+# keyed on the earlier column order is unaffected.
 CSV_COLUMNS = (
-    'career', 'external_id', 'workflow_uuid', 'label', 'strategy', 'requested_size', 'size',
+    'career', 'external_id', 'workflow_uuid', 'label', 'strategy', 'requested_size', 'shape', 'size',
     'complete', 'level_mix', 'verdict', 'n_on_topic', 'judge_reason', 'same_as',
-    'course_keys', 'course_titles', 'violations', 'error',
+    'course_keys', 'course_titles', 'violations', 'error', 'seats', 'verdict_v2',
 )
 
 
@@ -219,8 +253,18 @@ class VariantCollector:
     def __init__(self, *, variant_sizes=(), variant_strategies=(), judge_enabled: bool = False,
                  rerank_enabled: bool = True, enrich_enabled: bool = False,
                  customer_uuid: str = '', allow_unscoped: bool = False,
-                 max_calls: int | None = None, dry_run: bool = False, lookup=None):
+                 max_calls: int | None = None, dry_run: bool = False, lookup=None,
+                 variant_shapes=(), include_candidates: bool = False, editorial_policy: bool = False,
+                 editorial_snapshot: dict | None = None, judge_rubrics=(RUBRIC_V1,)):
         self.sizes, self.strategies = resolve_variant_request(variant_sizes, variant_strategies)
+        self.shapes, shape_strategies = resolve_shape_request(variant_shapes, variant_strategies)
+        self.strategies = self.strategies + shape_strategies
+        self.judge_rubrics = normalise_rubrics(judge_rubrics)
+        if editorial_snapshot is not None and not isinstance(editorial_snapshot, dict):
+            raise ValueError('An editorial snapshot is an EditorialPolicy.to_dict() mapping.')
+        self.editorial_policy = bool(editorial_policy)
+        self.editorial_snapshot = dict(editorial_snapshot or {})
+        self.include_candidates = include_candidates
         self.judge_enabled = judge_enabled
         self.rerank_enabled = rerank_enabled
         self.enrich_enabled = enrich_enabled
@@ -237,11 +281,13 @@ class VariantCollector:
         """
         Upper bound on the paid model calls one career can issue.
 
-        The re-rank and each model arm and judgement; rationale enrichment when enabled. A
-        career with no candidates issues none of them, which is why this is a bound.
+        The re-rank and each model arm and judgement, under every rubric; rationale
+        enrichment when enabled. A career with no candidates issues none of them, which is
+        why this is a bound.
         """
         calls = estimated_model_calls(
             sizes=self.sizes, strategies=self.strategies, judge_enabled=self.judge_enabled,
+            shapes=self.shapes, judge_rubrics=self.judge_rubrics,
         )
         return calls + int(self.rerank_enabled) + int(self.enrich_enabled)
 
@@ -309,6 +355,8 @@ class VariantCollector:
         run.career_name = career['name']
         run.external_id = career.get('external_id', '')
         run.skill_count = len(career['skills'])
+        run.career_description = career.get('description') or ''
+        run.career_skills = list(career['skills'])
         workflow = PathwayAssemblyWorkflow.objects.create(
             input_data=PathwayAssemblyWorkflow.generate_input_dict(
                 career_name=career['name'],
@@ -320,6 +368,11 @@ class VariantCollector:
                 variant_sizes=self.sizes,
                 variant_strategies=self.strategies,
                 judge_enabled=self.judge_enabled,
+                variant_shapes=self.shapes,
+                career_description=run.career_description,
+                editorial_policy=self.editorial_policy,
+                editorial_snapshot=self.editorial_snapshot,
+                judge_rubrics=self.judge_rubrics,
             ),
         )
         run.workflow_uuid = workflow.uuid
@@ -334,7 +387,31 @@ class VariantCollector:
         # pathway is still a data point here, where the endpoint would report none.
         run.pathway = (workflow.output_data or {}).get(AssemblePathwayOutput.KEY)
         run.judgement = workflow.default_judgement()
+        if RUBRIC_V2 in self.judge_rubrics:
+            run.judgement_v2 = workflow.default_judgement(RUBRIC_V2)
         run.variants = workflow.variants()
+        if self.include_candidates:
+            run.candidates = ordered_candidates(workflow)
+
+
+def ordered_candidates(workflow) -> list[dict]:
+    """
+    A finished run's candidate window, in the relevance order its variants were built from.
+
+    Read from the persisted step outputs and ordered by ``AssemblePathwayStep``'s own rule, so
+    this is the order assembly and every variant arm saw, not a reconstruction of it.
+    """
+    output = workflow.output_data or {}
+    retrieved = output.get(RetrieveCandidatesOutput.KEY)
+    if not retrieved:
+        return []
+    candidates = RetrieveCandidatesOutput.from_dict(retrieved).courses
+    reranked = output.get(RerankCandidatesOutput.KEY)
+    rerank_output = RerankCandidatesOutput.from_dict(reranked) if reranked else None
+    return [
+        candidate.to_dict()
+        for candidate in AssemblePathwayStep.order_candidates(candidates, rerank_output)
+    ]
 
 
 def append_checkpoint(path, run: CareerRun) -> None:
@@ -380,7 +457,9 @@ def summarise(runs) -> list[dict]:
     Outcome counts per pathway label, delivered pathway first.
 
     ``judged`` counts real verdicts; a label that was never judged, or whose judgement
-    failed, shows in ``unjudged`` rather than being folded into a verdict.
+    failed, shows in ``unjudged`` rather than being folded into a verdict. The v2 rubric's
+    verdicts are counted apart, in ``good_v2``, ``weak_v2`` and ``bad_v2``, and never pooled
+    with v1's: they are different instruments.
     """
     by_label: dict = {}
     for run in runs:
@@ -388,12 +467,15 @@ def summarise(runs) -> list[dict]:
             stats = by_label.setdefault(row['label'], {
                 'label': row['label'], 'pathways': 0, 'complete': 0, 'courses': 0,
                 'good': 0, 'weak': 0, 'bad': 0, 'unjudged': 0,
+                'good_v2': 0, 'weak_v2': 0, 'bad_v2': 0,
             })
             stats['pathways'] += 1
             stats['complete'] += int(row['complete'])
             stats['courses'] += row['size']
             verdict = row['verdict']
             stats[verdict if verdict in ('good', 'weak', 'bad') else 'unjudged'] += 1
+            if row['verdict_v2'] in ('good', 'weak', 'bad'):
+                stats[f"{row['verdict_v2']}_v2"] += 1
 
     def order(label):
         return (label != DEFAULT_PATHWAY_LABEL, label.split(':')[0], label)

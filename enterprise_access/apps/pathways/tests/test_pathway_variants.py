@@ -7,6 +7,8 @@ two model arms differ in their size rule and nothing else; and a failed arm is r
 not raised.
 """
 import json
+from dataclasses import asdict, dataclass
+from unittest import mock
 
 import ddt
 from django.test import TestCase, override_settings
@@ -18,25 +20,50 @@ from enterprise_access.apps.pathways.model_backends import (
 )
 from enterprise_access.apps.pathways.pathway_assembly import eligible_candidates
 from enterprise_access.apps.pathways.pathway_variants import (
+    ALL_STRATEGIES,
     DEFAULT_VARIANT_SIZES,
+    SELECTION_V2_CAREER_DESCRIPTION_CHARS,
+    SELECTION_V2_FAMILY_TITLES_SHOWN,
+    SELECTION_V2_SKILL_NAMES_SHOWN,
+    SHAPE_STRATEGIES,
     STRATEGY_MODEL_PICK,
     STRATEGY_MODEL_SIZED,
     STRATEGY_RANKED_CUT,
+    STRATEGY_SHAPE_CUT,
+    STRATEGY_SHAPE_PICK,
+    STRATEGY_SHAPE_PICK_V2,
+    VARIANT_STRATEGIES,
     Variant,
     apply_selection,
+    build_selection_content,
+    build_selection_content_v2,
     build_variants,
     estimated_model_calls,
     get_variant_backend,
     model_select,
+    normalise_shapes,
     normalise_sizes,
     normalise_strategies,
+    parse_shape,
+    place_seats,
+    policy_record,
     ranked_cut,
+    resolve_editorial_policy,
+    resolve_shape_request,
     resolve_variant_request,
     selection_system_prompt,
+    selection_system_prompt_v2,
+    shape_breakdown,
+    shape_cut,
     variant_count,
     variant_label
 )
-from enterprise_access.apps.pathways.prompts import SELECTION_EXACT_SIZE_INSTRUCTION, SELECTION_MODEL_SIZED_INSTRUCTION
+from enterprise_access.apps.pathways.prompts import (
+    PATHWAY_SELECTION_SYSTEM_PROMPT_V2,
+    SELECTION_EXACT_SIZE_INSTRUCTION,
+    SELECTION_MODEL_SIZED_INSTRUCTION,
+    SELECTION_SHAPE_INSTRUCTION
+)
 from enterprise_access.apps.pathways.tests.test_reranking import FakeBackend
 
 
@@ -408,3 +435,726 @@ class TestBuildVariants(TestCase):
                 sizes=[6], strategies=[STRATEGY_MODEL_PICK], trace_prefix='wf', backend=backend,
             )
         self.assertEqual(backend.calls, [])
+
+
+# Two per rung, from four providers, in relevance order.
+SHAPED_WINDOW = [
+    candidate('I+1', partner='P1'),
+    candidate('M+1', level='Intermediate', partner='P1'),
+    candidate('I+2', partner='P1'),
+    candidate('A+1', level='Advanced', partner='P2'),
+    candidate('M+2', level='Intermediate', partner='P3'),
+    candidate('I+3', partner='P4'),
+]
+
+
+@ddt.ddt
+class TestShapeRequests(TestCase):
+    """
+    Scenario: A level shape is read the same way by every caller, and priced before it runs.
+    """
+
+    def test_a_shape_reads_as_courses_per_rung(self):
+        self.assertEqual(parse_shape('2/2/1'), (2, 2, 1))
+        self.assertEqual(parse_shape(' 0/2/0 '), (0, 2, 0))
+
+    @ddt.data('2/2', '2-0-0', 'a/0/0', '1/0/0', '2/2/2', '')
+    def test_a_malformed_or_out_of_range_shape_is_rejected(self, shape):
+        with self.assertRaises(ValueError):
+            parse_shape(shape)
+
+    def test_shapes_are_canonicalised_and_deduplicated_in_request_order(self):
+        self.assertEqual(normalise_shapes(['0/2/0', '2/0/0', ' 0/2/0']), ['0/2/0', '2/0/0'])
+
+    def test_shapes_alone_run_the_free_shape_arm(self):
+        self.assertEqual(resolve_shape_request(['2/0/0'], []), (['2/0/0'], [STRATEGY_SHAPE_CUT]))
+
+    def test_a_shape_arm_without_a_shape_is_refused(self):
+        with self.assertRaisesRegex(ValueError, 'at least one shape'):
+            resolve_shape_request([], [STRATEGY_SHAPE_PICK])
+
+    def test_the_size_and_shape_requests_each_keep_their_own_arms(self):
+        strategies = [STRATEGY_MODEL_SIZED, STRATEGY_SHAPE_PICK]
+
+        self.assertEqual(resolve_variant_request([], strategies)[1], [STRATEGY_MODEL_SIZED])
+        self.assertEqual(resolve_shape_request(['2/0/0'], strategies)[1], [STRATEGY_SHAPE_PICK])
+
+    def test_a_shape_only_request_asks_for_no_sizes(self):
+        self.assertEqual(resolve_variant_request([], [STRATEGY_SHAPE_CUT]), ([], []))
+
+    def test_the_api_strategies_do_not_include_the_shape_arms(self):
+        self.assertNotIn(STRATEGY_SHAPE_CUT, VARIANT_STRATEGIES)
+        self.assertNotIn(STRATEGY_SHAPE_PICK, VARIANT_STRATEGIES)
+
+    def test_shape_pick_costs_one_call_per_shape_and_shape_cut_none(self):
+        shapes = ['2/0/0', '0/2/0', '2/2/1']
+        strategies = [STRATEGY_SHAPE_CUT, STRATEGY_SHAPE_PICK]
+
+        self.assertEqual(variant_count([], strategies, shapes), 6)
+        self.assertEqual(estimated_model_calls(sizes=[], strategies=strategies, shapes=shapes,
+                                               judge_enabled=False), 3)
+        self.assertEqual(estimated_model_calls(sizes=[], strategies=strategies, shapes=shapes,
+                                               judge_enabled=True), 3 + 1 + 6)
+
+    def test_a_shape_label_names_the_strategy_and_shape(self):
+        self.assertEqual(variant_label(STRATEGY_SHAPE_PICK, 5, (2, 2, 1)), 'shape_pick:2/2/1')
+
+
+class TestShapeCut(TestCase):
+    """
+    Scenario: The free shape arm fills each rung from the relevance order and never backfills.
+    """
+
+    def test_it_fills_each_rung_in_relevance_order(self):
+        variant = shape_cut(eligible(SHAPED_WINDOW), (2, 0, 0))
+
+        self.assertEqual(keys_of(variant), ['I+1', 'I+2'])
+        self.assertTrue(variant.is_complete)
+        self.assertEqual(variant.label, 'shape_cut:2/0/0')
+        self.assertEqual(variant.violations(), [])
+
+    def test_a_ladder_is_delivered_easiest_first(self):
+        variant = shape_cut(eligible(SHAPED_WINDOW), (1, 1, 1))
+
+        self.assertEqual([c.level_type for c in variant.courses], ['Introductory', 'Intermediate', 'Advanced'])
+        self.assertTrue(variant.is_complete)
+
+    def test_the_scarce_rung_claims_the_provider_first(self):
+        # P1 supplies the most relevant intro AND the only intermediate course. The
+        # intermediate rung is scarcer (1 against 3), so it takes M+1 first, and the intro rung
+        # skips I+2 at the cap and takes I+4 -- rather than spending both of P1's places on
+        # intro courses and leaving the intermediate rung empty.
+        window = SHAPED_WINDOW[:3] + [candidate('I+4', partner='P5')]
+        variant = shape_cut(eligible(window), (2, 1, 0))
+
+        self.assertEqual(keys_of(variant), ['I+1', 'I+4', 'M+1'])
+        self.assertEqual(variant.dropped, {'provider_cap': 1})
+
+    def test_an_empty_rung_leaves_the_variant_short_rather_than_backfilled(self):
+        window = [c for c in SHAPED_WINDOW if c['level_type'] != 'Advanced']
+        variant = shape_cut(eligible(window), (2, 2, 1))
+
+        self.assertEqual(len(variant.courses), 4)
+        self.assertFalse(variant.is_complete)
+        self.assertIn('exactly 5 courses, got 4', variant.violations()[0])
+
+
+class TestShapePick(TestCase):
+    """
+    Scenario: The model shape arm sees only the shape's rungs, and its counts are enforced.
+    """
+
+    def _pick(self, backend, shape=(0, 2, 0), window=None):
+        window = window or SHAPED_WINDOW
+        return model_select(
+            strategy=STRATEGY_SHAPE_PICK, requested_size=sum(shape), shape=shape,
+            career_name='Data Analyst', career_skills=['SQL'], candidate_dicts=window,
+            eligible=eligible(window), trace_id='t', backend=backend,
+        )
+
+    def test_only_candidates_on_the_shapes_rungs_are_shown(self):
+        backend = FakeBackend(content=json.dumps({'keys': []}))
+        self._pick(backend)
+
+        shown = [c['key'] for c in json.loads(backend.calls[0]['user_content'])['candidates']]
+        self.assertEqual(shown, ['M+1', 'M+2'])
+
+    def test_the_prompt_states_the_shape(self):
+        backend = FakeBackend(content=json.dumps({'keys': []}))
+        self._pick(backend, shape=(2, 1, 0))
+
+        self.assertIn('Pick exactly 3 courses: 2 Introductory and 1 Intermediate.',
+                      backend.calls[0]['system_prompt'])
+
+    def test_a_rung_over_its_count_is_dropped(self):
+        backend = FakeBackend(content=json.dumps({'keys': ['I+1', 'I+3', 'M+1']}))
+        variant = self._pick(backend, shape=(1, 1, 0))
+
+        self.assertEqual(keys_of(variant), ['I+1', 'M+1'])
+        self.assertEqual(variant.dropped, {'over_level_quota': 1})
+        self.assertTrue(variant.is_complete)
+        self.assertEqual(variant.label, 'shape_pick:1/1/0')
+
+    def test_a_key_off_the_shape_is_a_fabrication_since_it_was_never_shown(self):
+        backend = FakeBackend(content=json.dumps({'keys': ['M+1', 'A+1']}))
+        variant = self._pick(backend)
+
+        self.assertEqual(keys_of(variant), ['M+1'])
+        self.assertEqual(variant.fabricated_keys, ['A+1'])
+        self.assertFalse(variant.is_complete)
+
+    def test_no_candidates_on_the_rungs_means_no_call(self):
+        backend = FakeBackend(content=json.dumps({'keys': ['A+1', 'A+2']}))
+        no_advanced = [c for c in SHAPED_WINDOW if c['level_type'] != 'Advanced']
+        variant = self._pick(backend, shape=(0, 0, 2), window=no_advanced)
+
+        self.assertEqual(backend.calls, [])
+        self.assertIn('no candidates on the rungs', variant.error)
+
+
+class TestShapePrompt(TestCase):
+    """
+    Scenario: The shape arm shares the size arms' prompt and changes only its size rule.
+    """
+
+    def test_the_breakdown_reads_as_a_sentence(self):
+        self.assertEqual(shape_breakdown((0, 2, 0)), '2 Intermediate')
+        self.assertEqual(shape_breakdown((2, 2, 1)), '2 Introductory, 2 Intermediate and 1 Advanced')
+
+    def test_only_the_size_instruction_differs_from_the_exact_size_arm(self):
+        shaped = selection_system_prompt(5, (2, 2, 1))
+        exact = selection_system_prompt(5)
+        shape_sentence = SELECTION_SHAPE_INSTRUCTION.format(size=5, breakdown=shape_breakdown((2, 2, 1)))
+
+        self.assertEqual(
+            shaped.replace(shape_sentence, '<rule>'),
+            exact.replace(SELECTION_EXACT_SIZE_INSTRUCTION.format(size=5), '<rule>'),
+        )
+
+
+class TestBuildShapeVariants(TestCase):
+    """
+    Scenario: Shape arms build beside the size arms, in a stable order.
+    """
+
+    def test_shape_arms_follow_the_size_arms_then_the_requested_shape_order(self):
+        backend = FakeBackend(content=json.dumps({'keys': ['M+1', 'M+2']}))
+        variants = build_variants(
+            career_name='Data Analyst', career_skills=['SQL'], ordered_candidates=SHAPED_WINDOW,
+            sizes=[2], strategies=[STRATEGY_SHAPE_PICK, STRATEGY_RANKED_CUT, STRATEGY_SHAPE_CUT],
+            shapes=['0/2/0', '2/0/0'], trace_prefix='p', backend=backend,
+        )
+
+        self.assertEqual(
+            [variant.label for variant in variants],
+            ['ranked_cut:2', 'shape_cut:0/2/0', 'shape_cut:2/0/0', 'shape_pick:0/2/0', 'shape_pick:2/0/0'],
+        )
+        self.assertEqual(len(backend.calls), 2)
+        self.assertEqual(backend.calls[0]['trace_id'], 'p:shape_pick:0/2/0')
+
+
+# ---------------------------------------------------------------------------------------
+# shape_pick_v2, editorial exclusions and seats. The editorial app is a separate module that
+# may not be installed; everything here stands in for it, so these tests never import it.
+# ---------------------------------------------------------------------------------------
+
+PATCH_EDITORIAL_API = 'enterprise_access.apps.pathways.pathway_variants.load_editorial_api'
+
+
+@dataclass(frozen=True)
+class FakeSeat:
+    """Stands in for ``pathway_editorial.api.Seat``: the same fields and ``to_dict``."""
+
+    key: str
+    level: str = 'Introductory'
+    rule: str = 'flagship'
+    reason: str = 'named by the policy'
+
+    def to_dict(self):
+        return asdict(self)
+
+
+class FakePolicy:
+    """Stands in for ``EditorialPolicy``: what the variant arms read of one."""
+
+    def __init__(self, excluded_keys=()):
+        self.excluded_keys = frozenset(excluded_keys)
+
+    def to_dict(self):
+        return {'excluded_keys': sorted(self.excluded_keys), 'flagships': [], 'promoted': []}
+
+
+class FakePlanner:
+    """Stands in for ``plan_seats``: records each call and seats the keys it was given."""
+
+    def __init__(self, seats=(), error=None):
+        self.seats = list(seats)
+        self.error = error
+        self.calls = []
+
+    def __call__(self, *, ordered_candidates, shape, career_skills, policy):
+        self.calls.append({
+            'keys': [c['key'] for c in ordered_candidates], 'shape': shape,
+            'career_skills': career_skills, 'policy': policy,
+        })
+        if self.error:
+            raise self.error
+        return list(self.seats)
+
+
+def build(strategies, shapes, *, backend=None, policy=None, planner=None, sizes=(), **kwargs):
+    """``build_variants`` over ``SHAPED_WINDOW``, as the variant step calls it."""
+    return build_variants(
+        career_name='Data Analyst', career_skills=['SQL'], ordered_candidates=SHAPED_WINDOW,
+        sizes=list(sizes), strategies=strategies, shapes=shapes, trace_prefix='p',
+        backend=backend or FakeBackend(content=json.dumps({'keys': []})), policy=policy,
+        seat_planner=planner, **kwargs,
+    )
+
+
+class TestShapePickV2Arm(TestCase):
+    """
+    Scenario: shape_pick_v2 is a shape arm, priced like shape_pick, and off the API.
+    """
+
+    def test_it_is_a_shape_arm_the_api_does_not_offer(self):
+        self.assertIn(STRATEGY_SHAPE_PICK_V2, SHAPE_STRATEGIES)
+        self.assertIn(STRATEGY_SHAPE_PICK_V2, ALL_STRATEGIES)
+        self.assertNotIn(STRATEGY_SHAPE_PICK_V2, VARIANT_STRATEGIES)
+        self.assertEqual(resolve_shape_request(['2/0/0'], [STRATEGY_SHAPE_PICK_V2])[1], [STRATEGY_SHAPE_PICK_V2])
+
+    def test_it_costs_up_to_two_calls_per_shape_for_its_repair_round(self):
+        shapes = ['2/0/0', '0/2/0']
+
+        self.assertEqual(estimated_model_calls(sizes=[], strategies=[STRATEGY_SHAPE_PICK_V2], shapes=shapes,
+                                               judge_enabled=False), 4)
+        self.assertEqual(estimated_model_calls(sizes=[], strategies=[STRATEGY_SHAPE_PICK, STRATEGY_SHAPE_PICK_V2],
+                                               shapes=shapes, judge_enabled=True), 2 + 4 + 1 + 4)
+
+    def test_each_judge_rubric_is_charged_for_every_pathway(self):
+        self.assertEqual(estimated_model_calls(sizes=[2, 3], strategies=[STRATEGY_RANKED_CUT], judge_enabled=True,
+                                               judge_rubrics=['v1', 'v2']), 2 * (1 + 2))
+        self.assertEqual(estimated_model_calls(sizes=[2, 3], strategies=[STRATEGY_RANKED_CUT], judge_enabled=True,
+                                               judge_rubrics=['v2']), 1 + 2)
+        with self.assertRaises(ValueError):
+            estimated_model_calls(sizes=[2], strategies=[STRATEGY_RANKED_CUT], judge_enabled=True,
+                                  judge_rubrics=['v7'])
+
+    def test_it_sends_the_v2_prompt_with_the_shape_sentence(self):
+        backend = FakeBackend(content=json.dumps({'keys': ['M+1', 'M+2']}))
+
+        variant = build([STRATEGY_SHAPE_PICK_V2], ['0/2/0'], backend=backend)[0]
+
+        call = backend.calls[0]
+        self.assertEqual(call['system_prompt'], selection_system_prompt_v2((0, 2, 0)))
+        self.assertTrue(call['system_prompt'].startswith(PATHWAY_SELECTION_SYSTEM_PROMPT_V2.split('{')[0]))
+        self.assertIn('Pick exactly 2 courses: 2 Intermediate.', call['system_prompt'])
+        self.assertIn('"keys"', call['system_prompt'])
+        self.assertEqual(call['trace_id'], 'p:shape_pick_v2:0/2/0')
+        self.assertEqual((variant.label, keys_of(variant)), ('shape_pick_v2:0/2/0', ['M+1', 'M+2']))
+        self.assertTrue(variant.is_complete)
+
+    def test_it_shows_the_career_its_family_and_each_candidates_skills(self):
+        window = [dict(c, skill_names=[f'K{n}' for n in range(12)]) for c in SHAPED_WINDOW]
+        backend = FakeBackend(content=json.dumps({'keys': []}))
+        build_variants(
+            career_name='Data Analyst', career_skills=[f'S{n}' for n in range(12)], ordered_candidates=window,
+            sizes=[], strategies=[STRATEGY_SHAPE_PICK_V2], shapes=['0/2/0'], trace_prefix='p', backend=backend,
+            career_description='Finds patterns in data. ' * 50,
+            family_titles=[f'Title {n}' for n in range(20)], family_size=31,
+        )
+
+        shown = json.loads(backend.calls[0]['user_content'])
+        self.assertEqual(shown['career'], 'Data Analyst')
+        self.assertEqual(len(shown['career_description']), SELECTION_V2_CAREER_DESCRIPTION_CHARS)
+        self.assertEqual(shown['family_size'], 31)
+        self.assertEqual(len(shown['family_titles']), SELECTION_V2_FAMILY_TITLES_SHOWN)
+        self.assertEqual(len(shown['career_skills']), 8)
+        self.assertEqual(shown['already_chosen'], [])
+        self.assertEqual([c['key'] for c in shown['candidates']], ['M+1', 'M+2'])
+        self.assertEqual(
+            set(shown['candidates'][0]), {'key', 'title', 'level', 'provider', 'description', 'skill_names'},
+        )
+        self.assertEqual(len(shown['candidates'][0]['skill_names']), SELECTION_V2_SKILL_NAMES_SHOWN)
+
+    def test_the_family_size_is_never_below_the_titles_known(self):
+        content = json.loads(build_selection_content_v2(
+            career_name='Welder', career_skills=[], career_description='', family_titles=['A', 'B', 'A', ' '],
+            family_size=0, candidates=[], already_chosen=[],
+        ))
+
+        self.assertEqual((content['family_titles'], content['family_size']), (['A', 'B'], 2))
+
+    def test_the_v1_arms_ignore_the_career_description_and_family(self):
+        backend = FakeBackend(content=json.dumps({'keys': []}))
+        build([STRATEGY_SHAPE_PICK], ['0/2/0'], backend=backend,
+              career_description='Finds patterns.', family_titles=['X'], family_size=4)
+
+        shown = json.loads(backend.calls[0]['user_content'])
+        self.assertEqual(set(shown), {'career', 'career_skills', 'candidates'})
+
+
+class TestSelectionContentWithoutSeats(TestCase):
+    """
+    Scenario: A run without seats sends the v1 arms exactly what they were sent before.
+    """
+
+    def test_the_v1_content_is_pinned(self):
+        content = build_selection_content(career_name='Welder', career_skills=['Welding'], candidates=WINDOW[:1])
+
+        self.assertEqual(content, (
+            '{"career":"Welder","career_skills":["Welding"],"candidates":[{"key":"A+1","title":"Course A+1",'
+            '"level":"Intermediate","provider":"P1","description":"About A+1."}]}'
+        ))
+
+    def test_seated_courses_are_listed_as_already_chosen_only_when_there_are_any(self):
+        content = json.loads(build_selection_content(
+            career_name='Welder', career_skills=[], candidates=WINDOW[1:2], already_chosen=WINDOW[:1],
+        ))
+
+        self.assertEqual(list(content), ['career', 'career_skills', 'already_chosen', 'candidates'])
+        self.assertEqual(content['already_chosen'],
+                         [{'key': 'A+1', 'title': 'Course A+1', 'level': 'Intermediate', 'provider': 'P1'}])
+
+
+class TestPlaceSeats(TestCase):
+    """
+    Scenario: A seat plan is checked against the window and the shape, as a model's pick is.
+    """
+
+    def test_valid_seats_are_placed_and_close_their_places(self):
+        placement = place_seats(eligible(SHAPED_WINDOW), (2, 1, 0), [FakeSeat('I+3'), FakeSeat('M+2')])
+
+        self.assertEqual([c.key for c in placement.seated], ['I+3', 'M+2'])
+        self.assertEqual(placement.open_shape, (1, 0, 0))
+        self.assertEqual(placement.records[0], FakeSeat('I+3').to_dict())
+        self.assertEqual(placement.rejected, 0)
+
+    def test_seats_that_do_not_fit_are_refused_and_counted(self):
+        placement = place_seats(eligible(SHAPED_WINDOW), (2, 1, 0), [
+            FakeSeat('Z+9'),            # not an eligible candidate (unknown, or excluded)
+            FakeSeat('A+1'),            # on a rung the shape does not have
+            FakeSeat('M+1'),
+            FakeSeat('M+2'),            # its rung is already full
+            FakeSeat('M+1'),            # repeated
+            FakeSeat('I+1'),
+            FakeSeat('I+2'),            # P1's third course
+        ])
+
+        self.assertEqual([c.key for c in placement.seated], ['M+1', 'I+1'])
+        self.assertEqual(placement.rejected, 5)
+
+    def test_the_candidates_own_level_decides_its_rung(self):
+        placement = place_seats(eligible(SHAPED_WINDOW), (0, 2, 0), [FakeSeat('M+1', level='Introductory')])
+
+        self.assertEqual(placement.open_shape, (0, 1, 0))
+
+    def test_plain_dict_seats_are_accepted(self):
+        placement = place_seats(eligible(SHAPED_WINDOW), (2, 0, 0), [{'key': 'I+1', 'rule': 'promoted:x'}])
+
+        self.assertEqual(placement.records, [{'key': 'I+1', 'rule': 'promoted:x'}])
+
+
+class TestApplySelectionWithSeats(TestCase):
+    """
+    Scenario: Seated courses count against every rule a chosen course does.
+    """
+
+    def test_seats_count_against_the_quota_the_cap_and_the_size(self):
+        window = eligible(SHAPED_WINDOW)
+        seated = [c for c in window if c.key in ('I+1', 'M+1')]
+        pool = [c for c in window if c.key in ('I+2', 'I+3')]
+
+        courses, dropped, fabricated = apply_selection(
+            pool, ['I+2', 'M+1', 'I+3', 'A+1'], max_size=3,
+            level_quota={'Introductory': 2, 'Intermediate': 1, 'Advanced': 0}, seated=seated,
+        )
+
+        self.assertEqual([c.key for c in courses], ['I+1', 'I+3', 'M+1'])
+        self.assertEqual(dropped, {'provider_cap': 1, 'already_seated': 1})
+        self.assertEqual(fabricated, ['A+1'])
+
+
+class TestShapeCutWithSeats(TestCase):
+    """
+    Scenario: The free shape arm places the seats, then fills what is left by relevance.
+    """
+
+    def test_seats_come_first_and_the_rest_follows_the_relevance_order(self):
+        variant = shape_cut(eligible(SHAPED_WINDOW), (2, 0, 0), seats=[FakeSeat('I+3')])
+
+        self.assertEqual(sorted(keys_of(variant)), ['I+1', 'I+3'])
+        self.assertEqual(variant.seats, [FakeSeat('I+3').to_dict()])
+        self.assertTrue(variant.is_complete)
+
+    def test_seats_spend_their_providers_allowance(self):
+        variant = shape_cut(eligible(SHAPED_WINDOW), (2, 1, 0), seats=[FakeSeat('I+1'), FakeSeat('M+1')])
+
+        self.assertEqual(sorted(keys_of(variant)), ['I+1', 'I+3', 'M+1'])
+        self.assertEqual(variant.dropped, {'provider_cap': 1})
+
+    def test_a_refused_seat_is_counted_and_its_place_filled_as_usual(self):
+        variant = shape_cut(eligible(SHAPED_WINDOW), (2, 0, 0), seats=[FakeSeat('A+1', level='Advanced')])
+
+        self.assertEqual(keys_of(variant), ['I+1', 'I+2'])
+        self.assertEqual(variant.dropped, {'seat_rejected': 1})
+        self.assertEqual(variant.seats, [])
+
+    def test_without_seats_it_is_unchanged(self):
+        self.assertEqual(keys_of(shape_cut(eligible(SHAPED_WINDOW), (2, 1, 0), seats=())),
+                         keys_of(shape_cut(eligible(SHAPED_WINDOW), (2, 1, 0))))
+
+
+class TestBuildVariantsWithAPolicy(TestCase):
+    """
+    Scenario: An editorial policy excludes courses from every arm and seats the shape arms.
+    """
+
+    def test_excluded_courses_reach_no_arm_and_no_model(self):
+        backend = FakeBackend(content=json.dumps({'keys': ['I+1', 'I+2']}))
+        variants = build(
+            [STRATEGY_RANKED_CUT, STRATEGY_MODEL_PICK, STRATEGY_SHAPE_CUT, STRATEGY_SHAPE_PICK_V2], ['2/0/0'],
+            sizes=[2], backend=backend, policy=FakePolicy(excluded_keys={'I+1'}), planner=FakePlanner(),
+        )
+
+        for variant in variants:
+            with self.subTest(variant.label):
+                self.assertNotIn('I+1', keys_of(variant))
+        for call in backend.calls:
+            self.assertNotIn('"I+1"', call['user_content'])
+        self.assertEqual(variants[0].label, 'ranked_cut:2')
+
+    def test_the_planner_sees_the_eligible_window_once_per_shape(self):
+        planner = FakePlanner()
+        policy = FakePolicy(excluded_keys={'M+1'})
+
+        build([STRATEGY_SHAPE_CUT, STRATEGY_SHAPE_PICK, STRATEGY_SHAPE_PICK_V2], ['2/0/0', '0/2/0'],
+              policy=policy, planner=planner)
+
+        self.assertEqual([call['shape'] for call in planner.calls], [(2, 0, 0), (0, 2, 0)])
+        self.assertEqual(planner.calls[0]['keys'], ['I+1', 'I+2', 'A+1', 'M+2', 'I+3'])
+        self.assertEqual(planner.calls[0]['career_skills'], ['SQL'])
+        self.assertIs(planner.calls[0]['policy'], policy)
+
+    def test_the_model_is_asked_only_for_the_places_the_seats_leave(self):
+        backend = FakeBackend(content=json.dumps({'keys': ['I+2', 'M+1', 'I+3']}))
+        planner = FakePlanner([FakeSeat('I+1'), FakeSeat('M+1', level='Intermediate')])
+
+        variant = build([STRATEGY_SHAPE_PICK_V2], ['2/1/0'], backend=backend, policy=FakePolicy(),
+                        planner=planner)[0]
+
+        call = backend.calls[0]
+        self.assertIn('Pick exactly 1 courses: 1 Introductory.', call['system_prompt'])
+        shown = json.loads(call['user_content'])
+        self.assertEqual([c['key'] for c in shown['already_chosen']], ['I+1', 'M+1'])
+        self.assertEqual([c['key'] for c in shown['candidates']], ['I+2', 'I+3'])
+        # I+2 would be P1's third course; M+1 is already seated.
+        self.assertEqual(sorted(keys_of(variant)), ['I+1', 'I+3', 'M+1'])
+        self.assertEqual(variant.dropped, {'provider_cap': 1, 'already_seated': 1})
+        self.assertEqual([seat['key'] for seat in variant.seats], ['I+1', 'M+1'])
+        self.assertTrue(variant.is_complete)
+
+    def test_the_v1_shape_arm_is_shown_its_seats_too(self):
+        backend = FakeBackend(content=json.dumps({'keys': ['I+3']}))
+
+        variant = build([STRATEGY_SHAPE_PICK], ['2/0/0'], backend=backend, policy=FakePolicy(),
+                        planner=FakePlanner([FakeSeat('I+1')]))[0]
+
+        call = backend.calls[0]
+        self.assertIn('Pick exactly 1 courses: 1 Introductory.', call['system_prompt'])
+        self.assertNotIn('already_chosen are fixed', call['system_prompt'])
+        self.assertEqual([c['key'] for c in json.loads(call['user_content'])['already_chosen']], ['I+1'])
+        self.assertEqual(sorted(keys_of(variant)), ['I+1', 'I+3'])
+
+    def test_seats_that_fill_the_shape_leave_nothing_to_ask(self):
+        backend = FakeBackend(content=json.dumps({'keys': ['I+2']}))
+        planner = FakePlanner([FakeSeat('I+1'), FakeSeat('M+2', level='Intermediate')])
+
+        variants = build([STRATEGY_SHAPE_CUT, STRATEGY_SHAPE_PICK, STRATEGY_SHAPE_PICK_V2], ['1/1/0'],
+                         backend=backend, policy=FakePolicy(), planner=planner)
+
+        self.assertEqual(backend.calls, [])
+        for variant in variants:
+            with self.subTest(variant.label):
+                self.assertEqual(keys_of(variant), ['I+1', 'M+2'])
+                self.assertTrue(variant.is_complete)
+                self.assertEqual(variant.error, '')
+
+    def test_a_planner_failure_costs_the_shape_arms_and_nothing_else(self):
+        backend = FakeBackend(content=json.dumps({'keys': []}))
+        variants = build([STRATEGY_RANKED_CUT, STRATEGY_SHAPE_CUT, STRATEGY_SHAPE_PICK_V2], ['2/0/0'], sizes=[2],
+                         backend=backend, policy=FakePolicy(), planner=FakePlanner(error=RuntimeError('boom')))
+
+        self.assertEqual(len(variants), 3)
+        self.assertTrue(variants[0].is_complete)
+        for variant in variants[1:]:
+            self.assertEqual(variant.courses, [])
+            self.assertEqual(variant.error, 'seat planning failed (RuntimeError): boom')
+        self.assertEqual(backend.calls, [])
+
+    def test_a_missing_editorial_app_is_a_planner_failure_not_a_crash(self):
+        with mock.patch(PATCH_EDITORIAL_API, side_effect=ImportError('no editorial app')):
+            variant = build([STRATEGY_SHAPE_CUT], ['2/0/0'], policy=FakePolicy())[0]
+
+        self.assertIn('ImportError', variant.error)
+
+    def test_the_default_planner_is_the_editorial_apps(self):
+        editorial_api = mock.Mock()
+        editorial_api.plan_seats.return_value = [FakeSeat('I+3')]
+        with mock.patch(PATCH_EDITORIAL_API, return_value=editorial_api):
+            variant = build([STRATEGY_SHAPE_CUT], ['2/0/0'], policy=FakePolicy())[0]
+
+        self.assertEqual(editorial_api.plan_seats.call_args.kwargs['shape'], (2, 0, 0))
+        self.assertEqual(variant.seats, [FakeSeat('I+3').to_dict()])
+
+    def test_without_a_policy_nothing_is_planned_or_excluded(self):
+        planner = FakePlanner([FakeSeat('I+3')])
+        with mock.patch(PATCH_EDITORIAL_API) as editorial:
+            variant = build([STRATEGY_SHAPE_CUT], ['2/0/0'], planner=planner)[0]
+
+        self.assertEqual(planner.calls, [])
+        editorial.assert_not_called()
+        self.assertEqual((keys_of(variant), variant.seats), (['I+1', 'I+2'], []))
+
+
+class TestResolveEditorialPolicy(TestCase):
+    """
+    Scenario: A run's policy comes from its snapshot, else the active policy, else nowhere.
+    """
+
+    def test_a_snapshot_wins_over_the_active_policy(self):
+        editorial_api = mock.Mock()
+        with mock.patch(PATCH_EDITORIAL_API, return_value=editorial_api):
+            policy = resolve_editorial_policy(use_active=True, snapshot={'excluded_keys': ['A+1']})
+
+        self.assertIs(policy, editorial_api.EditorialPolicy.from_dict.return_value)
+        editorial_api.EditorialPolicy.from_dict.assert_called_once_with({'excluded_keys': ['A+1']})
+        editorial_api.load_policy.assert_not_called()
+
+    def test_the_active_policy_is_loaded_when_asked_for(self):
+        editorial_api = mock.Mock()
+        with mock.patch(PATCH_EDITORIAL_API, return_value=editorial_api):
+            policy = resolve_editorial_policy(use_active=True, snapshot={})
+
+        self.assertIs(policy, editorial_api.load_policy.return_value)
+
+    def test_no_opt_in_never_touches_the_editorial_app(self):
+        with mock.patch(PATCH_EDITORIAL_API) as loader:
+            self.assertIsNone(resolve_editorial_policy())
+
+        loader.assert_not_called()
+
+    def test_a_policy_is_recorded_as_its_to_dict(self):
+        self.assertEqual(policy_record(None), {})
+        self.assertEqual(policy_record(FakePolicy({'B+1', 'A+1'}))['excluded_keys'], ['A+1', 'B+1'])
+
+
+class TestBuildVariantsWithTheEditorialApp(TestCase):
+    """
+    Scenario: The real editorial policy and planner, end to end through ``build_variants``.
+
+    The one test here that imports the editorial app, so the rest of this module runs without
+    it. It asserts only exclusion and a flagship seat -- not which promoted course is seated,
+    which is the editorial app's own rule to change.
+    """
+
+    def test_an_excluded_course_never_appears_and_a_flagship_is_seated(self):
+        # pylint: disable=import-outside-toplevel
+        from enterprise_access.apps.pathway_editorial.api import EditorialPolicy, FlagshipRule
+        policy = EditorialPolicy(
+            excluded_keys=frozenset({'I+1'}),
+            flagships=(FlagshipRule(course_key='I+3', level='Introductory', reason='house foundation course'),),
+        )
+        # The model tries the excluded course first; it was never shown, so it cannot land.
+        backend = FakeBackend(content=json.dumps({'keys': ['I+1', 'I+2', 'M+2']}))
+
+        variants = build_variants(
+            career_name='Data Analyst', career_skills=['SQL'], ordered_candidates=SHAPED_WINDOW,
+            sizes=[2], strategies=[STRATEGY_RANKED_CUT, STRATEGY_SHAPE_CUT, STRATEGY_SHAPE_PICK_V2],
+            shapes=['2/1/0'], trace_prefix='p', backend=backend, policy=policy,
+        )
+
+        for variant in variants:
+            with self.subTest(variant.label):
+                self.assertNotIn('I+1', keys_of(variant))
+                self.assertEqual(variant.error, '')
+        for variant in variants[1:]:
+            with self.subTest(variant.label):
+                self.assertIn('I+3', keys_of(variant))
+                self.assertIn({'key': 'I+3', 'level': 'Introductory', 'rule': 'flagship',
+                               'reason': 'house foundation course'}, variant.seats)
+                self.assertTrue(variant.is_complete)
+        self.assertNotIn('"I+1"', backend.calls[0]['user_content'])
+        self.assertEqual(policy_record(policy), policy.to_dict())
+
+
+class SequencedBackend(FakeBackend):
+    """A fake backend that answers each call with the next scripted response."""
+
+    def __init__(self, contents, error_on=None):
+        super().__init__(content=contents[0])
+        self.contents = list(contents)
+        self.error_on = error_on
+
+    def complete(self, **kwargs):
+        index = len(self.calls)
+        if self.error_on is not None and index == self.error_on:
+            self.calls.append(kwargs)
+            raise ModelBackendRequestError('down')
+        self.content = self.contents[min(index, len(self.contents) - 1)]
+        return super().complete(**kwargs)
+
+
+# P1 supplies the intro course and two of the three intermediate ones, so a model that picks
+# P1 for every slot breaks the provider cap.
+CAPPED_WINDOW = [
+    candidate('I+1', partner='P1'),
+    candidate('M+1', level='Intermediate', partner='P1'),
+    candidate('M+2', level='Intermediate', partner='P1'),
+    candidate('M+3', level='Intermediate', partner='P2'),
+]
+
+
+class TestShapePickV2Repair(TestCase):
+    """
+    Scenario: a v2 pick the code had to refuse gets one repair round, not a short pathway.
+    """
+
+    def _pick(self, backend, strategy=STRATEGY_SHAPE_PICK_V2, shape=(1, 2, 0)):
+        return model_select(
+            strategy=strategy, requested_size=sum(shape), shape=shape, career_name='Data Analyst',
+            career_skills=['SQL'], candidate_dicts=CAPPED_WINDOW, eligible=eligible(CAPPED_WINDOW),
+            trace_id='t', backend=backend,
+        )
+
+    def test_a_provider_cap_refusal_is_repaired_with_only_allowed_candidates(self):
+        backend = SequencedBackend([json.dumps({'keys': ['I+1', 'M+1', 'M+2']}), json.dumps({'keys': ['M+3']})])
+
+        variant = self._pick(backend)
+
+        self.assertEqual(keys_of(variant), ['I+1', 'M+1', 'M+3'])
+        self.assertTrue(variant.is_complete)
+        self.assertEqual(variant.dropped, {'provider_cap': 1})
+        self.assertEqual((variant.repair['attempted'], variant.repair['added']), (True, 1))
+        second = backend.calls[1]
+        self.assertEqual(second['trace_id'], 't:repair')
+        content = json.loads(second['user_content'])
+        self.assertEqual([c['key'] for c in content['candidates']], ['M+3'])
+        self.assertEqual(sorted(c['key'] for c in content['already_chosen']), ['I+1', 'M+1'])
+        self.assertIn('1 Intermediate', second['system_prompt'])
+
+    def test_an_honest_short_answer_is_not_repaired(self):
+        backend = SequencedBackend([json.dumps({'keys': ['I+1', 'M+3']})])
+
+        variant = self._pick(backend)
+
+        self.assertEqual(len(backend.calls), 1)
+        self.assertFalse(variant.is_complete)
+        self.assertEqual(variant.repair, {})
+
+    def test_a_failed_repair_keeps_the_first_answer(self):
+        backend = SequencedBackend([json.dumps({'keys': ['I+1', 'M+1', 'M+2']})], error_on=1)
+
+        variant = self._pick(backend)
+
+        self.assertEqual(keys_of(variant), ['I+1', 'M+1'])
+        self.assertIn('repair failed', variant.repair['error'])
+        self.assertEqual(variant.error, '')
+
+    def test_the_repair_still_enforces_every_rule(self):
+        backend = SequencedBackend([json.dumps({'keys': ['I+1', 'M+1', 'M+2']}),
+                                    json.dumps({'keys': ['M+2', 'M+3', 'Z+9']})])
+
+        variant = self._pick(backend)
+
+        self.assertEqual(keys_of(variant), ['I+1', 'M+1', 'M+3'])
+        self.assertEqual(variant.repair['fabricated_keys'], ['M+2', 'Z+9'])
+
+    def test_the_first_selection_arm_never_repairs(self):
+        backend = SequencedBackend([json.dumps({'keys': ['I+1', 'M+1', 'M+2']}), json.dumps({'keys': ['M+3']})])
+
+        variant = self._pick(backend, strategy=STRATEGY_SHAPE_PICK)
+
+        self.assertEqual(len(backend.calls), 1)
+        self.assertFalse(variant.is_complete)
+        self.assertEqual(variant.repair, {})

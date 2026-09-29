@@ -97,6 +97,28 @@ class TestEligibleCandidates(TestCase):
         self.assertEqual(len(candidates), 1)
         self.assertEqual(ineligible['duplicate_key'], 1)
 
+    def test_editorially_excluded_keys_are_rejected_and_counted_apart(self):
+        candidates, ineligible = eligible_candidates(
+            [hit('A+1'), hit('B+1'), hit('C+1', language='Spanish'), hit('B+1')],
+            excluded_keys=frozenset({'B+1', 'Z+9'}),
+        )
+
+        self.assertEqual([candidate.key for candidate in candidates], ['A+1'])
+        self.assertEqual(ineligible, {'editorial_excluded': 2, 'unsupported_language': 1})
+
+    def test_an_exclusion_matches_ignoring_case_and_space_as_the_editorial_app_does(self):
+        candidates, ineligible = eligible_candidates([hit('IBM+DA0101EN'), hit('B+1')],
+                                                     excluded_keys=frozenset({' ibm+da0101en '}))
+
+        self.assertEqual([candidate.key for candidate in candidates], ['B+1'])
+        self.assertEqual(ineligible, {'editorial_excluded': 1})
+
+    def test_nothing_is_excluded_by_default(self):
+        candidates, ineligible = eligible_candidates([hit('A+1'), hit('B+1')])
+
+        self.assertEqual(len(candidates), 2)
+        self.assertNotIn('editorial_excluded', ineligible)
+
 
 @ddt.ddt
 class TestAssemblePathway(TestCase):
@@ -224,6 +246,15 @@ class TestAssemblePathway(TestCase):
 
         self.assertEqual(assembly.ineligible['invalid_course_key'], 1)
         self.assertEqual(assembly.ineligible['unsupported_language'], 1)
+
+    def test_excluded_keys_never_reach_the_pathway_and_are_reported(self):
+        excluded = frozenset({'B+1'})
+
+        assembly = assemble_pathway(hits_spanning_levels(), excluded_keys=excluded)
+
+        self.assertNotIn('B+1', [course.key for course in assembly.courses])
+        self.assertEqual(assembly.ineligible, {'editorial_excluded': 1})
+        self.assertIn('B+1', [course.key for course in assemble_pathway(hits_spanning_levels()).courses])
 
     def test_unattributed_courses_are_not_counted_against_one_provider(self):
         assembly = assemble_pathway([
