@@ -67,7 +67,11 @@ class SubsidyAPIHTTPError(requests.exceptions.HTTPError):
         # requests.models.Response is falsey for HTTP status codes greater than or equal to 400!  We must explicitly
         # check if the response object is not None before giving up on it.
         if self.error_response is not None:
-            error_payload = self.error_response.json()
+            # The downstream response body isn't guaranteed to be valid JSON (e.g. a non-DRF error page).
+            try:
+                error_payload = self.error_response.json()
+            except ValueError:
+                error_payload = {'detail': self.error_response.text}
             error_payload['subsidy_status_code'] = self.error_response.status_code
             return error_payload
         return {
