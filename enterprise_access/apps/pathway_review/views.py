@@ -170,14 +170,20 @@ def review_access_required(view):
     return wrapper
 
 
-def serialize_item(item):
+def serialize_item(item, user=None):
     """
     The reviewer-visible half of an item.
 
     Only ``payload`` is spread here. ``pool`` and ``control_key`` stay on the server, so a
     reviewer cannot tell a seeded control from a real pathway by reading the response.
+
+    ``carried`` is what this reviewer has already called acceptable on each of this item's
+    levels, so a career shown in four shapes does not ask for the same answer four times. It
+    says nothing about any other reviewer.
     """
-    return dict(item.payload, id=item.item_id, mix=item.mix)
+    serialized = dict(item.payload, id=item.item_id, mix=item.mix)
+    serialized['carried'] = selectors.carried_acceptable(user, item) if user else {}
+    return serialized
 
 
 @login_required
@@ -195,7 +201,7 @@ def next_item(request):
     """The next pathway for this reviewer, with their progress."""
     item = selectors.next_item_for(request.user)
     return JsonResponse({
-        'item': serialize_item(item) if item else None,
+        'item': serialize_item(item, request.user) if item else None,
         'progress': selectors.progress_for(request.user),
     })
 

@@ -143,6 +143,38 @@ count of drops. So a kept course has an optional **Suggest** button.
 For analysis, a suggestion widens the set of acceptable answers for a rung. It is a softer
 signal than a replacement, and nothing that counts drops or swaps should read it as one.
 
+## Asking each question once per career
+
+One career is shown in several shapes, so the courses that would serve on its introductory rung
+come round again in the ladder and in whatever other shape it was given. Marking the same three
+courses four times is not four judgements; it is one judgement and three chores, and a reviewer
+who tires of it stops answering.
+
+So what a reviewer calls acceptable at a level is offered again on that career's other shapes.
+The courses arrive ticked and tagged **Carried over**, in whichever menu applies: the Suggest
+menu on a kept course, and the also-fine picks once a course is dropped.
+
+Three lines hold this in place:
+
+- **A drop never carries.** Dropping says this pathway is wrong, which is a judgement about the
+  pathway in front of them; whether another course *would serve* is a property of the career.
+  Only the second kind travels, which is also what keeps a round's drop counts comparable.
+- **The best pick never carries either**, for the same reason: it says what should have been
+  there instead.
+- **Nothing is remembered across reviewers.** A reviewer only ever sees their own answers, so
+  the independence the two-rater design depends on is untouched.
+
+There is no table behind this. `selectors.carried_acceptable` reads it from the reviewer's own
+votes on the same `family_key`, so it needed no backfill and cannot drift from what they
+actually recorded. The most recent vote *that said something about a level* wins, which means
+rating a pathway without opening either menu leaves an earlier answer standing, and unticking a
+carried course carries that decision forward too. The one case it cannot tell apart is unticking
+*every* course at a level, which reads as having said nothing and leaves the earlier answer in
+place.
+
+Only courses the item actually offers on that level come back: two shapes of one career need not
+have been built from the same window, and a course the newer one excludes should not reappear.
+
 ## Starting a round: the queue upload
 
 A round of review begins with a file produced offline — pathways are assembled, judged and

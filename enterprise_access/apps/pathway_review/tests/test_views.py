@@ -13,6 +13,7 @@ from edx_toggles.toggles.testutils import override_waffle_flag
 
 from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.pathway_review.models import PathwayReviewVote, ReviewPool, Verdict
+from enterprise_access.apps.pathway_review.selectors import carried_acceptable
 from enterprise_access.apps.pathway_review.tests.factories import (
     PathwayReviewItemFactory,
     PathwayReviewVoteFactory,
@@ -462,3 +463,95 @@ class SuggestionTests(BenchTestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn(message, response.json()['error'])
         self.assertFalse(PathwayReviewVote.objects.exists())
+
+
+class CarriedAcceptableTests(BenchTestCase):
+    """
+    What a reviewer calls acceptable on one shape is offered again on the next shape of the
+    same career, so the same question is not asked four times.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.first = PathwayReviewItemFactory(item_id='F0001', family_key='business analyst',
+                                              payload=ladder_payload())
+        self.second = PathwayReviewItemFactory(item_id='F0002', family_key='business analyst',
+                                               payload=ladder_payload())
+        self.elsewhere = PathwayReviewItemFactory(item_id='X0001', family_key='data analyst',
+                                                  payload=ladder_payload())
+
+    def vote_on(self, item, *, suggest=None, drops=(), swaps=None, verdict=Verdict.GOOD, notes='Fine.'):
+        return self.post('pathway_review:submit-vote', {
+            'item': item.item_id, 'verdict': verdict, 'drops': list(drops), 'swaps': swaps or {},
+            'suggest': suggest or {}, 'notes': notes,
+        })
+
+    def carried_for(self, item):
+        return carried_acceptable(self.user, item)
+
+    def test_suggestions_carry_to_another_shape_of_the_same_career(self):
+        # Step 1 is introductory in ladder_payload; Alt+B1 and Alt+B2 are its alternates.
+        self.vote_on(self.first, suggest={'1': ['Alt+B1', 'Alt+B2']})
+
+        self.assertEqual(self.carried_for(self.second), {'Introductory': ['Alt+B1', 'Alt+B2']})
+
+    def test_they_do_not_reach_another_career(self):
+        self.vote_on(self.first, suggest={'1': ['Alt+B1']})
+
+        self.assertEqual(self.carried_for(self.elsewhere), {})
+
+    def test_the_also_fine_picks_beside_a_replacement_carry_too(self):
+        self.vote_on(self.first, drops=[3], verdict=Verdict.NEEDS_WORK, notes='Wrong rung.',
+                     swaps={'3': {'best': 'Alt+I1', 'also': ['Alt+I2']}})
+
+        # The best pick says what belonged there instead, which is about this pathway; the
+        # also-fine picks say what would serve, which is about the career.
+        self.assertEqual(self.carried_for(self.second), {'Intermediate': ['Alt+I2']})
+
+    def test_nothing_would_work_carries_nothing(self):
+        self.vote_on(self.first, drops=[3], verdict=Verdict.NEEDS_WORK, notes='Thin rung.',
+                     swaps={'3': '__none__'})
+
+        self.assertEqual(self.carried_for(self.second), {})
+
+    def test_the_latest_word_on_a_level_wins(self):
+        self.vote_on(self.first, suggest={'1': ['Alt+B1', 'Alt+B2']})
+        self.vote_on(self.second, suggest={'1': ['Alt+B1']})
+        third = PathwayReviewItemFactory(item_id='F0003', family_key='business analyst',
+                                         payload=ladder_payload())
+
+        self.assertEqual(self.carried_for(third), {'Introductory': ['Alt+B1']})
+
+    def test_a_vote_that_said_nothing_about_a_level_leaves_the_answer_standing(self):
+        self.vote_on(self.first, suggest={'1': ['Alt+B1']})
+        self.vote_on(self.second)
+        third = PathwayReviewItemFactory(item_id='F0003', family_key='business analyst',
+                                         payload=ladder_payload())
+
+        self.assertEqual(self.carried_for(third), {'Introductory': ['Alt+B1']})
+
+    def test_only_courses_this_item_offers_come_back(self):
+        self.vote_on(self.first, suggest={'1': ['Alt+B1', 'Alt+B2']})
+        thin = PathwayReviewItemFactory(item_id='F0004', family_key='business analyst',
+                                        payload=dict(ladder_payload(),
+                                                     alt={'Introductory': [{'key': 'Alt+B2', 'title': 'Kept'}],
+                                                          'Intermediate': [], 'Advanced': []}))
+
+        self.assertEqual(self.carried_for(thin), {'Introductory': ['Alt+B2']})
+
+    def test_an_item_carries_nothing_from_itself(self):
+        self.vote_on(self.first, suggest={'1': ['Alt+B1']})
+
+        self.assertEqual(self.carried_for(self.first), {})
+
+    def test_the_next_item_is_served_with_what_was_carried(self):
+        self.vote_on(self.first, suggest={'1': ['Alt+B1']})
+
+        served = self.client.get(reverse('pathway_review:next-item')).json()['item']
+
+        self.assertEqual(served['carried'], {'Introductory': ['Alt+B1']})
+
+    def test_one_reviewer_never_sees_another_reviewers_answers(self):
+        self.vote_on(self.first, suggest={'1': ['Alt+B1']})
+
+        self.assertEqual(carried_acceptable(UserFactory(), self.second), {})

@@ -370,7 +370,10 @@
   function togglePick(step, key) {
     var p = pickOf(step);
     if (!p) {
-      draft.swaps[step] = { best: key, also: [] };        // also replaces NONE: they exclude
+      // The first click names the best. Anything already called acceptable for this career at
+      // this level comes with it, up to the cap, so a drop does not ask the question twice.
+      var carried = (draft.carried[step] || []).filter(function (k) { return k !== key; });
+      draft.swaps[step] = { best: key, also: carried.slice(0, MAX_ALSO) };
     } else if (p.best === key) {
       if (p.also.length) { p.best = p.also.shift(); } else { delete draft.swaps[step]; }
     } else if (p.also.indexOf(key) >= 0) {
@@ -423,6 +426,9 @@
       var d = el("span");
       var t = el("span", "t", alt.title);
       if (role) { t.appendChild(el("span", "ptag " + role, role === "best" ? "Best" : "Also fine")); }
+      if (role !== "best" && wasCarried(c.step, alt.key)) {
+        t.appendChild(el("span", "ptag carried", "Carried over"));
+      }
       d.appendChild(t);
       d.appendChild(el("span", "m", alt.provider + " · " + alt.key));
       var sd = descBlock(alt.desc, 500, false, "pick:" + alt.key);
@@ -474,6 +480,24 @@
     render();
   }
 
+  // One career is shown in several shapes, so the courses that would serve on its introductory
+  // rung are the same each time. The server sends what this reviewer already called acceptable
+  // at each level (see selectors.carried_acceptable); those arrive ticked and tagged, and
+  // unticking one is a judgement like any other. A carried course is never dropped for them:
+  // dropping is about this pathway, and stays theirs to decide here.
+  function seedCarried(item) {
+    var byLevel = item.carried || {};
+    (item.courses || []).forEach(function (c) {
+      var keys = (byLevel[c.level] || []).filter(function (k) { return k !== c.key; });
+      if (!keys.length) { return; }
+      draft.suggest[c.step] = keys.slice();
+      draft.carried[c.step] = keys.slice();
+    });
+  }
+  function wasCarried(step, key) {
+    return (draft.carried[step] || []).indexOf(key) >= 0;
+  }
+
   function suggestPicker(item, c) {
     var box = el("div", "swap suggest");
     var alts = (item.alt && item.alt[c.level]) || [];
@@ -482,6 +506,11 @@
       + " courses would also work here?"));
     box.appendChild(el("p", "swap-help", "Optional. You are keeping this course; mark any others "
       + "from the same rung that would be just as good."));
+    if ((draft.carried[c.step] || []).length) {
+      box.appendChild(el("p", "swap-help carried-note",
+        "Courses you already marked for this career are ticked. Untick any that do not belong "
+        + "here, and that will carry on too."));
+    }
     var list = keepScroll(el("div", "opts"), item.id + ":suggest:" + c.step);
     alts.forEach(function (alt) {
       var on = picked.indexOf(alt.key) >= 0;
@@ -494,6 +523,9 @@
       var d = el("span");
       var t = el("span", "t", alt.title);
       if (on) { t.appendChild(el("span", "ptag also", "Also fine")); }
+      if (wasCarried(c.step, alt.key)) {
+        t.appendChild(el("span", "ptag carried", "Carried over"));
+      }
       d.appendChild(t);
       d.appendChild(el("span", "m", alt.provider + " · " + alt.key));
       var sd = descBlock(alt.desc, 500, false, "sug:" + alt.key);
@@ -919,7 +951,9 @@
       careerDesc = {};
       if (current) {
         (current.careers_list || []).forEach(function (c) { careerDesc[c.name] = c.desc; });
-        draft = { drops: {}, swaps: {}, suggest: {}, suggestOpen: {}, verdict: null, reasons: {}, notes: "" };
+        draft = { drops: {}, swaps: {}, suggest: {}, suggestOpen: {}, carried: {}, verdict: null,
+          reasons: {}, notes: "" };
+        seedCarried(current);
         openDesc = {}; openPanels = {};
         startedAt = Date.now();
       }
