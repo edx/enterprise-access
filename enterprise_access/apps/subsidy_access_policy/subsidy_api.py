@@ -109,12 +109,22 @@ def get_and_cache_transactions_for_learner(subsidy_uuid, lms_user_id):
     return result
 
 
-def get_subsidy_transactions_export(subsidy_uuid, search=None, start_date=None, end_date=None, **kwargs):
+def get_subsidy_transactions_export(
+    subsidy_uuid,
+    enterprise_customer_uuid,
+    subsidy_access_policy_uuid=None,
+    search=None,
+    start_date=None,
+    end_date=None,
+):
     """
     Fetch a CSV export of Learner Credit spent transactions for a subsidy from enterprise-subsidy.
 
     Arguments:
         subsidy_uuid (str|UUID): The subsidy whose spent transactions should be exported.
+        enterprise_customer_uuid (str|UUID): The enterprise that owns the subsidy. Always forwarded so that
+            enterprise-subsidy also scopes the export to this enterprise (defense in depth for cross-customer access).
+        subsidy_access_policy_uuid (str|UUID, optional): Only export transactions redeemed via this policy (budget).
         search (str, optional): Free-text search filter, forwarded as-is to enterprise-subsidy.
         start_date (str, optional): Only include transactions created on/after this date/datetime.
         end_date (str, optional): Only include transactions created on/before this date/datetime.
@@ -127,7 +137,12 @@ def get_subsidy_transactions_export(subsidy_uuid, search=None, start_date=None, 
         SubsidyAPIHTTPError: if the Subsidy API request failed.
     """
     client = get_versioned_subsidy_client()
-    query_params = {'subsidy_uuid': str(subsidy_uuid), **kwargs}
+    query_params = {
+        'subsidy_uuid': str(subsidy_uuid),
+        'enterprise_customer_uuid': str(enterprise_customer_uuid),
+    }
+    if subsidy_access_policy_uuid:
+        query_params['subsidy_access_policy_uuid'] = str(subsidy_access_policy_uuid)
     if search:
         query_params['search'] = search
     if start_date:
@@ -136,7 +151,11 @@ def get_subsidy_transactions_export(subsidy_uuid, search=None, start_date=None, 
         query_params['end_date'] = str(end_date)
 
     try:
-        response = client.client.get(client.TRANSACTIONS_ENDPOINT + 'export/', params=query_params)
+        response = client.client.get(
+            client.TRANSACTIONS_ENDPOINT + 'export/',
+            params=query_params,
+            stream=True,
+        )
         response.raise_for_status()
     except requests.exceptions.RequestException as exc:
         raise SubsidyAPIHTTPError('HTTPError occurred in Subsidy API request.') from exc

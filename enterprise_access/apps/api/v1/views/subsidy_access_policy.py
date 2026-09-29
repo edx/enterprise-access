@@ -1370,13 +1370,16 @@ class SubsidyAccessPolicyTransactionsViewset(PermissionRequiredMixin, viewsets.G
     authentication_classes = (JwtAuthentication, authentication.SessionAuthentication)
 
     def get_permission_required(self):
+        # REQUESTS_ADMIN_ACCESS_PERMISSION is the permission granted to enterprise admins (and operators).
+        # SUBSIDY_ACCESS_POLICY_READ_PERMISSION would also admit learners, and the policy operator permission would
+        # exclude enterprise admins, neither of which is right for a customer-facing admin report.
         return [REQUESTS_ADMIN_ACCESS_PERMISSION]
 
     def get_permission_object(self):
         """
         Returns the enterprise uuid to verify that the requesting user possesses the enterprise admin/operator role.
         """
-        return self.validated_export_params['enterprise_customer_uuid']
+        return str(self.validated_export_params['enterprise_customer_uuid'])
 
     def get_queryset(self):
         """
@@ -1390,6 +1393,7 @@ class SubsidyAccessPolicyTransactionsViewset(PermissionRequiredMixin, viewsets.G
         responses={
             status.HTTP_200_OK: None,
             status.HTTP_400_BAD_REQUEST: None,
+            status.HTTP_404_NOT_FOUND: None,
             status.HTTP_502_BAD_GATEWAY: None,
         },
     )
@@ -1400,16 +1404,31 @@ class SubsidyAccessPolicyTransactionsViewset(PermissionRequiredMixin, viewsets.G
         Params:
             enterprise_customer_uuid: (required) The enterprise customer for which to export transactions.
             subsidy_uuid: (required) The subsidy whose spent transactions should be exported.
+            subsidy_access_policy_uuid: (Optional) Only export spend from this policy (budget) of the subsidy.
             search: (Optional) Free-text search filter, forwarded to enterprise-subsidy.
             start_date: (Optional) Only include transactions created on/after this date/datetime.
             end_date: (Optional) Only include transactions created on/before this date/datetime.
         """
         validated_data = self.validated_export_params
 
+        # The permission check only covers enterprise_customer_uuid, and the Subsidy API is called with this service's
+        # own (operator) credentials, so we must verify the requested subsidy belongs to that enterprise. Respond with
+        # a 404 rather than a 403 so the existence of other customers' subsidies isn't revealed. When a policy (budget)
+        # is requested, it must also belong to that same enterprise and subsidy.
+        policy_lookup = {
+            'enterprise_customer_uuid': validated_data['enterprise_customer_uuid'],
+            'subsidy_uuid': validated_data['subsidy_uuid'],
+        }
+        if validated_data.get('subsidy_access_policy_uuid'):
+            policy_lookup['uuid'] = validated_data['subsidy_access_policy_uuid']
+        if not SubsidyAccessPolicy.objects.filter(**policy_lookup).exists():
+            raise NotFound('No subsidy or policy found for the given enterprise_customer_uuid and subsidy_uuid.')
+
         try:
             subsidy_response = get_subsidy_transactions_export(
                 subsidy_uuid=validated_data['subsidy_uuid'],
                 enterprise_customer_uuid=validated_data['enterprise_customer_uuid'],
+                subsidy_access_policy_uuid=validated_data.get('subsidy_access_policy_uuid'),
                 search=validated_data.get('search'),
                 start_date=validated_data.get('start_date'),
                 end_date=validated_data.get('end_date'),
@@ -1419,7 +1438,7 @@ class SubsidyAccessPolicyTransactionsViewset(PermissionRequiredMixin, viewsets.G
             raise TransactionsExportError(detail=exc.error_payload()) from exc
 
         response = StreamingHttpResponse(
-            subsidy_response.iter_content(chunk_size=8192),
+            self._stream_and_close(subsidy_response),
             content_type='text/csv',
         )
         response['Content-Disposition'] = subsidy_response.headers.get(
@@ -1427,6 +1446,16 @@ class SubsidyAccessPolicyTransactionsViewset(PermissionRequiredMixin, viewsets.G
             f'attachment; filename="spent_report_{validated_data["subsidy_uuid"]}.csv"',
         )
         return response
+
+    @staticmethod
+    def _stream_and_close(subsidy_response, chunk_size=8192):
+        """
+        Yield the upstream CSV in chunks, releasing the upstream connection even if the client aborts the download.
+        """
+        try:
+            yield from subsidy_response.iter_content(chunk_size=chunk_size)
+        finally:
+            subsidy_response.close()
 
     @cached_property
     def validated_export_params(self):

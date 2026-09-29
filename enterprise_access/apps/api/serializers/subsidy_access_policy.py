@@ -974,6 +974,13 @@ class TransactionsExportRequestSerializer(serializers.Serializer):
         required=True,
         help_text='The subsidy whose spent transactions should be exported.',
     )
+    subsidy_access_policy_uuid = serializers.UUIDField(
+        required=False,
+        help_text=(
+            'Only export transactions redeemed via this policy (budget). It must belong to the given enterprise '
+            'customer and subsidy. Omit it to export spend across every budget funded by the subsidy.'
+        ),
+    )
     search = serializers.CharField(
         required=False,
         max_length=320,

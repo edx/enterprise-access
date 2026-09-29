@@ -64,7 +64,7 @@ urlpatterns = [
         name='delete-group-association'
     ),
     path(
-        'subsidy-access-policies/transactions/export',
+        'subsidy-access-policies/transactions/export/',
         views.SubsidyAccessPolicyTransactionsViewset.as_view({'get': 'export_transactions'}),
         name='transactions-export'
     ),
