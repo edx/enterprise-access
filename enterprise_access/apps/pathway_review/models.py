@@ -39,6 +39,58 @@ class Verdict(models.TextChoices):
 #: Verdicts that carry no diagnosis and so require the reviewer to explain themselves.
 VERDICTS_REQUIRING_NOTES = frozenset({Verdict.NEEDS_WORK, Verdict.BAD})
 
+#: A dropped rung where nothing the search found would do: the catalog lacks the content.
+#: The same sentinel the first client sent and stored, so older votes need no rewrite.
+NOTHING_WORKS = '__none__'
+#: What the first client sent, and stored, for a dropped rung the reviewer left unanswered.
+#: It is read as no pick at all, never as :data:`NOTHING_WORKS`, and is no longer stored.
+LEGACY_NO_PICK = ''
+#: How many replacements a reviewer may mark "also fine" beside their best pick. A replacement
+#: is a ranked answer -- one course the reviewer would have put there, and a few they would
+#: accept -- and marking everything plausible would dilute it. Suggestions carry no such cap:
+#: see :attr:`PathwayReviewVote.suggestions`.
+MAX_ALSO_FINE = 3
+
+
+def normalize_replacement(value):
+    """
+    One stored replacement in the current shape, whichever shape it was saved in.
+
+    Returns :data:`NOTHING_WORKS` for "nothing here would work", ``{'best': key, 'also': [keys]}``
+    for a pick, or ``None`` for no pick. A bare course key is how votes were stored before
+    reviewers could mark more than one replacement; it reads as a best pick with nothing else
+    marked. :data:`LEGACY_NO_PICK`, and any value that is none of these, reads as no pick.
+    """
+    if value == NOTHING_WORKS:
+        return NOTHING_WORKS
+    if value == LEGACY_NO_PICK:
+        return None
+    if isinstance(value, str):
+        return {'best': value, 'also': []}
+    if isinstance(value, dict) and isinstance(value.get('best'), str) and value['best']:
+        also = value.get('also')
+        also = [key for key in also if isinstance(key, str) and key] if isinstance(also, list) else []
+        return {'best': value['best'], 'also': also}
+    return None
+
+
+def normalize_replacements(value):
+    """
+    Return a vote's ``replacements`` in the current shape, for legacy and current votes alike.
+
+    Read the field through this rather than directly: votes saved before the best-plus-also-fine
+    picker hold a bare course key per step, and ``''`` for a step left unanswered. A step with
+    no pick is absent from the result.
+    """
+    if not isinstance(value, dict):
+        return {}
+    normalized = {}
+    for step, replacement in value.items():
+        replacement = normalize_replacement(replacement)
+        if replacement is not None:
+            normalized[str(step)] = replacement
+    return normalized
+
 
 class PathwayReviewItem(TimeStampedModel):
     """
@@ -97,9 +149,22 @@ class PathwayReviewVote(TimeStampedModel):
     verdict = models.CharField(max_length=16, choices=Verdict.choices)
     #: Rung numbers (1-5) the reviewer dropped.
     dropped_steps = models.JSONField(default=list, blank=True)
-    #: Step number -> replacement course key, or '' where nothing in the rung would do.
-    #: A course key means the ranker missed better content; '' means the catalog lacks it.
+    #: Dropped step number (a string) -> what should have been in that rung. Either
+    #: ``{'best': key, 'also': [up to three keys]}``, the reviewer's first choice plus others that
+    #: would also do, or ``'__none__'`` where nothing in the rung would do. A pick means the
+    #: ranker missed better content; ``'__none__'`` means the catalog lacks it. A dropped step
+    #: with no answer is absent. Older votes hold a bare course key in place of the dict, and
+    #: ``''`` for a step left unanswered; read the field through :attr:`replacement_picks`, which
+    #: returns the current shape for both and leaves the unanswered steps out.
     replacements = models.JSONField(default=dict, blank=True)
+    #: Kept step number (a string) -> other courses from the same rung that the reviewer says
+    #: would also work there. The kept course stays: a suggestion widens the set of acceptable
+    #: answers rather than correcting the pathway, so it is kept apart from :attr:`replacements`,
+    #: which only dropped steps have. Uncapped, unlike the also-fine picks on a replacement:
+    #: nothing here is ranked, so a reviewer who finds six courses that would serve is telling
+    #: us more than one who finds three. The rung's own list of alternates is the only bound.
+    #: Empty on votes cast before the bench offered it.
+    suggestions = models.JSONField(default=dict, blank=True)
     reasons = models.JSONField(default=list, blank=True)
     notes = models.TextField(blank=True)
     seconds = models.PositiveIntegerField(default=0)
@@ -109,6 +174,11 @@ class PathwayReviewVote(TimeStampedModel):
         constraints = [
             models.UniqueConstraint(fields=['item', 'reviewer'], name='one_vote_per_reviewer_per_item'),
         ]
+
+    @property
+    def replacement_picks(self):
+        """:attr:`replacements` in the current shape, however this vote was stored."""
+        return normalize_replacements(self.replacements)
 
     def clean(self):
         """A verdict that is not positive owes an explanation, or it cannot be acted on."""

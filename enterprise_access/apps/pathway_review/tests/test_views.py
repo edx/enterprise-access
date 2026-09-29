@@ -13,7 +13,11 @@ from edx_toggles.toggles.testutils import override_waffle_flag
 
 from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.pathway_review.models import PathwayReviewVote, ReviewPool, Verdict
-from enterprise_access.apps.pathway_review.tests.factories import PathwayReviewItemFactory, PathwayReviewVoteFactory
+from enterprise_access.apps.pathway_review.tests.factories import (
+    PathwayReviewItemFactory,
+    PathwayReviewVoteFactory,
+    ladder_payload
+)
 from enterprise_access.toggles import PATHWAY_REVIEW_BENCH
 
 
@@ -118,18 +122,19 @@ class SubmitVoteTests(BenchTestCase):
 
     def setUp(self):
         super().setUp()
-        self.item = PathwayReviewItemFactory(item_id='L0007')
+        self.item = PathwayReviewItemFactory(item_id='L0007', payload=ladder_payload())
 
     def test_records_a_vote(self):
         response = self.post('pathway_review:submit-vote', {
             'item': 'L0007', 'verdict': Verdict.NEEDS_WORK, 'drops': [3],
-            'swaps': {'3': 'RITx+PM9001x'}, 'reasons': ['wrong_level'],
+            'swaps': {'3': {'best': 'Alt+I1', 'also': ['Alt+I2']}}, 'reasons': ['wrong_level'],
             'notes': 'The third rung is introductory.', 'seconds': 92,
         })
 
         self.assertEqual(response.status_code, 200)
         vote = PathwayReviewVote.objects.get()
-        self.assertEqual(vote.replacements, {'3': 'RITx+PM9001x'})
+        self.assertEqual(vote.dropped_steps, [3])
+        self.assertEqual(vote.replacements, {'3': {'best': 'Alt+I1', 'also': ['Alt+I2']}})
         self.assertEqual(response.json()['progress']['reviewed'], 1)
 
     @ddt.data(Verdict.NEEDS_WORK, Verdict.BAD)
@@ -164,6 +169,122 @@ class SubmitVoteTests(BenchTestCase):
     def test_unknown_item_is_not_found(self):
         response = self.post('pathway_review:submit-vote', {'item': 'L9999', 'verdict': Verdict.GOOD})
         self.assertEqual(response.status_code, 404)
+
+
+@ddt.ddt
+class ReplacementTests(BenchTestCase):
+    """
+    One best replacement plus up to three also-fine ones, drawn only from what the rung offered.
+
+    Steps 3 and 4 of ``ladder_payload`` are intermediate, so ``Alt+I*`` keys are theirs to offer
+    and ``Alt+B*`` (introductory) keys are not.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.item = PathwayReviewItemFactory(item_id='L0100', payload=ladder_payload())
+
+    def vote(self, swaps, drops=(3,)):
+        return self.post('pathway_review:submit-vote', {
+            'item': 'L0100', 'verdict': Verdict.NEEDS_WORK, 'drops': list(drops),
+            'swaps': swaps, 'notes': 'The third rung is wrong.',
+        })
+
+    def stored(self):
+        return PathwayReviewVote.objects.get().replacements
+
+    def test_best_with_three_also_fine(self):
+        swaps = {'3': {'best': 'Alt+I4', 'also': ['Alt+I1', 'Alt+I2', 'Alt+I3']}}
+        self.assertEqual(self.vote(swaps).status_code, 200)
+        self.assertEqual(self.stored(), swaps)
+
+    @ddt.data({'best': 'Alt+I2'}, {'best': 'Alt+I2', 'also': []}, {'best': 'Alt+I2', 'also': None})
+    def test_best_alone(self, pick):
+        self.assertEqual(self.vote({'3': pick}).status_code, 200)
+        self.assertEqual(self.stored(), {'3': {'best': 'Alt+I2', 'also': []}})
+
+    def test_legacy_bare_key_is_stored_as_a_best_pick(self):
+        """A tab opened before the picker changed still sends one key per step."""
+        self.assertEqual(self.vote({'3': 'Alt+I2'}).status_code, 200)
+        self.assertEqual(self.stored(), {'3': {'best': 'Alt+I2', 'also': []}})
+
+    def test_nothing_works(self):
+        """Both clients send the same sentinel, and it is stored as sent."""
+        self.assertEqual(self.vote({'3': '__none__'}).status_code, 200)
+        self.assertEqual(self.stored(), {'3': '__none__'})
+
+    def test_legacy_empty_string_is_no_pick_and_is_not_stored(self):
+        """The first client sent '' for a dropped rung left unanswered; it is not "nothing works"."""
+        response = self.vote({'3': '', '4': {'best': 'Alt+I1', 'also': []}}, drops=[3, 4])
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.stored(), {'4': {'best': 'Alt+I1', 'also': []}})
+
+    def test_legacy_empty_string_alone_stores_nothing(self):
+        self.assertEqual(self.vote({'3': ''}).status_code, 200)
+        self.assertEqual(self.stored(), {})
+
+    def test_nothing_works_needs_no_alternates(self):
+        """A rung the search found nothing else for can still be marked as a catalog gap."""
+        payload = ladder_payload()
+        payload['alt']['Advanced'] = []
+        self.item.payload = payload
+        self.item.save()
+
+        self.assertEqual(self.vote({'5': '__none__'}, drops=[5]).status_code, 200)
+        self.assertEqual(self.stored(), {'5': '__none__'})
+
+    def test_a_dropped_step_with_no_answer_is_absent(self):
+        response = self.vote({'4': {'best': 'Alt+I3', 'also': []}}, drops=[3, 4])
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.stored(), {'4': {'best': 'Alt+I3', 'also': []}})
+
+    def test_steps_are_checked_against_their_own_level(self):
+        response = self.vote(
+            {'1': {'best': 'Alt+B5', 'also': ['Alt+B1']}, '5': {'best': 'Alt+A1', 'also': []}},
+            drops=[1, 5],
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(set(self.stored()), {'1', '5'})
+
+    @ddt.data(
+        ('a course from another level', {'3': {'best': 'Alt+B1', 'also': []}}, 'not one of'),
+        ('an also-fine course from another level', {'3': {'best': 'Alt+I1', 'also': ['Alt+A1']}}, 'not one of'),
+        ('a key the search never found', {'3': {'best': 'Nope+1', 'also': []}}, 'not one of'),
+        ('the dropped course itself', {'3': {'best': 'Ladder+3', 'also': []}}, 'not one of'),
+        ('a legacy key the search never found', {'3': 'Nope+1'}, 'not one of'),
+        ('four also-fine', {'3': {'best': 'Alt+I1', 'also': ['Alt+I2', 'Alt+I3', 'Alt+I4', 'Alt+I5']}},
+         'at most 3'),
+        ('a repeated also-fine', {'3': {'best': 'Alt+I1', 'also': ['Alt+I2', 'Alt+I2']}}, 'more than once'),
+        ('the best also marked also fine', {'3': {'best': 'Alt+I1', 'also': ['Alt+I1']}}, 'cannot also'),
+        ('also-fine with no best', {'3': {'also': ['Alt+I1']}}, 'best replacement before'),
+        ('also-fine with an empty best', {'3': {'best': '', 'also': ['Alt+I1']}}, 'best replacement before'),
+        ('an empty pick', {'3': {}}, 'needs a best'),
+        ('a best that is not a key', {'3': {'best': 7, 'also': []}}, 'one best course'),
+        ('also-fine that is not a list', {'3': {'best': 'Alt+I1', 'also': 'Alt+I2'}}, 'one best course'),
+        ('an also-fine that is not a key', {'3': {'best': 'Alt+I1', 'also': [7]}}, 'one best course'),
+        ('a pick that is a list', {'3': ['Alt+I1']}, 'one best course'),
+        ('a pick that is a number', {'3': 7}, 'one best course'),
+        ('a pick that is null', {'3': None}, 'one best course'),
+        ('a replacement for a kept step', {'4': {'best': 'Alt+I1', 'also': []}}, 'was kept'),
+        ('a step the pathway does not have', {'9': '__none__'}, 'no step 9'),
+        ('nothing-works for a kept step', {'4': '__none__'}, 'was kept'),
+    )
+    @ddt.unpack
+    def test_rejects(self, _case, swaps, message):
+        response = self.vote(swaps, drops=[3, 9] if '9' in swaps else [3])
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(message, response.json()['error'])
+        self.assertFalse(PathwayReviewVote.objects.exists())
+
+    def test_one_bad_step_rejects_the_whole_vote(self):
+        response = self.vote(
+            {'3': {'best': 'Alt+I1', 'also': []}, '4': {'best': 'Alt+B1', 'also': []}}, drops=[3, 4],
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(PathwayReviewVote.objects.exists())
 
 
 class GoalAndLeaderboardTests(BenchTestCase):
@@ -269,3 +390,75 @@ class ConcurrentVoteTests(BenchTestCase):
 
         self.assertEqual(response.status_code, 409)
         self.assertEqual(PathwayReviewVote.objects.filter(item=item).count(), 1)
+
+
+@ddt.ddt
+class SuggestionTests(BenchTestCase):
+    """
+    "Keep this course, and these would also work": up to three alternates for a KEPT rung,
+    drawn only from what that rung offered, stored apart from replacements.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.item = PathwayReviewItemFactory(item_id='L0200', payload=ladder_payload())
+
+    def vote(self, suggest, drops=(), swaps=None, verdict=Verdict.GOOD):
+        return self.post('pathway_review:submit-vote', {
+            'item': 'L0200', 'verdict': verdict, 'drops': list(drops), 'swaps': swaps or {},
+            'suggest': suggest, 'notes': 'Fine, with options.',
+        })
+
+    def stored(self):
+        return PathwayReviewVote.objects.get()
+
+    def test_suggestions_for_kept_steps_are_stored_apart_from_replacements(self):
+        response = self.vote({'1': ['Alt+B2', 'Alt+B3'], '3': ['Alt+I1']})
+
+        self.assertEqual(response.status_code, 200)
+        vote = self.stored()
+        self.assertEqual(vote.suggestions, {'1': ['Alt+B2', 'Alt+B3'], '3': ['Alt+I1']})
+        self.assertEqual((vote.replacements, vote.dropped_steps), ({}, []))
+
+    def test_a_vote_can_carry_both_replacements_and_suggestions(self):
+        response = self.vote({'1': ['Alt+B1']}, drops=[3], swaps={'3': {'best': 'Alt+I2', 'also': []}},
+                             verdict=Verdict.NEEDS_WORK)
+
+        self.assertEqual(response.status_code, 200)
+        vote = self.stored()
+        self.assertEqual(vote.suggestions, {'1': ['Alt+B1']})
+        self.assertEqual(vote.replacements, {'3': {'best': 'Alt+I2', 'also': []}})
+
+    def test_an_empty_list_is_no_suggestion(self):
+        self.assertEqual(self.vote({'2': []}).status_code, 200)
+        self.assertEqual(self.stored().suggestions, {})
+
+    def test_a_client_that_sends_no_suggestions_still_works(self):
+        response = self.post('pathway_review:submit-vote', {'item': 'L0200', 'verdict': Verdict.GOOD})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.stored().suggestions, {})
+
+    def test_every_alternate_the_rung_offered_can_be_suggested(self):
+        """Suggestions are uncapped: nothing among them is ranked, so there is no best to dilute."""
+        every = [f'Alt+B{n}' for n in range(1, 6)]
+
+        self.assertEqual(self.vote({'1': every}).status_code, 200)
+        self.assertEqual(self.stored().suggestions, {'1': every})
+
+    @ddt.data(
+        ({'3': ['Alt+I1']}, [3], 'was dropped'),
+        ({'1': ['Alt+I1']}, [], 'not one of the introductory courses'),
+        ({'1': ['Alt+B1', 'Alt+B1']}, [], 'more than once'),
+        ({'1': 'Alt+B1'}, [], 'a list of course keys'),
+        ({'1': [7]}, [], 'a list of course keys'),
+        ({'9': ['Alt+B1']}, [], 'no step 9'),
+    )
+    @ddt.unpack
+    def test_invalid_suggestions_are_refused(self, suggest, drops, message):
+        swaps = {str(step): '__none__' for step in drops}
+        response = self.vote(suggest, drops=drops, swaps=swaps, verdict=Verdict.NEEDS_WORK)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(message, response.json()['error'])
+        self.assertFalse(PathwayReviewVote.objects.exists())

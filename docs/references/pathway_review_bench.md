@@ -54,10 +54,94 @@ downvote with no diagnosis cannot be acted on — it tells you the accuracy and 
 what to change. `skip` is exempt: "I can't judge this" is a legitimate answer, and forcing
 prose there would push reviewers into guessing rather than skipping.
 
-`replacements` is the field that separates the two failure modes. A course key means the
-ranker had better content in that rung and missed it; an empty string means the reviewer found
-nothing usable, so the catalog is the problem. Those need different fixes and must never be
-summed together.
+`replacements` is the field that separates the two failure modes. A pick means the ranker had
+better content in that rung and missed it; `"__none__"` means the reviewer found nothing
+usable, so the catalog is the problem. Those need different fixes and must never be summed
+together. What a pick holds is described in
+[Best replacement, plus up to three that would also do](#best-replacement-plus-up-to-three-that-would-also-do).
+
+## Best replacement, plus up to three that would also do
+
+A reviewer who drops a course is shown the other courses the search found at that rung's level
+and asked what should have been there. They can mark:
+
+* one **best** replacement — the first course they click;
+* up to three more as **also fine** — each later click toggles one, and a fourth is refused;
+* or **nothing here would work**, which is exclusive: choosing it clears any picks, and
+  choosing a course clears it.
+
+Clicking the best again un-sets it and promotes the first also-fine pick. An also-fine pick
+carries a "Make best" control that swaps it with the current best.
+
+The first version allowed one pick per rung, which cannot record that more than one alternate
+would have done. A flat multi-select was considered and rejected: it records which courses
+would do, but not which one the reviewer would have put in the rung, and that is the answer a
+ranker's choice can be scored against. Best plus also-fine keeps both.
+
+### Stored shape
+
+`PathwayReviewVote.replacements` maps a dropped step number (as a string) to:
+
+| Value | Means |
+| --- | --- |
+| `{"best": key, "also": [keys]}` | the ranker missed better content in this rung |
+| `"__none__"` | nothing the search found would do; the catalog lacks it |
+| *(step absent)* | the reviewer dropped the course but left the rung unanswered |
+
+`submit_vote` rejects, with a 400 that names the problem:
+
+* a step the pathway does not have, or one the reviewer kept;
+* a key that is not among the alternates the bench showed for that step's level
+  (`payload["alt"][level]`) — stored, it would read as "the ranker missed this" for a course
+  the reviewer never saw;
+* also-fine picks with no best, more than three of them, a repeated one, or the best repeated
+  among them.
+
+### Older votes
+
+No migration and no data edit: the field is a `JSONField`, and both shapes are read through
+one helper. The first client sent three values, and each keeps the meaning it had:
+
+| First client sent | Meant | Read as |
+| --- | --- | --- |
+| a bare course key | one replacement | `{"best": key, "also": []}` |
+| `"__none__"` | nothing here would work | `"__none__"`, unchanged |
+| `""` | dropped, but left unanswered | no pick: the step is left out |
+
+`"__none__"` stays the nothing-works value for that reason. Moving it to `""` would have given
+`""` two meanings in stored votes, and only a data edit could have separated them.
+
+* The server still accepts the first client's shape, since a tab left open across a deploy
+  keeps sending it: a bare course key is stored as a best pick, and an incoming `""` is dropped
+  rather than stored.
+* Stored votes are read through `PathwayReviewVote.replacement_picks`
+  (`models.normalize_replacements`), which returns the current shape for either and leaves out
+  the unanswered steps.
+
+## Suggesting courses without dropping one
+
+A replacement answers "this course is wrong, and this is what should be here". Reviewers also
+had the opposite case: the course is fine, but others on the same rung would be just as good.
+Forcing that through Drop would record a correction that isn't one, and would inflate every
+count of drops. So a kept course has an optional **Suggest** button.
+
+- **The menu:** the same menu of that rung's alternates. The reviewer marks up to three as also
+  fine.
+- **What it leaves out:** there is no best (the kept course is the first choice) and no "nothing
+  works" (nothing is missing).
+- **Storage:** a separate field, `PathwayReviewVote.suggestions`, `{step: [keys]}`. It holds
+  kept steps only; a dropped step's alternatives stay in `replacements`. Migration
+  `0002_pathwayreviewvote_suggestions` adds it, empty for earlier votes.
+- **Validation:** as for replacements. Each key must be an alternate the rung offered, at most
+  three per step, with no repeats. A suggestion on a dropped step is refused.
+- **Changing your mind loses nothing:**
+  - Dropping a course whose suggestions are already marked turns them into its replacements,
+    the first becoming the best.
+  - Keeping a dropped course turns its replacements back into suggestions (the first three, with
+    a note if one had to go).
+
+For analysis, a suggestion widens the set of acceptable answers for a rung. It is a softer
+signal than a replacement, and nothing that counts drops or swaps should read it as one.
 
 ## Access
 

@@ -13,6 +13,26 @@ from enterprise_access.apps.pathway_review.models import (
 )
 
 
+def ladder_payload():
+    """
+    Build a reviewer-visible payload: a five-rung ladder and five alternates per level.
+
+    Rungs 1-2 are introductory, 3-4 intermediate and 5 advanced; the alternates for a level are
+    keyed ``Alt+<level initial><n>``, so ``Alt+I1`` is an intermediate alternate.
+    """
+    levels = ['Introductory', 'Introductory', 'Intermediate', 'Intermediate', 'Advanced']
+    courses = [
+        {'step': step, 'level': level, 'key': f'Ladder+{step}', 'title': f'Rung {step}'}
+        for step, level in enumerate(levels, 1)
+    ]
+    initials = {'Introductory': 'B', 'Intermediate': 'I', 'Advanced': 'A'}
+    alt = {
+        level: [{'key': f'Alt+{initial}{n}', 'title': f'{level} alternate {n}'} for n in range(1, 6)]
+        for level, initial in initials.items()
+    }
+    return {'pathway': 'Example', 'courses': courses, 'alt': alt}
+
+
 class PathwayReviewItemFactory(factory.django.DjangoModelFactory):
     """ Test factory for the `PathwayReviewItem` model. """
 

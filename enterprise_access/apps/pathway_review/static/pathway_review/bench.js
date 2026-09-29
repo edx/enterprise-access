@@ -162,6 +162,30 @@
     return d;
   }
 
+  /* ---------- scroll positions ---------- */
+  // render() rebuilds the stage from scratch, so a scrolled list inside it would come back at
+  // the top -- picking a replacement far down the list would throw the reviewer back to the
+  // first option. A list that should hold its place carries data-keep-scroll; its offset is
+  // read before the rebuild and put back after it. Keys include the item id, so the next
+  // pathway's lists still start at the top.
+  function keepScroll(node, key) {
+    node.setAttribute("data-keep-scroll", key);
+    return node;
+  }
+  function saveScroll() {
+    var saved = {};
+    stage.querySelectorAll("[data-keep-scroll]").forEach(function (n) {
+      saved[n.getAttribute("data-keep-scroll")] = n.scrollTop;
+    });
+    return saved;
+  }
+  function restoreScroll(saved) {
+    stage.querySelectorAll("[data-keep-scroll]").forEach(function (n) {
+      var top = saved[n.getAttribute("data-keep-scroll")];
+      if (top) { n.scrollTop = top; }
+    });
+  }
+
   /* ---------- disclosures ---------- */
   function careersDetails(list) {
     if (!list || !list.length) { return null; }
@@ -270,9 +294,24 @@
         b.addEventListener("click", function () { setDrop(c, v === "drop"); });
         kd.appendChild(b);
       });
+      if (!draft.drops[c.step] && ((item.alt && item.alt[c.level]) || []).length) {
+        var n = (draft.suggest[c.step] || []).length;
+        var sg = el("button", "", n ? "Suggested " + n : "Suggest");
+        sg.type = "button";
+        sg.dataset.v = "suggest";
+        sg.setAttribute("aria-pressed", String(!!draft.suggestOpen[c.step]));
+        sg.setAttribute("aria-label", "Keep this course and suggest others that would also work"
+          + (n ? " (" + n + " suggested)" : ""));
+        sg.addEventListener("click", function () {
+          draft.suggestOpen[c.step] = !draft.suggestOpen[c.step];
+          render();
+        });
+        kd.appendChild(sg);
+      }
       row.appendChild(kd);
 
       if (draft.drops[c.step]) { row.appendChild(swapPicker(item, c)); }
+      else if (draft.suggestOpen[c.step]) { row.appendChild(suggestPicker(item, c)); }
       lad.appendChild(row);
     });
     card.appendChild(lad);
@@ -285,58 +324,193 @@
   }
 
   function setDrop(c, isDrop) {
+    // Picks follow the course between the two menus, so changing your mind loses nothing:
+    // dropping a kept course turns its suggestions into replacements (the first becomes the
+    // best), and keeping a dropped one turns its replacements back into suggestions.
+    var s = c.step;
     if (isDrop) {
-      draft.drops[c.step] = true;
+      draft.drops[s] = true;
+      var sug = draft.suggest[s] || [];
+      if (sug.length && !draft.swaps[s]) {
+        // A replacement is ranked and capped, so a long suggestion list loses its tail here.
+        if (sug.length > MAX_ALSO + 1) {
+          toast("Kept " + (MAX_ALSO + 1) + " of your " + sug.length
+            + " suggestions: a replacement takes one best and " + MAX_ALSO + " also-fine.", 3200);
+        }
+        draft.swaps[s] = { best: sug[0], also: sug.slice(1, MAX_ALSO + 1) };
+      }
+      delete draft.suggest[s];
+      delete draft.suggestOpen[s];
     } else {
-      delete draft.drops[c.step];
-      delete draft.swaps[c.step];
+      var p = pickOf(s);
+      delete draft.drops[s];
+      delete draft.swaps[s];
+      if (p) {
+        draft.suggest[s] = [p.best].concat(p.also);
+        draft.suggestOpen[s] = true;
+      }
     }
     render();
     var r = document.getElementById("rung-" + c.step);
     if (r && isDrop) { r.scrollIntoView({ block: "nearest", behavior: "smooth" }); }
   }
 
+  /* ---------- replacement picks ---------- */
+  // A dropped rung's answer is one of: nothing yet (no entry), NONE ("nothing here would
+  // work"), or { best: key, also: [keys] }. The first course clicked is the best; later ones
+  // are "also fine", up to MAX_ALSO. A flat multi-select would lose which one the reviewer
+  // would actually have put there, and that is the signal a ranker can learn from.
+  var NONE = "__none__";
+  var MAX_ALSO = 3;
+
+  function pickOf(step) {
+    var p = draft.swaps[step];
+    return p && typeof p === "object" ? p : null;
+  }
+  function togglePick(step, key) {
+    var p = pickOf(step);
+    if (!p) {
+      draft.swaps[step] = { best: key, also: [] };        // also replaces NONE: they exclude
+    } else if (p.best === key) {
+      if (p.also.length) { p.best = p.also.shift(); } else { delete draft.swaps[step]; }
+    } else if (p.also.indexOf(key) >= 0) {
+      p.also.splice(p.also.indexOf(key), 1);
+    } else if (p.also.length >= MAX_ALSO) {
+      toast("Up to " + MAX_ALSO + " also-fine picks. Unmark one first.");
+      return;
+    } else {
+      p.also.push(key);
+    }
+    render();
+  }
+  function makeBest(step, key) {
+    var p = pickOf(step);
+    var i = p ? p.also.indexOf(key) : -1;
+    if (i < 0) { return; }
+    p.also[i] = p.best;
+    p.best = key;
+    render();
+  }
+  function toggleNone(step) {
+    if (draft.swaps[step] === NONE) { delete draft.swaps[step]; } else { draft.swaps[step] = NONE; }
+    render();
+  }
+
   function swapPicker(item, c) {
     var box = el("div", "swap");
     var alts = (item.alt && item.alt[c.level]) || [];
+    var pick = pickOf(c.step);
     box.appendChild(el("h4", "",
       "What should have been in this " + c.level.toLowerCase() + " slot?"));
     if (!alts.length) {
       box.appendChild(el("p", "empty-rung", "The search found no other "
         + c.level.toLowerCase() + " course for this career. There was nothing else to pick."));
+    } else {
+      box.appendChild(el("p", "swap-help", "Click your best pick first, then up to "
+        + MAX_ALSO + " more that would also be fine."));
     }
-    var list = el("div", "opts");
+    var list = keepScroll(el("div", "opts"), item.id + ":swap:" + c.step);
     alts.forEach(function (alt) {
-      var b = el("button", "opt");
+      var role = !pick ? "" : pick.best === alt.key ? "best"
+        : pick.also.indexOf(alt.key) >= 0 ? "also" : "";
+      var row = el("div", "optrow");
+      var b = el("button", "opt" + (role ? " " + role : ""));
       b.type = "button";
-      b.setAttribute("aria-pressed", String(draft.swaps[c.step] === alt.key));
+      b.setAttribute("aria-pressed", String(!!role));
+      b.setAttribute("aria-label", alt.title + (role === "best" ? ", best replacement"
+        : role === "also" ? ", also fine" : ", not picked"));
       b.appendChild(el("span", "radio"));
       var d = el("span");
-      d.appendChild(el("span", "t", alt.title));
+      var t = el("span", "t", alt.title);
+      if (role) { t.appendChild(el("span", "ptag " + role, role === "best" ? "Best" : "Also fine")); }
+      d.appendChild(t);
       d.appendChild(el("span", "m", alt.provider + " · " + alt.key));
       var sd = descBlock(alt.desc, 500, false, "pick:" + alt.key);
       if (sd) { d.appendChild(sd); }
       b.appendChild(d);
-      b.addEventListener("click", function () {
-        draft.swaps[c.step] = draft.swaps[c.step] === alt.key ? undefined : alt.key;
-        render();
-      });
-      list.appendChild(b);
+      b.addEventListener("click", function () { togglePick(c.step, alt.key); });
+      row.appendChild(b);
+      if (role === "also") {
+        var mk = el("button", "mkbest", "Make best");
+        mk.type = "button";
+        mk.setAttribute("aria-label", "Make " + alt.title + " the best replacement");
+        mk.addEventListener("click", function () { makeBest(c.step, alt.key); });
+        row.appendChild(mk);
+      }
+      list.appendChild(row);
     });
+    var isNone = draft.swaps[c.step] === NONE;
     var none = el("button", "opt none");
     none.type = "button";
-    none.setAttribute("aria-pressed", String(draft.swaps[c.step] === "__none__"));
+    none.setAttribute("aria-pressed", String(isNone));
     none.appendChild(el("span", "radio"));
     var nd = el("span");
     nd.appendChild(el("span", "t", "Nothing here would work"));
     nd.appendChild(el("span", "m", "The catalog is missing content for this rung"));
     none.appendChild(nd);
-    none.addEventListener("click", function () {
-      draft.swaps[c.step] = draft.swaps[c.step] === "__none__" ? undefined : "__none__";
+    none.addEventListener("click", function () { toggleNone(c.step); });
+    var nrow = el("div", "optrow");
+    nrow.appendChild(none);
+    list.appendChild(nrow);
+    box.appendChild(list);
+    return box;
+  }
+
+  /* ---------- suggestions for a kept course ---------- */
+  // "This course is fine, and these would also work here." The kept course stays; any others
+  // from the same rung can be marked as acceptable alternatives. Uncapped, unlike a
+  // replacement's also-fine picks: nothing here is ranked, so there is no best to dilute.
+  // Stored apart from replacements, because a suggestion widens the set of good answers rather
+  // than correcting the pathway -- and the scores that count drops must not see it as one.
+  function toggleSuggest(step, key) {
+    var list = draft.suggest[step] || [];
+    var i = list.indexOf(key);
+    if (i >= 0) {
+      list.splice(i, 1);
+    } else {
+      list.push(key);
+    }
+    if (list.length) { draft.suggest[step] = list; } else { delete draft.suggest[step]; }
+    render();
+  }
+
+  function suggestPicker(item, c) {
+    var box = el("div", "swap suggest");
+    var alts = (item.alt && item.alt[c.level]) || [];
+    var picked = draft.suggest[c.step] || [];
+    box.appendChild(el("h4", "", "Which other " + c.level.toLowerCase()
+      + " courses would also work here?"));
+    box.appendChild(el("p", "swap-help", "Optional. You are keeping this course; mark any others "
+      + "from the same rung that would be just as good."));
+    var list = keepScroll(el("div", "opts"), item.id + ":suggest:" + c.step);
+    alts.forEach(function (alt) {
+      var on = picked.indexOf(alt.key) >= 0;
+      var row = el("div", "optrow");
+      var b = el("button", "opt sug" + (on ? " on" : ""));
+      b.type = "button";
+      b.setAttribute("aria-pressed", String(on));
+      b.setAttribute("aria-label", alt.title + (on ? ", suggested" : ", not suggested"));
+      b.appendChild(el("span", "radio"));
+      var d = el("span");
+      var t = el("span", "t", alt.title);
+      if (on) { t.appendChild(el("span", "ptag also", "Also fine")); }
+      d.appendChild(t);
+      d.appendChild(el("span", "m", alt.provider + " · " + alt.key));
+      var sd = descBlock(alt.desc, 500, false, "sug:" + alt.key);
+      if (sd) { d.appendChild(sd); }
+      b.appendChild(d);
+      b.addEventListener("click", function () { toggleSuggest(c.step, alt.key); });
+      row.appendChild(b);
+      list.appendChild(row);
+    });
+    box.appendChild(list);
+    var done = el("button", "sugdone", picked.length ? "Done" : "Close");
+    done.type = "button";
+    done.addEventListener("click", function () {
+      delete draft.suggestOpen[c.step];
       render();
     });
-    list.appendChild(none);
-    box.appendChild(list);
+    box.appendChild(done);
     return box;
   }
 
@@ -467,13 +641,25 @@
   function submit() {
     if (!current || !draft.verdict || noteMissing()) { return; }
     var drops = Object.keys(draft.drops).map(Number).sort(function (a, b) { return a - b; });
+    // A dropped step with no answer sends nothing; NONE is "nothing here would work".
     var swaps = {};
-    drops.forEach(function (s) { swaps[String(s)] = draft.swaps[s] || ""; });
+    drops.forEach(function (s) {
+      var p = draft.swaps[s];
+      if (p === NONE) { swaps[String(s)] = NONE; }
+      else if (p && p.best) { swaps[String(s)] = { best: p.best, also: p.also.slice() }; }
+    });
+    // Suggestions only for steps still kept; a dropped step's alternatives are its swaps.
+    var suggest = {};
+    Object.keys(draft.suggest).forEach(function (s) {
+      var list = draft.suggest[s] || [];
+      if (!draft.drops[s] && list.length) { suggest[String(s)] = list.slice(); }
+    });
     var payload = {
       item: current.id,
       verdict: draft.verdict,
       drops: drops,
       swaps: swaps,
+      suggest: suggest,
       reasons: Object.keys(draft.reasons),
       notes: draft.notes || "",
       seconds: Math.round((Date.now() - startedAt) / 1000)
@@ -658,6 +844,7 @@
 
   function render() {
     paintMeter();
+    var scroll = saveScroll();
     stage.innerHTML = "";
     if (mode === "leaderboard") { stage.appendChild(renderLeaderboard()); return; }
     if (askingGoal) { stage.appendChild(renderGoalGate()); return; }
@@ -677,6 +864,7 @@
       return;
     }
     stage.appendChild(renderLadder(current));
+    restoreScroll(scroll);
   }
 
   function switchMode(m) {
@@ -731,7 +919,7 @@
       careerDesc = {};
       if (current) {
         (current.careers_list || []).forEach(function (c) { careerDesc[c.name] = c.desc; });
-        draft = { drops: {}, swaps: {}, verdict: null, reasons: {}, notes: "" };
+        draft = { drops: {}, swaps: {}, suggest: {}, suggestOpen: {}, verdict: null, reasons: {}, notes: "" };
         openDesc = {}; openPanels = {};
         startedAt = Date.now();
       }
