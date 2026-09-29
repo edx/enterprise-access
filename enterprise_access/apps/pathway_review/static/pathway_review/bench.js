@@ -330,7 +330,7 @@
     var s = c.step;
     if (isDrop) {
       draft.drops[s] = true;
-      var sug = draft.suggest[s] || [];
+      var sug = levelKeys(c.level).filter(function (k) { return k !== c.key; });
       if (sug.length && !draft.swaps[s]) {
         // A replacement is ranked and capped, so a long suggestion list loses its tail here.
         if (sug.length > MAX_ALSO + 1) {
@@ -346,7 +346,13 @@
       delete draft.drops[s];
       delete draft.swaps[s];
       if (p) {
-        draft.suggest[s] = [p.best].concat(p.also);
+        // What the replacement named as acceptable rejoins the level's set, so the rung comes
+        // back in step with its siblings rather than carrying a private answer.
+        var merged = levelKeys(c.level).slice();
+        [p.best].concat(p.also).forEach(function (k) {
+          if (merged.indexOf(k) < 0) { merged.push(k); }
+        });
+        setLevelKeys(c.level, merged);
         draft.suggestOpen[s] = true;
       }
     }
@@ -363,6 +369,10 @@
   var NONE = "__none__";
   var MAX_ALSO = 3;
 
+  function levelOfStep(step) {
+    var course = ((current && current.courses) || []).filter(function (c) { return c.step === step; })[0];
+    return course ? course.level : "";
+  }
   function pickOf(step) {
     var p = draft.swaps[step];
     return p && typeof p === "object" ? p : null;
@@ -372,8 +382,8 @@
     if (!p) {
       // The first click names the best. Anything already called acceptable for this career at
       // this level comes with it, up to the cap, so a drop does not ask the question twice.
-      var carried = (draft.carried[step] || []).filter(function (k) { return k !== key; });
-      draft.swaps[step] = { best: key, also: carried.slice(0, MAX_ALSO) };
+      var accepted = levelKeys(levelOfStep(step)).filter(function (k) { return k !== key; });
+      draft.swaps[step] = { best: key, also: accepted.slice(0, MAX_ALSO) };
     } else if (p.best === key) {
       if (p.also.length) { p.best = p.also.shift(); } else { delete draft.swaps[step]; }
     } else if (p.also.indexOf(key) >= 0) {
@@ -426,7 +436,7 @@
       var d = el("span");
       var t = el("span", "t", alt.title);
       if (role) { t.appendChild(el("span", "ptag " + role, role === "best" ? "Best" : "Also fine")); }
-      if (role !== "best" && wasCarried(c.step, alt.key)) {
+      if (role !== "best" && wasCarried(c.level, alt.key)) {
         t.appendChild(el("span", "ptag carried", "Carried over"));
       }
       d.appendChild(t);
@@ -468,15 +478,25 @@
   // replacement's also-fine picks: nothing here is ranked, so there is no best to dilute.
   // Stored apart from replacements, because a suggestion widens the set of good answers rather
   // than correcting the pathway -- and the scores that count drops must not see it as one.
-  function toggleSuggest(step, key) {
-    var list = draft.suggest[step] || [];
+  // The answer belongs to the LEVEL, not to the rung the reviewer happened to be looking at. A
+  // ladder has two introductory rungs and both draw on the same pool, so "these would also serve
+  // here" is one answer given once: marking it on either rung shows it on both. A rung they have
+  // dropped is left alone -- its picks are a ranked answer to a different question.
+  function levelKeys(level) {
+    return draft.acceptable[level] || [];
+  }
+  function setLevelKeys(level, keys) {
+    if (keys.length) { draft.acceptable[level] = keys; } else { delete draft.acceptable[level]; }
+    ((current && current.courses) || []).forEach(function (c) {
+      if (c.level !== level || draft.drops[c.step]) { return; }
+      if (keys.length) { draft.suggest[c.step] = keys.slice(); } else { delete draft.suggest[c.step]; }
+    });
+  }
+  function toggleSuggest(level, key) {
+    var list = levelKeys(level).slice();
     var i = list.indexOf(key);
-    if (i >= 0) {
-      list.splice(i, 1);
-    } else {
-      list.push(key);
-    }
-    if (list.length) { draft.suggest[step] = list; } else { delete draft.suggest[step]; }
+    if (i >= 0) { list.splice(i, 1); } else { list.push(key); }
+    setLevelKeys(level, list);
     render();
   }
 
@@ -489,27 +509,35 @@
     var byLevel = item.carried || {};
     (item.courses || []).forEach(function (c) {
       var keys = (byLevel[c.level] || []).filter(function (k) { return k !== c.key; });
-      if (!keys.length) { return; }
-      draft.suggest[c.step] = keys.slice();
-      draft.carried[c.step] = keys.slice();
+      if (!keys.length || draft.carried[c.level]) { return; }
+      draft.carried[c.level] = keys.slice();
+      setLevelKeys(c.level, keys.slice());
     });
   }
-  function wasCarried(step, key) {
-    return (draft.carried[step] || []).indexOf(key) >= 0;
+  function wasCarried(level, key) {
+    return (draft.carried[level] || []).indexOf(key) >= 0;
   }
 
   function suggestPicker(item, c) {
     var box = el("div", "swap suggest");
     var alts = (item.alt && item.alt[c.level]) || [];
-    var picked = draft.suggest[c.step] || [];
+    var picked = levelKeys(c.level);
     box.appendChild(el("h4", "", "Which other " + c.level.toLowerCase()
       + " courses would also work here?"));
     box.appendChild(el("p", "swap-help", "Optional. You are keeping this course; mark any others "
       + "from the same rung that would be just as good."));
-    if ((draft.carried[c.step] || []).length) {
+    if ((draft.carried[c.level] || []).length) {
       box.appendChild(el("p", "swap-help carried-note",
         "Courses you already marked for this career are ticked. Untick any that do not belong "
         + "here, and that will carry on too."));
+    }
+    var siblings = ((current && current.courses) || []).filter(function (o) {
+      return o.level === c.level && o.step !== c.step && !draft.drops[o.step];
+    }).length;
+    if (siblings) {
+      box.appendChild(el("p", "swap-help carried-note",
+        "This pathway has " + (siblings + 1) + " " + c.level.toLowerCase()
+        + " courses; what you mark here applies to all of them."));
     }
     var list = keepScroll(el("div", "opts"), item.id + ":suggest:" + c.step);
     alts.forEach(function (alt) {
@@ -523,7 +551,7 @@
       var d = el("span");
       var t = el("span", "t", alt.title);
       if (on) { t.appendChild(el("span", "ptag also", "Also fine")); }
-      if (wasCarried(c.step, alt.key)) {
+      if (wasCarried(c.level, alt.key)) {
         t.appendChild(el("span", "ptag carried", "Carried over"));
       }
       d.appendChild(t);
@@ -531,7 +559,7 @@
       var sd = descBlock(alt.desc, 500, false, "sug:" + alt.key);
       if (sd) { d.appendChild(sd); }
       b.appendChild(d);
-      b.addEventListener("click", function () { toggleSuggest(c.step, alt.key); });
+      b.addEventListener("click", function () { toggleSuggest(c.level, alt.key); });
       row.appendChild(b);
       list.appendChild(row);
     });
@@ -951,8 +979,8 @@
       careerDesc = {};
       if (current) {
         (current.careers_list || []).forEach(function (c) { careerDesc[c.name] = c.desc; });
-        draft = { drops: {}, swaps: {}, suggest: {}, suggestOpen: {}, carried: {}, verdict: null,
-          reasons: {}, notes: "" };
+        draft = { drops: {}, swaps: {}, suggest: {}, suggestOpen: {}, acceptable: {}, carried: {},
+          verdict: null, reasons: {}, notes: "" };
         seedCarried(current);
         openDesc = {}; openPanels = {};
         startedAt = Date.now();

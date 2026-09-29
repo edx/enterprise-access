@@ -154,6 +154,12 @@ So what a reviewer calls acceptable at a level is offered again on that career's
 The courses arrive ticked and tagged **Carried over**, in whichever menu applies: the Suggest
 menu on a kept course, and the also-fine picks once a course is dropped.
 
+The answer belongs to the **level**, not to the rung that happened to be open. A ladder has two
+introductory rungs drawing on one pool, so marking a course on either shows it on both, and the
+menu says so. A rung the reviewer has dropped is left out of that: its picks are a ranked answer
+to a different question. Keeping it again folds them back into the level's set, so the rung
+rejoins its siblings rather than carrying a private answer.
+
 Three lines hold this in place:
 
 - **A drop never carries.** Dropping says this pathway is wrong, which is a judgement about the
