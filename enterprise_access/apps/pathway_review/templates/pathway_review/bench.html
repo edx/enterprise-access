@@ -1,0 +1,33 @@
+{% load static %}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pathway Review Bench</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="{% static 'pathway_review/bench.css' %}">
+</head>
+<body>
+{% csrf_token %}
+<div class="top">
+  <div class="top-in">
+    <span class="brand">Pathway Review Bench</span>
+    <div class="modes" id="modes">
+      <button class="mode" data-mode="ladders" aria-pressed="true">Ladders</button>
+      <button class="mode" data-mode="leaderboard" aria-pressed="false">Leaderboard</button>
+    </div>
+    <span class="spacer"></span>
+    <div class="meter" id="meter">
+      <span id="meter-txt" class="mono"></span>
+      <span class="bar"><i id="meter-bar" style="width:0%"></i></span>
+      <span id="meter-label"></span>
+    </div>
+    <span class="who" id="who">reviewing as <b>{{ reviewer_name }}</b></span>
+  </div>
+</div>
+<div class="wrap"><div id="stage"></div></div>
+<script src="{% static 'pathway_review/bench.js' %}"></script>
+</body>
+</html>
