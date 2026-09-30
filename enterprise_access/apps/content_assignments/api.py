@@ -1343,7 +1343,11 @@ def expire_assignment(
         logger.info('Cannot expire accepted assignment %s', assignment.uuid)
         return None
 
-    automatic_expiration_date_and_reason = get_automatic_expiration_date_and_reason(assignment, content_metadata)
+    automatic_expiration_date_and_reason = get_automatic_expiration_date_and_reason(
+        assignment,
+        content_metadata,
+        use_catalog_agnostic_fallback=True,
+    )
     automatic_expiration_date = automatic_expiration_date_and_reason['date']
     automatic_expiration_reason = automatic_expiration_date_and_reason['reason']
 

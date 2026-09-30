@@ -3,14 +3,17 @@ Tests for `automatically_expire_assignments` management command.
 """
 
 from unittest import TestCase, mock
-from unittest.mock import call
+from unittest.mock import ANY, call
 from uuid import uuid4
 
 import pytest
 from django.core.management import call_command
 from django.utils import timezone
 
-from enterprise_access.apps.content_assignments.constants import LearnerContentAssignmentStateChoices
+from enterprise_access.apps.content_assignments.constants import (
+    AssignmentAutomaticExpiredReason,
+    LearnerContentAssignmentStateChoices
+)
 from enterprise_access.apps.content_assignments.management.commands import automatically_expire_assignments
 from enterprise_access.apps.content_assignments.models import LearnerContentAssignment
 from enterprise_access.apps.content_assignments.tests.factories import (
@@ -20,6 +23,9 @@ from enterprise_access.apps.content_assignments.tests.factories import (
 from enterprise_access.apps.subsidy_access_policy.tests.factories import AssignedLearnerCreditAccessPolicyFactory
 
 COMMAND_PATH = 'enterprise_access.apps.content_assignments.management.commands.automatically_expire_assignments'
+BACKFILL_COMMAND_PATH = (
+    'enterprise_access.apps.content_assignments.management.commands.backfill_course_run_ended_assignments'
+)
 
 
 @pytest.mark.django_db
@@ -64,6 +70,7 @@ class TestAutomaticallyExpireAssignmentCommand(TestCase):
             state=LearnerContentAssignmentStateChoices.ALLOCATED,
         )
 
+    @mock.patch('enterprise_access.utils._get_catalog_agnostic_content_metadata_for_assignment')
     @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient')
     @mock.patch('enterprise_access.apps.content_assignments.api.send_assignment_automatically_expired_email.delay')
     @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_client')
@@ -72,10 +79,16 @@ class TestAutomaticallyExpireAssignmentCommand(TestCase):
         mock_subsidy_client,
         mock_send_assignment_automatically_expired_email_task,
         mock_catalog_client,
+        mock_catalog_agnostic_metadata,
     ):
         """
         Verify that management command work as expected in dry run mode.
         """
+        # Alice's content key is intentionally absent from the mocked catalog response below, so the
+        # code falls back to a catalog-agnostic metadata lookup. Mock that fallback here to avoid a
+        # real network call; returning no useful metadata means alice's expiration falls back to the
+        # 90-day timeout, as originally intended by this test (see `self.alice_assignment.created` below).
+        mock_catalog_agnostic_metadata.return_value = {}
         enrollment_end = timezone.now() - timezone.timedelta(days=5)
         enrollment_end = enrollment_end.replace(microsecond=0)
         subsidy_expiry = timezone.now() + timezone.timedelta(days=5)
@@ -187,3 +200,194 @@ class TestAutomaticallyExpireAssignmentCommand(TestCase):
         )
         # verify that state has not changed for any assignment
         assert all_assignment.count() == cancelled_assignments.count()
+
+    @mock.patch(f'{COMMAND_PATH}.expire_assignment')
+    @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient')
+    @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_client')
+    def test_command_isolates_per_assignment_failures(
+        self,
+        mock_subsidy_client,
+        mock_catalog_client,  # pylint: disable=unused-argument
+        mock_expire_assignment,
+    ):
+        """
+        One assignment raising during expiration should not prevent the rest of the batch
+        from being processed.
+        """
+        mock_subsidy_client.retrieve_subsidy.return_value = {
+            'enterprise_customer_uuid': str(self.enterprise_uuid),
+            'expiration_datetime': (timezone.now() + timezone.timedelta(days=100)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            'is_active': True,
+        }
+
+        # pylint: disable-next=unused-argument
+        def expire_assignment_side_effect(assignment, content_metadata, modify_assignment=True):
+            if assignment.uuid == self.alice_assignment.uuid:
+                raise ValueError('boom')
+            return AssignmentAutomaticExpiredReason.NINETY_DAYS_PASSED
+
+        mock_expire_assignment.side_effect = expire_assignment_side_effect
+
+        call_command(self.command)
+
+        mock_expire_assignment.assert_has_calls([
+            call(self.alice_assignment, ANY, modify_assignment=True),
+            call(self.bob_assignment, ANY, modify_assignment=True),
+        ])
+
+    @mock.patch(f'{BACKFILL_COMMAND_PATH}._get_catalog_agnostic_content_metadata_for_assignment')
+    @mock.patch('enterprise_access.apps.content_assignments.api.send_assignment_automatically_expired_email.delay')
+    @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient')
+    @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_client')
+    def test_backfill_course_run_ended_assignments(
+        self,
+        mock_subsidy_client,
+        mock_catalog_client,
+        mock_send_assignment_automatically_expired_email_task,
+        mock_catalog_agnostic_metadata,
+    ):
+        """
+        Verify the backfill command expires assignments whose known runs have all ended.
+        """
+        course_key = 'edX+DemoX'
+        run_key = 'course-v1:edX+DemoX+T2024'
+        assignment = LearnerContentAssignmentFactory(
+            assignment_configuration=self.assignment_configuration,
+            learner_email='charlie@foo.com',
+            lms_user_id=456,
+            content_key=run_key,
+            parent_content_key=course_key,
+            is_assigned_course_run=True,
+            state=LearnerContentAssignmentStateChoices.ALLOCATED,
+        )
+
+        mock_subsidy_client.retrieve_subsidy.return_value = {
+            'enterprise_customer_uuid': str(self.enterprise_uuid),
+            'expiration_datetime': (timezone.now() + timezone.timedelta(days=100)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            'is_active': True,
+        }
+        mock_catalog_client.return_value.catalog_content_metadata.return_value = {'count': 0, 'results': []}
+
+        def catalog_agnostic_metadata_side_effect(queried_assignment):
+            # Only return "course run ended" metadata for the assignment under test here, so that
+            # `alice_assignment`/`bob_assignment` from setUp() aren't also matched and expired.
+            # A non-empty placeholder (rather than `{}`) is returned for unrelated assignments so that
+            # `get_automatic_expiration_date_and_reason` doesn't treat the metadata as missing and
+            # trigger its own (unmocked) catalog-agnostic lookup, which would hit the network.
+            if queried_assignment.content_key != run_key:
+                return {'key': queried_assignment.content_key}
+            return {
+                'key': course_key,
+                'normalized_metadata': {'enroll_by_date': None},
+                'normalized_metadata_by_run': {
+                    run_key: {
+                        'end_date': (timezone.now() - timezone.timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    },
+                },
+            }
+        mock_catalog_agnostic_metadata.side_effect = catalog_agnostic_metadata_side_effect
+
+        call_command('backfill_course_run_ended_assignments')
+
+        assignment.refresh_from_db()
+        self.assertEqual(assignment.state, LearnerContentAssignmentStateChoices.EXPIRED)
+        mock_send_assignment_automatically_expired_email_task.assert_called_once_with(assignment.uuid)
+
+        # dry run must not mutate state
+        assignment.state = LearnerContentAssignmentStateChoices.ALLOCATED
+        assignment.save(update_fields=['state'])
+        call_command('backfill_course_run_ended_assignments', '--dry-run')
+        assignment.refresh_from_db()
+        self.assertEqual(assignment.state, LearnerContentAssignmentStateChoices.ALLOCATED)
+
+    @mock.patch(f'{BACKFILL_COMMAND_PATH}._get_catalog_agnostic_content_metadata_for_assignment')
+    @mock.patch(f'{BACKFILL_COMMAND_PATH}.get_content_metadata_for_assignments')
+    @mock.patch('enterprise_access.apps.content_assignments.api.send_assignment_automatically_expired_email.delay')
+    @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_client')
+    def test_backfill_course_run_ended_assignments_metadata_found_directly(
+        self,
+        mock_subsidy_client,
+        mock_send_assignment_automatically_expired_email_task,
+        mock_get_content_metadata_for_assignments,
+        mock_catalog_agnostic_metadata,
+    ):
+        """
+        When content metadata for the assignment's content key is already present in the
+        policy's catalog, the command should expire the assignment without falling back to
+        the catalog-agnostic lookup.
+        """
+        course_key = 'edX+DemoX'
+        run_key = 'course-v1:edX+DemoX+T2024'
+        assignment = LearnerContentAssignmentFactory(
+            assignment_configuration=self.assignment_configuration,
+            learner_email='dana@foo.com',
+            lms_user_id=789,
+            content_key=run_key,
+            parent_content_key=course_key,
+            is_assigned_course_run=True,
+            state=LearnerContentAssignmentStateChoices.ALLOCATED,
+        )
+
+        mock_subsidy_client.retrieve_subsidy.return_value = {
+            'enterprise_customer_uuid': str(self.enterprise_uuid),
+            'expiration_datetime': (timezone.now() + timezone.timedelta(days=100)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            'is_active': True,
+        }
+        # alice/bob need non-empty metadata too, else they'd also try the (unmocked) catalog-agnostic
+        # fallback, which would hit the network.
+        mock_get_content_metadata_for_assignments.return_value = {
+            self.alice_assignment.content_key: {'key': self.alice_assignment.content_key},
+            self.bob_assignment.content_key: {'key': self.bob_assignment.content_key},
+            run_key: {
+                'key': course_key,
+                'normalized_metadata': {'enroll_by_date': None},
+                'normalized_metadata_by_run': {
+                    run_key: {
+                        'end_date': (timezone.now() - timezone.timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    },
+                },
+            },
+        }
+
+        call_command('backfill_course_run_ended_assignments')
+
+        assignment.refresh_from_db()
+        self.assertEqual(assignment.state, LearnerContentAssignmentStateChoices.EXPIRED)
+        mock_send_assignment_automatically_expired_email_task.assert_called_once_with(assignment.uuid)
+        mock_catalog_agnostic_metadata.assert_not_called()
+
+    @mock.patch(f'{BACKFILL_COMMAND_PATH}.get_automatic_expiration_date_and_reason')
+    @mock.patch(f'{BACKFILL_COMMAND_PATH}.get_content_metadata_for_assignments')
+    @mock.patch('enterprise_access.apps.content_assignments.api.send_assignment_automatically_expired_email.delay')
+    @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_client')
+    def test_backfill_course_run_ended_assignments_skips_when_not_yet_due(
+        self,
+        mock_subsidy_client,
+        mock_send_assignment_automatically_expired_email_task,
+        mock_get_content_metadata_for_assignments,
+        mock_get_automatic_expiration_date_and_reason,
+    ):
+        """
+        Defensive guard: even if the expiration reason is reported as COURSE_RUN_ENDED with a
+        date that's `None` or still in the future, the command must not expire the assignment.
+        """
+        mock_subsidy_client.retrieve_subsidy.return_value = {
+            'enterprise_customer_uuid': str(self.enterprise_uuid),
+            'expiration_datetime': (timezone.now() + timezone.timedelta(days=100)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            'is_active': True,
+        }
+        mock_get_content_metadata_for_assignments.return_value = {
+            self.alice_assignment.content_key: {'key': self.alice_assignment.content_key},
+            self.bob_assignment.content_key: {'key': self.bob_assignment.content_key},
+        }
+        mock_get_automatic_expiration_date_and_reason.return_value = {
+            'reason': AssignmentAutomaticExpiredReason.COURSE_RUN_ENDED,
+            'date': None,
+        }
+
+        call_command('backfill_course_run_ended_assignments')
+
+        mock_send_assignment_automatically_expired_email_task.assert_not_called()
+        for assignment in (self.alice_assignment, self.bob_assignment):
+            assignment.refresh_from_db()
+            self.assertEqual(assignment.state, LearnerContentAssignmentStateChoices.ALLOCATED)
