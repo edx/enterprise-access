@@ -66,7 +66,7 @@ class Command(BaseCommand):
 
             message = (
                 '[AUTOMATICALLY_EXPIRE_ASSIGNMENTS] Assignment Configuration. UUID: [%s], '
-                'Policy: [%s], Catalog: [%s], Enterprise: [%s], dry_run [%s]',
+                'Policy: [%s], Catalog: [%s], Enterprise: [%s], dry_run [%s]'
             )
             logger.info(
                 message,
@@ -92,8 +92,15 @@ class Command(BaseCommand):
 
                 for assignment in assignments:
                     content_metadata = content_metadata_for_assignments.get(assignment.content_key, {})
-                    expire_assignment(
-                        assignment,
-                        content_metadata,
-                        modify_assignment=not dry_run,
-                    )
+                    try:
+                        expire_assignment(
+                            assignment,
+                            content_metadata,
+                            modify_assignment=not dry_run,
+                        )
+                    except Exception:  # pylint: disable=broad-except
+                        logger.exception(
+                            '[AUTOMATICALLY_EXPIRE_ASSIGNMENTS] Failed to expire assignment %s',
+                            assignment.uuid,
+                        )
+                        continue

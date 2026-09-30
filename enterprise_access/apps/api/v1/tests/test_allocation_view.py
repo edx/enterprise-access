@@ -374,7 +374,8 @@ class TestSubsidyAccessPolicyAllocationView(APITestWithMocks):
     @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient', autospec=True)
     @mock.patch('enterprise_access.apps.api.v1.views.subsidy_access_policy.uuid4')
     def test_allocate_happy_path(
-        self, mock_uuid4, mock_catalog_client, mock_allocate, mock_subsidy_record, mock_can_allocate
+        self, mock_uuid4, mock_catalog_client, mock_allocate, mock_subsidy_record,
+        mock_can_allocate
     ):
         """
         Tests that we can successfully call the allocate view

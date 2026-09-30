@@ -8,6 +8,7 @@ from decimal import Decimal
 
 from django.apps import apps
 from pytz import UTC
+from requests.exceptions import HTTPError
 
 from enterprise_access.apps.content_assignments.constants import AssignmentAutomaticExpiredReason
 from enterprise_access.apps.enterprise_groups.constants import (
@@ -104,23 +105,112 @@ def _get_enrollment_deadline_date(assignment, content_metadata):
     return strategy.get_enrollment_deadline(assignment, content_metadata)
 
 
+def _get_course_run_ended_date(content_metadata):
+    """
+    Return the datetime when all known course runs have ended, or None if not all known runs are complete.
+    """
+    # Import here to avoid circular import
+    # pylint: disable=import-outside-toplevel
+    from enterprise_access.apps.content_assignments.content_metadata_api import parse_datetime_string
+
+    if not content_metadata:
+        return None
+
+    run_metadata_by_key = content_metadata.get('normalized_metadata_by_run') or {}
+    if not run_metadata_by_key:
+        course_runs = content_metadata.get('course_runs') or []
+        run_metadata_by_key = {
+            run.get('key'): run
+            for run in course_runs
+            if run.get('key')
+        }
+
+    if not run_metadata_by_key:
+        return None
+
+    known_end_dates = []
+    for run_metadata in run_metadata_by_key.values():
+        run_end_date = run_metadata.get('end_date') or run_metadata.get('end')
+        if not run_end_date:
+            return None
+
+        try:
+            run_end_datetime = parse_datetime_string(run_end_date)
+        except ValueError:
+            logger.warning(
+                'Bad course run end date for content %s, value: %s',
+                content_metadata.get('key'),
+                run_end_date,
+            )
+            return None
+
+        known_end_dates.append(run_end_datetime.replace(tzinfo=UTC))
+
+    if all(datetime_value <= localized_utcnow() for datetime_value in known_end_dates):
+        return max(known_end_dates)
+    return None
+
+
+def _get_catalog_agnostic_content_metadata_for_assignment(assignment):
+    """
+    Fetch content metadata without relying on the assignment's active policy catalog.
+    """
+    # Import here to avoid circular import
+    # pylint: disable=import-outside-toplevel
+    from enterprise_access.apps.content_metadata.api import get_and_cache_content_metadata
+
+    content_identifiers = []
+    if assignment.content_key:
+        content_identifiers.append(assignment.content_key)
+    if assignment.parent_content_key and assignment.parent_content_key not in content_identifiers:
+        content_identifiers.append(assignment.parent_content_key)
+
+    for content_identifier in content_identifiers:
+        for coerce_to_parent_course in (True, False):
+            try:
+                content_metadata = get_and_cache_content_metadata(
+                    content_identifier,
+                    coerce_to_parent_course=coerce_to_parent_course,
+                )
+            except HTTPError as exc:
+                logger.warning(
+                    'Could not fetch catalog-agnostic content metadata for %s '
+                    '(coerce_to_parent_course=%s): %s',
+                    content_identifier,
+                    coerce_to_parent_course,
+                    exc,
+                )
+                continue
+            if content_metadata:
+                return content_metadata
+
+    return {}
+
+
 def get_automatic_expiration_date_and_reason(
     assignment,
-    content_metadata: dict = None
+    content_metadata: dict = None,
+    *,
+    use_catalog_agnostic_fallback: bool = False,
 ):
     """
     For the given assignment, returns the date at which this assignment expires due to:
     * subsidy expiration
     * content enrollment deadline
+    * course run end date
     * 90-day timeout from allocation
 
-    Whichever of the three above dates is the earliest is returned, along with the reason
+    Whichever of the four above dates is the earliest is returned, along with the reason
     for the expiration as a dictionary.
 
     Arguments:
         assignment (LearnerContentAssignment): The assignment to check for expiration.
         [content_metadata] (dict): Content metadata for the assignment's content key. If not provided, it will be
             fetched and subsequently cached from the content metadata API.
+        [use_catalog_agnostic_fallback] (bool): Whether to fall back to a catalog-/customer-agnostic content
+            metadata lookup when the assignment's policy catalog has no metadata for the content. This makes a
+            synchronous call to enterprise-catalog, so it should only be set for the automatic-expiration path,
+            not for read endpoints or other callers of this function.
     """
     # Import here to avoid circular import
     # pylint: disable=import-outside-toplevel
@@ -141,14 +231,20 @@ def get_automatic_expiration_date_and_reason(
             assignments=[assignment],
         )
         content_metadata = content_metadata_by_key.get(content_key)
+
+    if not content_metadata and use_catalog_agnostic_fallback:
+        content_metadata = _get_catalog_agnostic_content_metadata_for_assignment(assignment)
+
     enrollment_deadline_datetime = _get_enrollment_deadline_date(assignment, content_metadata)
     if enrollment_deadline_datetime:
         enrollment_deadline_datetime = enrollment_deadline_datetime.replace(tzinfo=UTC)
 
+    course_run_ended_datetime = _get_course_run_ended_date(content_metadata)
+
     # 90-day timeout from allocation
     timeout_expiration_datetime = assignment.get_allocation_timeout_expiration()
 
-    # Determine which of the three expiration dates is the earliest
+    # Determine which of the four expiration dates is the earliest
     subsidy_expiration = {
         'date': subsidy_expiration_datetime,
         'reason': AssignmentAutomaticExpiredReason.SUBSIDY_EXPIRED,
@@ -157,11 +253,15 @@ def get_automatic_expiration_date_and_reason(
         'date': enrollment_deadline_datetime,
         'reason': AssignmentAutomaticExpiredReason.ENROLLMENT_DATE_PASSED,
     }
+    course_run_ended = {
+        'date': course_run_ended_datetime,
+        'reason': AssignmentAutomaticExpiredReason.COURSE_RUN_ENDED,
+    }
     timeout_expiration = {
         'date': timeout_expiration_datetime,
         'reason': AssignmentAutomaticExpiredReason.NINETY_DAYS_PASSED,
     }
-    expiration_dates = [subsidy_expiration, enrollment_deadline, timeout_expiration]
+    expiration_dates = [subsidy_expiration, enrollment_deadline, course_run_ended, timeout_expiration]
     sorted_available_expiration_dates = sorted(
         filter(lambda x: x['date'] is not None, expiration_dates),
         key=lambda x: x['date'],
@@ -169,13 +269,15 @@ def get_automatic_expiration_date_and_reason(
     action_required_by = sorted_available_expiration_dates[0]
     message = (
         'action_required_by assignment=%s: subsidy_expiration=%s, enrollment_deadline=%s, '
-        'timeout_expiration_date=%s, action_required_by_datetime=%s, action_required_by_reason=%s',
+        'course_run_ended=%s, timeout_expiration_date=%s, action_required_by_datetime=%s, '
+        'action_required_by_reason=%s'
     )
     logger.info(
         message,
         assignment.uuid,
         subsidy_expiration_datetime,
         enrollment_deadline_datetime,
+        course_run_ended_datetime,
         timeout_expiration_datetime,
         action_required_by['date'],
         action_required_by['reason'],

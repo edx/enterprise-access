@@ -1026,7 +1026,7 @@ class TestBrazeEmailTasks(APITestWithMocks):
             'key': assignment.content_key,
             'normalized_metadata': {
                 'start_date': '2020-01-01 12:00:00Z',
-                'end_date': '2022-01-01 12:00:00Z',
+                'end_date': '2099-12-31 12:00:00Z',
                 'enroll_by_date': (now() + timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%SZ'),
             },
         }
@@ -1079,13 +1079,13 @@ class TestBrazeEmailTasks(APITestWithMocks):
             'key': assignment.content_key,
             'normalized_metadata': {
                 'start_date': '2020-01-01 12:00:00Z',
-                'end_date': '2022-01-01 12:00:00Z',
+                'end_date': '2099-12-31 12:00:00Z',
                 'enroll_by_date': formatted_yesterday,
             },
             'normalized_metadata_by_run': {
                 TEST_COURSE_RUN_KEY: {
                     'start_date': '2020-01-01 12:00:00Z',
-                    'end_date': '2022-01-01 12:00:00Z',
+                    'end_date': '2099-12-31 12:00:00Z',
                     'enroll_by_date': formatted_yesterday,
                 },
             }
@@ -1137,13 +1137,13 @@ class TestBrazeEmailTasks(APITestWithMocks):
             'key': assignment.content_key,
             'normalized_metadata': {
                 'start_date': '2020-01-01 12:00:00Z',
-                'end_date': '2022-01-01 12:00:00Z',
+                'end_date': '2099-12-31 12:00:00Z',
                 'enroll_by_date': the_future.strftime('%Y-%m-%d %H:%M:%SZ'),
             },
             'normalized_metadata_by_run': {
                 TEST_COURSE_RUN_KEY: {
                     'start_date': '2020-01-01 12:00:00Z',
-                    'end_date': '2022-01-01 12:00:00Z',
+                    'end_date': '2099-12-31 12:00:00Z',
                     'enroll_by_date': the_future.strftime('%Y-%m-%d %H:%M:%SZ'),
                 },
             },
@@ -1238,6 +1238,16 @@ class TestClearPiiForExpiredAssignmentsTask(APITestWithMocks):
         self.expired_assignment.created = now() - timedelta(days=100)
         self.expired_assignment.save()
 
+    def tearDown(self):
+        super().tearDown()
+        # Content metadata fetched via get_and_cache_catalog_content_metadata() is cached
+        # per (catalog_uuid, content_key). Every test in this class shares the same
+        # assignment_configuration/catalog (set in setUpTestData) and TEST_COURSE_KEY, so
+        # without clearing the cache here, whichever test runs first "wins" and later tests
+        # silently reuse its mocked metadata instead of their own.
+        request_cache(namespace=REQUEST_CACHE_NAMESPACE).clear()
+        TieredCache.dangerous_clear_all_tiers()
+
     @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient')
     @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_client')
     @ddt.data(True, False)
@@ -1321,6 +1331,61 @@ class TestClearPiiForExpiredAssignmentsTask(APITestWithMocks):
 
         self.expired_assignment.refresh_from_db()
         assert self.expired_assignment.learner_email == original_email
+        assert result['cleared_count'] == 0
+
+    @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient')
+    @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_client')
+    def test_clear_pii_skipped_for_course_run_ended_reason(
+        self,
+        mock_subsidy_client,
+        mock_catalog_client,
+    ):
+        """
+        Pins down current behavior: an assignment recomputed as COURSE_RUN_ENDED at clearing time
+        keeps its PII forever, since ``_should_clear_pii_for_assignment`` only clears PII for
+        NINETY_DAYS_PASSED.
+        # TODO(ENT-12316): pending product decision on PII retention
+        """
+        course_run_ended_assignment = LearnerContentAssignmentFactory(
+            assignment_configuration=self.assignment_configuration,
+            learner_email='course-run-ended@test.com',
+            lms_user_id=TEST_LMS_USER_ID_2,
+            content_key=TEST_COURSE_KEY,
+            content_title='Test Course',
+            content_quantity=-100,
+            state=LearnerContentAssignmentStateChoices.EXPIRED,
+            expired_at=now() - timedelta(hours=2),
+        )
+        course_run_ended_assignment.add_successful_expiration_action()
+
+        subsidy_expiry = now() + timedelta(days=365)
+
+        mock_subsidy_client.retrieve_subsidy.return_value = {
+            'enterprise_customer_uuid': str(self.enterprise_uuid),
+            'expiration_datetime': subsidy_expiry.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            'is_active': True,
+        }
+        mock_catalog_client.return_value.catalog_content_metadata.return_value = {
+            'count': 1,
+            'results': [{
+                'key': TEST_COURSE_KEY,
+                'normalized_metadata': {
+                    'start_date': '2020-01-01 12:00:00Z',
+                    'end_date': '2020-06-01 12:00:00Z',
+                    'enroll_by_date': None,
+                    'content_price': 100,
+                },
+                'normalized_metadata_by_run': {
+                    TEST_COURSE_KEY: {'end_date': '2020-06-01 12:00:00Z'},
+                },
+            }],
+        }
+
+        original_email = course_run_ended_assignment.learner_email
+        result = clear_pii_for_expired_assignments(dry_run=False)
+
+        course_run_ended_assignment.refresh_from_db()
+        assert course_run_ended_assignment.learner_email == original_email
         assert result['cleared_count'] == 0
 
     @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient')
