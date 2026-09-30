@@ -1293,3 +1293,33 @@ class TestEcosystemFromSkillTags(TestCase):
         restored = eligible_candidates([hit])[0][0]
 
         self.assertEqual(restored.skill_names, ('IBM Cognos',))
+
+
+class TestEcosystemRefusalIsRepaired(TestCase):
+    """
+    Scenario: a course the ecosystem rule turns away leaves a gap the repair round fills.
+
+    The rule refuses; it does not shorten. The repair is shown only courses the rule allows, so
+    a second answer cannot reintroduce the vendor that was refused.
+    """
+
+    def test_the_gap_is_filled_from_courses_the_rule_allows(self):
+        window = [
+            candidate('MS+1', title='Data Analysis with Power BI'),
+            candidate('GC+1', partner='P2', title='Analytics on BigQuery'),
+            candidate('NEU+1', partner='P3', title='Foundations of Data Analysis'),
+        ]
+        backend = SequencedBackend([json.dumps({'keys': ['MS+1', 'GC+1']}), json.dumps({'keys': ['NEU+1']})])
+
+        variant = model_select(
+            strategy=STRATEGY_SHAPE_PICK_V2, requested_size=2, shape=(2, 0, 0), career_name='Data Analyst',
+            career_skills=['SQL'], candidate_dicts=window, eligible=eligible(window), trace_id='t',
+            backend=backend, single_ecosystem=True,
+        )
+
+        self.assertEqual(sorted(keys_of(variant)), ['MS+1', 'NEU+1'])
+        self.assertTrue(variant.is_complete)
+        self.assertEqual(variant.dropped.get('other_ecosystem'), 1)
+        self.assertEqual(variant.repair['added'], 1)
+        shown = [c['key'] for c in json.loads(backend.calls[1]['user_content'])['candidates']]
+        self.assertNotIn('GC+1', shown)

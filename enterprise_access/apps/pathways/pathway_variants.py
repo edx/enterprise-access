@@ -797,13 +797,17 @@ def get_variant_backend():
     )
 
 
-# The refusals a repair round answers. Each is the model breaking a rule it was told --
-# the provider cap, a rung's count, a key it was never shown -- rather than declining to
-# fill a place, which is an honest answer and is left short. Measured on the bench round-1
-# windows (2026-09-29): with a seated course from a provider that dominates the window, the
-# model chose two more from that provider for 9 of Sales Manager's 12 shapes, and the cap
-# left every one of them short.
-REPAIRABLE_DROPS = ('provider_cap', 'over_level_quota', 'already_seated', 'duplicate')
+# The refusals a repair round answers: a course the rules turned away, rather than the model
+# declining to fill a place, which is an honest answer about a thin rung and is left short.
+# Measured on the bench round-1 windows (2026-09-29): with a seated course from a provider that
+# dominates the window, the model chose two more from that provider for 9 of Sales Manager's 12
+# shapes, and the cap left every one of them short.
+#
+# ``other_ecosystem`` is here for a slightly different reason. The model is not told that rule,
+# so refusing its choice is not it breaking a promise -- but the gap is ours to fill, and the
+# repair round is shown only courses the rule already allows, so whatever comes back complies.
+# Without it the rule cost eight of 48 pathways a course they could have had (2026-09-30).
+REPAIRABLE_DROPS = ('provider_cap', 'over_level_quota', 'already_seated', 'duplicate', ECOSYSTEM_DROP)
 
 
 def model_select(*, strategy: str, requested_size: int | None, career_name: str,
