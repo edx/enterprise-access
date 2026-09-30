@@ -98,6 +98,10 @@ class Candidate:
     level_type: str = ''
     partner: str = ''
     language: str = ''
+    #: The course's skill tags, as a tuple so the candidate stays hashable. Carried because a
+    #: course names the vendor whose product it teaches at least as often in its tags as in its
+    #: title -- see ``ecosystems``, where reading the title alone missed most of them.
+    skill_names: tuple = ()
 
     @classmethod
     def from_hit(cls, hit: dict) -> 'Candidate':
@@ -115,6 +119,9 @@ class Candidate:
             level_type=(hit.get('level_type') or '').strip(),
             partner=(first_partner.get('name') or '').strip(),
             language=(hit.get('language') or '').strip(),
+            skill_names=tuple(
+                name.strip() for name in (hit.get('skill_names') or []) if isinstance(name, str) and name.strip()
+            ),
         )
 
     @property

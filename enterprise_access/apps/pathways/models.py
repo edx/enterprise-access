@@ -674,6 +674,7 @@ class CourseCandidate(BaseInputOutput):
             'level_type': self.level_type,
             'partners': [{'name': self.partner}] if self.partner else [],
             'language': self.language,
+            'skill_names': list(self.skill_names),
         }
 
 

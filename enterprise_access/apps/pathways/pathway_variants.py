@@ -370,6 +370,7 @@ def _assembly_hit(candidate: dict) -> dict:
         'level_type': candidate.get('level_type') or '',
         'partners': [{'name': partner}] if partner else [],
         'language': candidate.get('language') or '',
+        'skill_names': candidate.get('skill_names') or [],
     }
 
 

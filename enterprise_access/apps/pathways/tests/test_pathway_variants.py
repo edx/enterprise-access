@@ -93,6 +93,7 @@ def eligible(window=None):
     hits = [{
         'key': c['key'], 'title': c['title'], 'level_type': c['level_type'],
         'partners': [{'name': c['partner']}] if c['partner'] else [], 'language': c['language'],
+        'skill_names': c.get('skill_names') or [],
     } for c in (window or WINDOW)]
     return eligible_candidates(hits)[0]
 
@@ -1263,3 +1264,32 @@ class TestSingleEcosystem(TestCase):
         self.assertIn('GC+1', keys_of(variant))
         self.assertNotIn('MS+1', keys_of(variant))
         self.assertNotIn('MS+2', keys_of(variant))
+
+
+class TestEcosystemFromSkillTags(TestCase):
+    """
+    Scenario: a course names its vendor in its skill tags as often as in its title.
+
+    Reading the title alone let eight pathways span two ecosystems in the first run of the rule,
+    because the candidates assembly works with carried no tags at all.
+    """
+
+    def test_a_vendor_named_only_in_the_tags_is_seen(self):
+        window = [
+            candidate('A+1', title='Analytics on BigQuery'),
+            dict(candidate('B+1', partner='Carlos III', title='Management Information Systems'),
+                 skill_names=['Microsoft Excel', 'Databases']),
+        ]
+
+        variant = ranked_cut(eligible(window), 2, single_ecosystem=True)
+
+        self.assertEqual(keys_of(variant), ['A+1'])
+        self.assertEqual(variant.dropped.get('other_ecosystem'), 1)
+
+    def test_the_tags_survive_the_round_trip_into_assembly(self):
+        hit = {'key': 'A+1', 'title': 'Anything', 'level_type': 'Introductory',
+               'partners': [{'name': 'P'}], 'language': 'English', 'skill_names': ['IBM Cognos', '']}
+
+        restored = eligible_candidates([hit])[0][0]
+
+        self.assertEqual(restored.skill_names, ('IBM Cognos',))
