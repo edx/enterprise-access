@@ -22,7 +22,8 @@ from enterprise_access.apps.pathway_eval.variant_collection import (
     write_csv
 )
 from enterprise_access.apps.pathways.course_retrieval import eval_customer_uuid
-from enterprise_access.apps.pathways.pathway_variants import MAX_PATHWAY_SIZE, MIN_PATHWAY_SIZE, VARIANT_STRATEGIES
+from enterprise_access.apps.pathways.judging import JUDGE_RUBRICS, RUBRIC_V2
+from enterprise_access.apps.pathways.pathway_variants import ALL_STRATEGIES, MAX_PATHWAY_SIZE, MIN_PATHWAY_SIZE
 
 
 class Command(BaseCommand):
@@ -58,13 +59,40 @@ class Command(BaseCommand):
         )
         parser.add_argument(
             '--variant-strategy', action='append', dest='variant_strategies',
-            choices=VARIANT_STRATEGIES,
+            choices=ALL_STRATEGIES,
             help='Strategy to build variants with. Repeatable; defaults to ranked_cut when '
-                 'only sizes are given. model_pick and model_sized issue paid calls.',
+                 'only sizes are given, and to shape_cut when only shapes are. model_pick, '
+                 'model_sized, shape_pick and shape_pick_v2 issue paid calls.',
+        )
+        parser.add_argument(
+            '--variant-shape', action='append', dest='variant_shapes',
+            help='A level shape to build, as Introductory/Intermediate/Advanced course counts '
+                 '(such as 2/0/0 or 2/2/1), for the shape_cut and shape_pick arms. Repeatable.',
+        )
+        parser.add_argument(
+            '--include-candidates', action='store_true',
+            help='Record each career\'s candidate window, in relevance order, in the JSON '
+                 'export and checkpoint. Needed to review a pathway against what the search found.',
         )
         parser.add_argument(
             '--judge', action='store_true',
             help='Score the delivered pathway and every variant with the model judge.',
+        )
+        parser.add_argument(
+            '--judge-rubric', action='append', dest='judge_rubrics', choices=JUDGE_RUBRICS,
+            help='A rubric to judge under, with --judge. Repeatable; defaults to v1, the '
+                 'calibrated rubric. Each rubric is a separate paid call per pathway.',
+        )
+        parser.add_argument(
+            '--editorial-policy', action='store_true',
+            help='Honour the active editorial policy: its exclusions for every pathway, the '
+                 'delivered one included, and its seats for the shape arms.',
+        )
+        parser.add_argument(
+            '--editorial-snapshot',
+            help='Honour a fixed editorial policy instead of the active one: a JSON file '
+                 'holding an EditorialPolicy.to_dict(), such as a run_config from an earlier '
+                 'export.',
         )
         parser.add_argument(
             '--no-rerank', action='store_true',
@@ -131,6 +159,9 @@ class Command(BaseCommand):
             raise CommandError('No careers given; use --career or --careers-file.')
         if options['resume'] and not options.get('checkpoint'):
             raise CommandError('--resume needs --checkpoint.')
+        if options.get('judge_rubrics') and not options['judge']:
+            raise CommandError('--judge-rubric needs --judge.')
+        editorial_snapshot = self._load_snapshot(options.get('editorial_snapshot'))
         done = load_checkpoint(options['checkpoint']) if options['resume'] else {}
         on_run = None
         if options.get('checkpoint') and not options['dry_run']:
@@ -149,6 +180,11 @@ class Command(BaseCommand):
                 allow_unscoped=options['unscoped'],
                 max_calls=options.get('max_calls'),
                 dry_run=options['dry_run'],
+                variant_shapes=options.get('variant_shapes'),
+                include_candidates=options['include_candidates'],
+                editorial_policy=options['editorial_policy'],
+                editorial_snapshot=editorial_snapshot,
+                judge_rubrics=options.get('judge_rubrics') or None,
             )
         except ValueError as exc:
             raise CommandError(str(exc)) from exc
@@ -168,6 +204,19 @@ class Command(BaseCommand):
             rows = write_csv(result['runs'], path)
             self.stdout.write(f'  wrote {rows} pathway row(s) to {path}')
 
+    @staticmethod
+    def _load_snapshot(path) -> dict | None:
+        """The ``--editorial-snapshot`` file's policy, or ``None`` when none was given."""
+        if not path:
+            return None
+        try:
+            snapshot = json.loads(Path(path).read_text(encoding='utf-8'))
+        except (OSError, ValueError) as exc:
+            raise CommandError(f'Could not read --editorial-snapshot: {exc}') from exc
+        if not isinstance(snapshot, dict):
+            raise CommandError('--editorial-snapshot must hold a JSON object (an EditorialPolicy.to_dict()).')
+        return snapshot
+
     def _render(self, result, collector, customer_uuid, options):
         """Print the plan, one line per career, and counts per pathway label."""
         write = self.stdout.write
@@ -176,6 +225,14 @@ class Command(BaseCommand):
         write('PATHWAY VARIANT COLLECTION' + ('  (DRY RUN -- no calls issued)' if options['dry_run'] else ''))
         write(f'  careers: {len(runs)}  strategies: {collector.strategies or "none"}  '
               f'sizes: {collector.sizes or "none"}  judge: {collector.judge_enabled}')
+        if collector.shapes:
+            write(f'  shapes: {collector.shapes}')
+        if collector.judge_enabled:
+            write(f'  judge rubrics: {collector.judge_rubrics}')
+        if collector.editorial_snapshot:
+            write('  editorial policy: fixed snapshot from --editorial-snapshot')
+        elif collector.editorial_policy:
+            write('  editorial policy: the active policy')
         write(f'  up to {collector.calls_per_career} paid model call(s) per career; '
               f'{collector.calls_per_career * len(runs)} for the whole list')
         if not customer_uuid:
@@ -195,13 +252,16 @@ class Command(BaseCommand):
         write('=' * 78)
 
         summary = summarise(runs)
+        with_v2 = collector.judge_enabled and RUBRIC_V2 in collector.judge_rubrics
         if summary:
+            v2_header = f' {"v2 good":>8} {"v2 weak":>8} {"v2 bad":>8}' if with_v2 else ''
             write(f'  {"label":<18} {"pathways":>8} {"complete":>8} {"mean len":>8} '
-                  f'{"good":>5} {"weak":>5} {"bad":>5} {"unjudged":>8}')
+                  f'{"good":>5} {"weak":>5} {"bad":>5} {"unjudged":>8}{v2_header}')
             for row in summary:
                 mean = row['courses'] / row['pathways'] if row['pathways'] else 0
+                v2_cells = f' {row["good_v2"]:>8} {row["weak_v2"]:>8} {row["bad_v2"]:>8}' if with_v2 else ''
                 write(f'  {row["label"]:<18} {row["pathways"]:>8} {row["complete"]:>8} {mean:>8.2f} '
-                      f'{row["good"]:>5} {row["weak"]:>5} {row["bad"]:>5} {row["unjudged"]:>8}')
+                      f'{row["good"]:>5} {row["weak"]:>5} {row["bad"]:>5} {row["unjudged"]:>8}{v2_cells}')
         if result.get('resumed'):
             write(f'  resumed from checkpoint (not re-run, not charged): {result["resumed"]}')
         write(f'  model calls charged (upper bound): {result["calls_charged"]}')
@@ -215,7 +275,11 @@ class Command(BaseCommand):
             'run_config': {
                 'variant_sizes': collector.sizes,
                 'variant_strategies': collector.strategies,
+                'variant_shapes': collector.shapes,
                 'judge_enabled': collector.judge_enabled,
+                'judge_rubrics': collector.judge_rubrics if collector.judge_enabled else [],
+                'editorial_policy': collector.editorial_policy,
+                'editorial_snapshot': collector.editorial_snapshot,
                 'rerank_enabled': collector.rerank_enabled,
                 'enrich_enabled': collector.enrich_enabled,
                 'customer_uuid': customer_uuid or '',

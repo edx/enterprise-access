@@ -140,6 +140,64 @@ SELECTION_MODEL_SIZED_INSTRUCTION = (
     'padded one, so do not add courses just to reach {max_size}.'
 )
 
+# The shape arm's size rule. Only candidates on the named rungs are shown, and each rung's
+# count is enforced in code, so this sentence tells the model what the pathway is for rather
+# than being the only thing holding the shape.
+SELECTION_SHAPE_INSTRUCTION = (
+    'Pick exactly {size} courses: {breakdown}. Only courses at those levels are listed. '
+    'Choose the ones at each level that would best prepare someone for this career.'
+)
+
+# Variant selection, second version, for the ``shape_pick_v2`` arm only. It comes from bench
+# round 1 of the shape review (2026-09), where a reviewer rated 35 generated pathways: in 17
+# of his 24 course swaps the replacement ranked BELOW the course it replaced in the re-rank
+# order, so the gap was the selection criteria, not retrieval. This prompt adds his recurring
+# reasons as five general rules -- generality, complementarity, role fit, coherence and level
+# honesty -- worded so that they name no course, provider or career.
+#
+# It is a new constant rather than an edit: ``PATHWAY_SELECTION_SYSTEM_PROMPT`` above is
+# untouched, so the ``model_pick``, ``model_sized`` and ``shape_pick`` arms still measure what
+# they measured before. It keeps v1's skeleton (what a course teaches, the provider cap, input
+# keys only, taught order, JSON only, the ``{size_instruction}`` slot), so the two differ in
+# their rules and in what the model is shown, not in their frame. Its size rule is
+# ``SELECTION_SHAPE_INSTRUCTION``; when editorial seats exist, the counts in that sentence are
+# the places still open, and the seated courses arrive under ``already_chosen``.
+PATHWAY_SELECTION_SYSTEM_PROMPT_V2 = """\
+You choose which online courses belong on a learning pathway for a named career.
+
+You will receive a career name, a description of its work, the job titles the pathway will
+serve, the skills that career needs, any courses already chosen, and a list of candidate
+courses, each with a key, a title, a level, a provider, a short description and its skills.
+
+{size_instruction}
+
+One pathway serves a whole family of job titles, not one exact title, so choose courses
+that would help most of the people who hold them.
+
+How to choose:
+- Choose for what a course TEACHES, not for whether its title resembles the job title. A
+  course whose subject is a different profession does not belong however well its words
+  match.
+- Prefer transferable skills over one vendor's product or one institution's own practice,
+  unless the career is defined by that tool.
+- Make every course add something the others do not. Never choose two courses that cover
+  the same ground.
+- Match the responsibility the job titles imply: leading people, specialist depth, or
+  individual contribution.
+- Build a sequence. Later courses should build on earlier ones and stay on the same
+  programming language or technical stack.
+- Be honest about level. An introductory course must suit someone new to the field. Where
+  two introductory courses are needed, make one a broad foundation and the other a more
+  focused course.
+- Courses listed under already_chosen are fixed and count toward the pathway. Do not
+  return their keys, and do not choose a course that covers what they already cover.
+- Pick at most 2 courses from any one provider, counting the courses already chosen.
+- Use ONLY keys that appear in the candidates. Never invent, correct or reformat a key.
+- Return the chosen keys in the order they should be taken, easier and more foundational
+  first.
+
+Return JSON only, with no prose before or after it."""
+
 PATHWAY_SELECTION_OUTPUT_SCHEMA = {
     'type': 'object',
     'required': ['keys'],
@@ -209,6 +267,115 @@ PATHWAY_JUDGE_OUTPUT_SCHEMA = {
                 'properties': {
                     'key': {'type': 'string'},
                     'on_topic': {'type': 'boolean'},
+                },
+            },
+        },
+    },
+}
+
+# The pathway judge, second rubric. A NEW instrument, not a revision of the one above: bench
+# round 1 of the shape review (2026-09) found the v1 judge agreed with a human reviewer on
+# only 11 of the 25 pathways it called good, because v1 asks about topical fit alone and the
+# reviewer's objections were mostly about how the courses fit together. This rubric keeps v1's
+# verdict scale and its topical test, and adds the reviewer's five recurring reasons --
+# generality, complementarity, role fit, coherence and level honesty -- as per-course flags,
+# worded so that they name no course, provider or career.
+#
+# It judges pathway quality only. Business policy -- which subjects to feature, which
+# providers or regions to favour -- is editorial configuration applied at selection, and
+# belongs in no rubric: a judge that rewarded it would stop measuring quality.
+#
+# Nothing calibrates this text yet, so its verdicts compare with v2 verdicts only, never with
+# v1's or the analysis's. The same rule applies to it as to v1: editing it starts a new
+# instrument, so a change belongs in a new constant.
+PATHWAY_JUDGE_SYSTEM_PROMPT_V2 = """\
+You judge whether a set of online courses makes a good learning pathway for a specific
+career. You are strict and concrete.
+
+You are given a CAREER FAMILY -- a group of related job titles that ONE pathway has to
+serve -- with a description of the work and the skills it needs, and 2 to 5 COURSES
+recommended for it, in the order a learner would take them. Judge against the family as a
+whole: a course that suits one title but not most of the others is narrower than it should
+be.
+
+For the pathway as a whole return one verdict:
+  good    the courses teach skills the career actually needs, each adds something the
+          others do not, and they build on one another at levels a learner can follow
+  weak    some genuine relevance, but padded, repetitive, too narrow for the family, or
+          pitched at the wrong level or role
+  bad     the courses do not prepare someone for this career; the match looks accidental
+
+For each course return:
+  on_topic        would a practitioner in this career agree this course teaches something
+                  their job needs? A course about a different profession, or matched only
+                  because a word coincided, is false. Being introductory is NOT a reason
+                  to mark false.
+  too_specific    true if the course teaches one vendor's product or one institution's own
+                  practice where the family needs the transferable skill -- unless the
+                  career is defined by that tool.
+  redundant_with  the key of another course in THIS pathway that covers substantially the
+                  same ground, or "" if there is none.
+  level_mismatch  true if the course's level does not fit its place: an introductory course
+                  a newcomer could not follow, an advanced course with nothing before it to
+                  build on, or a course that repeats foundations already covered.
+  role_misfit     true if the course is aimed at a different responsibility than the job
+                  titles imply -- leading people, specialist depth, or individual
+                  contribution.
+
+What makes a pathway good:
+- Generality: it prefers transferable skills over one vendor's product or one
+  institution's practice, unless the career is defined by that tool.
+- Complementarity: each course adds something the others do not; no two cover the same
+  ground.
+- Role fit: the courses match the responsibility the job titles imply.
+- Coherence: later courses build on earlier ones and stay on the same programming
+  language or technical stack.
+- Level honesty: an introductory course suits someone new to the field. Where a pathway
+  has two introductory courses, one broad foundation and one focused course serve a
+  newcomer better than two overviews of the same thing.
+
+Judge teaching quality and fit only. Which provider offers a course, and any business
+reason to feature one, are not part of this judgement.
+
+Be willing to say bad. Many of these were produced by loose keyword matching and are
+wrong. Do not reward a pathway for being plausible-sounding if the courses are off-topic,
+and do not call a pathway good because every course is on topic if they repeat one another
+or do not fit together.
+
+Return only the requested JSON."""
+
+# The per-course flags v2 adds, beside ``on_topic``. ``redundant_with`` is a key, the rest
+# are booleans; ``judging.parse_judgement_v2`` reads exactly these.
+PATHWAY_JUDGE_V2_BOOLEAN_FLAGS = ('too_specific', 'level_mismatch', 'role_misfit')
+
+PATHWAY_JUDGE_OUTPUT_SCHEMA_V2 = {
+    'type': 'object',
+    'additionalProperties': False,
+    'required': ['verdict', 'reason', 'courses'],
+    'properties': {
+        'verdict': {'type': 'string', 'enum': list(PATHWAY_JUDGE_VERDICTS)},
+        'reason': {'type': 'string', 'description': 'one sentence, concrete'},
+        'courses': {
+            'type': 'array',
+            'items': {
+                'type': 'object',
+                'additionalProperties': False,
+                'required': [
+                    'key', 'on_topic', 'too_specific', 'redundant_with', 'level_mismatch', 'role_misfit',
+                ],
+                'properties': {
+                    'key': {'type': 'string'},
+                    'on_topic': {'type': 'boolean'},
+                    'too_specific': {'type': 'boolean'},
+                    'redundant_with': {
+                        'type': 'string',
+                        'description': (
+                            'The key of another course in this pathway covering the same ground, '
+                            'or an empty string.'
+                        ),
+                    },
+                    'level_mismatch': {'type': 'boolean'},
+                    'role_misfit': {'type': 'boolean'},
                 },
             },
         },

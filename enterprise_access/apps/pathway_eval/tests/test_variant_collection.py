@@ -202,6 +202,37 @@ class TestVariantCollector(TestCase):
         self.assertEqual(cls.objects.create.call_count, 1)
         self.assertFalse(result['budget_exhausted'])
 
+    def test_the_cost_bound_counts_the_shape_arms(self):
+        collector = self._collector(variant_strategies=['shape_cut', 'shape_pick'],
+                                    variant_shapes=['2/0/0', '0/2/0'], judge_enabled=True)
+
+        # rerank 1 + shape_pick 2 + judge (1 default + 4 variants) 5
+        self.assertEqual(collector.calls_per_career, 8)
+
+    def test_shapes_reach_the_workflow_beside_the_size_arms(self):
+        cls, _ = fake_workflow_class()
+        collector = self._collector(variant_strategies=['model_sized', 'shape_pick'],
+                                    variant_shapes=['0/2/0'])
+        with mock.patch(PATCH_WORKFLOW, cls):
+            collector.run(['Welder'])
+
+        kwargs = cls.generate_input_dict.call_args.kwargs
+        self.assertEqual(kwargs['variant_strategies'], ['model_sized', 'shape_pick'])
+        self.assertEqual(kwargs['variant_shapes'], ['0/2/0'])
+
+    def test_the_candidate_window_is_recorded_only_when_asked_for(self):
+        cls, instance = fake_workflow_class()
+        instance.output_data['retrieve_candidates_output'] = {
+            'courses': [{'key': 'A+1', 'level_type': 'Introductory'}, {'key': 'B+1', 'level_type': 'Advanced'}],
+        }
+        instance.output_data['rerank_candidates_output'] = {'ordered_keys': ['B+1', 'A+1'], 'executed': True}
+        with mock.patch(PATCH_WORKFLOW, cls):
+            without = self._collector(variant_sizes=[2]).run(['Welder'])['runs'][0]
+            with_window = self._collector(variant_sizes=[2], include_candidates=True).run(['Welder'])['runs'][0]
+
+        self.assertEqual(without.candidates, [])
+        self.assertEqual([c['key'] for c in with_window.candidates], ['B+1', 'A+1'])
+
     def test_the_experiment_request_reaches_the_workflow(self):
         cls, _ = fake_workflow_class()
         collector = self._collector(variant_sizes=[4, 2], judge_enabled=True, rerank_enabled=False)
@@ -370,6 +401,16 @@ class TestExports(TestCase):
         self.assertEqual(count, 3)
         self.assertEqual(rows[1]['verdict'], 'good')
 
+    def test_a_shape_arm_row_names_its_shape(self):
+        run = self._run()
+        run.variants.append({**variant('shape_cut:2', ['A+1', 'B+1']), 'label': 'shape_cut:2/0/0',
+                             'strategy': 'shape_cut', 'shape': '2/0/0'})
+
+        rows = run.pathway_rows()
+
+        self.assertEqual((rows[-1]['label'], rows[-1]['shape']), ('shape_cut:2/0/0', '2/0/0'))
+        self.assertEqual(rows[0]['shape'], '')
+
 
 class TestCollectPathwayVariantsCommand(TestCase):
     """
@@ -446,3 +487,140 @@ class TestCollectPathwayVariantsCommand(TestCase):
         self.assertEqual(payload['runs'][0]['career_name'], 'Data Analyst')
         self.assertEqual([row['label'] for row in rows], ['default', 'ranked_cut:3'])
         self.assertIn('ranked_cut:3', output)
+
+
+class TestEditorialAndRubricCollection(TestCase):
+    """
+    Scenario: The editorial policy, the rubrics and the career's description reach the run.
+    """
+
+    def _collector(self, **kwargs):
+        kwargs.setdefault('lookup', lambda name: dict(CAREER, name=name, description='Finds patterns in data.'))
+        return VariantCollector(**kwargs)
+
+    def test_the_new_options_reach_the_workflow(self):
+        cls, _ = fake_workflow_class()
+        snapshot = {'excluded_keys': ['A+1'], 'flagships': [], 'promoted': []}
+        collector = self._collector(judge_enabled=True, judge_rubrics=['v2', 'v1'], editorial_policy=True,
+                                    editorial_snapshot=snapshot, variant_strategies=['shape_pick_v2'],
+                                    variant_shapes=['2/0/0'])
+        with mock.patch(PATCH_WORKFLOW, cls):
+            run = collector.run(['Data Analyst'])['runs'][0]
+
+        kwargs = cls.generate_input_dict.call_args.kwargs
+        self.assertEqual(kwargs['career_description'], 'Finds patterns in data.')
+        self.assertEqual(kwargs['judge_rubrics'], ['v1', 'v2'])
+        self.assertTrue(kwargs['editorial_policy'])
+        self.assertEqual(kwargs['editorial_snapshot'], snapshot)
+        self.assertEqual(kwargs['variant_strategies'], ['shape_pick_v2'])
+        self.assertEqual((run.career_description, run.career_skills), ('Finds patterns in data.', ['SQL', 'Excel']))
+
+    def test_by_default_the_workflow_is_asked_for_nothing_new(self):
+        cls, _ = fake_workflow_class()
+        with mock.patch(PATCH_WORKFLOW, cls):
+            self._collector(variant_sizes=[2]).run(['Welder'])
+
+        kwargs = cls.generate_input_dict.call_args.kwargs
+        self.assertEqual((kwargs['judge_rubrics'], kwargs['editorial_policy'], kwargs['editorial_snapshot']),
+                         (['v1'], False, {}))
+
+    def test_the_cost_bound_counts_every_rubric(self):
+        collector = self._collector(variant_strategies=['shape_pick_v2'], variant_shapes=['2/0/0', '0/2/0'],
+                                    judge_enabled=True, judge_rubrics=['v1', 'v2'])
+
+        # rerank 1 + shape_pick_v2 up to 4 (a repair round per shape)
+        # + judge 2 rubrics x (1 default + 2 variants) 6
+        self.assertEqual(collector.calls_per_career, 11)
+
+    def test_the_delivered_pathways_v2_judgement_is_kept_only_when_v2_ran(self):
+        cls, instance = fake_workflow_class(judgement={'label': 'default', 'verdict': 'good', 'rubric': 'v1'})
+        instance.default_judgement.side_effect = lambda rubric='v1': {'label': 'default', 'rubric': rubric}
+        with mock.patch(PATCH_WORKFLOW, cls):
+            with_v2 = self._collector(judge_enabled=True, judge_rubrics=['v1', 'v2']).run(['A'])['runs'][0]
+            without = self._collector(judge_enabled=True).run(['B'])['runs'][0]
+
+        self.assertEqual((with_v2.judgement['rubric'], with_v2.judgement_v2['rubric']), ('v1', 'v2'))
+        self.assertIsNone(without.judgement_v2)
+
+    def test_bad_options_are_refused_up_front(self):
+        with self.assertRaises(ValueError):
+            self._collector(judge_rubrics=['v3'])
+        with self.assertRaises(ValueError):
+            self._collector(editorial_snapshot=['A+1'])
+
+    def test_a_run_from_an_older_checkpoint_still_loads(self):
+        run = CareerRun.from_dict({'requested_name': 'Welder', 'pathway': assembly()})
+
+        self.assertEqual((run.career_description, run.career_skills, run.judgement_v2), ('', [], None))
+
+    def test_seats_and_the_v2_verdict_are_exported_and_counted_apart(self):
+        seated = dict(variant('shape_cut:2', ['A+1', 'B+1'], verdict='weak'),
+                      label='shape_cut:2/0/0', strategy='shape_cut', shape='2/0/0',
+                      seats=[{'key': 'A+1', 'level': 'Introductory', 'rule': 'flagship', 'reason': ''},
+                             {'key': 'B+1', 'level': 'Introductory', 'rule': 'promoted:Topic', 'reason': ''}],
+                      judgement_v2={'verdict': 'bad', 'n_on_topic': 1})
+        run = CareerRun('Welder', career_name='Welder', pathway=assembly(),
+                        judgement={'verdict': 'good'}, judgement_v2={'verdict': 'weak'}, variants=[seated])
+
+        rows = run.pathway_rows()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / 'variants.csv'
+            write_csv([run], path)
+            header = next(csv.reader(path.open(encoding='utf-8')))
+        summary = {row['label']: row for row in summarise([run])}
+
+        self.assertEqual(header[-2:], ['seats', 'verdict_v2'])
+        self.assertEqual(rows[1]['seats'], 'A+1 (flagship) | B+1 (promoted:Topic)')
+        self.assertEqual((rows[0]['verdict_v2'], rows[1]['verdict_v2']), ('weak', 'bad'))
+        self.assertEqual((rows[0]['seats'], rows[1]['verdict']), ('', 'weak'))
+        self.assertEqual((summary['default']['good'], summary['default']['weak_v2']), (1, 1))
+        self.assertEqual((summary['shape_cut:2/0/0']['weak'], summary['shape_cut:2/0/0']['bad_v2']), (1, 1))
+
+
+class TestCollectCommandEditorialAndRubrics(TestCase):
+    """
+    Scenario: The collection command's new flags are validated and recorded.
+    """
+
+    def call(self, **kwargs):
+        stdout = StringIO()
+        call_command('collect_pathway_variants', stdout=stdout, **kwargs)
+        return stdout.getvalue()
+
+    def test_a_rubric_needs_the_judge(self):
+        with self.assertRaisesRegex(CommandError, '--judge-rubric needs --judge'):
+            self.call(career=['Welder'], judge_rubrics=['v2'], dry_run=True)
+
+    def test_every_rubric_is_priced_in_the_plan(self):
+        output = self.call(career=['Welder'], variant_strategies=['model_sized'], judge=True,
+                           judge_rubrics=['v1', 'v2'], dry_run=True)
+
+        # rerank 1 + model_sized 1 + judge 2 rubrics x 2 pathways 4 = 6 per career.
+        self.assertIn("judge rubrics: ['v1', 'v2']", output)
+        self.assertIn('up to 6 paid model call(s) per career', output)
+
+    def test_a_snapshot_file_is_read_and_recorded_in_the_export(self):
+        snapshot = {'excluded_keys': ['A+1'], 'flagships': [], 'promoted': []}
+        cls, _ = fake_workflow_class()
+        with tempfile.TemporaryDirectory() as tmpdir, \
+                mock.patch(PATCH_WORKFLOW, cls), mock.patch(PATCH_LOOKUP, return_value=CAREER):
+            snapshot_path = Path(tmpdir) / 'policy.json'
+            snapshot_path.write_text(json.dumps(snapshot))
+            json_path = Path(tmpdir) / 'runs.json'
+            output = self.call(career=['Data Analyst'], variant_shapes=['2/0/0'], editorial_policy=True,
+                               editorial_snapshot=str(snapshot_path), output_json=str(json_path))
+            config = json.loads(json_path.read_text())['run_config']
+
+        self.assertIn('editorial policy: fixed snapshot', output)
+        self.assertEqual(cls.generate_input_dict.call_args.kwargs['editorial_snapshot'], snapshot)
+        self.assertEqual((config['editorial_policy'], config['editorial_snapshot']), (True, snapshot))
+        self.assertEqual(config['judge_rubrics'], [])
+
+    def test_an_unreadable_or_malformed_snapshot_is_a_command_error(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            listed = Path(tmpdir) / 'list.json'
+            listed.write_text('["A+1"]')
+            for path, message in ((Path(tmpdir) / 'missing.json', 'Could not read'), (listed, 'JSON object')):
+                with self.subTest(path.name):
+                    with self.assertRaisesRegex(CommandError, message):
+                        self.call(career=['Welder'], editorial_snapshot=str(path), dry_run=True)

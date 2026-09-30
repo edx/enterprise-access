@@ -94,6 +94,7 @@ PROJECT_APPS = (
     'enterprise_access.apps.prompts',
     'enterprise_access.apps.pathway_eval',
     'enterprise_access.apps.pathways',
+    'enterprise_access.apps.pathway_editorial',
 )
 
 INSTALLED_APPS += THIRD_PARTY_APPS

@@ -9,6 +9,7 @@ from django.test import TestCase
 
 from enterprise_access.apps.api_client.algolia_client import AlgoliaSearchError
 from enterprise_access.apps.pathways.models import (
+    CareerCandidate,
     CareerDiscoveryWorkflow,
     ExtractIntentInput,
     ExtractIntentOutput,
@@ -101,12 +102,20 @@ class TestCareerDiscoveryWorkflowExecution(CareerDiscoveryWorkflowTestMixin, Tes
 
         workflow.execute()
 
+        # ``description`` is persisted for the pathway experiments; the careers endpoint's
+        # serializer does not expose it, so the HTTP response is unchanged.
         assert workflow.career_candidates() == [{
             'external_id': 'ETE78CD2CDFFFAC66B',
             'name': 'Data Analyst',
             'skills': ['SQL (Programming Language)'],
             'industries': ['Health Care'],
+            'description': '',
         }]
+
+    def test_a_career_persisted_before_descriptions_were_read_still_loads(self):
+        career = CareerCandidate.from_dict({'external_id': 'ET1', 'name': 'Welder', 'skills': ['Welding']})
+
+        assert career.description == ''
 
     def test_derived_intent_drives_the_jobs_search(self):
         self.create_workflow().execute()

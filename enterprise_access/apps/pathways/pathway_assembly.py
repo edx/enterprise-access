@@ -98,6 +98,10 @@ class Candidate:
     level_type: str = ''
     partner: str = ''
     language: str = ''
+    #: The course's skill tags, as a tuple so the candidate stays hashable. Carried because a
+    #: course names the vendor whose product it teaches at least as often in its tags as in its
+    #: title -- see ``ecosystems``, where reading the title alone missed most of them.
+    skill_names: tuple = ()
 
     @classmethod
     def from_hit(cls, hit: dict) -> 'Candidate':
@@ -115,6 +119,9 @@ class Candidate:
             level_type=(hit.get('level_type') or '').strip(),
             partner=(first_partner.get('name') or '').strip(),
             language=(hit.get('language') or '').strip(),
+            skill_names=tuple(
+                name.strip() for name in (hit.get('skill_names') or []) if isinstance(name, str) and name.strip()
+            ),
         )
 
     @property
@@ -160,17 +167,26 @@ class PathwayAssembly:
         return mix
 
 
-def eligible_candidates(hits, *, supported_language: str = SUPPORTED_LANGUAGE):
+def eligible_candidates(hits, *, supported_language: str = SUPPORTED_LANGUAGE,
+                        excluded_keys=frozenset()):
     """
     Filter raw hits down to the courses a pathway may contain.
 
     Returns ``(candidates, ineligible_counts)``. The counts are returned rather than
     logged away because "the candidate set was large but mostly unusable" and "retrieval
     found little" are different diagnoses that a bare pathway cannot distinguish.
+
+    ``excluded_keys`` are courses an editorial policy has withdrawn from pathways. They are
+    rejected as ``editorial_excluded`` and counted like every other reason, so a window
+    thinned by policy reads differently from one thinned by the catalog. They match
+    ignoring case and surrounding space, as the editorial app matches them, so a key typed
+    in another case cannot slip past the fill. Empty unless a caller opts in, so the
+    delivered pathway is unaffected by default.
     """
     candidates = []
     ineligible: dict = {}
     seen = set()
+    excluded = {key.strip().casefold() for key in excluded_keys or () if isinstance(key, str) and key.strip()}
 
     def reject(reason):
         ineligible[reason] = ineligible.get(reason, 0) + 1
@@ -183,6 +199,9 @@ def eligible_candidates(hits, *, supported_language: str = SUPPORTED_LANGUAGE):
         if candidate.key in seen:
             reject('duplicate_key')
             continue
+        if candidate.key.casefold() in excluded:
+            reject('editorial_excluded')
+            continue
         if supported_language and candidate.language and candidate.language != supported_language:
             reject('unsupported_language')
             continue
@@ -192,7 +211,8 @@ def eligible_candidates(hits, *, supported_language: str = SUPPORTED_LANGUAGE):
     return candidates, ineligible
 
 
-def assemble_pathway(hits, *, level_quota=None, max_per_partner: int = MAX_PER_PARTNER):
+def assemble_pathway(hits, *, level_quota=None, max_per_partner: int = MAX_PER_PARTNER,
+                     excluded_keys=frozenset()):
     """
     Select ``PATHWAY_SIZE`` courses spanning the level quota, capped per provider.
 
@@ -218,9 +238,11 @@ def assemble_pathway(hits, *, level_quota=None, max_per_partner: int = MAX_PER_P
     Returns a ``PathwayAssembly``. When fewer than ``PATHWAY_SIZE`` eligible candidates
     exist it returns an incomplete assembly rather than padding -- the caller reports no
     pathway, per Decision 3.
+
+    ``excluded_keys`` is passed to ``eligible_candidates``; empty unless a caller opts in.
     """
     quota = dict(level_quota or DEFAULT_LEVEL_QUOTA)
-    candidates, ineligible = eligible_candidates(hits)
+    candidates, ineligible = eligible_candidates(hits, excluded_keys=excluded_keys)
 
     chosen: list = []
     per_partner: dict = {}

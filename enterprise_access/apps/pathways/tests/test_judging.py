@@ -15,10 +15,18 @@ from enterprise_access.apps.pathways.judging import (
     COURSE_SKILLS_SHOWN,
     DESCRIPTION_CHARS_SHOWN,
     JUDGE_SYSTEM_PROMPT,
+    JUDGE_SYSTEM_PROMPT_V2,
+    V2_CAREER_DESCRIPTION_CHARS,
+    V2_CAREER_SKILLS_SHOWN,
+    V2_FAMILY_TITLES_SHOWN,
     build_user_content,
+    build_user_content_v2,
     get_judge_backend,
+    is_flagged,
     judge_pathway,
-    parse_judgement
+    normalise_rubrics,
+    parse_judgement,
+    parse_judgement_v2
 )
 from enterprise_access.apps.pathways.model_backends import (
     ModelBackendConfigurationError,
@@ -232,3 +240,215 @@ class TestJudgePathway(TestCase):
 
         self.assertEqual(result['error'], 'judge response was not JSON')
         self.assertEqual(result['trace']['backend'], 'fake')
+
+
+# ``build_user_content`` for ``COURSES`` with two career skills, as it rendered before the v2
+# rubric existed. v1 is a calibrated instrument, so its rendering is pinned verbatim.
+V1_USER_CONTENT = (
+    'CAREER FAMILY: Welder\n'
+    'job titles in this family: Welder\n'
+    'skills this career needs (Lightcast): Welding, Blueprints\n'
+    '\n'
+    'RECOMMENDED PATHWAY (2 courses):\n'
+    '1. [A+1] Intro to Welding (Introductory)\n'
+    f"   about: {('Learn to weld. ' * 40)[:280]}\n"
+    f"   course skills: {', '.join(f'Skill {n}' for n in range(8))}\n"
+    '2. [B+2] Metallurgy (level unknown)'
+)
+
+
+def v2_payload(verdict='good', courses=None, reason='Coherent.'):
+    return {
+        'verdict': verdict,
+        'reason': reason,
+        'courses': courses if courses is not None else [
+            {'key': 'A+1', 'on_topic': True, 'too_specific': False, 'redundant_with': '',
+             'level_mismatch': False, 'role_misfit': False},
+            {'key': 'B+2', 'on_topic': True, 'too_specific': True, 'redundant_with': 'A+1',
+             'level_mismatch': False, 'role_misfit': True},
+        ],
+    }
+
+
+class TestRubricNames(TestCase):
+    """
+    Scenario: A run names the rubrics it is judged under, v1 when it names none.
+    """
+
+    def test_none_means_v1_alone(self):
+        self.assertEqual(normalise_rubrics(None), ['v1'])
+        self.assertEqual(normalise_rubrics([]), ['v1'])
+
+    def test_rubrics_come_back_deduplicated_in_canonical_order(self):
+        self.assertEqual(normalise_rubrics(['v2', 'v1', 'v2']), ['v1', 'v2'])
+        self.assertEqual(normalise_rubrics(['v2']), ['v2'])
+
+    def test_an_unknown_rubric_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'Unknown judge rubrics'):
+            normalise_rubrics(['v3'])
+
+
+class TestTheV1PathIsUnchanged(TestCase):
+    """
+    Scenario: The default rubric sends exactly what the calibrated judge always received.
+    """
+
+    def test_the_v1_user_content_is_pinned(self):
+        content = build_user_content(career_name='Welder', career_skills=['Welding', 'Blueprints'], courses=COURSES)
+
+        self.assertEqual(content, V1_USER_CONTENT)
+
+    def test_the_default_and_explicit_v1_send_the_v1_prompt_and_content(self):
+        for kwargs in ({}, {'rubric': 'v1', 'career_description': 'Joins metal.', 'family_titles': ['Welder II'],
+                            'family_size': 9}):
+            with self.subTest(kwargs=kwargs):
+                backend = FakeBackend(content=json.dumps(verdict_payload()))
+
+                result = judge_pathway(career_name='Welder', career_skills=['Welding', 'Blueprints'],
+                                       courses=COURSES, trace_id='t', backend=backend, **kwargs)
+
+                self.assertEqual(backend.calls[0]['system_prompt'], JUDGE_SYSTEM_PROMPT)
+                self.assertEqual(backend.calls[0]['user_content'], V1_USER_CONTENT)
+                self.assertEqual((result['rubric'], result['flags']), ('v1', {}))
+                self.assertEqual(result['verdict'], 'good')
+
+    def test_an_unknown_rubric_is_refused_before_any_call(self):
+        backend = FakeBackend(content=json.dumps(verdict_payload()))
+
+        with self.assertRaises(ValueError):
+            judge_pathway(career_name='Welder', career_skills=[], courses=COURSES, trace_id='t',
+                          backend=backend, rubric='v9')
+        self.assertEqual(backend.calls, [])
+
+
+class TestBuildUserContentV2(TestCase):
+    """
+    Scenario: v2 shows the family and the work the pathway is for, and courses as v1 does.
+    """
+
+    def _content(self, **kwargs):
+        kwargs.setdefault('career_name', 'Welder')
+        kwargs.setdefault('career_skills', [f'S{n}' for n in range(12)])
+        kwargs.setdefault('courses', COURSES)
+        return build_user_content_v2(**kwargs)
+
+    def test_the_family_titles_size_description_and_skills_are_shown(self):
+        titles = [f'Welder {n}' for n in range(20)]
+        lines = self._content(family_titles=titles, family_size=42,
+                              career_description='Joins metal parts.  ' + 'x' * 900).split('\n')
+
+        self.assertEqual(lines[0], 'CAREER FAMILY: Welder')
+        self.assertEqual(lines[1], 'family size: 42 job titles')
+        self.assertTrue(lines[2].startswith(f'job titles in this family ({V2_FAMILY_TITLES_SHOWN} of 42 shown): '))
+        self.assertEqual(len(lines[2].split(': ', 1)[1].split('; ')), V2_FAMILY_TITLES_SHOWN)
+        about = lines[3].split(': ', 1)[1]
+        self.assertTrue(about.startswith('Joins metal parts. x'))
+        self.assertEqual(len(about), V2_CAREER_DESCRIPTION_CHARS)
+        self.assertEqual(len(lines[4].split(': ', 1)[1].split(', ')), V2_CAREER_SKILLS_SHOWN)
+
+    def test_without_a_family_the_career_name_stands_in_as_in_v1(self):
+        lines = self._content(career_skills=[]).split('\n')
+
+        self.assertEqual(lines[1], 'family size: 1 job title')
+        self.assertEqual(lines[2], 'job titles in this family: Welder')
+        self.assertEqual(lines[3], 'skills this career needs (Lightcast): (none resolved)')
+        self.assertNotIn('what this work involves', '\n'.join(lines))
+
+    def test_courses_render_exactly_as_in_v1(self):
+        v1_courses = V1_USER_CONTENT.split('\n')[5:]
+        v2_lines = self._content().split('\n')
+
+        self.assertEqual(v2_lines[-len(v1_courses):], v1_courses)
+        self.assertIn('RECOMMENDED PATHWAY (2 courses, in the order they would be taken):', v2_lines)
+
+
+class TestParseJudgementV2(TestCase):
+    """
+    Scenario: The v2 judge's flags are held to the pathway it was shown.
+    """
+
+    def test_flags_are_read_per_course(self):
+        result = parse_judgement_v2(v2_payload(), ['A+1', 'B+2'])
+
+        self.assertEqual(result['verdict'], 'good')
+        self.assertEqual(result['on_topic'], {'A+1': True, 'B+2': True})
+        self.assertEqual(result['flags'], {
+            'A+1': {'too_specific': False, 'redundant_with': '', 'level_mismatch': False, 'role_misfit': False},
+            'B+2': {'too_specific': True, 'redundant_with': 'A+1', 'level_mismatch': False, 'role_misfit': True},
+        })
+        self.assertTrue(is_flagged(result['flags']['B+2']))
+        self.assertFalse(is_flagged(result['flags']['A+1']))
+
+    def test_a_redundancy_with_anything_but_another_supplied_course_is_cleared(self):
+        courses = [
+            {'key': 'A+1', 'on_topic': True, 'redundant_with': 'Z+9'},
+            {'key': 'B+2', 'on_topic': True, 'redundant_with': 'B+2'},
+            {'key': 'C+3', 'on_topic': False, 'redundant_with': ['A+1']},
+        ]
+
+        result = parse_judgement_v2(v2_payload(courses=courses), ['A+1', 'B+2', 'C+3'])
+
+        self.assertEqual({key: flags['redundant_with'] for key, flags in result['flags'].items()},
+                         {'A+1': '', 'B+2': '', 'C+3': ''})
+
+    def test_an_invented_key_is_dropped_and_counted_and_carries_no_flags(self):
+        courses = [{'key': 'A+1', 'on_topic': True}, {'key': 'Z+9', 'on_topic': True, 'too_specific': True}]
+
+        result = parse_judgement_v2(v2_payload(courses=courses), ['A+1', 'B+2'])
+
+        self.assertEqual(result['fabricated_keys'], ['Z+9'])
+        self.assertEqual(list(result['flags']), ['A+1'])
+        self.assertEqual(result['unjudged_keys'], ['B+2'])
+
+    def test_a_flag_that_is_not_a_boolean_is_not_raised(self):
+        courses = [{'key': 'A+1', 'on_topic': True, 'too_specific': 'yes', 'role_misfit': 1}]
+
+        result = parse_judgement_v2(v2_payload(courses=courses), ['A+1'])
+
+        self.assertEqual(result['flags']['A+1']['too_specific'], False)
+        self.assertEqual(result['flags']['A+1']['role_misfit'], False)
+
+    def test_flags_come_from_the_entry_whose_on_topic_answer_was_accepted(self):
+        courses = [{'key': 'A+1', 'on_topic': 'maybe', 'too_specific': True},
+                   {'key': 'A+1', 'on_topic': False, 'level_mismatch': True}]
+
+        result = parse_judgement_v2(v2_payload(courses=courses), ['A+1'])
+
+        self.assertEqual(result['on_topic'], {'A+1': False})
+        self.assertEqual(result['flags']['A+1']['level_mismatch'], True)
+        self.assertEqual(result['flags']['A+1']['too_specific'], False)
+
+    def test_an_unusable_response_has_no_verdict_and_no_flags(self):
+        result = parse_judgement_v2(v2_payload(verdict='great'), ['A+1', 'B+2'])
+
+        self.assertEqual((result['verdict'], result['flags']), ('', {}))
+        self.assertIn('great', result['error'])
+
+
+class TestJudgePathwayV2(TestCase):
+    """
+    Scenario: Judging under v2 sends the v2 instrument and records its flags.
+    """
+
+    def test_the_v2_prompt_and_content_are_sent_and_flags_returned(self):
+        backend = FakeBackend(content=json.dumps(v2_payload()))
+
+        result = judge_pathway(
+            career_name='Welder', career_skills=['Welding'], courses=COURSES, trace_id='t', backend=backend,
+            rubric='v2', career_description='Joins metal.', family_titles=['Welder', 'Pipe Welder'], family_size=3,
+        )
+
+        call = backend.calls[0]
+        self.assertEqual(call['system_prompt'], JUDGE_SYSTEM_PROMPT_V2)
+        self.assertIn('job titles in this family (2 of 3 shown): Welder; Pipe Welder', call['user_content'])
+        self.assertIn('what this work involves: Joins metal.', call['user_content'])
+        self.assertEqual(result['rubric'], 'v2')
+        self.assertEqual(result['n_on_topic'], 2)
+        self.assertEqual(result['flags']['B+2']['redundant_with'], 'A+1')
+
+    def test_a_v2_failure_is_recorded_like_v1s(self):
+        result = judge_pathway(career_name='Welder', career_skills=[], courses=COURSES, trace_id='t',
+                               backend=FakeBackend(error=ModelBackendRequestError('x')), rubric='v2')
+
+        self.assertEqual((result['verdict'], result['rubric'], result['flags']), ('', 'v2', {}))
+        self.assertIn('ModelBackendRequestError', result['error'])

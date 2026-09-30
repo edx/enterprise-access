@@ -164,7 +164,20 @@ class TestCareerCandidateMapping(TestCase):
             'name': 'Data Analyst',
             'skills': ['SQL (Programming Language)', 'Data Analysis'],
             'industries': ['Health Care', 'Information'],
+            'description': '',
         }
+
+    def test_the_career_description_is_carried_trimmed_and_capped(self):
+        hit = {**JOBS_HIT, 'description': '  Analyses data.  ' + 'x' * 2000}
+
+        description = pathways_api.career_candidate_from_hit(hit)['description']
+
+        assert description.startswith('Analyses data.')
+        assert len(description) == pathways_api.CAREER_DESCRIPTION_CHARS
+
+    @ddt.data(None, 7, ['prose'])
+    def test_a_missing_or_malformed_description_is_empty(self, description):
+        assert pathways_api.career_candidate_from_hit({**JOBS_HIT, 'description': description})['description'] == ''
 
     @ddt.data(
         {'name': 'Data Analyst'},
@@ -282,7 +295,7 @@ class TestRetrieveCareers(TestCase):
         args, kwargs = search.call_args
         assert args == ('data analyst',)
         assert kwargs['hitsPerPage'] == pathways_api.CAREER_HITS_PER_PAGE == 10
-        assert kwargs['attributesToRetrieve'] == ['external_id', 'name', 'skills', 'industry_names']
+        assert kwargs['attributesToRetrieve'] == ['external_id', 'name', 'skills', 'industry_names', 'description']
         assert kwargs['filters'] == 'metadata_language:en AND (industry_names:"Health Care")'
         assert kwargs['optionalFilters'] == ['skills.name:"SQL"', 'skills.name:"Tableau"<score=1>']
         assert result['query'] == 'data analyst'
