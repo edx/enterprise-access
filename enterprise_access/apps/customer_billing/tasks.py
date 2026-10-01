@@ -44,6 +44,11 @@ def _format_currency_for_braze(amount_cents, suffix=''):
     )
 
 
+def _format_braze_timestamp(timestamp):
+    """Format a Unix timestamp as the ISO-8601 string Braze templates pipe through Liquid date filters."""
+    return format_datetime_obj(datetime_from_timestamp(timestamp), output_pattern=BRAZE_TIMESTAMP_FORMAT)
+
+
 def _build_common_trigger_properties(ssp_product=None, organization_name=None, **extra):
     """
     Build the common trigger_properties dict shared across all email tasks.
@@ -433,6 +438,82 @@ def send_trial_ended_cancellation_email_task(checkout_intent_id: int):
     )
 
 
+def _format_braze_date(timestamp):
+    """Format a Unix timestamp as the human-readable date Braze templates display."""
+    return format_datetime_obj(datetime_from_timestamp(timestamp), output_pattern=BRAZE_DATE_FORMAT_2)
+
+
+@shared_task(base=LoggedTaskWithRetry)
+def send_paid_subscription_ended_email_task(checkout_intent_id, ended_at_timestamp):
+    """
+    Send Braze email notification when a paid subscription ends at the end of its term.
+
+    Sent for every previously active subscription that Stripe ends, whether the admin
+    cancelled it or it lapsed. Independent of the scheduled-cancellation email.
+
+    Args:
+        checkout_intent_id (int): ID of the CheckoutIntent record
+        ended_at_timestamp (int): Unix timestamp of when the subscription ended.
+
+    Raises:
+        BrazeClientError: If there's an error communicating with Braze
+        Exception: For any other unexpected errors during email sending
+    """
+    _send_admin_campaign(
+        checkout_intent_id,
+        lambda ssp_product: get_campaign_id('subscription_ended', ssp_product),
+        'paid subscription ended email',
+        extra_properties={'subscription_end_date': _format_braze_date(ended_at_timestamp)},
+    )
+
+
+@shared_task(base=LoggedTaskWithRetry)
+def send_paid_subscription_renewal_notice_email_task(
+    checkout_intent_id, renewed_at_timestamp, invoice_id, period_start_timestamp, period_end_timestamp,
+):
+    """
+    Send Braze email notification when a paid subscription renews for another term.
+
+    Sent in addition to the payment receipt email. Plan size and billing amount come from the
+    ``invoice.paid`` summary of the renewal invoice.
+
+    Args:
+        checkout_intent_id (int): ID of the CheckoutIntent record
+        renewed_at_timestamp (int): Unix timestamp of when the renewal invoice was created.
+        invoice_id (str): The Stripe ID of the renewal invoice.
+        period_start_timestamp (int): Unix timestamp of the start of the renewed term.
+        period_end_timestamp (int): Unix timestamp of the end of the renewed term (the next payment date).
+
+    Raises:
+        BrazeClientError: If there's an error communicating with Braze
+        Exception: For any other unexpected errors during email sending
+    """
+    invoice_summary = StripeEventSummary.get_latest_invoice_paid(invoice_id)
+    if not invoice_summary:
+        logger.error(
+            'Paid subscription renewal notice email not sent: No invoice summary found for invoice %s '
+            '(checkout_intent_id: %s)',
+            invoice_id,
+            checkout_intent_id,
+        )
+        return
+
+    _send_admin_campaign(
+        checkout_intent_id,
+        lambda ssp_product: get_campaign_id('subscription_renewal_notice', ssp_product),
+        'paid subscription renewal notice email',
+        extra_properties={
+            'renewal_date': _format_braze_date(renewed_at_timestamp),
+            'total_license': int(invoice_summary.invoice_quantity or 0),
+            # The template renders the dollar sign and the "/year USD" suffix itself.
+            'billing_amount': _format_currency_for_braze(invoice_summary.invoice_amount_paid or 0).lstrip('$'),
+            'subscription_start_period': _format_braze_timestamp(period_start_timestamp),
+            'subscription_end_period': _format_braze_timestamp(period_end_timestamp),
+            'next_payment_date': _format_braze_timestamp(period_end_timestamp),
+        },
+    )
+
+
 @shared_task(base=LoggedTaskWithRetry)
 def send_billing_error_email_task(checkout_intent_id: int):
     """
@@ -501,20 +582,26 @@ def send_billing_error_email_task(checkout_intent_id: int):
     )
 
 
-def _send_reinstatement_campaign(checkout_intent_id: int, campaign_id: str, email_description: str):
+def _send_admin_campaign(
+    checkout_intent_id: int, campaign_id, email_description: str, extra_properties: dict = None,
+):
     """
-    Shared logic for sending a Braze reinstatement email for a given campaign.
+    Shared logic for sending a Braze email to an enterprise's admins for a given campaign.
 
     Not itself a Celery task; must be called from one (e.g. send_trial_reinstatement_email_task,
-    send_paid_reinstatement_email_task).
+    send_paid_reinstatement_email_task, send_paid_subscription_ended_email_task).
 
     Args:
         checkout_intent_id (int): ID of the CheckoutIntent record
-        campaign_id (str): Braze campaign UUID to trigger
+        campaign_id (str or callable): Braze campaign UUID to trigger, or a callable that resolves it
+            from the checkout intent's ``ssp_product`` (avoids loading the intent twice)
         email_description (str): Human-readable description used for logging
+        extra_properties (dict): Optional additional trigger properties, merged over the common ones
     """
     checkout_intent = _get_checkout_intent_with_product(checkout_intent_id)
     enterprise_slug = checkout_intent.enterprise_slug
+    if callable(campaign_id):
+        campaign_id = campaign_id(checkout_intent.ssp_product)
 
     admin_users = get_enterprise_admins(enterprise_slug, raise_if_empty=True)
     braze_client = BrazeApiClient()
@@ -540,6 +627,7 @@ def _send_reinstatement_campaign(checkout_intent_id: int, campaign_id: str, emai
         product_type=product_type,
         product_type_display=product_type.capitalize(),
         enterprise_admin_portal_url=f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/{enterprise_slug}',
+        **(extra_properties or {}),
     )
 
     send_campaign_message(
@@ -563,7 +651,7 @@ def send_trial_reinstatement_email_task(checkout_intent_id: int):
     Args:
         checkout_intent_id (int): ID of the CheckoutIntent record
     """
-    _send_reinstatement_campaign(
+    _send_admin_campaign(
         checkout_intent_id,
         settings.BRAZE_ENTERPRISE_SSP_TRIAL_SUBSCRIPTION_REINSTATED_CAMPAIGN,
         'trial subscription reinstatement email',
@@ -581,7 +669,7 @@ def send_paid_reinstatement_email_task(checkout_intent_id: int):
     Args:
         checkout_intent_id (int): ID of the CheckoutIntent record
     """
-    _send_reinstatement_campaign(
+    _send_admin_campaign(
         checkout_intent_id,
         settings.BRAZE_ENTERPRISE_SSP_PAID_SUBSCRIPTION_REINSTATED_CAMPAIGN,
         'paid subscription reinstatement email',
@@ -788,8 +876,8 @@ def send_trial_end_and_subscription_started_email_task(
     subscription_end_period = None
     next_payment_date = None
     if period_start and period_end:
-        subscription_start_period = format_datetime_obj(datetime_from_timestamp(period_start), BRAZE_TIMESTAMP_FORMAT)
-        subscription_end_period = format_datetime_obj(datetime_from_timestamp(period_end), BRAZE_TIMESTAMP_FORMAT)
+        subscription_start_period = _format_braze_timestamp(period_start)
+        subscription_end_period = _format_braze_timestamp(period_end)
         next_payment_date = subscription_end_period
 
     organization_name = checkout_intent.enterprise_name
