@@ -198,7 +198,10 @@ On reinstatement:
 * **Note:** Because License Manager plans were never modified during cancellation scheduling,
   no License Manager changes are needed on reinstatement
 
-*Braze Emails:* ``BRAZE_SSP_SUBSCRIPTION_REINSTATED_CAMPAIGN`` - Confirms subscription has been restored.
+*Braze Emails:*
+
+* **Trial subscriptions:** ``BRAZE_ENTERPRISE_SSP_TRIAL_SUBSCRIPTION_REINSTATED_CAMPAIGN`` - Confirms trial subscription has been restored.
+* **Active subscriptions:** ``BRAZE_ENTERPRISE_SSP_PAID_SUBSCRIPTION_REINSTATED_CAMPAIGN`` - Confirms paid subscription has been restored.
 
 **Subscription Termination (Finalized)**
 
@@ -225,27 +228,29 @@ Braze Campaign Summary
 
 Key: ``[BEP] = BRAZE_ENTERPRISE_PROVISION``
 
-+--------------------------------------+-----------------------------------------------------+--------------------------------------------------------+
-| Event/Trigger                        | Braze Campaign Setting                              | Description                                            |
-+======================================+=====================================================+========================================================+
-| Provisioning complete                | ``[BEP]_SIGNUP_CONFIRMATION_CAMPAIGN``              | Signup confirmation with trial details                 |
-+--------------------------------------+-----------------------------------------------------+--------------------------------------------------------+
-| 72 hours before trial ends           | ``[BEP]_TRIAL_ENDING_SOON_CAMPAIGN``                | Trial ending reminder with renewal info                |
-+--------------------------------------+-----------------------------------------------------+--------------------------------------------------------+
-| Trial ends, paid subscription starts | ``[BEP]_TRIAL_END_SUBSCRIPTION_STARTED_CAMPAIGN``   | Confirmation of paid subscription start                |
-+--------------------------------------+-----------------------------------------------------+--------------------------------------------------------+
-| Invoice paid (amount > $0)           | ``[BEP]_PAYMENT_RECEIPT_CAMPAIGN``                  | Payment receipt with billing details                   |
-+--------------------------------------+-----------------------------------------------------+--------------------------------------------------------+
-| Subscription becomes past_due        | ``BRAZE_BILLING_ERROR_CAMPAIGN``                    | Payment failure notification                           |
-+--------------------------------------+-----------------------------------------------------+--------------------------------------------------------+
-| Trial cancellation scheduled         | ``BRAZE_TRIAL_CANCELLATION_CAMPAIGN``               | Scheduled cancellation confirmation during trial       |
-+--------------------------------------+-----------------------------------------------------+--------------------------------------------------------+
-| Paid plan cancellation scheduled     | ``BRAZE_PAID_CANCELLATION_CAMPAIGN``                | Scheduled cancellation confirmation during paid period |
-+--------------------------------------+-----------------------------------------------------+--------------------------------------------------------+
-| Cancellation reversed (reinstated)   | ``BRAZE_SSP_SUBSCRIPTION_REINSTATED_CAMPAIGN``      | Subscription restored confirmation                     |
-+--------------------------------------+-----------------------------------------------------+--------------------------------------------------------+
-| Active subscription deleted          | ``BRAZE_SSP_CANCELATION_FINALIZATION_CAMPAIGN``     | Final cancellation confirmation                        |
-+--------------------------------------+-----------------------------------------------------+--------------------------------------------------------+
++--------------------------------------+-----------------------------------------------------------------+--------------------------------------------------------+
+| Event/Trigger                        | Braze Campaign Setting                                          | Description                                            |
++======================================+=================================================================+========================================================+
+| Provisioning complete                | ``[BEP]_SIGNUP_CONFIRMATION_CAMPAIGN``                          | Signup confirmation with trial details                 |
++--------------------------------------+-----------------------------------------------------------------+--------------------------------------------------------+
+| 72 hours before trial ends           | ``[BEP]_TRIAL_ENDING_SOON_CAMPAIGN``                            | Trial ending reminder with renewal info                |
++--------------------------------------+-----------------------------------------------------------------+--------------------------------------------------------+
+| Trial ends, paid subscription starts | ``[BEP]_TRIAL_END_SUBSCRIPTION_STARTED_CAMPAIGN``               | Confirmation of paid subscription start                |
++--------------------------------------+-----------------------------------------------------------------+--------------------------------------------------------+
+| Invoice paid (amount > $0)           | ``[BEP]_PAYMENT_RECEIPT_CAMPAIGN``                              | Payment receipt with billing details                   |
++--------------------------------------+-----------------------------------------------------------------+--------------------------------------------------------+
+| Subscription becomes past_due        | ``BRAZE_BILLING_ERROR_CAMPAIGN``                                | Payment failure notification                           |
++--------------------------------------+-----------------------------------------------------------------+--------------------------------------------------------+
+| Trial cancellation scheduled         | ``BRAZE_TRIAL_CANCELLATION_CAMPAIGN``                           | Scheduled cancellation confirmation during trial       |
++--------------------------------------+-----------------------------------------------------------------+--------------------------------------------------------+
+| Paid plan cancellation scheduled     | ``BRAZE_PAID_CANCELLATION_CAMPAIGN``                            | Scheduled cancellation confirmation during paid period |
++--------------------------------------+-----------------------------------------------------------------+--------------------------------------------------------+
+| Trial cancellation reversed          | ``BRAZE_ENTERPRISE_SSP_TRIAL_SUBSCRIPTION_REINSTATED_CAMPAIGN`` | Trial subscription restored confirmation               |
++--------------------------------------+-----------------------------------------------------------------+--------------------------------------------------------+
+| Paid plan cancellation reversed      | ``BRAZE_ENTERPRISE_SSP_PAID_SUBSCRIPTION_REINSTATED_CAMPAIGN``  | Paid subscription restored confirmation                |
++--------------------------------------+-----------------------------------------------------------------+--------------------------------------------------------+
+| Active subscription deleted          | ``BRAZE_SSP_CANCELATION_FINALIZATION_CAMPAIGN``                 | Final cancellation confirmation                        |
++--------------------------------------+-----------------------------------------------------------------+--------------------------------------------------------+
 
 Event Processing Flows
 ----------------------

@@ -24,8 +24,7 @@ class CustomerBillingSspProductsTests(APITest):
     def setUp(self):
         super().setUp()
         self.course_count_patcher = mock.patch(
-            'enterprise_access.apps.api.serializers.customer_billing.get_cached_course_count',
-            create=True,
+            'enterprise_access.apps.customer_billing.models.get_cached_course_count',
         )
         self.mock_get_cached_course_count = self.course_count_patcher.start()
         self.mock_get_cached_course_count.return_value = 16
@@ -46,21 +45,6 @@ class CustomerBillingSspProductsTests(APITest):
             is_active=True,
             marketing_url=None,
         )
-
-    def test_course_count_returns_none(self):
-        """Course count is not yet implemented and always returns None, regardless of catalog query UUID."""
-        serializer = SspEssentialsProductResponseSerializer()
-
-        self.assertIsNone(serializer.get_course_count(self.essentials_product))
-        self.mock_get_cached_course_count.assert_not_called()
-
-    def test_course_count_returns_none_without_catalog_query_uuid(self):
-        """Products without a catalog query UUID have no course count, and skip the cache helper."""
-        product = mock.Mock(catalog_query_uuid=None)
-        serializer = SspEssentialsProductResponseSerializer()
-
-        self.assertIsNone(serializer.get_course_count(product))
-        self.mock_get_cached_course_count.assert_not_called()
 
     @classmethod
     def setUpTestData(cls):
@@ -138,7 +122,7 @@ class CustomerBillingSspProductsTests(APITest):
         )
         self.assertEqual(essentials_payload['tags'], ['ai', 'leadership'])
         self.assertEqual(essentials_payload['price'], '149.00')
-        self.assertIsNone(essentials_payload['course_count'])
+        self.assertEqual(essentials_payload['course_count'], 16)
 
         mock_get_all_stripe_prices.assert_called_once()
 
@@ -448,6 +432,7 @@ class CustomerBillingSspProductsTests(APITest):
         self.assertEqual(response.data['lookup_key'], 'ai_academy_yearly_price')
         # Pricing is not populated on retrieve in current view implementation
         self.assertIsNone(response.data['price'])
+        self.assertEqual(response.data['course_count'], 16)
 
     @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.get_all_stripe_prices')
     @mock.patch('enterprise_access.apps.api.v1.views.customer_billing.stripe.Price.list')

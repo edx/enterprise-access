@@ -1579,6 +1579,13 @@ class TestSspProduct(TestCase):
         product = self._make_product(slug='teams-yearly')
         self.assertEqual(str(product), '<SspProduct slug=teams-yearly>')
 
+    @mock.patch('enterprise_access.apps.customer_billing.models.get_cached_course_count')
+    def test_course_count_fetches_by_catalog_query_uuid(self, mock_get_course_count):
+        mock_get_course_count.return_value = 93
+        product = self._make_product()
+        self.assertEqual(product.course_count, 93)
+        mock_get_course_count.assert_called_once_with(product.catalog_query_uuid)
+
     @mock.patch('enterprise_access.apps.customer_billing.models.get_cached_academy_data')
     def test_academy_properties_return_fields(self, mock_get_data):
         mock_get_data.return_value = {
