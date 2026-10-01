@@ -211,6 +211,9 @@ class PathwayViewSet(ViewSet):
                 career_skills=validated['career_skills'],
                 skills_required=validated.get('skills_required') or [],
                 skills_preferred=validated.get('skills_preferred') or [],
+                # ``str()`` because ``UUIDField`` yields a ``uuid.UUID`` and the step input
+                # classes validate this field as a string.
+                customer_uuid=str(validated.get('enterprise_customer_uuid') or ''),
                 learner_profile=validated.get('learner_profile') or {},
             ),
         )

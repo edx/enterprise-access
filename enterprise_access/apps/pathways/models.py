@@ -21,11 +21,15 @@ it into ``apps/workflow/`` is a later conversation with that code's owner.
 import logging
 from typing import Optional
 
+import crum
 from attrs import define, field, make_class, validators
 from django.utils.functional import cached_property
 
+from enterprise_access.apps.api_client.algolia_client import SecuredAlgoliaKey
+from enterprise_access.apps.api_client.enterprise_catalog_client import EnterpriseCatalogUserV1ApiClient
 from enterprise_access.apps.pathways import api as pathways_api
 from enterprise_access.apps.pathways import catalog_translation, course_retrieval, pathway_assembly, reranking
+from enterprise_access.apps.pathways.catalog_access import resolve_catalog_access
 from enterprise_access.apps.prompts import api as prompts_api
 from enterprise_access.apps.prompts.api_client import XpertAPIError
 from enterprise_access.apps.workflow.exceptions import UnitOfWorkException
@@ -34,6 +38,34 @@ from enterprise_access.apps.workflow.serialization import BaseInputOutput
 from enterprise_access.toggles import learner_pathways_candidate_rerank_enabled
 
 logger = logging.getLogger(__name__)
+
+
+def _catalog_access(customer_uuid, allow_unscoped):
+    """
+    Resolve the credential a catalog-reading step should search with, right now.
+
+    The secured key is resolved here -- live, inside ``process_input`` -- rather than
+    threaded through ``generate_input_dict``, because a step's input is persisted: a
+    re-run of a workflow would otherwise replay a stale, time-limited credential.
+
+    ``crum`` is reached for at this edge only, and the decision itself lives in
+    ``catalog_access.resolve_catalog_access``, which takes no request dependency. Outside a
+    live request -- the offline evaluation harness -- there is nothing to vend from, so no
+    attempt is made and behaviour falls through to the caller's own ``allow_unscoped``.
+    """
+    request = crum.get_current_request()
+
+    def vend(enterprise_customer_uuid):
+        payload = EnterpriseCatalogUserV1ApiClient(request).get_secured_algolia_api_key(
+            enterprise_customer_uuid=enterprise_customer_uuid,
+        )
+        return SecuredAlgoliaKey.from_response_payload(payload)
+
+    return resolve_catalog_access(
+        enterprise_customer_uuid=customer_uuid,
+        vend_secured_key=vend if request is not None else None,
+        allow_unscoped_fallback=allow_unscoped,
+    )
 
 
 class AbstractConditionalWorkflow(AbstractWorkflow):
@@ -413,9 +445,14 @@ class SnapshotCatalogFacetsInput(BaseInputOutput):
 
     Kept as an explicit empty class rather than reusing ``Empty`` so the step has its own
     ``KEY`` in the workflow's input/output classes.
+
+    ``customer_uuid`` is the enterprise to scope the read to. It is the customer identifier
+    only -- never the resolved secured key, which is time-limited and must not be persisted
+    into a re-runnable step's input.
     """
     KEY = 'snapshot_catalog_facets_input'
 
+    customer_uuid: str = field(default='', validator=_is_str)
     allow_unscoped: bool = field(default=False, validator=validators.instance_of(bool))
 
 
@@ -461,6 +498,7 @@ class TranslateToCatalogInput(BaseInputOutput):
     career_skills: list[str] = field(factory=list, validator=_is_str_list)
     skills_required: list[str] = field(factory=list, validator=_is_str_list)
     skills_preferred: list[str] = field(factory=list, validator=_is_str_list)
+    customer_uuid: str = field(default='', validator=_is_str)
     allow_unscoped: bool = field(default=False, validator=validators.instance_of(bool))
 
 
@@ -516,8 +554,10 @@ class SnapshotCatalogFacetsStep(AbstractWorkflowStep):
     output_class = SnapshotCatalogFacetsOutput
 
     def process_input(self, accumulated_output=None, **kwargs):
+        access = _catalog_access(self.input_object.customer_uuid, self.input_object.allow_unscoped)
         snapshot = catalog_translation.snapshot_catalog_facets(
-            allow_unscoped=self.input_object.allow_unscoped,
+            secured_key=access.secured_key,
+            allow_unscoped=access.allow_unscoped,
         )
         # The two skill facets are merged: the resolver only cares which values exist, and
         # `skill_names` already takes precedence on a collision.
@@ -569,10 +609,14 @@ class TranslateToCatalogStep(AbstractWorkflowStep):
 
         refined = False
         if translation['unresolved']:
+            # Resolved only on this conditional path: the common case skips the refinement
+            # entirely, and there is no reason to vend a key for a request never issued.
+            access = _catalog_access(self.input_object.customer_uuid, self.input_object.allow_unscoped)
             refinement = catalog_translation.refine_unmatched_skills(
                 unresolved=translation['unresolved'],
                 facet_snapshot=facet_snapshot,
-                allow_unscoped=self.input_object.allow_unscoped,
+                secured_key=access.secured_key,
+                allow_unscoped=access.allow_unscoped,
             )
             translation = catalog_translation.merge_refinement(translation, refinement)
             refined = True
@@ -823,11 +867,13 @@ class RetrieveCandidatesStep(AbstractWorkflowStep):
                 f'{TranslateToCatalogStep.__name__} must run first.'
             )
 
+        access = _catalog_access(self.input_object.customer_uuid, self.input_object.allow_unscoped)
         result = course_retrieval.retrieve_candidate_courses(
             career_name=self.input_object.career_name,
             translation=translation_output.to_dict(),
             customer_uuid=self.input_object.customer_uuid,
-            allow_unscoped=self.input_object.allow_unscoped,
+            secured_key=access.secured_key,
+            allow_unscoped=access.allow_unscoped,
         )
         return self.output_class(
             courses=[CourseCandidate.from_hit(hit) for hit in result['courses']],
@@ -1072,11 +1118,15 @@ class PathwayAssemblyWorkflow(AbstractConditionalWorkflow):
                             rerank_enabled=True, enrich_enabled=True, learner_profile=None):
         """Build ``input_data`` for a pathway run."""
         return {
-            SnapshotCatalogFacetsInput.KEY: {'allow_unscoped': allow_unscoped},
+            SnapshotCatalogFacetsInput.KEY: {
+                'customer_uuid': customer_uuid,
+                'allow_unscoped': allow_unscoped,
+            },
             TranslateToCatalogInput.KEY: {
                 'career_skills': list(career_skills or []),
                 'skills_required': list(skills_required or []),
                 'skills_preferred': list(skills_preferred or []),
+                'customer_uuid': customer_uuid,
                 'allow_unscoped': allow_unscoped,
             },
             RetrieveCandidatesInput.KEY: {

@@ -112,6 +112,11 @@ class PathwayRequestSerializer(serializers.Serializer):  # pylint: disable=abstr
     skills_preferred = serializers.ListField(
         child=serializers.CharField(allow_blank=False), required=False, default=list,
     )
+    # Which enterprise's catalog to search. Optional, and safe to accept from the client:
+    # it is not a credential, and the secured Algolia key it is exchanged for is vended by
+    # enterprise-catalog, which enforces the requesting user's relationship to the customer
+    # server-side. A uuid the caller has no claim to is refused there, not trusted here.
+    enterprise_customer_uuid = serializers.UUIDField(required=False, allow_null=True)
     # Passed through to the existing ``recommendations_feedback`` prompt, which is what
     # generates the per-course rationale. Optional: a pathway without it is still a
     # pathway, just explained more generically.
