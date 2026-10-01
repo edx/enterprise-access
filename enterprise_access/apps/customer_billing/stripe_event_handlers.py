@@ -28,6 +28,8 @@ from enterprise_access.apps.customer_billing.tasks import (
     send_finalized_cancelation_email_task,
     send_paid_cancellation_email_task,
     send_paid_reinstatement_email_task,
+    send_paid_subscription_ended_email_task,
+    send_paid_subscription_renewal_notice_email_task,
     send_payment_receipt_email,
     send_trial_cancellation_email_task,
     send_trial_end_and_subscription_started_email_task,
@@ -442,6 +444,16 @@ def _handle_invoice_paid_status_updated(
             logger.error(
                 "SelfServiceSubscriptionRenewal %s record does not have renewed_subscription_plan_uuid",
                 renewal,
+            )
+
+        if invoice.get('billing_reason') == 'subscription_cycle':
+            logger.info(
+                "Queuing paid subscription renewal notice email for checkout_intent uuid=%s",
+                checkout_intent.uuid,
+            )
+            send_paid_subscription_renewal_notice_email_task.delay(
+                checkout_intent_id=checkout_intent.id,
+                renewed_at_timestamp=invoice['created'],
             )
     else:
         # First paid invoice — process the trial→paid transition.
@@ -906,6 +918,14 @@ class StripeEventHandler:
                     checkout_intent.uuid,
                 )
                 send_finalized_cancelation_email_task.delay(
+                    checkout_intent_id=checkout_intent.id,
+                    ended_at_timestamp=ended_at,
+                )
+                logger.info(
+                    "Queuing paid subscription ended email for checkout_intent uuid=%s",
+                    checkout_intent.uuid,
+                )
+                send_paid_subscription_ended_email_task.delay(
                     checkout_intent_id=checkout_intent.id,
                     ended_at_timestamp=ended_at,
                 )

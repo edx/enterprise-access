@@ -2653,6 +2653,220 @@ class TestStripeEventHandler(TestCase):
         self.assertEqual(event_data.checkout_intent, self.checkout_intent)
         self.assertIsNotNone(event_data.handled_at)
 
+    def _dispatch_subscription_deleted(self, subscription_id, prior_status, **subscription_extra):
+        """Dispatch a customer.subscription.deleted event following a prior event with ``prior_status``."""
+        self._create_existing_event_data_records(subscription_id, subscription_status=prior_status)
+        self.checkout_intent.enterprise_uuid = uuid.uuid4()
+        self.checkout_intent.save(update_fields=["enterprise_uuid"])
+        subscription_data = {
+            "id": subscription_id,
+            "status": "canceled",
+            "ended_at": 1234567890,
+            "metadata": self._create_mock_stripe_subscription(self.checkout_intent),
+            **subscription_extra,
+        }
+        StripeEventHandler.dispatch(
+            self._create_mock_stripe_event("customer.subscription.deleted", subscription_data)
+        )
+
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_paid_subscription_ended_email_task"
+    )
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_paid_cancellation_email_task"
+    )
+    def test_subscription_updated_cancel_scheduled_does_not_queue_ended_email(
+        self, mock_paid_cancellation_task, mock_ended_task,
+    ):
+        """Scheduling a cancellation queues only the cancellation email, not the ended email."""
+        subscription_id = "sub_test_cancel_scheduled_no_ended"
+        _, prior_summary = self._create_existing_event_data_records(
+            subscription_id, subscription_status=StripeSubscriptionStatus.ACTIVE,
+        )
+        prior_summary.subscription_cancel_at = None
+        prior_summary.save()
+
+        StripeEventHandler.dispatch(self._create_mock_stripe_event(
+            "customer.subscription.updated",
+            {
+                "id": subscription_id,
+                "status": StripeSubscriptionStatus.ACTIVE,
+                "cancel_at": int((timezone.now() + timedelta(days=30)).timestamp()),
+                "metadata": self._create_mock_stripe_subscription(self.checkout_intent.id),
+            },
+        ))
+
+        mock_paid_cancellation_task.delay.assert_called_once()
+        mock_ended_task.delay.assert_not_called()
+
+    @ddt.data(
+        {'cancellation_details': {'reason': 'cancellation_requested'}},
+        {'cancellation_details': {'reason': 'payment_failed'}},
+        {},
+    )
+    @ddt.unpack
+    @mock.patch("enterprise_access.apps.customer_billing.stripe_event_handlers.cancel_all_future_plans")
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_paid_subscription_ended_email_task"
+    )
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_finalized_cancelation_email_task"
+    )
+    def test_subscription_deleted_active_queues_finalized_and_ended_emails(
+        self, mock_finalized_task, mock_ended_task, _mock_cancel, **subscription_extra,
+    ):
+        """An ended ACTIVE subscription queues both emails regardless of the cancellation reason."""
+        self._dispatch_subscription_deleted(
+            "sub_test_active_deleted_both", StripeSubscriptionStatus.ACTIVE, **subscription_extra,
+        )
+
+        mock_finalized_task.delay.assert_called_once_with(
+            checkout_intent_id=self.checkout_intent.id, ended_at_timestamp=1234567890,
+        )
+        mock_ended_task.delay.assert_called_once_with(
+            checkout_intent_id=self.checkout_intent.id, ended_at_timestamp=1234567890,
+        )
+
+    @mock.patch("enterprise_access.apps.customer_billing.stripe_event_handlers.cancel_all_future_plans")
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_paid_subscription_ended_email_task"
+    )
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_trial_ended_cancellation_email_task"
+    )
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_finalized_cancelation_email_task"
+    )
+    def test_subscription_deleted_trialing_does_not_queue_paid_emails(
+        self, mock_finalized_task, mock_trial_ended_task, mock_ended_task, _mock_cancel,
+    ):
+        """An ended TRIALING subscription queues only the trial ended email."""
+        self._dispatch_subscription_deleted("sub_test_trialing_deleted_no_paid", StripeSubscriptionStatus.TRIALING)
+
+        mock_trial_ended_task.delay.assert_called_once()
+        mock_finalized_task.delay.assert_not_called()
+        mock_ended_task.delay.assert_not_called()
+
+    @mock.patch("enterprise_access.apps.customer_billing.stripe_event_handlers.cancel_all_future_plans")
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_paid_subscription_ended_email_task"
+    )
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_paid_cancellation_email_task"
+    )
+    def test_cancel_then_term_end_delivers_both_campaigns(
+        self, mock_paid_cancellation_task, mock_ended_task, _mock_cancel,
+    ):
+        """Cancelling then reaching the end of the term queues the cancellation and the ended campaigns."""
+        subscription_id = "sub_test_cancel_lifecycle"
+        _, prior_summary = self._create_existing_event_data_records(
+            subscription_id, subscription_status=StripeSubscriptionStatus.ACTIVE,
+        )
+        prior_summary.subscription_cancel_at = None
+        prior_summary.save()
+        cancel_at = int((timezone.now() + timedelta(days=30)).timestamp())
+        metadata = self._create_mock_stripe_subscription(self.checkout_intent)
+        self.checkout_intent.enterprise_uuid = uuid.uuid4()
+        self.checkout_intent.save(update_fields=["enterprise_uuid"])
+
+        StripeEventHandler.dispatch(self._create_mock_stripe_event(
+            "customer.subscription.updated",
+            {
+                "id": subscription_id,
+                "status": StripeSubscriptionStatus.ACTIVE,
+                "cancel_at": cancel_at,
+                "metadata": metadata,
+            },
+            created=int((timezone.now() - timedelta(seconds=30)).timestamp()),
+        ))
+        mock_paid_cancellation_task.delay.assert_called_once()
+        mock_ended_task.delay.assert_not_called()
+
+        StripeEventHandler.dispatch(self._create_mock_stripe_event(
+            "customer.subscription.deleted",
+            {
+                "id": subscription_id,
+                "status": "canceled",
+                "ended_at": cancel_at,
+                "cancellation_details": {"reason": "cancellation_requested"},
+                "metadata": metadata,
+            },
+            created=int((timezone.now() - timedelta(seconds=5)).timestamp()),
+        ))
+
+        mock_paid_cancellation_task.delay.assert_called_once_with(
+            checkout_intent_id=self.checkout_intent.id, cancel_at_timestamp=cancel_at,
+        )
+        mock_ended_task.delay.assert_called_once_with(
+            checkout_intent_id=self.checkout_intent.id, ended_at_timestamp=cancel_at,
+        )
+
+    @ddt.data(
+        ('subscription_cycle', True, True),
+        ('subscription_cycle', False, False),
+        ('subscription_create', True, False),
+        ('subscription_update', True, False),
+    )
+    @ddt.unpack
+    @mock.patch("enterprise_access.apps.customer_billing.stripe_event_handlers.LicenseManagerApiClient")
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers."
+        "send_trial_end_and_subscription_started_email_task"
+    )
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers."
+        "send_paid_subscription_renewal_notice_email_task"
+    )
+    @mock.patch("enterprise_access.apps.customer_billing.stripe_event_handlers.send_payment_receipt_email")
+    def test_invoice_paid_queues_renewal_notice_only_for_subscription_cycle(
+        self, billing_reason, renewal_processed, expect_notice,
+        mock_receipt_task, mock_renewal_notice_task, _mock_trial_end_task, _mock_lm_client,
+    ):
+        """
+        The renewal notice is queued in addition to the receipt, only for ``subscription_cycle``
+        invoices of an already-converted paid subscription (never the first invoice after a trial).
+        """
+        stripe_event_data = StripeEventData.objects.create(
+            event_id='evt_test_renewal_notice_setup',
+            event_type='customer.subscription.created',
+            checkout_intent=self.checkout_intent,
+        )
+        SelfServiceSubscriptionRenewal.objects.create(
+            checkout_intent=self.checkout_intent,
+            prior_subscription_plan_uuid=uuid.uuid4(),
+            subscription_plan_renewal_id=1234,
+            renewed_subscription_plan_uuid=uuid.uuid4(),
+            processed_at=timezone.now() if renewal_processed else None,
+            stripe_event_data=stripe_event_data,
+            stripe_invoice_id='in_test_renewal_notice',
+        )
+        invoice_created = 1767285545
+        invoice_data = {
+            'id': 'in_test_renewal_notice',
+            'customer': 'cus_test_renewal_notice',
+            'object': 'invoice',
+            'billing_reason': billing_reason,
+            'created': invoice_created,
+            'parent': {
+                'subscription_details': {
+                    'metadata': self._create_mock_stripe_subscription(self.checkout_intent),
+                    'subscription': 'sub_test_renewal_notice',
+                },
+            },
+            'lines': {'data': [{'parent': {'type': SUBSCRIPTION_ITEM_TYPE}}]},
+            'total': 67,
+        }
+
+        StripeEventHandler.dispatch(self._create_mock_stripe_event('invoice.paid', invoice_data))
+
+        mock_receipt_task.delay.assert_called_once()
+        if expect_notice:
+            mock_renewal_notice_task.delay.assert_called_once_with(
+                checkout_intent_id=self.checkout_intent.id, renewed_at_timestamp=invoice_created,
+            )
+        else:
+            mock_renewal_notice_task.delay.assert_not_called()
+
 
 class TestInvoiceCreatedHandler(TestCase):
     """

@@ -433,6 +433,102 @@ def send_trial_ended_cancellation_email_task(checkout_intent_id: int):
     )
 
 
+def _send_paid_subscription_campaign(
+    checkout_intent_id, email_type, date_property, timestamp, email_description,
+):
+    """
+    Helper for sending a paid subscription lifecycle campaign shared by Teams and Essentials.
+
+    Not itself a Celery task; must be called from one. The campaign is resolved from
+    ``email_type`` and the formatted ``timestamp`` is sent under the ``date_property`` trigger property.
+    """
+    checkout_intent = _get_checkout_intent_with_product(checkout_intent_id)
+    enterprise_slug = checkout_intent.enterprise_slug
+    ssp_product = checkout_intent.ssp_product
+    campaign_id = get_campaign_id(email_type, ssp_product)
+
+    admin_users = get_enterprise_admins(enterprise_slug, raise_if_empty=True)
+    braze_client = BrazeApiClient()
+    recipients = prepare_admin_braze_recipients(
+        braze_client, admin_users, enterprise_slug, raise_if_empty=True,
+    )
+
+    logger.info(
+        "Sending %s for CheckoutIntent %s (enterprise slug: %s)",
+        email_description,
+        checkout_intent.id,
+        enterprise_slug,
+    )
+
+    braze_trigger_properties = _build_common_trigger_properties(
+        ssp_product=ssp_product,
+        organization_name=checkout_intent.enterprise_name,
+        product_type=get_product_type(ssp_product).capitalize(),
+        **{date_property: format_datetime_obj(
+            datetime_from_timestamp(timestamp),
+            output_pattern=BRAZE_DATE_FORMAT_2,
+        )},
+    )
+
+    send_campaign_message(
+        braze_client,
+        campaign_id,
+        recipients=recipients,
+        trigger_properties=braze_trigger_properties,
+        organization_name=checkout_intent.enterprise_name,
+        email_description=email_description,
+    )
+
+
+@shared_task(base=LoggedTaskWithRetry)
+def send_paid_subscription_ended_email_task(checkout_intent_id, ended_at_timestamp):
+    """
+    Send Braze email notification when a paid subscription ends at the end of its term.
+
+    Sent for every previously active subscription that Stripe ends, whether the admin
+    cancelled it or it lapsed. Independent of the scheduled-cancellation email.
+
+    Args:
+        checkout_intent_id (int): ID of the CheckoutIntent record
+        ended_at_timestamp (int): Unix timestamp of when the subscription ended.
+
+    Raises:
+        BrazeClientError: If there's an error communicating with Braze
+        Exception: For any other unexpected errors during email sending
+    """
+    _send_paid_subscription_campaign(
+        checkout_intent_id,
+        'subscription_ended',
+        'subscription_end_date',
+        ended_at_timestamp,
+        'paid subscription ended email',
+    )
+
+
+@shared_task(base=LoggedTaskWithRetry)
+def send_paid_subscription_renewal_notice_email_task(checkout_intent_id, renewed_at_timestamp):
+    """
+    Send Braze email notification when a paid subscription renews for another term.
+
+    Sent in addition to the payment receipt email.
+
+    Args:
+        checkout_intent_id (int): ID of the CheckoutIntent record
+        renewed_at_timestamp (int): Unix timestamp of when the renewal invoice was created.
+
+    Raises:
+        BrazeClientError: If there's an error communicating with Braze
+        Exception: For any other unexpected errors during email sending
+    """
+    _send_paid_subscription_campaign(
+        checkout_intent_id,
+        'subscription_renewal_notice',
+        'renewal_date',
+        renewed_at_timestamp,
+        'paid subscription renewal notice email',
+    )
+
+
 @shared_task(base=LoggedTaskWithRetry)
 def send_billing_error_email_task(checkout_intent_id: int):
     """
