@@ -67,6 +67,11 @@ LEARNER_PATHWAYS_SERVER_PIPELINE = WaffleSwitch(
 # runs, and the only other caller is the evaluation harness, which bounds its own spend
 # with ``max_calls`` and ``--dry-run``.
 #
+# This switch and ``CANDIDATE_HITS_PER_PAGE`` in ``course_retrieval.py`` are a matched
+# pair: the wider candidate window is only worth its latency while re-ranking runs, so
+# throwing this switch for cost reasons leaves that window's benefit unrealized. See the
+# comment on ``CANDIDATE_HITS_PER_PAGE`` for the measured data behind that tradeoff.
+#
 # .. toggle_name: enterprise_access.learner_pathways_disable_candidate_rerank
 # .. toggle_implementation: WaffleSwitch
 # .. toggle_default: False
