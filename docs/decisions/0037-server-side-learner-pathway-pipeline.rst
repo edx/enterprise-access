@@ -202,6 +202,19 @@ single model call.
 
 Consequences
 ============
+* **Paid Xpert calls are not idempotent against a crash between a successful call and
+  recording success.** ``ExtractIntentStep``, ``RerankCandidatesStep`` and
+  ``EnrichRationaleStep`` each issue a billed call to Xpert, but
+  ``AbstractUnitOfWork.execute()`` only persists a step's ``succeeded_at`` after that call
+  returns. A process crash or a failed database write in that window leaves the step record
+  unsucceeded even though the call already happened and was paid for. The documented
+  remediation for a failed workflow — re-run it — does not account for this, so a re-run
+  can reissue the same paid call. This is accepted as a known, deferred risk for this PR
+  because the pipeline is off-by-default behind the waffle switch and unwired to any
+  frontend, so no real traffic can reach this window today; it must be resolved, or this
+  acceptance explicitly re-affirmed, before the switch is enabled with real learner
+  traffic. A generalized fix — an idempotency marker on the shared ``apps/workflow`` base —
+  is planned as a follow-up PR.
 * Every pathway generation leaves an inspectable per-step trace, queryable in Django admin
   and by the evaluation harness, without a separate tracing layer.
 * Re-running a failed workflow skips already-succeeded steps, so a failed enrichment does
