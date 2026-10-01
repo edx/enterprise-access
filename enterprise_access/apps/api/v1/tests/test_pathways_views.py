@@ -203,6 +203,14 @@ class TestCareerDiscoveryAuthorization(CareerDiscoveryAPITestMixin, APITest):
 
         assert self.client.get(self.url).status_code == status.HTTP_405_METHOD_NOT_ALLOWED
 
+    def test_superuser_is_allowed_without_the_learner_pathways_role(self):
+        """Documents, for this endpoint specifically, the platform-wide superuser bypass."""
+        self.client.force_authenticate(user=UserFactory(is_active=True, is_superuser=True))
+
+        response = self.post_careers()
+
+        assert response.status_code == status.HTTP_200_OK
+
 
 class TestCareerDiscoveryFeatureFlag(CareerDiscoveryAPITestMixin, APITest):
     """The flag defaults off, so the endpoint must behave as though it does not exist."""

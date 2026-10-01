@@ -298,6 +298,14 @@ class TestPathwayAuthorization(PathwayAPITestMixin, APITest):
     def test_get_is_rejected(self):
         assert self.client.get(self.url).status_code == status.HTTP_405_METHOD_NOT_ALLOWED
 
+    def test_superuser_is_allowed_without_the_learner_pathways_role(self):
+        """Documents, for this endpoint specifically, the platform-wide superuser bypass."""
+        self.client.logout()
+        self.client.cookies.clear()
+        self.client.force_authenticate(user=UserFactory(is_active=True, is_superuser=True))
+
+        assert self.post_pathway().status_code == status.HTTP_200_OK
+
 
 @override_waffle_switch(LEARNER_PATHWAYS_SERVER_PIPELINE, True)
 class TestPathwayFailures(PathwayAPITestMixin, APITest):
@@ -334,6 +342,10 @@ class TestPathwayFeatureFlag(PathwayAPITestMixin, APITest):
     def test_disabled_pipeline_returns_404_for_an_invalid_payload_too(self):
         """A disabled endpoint must be indistinguishable from one that does not exist."""
         assert self.post_pathway({}).status_code == status.HTTP_404_NOT_FOUND
+
+    def test_default_switch_state_returns_404(self):
+        """No override at all -- this is what a fresh, unconfigured environment actually does."""
+        assert self.post_pathway().status_code == status.HTTP_404_NOT_FOUND
 
     @override_waffle_switch(LEARNER_PATHWAYS_SERVER_PIPELINE, True)
     def test_enabled_pipeline_serves_the_endpoint(self):
