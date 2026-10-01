@@ -7,6 +7,7 @@ from datetime import timezone as dt_timezone
 from unittest import mock
 from uuid import uuid4
 
+import ddt
 import stripe
 from braze.exceptions import BrazeClientError
 from django.conf import settings
@@ -14,7 +15,7 @@ from django.test import TestCase, override_settings
 from django.utils import timezone
 
 from enterprise_access.apps.core.tests.factories import UserFactory
-from enterprise_access.apps.customer_billing.constants import BRAZE_TIMESTAMP_FORMAT
+from enterprise_access.apps.customer_billing.constants import BRAZE_DATE_FORMAT_2, BRAZE_TIMESTAMP_FORMAT
 from enterprise_access.apps.customer_billing.models import (
     CheckoutIntent,
     SspProduct,
@@ -32,6 +33,8 @@ from enterprise_access.apps.customer_billing.tasks import (
     send_finalized_cancelation_email_task,
     send_paid_cancellation_email_task,
     send_paid_reinstatement_email_task,
+    send_paid_subscription_ended_email_task,
+    send_paid_subscription_renewal_notice_email_task,
     send_payment_receipt_email,
     send_trial_cancellation_email_task,
     send_trial_end_and_subscription_started_email_task,
@@ -428,6 +431,90 @@ class TestSendTrialEndedCancellationEmailTask(TestCase):
             send_trial_ended_cancellation_email_task(checkout_intent_id=self.checkout_intent.id)
 
         self.assertIn('Braze API error', str(context.exception))
+
+
+@ddt.ddt
+class TestSendPaidSubscriptionLifecycleEmailTasks(TestCase):
+    """Tests for the paid subscription ended and renewal notice email tasks."""
+
+    def setUp(self):
+        self.user = UserFactory()
+        self.checkout_intent = CheckoutIntent.create_intent(
+            user=self.user,
+            slug="test-enterprise",
+            name="Test Enterprise",
+            quantity=10,
+        )
+        self.timestamp = int(datetime(2026, 6, 1, tzinfo=dt_timezone.utc).timestamp())
+
+    def _set_product(self, academy_uuid):
+        """Attach a Teams (no academy) or Essentials (academy) product to the checkout intent."""
+        self.checkout_intent.ssp_product = SspProduct.objects.create(
+            slug=f'lifecycle-test-{uuid4()}',
+            stripe_price_lookup_key=f'lifecycle_test_key_{uuid4()}',
+            catalog_query_uuid=uuid4(),
+            academy_uuid=academy_uuid,
+            is_active=True,
+        )
+        self.checkout_intent.save()
+
+    @ddt.data(
+        (send_paid_subscription_ended_email_task, 'ENDED_AND_CANCELLED', 'subscription_end_date', False, 'Teams'),
+        (send_paid_subscription_ended_email_task, 'ENDED_AND_CANCELLED', 'subscription_end_date', True, 'Essentials'),
+        (send_paid_subscription_renewal_notice_email_task, 'RENEWAL_NOTICE', 'renewal_date', False, 'Teams'),
+        (send_paid_subscription_renewal_notice_email_task, 'RENEWAL_NOTICE', 'renewal_date', True, 'Essentials'),
+    )
+    @ddt.unpack
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
+    def test_sends_shared_campaign_to_admins(
+        self, task, campaign_name, date_property, is_essentials, expected_product_type,
+        mock_lms_client, mock_braze_client,
+    ):
+        """Teams and Essentials both use the single shared campaign, with a product_type trigger property."""
+        self._set_product(academy_uuid=uuid4() if is_essentials else None)
+        mock_lms_client.return_value.get_enterprise_customer_data.return_value = {
+            'admin_users': [
+                {'email': 'admin1@example.com', 'lms_user_id': 1},
+                {'email': 'admin2@example.com', 'lms_user_id': 2},
+            ]
+        }
+        recipients = [{'external_user_id': '1'}, {'external_user_id': '2'}]
+        mock_braze_client.return_value.create_braze_recipient.side_effect = recipients
+
+        task(self.checkout_intent.id, self.timestamp)
+
+        mock_braze_client.return_value.send_campaign_message.assert_called_once()
+        call_args = mock_braze_client.return_value.send_campaign_message.call_args
+        self.assertEqual(
+            call_args[0][0],
+            getattr(settings, f'BRAZE_ENTERPRISE_PROVISION_SUBSCRIPTION_{campaign_name}_CAMPAIGN'),
+        )
+        self.assertEqual(call_args[1]['recipients'], recipients)
+        trigger_props = call_args[1]['trigger_properties']
+        self.assertEqual(trigger_props['product_type'], expected_product_type)
+        self.assertEqual(
+            trigger_props[date_property],
+            format_datetime_obj(
+                datetime.fromtimestamp(self.timestamp, tz=dt_timezone.utc), output_pattern=BRAZE_DATE_FORMAT_2,
+            ),
+        )
+
+    @ddt.data(
+        send_paid_subscription_ended_email_task,
+        send_paid_subscription_renewal_notice_email_task,
+    )
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
+    def test_braze_exception_propagates(self, task, mock_lms_client, mock_braze_client):
+        mock_lms_client.return_value.get_enterprise_customer_data.return_value = {
+            'admin_users': [{'email': 'admin@example.com', 'lms_user_id': 1}]
+        }
+        mock_braze_client.return_value.create_braze_recipient.return_value = {'external_user_id': '1'}
+        mock_braze_client.return_value.send_campaign_message.side_effect = Exception('Braze API error')
+
+        with self.assertRaisesRegex(Exception, 'Braze API error'):
+            task(self.checkout_intent.id, self.timestamp)
 
 
 class TestSendBillingErrorEmailTask(TestCase):

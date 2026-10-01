@@ -152,6 +152,8 @@ class TestGetCampaignId(TestCase):
             ('trial_end_subscription_started', 'BRAZE_ENTERPRISE_PROVISION_TRIAL_END_SUBSCRIPTION_STARTED_CAMPAIGN'),
             ('billing_error', 'BRAZE_BILLING_ERROR_CAMPAIGN'),
             ('paid_cancellation', 'BRAZE_PAID_CANCELLATION_CAMPAIGN'),
+            ('subscription_ended', 'BRAZE_ENTERPRISE_PROVISION_SUBSCRIPTION_ENDED_AND_CANCELLED_CAMPAIGN'),
+            ('subscription_renewal_notice', 'BRAZE_ENTERPRISE_PROVISION_SUBSCRIPTION_RENEWAL_NOTICE_CAMPAIGN'),
         ]
         for email_type, settings_key in email_types:
             expected = getattr(settings, settings_key)
@@ -175,6 +177,8 @@ class TestGetCampaignId(TestCase):
             ('trial_end_subscription_started', 'BRAZE_ESSENTIALS_TRIAL_END_SUBSCRIPTION_STARTED_CAMPAIGN'),
             ('billing_error', 'BRAZE_ESSENTIALS_BILLING_ERROR_CAMPAIGN'),
             ('paid_cancellation', 'BRAZE_ESSENTIALS_PAID_CANCELLATION_CAMPAIGN'),
+            ('subscription_ended', 'BRAZE_ENTERPRISE_PROVISION_SUBSCRIPTION_ENDED_AND_CANCELLED_CAMPAIGN'),
+            ('subscription_renewal_notice', 'BRAZE_ENTERPRISE_PROVISION_SUBSCRIPTION_RENEWAL_NOTICE_CAMPAIGN'),
         ]
         for email_type, settings_key in email_types:
             expected = getattr(settings, settings_key)
