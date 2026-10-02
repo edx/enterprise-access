@@ -196,6 +196,10 @@ class AbstractWorkflow(AbstractUnitOfWork):
 
     A step that does not define ``should_execute`` always executes, so a workflow whose
     steps all omit it behaves exactly as it did before the hook existed.
+
+    A subclass whose steps issue costly or billed calls can override
+    ``handle_unresolved_call()`` to turn a re-run's unresolved-call warning into something
+    stronger -- the default is to log and proceed unchanged.
     """
     class Meta:
         abstract = True
@@ -214,6 +218,29 @@ class AbstractWorkflow(AbstractUnitOfWork):
         if should_execute is None:
             return True
         return bool(should_execute(accumulated_output, workflow))
+
+    def handle_unresolved_call(self, step_record, workflow_step_class):
+        """
+        Called when a *reused* step record shows an issued-but-unresolved call --
+        ``call_issued_at`` is set but neither ``succeeded_at`` nor ``failed_at`` is, meaning
+        a previous attempt may have already issued (and been billed for) an external call
+        whose outcome was never recorded.
+
+        Defaults to logging a warning and letting execution proceed exactly as it did
+        before this hook existed. A subclass whose steps make costly or billed calls can
+        override this to refuse re-execution instead (e.g. raising a dedicated exception
+        that requires a human to confirm it's safe to retry before clearing the marker).
+
+        Kept as a separate method, mirroring ``step_should_execute``, so the default
+        behaviour is testable directly and a subclass can change the convention without
+        reimplementing the loop.
+        """
+        logger.warning(
+            'Workflow %s (uuid=%s): step %s (step_uuid=%s) has an unresolved call issued at %s '
+            '-- re-executing may re-issue a call that already succeeded',
+            self.__class__.__name__, self.uuid, workflow_step_class.__name__,
+            step_record.uuid, step_record.call_issued_at,
+        )
 
     @cached_property
     def input_class(self):
@@ -311,16 +338,7 @@ class AbstractWorkflow(AbstractUnitOfWork):
                 not step_record.failed_at
             )
             if unresolved_call:
-                # The window ``call_issued_at`` exists to make visible: a previous attempt
-                # began and recorded no outcome, so its external call may already have
-                # happened -- and been paid for. Deliberately observability only; the step
-                # still re-executes exactly as it did before this warning existed.
-                logger.warning(
-                    'Workflow %s (uuid=%s): step %s (step_uuid=%s) has an unresolved call issued at %s '
-                    '-- re-executing may re-issue a call that already succeeded',
-                    self.__class__.__name__, self.uuid, workflow_step_class.__name__,
-                    step_record.uuid, step_record.call_issued_at,
-                )
+                self.handle_unresolved_call(step_record, workflow_step_class)
 
             if step_record.succeeded_at:
                 logger.info(

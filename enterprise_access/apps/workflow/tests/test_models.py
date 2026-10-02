@@ -334,6 +334,25 @@ class TestUnresolvedCallWarning(TestCase):
 
         self.assertEqual(warnings, [])
 
+    def test_a_subclass_can_override_handle_unresolved_call_to_refuse_reexecution(self):
+        """
+        The hook is a real extension point, not just a differently-named log call -- a
+        subclass whose steps issue costly or billed calls can replace the default
+        log-and-proceed behaviour with something that actually stops the re-run.
+        """
+        workflow = TestWorkflow.objects.create(input_data=self.INPUT_DATA)
+        self._unresolved_step_record(workflow)
+
+        class RefuseUnresolvedCalls(Exception):
+            pass
+
+        def _refuse(self, step_record, workflow_step_class):
+            raise RefuseUnresolvedCalls(f'{workflow_step_class.__name__} has an unresolved call')
+
+        with mock.patch.object(TestWorkflow, 'handle_unresolved_call', new=_refuse):
+            with self.assertRaises(RefuseUnresolvedCalls):
+                workflow.process_input()
+
     def test_does_not_warn_for_a_record_that_already_succeeded(self):
         """A resolved outcome means the call is accounted for, issued marker or not."""
         workflow = TestWorkflow.objects.create(input_data=self.INPUT_DATA)
