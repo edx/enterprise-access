@@ -8,7 +8,7 @@
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
-amqp==5.3.1
+amqp==5.4.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -30,7 +30,7 @@ asn1crypto==1.5.1
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
     #   snowflake-connector-python
-astroid==4.0.4
+astroid==4.3.3
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -59,12 +59,12 @@ billiard==4.3.0
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
     #   celery
-boto3==1.43.97
+boto3==1.43.107
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
     #   snowflake-connector-python
-botocore==1.43.97
+botocore==1.43.107
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -76,7 +76,7 @@ cachetools==7.2.0
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
     #   tox
-cattrs==26.2.0
+cattrs==26.2.1
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -98,7 +98,7 @@ cffi==2.1.1
     #   -r requirements/test.txt
     #   cryptography
     #   pynacl
-charset-normalizer==3.5.1
+charset-normalizer==3.5.2
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -151,7 +151,7 @@ confluent-kafka[avro,schema-registry]==2.6.1
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
-coverage[toml]==7.16.1
+coverage[toml]==7.16.2
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -160,7 +160,7 @@ crispy-bootstrap5==2026.9
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
-cryptography==50.0.1
+cryptography==50.0.2
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -280,7 +280,7 @@ django-simple-history==3.13.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
-django-test-migrations==1.6.0
+django-test-migrations==1.7.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -336,7 +336,7 @@ edx-api-doc-tools==3.0.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
-edx-auth-backends==5.0.0
+edx-auth-backends==5.1.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -357,7 +357,7 @@ edx-django-release-util==1.5.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
-edx-django-utils==8.0.2
+edx-django-utils==8.1.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -372,7 +372,7 @@ edx-drf-extensions==10.9.0
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
     #   edx-rbac
-edx-event-bus-kafka==6.1.0
+edx-event-bus-kafka==6.2.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -380,7 +380,7 @@ edx-lint==6.2.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
-edx-opaque-keys[django]==4.0.0
+edx-opaque-keys[django]==4.0.1
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -391,7 +391,7 @@ edx-rbac==3.0.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
-edx-rest-api-client==7.0.0
+edx-rest-api-client==7.1.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -406,7 +406,7 @@ factory-boy==3.3.3
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
-faker==40.39.0
+faker==40.40.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -450,7 +450,7 @@ iniconfig==2.3.0
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
     #   pytest
-isort==9.0.1
+isort==9.0.2
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -552,13 +552,13 @@ nh3==0.3.7
     # via
     #   -r requirements/quality.txt
     #   readme-renderer
-oauthlib==3.3.1
+oauthlib==4.0.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
     #   requests-oauthlib
     #   social-auth-core
-openedx-atlas==0.7.1
+openedx-atlas==0.7.2
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -578,7 +578,8 @@ packaging==26.3
     #   snowflake-connector-python
     #   tox
     #   twine
-platformdirs==4.11.10
+    #   virtualenv
+platformdirs==4.12.2
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -608,7 +609,7 @@ psutil==7.2.2
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
     #   edx-django-utils
-pycodestyle==2.14.0
+pycodestyle==2.15.0
     # via -r requirements/quality.txt
 pycparser==3.0
     # via
@@ -624,7 +625,7 @@ pygments==2.21.0
     #   pytest
     #   readme-renderer
     #   rich
-pyjwt[crypto]==2.14.0
+pyjwt[crypto]==2.15.1
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -634,7 +635,7 @@ pyjwt[crypto]==2.14.0
     #   edx-rest-api-client
     #   snowflake-connector-python
     #   social-auth-core
-pylint==4.0.8
+pylint==4.1.1
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -662,7 +663,7 @@ pymemcache==4.0.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
-pymongo==4.18.1
+pymongo==4.18.2
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -714,7 +715,7 @@ python-discovery==1.6.1
     #   -r requirements/test.txt
     #   tox
     #   virtualenv
-python-slugify==9.0.0
+python-slugify==9.1.2
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -724,7 +725,7 @@ python3-openid==3.2.0
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
     #   social-auth-core
-pytz==2026.3.post1
+pytz==2026.4
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -822,7 +823,7 @@ snowballstemmer==3.1.1
     # via
     #   -r requirements/quality.txt
     #   pydocstyle
-snowflake-connector-python==4.7.4
+snowflake-connector-python==4.8.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -854,7 +855,7 @@ stevedore==5.9.1
     #   code-annotations
     #   edx-django-utils
     #   edx-opaque-keys
-stripe==15.6.1
+stripe==16.0.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -875,7 +876,7 @@ tomlkit==0.15.1
     #   edx-lint
     #   pylint
     #   snowflake-connector-python
-tox==4.61.5
+tox==4.64.7
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -888,7 +889,6 @@ typing-extensions==4.16.0
     #   cattrs
     #   click-repl
     #   django-countries
-    #   django-test-migrations
     #   edx-opaque-keys
     #   pyopenssl
     #   referencing
@@ -926,12 +926,12 @@ vine==5.1.0
     #   amqp
     #   celery
     #   kombu
-virtualenv==21.7.12
+virtualenv==21.14.3
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
     #   tox
-wcwidth==0.8.4
+wcwidth==0.9.1
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
