@@ -10,15 +10,20 @@ from unittest import mock
 import ddt
 import yaml
 from django.core.management import call_command
-from django.core.management.base import CommandError
+from django.core.management.base import CommandError, OutputWrapper
 from django.test import TestCase
 
-from enterprise_access.apps.api_client.algolia_client import AlgoliaSearchError
+from enterprise_access.apps.api_client.algolia_client import AlgoliaClientError, AlgoliaSearchError
+from enterprise_access.apps.pathway_eval.management.commands.run_retrieval_diagnostic import (
+    Command as RunRetrievalDiagnosticCommand
+)
 from enterprise_access.apps.pathway_eval.personas import persona_from_dict
 from enterprise_access.apps.pathway_eval.retrieval_diagnostic import (
     MAX_QUERY_CHARS,
     Outcome,
+    PersonaDiagnostic,
     RetrievalDiagnostic,
+    StrategyResult,
     build_query_strategies,
     summarize
 )
@@ -452,3 +457,100 @@ class TestRunRetrievalDiagnosticCommand(TestCase):
     def test_missing_persona_dir_is_a_command_error(self):
         with self.assertRaisesRegex(CommandError, 'does not exist'):
             self.call(persona_dir='/nonexistent/persona/dir')
+
+    def test_an_empty_persona_directory_is_a_command_error(self):
+        """Distinct from a missing directory: this one exists and loads, and is empty."""
+        with tempfile.TemporaryDirectory() as empty_dir:
+            with self.assertRaisesRegex(CommandError, 'No personas found'):
+                self.call(persona_dir=empty_dir)
+
+    @mock.patch('enterprise_access.apps.pathway_eval.management.commands.run_retrieval_diagnostic.AlgoliaSearchClient')
+    def test_an_unusable_algolia_client_is_a_command_error(self, mock_client_class):
+        mock_client_class.side_effect = AlgoliaClientError('bad credentials')
+
+        with self.assertRaisesRegex(CommandError, 'Algolia is not usable'):
+            self.call()
+
+
+class TestRunRetrievalDiagnosticCommandRendering(TestCase):
+    """
+    Tests for ``Command._render``/``_render_persona`` against directly-constructed
+    ``PersonaDiagnostic`` results, rather than the full Algolia-backed command.
+
+    Some report branches -- a persona-level error, a probe that found a course the top-N
+    search did not, incidental hits for an expect-no-coverage persona -- are awkward to
+    provoke honestly through scripted Algolia responses. Constructing the result directly
+    is more honest than contriving a fake search response shaped to produce one.
+    """
+
+    def _render(self, results, **option_overrides):
+        """Render a crafted set of results through the real ``Command._render``."""
+        out = StringIO()
+        command = RunRetrievalDiagnosticCommand()
+        command.stdout = OutputWrapper(out)
+        options = {'top_n': 10, 'relax_query': False, 'unscoped': False, 'customer_uuid': None}
+        options.update(option_overrides)
+        command._render(results, summarize(results), options, scoped_courses=None)  # pylint: disable=protected-access
+        return out.getvalue()
+
+    def test_a_relaxed_query_run_omits_the_default_query_caveat(self):
+        output = self._render([], relax_query=True)
+
+        self.assertNotIn('Queries use the index default', output)
+
+    def test_persona_level_errors_are_reported(self):
+        result = PersonaDiagnostic(
+            persona_id='p001', domain='technology', tier='core', is_technology=True,
+            ground_truth_status='expert_authored', errors=['boom: Algolia timed out'],
+        )
+
+        output = self._render([result])
+
+        self.assertIn('1 error(s) occurred', output)
+        self.assertIn('boom: Algolia timed out', output)
+
+    def test_no_expert_authored_personas_fails_the_gate_explicitly(self):
+        """A placeholder-only run is flagged, not quietly reported as a clean pass."""
+        result = PersonaDiagnostic(
+            persona_id='p001', domain='technology', tier='core', is_technology=True,
+            ground_truth_status='placeholder',
+        )
+
+        output = self._render([result])
+
+        self.assertIn('placeholder ground truth', output)
+        self.assertIn('cannot clear the gate', output)
+
+    def test_a_strategy_level_error_is_reported_per_strategy(self):
+        result = PersonaDiagnostic(
+            persona_id='p001', domain='technology', tier='core', is_technology=True,
+            ground_truth_status='expert_authored',
+            strategy_results=[StrategyResult(strategy='condensed', query='x', error='timed out')],
+        )
+
+        output = self._render([result])
+
+        self.assertIn('ERROR: timed out', output)
+
+    def test_a_course_found_by_probe_but_not_retrieved_is_distinguished_from_truly_missing(self):
+        result = PersonaDiagnostic(
+            persona_id='p001', domain='technology', tier='core', is_technology=True,
+            ground_truth_status='expert_authored',
+            expected_course_keys=[EXPECTED_KEY], probe_found={EXPECTED_KEY: True},
+        )
+
+        output = self._render([result])
+
+        self.assertIn('in index, not retrieved', output)
+
+    def test_incidental_hits_are_reported_for_an_expect_no_coverage_persona(self):
+        result = PersonaDiagnostic(
+            persona_id='p001', domain='technology', tier='core', is_technology=True,
+            ground_truth_status='expert_authored',
+            incidental_hits=[{'key': OTHER_KEY, 'title': 'Unexpected'}],
+        )
+
+        output = self._render([result])
+
+        self.assertIn('returned anyway (expected no coverage)', output)
+        self.assertIn(OTHER_KEY, output)

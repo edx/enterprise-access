@@ -601,6 +601,46 @@ class TestReportPathwayHarnessCommand(TestCase):
         with self.assertRaisesRegex(CommandError, 'not a harness traces file'):
             self.call(path)
 
+    def test_a_missing_persona_directory_is_a_command_error(self):
+        """``load_personas``'s own validation surfaces through this command too."""
+        traces = self.write_traces('t.json', [cell('p001-tech')])
+
+        with self.assertRaisesRegex(CommandError, 'does not exist'):
+            self.call(traces, persona_dir=str(self.root / 'does-not-exist'))
+
+    def test_a_tier_one_violation_fails_the_gate_and_is_rendered(self):
+        traces = self.write_traces('t.json', [
+            cell('p001-tech', violations=['duplicate course key']), cell('p002-health'),
+        ])
+
+        output = self.call(traces, min_passing=1)
+
+        self.assertIn('FAIL -- do not read the quality numbers below as meaningful', output)
+        self.assertIn('duplicate course key', output)
+
+    def test_a_placeholder_ground_truth_persona_is_reported_not_scoreable(self):
+        placeholder_dir = self.root / 'placeholder_personas'
+        placeholder_dir.mkdir()
+        (placeholder_dir / 'p003-placeholder.yaml').write_text(
+            yaml.safe_dump(persona_dict('p003-placeholder', status='placeholder'), sort_keys=False),
+        )
+        traces = self.write_traces('t.json', [cell('p003-placeholder')])
+
+        output = self.call(traces, persona_dir=str(placeholder_dir), min_passing=0)
+
+        self.assertIn('not scoreable', output)
+
+    def test_an_improving_rerun_passes_the_regression_bar(self):
+        previous = self.write_traces('prev.json', [
+            cell('p001-tech', keys=five_keys('Other+1')), cell('p002-health'),
+        ])
+        current = self.write_traces('cur.json', [cell('p001-tech'), cell('p002-health')])
+
+        output = self.call(current, previous=str(previous), min_passing=1)
+
+        self.assertIn('PASS -- no tracked metric decreased', output)
+        self.assertIn('improved', output)
+
     def test_malformed_json_is_a_command_error(self):
         path = self.root / 'bad.json'
         path.write_text('{not json')

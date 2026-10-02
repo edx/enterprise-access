@@ -422,3 +422,60 @@ class TestRunPathwayHarnessCommand(TestCase):
             output = self.call(dry_run=True)
 
         self.assertIn('report_pathway_harness', output)
+
+    def test_an_unknown_persona_id_is_a_command_error(self):
+        """``load_personas`` requires every requested id to exist, not silently score fewer."""
+        with self.assertRaisesRegex(CommandError, 'No persona found'):
+            self.call(dry_run=True, persona_ids=['does-not-exist'])
+
+    def test_an_empty_persona_directory_is_a_command_error(self):
+        """A missing persona entirely is different from one that failed to load."""
+        with tempfile.TemporaryDirectory() as empty_dir:
+            with self.assertRaisesRegex(CommandError, 'No personas found'):
+                call_command(
+                    'run_pathway_harness', stdout=StringIO(),
+                    dry_run=True, persona_dir=empty_dir,
+                )
+
+    def test_budget_exhaustion_is_reported(self):
+        """Hitting --max-calls mid-run is surfaced, not silently truncated."""
+        (self.persona_dir / 'p002-test.yaml').write_text(
+            yaml.safe_dump(persona_dict('p002-test'), sort_keys=False),
+        )
+        career_cls, _ = fake_career_workflow(
+            [{'external_id': CAREER_ID, 'name': 'Data Analyst', 'skills': ['SQL']}],
+        )
+        pathway_cls, _ = fake_pathway_workflow(pathway_output())
+
+        with mock.patch(PATCH_CAREER_WORKFLOW, career_cls), \
+                mock.patch(PATCH_PATHWAY_WORKFLOW, pathway_cls):
+            output = self.call(career_modes=['auto'], max_calls=CALLS_PER_CELL)
+
+        self.assertIn('--max-calls was reached', output)
+
+    def test_a_failed_cell_reports_its_error(self):
+        career_cls, instance = fake_career_workflow(
+            [{'external_id': CAREER_ID, 'name': 'Data Analyst', 'skills': ['SQL']}],
+        )
+        instance.execute.side_effect = UnitOfWorkException('xpert exploded')
+
+        with mock.patch(PATCH_CAREER_WORKFLOW, career_cls):
+            output = self.call(career_modes=['auto'])
+
+        self.assertIn('ERROR', output)
+        self.assertIn('xpert exploded', output)
+
+    def test_tier_one_violations_and_unfilled_rungs_are_reported(self):
+        career_cls, _ = fake_career_workflow(
+            [{'external_id': CAREER_ID, 'name': 'Data Analyst', 'skills': ['SQL']}],
+        )
+        pathway_cls, _ = fake_pathway_workflow(
+            pathway_output(violations=['duplicate course key'], unfilled=['stretch']),
+        )
+
+        with mock.patch(PATCH_CAREER_WORKFLOW, career_cls), \
+                mock.patch(PATCH_PATHWAY_WORKFLOW, pathway_cls):
+            output = self.call(career_modes=['auto'])
+
+        self.assertIn('TIER 1 VIOLATIONS: duplicate course key', output)
+        self.assertIn('unfilled rungs: stretch', output)
