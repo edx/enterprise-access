@@ -595,6 +595,18 @@ rules.add_perm(
     ),
 )
 
+# Grants permission to export a subsidy's Learner Credit spend report (learner emails and amounts) to enterprise
+# admins and operators. This is deliberately its own permission so that who can export learner spend PII can change
+# independently of other features' roles (e.g. Browse & Request).
+rules.add_perm(
+    constants.SUBSIDY_ACCESS_POLICY_TRANSACTIONS_EXPORT_PERMISSION,
+    (
+        has_content_assignments_operator_access |
+        has_content_assignments_admin_access |
+        has_subsidy_access_policy_operator_access
+    ),
+)
+
 # Grants permission to acknowledge assignments if the user is linked to the enterprise customer
 # associated with the content assignment configuration.
 rules.add_perm(

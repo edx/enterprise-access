@@ -13,12 +13,13 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.http import StreamingHttpResponse
 from django.utils.functional import cached_property
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import OpenApiResponse, extend_schema
 from edx_enterprise_subsidy_client import EnterpriseSubsidyAPIClient
 from edx_rbac.decorators import permission_required
 from edx_rbac.mixins import PermissionRequiredMixin
 from edx_rest_framework_extensions.auth.jwt.authentication import JwtAuthentication
-from requests.exceptions import HTTPError
+from requests.exceptions import HTTPError, RequestException
 from rest_framework import authentication, mixins, permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import APIException, NotFound
@@ -34,10 +35,10 @@ from enterprise_access.apps.content_assignments.api import AllocationException
 from enterprise_access.apps.content_assignments.constants import AssignmentSources
 from enterprise_access.apps.content_metadata.api import get_and_cache_content_metadata
 from enterprise_access.apps.core.constants import (
-    REQUESTS_ADMIN_ACCESS_PERMISSION,
     SUBSIDY_ACCESS_POLICY_ALLOCATION_PERMISSION,
     SUBSIDY_ACCESS_POLICY_READ_PERMISSION,
     SUBSIDY_ACCESS_POLICY_REDEMPTION_PERMISSION,
+    SUBSIDY_ACCESS_POLICY_TRANSACTIONS_EXPORT_PERMISSION,
     SUBSIDY_ACCESS_POLICY_WRITE_PERMISSION
 )
 from enterprise_access.apps.events.signals import SUBSIDY_REDEEMED
@@ -456,10 +457,11 @@ class AllocationRequestException(APIException):
     default_detail = 'Could not allocate'
 
 
-class TransactionsExportError(APIException):
+class TransactionsExportRequestException(APIException):
     """
-    Raised when the Subsidy API export request fails, so the gateway endpoint can return a clean 502 payload
-    instead of leaking the downstream traceback.
+    Raised when the Subsidy API export request fails. Request params are validated before the upstream call, so an
+    upstream failure is a gateway error (502), and only a generic message is returned so upstream error bodies
+    (HTML error pages, internal permission names) aren't passed through to clients.
     """
     status_code = status.HTTP_502_BAD_GATEWAY
     default_detail = 'Failed to export transactions from the Subsidy API.'
@@ -1368,12 +1370,10 @@ class SubsidyAccessPolicyTransactionsViewset(PermissionRequiredMixin, viewsets.G
     """
     permission_classes = (permissions.IsAuthenticated,)
     authentication_classes = (JwtAuthentication, authentication.SessionAuthentication)
+    permission_required = SUBSIDY_ACCESS_POLICY_TRANSACTIONS_EXPORT_PERMISSION
 
-    def get_permission_required(self):
-        # REQUESTS_ADMIN_ACCESS_PERMISSION is the permission granted to enterprise admins (and operators).
-        # SUBSIDY_ACCESS_POLICY_READ_PERMISSION would also admit learners, and the policy operator permission would
-        # exclude enterprise admins, neither of which is right for a customer-facing admin report.
-        return [REQUESTS_ADMIN_ACCESS_PERMISSION]
+    # Size of the chunks in which the upstream CSV is relayed to the client.
+    STREAM_CHUNK_SIZE = 8192
 
     def get_permission_object(self):
         """
@@ -1391,10 +1391,19 @@ class SubsidyAccessPolicyTransactionsViewset(PermissionRequiredMixin, viewsets.G
         summary='Export Learner Credit spent transactions as a CSV report.',
         parameters=[serializers.TransactionsExportRequestSerializer],
         responses={
-            status.HTTP_200_OK: None,
-            status.HTTP_400_BAD_REQUEST: None,
-            status.HTTP_404_NOT_FOUND: None,
-            status.HTTP_502_BAD_GATEWAY: None,
+            (status.HTTP_200_OK, 'text/csv'): OpenApiResponse(
+                response=OpenApiTypes.BINARY,
+                description='The spend report, as a CSV file attachment.',
+            ),
+            status.HTTP_400_BAD_REQUEST: OpenApiResponse(description='Missing or invalid query parameters.'),
+            status.HTTP_401_UNAUTHORIZED: OpenApiResponse(description='Authentication credentials were not provided.'),
+            status.HTTP_403_FORBIDDEN: OpenApiResponse(
+                description='The requester is not an admin or operator of the given enterprise customer.',
+            ),
+            status.HTTP_404_NOT_FOUND: OpenApiResponse(
+                description='The subsidy (or policy) does not belong to the given enterprise customer.',
+            ),
+            status.HTTP_502_BAD_GATEWAY: OpenApiResponse(description='The Subsidy API export request failed.'),
         },
     )
     def export_transactions(self, request):
@@ -1406,10 +1415,16 @@ class SubsidyAccessPolicyTransactionsViewset(PermissionRequiredMixin, viewsets.G
             subsidy_uuid: (required) The subsidy whose spent transactions should be exported.
             subsidy_access_policy_uuid: (Optional) Only export spend from this policy (budget) of the subsidy.
             search: (Optional) Free-text search filter, forwarded to enterprise-subsidy.
-            start_date: (Optional) Only include transactions created on/after this date/datetime.
-            end_date: (Optional) Only include transactions created on/before this date/datetime.
+            start_date: (Optional) Only include transactions created on/after this date (YYYY-MM-DD).
+            end_date: (Optional) Only include transactions created on/before this date, inclusive (YYYY-MM-DD).
         """
         validated_data = self.validated_export_params
+        log_context = (
+            f'user_id={request.user.id}, '
+            f'enterprise_customer_uuid={validated_data["enterprise_customer_uuid"]}, '
+            f'subsidy_uuid={validated_data["subsidy_uuid"]}, '
+            f'subsidy_access_policy_uuid={validated_data.get("subsidy_access_policy_uuid")}'
+        )
 
         # The permission check only covers enterprise_customer_uuid, and the Subsidy API is called with this service's
         # own (operator) credentials, so we must verify the requested subsidy belongs to that enterprise. Respond with
@@ -1434,26 +1449,42 @@ class SubsidyAccessPolicyTransactionsViewset(PermissionRequiredMixin, viewsets.G
                 end_date=validated_data.get('end_date'),
             )
         except SubsidyAPIHTTPError as exc:
-            logger.exception(f'{exc} when exporting transactions from subsidy API')
-            raise TransactionsExportError(detail=exc.error_payload()) from exc
+            upstream_status_code = getattr(exc.error_response, 'status_code', None)
+            logger.exception(
+                f'Learner credit transactions export failed upstream (subsidy_status_code={upstream_status_code}): '
+                f'{log_context}'
+            )
+            raise TransactionsExportRequestException() from exc
+
+        # Audit trail for bulk exports of learner emails and spend.
+        logger.info(f'Learner credit transactions export started: {log_context}')
 
         response = StreamingHttpResponse(
-            self._stream_and_close(subsidy_response),
-            content_type='text/csv',
+            self._stream_and_close(subsidy_response, log_context),
+            content_type=subsidy_response.headers.get('Content-Type', 'text/csv; charset=utf-8'),
         )
         response['Content-Disposition'] = subsidy_response.headers.get(
             'Content-Disposition',
             f'attachment; filename="spent_report_{validated_data["subsidy_uuid"]}.csv"',
         )
+        # Forward the length so clients can detect a truncated download. Skip it if the upstream body was compressed,
+        # because ``iter_content()`` decompresses and the upstream length would no longer match what we send.
+        if 'Content-Length' in subsidy_response.headers and 'Content-Encoding' not in subsidy_response.headers:
+            response['Content-Length'] = subsidy_response.headers['Content-Length']
         return response
 
-    @staticmethod
-    def _stream_and_close(subsidy_response, chunk_size=8192):
+    def _stream_and_close(self, subsidy_response, log_context):
         """
         Yield the upstream CSV in chunks, releasing the upstream connection even if the client aborts the download.
+
+        A failure after the 200 headers are sent can't change the status code, so it's logged and re-raised, which
+        aborts the client's download instead of silently ending a truncated report.
         """
         try:
-            yield from subsidy_response.iter_content(chunk_size=chunk_size)
+            yield from subsidy_response.iter_content(chunk_size=self.STREAM_CHUNK_SIZE)
+        except RequestException:
+            logger.exception(f'Learner credit transactions export failed mid-stream: {log_context}')
+            raise
         finally:
             subsidy_response.close()
 

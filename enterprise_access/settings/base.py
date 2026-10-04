@@ -508,6 +508,9 @@ LMS_CLIENT_TIMEOUT = os.environ.get('LMS_CLIENT_TIMEOUT', 45)
 ECOMMERCE_CLIENT_TIMEOUT = os.environ.get('ECOMMERCE_CLIENT_TIMEOUT', 45)
 DISCOVERY_CLIENT_TIMEOUT = os.environ.get('DISCOVERY_CLIENT_TIMEOUT', 45)
 SUBSIDY_CLIENT_TIMEOUT = os.environ.get('SUBSIDY_CLIENT_TIMEOUT', 45)
+# (connect, read) timeout in seconds for the Learner Credit spend CSV export, which can take a while to generate
+# upstream. Keep the read timeout under gunicorn's worker timeout so a slow export can't hold a worker indefinitely.
+SUBSIDY_TRANSACTIONS_EXPORT_TIMEOUT = (10, 120)
 XPERT_REQUEST_TIMEOUT = os.environ.get('XPERT_REQUEST_TIMEOUT', 45)
 
 # Xpert API service settings

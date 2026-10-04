@@ -2,11 +2,18 @@
 Tests for the subsidy_api module.
 """
 import uuid
+from datetime import date
 from unittest import mock
 
-from django.test import TestCase
+import requests
+from django.test import TestCase, override_settings
 
-from ..subsidy_api import get_and_cache_transactions_for_learner, get_redemptions_by_content_and_policy_for_learner
+from ..exceptions import SubsidyAPIHTTPError
+from ..subsidy_api import (
+    get_and_cache_transactions_for_learner,
+    get_redemptions_by_content_and_policy_for_learner,
+    get_subsidy_transactions_export
+)
 from .factories import PerLearnerSpendCapLearnerCreditAccessPolicyFactory
 
 
@@ -151,3 +158,85 @@ class TransactionsForLearnerTests(TestCase):
             },
             result,
         )
+
+
+@override_settings(SUBSIDY_TRANSACTIONS_EXPORT_TIMEOUT=(1, 2))
+@mock.patch('enterprise_access.apps.subsidy_access_policy.subsidy_api.get_versioned_subsidy_client')
+class TransactionsExportTests(TestCase):
+    """
+    Tests the ``get_subsidy_transactions_export`` function.
+    """
+    LIST_ENDPOINT = 'http://subsidy/api/v2/subsidies/{subsidy_uuid}/admin/transactions/'
+
+    def _mock_client(self, mock_client_getter):
+        mock_client = mock_client_getter.return_value
+        mock_client.TRANSACTIONS_LIST_ENDPOINT = self.LIST_ENDPOINT
+        return mock_client
+
+    def test_builds_streamed_request_with_timeout(self, mock_client_getter):
+        subsidy_uuid = uuid.uuid4()
+        policy_uuid = uuid.uuid4()
+        mock_client = self._mock_client(mock_client_getter)
+        response = mock_client.client.get.return_value
+
+        result = get_subsidy_transactions_export(
+            subsidy_uuid=subsidy_uuid,
+            enterprise_customer_uuid='enterprise-uuid',
+            subsidy_access_policy_uuid=policy_uuid,
+            search='learner',
+            start_date=date(2026, 1, 1),
+            end_date=date(2026, 1, 31),
+        )
+
+        assert result is response
+        mock_client_getter.assert_called_once_with(version=2)
+        mock_client.client.get.assert_called_once_with(
+            f'http://subsidy/api/v2/subsidies/{subsidy_uuid}/admin/transactions/export/',
+            params={
+                'enterprise_customer_uuid': 'enterprise-uuid',
+                'subsidy_access_policy_uuid': str(policy_uuid),
+                'search': 'learner',
+                'start_date': '2026-01-01',
+                'end_date': '2026-01-31',
+            },
+            stream=True,
+            timeout=(1, 2),
+        )
+        response.raise_for_status.assert_called_once_with()
+        response.close.assert_not_called()
+
+    def test_optional_filters_are_omitted(self, mock_client_getter):
+        mock_client = self._mock_client(mock_client_getter)
+        subsidy_uuid = uuid.uuid4()
+
+        get_subsidy_transactions_export(subsidy_uuid=subsidy_uuid, enterprise_customer_uuid='enterprise-uuid')
+
+        assert mock_client.client.get.call_args.kwargs['params'] == {
+            'enterprise_customer_uuid': 'enterprise-uuid',
+        }
+
+    def test_arguments_are_keyword_only(self, mock_client_getter):  # pylint: disable=unused-argument
+        with self.assertRaises(TypeError):
+            # pylint: disable=too-many-function-args,missing-kwoa
+            get_subsidy_transactions_export(uuid.uuid4(), 'enterprise-uuid')
+
+    def test_transport_error_is_wrapped(self, mock_client_getter):
+        self._mock_client(mock_client_getter).client.get.side_effect = requests.Timeout()
+
+        with self.assertRaises(SubsidyAPIHTTPError) as context:
+            get_subsidy_transactions_export(subsidy_uuid=uuid.uuid4(), enterprise_customer_uuid=uuid.uuid4())
+
+        assert isinstance(context.exception.__cause__, requests.Timeout)
+
+    def test_error_status_closes_streamed_response_and_is_wrapped(self, mock_client_getter):
+        """With stream=True, an unread error response must be closed to release its pooled connection."""
+        response = self._mock_client(mock_client_getter).client.get.return_value
+        response.status_code = 503
+        http_error = requests.HTTPError(response=response)
+        response.raise_for_status.side_effect = http_error
+
+        with self.assertRaises(SubsidyAPIHTTPError) as context:
+            get_subsidy_transactions_export(subsidy_uuid=uuid.uuid4(), enterprise_customer_uuid=uuid.uuid4())
+
+        assert context.exception.__cause__ is http_error
+        response.close.assert_called_once_with()

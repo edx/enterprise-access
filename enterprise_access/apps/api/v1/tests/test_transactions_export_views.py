@@ -6,16 +6,38 @@ from uuid import uuid4
 
 import ddt
 import requests
+from django.test import TestCase
 from rest_framework import status
 from rest_framework.reverse import reverse
 
-from enterprise_access.apps.core.constants import SYSTEM_ENTERPRISE_ADMIN_ROLE, SYSTEM_ENTERPRISE_LEARNER_ROLE
+from enterprise_access.apps.core import constants
+from enterprise_access.apps.core.constants import (
+    ALL_ACCESS_CONTEXT,
+    SYSTEM_ENTERPRISE_ADMIN_ROLE,
+    SYSTEM_ENTERPRISE_LEARNER_ROLE,
+    SYSTEM_ENTERPRISE_OPERATOR_ROLE
+)
+from enterprise_access.apps.core.models import EnterpriseAccessFeatureRole, EnterpriseAccessRoleAssignment
+from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.subsidy_access_policy.exceptions import SubsidyAPIHTTPError
-from enterprise_access.apps.subsidy_access_policy.subsidy_api import get_subsidy_transactions_export
 from enterprise_access.apps.subsidy_access_policy.tests.factories import (
     PerLearnerSpendCapLearnerCreditAccessPolicyFactory
 )
 from test_utils import APITestWithMocks
+
+EXPORT_FUNCTION_PATH = 'enterprise_access.apps.api.v1.views.subsidy_access_policy.get_subsidy_transactions_export'
+VIEW_LOGGER_PATH = 'enterprise_access.apps.api.v1.views.subsidy_access_policy.logger'
+
+
+def _subsidy_api_error(status_code, body='<html><body>Internal permission subsidy.can_read</body></html>'):
+    """
+    Build the SubsidyAPIHTTPError that ``get_subsidy_transactions_export`` raises for a non-2xx upstream response.
+    """
+    downstream_error = requests.HTTPError()
+    downstream_error.response = mock.Mock(status_code=status_code, text=body)
+    wrapped_error = SubsidyAPIHTTPError('downstream failure')
+    wrapped_error.__cause__ = downstream_error
+    return wrapped_error
 
 
 @ddt.ddt
@@ -36,53 +58,100 @@ class TestTransactionsExportView(APITestWithMocks):
             'context': self.enterprise_uuid,
         }])
 
-    @mock.patch('enterprise_access.apps.api.v1.views.subsidy_access_policy.get_subsidy_transactions_export')
-    def test_exports_csv_and_forwards_filters(self, mock_export):
-        csv_content = b'email,amount\nlearner@example.com,10\n'
-        mock_export.return_value.headers = {}
-        mock_export.return_value.iter_content.return_value = [csv_content]
+    def _mock_upstream(self, mock_export, chunks=(b'header\n',), headers=None):
+        mock_export.return_value.headers = headers if headers is not None else {}
+        mock_export.return_value.iter_content.return_value = iter(chunks)
+        return mock_export.return_value
 
-        response = self.client.get(self.url, {
+    def _get(self, **params):
+        """GET the export endpoint for this enterprise and subsidy; ``None``-valued params are dropped."""
+        query = {
             'enterprise_customer_uuid': self.enterprise_uuid,
             'subsidy_uuid': self.subsidy_uuid,
-            'subsidy_access_policy_uuid': self.policy.uuid,
-            'search': 'learner@example.com',
-            'start_date': '2026-01-01',
-            'end_date': '2026-01-31',
-        })
+            **params,
+        }
+        return self.client.get(self.url, {key: value for key, value in query.items() if value is not None})
 
-        assert response.status_code == status.HTTP_200_OK
-        assert response['Content-Type'] == 'text/csv'
-        assert response['Content-Disposition'] == (
-            f'attachment; filename="spent_report_{self.subsidy_uuid}.csv"'
-        )
-        assert b''.join(response.streaming_content) == csv_content
-        mock_export.return_value.close.assert_called_once_with()
-        mock_export.assert_called_once_with(
-            subsidy_uuid=self.subsidy_uuid,
-            enterprise_customer_uuid=self.enterprise_uuid,
+    @mock.patch(EXPORT_FUNCTION_PATH)
+    def test_exports_csv_and_forwards_filters(self, mock_export):
+        csv_content = b'email,amount\nlearner@example.com,10\n'
+        upstream = self._mock_upstream(mock_export, chunks=[csv_content])
+
+        response = self._get(
             subsidy_access_policy_uuid=self.policy.uuid,
             search='learner@example.com',
             start_date='2026-01-01',
             end_date='2026-01-31',
         )
 
-    @mock.patch('enterprise_access.apps.api.v1.views.subsidy_access_policy.get_subsidy_transactions_export')
+        assert response.status_code == status.HTTP_200_OK
+        assert response['Content-Type'] == 'text/csv; charset=utf-8'
+        assert response['Content-Disposition'] == (
+            f'attachment; filename="spent_report_{self.subsidy_uuid}.csv"'
+        )
+        assert not response.has_header('Content-Length')
+        assert b''.join(response.streaming_content) == csv_content
+        upstream.close.assert_called_once_with()
+        mock_export.assert_called_once_with(
+            subsidy_uuid=self.subsidy_uuid,
+            enterprise_customer_uuid=self.enterprise_uuid,
+            subsidy_access_policy_uuid=self.policy.uuid,
+            search='learner@example.com',
+            start_date=mock.ANY,
+            end_date=mock.ANY,
+        )
+        assert mock_export.call_args.kwargs['start_date'].isoformat() == '2026-01-01'
+        assert mock_export.call_args.kwargs['end_date'].isoformat() == '2026-01-31'
+
+    @mock.patch(EXPORT_FUNCTION_PATH)
+    def test_upstream_headers_are_passed_through(self, mock_export):
+        """The upstream filename, charset and length are relayed to the client."""
+        self._mock_upstream(mock_export, chunks=[b'0123456789'], headers={
+            'Content-Type': 'text/csv; charset=utf-8',
+            'Content-Disposition': 'attachment; filename="upstream.csv"',
+            'Content-Length': '10',
+        })
+
+        response = self._get()
+
+        assert response['Content-Type'] == 'text/csv; charset=utf-8'
+        assert response['Content-Disposition'] == 'attachment; filename="upstream.csv"'
+        assert response['Content-Length'] == '10'
+
+    @mock.patch(EXPORT_FUNCTION_PATH)
+    def test_content_length_not_forwarded_for_compressed_upstream(self, mock_export):
+        """iter_content() decompresses the body, so a compressed upstream's length wouldn't match what we send."""
+        self._mock_upstream(mock_export, headers={'Content-Length': '10', 'Content-Encoding': 'gzip'})
+
+        response = self._get()
+
+        assert response.status_code == status.HTTP_200_OK
+        assert not response.has_header('Content-Length')
+
+    @mock.patch(VIEW_LOGGER_PATH)
+    @mock.patch(EXPORT_FUNCTION_PATH)
+    def test_export_is_audit_logged(self, mock_export, mock_logger):
+        self._mock_upstream(mock_export)
+
+        self._get(subsidy_access_policy_uuid=self.policy.uuid)
+
+        mock_logger.info.assert_called_once()
+        audit_message = mock_logger.info.call_args.args[0]
+        for expected in (str(self.enterprise_uuid), str(self.subsidy_uuid), str(self.policy.uuid), 'user_id='):
+            assert expected in audit_message
+
+    @mock.patch(EXPORT_FUNCTION_PATH)
     def test_export_without_policy_covers_whole_subsidy(self, mock_export):
         """Omitting subsidy_access_policy_uuid exports spend across every budget funded by the subsidy."""
-        mock_export.return_value.headers = {}
-        mock_export.return_value.iter_content.return_value = [b'header\n']
+        self._mock_upstream(mock_export)
 
-        response = self.client.get(self.url, {
-            'enterprise_customer_uuid': self.enterprise_uuid,
-            'subsidy_uuid': self.subsidy_uuid,
-        })
+        response = self._get()
 
         assert response.status_code == status.HTTP_200_OK
         assert mock_export.call_args.kwargs['subsidy_access_policy_uuid'] is None
 
     @ddt.data('other_subsidy_same_enterprise', 'same_subsidy_other_enterprise', 'nonexistent')
-    @mock.patch('enterprise_access.apps.api.v1.views.subsidy_access_policy.get_subsidy_transactions_export')
+    @mock.patch(EXPORT_FUNCTION_PATH)
     def test_policy_not_belonging_to_enterprise_and_subsidy_returns_not_found(self, policy_case, mock_export):
         """A requested budget must belong to both the requested enterprise and subsidy."""
         policy_uuid = {
@@ -97,63 +166,118 @@ class TestTransactionsExportView(APITestWithMocks):
             'nonexistent': uuid4,
         }[policy_case]()
 
-        response = self.client.get(self.url, {
-            'enterprise_customer_uuid': self.enterprise_uuid,
-            'subsidy_uuid': self.subsidy_uuid,
-            'subsidy_access_policy_uuid': policy_uuid,
-        })
+        response = self._get(subsidy_access_policy_uuid=policy_uuid)
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
         mock_export.assert_not_called()
 
-    @mock.patch('enterprise_access.apps.api.v1.views.subsidy_access_policy.get_subsidy_transactions_export')
+    @mock.patch(EXPORT_FUNCTION_PATH)
     def test_aborted_download_closes_upstream_response(self, mock_export):
         """If the client stops reading partway through, the upstream Subsidy API connection is still released."""
-        mock_export.return_value.headers = {}
-        mock_export.return_value.iter_content.return_value = iter([b'header\n', b'row 1\n', b'row 2\n'])
+        upstream = self._mock_upstream(mock_export, chunks=[b'header\n', b'row 1\n', b'row 2\n'])
 
-        response = self.client.get(self.url, {
-            'enterprise_customer_uuid': self.enterprise_uuid,
-            'subsidy_uuid': self.subsidy_uuid,
-        })
+        response = self._get()
         assert next(iter(response.streaming_content)) == b'header\n'
-        mock_export.return_value.close.assert_not_called()
+        upstream.close.assert_not_called()
 
         # Django closes the response (and with it the streaming generator) when the client disconnects.
         response.close()
 
-        mock_export.return_value.close.assert_called_once_with()
+        upstream.close.assert_called_once_with()
 
-    def test_missing_required_parameters_returns_bad_request(self):
-        response = self.client.get(self.url, {'subsidy_uuid': self.subsidy_uuid})
+    @mock.patch(VIEW_LOGGER_PATH)
+    @mock.patch(EXPORT_FUNCTION_PATH)
+    def test_mid_stream_failure_is_logged_and_aborts_download(self, mock_export, mock_logger):
+        """A failure after the headers are sent must not silently end the download as if the report were complete."""
+
+        def failing_chunks():
+            yield b'header\n'
+            raise requests.exceptions.ChunkedEncodingError('connection broken')
+
+        upstream = self._mock_upstream(mock_export, chunks=failing_chunks())
+
+        response = self._get()
+        content = iter(response.streaming_content)
+        assert next(content) == b'header\n'
+        with self.assertRaises(requests.exceptions.ChunkedEncodingError):
+            next(content)
+
+        mock_logger.exception.assert_called_once()
+        assert str(self.subsidy_uuid) in mock_logger.exception.call_args.args[0]
+        upstream.close.assert_called_once_with()
+
+    @ddt.data(
+        {'enterprise_customer_uuid': None},
+        {'subsidy_uuid': None},
+        {'enterprise_customer_uuid': 'not-a-uuid'},
+        {'subsidy_uuid': 'abc'},
+        {'subsidy_access_policy_uuid': 'abc'},
+        {'start_date': 'not-a-date'},
+        {'start_date': 'x' * 5000},
+        {'search': 'x' * 321},
+        {'end_date': '2024-02-30'},
+        {'end_date': '2024-01-10T15:30:00'},
+        {'start_date': '2024-02-01', 'end_date': '2024-01-31'},
+    )
+    @mock.patch(EXPORT_FUNCTION_PATH)
+    def test_invalid_parameters_return_bad_request(self, params, mock_export):
+        """Bad input is the client's error (400), and is never forwarded to the Subsidy API."""
+        response = self._get(**params)
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
-        assert 'enterprise_customer_uuid' in response.data
+        mock_export.assert_not_called()
 
     def test_unauthenticated_request_returns_unauthorized(self):
         self.client.cookies.clear()
 
-        response = self.client.get(self.url, {
-            'enterprise_customer_uuid': self.enterprise_uuid,
-            'subsidy_uuid': self.subsidy_uuid,
-        })
+        response = self._get()
 
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
-    def test_user_without_enterprise_admin_access_is_forbidden(self):
+    @mock.patch(EXPORT_FUNCTION_PATH)
+    def test_learner_is_forbidden(self, mock_export):
         self.set_jwt_cookie([{
             'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE,
             'context': self.enterprise_uuid,
         }])
 
-        response = self.client.get(self.url, {
-            'enterprise_customer_uuid': self.enterprise_uuid,
-            'subsidy_uuid': self.subsidy_uuid,
-        })
+        response = self._get()
 
         assert response.status_code == status.HTTP_403_FORBIDDEN
+        mock_export.assert_not_called()
 
-    @mock.patch('enterprise_access.apps.api.v1.views.subsidy_access_policy.get_subsidy_transactions_export')
+    @mock.patch(EXPORT_FUNCTION_PATH)
+    def test_admin_of_another_enterprise_is_forbidden(self, mock_export):
+        """
+        Tenant boundary: an admin of enterprise A can't export enterprise B's spend by passing B's uuid, even though
+        B's subsidy and policy really exist and belong together.
+        """
+        other_enterprise_uuid = uuid4()
+        other_subsidy_uuid = uuid4()
+        PerLearnerSpendCapLearnerCreditAccessPolicyFactory(
+            enterprise_customer_uuid=other_enterprise_uuid,
+            subsidy_uuid=other_subsidy_uuid,
+        )
+
+        response = self._get(enterprise_customer_uuid=other_enterprise_uuid, subsidy_uuid=other_subsidy_uuid)
+
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+        mock_export.assert_not_called()
+
+    @mock.patch(EXPORT_FUNCTION_PATH)
+    def test_operator_can_export(self, mock_export):
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_OPERATOR_ROLE,
+            'context': ALL_ACCESS_CONTEXT,
+        }])
+        self._mock_upstream(mock_export)
+
+        response = self._get()
+
+        assert response.status_code == status.HTTP_200_OK
+        mock_export.assert_called_once()
+
+    @mock.patch(EXPORT_FUNCTION_PATH)
     def test_subsidy_of_another_enterprise_returns_not_found(self, mock_export):
         """
         An admin of this enterprise must not be able to export a subsidy owned by a different enterprise,
@@ -165,21 +289,15 @@ class TestTransactionsExportView(APITestWithMocks):
             subsidy_uuid=other_enterprise_subsidy_uuid,
         )
 
-        response = self.client.get(self.url, {
-            'enterprise_customer_uuid': self.enterprise_uuid,
-            'subsidy_uuid': other_enterprise_subsidy_uuid,
-        })
+        response = self._get(subsidy_uuid=other_enterprise_subsidy_uuid)
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
         mock_export.assert_not_called()
 
-    @mock.patch('enterprise_access.apps.api.v1.views.subsidy_access_policy.get_subsidy_transactions_export')
+    @mock.patch(EXPORT_FUNCTION_PATH)
     def test_unknown_subsidy_returns_not_found(self, mock_export):
         """A subsidy with no policy under the requested enterprise returns a 404 without calling the Subsidy API."""
-        response = self.client.get(self.url, {
-            'enterprise_customer_uuid': self.enterprise_uuid,
-            'subsidy_uuid': uuid4(),
-        })
+        response = self._get(subsidy_uuid=uuid4())
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
         mock_export.assert_not_called()
@@ -190,7 +308,7 @@ class TestTransactionsExportView(APITestWithMocks):
         {'active': True, 'retired': True},
     )
     @ddt.unpack
-    @mock.patch('enterprise_access.apps.api.v1.views.subsidy_access_policy.get_subsidy_transactions_export')
+    @mock.patch(EXPORT_FUNCTION_PATH)
     def test_inactive_or_retired_policy_still_allows_export(self, mock_export, active, retired):
         """Admins can still download historical spend for budgets whose policy is inactive or retired."""
         subsidy_uuid = uuid4()
@@ -200,91 +318,79 @@ class TestTransactionsExportView(APITestWithMocks):
             active=active,
             retired=retired,
         )
-        mock_export.return_value.headers = {}
-        mock_export.return_value.iter_content.return_value = [b'header\n']
+        self._mock_upstream(mock_export)
 
-        response = self.client.get(self.url, {
-            'enterprise_customer_uuid': self.enterprise_uuid,
-            'subsidy_uuid': subsidy_uuid,
-        })
+        response = self._get(subsidy_uuid=subsidy_uuid)
 
         assert response.status_code == status.HTTP_200_OK
         mock_export.assert_called_once()
 
-    @mock.patch('enterprise_access.apps.api.v1.views.subsidy_access_policy.get_subsidy_transactions_export')
-    def test_downstream_error_returns_bad_gateway(self, mock_export):
-        downstream_error = requests.HTTPError()
-        downstream_error.response = mock.Mock(status_code=503)
-        downstream_error.response.json.return_value = {'detail': 'unavailable'}
-        wrapped_error = SubsidyAPIHTTPError('downstream failure')
-        wrapped_error.__cause__ = downstream_error
-        mock_export.side_effect = wrapped_error
+    @ddt.data(400, 403, 500, 503, 504)
+    @mock.patch(EXPORT_FUNCTION_PATH)
+    def test_upstream_error_returns_bad_gateway_without_upstream_body(self, upstream_status_code, mock_export):
+        """
+        Params are validated before the upstream call, so any upstream failure is a gateway error. The upstream body
+        (which may be an HTML error page or name internal permissions) is never passed through to the client.
+        """
+        mock_export.side_effect = _subsidy_api_error(upstream_status_code)
 
-        response = self.client.get(self.url, {
-            'enterprise_customer_uuid': self.enterprise_uuid,
-            'subsidy_uuid': self.subsidy_uuid,
-        })
+        response = self._get()
 
         assert response.status_code == status.HTTP_502_BAD_GATEWAY
-        assert str(response.data['subsidy_status_code']) == '503'
+        assert response.json() == {'detail': 'Failed to export transactions from the Subsidy API.'}
 
-    @mock.patch('enterprise_access.apps.api.v1.views.subsidy_access_policy.get_subsidy_transactions_export')
-    def test_downstream_non_json_error_returns_bad_gateway(self, mock_export):
-        """A non-JSON error body from enterprise-subsidy (e.g. an HTML error page from a proxy) shouldn't 500."""
-        downstream_error = requests.HTTPError()
-        downstream_error.response = mock.Mock(status_code=504)
-        downstream_error.response.json.side_effect = ValueError('not valid JSON')
-        downstream_error.response.text = '<html><body>504 Gateway Time-out</body></html>'
+    @mock.patch(EXPORT_FUNCTION_PATH)
+    def test_upstream_transport_error_returns_bad_gateway(self, mock_export):
         wrapped_error = SubsidyAPIHTTPError('downstream failure')
-        wrapped_error.__cause__ = downstream_error
+        wrapped_error.__cause__ = requests.Timeout()
         mock_export.side_effect = wrapped_error
 
-        response = self.client.get(self.url, {
-            'enterprise_customer_uuid': self.enterprise_uuid,
-            'subsidy_uuid': self.subsidy_uuid,
-        })
+        response = self._get()
 
         assert response.status_code == status.HTTP_502_BAD_GATEWAY
-        assert response.data['detail'] == downstream_error.response.text
-        assert str(response.data['subsidy_status_code']) == '504'
 
 
-class TestTransactionsExportClient(APITestWithMocks):
-    """Tests for the enterprise-subsidy export wrapper."""
+@ddt.ddt
+class TestTransactionsExportPermission(TestCase):
+    """
+    Tests who is granted SUBSIDY_ACCESS_POLICY_TRANSACTIONS_EXPORT_PERMISSION via explicit (database) role assignments.
+    """
 
-    @mock.patch('enterprise_access.apps.subsidy_access_policy.subsidy_api.get_versioned_subsidy_client')
-    def test_export_wrapper_builds_request(self, mock_client_getter):
-        subsidy_uuid = uuid4()
-        policy_uuid = uuid4()
-        response = mock_client_getter.return_value.client.get.return_value
+    def setUp(self):
+        super().setUp()
+        self.enterprise_uuid = uuid4()
+        self.user = UserFactory()
 
-        result = get_subsidy_transactions_export(
-            subsidy_uuid,
-            enterprise_customer_uuid='enterprise-uuid',
-            subsidy_access_policy_uuid=policy_uuid,
-            search='learner',
-            start_date='2026-01-01',
-            end_date='2026-01-31',
+    def _assign_role(self, role_name, enterprise_uuid):
+        role, _ = EnterpriseAccessFeatureRole.objects.get_or_create(name=role_name)
+        EnterpriseAccessRoleAssignment.objects.create(
+            user=self.user,
+            role=role,
+            enterprise_customer_uuid=enterprise_uuid,
         )
 
-        assert result is response
-        mock_client_getter.return_value.client.get.assert_called_once_with(
-            mock_client_getter.return_value.TRANSACTIONS_ENDPOINT + 'export/',
-            params={
-                'subsidy_uuid': str(subsidy_uuid),
-                'enterprise_customer_uuid': 'enterprise-uuid',
-                'subsidy_access_policy_uuid': str(policy_uuid),
-                'search': 'learner',
-                'start_date': '2026-01-01',
-                'end_date': '2026-01-31',
-            },
-            stream=True,
+    @ddt.data(
+        (constants.CONTENT_ASSIGNMENTS_ADMIN_ROLE, True),
+        (constants.CONTENT_ASSIGNMENTS_OPERATOR_ROLE, True),
+        (constants.SUBSIDY_ACCESS_POLICY_OPERATOR_ROLE, True),
+        # The Browse & Request admin role alone must not grant access to learner spend PII.
+        (constants.REQUESTS_ADMIN_ROLE, False),
+        (constants.SUBSIDY_ACCESS_POLICY_LEARNER_ROLE, False),
+        (constants.CONTENT_ASSIGNMENTS_LEARNER_ROLE, False),
+    )
+    @ddt.unpack
+    def test_explicit_role_grants(self, role_name, expected_access):
+        self._assign_role(role_name, self.enterprise_uuid)
+
+        assert self.user.has_perm(
+            constants.SUBSIDY_ACCESS_POLICY_TRANSACTIONS_EXPORT_PERMISSION,
+            str(self.enterprise_uuid),
+        ) is expected_access
+
+    def test_role_for_another_enterprise_does_not_grant_access(self):
+        self._assign_role(constants.CONTENT_ASSIGNMENTS_ADMIN_ROLE, uuid4())
+
+        assert not self.user.has_perm(
+            constants.SUBSIDY_ACCESS_POLICY_TRANSACTIONS_EXPORT_PERMISSION,
+            str(self.enterprise_uuid),
         )
-        response.raise_for_status.assert_called_once_with()
-
-    @mock.patch('enterprise_access.apps.subsidy_access_policy.subsidy_api.get_versioned_subsidy_client')
-    def test_export_wrapper_converts_transport_error(self, mock_client_getter):
-        mock_client_getter.return_value.client.get.side_effect = requests.Timeout()
-
-        with self.assertRaises(SubsidyAPIHTTPError):
-            get_subsidy_transactions_export(uuid4(), enterprise_customer_uuid=uuid4())

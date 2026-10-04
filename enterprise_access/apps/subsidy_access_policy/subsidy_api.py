@@ -110,6 +110,7 @@ def get_and_cache_transactions_for_learner(subsidy_uuid, lms_user_id):
 
 
 def get_subsidy_transactions_export(
+    *,
     subsidy_uuid,
     enterprise_customer_uuid,
     subsidy_access_policy_uuid=None,
@@ -120,25 +121,28 @@ def get_subsidy_transactions_export(
     """
     Fetch a CSV export of Learner Credit spent transactions for a subsidy from enterprise-subsidy.
 
+    Arguments are keyword-only, since several are optional values of the same type that are easy to swap.
+
     Arguments:
         subsidy_uuid (str|UUID): The subsidy whose spent transactions should be exported.
         enterprise_customer_uuid (str|UUID): The enterprise that owns the subsidy. Always forwarded so that
             enterprise-subsidy also scopes the export to this enterprise (defense in depth for cross-customer access).
         subsidy_access_policy_uuid (str|UUID, optional): Only export transactions redeemed via this policy (budget).
         search (str, optional): Free-text search filter, forwarded as-is to enterprise-subsidy.
-        start_date (str, optional): Only include transactions created on/after this date/datetime.
-        end_date (str, optional): Only include transactions created on/before this date/datetime.
+        start_date (date, optional): Only include transactions created on/after this date.
+        end_date (date, optional): Only include transactions created on/before this date (inclusive).
 
     Returns:
-        requests.Response: the raw CSV response from enterprise-subsidy, including its
-        ``Content-Disposition`` header.
+        requests.Response: the open, streamed CSV response from enterprise-subsidy, including its headers.
+        The caller is responsible for closing it.
 
     Raises:
-        SubsidyAPIHTTPError: if the Subsidy API request failed.
+        SubsidyAPIHTTPError: if the Subsidy API request failed. The upstream response, if any, is already closed.
     """
-    client = get_versioned_subsidy_client()
+    # The export is a v2 admin endpoint (it needs admin-level access to the subsidy), so always use the v2 client.
+    client = get_versioned_subsidy_client(version=2)
+    export_url = client.TRANSACTIONS_LIST_ENDPOINT.format(subsidy_uuid=subsidy_uuid) + 'export/'
     query_params = {
-        'subsidy_uuid': str(subsidy_uuid),
         'enterprise_customer_uuid': str(enterprise_customer_uuid),
     }
     if subsidy_access_policy_uuid:
@@ -146,18 +150,33 @@ def get_subsidy_transactions_export(
     if search:
         query_params['search'] = search
     if start_date:
-        query_params['start_date'] = str(start_date)
+        query_params['start_date'] = start_date.isoformat()
     if end_date:
-        query_params['end_date'] = str(end_date)
+        query_params['end_date'] = end_date.isoformat()
 
     try:
+        # OAuthAPIClient only sets a timeout on its token fetch, so set one explicitly for this potentially slow call.
         response = client.client.get(
-            client.TRANSACTIONS_ENDPOINT + 'export/',
+            export_url,
             params=query_params,
             stream=True,
+            timeout=settings.SUBSIDY_TRANSACTIONS_EXPORT_TIMEOUT,
         )
-        response.raise_for_status()
     except requests.exceptions.RequestException as exc:
+        logger.exception(
+            'Subsidy API transactions export request to %s failed with params %s', export_url, query_params,
+        )
+        raise SubsidyAPIHTTPError('HTTPError occurred in Subsidy API request.') from exc
+
+    try:
+        response.raise_for_status()
+    except requests.exceptions.HTTPError as exc:
+        # With stream=True the body hasn't been read, so the pooled connection isn't released until we close it.
+        response.close()
+        logger.error(
+            'Subsidy API transactions export %s returned %s for params %s',
+            export_url, response.status_code, query_params,
+        )
         raise SubsidyAPIHTTPError('HTTPError occurred in Subsidy API request.') from exc
     return response
 

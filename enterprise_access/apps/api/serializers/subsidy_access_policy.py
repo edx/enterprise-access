@@ -986,11 +986,19 @@ class TransactionsExportRequestSerializer(serializers.Serializer):
         max_length=320,
         help_text='Free-text search filter, forwarded as-is to the Subsidy API.',
     )
-    start_date = serializers.CharField(
+    # Validated here, not just forwarded, so a malformed date is reported as the client's 400 rather than surfacing
+    # as an upstream failure (502).
+    start_date = serializers.DateField(
         required=False,
-        help_text='Only include transactions created on/after this date/datetime, forwarded to the Subsidy API.',
+        help_text='Only include transactions created on/after this date (YYYY-MM-DD, UTC).',
     )
-    end_date = serializers.CharField(
+    end_date = serializers.DateField(
         required=False,
-        help_text='Only include transactions created on/before this date/datetime, forwarded to the Subsidy API.',
+        help_text='Only include transactions created on/before this date, inclusive (YYYY-MM-DD, UTC).',
     )
+
+    def validate(self, attrs):
+        start_date, end_date = attrs.get('start_date'), attrs.get('end_date')
+        if start_date and end_date and start_date > end_date:
+            raise serializers.ValidationError({'end_date': 'end_date must be on or after start_date.'})
+        return attrs

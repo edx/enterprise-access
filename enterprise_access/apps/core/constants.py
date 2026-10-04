@@ -18,6 +18,7 @@ SUBSIDY_ACCESS_POLICY_READ_PERMISSION = 'subsidy_access_policy.has_read_access'
 SUBSIDY_ACCESS_POLICY_WRITE_PERMISSION = 'subsidy_access_policy.has_write_access'
 SUBSIDY_ACCESS_POLICY_REDEMPTION_PERMISSION = 'subsidy_access_policy.has_redemption_access'
 SUBSIDY_ACCESS_POLICY_ALLOCATION_PERMISSION = 'subsidy_access_policy.has_allocation_access'
+SUBSIDY_ACCESS_POLICY_TRANSACTIONS_EXPORT_PERMISSION = 'subsidy_access_policy.has_transactions_export_access'
 
 CONTENT_ASSIGNMENTS_OPERATOR_ROLE = 'enterprise_access_content_assignments_operator'
 CONTENT_ASSIGNMENTS_ADMIN_ROLE = 'enterprise_access_content_assignments_admin'
