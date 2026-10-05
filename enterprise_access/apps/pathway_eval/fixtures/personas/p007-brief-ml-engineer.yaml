@@ -1,0 +1,37 @@
+# Persona 7 - Brief Bob
+#
+# Imported from "Learner Rec Persona Testing.xlsx", authored by the product team. Expected-
+# course titles were resolved to catalog course keys against the live index on 2026-09-09; only
+# exact title matches were kept.
+id: p007-brief-ml-engineer
+domain: technology
+tier: core
+
+inputs:
+  selected_goals: >-
+    Learn
+  free_text: >-
+    Job is making me take a course
+  known_context: >-
+    machine learning engineer
+  interested_industries: >-
+    tech
+
+expected:
+  ground_truth_status: placeholder
+  expect_no_coverage: false
+  careers:
+    - external_id: "ETFE217EE8D3363FC5"
+      name: "Machine Learning Engineer"
+  courses: []
+
+catalog:
+  snapshot_date: 2026-09-09
+
+notes: >-
+  **No expected courses authored yet** -- loads, reports has_ground_truth false, must not be
+  scored as a miss.
+  
+  The deliberate opposite of persona 6: four fields totalling ~60 characters ("Learn",
+  "tech"). Minimal input is its own failure mode -- there is almost nothing for intent
+  extraction to work with. Keep as a boundary case.

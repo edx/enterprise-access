@@ -1,0 +1,45 @@
+# Persona 8 - Innapropriate and aimless assistant
+#
+# Imported from "Learner Rec Persona Testing.xlsx", authored by the product team. Expected-
+# course titles were resolved to catalog course keys against the live index on 2026-09-09; only
+# exact title matches were kept.
+id: p008-aimless-administrative-assistant
+domain: business
+tier: edge
+
+inputs:
+  selected_goals: >-
+    leave this shitty job and get a better one
+  free_text: >-
+    this fucking job is forcing me to take a course
+  known_context: >-
+    I'm an administrative assistant but I want to go into a career that actually makes me some
+    fucking money
+  interested_industries: >-
+    anything
+
+expected:
+  ground_truth_status: expert_authored
+  expect_no_coverage: false
+  careers: []
+  courses:
+    - key: "FullbridgeX+Career5x"
+      title: "Resume, Networking, and Interview Skills"
+
+catalog:
+  snapshot_date: 2026-09-09
+
+notes: >-
+  Authored ground truth: one expected course, resolved exactly.
+  
+  Two things this persona tests that no other does: hostile/profane input (verbatim from the
+  author -- it is real learner-input behaviour and the pipeline should degrade gracefully, not
+  crash or moralise), and a learner with no career direction at all ("anything").
+  
+  No expected career recorded -- the author left it blank, appropriately, since the persona
+  has no target role.
+  
+  Observed-run note: "Majority don't create pathways, and the only one this person might be
+  qualified for (warehouse sorter) has completely random courses." That matches the measured
+  catalog shape: frontline and warehouse roles are among the 20 of 43 sampled careers with no
+  serviceable pathway.

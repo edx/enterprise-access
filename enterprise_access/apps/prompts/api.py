@@ -53,6 +53,32 @@ def get_current_prompt(
     return prompt
 
 
+def compose_system_prompt(system_prompt: str, output_schema: Any = None) -> str:
+    """
+    Compose prompt text and an output schema into the string a model receives.
+
+    Split out from ``build_system_prompt`` so that callers holding a prompt *model* and
+    callers holding plain constants compose them the same way. The direct model backends
+    (claude, openai) are the second kind: they take a caller-supplied system prompt and
+    have no database row to read a schema from.
+
+    That distinction is load-bearing rather than cosmetic. A prompt sent without its
+    schema never names the fields the response must use, so the model picks its own and
+    the parser finds nothing it recognises -- a silent degradation, because an unusable
+    re-rank response falls back to retrieval order by design.
+    """
+    composed = system_prompt.strip()
+
+    if output_schema:
+        composed += _SCHEMA_SEPARATOR + json.dumps(
+            output_schema,
+            indent=2,
+            sort_keys=True,
+        )
+
+    return composed
+
+
 def build_system_prompt(prompt: BaseSystemPrompt) -> str:
     """
     Build the complete system prompt sent to Xpert.
@@ -60,17 +86,7 @@ def build_system_prompt(prompt: BaseSystemPrompt) -> str:
     The configured prompt text is stripped of surrounding whitespace.
     A non-empty output schema is appended as formatted JSON.
     """
-    system_prompt = prompt.system_prompt.strip()
-    output_schema = prompt.output_schema
-
-    if output_schema:
-        system_prompt += _SCHEMA_SEPARATOR + json.dumps(
-            output_schema,
-            indent=2,
-            sort_keys=True,
-        )
-
-    return system_prompt
+    return compose_system_prompt(prompt.system_prompt, prompt.output_schema)
 
 
 def build_messages(validated_data: ValidatedData) -> list[XpertMessage]:
