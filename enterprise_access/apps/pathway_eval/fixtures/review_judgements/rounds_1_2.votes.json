@@ -1,0 +1,5559 @@
+[
+ {
+  "career": "Business Analyst",
+  "courses": [
+   {
+    "key": "USMx+DIGITAL01",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "IBM+DB0111EN",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "Microsoft+MS-108",
+    "level": "Intermediate",
+    "step": 3
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-09-4a",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Business Analyst",
+  "courses": [
+   {
+    "key": "IBM+DB0111EN",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "CodeSignal+164",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "Microsoft+MS-108",
+    "level": "Intermediate",
+    "step": 3
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-09-4b",
+  "replacements": {},
+  "suggestions": {
+   "1": [
+    "IBM+DA0100",
+    "DavidsonX+DavidsonX_D007"
+   ],
+   "2": [
+    "IBM+DA0100",
+    "DavidsonX+DavidsonX_D007"
+   ],
+   "3": [
+    "Microsoft+MS-AI-123",
+    "IBM+DB260EN"
+   ]
+  },
+  "verdict": "good"
+ },
+ {
+  "career": "Sales Consultant",
+  "courses": [
+   {
+    "key": "IBM+CB0103EN",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "Microsoft+MS-133",
+    "level": "Introductory",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-10-1a",
+  "replacements": {},
+  "suggestions": {
+   "2": [
+    "HarvardX+ENTMR",
+    "Microsoft+MS-144"
+   ]
+  },
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Sales Consultant",
+  "courses": [
+   {
+    "key": "State-Bank-of-India+SBSC0015x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "Microsoft+MS-133",
+    "level": "Introductory",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [
+   2
+  ],
+  "item_id": "R2-10-1b",
+  "replacements": {
+   "2": {
+    "also": [
+     "HarvardX+ENTMR",
+     "logycaX+SCD_01",
+     "OxfordX+OXFAIM01"
+    ],
+    "best": "Microsoft+MS-144"
+   }
+  },
+  "suggestions": {},
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Sales Consultant",
+  "courses": [
+   {
+    "key": "Microsoft+MS-AI-114",
+    "level": "Intermediate",
+    "step": 1
+   },
+   {
+    "key": "WOBI+WOBI003",
+    "level": "Intermediate",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-10-2a",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Sales Consultant",
+  "courses": [
+   {
+    "key": "Microsoft+MS-AI-114",
+    "level": "Intermediate",
+    "step": 1
+   },
+   {
+    "key": "WOBI+WOBI003",
+    "level": "Intermediate",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-10-2b",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Sales Consultant",
+  "courses": [
+   {
+    "key": "State-Bank-of-India+SBSC0015x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "HarvardX+ENTMR",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "Microsoft+MS-AI-141",
+    "level": "Intermediate",
+    "step": 3
+   },
+   {
+    "key": "Microsoft+MS-AI-114",
+    "level": "Intermediate",
+    "step": 4
+   },
+   {
+    "key": "CFI+001",
+    "level": "Advanced",
+    "step": 5
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-10-3a",
+  "replacements": {},
+  "suggestions": {
+   "1": [
+    "Microsoft+MS-144",
+    "OxfordX+OXFAIM01",
+    "IIMBx+MK101x"
+   ],
+   "3": [
+    "Microsoft+MS-124",
+    "WOBI+WOBI003",
+    "BabsonX+MKT01x"
+   ]
+  },
+  "verdict": "good"
+ },
+ {
+  "career": "Sales Consultant",
+  "courses": [
+   {
+    "key": "HarvardX+ENTMR",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "Microsoft+MS-133",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "Microsoft+MS-AI-114",
+    "level": "Intermediate",
+    "step": 3
+   },
+   {
+    "key": "WOBI+WOBI003",
+    "level": "Intermediate",
+    "step": 4
+   },
+   {
+    "key": "CFI+001",
+    "level": "Advanced",
+    "step": 5
+   }
+  ],
+  "dropped_steps": [
+   2
+  ],
+  "item_id": "R2-10-3b",
+  "replacements": {
+   "2": {
+    "also": [
+     "Microsoft+MS-144",
+     "OxfordX+OXFAIM01",
+     "IIMBx+MK101x"
+    ],
+    "best": "ISCEA+CFDP02"
+   }
+  },
+  "suggestions": {
+   "1": [
+    "Microsoft+MS-144"
+   ],
+   "4": [
+    "Microsoft+MS-124",
+    "Microsoft+MS-AI-141",
+    "BabsonX+MKT01x"
+   ],
+   "5": [
+    "NYIF+FAIC.PC1x"
+   ]
+  },
+  "verdict": "good"
+ },
+ {
+  "career": "Sales Consultant",
+  "courses": [
+   {
+    "key": "HarvardX+ENTMR",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "Microsoft+MS-132",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "IIMBx+MK101x",
+    "level": "Introductory",
+    "step": 3
+   },
+   {
+    "key": "Microsoft+MS-AI-114",
+    "level": "Intermediate",
+    "step": 4
+   },
+   {
+    "key": "WOBI+WOBI003",
+    "level": "Intermediate",
+    "step": 5
+   }
+  ],
+  "dropped_steps": [
+   2
+  ],
+  "item_id": "R2-10-4a",
+  "replacements": {
+   "2": {
+    "also": [
+     "logycaX+SCD_01",
+     "ISCEA+CFDP02",
+     "IBM+CB0103EN"
+    ],
+    "best": "Microsoft+MS-144"
+   }
+  },
+  "suggestions": {},
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Sales Consultant",
+  "courses": [
+   {
+    "key": "State-Bank-of-India+SBSC0015x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "HarvardX+ENTMR",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "Microsoft+MS-AI-141",
+    "level": "Intermediate",
+    "step": 3
+   },
+   {
+    "key": "Microsoft+MS-AI-114",
+    "level": "Intermediate",
+    "step": 4
+   },
+   {
+    "key": "WOBI+WOBI003",
+    "level": "Intermediate",
+    "step": 5
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-10-4b",
+  "replacements": {},
+  "suggestions": {
+   "2": [
+    "Microsoft+MS-144",
+    "IIMBx+MK101x"
+   ],
+   "4": [
+    "Microsoft+MS-124",
+    "USMx+ENES680.2x",
+    "BabsonX+MKT01x"
+   ],
+   "5": [
+    "Microsoft+MS-124",
+    "BabsonX+MKT01x"
+   ]
+  },
+  "verdict": "good"
+ },
+ {
+  "career": "Automation Engineer",
+  "courses": [
+   {
+    "key": "RedHat+RH094x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "GoogleCloud+CALP5x",
+    "level": "Introductory",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-11-1a",
+  "replacements": {},
+  "suggestions": {
+   "1": [
+    "Microsoft+MS-CC-146",
+    "AI+mlops1x",
+    "AI+rust3x"
+   ],
+   "2": [
+    "AI+rust3x",
+    "Microsoft+MS-CC-119"
+   ]
+  },
+  "verdict": "good"
+ },
+ {
+  "career": "Automation Engineer",
+  "courses": [
+   {
+    "key": "LinuxFoundationX+LFS162x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "RedHat+RH094x",
+    "level": "Introductory",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-11-1b",
+  "replacements": {},
+  "suggestions": {
+   "1": [
+    "Microsoft+MS-CC-146",
+    "AI+mlops1x",
+    "AI+rust3x",
+    "Microsoft+MS-CC-119"
+   ],
+   "2": [
+    "Microsoft+MS-CC-146",
+    "AI+mlops1x",
+    "AI+rust3x",
+    "Microsoft+MS-CC-119"
+   ]
+  },
+  "verdict": "good"
+ },
+ {
+  "career": "Automation Engineer",
+  "courses": [
+   {
+    "key": "FedericaX+51",
+    "level": "Intermediate",
+    "step": 1
+   },
+   {
+    "key": "IBM+AI0325EN",
+    "level": "Intermediate",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-11-2a",
+  "replacements": {},
+  "suggestions": {
+   "1": [
+    "IBM+CD0215EN",
+    "IBM+AI0274EN",
+    "IBM+CC0201EN"
+   ],
+   "2": [
+    "IBM+CD0215EN",
+    "DelftX+IEPG1x",
+    "IBM+AI0274EN"
+   ]
+  },
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Automation Engineer",
+  "courses": [
+   {
+    "key": "FedericaX+51",
+    "level": "Intermediate",
+    "step": 1
+   },
+   {
+    "key": "IBM+CD0215EN",
+    "level": "Intermediate",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-11-2b",
+  "replacements": {},
+  "suggestions": {
+   "1": [
+    "IBM+AI0274EN",
+    "IBM+CC0201EN",
+    "DelftX+IEPG1x"
+   ],
+   "2": [
+    "IBM+AI0274EN",
+    "IBM+CC0201EN",
+    "DelftX+IEPG1x"
+   ]
+  },
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Automation Engineer",
+  "courses": [
+   {
+    "key": "RedHat+RH094x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "GoogleCloud+CALP5x",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "IBM+AI0325EN",
+    "level": "Intermediate",
+    "step": 3
+   },
+   {
+    "key": "IBM+CD0215EN",
+    "level": "Intermediate",
+    "step": 4
+   },
+   {
+    "key": "Microsoft+MS-116",
+    "level": "Advanced",
+    "step": 5
+   }
+  ],
+  "dropped_steps": [
+   5
+  ],
+  "item_id": "R2-11-3a",
+  "replacements": {
+   "5": {
+    "also": [
+     "Microsoft+MS-AI-133",
+     "Microsoft+MS-AI-134"
+    ],
+    "best": "HarvardX+TinyML4"
+   }
+  },
+  "suggestions": {
+   "1": [
+    "Microsoft+MS-CC-146",
+    "AI+mlops1x",
+    "AI+rust3x",
+    "Microsoft+MS-CC-119"
+   ],
+   "2": [
+    "Microsoft+MS-CC-146",
+    "AI+mlops1x",
+    "AI+rust3x",
+    "Microsoft+MS-CC-119"
+   ],
+   "3": [
+    "IBM+AI0274EN",
+    "IBM+CC0201EN",
+    "DelftX+IEPG1x"
+   ],
+   "4": [
+    "IBM+AI0274EN",
+    "IBM+CC0201EN",
+    "DelftX+IEPG1x"
+   ]
+  },
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Automation Engineer",
+  "courses": [
+   {
+    "key": "RedHat+RH094x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "GoogleCloud+CALP5x",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "IBM+CC0201EN",
+    "level": "Intermediate",
+    "step": 3
+   },
+   {
+    "key": "IBM+CD0215EN",
+    "level": "Intermediate",
+    "step": 4
+   },
+   {
+    "key": "Microsoft+MS-110",
+    "level": "Advanced",
+    "step": 5
+   }
+  ],
+  "dropped_steps": [
+   2
+  ],
+  "item_id": "R2-11-3b",
+  "replacements": {
+   "2": {
+    "also": [
+     "AI+mlops1x",
+     "AI+rust3x",
+     "Microsoft+MS-CC-119"
+    ],
+    "best": "Microsoft+MS-CC-146"
+   }
+  },
+  "suggestions": {
+   "1": [
+    "Microsoft+MS-CC-146",
+    "AI+mlops1x",
+    "AI+rust3x",
+    "Microsoft+MS-CC-119"
+   ],
+   "3": [
+    "IBM+AI0274EN",
+    "DelftX+IEPG1x"
+   ],
+   "4": [
+    "IBM+AI0274EN",
+    "DelftX+IEPG1x"
+   ],
+   "5": [
+    "Microsoft+MS-AI-133",
+    "Microsoft+MS-AI-134"
+   ]
+  },
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Automation Engineer",
+  "courses": [
+   {
+    "key": "RedHat+RH094x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "FedericaX+51",
+    "level": "Intermediate",
+    "step": 2
+   },
+   {
+    "key": "IBM+CD0215EN",
+    "level": "Intermediate",
+    "step": 3
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-11-4a",
+  "replacements": {},
+  "suggestions": {
+   "1": [
+    "Microsoft+MS-CC-146",
+    "AI+mlops1x",
+    "AI+rust3x",
+    "Microsoft+MS-CC-119"
+   ],
+   "2": [
+    "IBM+AI0274EN",
+    "DelftX+IEPG1x"
+   ],
+   "3": [
+    "IBM+AI0274EN",
+    "DelftX+IEPG1x"
+   ]
+  },
+  "verdict": "good"
+ },
+ {
+  "career": "Automation Engineer",
+  "courses": [
+   {
+    "key": "LinuxFoundationX+LFS162x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "RedHat+RH094x",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "Microsoft+MS-122",
+    "level": "Introductory",
+    "step": 3
+   },
+   {
+    "key": "IBM+AI0325EN",
+    "level": "Intermediate",
+    "step": 4
+   },
+   {
+    "key": "IBM+CD0215EN",
+    "level": "Intermediate",
+    "step": 5
+   }
+  ],
+  "dropped_steps": [
+   3
+  ],
+  "item_id": "R2-11-4b",
+  "replacements": {
+   "3": {
+    "also": [
+     "AI+mlops1x",
+     "AI+rust3x",
+     "Microsoft+MS-CC-119"
+    ],
+    "best": "Microsoft+MS-CC-146"
+   }
+  },
+  "suggestions": {
+   "1": [
+    "Microsoft+MS-CC-146",
+    "AI+mlops1x",
+    "AI+rust3x",
+    "Microsoft+MS-CC-119"
+   ],
+   "2": [
+    "Microsoft+MS-CC-146",
+    "AI+mlops1x",
+    "AI+rust3x",
+    "Microsoft+MS-CC-119"
+   ],
+   "4": [
+    "IBM+AI0274EN",
+    "DelftX+IEPG1x"
+   ],
+   "5": [
+    "IBM+AI0274EN",
+    "DelftX+IEPG1x"
+   ]
+  },
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Security Engineer",
+  "courses": [
+   {
+    "key": "USMx+IS4551",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "IBM+Cybfun.6.0",
+    "level": "Introductory",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-12-1a",
+  "replacements": {},
+  "suggestions": {
+   "1": [
+    "IBM+CS0221EN",
+    "WisconsinX+LS0009",
+    "Microsoft+MS-CC-130"
+   ],
+   "2": [
+    "IBM+CS0221EN",
+    "WisconsinX+LS0009",
+    "IBM+Cybfun.3.0",
+    "Microsoft+MS-CC-130",
+    "Microsoft+MS-CC-141",
+    "IBM+Cybfun.4.0"
+   ]
+  },
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Security Engineer",
+  "courses": [
+   {
+    "key": "IBM+CS0221EN",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "IBM+Cybfun.6.0",
+    "level": "Introductory",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-12-1b",
+  "replacements": {},
+  "suggestions": {
+   "1": [
+    "WisconsinX+LS0009",
+    "Microsoft+MS-CC-130",
+    "IBM+Cybfun.3.0",
+    "Microsoft+MS-CC-141",
+    "IBM+Cybfun.4.0"
+   ],
+   "2": [
+    "WisconsinX+LS0009",
+    "Microsoft+MS-CC-130",
+    "IBM+Cybfun.3.0",
+    "Microsoft+MS-CC-141",
+    "IBM+Cybfun.4.0"
+   ]
+  },
+  "verdict": "skip"
+ },
+ {
+  "career": "Security Engineer",
+  "courses": [
+   {
+    "key": "IBM+Cybfun.5.0",
+    "level": "Intermediate",
+    "step": 1
+   },
+   {
+    "key": "IBM+AI0275EN",
+    "level": "Intermediate",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-12-2a",
+  "replacements": {},
+  "suggestions": {
+   "1": [
+    "IBM+CD0267EN",
+    "IBM+CS0112EN",
+    "SkillUp-EdTech+DM0101EN",
+    "USMx+IS6593"
+   ]
+  },
+  "verdict": "good"
+ },
+ {
+  "career": "Security Engineer",
+  "courses": [
+   {
+    "key": "IBM+CD0267EN",
+    "level": "Intermediate",
+    "step": 1
+   },
+   {
+    "key": "Microsoft+AZ-500-103",
+    "level": "Intermediate",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-12-2b",
+  "replacements": {},
+  "suggestions": {
+   "1": [
+    "IBM+CS0112EN",
+    "SkillUp-EdTech+DM0101EN",
+    "USMx+IS6593"
+   ],
+   "2": [
+    "IBM+CS0112EN",
+    "SkillUp-EdTech+DM0101EN",
+    "USMx+IS6593"
+   ]
+  },
+  "verdict": "good"
+ },
+ {
+  "career": "Security Engineer",
+  "courses": [
+   {
+    "key": "WisconsinX+LS0009",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "IBM+CS0221EN",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "GoogleCloud+SECGKECNGFx1",
+    "level": "Intermediate",
+    "step": 3
+   },
+   {
+    "key": "IBM+AI0275EN",
+    "level": "Intermediate",
+    "step": 4
+   },
+   {
+    "key": "GoogleCloud+SBPIGC1x",
+    "level": "Advanced",
+    "step": 5
+   }
+  ],
+  "dropped_steps": [
+   2,
+   5
+  ],
+  "item_id": "R2-12-3a",
+  "replacements": {
+   "2": {
+    "also": [
+     "IBM+Cybfun.3.0",
+     "Microsoft+MS-CC-141",
+     "IBM+Cybfun.6.0"
+    ],
+    "best": "Microsoft+MS-CC-130"
+   },
+   "5": {
+    "also": [
+     "Microsoft+MS-AI-137"
+    ],
+    "best": "Microsoft+MS-AI-134"
+   }
+  },
+  "suggestions": {
+   "1": [
+    "Microsoft+MS-CC-130",
+    "IBM+Cybfun.3.0",
+    "Microsoft+MS-CC-141",
+    "IBM+Cybfun.6.0"
+   ],
+   "3": [
+    "IBM+CS0112EN",
+    "SkillUp-EdTech+DM0101EN",
+    "USMx+IS6593"
+   ],
+   "4": [
+    "IBM+CS0112EN",
+    "SkillUp-EdTech+DM0101EN",
+    "USMx+IS6593"
+   ]
+  },
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Security Engineer",
+  "courses": [
+   {
+    "key": "IBM+Cybfun.6.0",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "IBM+CS0221EN",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "Microsoft+AZ-500-103",
+    "level": "Intermediate",
+    "step": 3
+   },
+   {
+    "key": "Microsoft+SC-200-102",
+    "level": "Intermediate",
+    "step": 4
+   },
+   {
+    "key": "GoogleCloud+MSIGCL1x",
+    "level": "Advanced",
+    "step": 5
+   }
+  ],
+  "dropped_steps": [
+   3,
+   4,
+   5
+  ],
+  "item_id": "R2-12-3b",
+  "replacements": {
+   "3": {
+    "also": [
+     "SkillUp-EdTech+DM0101EN",
+     "USMx+IS6593"
+    ],
+    "best": "IBM+CS0112EN"
+   },
+   "4": {
+    "also": [
+     "SkillUp-EdTech+DM0101EN",
+     "USMx+IS6593"
+    ],
+    "best": "IBM+CS0112EN"
+   },
+   "5": {
+    "also": [
+     "Microsoft+MS-AI-134"
+    ],
+    "best": "Microsoft+MS-AI-137"
+   }
+  },
+  "suggestions": {
+   "1": [
+    "Microsoft+MS-CC-130",
+    "IBM+Cybfun.3.0",
+    "Microsoft+MS-CC-141"
+   ],
+   "2": [
+    "Microsoft+MS-CC-130",
+    "IBM+Cybfun.3.0",
+    "Microsoft+MS-CC-141"
+   ]
+  },
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Security Engineer",
+  "courses": [
+   {
+    "key": "WisconsinX+LS0009",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "IBM+CS0221EN",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "GoogleCloud+CALP4x",
+    "level": "Introductory",
+    "step": 3
+   },
+   {
+    "key": "Microsoft+AZ-500-102",
+    "level": "Intermediate",
+    "step": 4
+   },
+   {
+    "key": "IBM+AI0275EN",
+    "level": "Intermediate",
+    "step": 5
+   }
+  ],
+  "dropped_steps": [
+   2,
+   3,
+   4
+  ],
+  "item_id": "R2-12-4a",
+  "replacements": {
+   "2": {
+    "also": [
+     "Microsoft+MS-CC-130",
+     "Microsoft+MS-CC-141"
+    ],
+    "best": "IBM+Cybfun.3.0"
+   },
+   "3": {
+    "also": [
+     "IBM+Cybfun.3.0",
+     "Microsoft+MS-CC-141"
+    ],
+    "best": "Microsoft+MS-CC-130"
+   },
+   "4": {
+    "also": [
+     "USMx+IS6593"
+    ],
+    "best": "SkillUp-EdTech+DM0101EN"
+   }
+  },
+  "suggestions": {
+   "1": [
+    "Microsoft+MS-CC-130",
+    "IBM+Cybfun.3.0",
+    "Microsoft+MS-CC-141"
+   ],
+   "5": [
+    "SkillUp-EdTech+DM0101EN",
+    "USMx+IS6593"
+   ]
+  },
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Security Engineer",
+  "courses": [
+   {
+    "key": "WisconsinX+LS0009",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "IBM+Cybfun.6.0",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "IBM+CS0221EN",
+    "level": "Introductory",
+    "step": 3
+   },
+   {
+    "key": "Microsoft+AZ-500-103",
+    "level": "Intermediate",
+    "step": 4
+   },
+   {
+    "key": "Microsoft+SC-200-102",
+    "level": "Intermediate",
+    "step": 5
+   }
+  ],
+  "dropped_steps": [
+   3,
+   4,
+   5
+  ],
+  "item_id": "R2-12-4b",
+  "replacements": {
+   "3": {
+    "also": [
+     "IBM+Cybfun.3.0",
+     "Microsoft+MS-CC-141"
+    ],
+    "best": "Microsoft+MS-CC-130"
+   },
+   "4": {
+    "also": [
+     "USMx+IS6593"
+    ],
+    "best": "SkillUp-EdTech+DM0101EN"
+   },
+   "5": {
+    "also": [
+     "USMx+IS6593"
+    ],
+    "best": "SkillUp-EdTech+DM0101EN"
+   }
+  },
+  "suggestions": {
+   "1": [
+    "Microsoft+MS-CC-130",
+    "IBM+Cybfun.3.0",
+    "Microsoft+MS-CC-141"
+   ],
+   "2": [
+    "Microsoft+MS-CC-130",
+    "IBM+Cybfun.3.0",
+    "Microsoft+MS-CC-141"
+   ]
+  },
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Physician Assistant",
+  "courses": [
+   {
+    "key": "OsmosisFromElsevier+HS2",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "HKPolyUx+PACEx101x",
+    "level": "Introductory",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-13-1a",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Physician Assistant",
+  "courses": [
+   {
+    "key": "OsmosisFromElsevier+HS2",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "OsmosisFromElsevier+HS3",
+    "level": "Introductory",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-13-1b",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Physician Assistant",
+  "courses": [
+   {
+    "key": "OsmosisFromElsevier+HS2",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "HarvardX+AT1x",
+    "level": "Intermediate",
+    "step": 2
+   },
+   {
+    "key": "StanfordOnline+CME.20952",
+    "level": "Advanced",
+    "step": 3
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-13-3a",
+  "replacements": {},
+  "suggestions": {
+   "1": [
+    "HKPolyUx+PACEx101x",
+    "OsmosisFromElsevier+HS3",
+    "OsmosisFromElsevier+HS1"
+   ],
+   "3": [
+    "StanfordOnline+CME.20868",
+    "StanfordOnline+SOM-YCME0045",
+    "StanfordOnline+CME.20758",
+    "StanfordOnline+CME.20775"
+   ]
+  },
+  "verdict": "good"
+ },
+ {
+  "career": "Physician Assistant",
+  "courses": [
+   {
+    "key": "HKPolyUx+PACEx101x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "OsmosisFromElsevier+HS3",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "HarvardX+AT1x",
+    "level": "Intermediate",
+    "step": 3
+   },
+   {
+    "key": "StanfordOnline+CME.20952",
+    "level": "Advanced",
+    "step": 4
+   },
+   {
+    "key": "StanfordOnline+CME.20868",
+    "level": "Advanced",
+    "step": 5
+   }
+  ],
+  "dropped_steps": [
+   4
+  ],
+  "item_id": "R2-13-3b",
+  "replacements": {
+   "4": {
+    "also": [
+     "StanfordOnline+CME.20758",
+     "StanfordOnline+CME.20775"
+    ],
+    "best": "StanfordOnline+SOM-YCME0045"
+   }
+  },
+  "suggestions": {
+   "1": [
+    "OsmosisFromElsevier+HS1"
+   ],
+   "2": [
+    "OsmosisFromElsevier+HS1"
+   ],
+   "5": [
+    "StanfordOnline+SOM-YCME0045",
+    "StanfordOnline+CME.20758",
+    "StanfordOnline+CME.20775"
+   ]
+  },
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Physician Assistant",
+  "courses": [
+   {
+    "key": "HarvardX+AT1x",
+    "level": "Intermediate",
+    "step": 1
+   },
+   {
+    "key": "StanfordOnline+CME.20868",
+    "level": "Advanced",
+    "step": 2
+   },
+   {
+    "key": "StanfordOnline+SOM-YCME0045",
+    "level": "Advanced",
+    "step": 3
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-13-4a",
+  "replacements": {},
+  "suggestions": {
+   "2": [
+    "StanfordOnline+CME.20758",
+    "StanfordOnline+CME.20775"
+   ],
+   "3": [
+    "StanfordOnline+CME.20758",
+    "StanfordOnline+CME.20775"
+   ]
+  },
+  "verdict": "good"
+ },
+ {
+  "career": "Physician Assistant",
+  "courses": [
+   {
+    "key": "HarvardX+AT1x",
+    "level": "Intermediate",
+    "step": 1
+   },
+   {
+    "key": "StanfordOnline+SOM-YCME0045",
+    "level": "Advanced",
+    "step": 2
+   },
+   {
+    "key": "StanfordOnline+CME.20968",
+    "level": "Advanced",
+    "step": 3
+   }
+  ],
+  "dropped_steps": [
+   3
+  ],
+  "item_id": "R2-13-4b",
+  "replacements": {
+   "3": {
+    "also": [
+     "StanfordOnline+CME.20775",
+     "StanfordOnline+CME.20666",
+     "StanfordOnline+SOM-YCME0044"
+    ],
+    "best": "StanfordOnline+CME.20758"
+   }
+  },
+  "suggestions": {
+   "2": [
+    "StanfordOnline+CME.20758",
+    "StanfordOnline+CME.20775"
+   ]
+  },
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Team Lead",
+  "courses": [
+   {
+    "key": "IIMBx+HR101x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "AdelaideX+PerformaX",
+    "level": "Introductory",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-14-1a",
+  "replacements": {},
+  "suggestions": {
+   "1": [
+    "AdelaideX+EmpowerX",
+    "LSE+LSEMPT01",
+    "IUx+BUSM-E102"
+   ]
+  },
+  "verdict": "good"
+ },
+ {
+  "career": "Team Lead",
+  "courses": [
+   {
+    "key": "IIMBx+HR101x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "AdelaideX+PerformaX",
+    "level": "Introductory",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-14-1b",
+  "replacements": {},
+  "suggestions": {
+   "1": [
+    "AdelaideX+EmpowerX",
+    "LSE+LSEMPT01",
+    "IUx+BUSM-E102"
+   ],
+   "2": [
+    "AdelaideX+EmpowerX",
+    "LSE+LSEMPT01",
+    "IUx+BUSM-E102"
+   ]
+  },
+  "verdict": "good"
+ },
+ {
+  "career": "Team Lead",
+  "courses": [
+   {
+    "key": "IIMBx+OB252x",
+    "level": "Intermediate",
+    "step": 1
+   },
+   {
+    "key": "DartmouthX+SCC3",
+    "level": "Intermediate",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-14-2a",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Team Lead",
+  "courses": [
+   {
+    "key": "IIMBx+OB252x",
+    "level": "Intermediate",
+    "step": 1
+   },
+   {
+    "key": "BabsonX+MOB01x",
+    "level": "Intermediate",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-14-2b",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Team Lead",
+  "courses": [
+   {
+    "key": "LSE+LSEMPT01",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "IIMBx+OB252x",
+    "level": "Intermediate",
+    "step": 2
+   },
+   {
+    "key": "DartmouthX+SCC3",
+    "level": "Intermediate",
+    "step": 3
+   },
+   {
+    "key": "CodeSignal+548",
+    "level": "Advanced",
+    "step": 4
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-14-3a",
+  "replacements": {},
+  "suggestions": {
+   "1": [
+    "AdelaideX+EmpowerX",
+    "IUx+BUSM-E102"
+   ],
+   "3": [
+    "BabsonX+MOB01x",
+    "StellenboschX+Analytics.1",
+    "GoogleCloud+ITSITWOAI1x",
+    "ISCEA+CPSCAI02"
+   ]
+  },
+  "verdict": "good"
+ },
+ {
+  "career": "Team Lead",
+  "courses": [
+   {
+    "key": "IIMBx+HR101x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "IIMBx+OB252x",
+    "level": "Intermediate",
+    "step": 2
+   },
+   {
+    "key": "DartmouthX+SCC3",
+    "level": "Intermediate",
+    "step": 3
+   },
+   {
+    "key": "CodeSignal+548",
+    "level": "Advanced",
+    "step": 4
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-14-3b",
+  "replacements": {},
+  "suggestions": {
+   "1": [
+    "AdelaideX+EmpowerX",
+    "IUx+BUSM-E102"
+   ],
+   "2": [
+    "BabsonX+MOB01x",
+    "StellenboschX+Analytics.1",
+    "GoogleCloud+ITSITWOAI1x",
+    "ISCEA+CPSCAI02"
+   ],
+   "3": [
+    "BabsonX+MOB01x",
+    "StellenboschX+Analytics.1",
+    "GoogleCloud+ITSITWOAI1x",
+    "ISCEA+CPSCAI02"
+   ]
+  },
+  "verdict": "good"
+ },
+ {
+  "career": "Team Lead",
+  "courses": [
+   {
+    "key": "IIMBx+HR101x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "AdelaideX+EmpowerX",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "IIMBx+OB252x",
+    "level": "Intermediate",
+    "step": 3
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-14-4a",
+  "replacements": {},
+  "suggestions": {
+   "1": [
+    "IUx+BUSM-E102"
+   ],
+   "2": [
+    "IUx+BUSM-E102"
+   ],
+   "3": [
+    "BabsonX+MOB01x",
+    "StellenboschX+Analytics.1",
+    "GoogleCloud+ITSITWOAI1x",
+    "ISCEA+CPSCAI02"
+   ]
+  },
+  "verdict": "good"
+ },
+ {
+  "career": "Team Lead",
+  "courses": [
+   {
+    "key": "IIMBx+HR101x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "AdelaideX+PerformaX",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "LSE+LSEMPT01",
+    "level": "Introductory",
+    "step": 3
+   },
+   {
+    "key": "IIMBx+OB252x",
+    "level": "Intermediate",
+    "step": 4
+   },
+   {
+    "key": "DartmouthX+SCC3",
+    "level": "Intermediate",
+    "step": 5
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-14-4b",
+  "replacements": {},
+  "suggestions": {
+   "1": [
+    "IUx+BUSM-E102"
+   ],
+   "2": [
+    "IUx+BUSM-E102"
+   ],
+   "3": [
+    "IUx+BUSM-E102"
+   ],
+   "4": [
+    "BabsonX+MOB01x",
+    "StellenboschX+Analytics.1",
+    "GoogleCloud+ITSITWOAI1x",
+    "ISCEA+CPSCAI02"
+   ],
+   "5": [
+    "BabsonX+MOB01x",
+    "StellenboschX+Analytics.1",
+    "GoogleCloud+ITSITWOAI1x",
+    "ISCEA+CPSCAI02"
+   ]
+  },
+  "verdict": "good"
+ },
+ {
+  "career": "Data Analyst",
+  "courses": [
+   {
+    "key": "HarvardX+PH125.1x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "IBM+DA0151EN",
+    "level": "Introductory",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [
+   2
+  ],
+  "item_id": "R2-15-1a",
+  "replacements": {
+   "2": {
+    "also": [
+     "Microsoft+MS-CC-133",
+     "IBM+DV0130",
+     "Microsoft+MS-CC-127"
+    ],
+    "best": "GoogleCloud+PIATPCDAJ1x"
+   }
+  },
+  "suggestions": {},
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Data Analyst",
+  "courses": [
+   {
+    "key": "IBM+DA0100",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "HarvardX+PH125.1x",
+    "level": "Introductory",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [
+   2
+  ],
+  "item_id": "R2-15-1b",
+  "replacements": {
+   "2": {
+    "also": [
+     "IBM+DV0130",
+     "Microsoft+MS-CC-127",
+     "IBM+DA0151EN"
+    ],
+    "best": "Microsoft+MS-CC-133"
+   }
+  },
+  "suggestions": {
+   "1": [
+    "Microsoft+MS-CC-133",
+    "IBM+DV0130",
+    "Microsoft+MS-CC-127"
+   ]
+  },
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Data Analyst",
+  "courses": [
+   {
+    "key": "Microsoft+MS-108",
+    "level": "Intermediate",
+    "step": 1
+   },
+   {
+    "key": "IBM+DA0101EN",
+    "level": "Intermediate",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-15-2a",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Data Analyst",
+  "courses": [
+   {
+    "key": "IBM+DA0101EN",
+    "level": "Intermediate",
+    "step": 1
+   },
+   {
+    "key": "IBM+AI0273EN",
+    "level": "Intermediate",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-15-2b",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Data Analyst",
+  "courses": [
+   {
+    "key": "HarvardX+PH125.1x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "IBM+AI0273EN",
+    "level": "Intermediate",
+    "step": 2
+   },
+   {
+    "key": "IBM+DA0321",
+    "level": "Advanced",
+    "step": 3
+   }
+  ],
+  "dropped_steps": [
+   3
+  ],
+  "item_id": "R2-15-3a",
+  "replacements": {
+   "3": "__none__"
+  },
+  "suggestions": {
+   "1": [
+    "Microsoft+MS-CC-133",
+    "IBM+DV0130",
+    "IBM+DA0151EN"
+   ]
+  },
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Data Analyst",
+  "courses": [
+   {
+    "key": "GoogleCloud+PIATPCDAJ1x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "Microsoft+MS-CC-134",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "Microsoft+MS-108",
+    "level": "Intermediate",
+    "step": 3
+   },
+   {
+    "key": "IBM+DA0101EN",
+    "level": "Intermediate",
+    "step": 4
+   },
+   {
+    "key": "IBM+DA0321",
+    "level": "Advanced",
+    "step": 5
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-15-3b",
+  "replacements": {},
+  "suggestions": {
+   "1": [
+    "Microsoft+MS-CC-133",
+    "IBM+DV0130",
+    "IBM+DA0151EN"
+   ],
+   "2": [
+    "Microsoft+MS-CC-133",
+    "IBM+DV0130",
+    "IBM+DA0151EN"
+   ]
+  },
+  "verdict": "good"
+ },
+ {
+  "career": "Data Analyst",
+  "courses": [
+   {
+    "key": "IBM+RP0101EN",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "HarvardX+PH125.1x",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "Microsoft+MS-CC-134",
+    "level": "Introductory",
+    "step": 3
+   },
+   {
+    "key": "Microsoft+MS-108",
+    "level": "Intermediate",
+    "step": 4
+   },
+   {
+    "key": "IBM+AI0273EN",
+    "level": "Intermediate",
+    "step": 5
+   }
+  ],
+  "dropped_steps": [
+   2
+  ],
+  "item_id": "R2-15-4a",
+  "replacements": {
+   "2": {
+    "also": [
+     "IBM+DV0130",
+     "IBM+DA0151EN",
+     "Microsoft+MS-CC-113"
+    ],
+    "best": "Microsoft+MS-CC-133"
+   }
+  },
+  "suggestions": {
+   "1": [
+    "Microsoft+MS-CC-133",
+    "IBM+DV0130",
+    "IBM+DA0151EN"
+   ],
+   "3": [
+    "Microsoft+MS-CC-133",
+    "IBM+DV0130",
+    "IBM+DA0151EN"
+   ],
+   "4": [
+    "USMx+IS6754",
+    "IBM+AI0272EN",
+    "GoogleCloud+TPOSHVDC1x",
+    "IBM+DA0101EN"
+   ],
+   "5": [
+    "IBM+DA0101EN",
+    "CodeSignal+34",
+    "GoogleCloud+TPOSHVDC1x",
+    "IBM+AI0272EN"
+   ]
+  },
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Data Analyst",
+  "courses": [
+   {
+    "key": "HarvardX+PH125.1x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "IBM+DA0100",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "GoogleCloud+AVDTGW1x",
+    "level": "Introductory",
+    "step": 3
+   },
+   {
+    "key": "Microsoft+MS-108",
+    "level": "Intermediate",
+    "step": 4
+   },
+   {
+    "key": "USMx+IS6754",
+    "level": "Intermediate",
+    "step": 5
+   }
+  ],
+  "dropped_steps": [
+   2,
+   3
+  ],
+  "item_id": "R2-15-4b",
+  "replacements": {
+   "2": {
+    "also": [
+     "IBM+DV0130",
+     "IBM+DA0151EN",
+     "Microsoft+MS-CC-113"
+    ],
+    "best": "Microsoft+MS-CC-133"
+   },
+   "3": {
+    "also": [
+     "IBM+DV0130",
+     "IBM+DA0151EN",
+     "Microsoft+MS-CC-113"
+    ],
+    "best": "Microsoft+MS-CC-133"
+   }
+  },
+  "suggestions": {
+   "1": [
+    "Microsoft+MS-CC-133",
+    "IBM+DV0130",
+    "IBM+DA0151EN",
+    "Microsoft+MS-CC-113"
+   ],
+   "4": [
+    "IBM+AI0272EN",
+    "GoogleCloud+TPOSHVDC1x",
+    "IBM+DA0101EN",
+    "CodeSignal+34"
+   ],
+   "5": [
+    "IBM+AI0272EN",
+    "GoogleCloud+TPOSHVDC1x",
+    "IBM+DA0101EN",
+    "CodeSignal+34"
+   ]
+  },
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Solutions Architect",
+  "courses": [
+   {
+    "key": "IBM+CC0101EN",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "AI+rust5x",
+    "level": "Introductory",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [
+   2
+  ],
+  "item_id": "R2-16-1a",
+  "replacements": {
+   "2": {
+    "also": [],
+    "best": "Microsoft+MS-CC-148"
+   }
+  },
+  "suggestions": {
+   "1": [
+    "Microsoft+MS-CC-148",
+    "AI+aws1x",
+    "GoogleCloud+CALP4x",
+    "Microsoft+MS-CC-120",
+    "AI+azure1x"
+   ]
+  },
+  "verdict": "bad"
+ },
+ {
+  "career": "Solutions Architect",
+  "courses": [
+   {
+    "key": "Microsoft+MS-CC-148",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "AI+aws1x",
+    "level": "Introductory",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-16-1b",
+  "replacements": {},
+  "suggestions": {
+   "1": [
+    "GoogleCloud+CALP4x",
+    "Microsoft+MS-CC-120",
+    "AI+azure1x"
+   ],
+   "2": [
+    "GoogleCloud+CALP4x",
+    "Microsoft+MS-CC-120",
+    "AI+azure1x"
+   ]
+  },
+  "verdict": "good"
+ },
+ {
+  "career": "Solutions Architect",
+  "courses": [
+   {
+    "key": "GoogleCloud+CALP6x",
+    "level": "Intermediate",
+    "step": 1
+   },
+   {
+    "key": "Microsoft+AZ-305-101",
+    "level": "Intermediate",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-16-2a",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "bad"
+ },
+ {
+  "career": "Solutions Architect",
+  "courses": [
+   {
+    "key": "Microsoft+MS-AI-136",
+    "level": "Intermediate",
+    "step": 1
+   },
+   {
+    "key": "Microsoft+AZ-305-101",
+    "level": "Intermediate",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-16-2b",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Solutions Architect",
+  "courses": [
+   {
+    "key": "GoogleCloud+CALP5x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "AI+aws1x",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "GoogleCloud+CALP6x",
+    "level": "Intermediate",
+    "step": 3
+   },
+   {
+    "key": "Microsoft+AZ-305-101",
+    "level": "Intermediate",
+    "step": 4
+   },
+   {
+    "key": "Microsoft+AZ-305-103",
+    "level": "Advanced",
+    "step": 5
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-16-3a",
+  "replacements": {},
+  "suggestions": {
+   "1": [
+    "GoogleCloud+CALP4x",
+    "Microsoft+MS-CC-120",
+    "AI+azure1x"
+   ],
+   "2": [
+    "GoogleCloud+CALP4x",
+    "Microsoft+MS-CC-120",
+    "AI+azure1x"
+   ]
+  },
+  "verdict": "bad"
+ },
+ {
+  "career": "Solutions Architect",
+  "courses": [
+   {
+    "key": "Microsoft+MS-CC-148",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "AI+aws1x",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "Microsoft+MS-AI-136",
+    "level": "Intermediate",
+    "step": 3
+   },
+   {
+    "key": "GoogleCloud+CALP6x",
+    "level": "Intermediate",
+    "step": 4
+   },
+   {
+    "key": "GoogleCloud+ITCNGFI1x",
+    "level": "Advanced",
+    "step": 5
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-16-3b",
+  "replacements": {},
+  "suggestions": {
+   "1": [
+    "GoogleCloud+CALP4x",
+    "Microsoft+MS-CC-120",
+    "AI+azure1x"
+   ],
+   "2": [
+    "GoogleCloud+CALP4x",
+    "Microsoft+MS-CC-120",
+    "AI+azure1x"
+   ]
+  },
+  "verdict": "bad"
+ },
+ {
+  "career": "Solutions Architect",
+  "courses": [
+   {
+    "key": "IBM+CC0101EN",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "Microsoft+MS-CC-148",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "GoogleCloud+CALP5x",
+    "level": "Introductory",
+    "step": 3
+   },
+   {
+    "key": "Microsoft+AZ-305-101",
+    "level": "Intermediate",
+    "step": 4
+   },
+   {
+    "key": "GoogleCloud+CALP6x",
+    "level": "Intermediate",
+    "step": 5
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-16-4a",
+  "replacements": {},
+  "suggestions": {
+   "1": [
+    "GoogleCloud+CALP4x",
+    "Microsoft+MS-CC-120",
+    "AI+azure1x"
+   ],
+   "2": [
+    "GoogleCloud+CALP4x",
+    "Microsoft+MS-CC-120",
+    "AI+azure1x"
+   ],
+   "3": [
+    "GoogleCloud+CALP4x",
+    "Microsoft+MS-CC-120",
+    "AI+azure1x"
+   ]
+  },
+  "verdict": "skip"
+ },
+ {
+  "career": "Solutions Architect",
+  "courses": [
+   {
+    "key": "AI+aws1x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "Microsoft+MS-CC-148",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "GoogleCloud+CALP4x",
+    "level": "Introductory",
+    "step": 3
+   },
+   {
+    "key": "Microsoft+MS-AI-136",
+    "level": "Intermediate",
+    "step": 4
+   },
+   {
+    "key": "GoogleCloud+CALP6x",
+    "level": "Intermediate",
+    "step": 5
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-16-4b",
+  "replacements": {},
+  "suggestions": {
+   "1": [
+    "Microsoft+MS-CC-120",
+    "AI+azure1x"
+   ],
+   "2": [
+    "Microsoft+MS-CC-120",
+    "AI+azure1x"
+   ],
+   "3": [
+    "Microsoft+MS-CC-120",
+    "AI+azure1x"
+   ]
+  },
+  "verdict": "skip"
+ },
+ {
+  "career": "Strategy Manager",
+  "courses": [
+   {
+    "key": "IIMBx+ST101x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "AdelaideX+DataAnaX",
+    "level": "Introductory",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [
+   2
+  ],
+  "item_id": "R2-17-1a",
+  "replacements": {
+   "2": {
+    "also": [
+     "WOBI+WOBI009"
+    ],
+    "best": "USMx+AHA04"
+   }
+  },
+  "suggestions": {
+   "1": [
+    "USMx+AHA04"
+   ]
+  },
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Strategy Manager",
+  "courses": [
+   {
+    "key": "IIMBx+ST101x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "SkillUp-EdTech+PGM131EN",
+    "level": "Introductory",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [
+   2
+  ],
+  "item_id": "R2-17-1b",
+  "replacements": {
+   "2": {
+    "also": [
+     "WOBI+WOBI009"
+    ],
+    "best": "USMx+AHA04"
+   }
+  },
+  "suggestions": {
+   "1": [
+    "USMx+AHA04",
+    "WOBI+WOBI009"
+   ]
+  },
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Strategy Manager",
+  "courses": [
+   {
+    "key": "DartmouthX+ROmniX",
+    "level": "Intermediate",
+    "step": 1
+   },
+   {
+    "key": "USMx+ENCE627.3X",
+    "level": "Intermediate",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-17-2a",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Strategy Manager",
+  "courses": [
+   {
+    "key": "USMx+ENCE627.3X",
+    "level": "Intermediate",
+    "step": 1
+   },
+   {
+    "key": "RITx+PM9001x",
+    "level": "Intermediate",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-17-2b",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Strategy Manager",
+  "courses": [
+   {
+    "key": "IIMBx+ST101x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "RITx+PM9001x",
+    "level": "Intermediate",
+    "step": 2
+   },
+   {
+    "key": "USMx+ENCE627.3X",
+    "level": "Intermediate",
+    "step": 3
+   },
+   {
+    "key": "IIMBx+ST104x",
+    "level": "Advanced",
+    "step": 4
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-17-3a",
+  "replacements": {},
+  "suggestions": {
+   "1": [
+    "USMx+AHA04"
+   ]
+  },
+  "verdict": "good"
+ },
+ {
+  "career": "Strategy Manager",
+  "courses": [
+   {
+    "key": "IIMBx+ST101x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "SkillUp-EdTech+AI0289EN",
+    "level": "Intermediate",
+    "step": 2
+   },
+   {
+    "key": "RITx+PM9001x",
+    "level": "Intermediate",
+    "step": 3
+   },
+   {
+    "key": "USMx+PGPM661.3x",
+    "level": "Advanced",
+    "step": 4
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-17-3b",
+  "replacements": {},
+  "suggestions": {
+   "1": [
+    "USMx+AHA04"
+   ]
+  },
+  "verdict": "good"
+ },
+ {
+  "career": "Strategy Manager",
+  "courses": [
+   {
+    "key": "USMx+PGPM661.3x",
+    "level": "Advanced",
+    "step": 1
+   },
+   {
+    "key": "IIMBx+ST104x",
+    "level": "Advanced",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-17-4a",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Strategy Manager",
+  "courses": [
+   {
+    "key": "SkillUp-EdTech+AI0289EN",
+    "level": "Intermediate",
+    "step": 1
+   },
+   {
+    "key": "USMx+PGPM661.3x",
+    "level": "Advanced",
+    "step": 2
+   },
+   {
+    "key": "IIMBx+ST104x",
+    "level": "Advanced",
+    "step": 3
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-17-4b",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Application Developer",
+  "courses": [
+   {
+    "key": "Microsoft+MS-CC-124",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "Microsoft+MS-CC-137",
+    "level": "Introductory",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-18-1a",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Application Developer",
+  "courses": [
+   {
+    "key": "HarvardX+CS50P",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "IBM+CS0131EN",
+    "level": "Introductory",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [
+   2
+  ],
+  "item_id": "R2-18-1b",
+  "replacements": {
+   "2": {
+    "also": [
+     "Codio+python3.1",
+     "AI+genai5x",
+     "Microsoft+MS-CC-124"
+    ],
+    "best": "Microsoft+MS-CC-137"
+   }
+  },
+  "suggestions": {},
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Application Developer",
+  "courses": [
+   {
+    "key": "CodeSignal+68",
+    "level": "Intermediate",
+    "step": 1
+   },
+   {
+    "key": "GoogleCloud+BSJMSBSC1x",
+    "level": "Intermediate",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-18-2a",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Application Developer",
+  "courses": [
+   {
+    "key": "IBM+CD0215EN",
+    "level": "Intermediate",
+    "step": 1
+   },
+   {
+    "key": "GoogleCloud+BSJMSBSC1x",
+    "level": "Intermediate",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-18-2b",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Application Developer",
+  "courses": [
+   {
+    "key": "HarvardX+CS50P",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "CodeSignal+68",
+    "level": "Intermediate",
+    "step": 2
+   },
+   {
+    "key": "GoogleCloud+BSJMSBSC1x",
+    "level": "Intermediate",
+    "step": 3
+   },
+   {
+    "key": "Microsoft+MS-112",
+    "level": "Advanced",
+    "step": 4
+   }
+  ],
+  "dropped_steps": [
+   3,
+   4
+  ],
+  "item_id": "R2-18-3a",
+  "replacements": {
+   "3": {
+    "also": [
+     "IBM+CD0267EN",
+     "DelftX+UnixTx"
+    ],
+    "best": "IBM+CD0215EN"
+   },
+   "4": {
+    "also": [],
+    "best": "Microsoft+MS-146"
+   }
+  },
+  "suggestions": {
+   "1": [
+    "Codio+python3.1",
+    "Microsoft+MS-CC-124"
+   ]
+  },
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Application Developer",
+  "courses": [
+   {
+    "key": "IBM+CS0131EN",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "IBM+CD0215EN",
+    "level": "Intermediate",
+    "step": 2
+   },
+   {
+    "key": "GoogleCloud+BSJMSBSC1x",
+    "level": "Intermediate",
+    "step": 3
+   },
+   {
+    "key": "Microsoft+AZ-400-102",
+    "level": "Advanced",
+    "step": 4
+   }
+  ],
+  "dropped_steps": [
+   1,
+   3,
+   4
+  ],
+  "item_id": "R2-18-3b",
+  "replacements": {
+   "1": {
+    "also": [
+     "Microsoft+MS-CC-124",
+     "Codio+python3.1"
+    ],
+    "best": "HarvardX+CS50P"
+   },
+   "3": {
+    "also": [
+     "DelftX+UnixTx"
+    ],
+    "best": "IBM+CD0267EN"
+   },
+   "4": {
+    "also": [],
+    "best": "Microsoft+MS-146"
+   }
+  },
+  "suggestions": {
+   "2": [
+    "IBM+CD0267EN",
+    "DelftX+UnixTx"
+   ]
+  },
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Application Developer",
+  "courses": [
+   {
+    "key": "IBM+CS0131EN",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "Microsoft+MS-CC-124",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "IBM+CAD201EN",
+    "level": "Intermediate",
+    "step": 3
+   },
+   {
+    "key": "GoogleCloud+BSJMSBSC1x",
+    "level": "Intermediate",
+    "step": 4
+   }
+  ],
+  "dropped_steps": [
+   1,
+   4
+  ],
+  "item_id": "R2-18-4a",
+  "replacements": {
+   "1": {
+    "also": [
+     "Codio+python3.1"
+    ],
+    "best": "HarvardX+CS50P"
+   },
+   "4": {
+    "also": [
+     "DelftX+UnixTx"
+    ],
+    "best": "IBM+CD0267EN"
+   }
+  },
+  "suggestions": {
+   "2": [
+    "Codio+python3.1"
+   ],
+   "3": [
+    "IBM+CD0267EN",
+    "DelftX+UnixTx"
+   ]
+  },
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Application Developer",
+  "courses": [
+   {
+    "key": "HarvardX+CS50P",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "Microsoft+MS-CC-137",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "KULeuvenX+MERODEx",
+    "level": "Introductory",
+    "step": 3
+   },
+   {
+    "key": "CodeSignal+68",
+    "level": "Intermediate",
+    "step": 4
+   },
+   {
+    "key": "GoogleCloud+BSJMSBSC1x",
+    "level": "Intermediate",
+    "step": 5
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-18-4b",
+  "replacements": {},
+  "suggestions": {
+   "1": [
+    "Codio+python3.1"
+   ],
+   "2": [
+    "Codio+python3.1"
+   ],
+   "3": [
+    "Codio+python3.1"
+   ],
+   "4": [
+    "IBM+CD0267EN",
+    "DelftX+UnixTx"
+   ],
+   "5": [
+    "IBM+CD0267EN",
+    "DelftX+UnixTx"
+   ]
+  },
+  "verdict": "good"
+ },
+ {
+  "career": "Demand Planning Manager",
+  "courses": [
+   {
+    "key": "ISCEA+CFDP01",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "ISCEA+CFDP03",
+    "level": "Introductory",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-19-1a",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Demand Planning Manager",
+  "courses": [
+   {
+    "key": "ISCEA+CFDP01",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "ISCEA+CFDP02",
+    "level": "Introductory",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-19-1b",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Demand Planning Manager",
+  "courses": [
+   {
+    "key": "ISCEA+SSCP02",
+    "level": "Intermediate",
+    "step": 1
+   },
+   {
+    "key": "ISCEA+CSCTP02",
+    "level": "Intermediate",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-19-2a",
+  "replacements": {},
+  "suggestions": {
+   "1": [
+    "Microsoft+MS-AI-115",
+    "ISCEA+CPSP03",
+    "ISCEA+ISC-AI01"
+   ],
+   "2": [
+    "Microsoft+MS-AI-115",
+    "ISCEA+CPSP03",
+    "ISCEA+ISC-AI01"
+   ]
+  },
+  "verdict": "good"
+ },
+ {
+  "career": "Demand Planning Manager",
+  "courses": [
+   {
+    "key": "DartmouthX+RFundX",
+    "level": "Intermediate",
+    "step": 1
+   },
+   {
+    "key": "Microsoft+MS-AI-115",
+    "level": "Intermediate",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-19-2b",
+  "replacements": {},
+  "suggestions": {
+   "1": [
+    "ISCEA+CPSP03",
+    "ISCEA+ISC-AI01",
+    "ISCEA+CPSCAI01",
+    "ISCEA+SSCP02"
+   ],
+   "2": [
+    "ISCEA+CPSP03",
+    "ISCEA+ISC-AI01",
+    "ISCEA+CPSCAI01",
+    "ISCEA+SSCP02"
+   ]
+  },
+  "verdict": "good"
+ },
+ {
+  "career": "Demand Planning Manager",
+  "courses": [
+   {
+    "key": "ISCEA+CFDP01",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "ISCEA+CPSCAI01",
+    "level": "Intermediate",
+    "step": 2
+   },
+   {
+    "key": "Microsoft+MS-AI-115",
+    "level": "Intermediate",
+    "step": 3
+   },
+   {
+    "key": "USMx+PGPM661.3x",
+    "level": "Advanced",
+    "step": 4
+   }
+  ],
+  "dropped_steps": [
+   3
+  ],
+  "item_id": "R2-19-3a",
+  "replacements": {
+   "3": {
+    "also": [
+     "ISCEA+ISC-AI01",
+     "ISCEA+SSCP02"
+    ],
+    "best": "ISCEA+CPSP03"
+   }
+  },
+  "suggestions": {
+   "2": [
+    "ISCEA+CPSP03",
+    "ISCEA+ISC-AI01",
+    "ISCEA+SSCP02"
+   ]
+  },
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Demand Planning Manager",
+  "courses": [
+   {
+    "key": "ISCEA+CFDP01",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "ISCEA+CFDP02",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "Microsoft+MS-AI-115",
+    "level": "Intermediate",
+    "step": 3
+   },
+   {
+    "key": "USMx+ENES680.1x",
+    "level": "Intermediate",
+    "step": 4
+   },
+   {
+    "key": "USMx+PGPM661.2x",
+    "level": "Advanced",
+    "step": 5
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-19-3b",
+  "replacements": {},
+  "suggestions": {
+   "3": [
+    "ISCEA+CPSP03",
+    "ISCEA+ISC-AI01",
+    "ISCEA+SSCP02"
+   ],
+   "4": [
+    "ISCEA+CPSP03",
+    "ISCEA+ISC-AI01",
+    "ISCEA+SSCP02"
+   ]
+  },
+  "verdict": "good"
+ },
+ {
+  "career": "Demand Planning Manager",
+  "courses": [
+   {
+    "key": "ISCEA+CFDP01",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "ISCEA+CFDP03",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "Microsoft+MS-AI-115",
+    "level": "Intermediate",
+    "step": 3
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-19-4a",
+  "replacements": {},
+  "suggestions": {
+   "3": [
+    "ISCEA+CPSP03",
+    "ISCEA+SSCP02"
+   ]
+  },
+  "verdict": "good"
+ },
+ {
+  "career": "Demand Planning Manager",
+  "courses": [
+   {
+    "key": "ISCEA+CFDP02",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "ISCEA+CFDP01",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "Microsoft+MS-AI-115",
+    "level": "Intermediate",
+    "step": 3
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-19-4b",
+  "replacements": {},
+  "suggestions": {
+   "3": [
+    "ISCEA+CPSP03",
+    "ISCEA+SSCP02"
+   ]
+  },
+  "verdict": "good"
+ },
+ {
+  "career": "PLM Solution Architect",
+  "courses": [
+   {
+    "key": "Microsoft+MS-CC-147",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "Microsoft+MS-CC-148",
+    "level": "Introductory",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-20-1a",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "PLM Solution Architect",
+  "courses": [
+   {
+    "key": "Microsoft+MS-CC-148",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "GoogleCloud+CALP4x",
+    "level": "Introductory",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [
+   2
+  ],
+  "item_id": "R2-20-1b",
+  "replacements": {
+   "2": {
+    "also": [
+     "Microsoft+MS-CC-120",
+     "Microsoft+MS-CC-115",
+     "SkillUp-EdTech+PDM131EN"
+    ],
+    "best": "Microsoft+MS-CC-147"
+   }
+  },
+  "suggestions": {},
+  "verdict": "needs_work"
+ },
+ {
+  "career": "PLM Solution Architect",
+  "courses": [
+   {
+    "key": "USMx+ENES680.2x",
+    "level": "Intermediate",
+    "step": 1
+   },
+   {
+    "key": "DelftX+CPSS1x",
+    "level": "Intermediate",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-20-2a",
+  "replacements": {},
+  "suggestions": {
+   "1": [
+    "USMx+ENES680.1x"
+   ],
+   "2": [
+    "USMx+ENES680.1x"
+   ]
+  },
+  "verdict": "good"
+ },
+ {
+  "career": "PLM Solution Architect",
+  "courses": [
+   {
+    "key": "USMx+ENES680.1x",
+    "level": "Intermediate",
+    "step": 1
+   },
+   {
+    "key": "CodeSignal+68",
+    "level": "Intermediate",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [
+   2
+  ],
+  "item_id": "R2-20-2b",
+  "replacements": {
+   "2": {
+    "also": [
+     "IBM+AI0223EN"
+    ],
+    "best": "USMx+ENES680.2x"
+   }
+  },
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "PLM Solution Architect",
+  "courses": [
+   {
+    "key": "Microsoft+MS-CC-147",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "GoogleCloud+CALP5x",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "GoogleCloud+CALP6x",
+    "level": "Intermediate",
+    "step": 3
+   },
+   {
+    "key": "USMx+ENES680.2x",
+    "level": "Intermediate",
+    "step": 4
+   },
+   {
+    "key": "SkillUp-EdTech+DM0201EN",
+    "level": "Advanced",
+    "step": 5
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-20-3a",
+  "replacements": {},
+  "suggestions": {
+   "1": [
+    "Microsoft+MS-CC-120",
+    "Microsoft+MS-CC-115",
+    "SkillUp-EdTech+PDM131EN"
+   ],
+   "2": [
+    "Microsoft+MS-CC-120",
+    "Microsoft+MS-CC-115",
+    "SkillUp-EdTech+PDM131EN"
+   ],
+   "3": [
+    "IBM+AI0223EN"
+   ],
+   "4": [
+    "IBM+AI0223EN"
+   ]
+  },
+  "verdict": "skip"
+ },
+ {
+  "career": "PLM Solution Architect",
+  "courses": [
+   {
+    "key": "Microsoft+MS-CC-148",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "GoogleCloud+CALP6x",
+    "level": "Intermediate",
+    "step": 2
+   },
+   {
+    "key": "Microsoft+MS-125",
+    "level": "Intermediate",
+    "step": 3
+   },
+   {
+    "key": "SkillUp-EdTech+DM0201EN",
+    "level": "Advanced",
+    "step": 4
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-20-3b",
+  "replacements": {},
+  "suggestions": {
+   "1": [
+    "Microsoft+MS-CC-120",
+    "Microsoft+MS-CC-115",
+    "SkillUp-EdTech+PDM131EN"
+   ],
+   "2": [
+    "IBM+AI0223EN"
+   ],
+   "3": [
+    "IBM+AI0223EN"
+   ]
+  },
+  "verdict": "skip"
+ },
+ {
+  "career": "PLM Solution Architect",
+  "courses": [
+   {
+    "key": "Microsoft+MS-CC-147",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "Microsoft+MS-CC-148",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "GoogleCloud+CALP5x",
+    "level": "Introductory",
+    "step": 3
+   },
+   {
+    "key": "GoogleCloud+CALP6x",
+    "level": "Intermediate",
+    "step": 4
+   },
+   {
+    "key": "SkillUp-EdTech+DM0101EN",
+    "level": "Intermediate",
+    "step": 5
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-20-4a",
+  "replacements": {},
+  "suggestions": {
+   "1": [
+    "Microsoft+MS-CC-120",
+    "Microsoft+MS-CC-115",
+    "SkillUp-EdTech+PDM131EN"
+   ],
+   "2": [
+    "Microsoft+MS-CC-120",
+    "Microsoft+MS-CC-115",
+    "SkillUp-EdTech+PDM131EN"
+   ],
+   "3": [
+    "Microsoft+MS-CC-120",
+    "Microsoft+MS-CC-115",
+    "SkillUp-EdTech+PDM131EN"
+   ],
+   "4": [
+    "IBM+AI0223EN"
+   ],
+   "5": [
+    "IBM+AI0223EN"
+   ]
+  },
+  "verdict": "skip"
+ },
+ {
+  "career": "PLM Solution Architect",
+  "courses": [
+   {
+    "key": "Microsoft+MS-CC-148",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "Microsoft+MS-CC-147",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "AI+gcp1x",
+    "level": "Introductory",
+    "step": 3
+   },
+   {
+    "key": "GoogleCloud+CALP6x",
+    "level": "Intermediate",
+    "step": 4
+   },
+   {
+    "key": "GoogleCloud+NLPOGC1x",
+    "level": "Intermediate",
+    "step": 5
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "R2-20-4b",
+  "replacements": {},
+  "suggestions": {
+   "1": [
+    "Microsoft+MS-CC-120",
+    "Microsoft+MS-CC-115",
+    "SkillUp-EdTech+PDM131EN"
+   ],
+   "2": [
+    "Microsoft+MS-CC-120",
+    "Microsoft+MS-CC-115",
+    "SkillUp-EdTech+PDM131EN"
+   ],
+   "3": [
+    "Microsoft+MS-CC-120",
+    "Microsoft+MS-CC-115",
+    "SkillUp-EdTech+PDM131EN"
+   ],
+   "4": [
+    "IBM+AI0223EN"
+   ],
+   "5": [
+    "IBM+AI0223EN"
+   ]
+  },
+  "verdict": "skip"
+ },
+ {
+  "career": "Project Manager",
+  "courses": [
+   {
+    "key": "GTx+PMF1000xII",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "USMx+PMPREP01",
+    "level": "Introductory",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "S01-1-intro",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Project Manager",
+  "courses": [
+   {
+    "key": "RITx+PM9001x",
+    "level": "Intermediate",
+    "step": 1
+   },
+   {
+    "key": "IDBx+IDB34.2x",
+    "level": "Intermediate",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [
+   2
+  ],
+  "item_id": "S01-2-inter",
+  "replacements": {
+   "2": "USMx+EVPM01"
+  },
+  "suggestions": {},
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Project Manager",
+  "courses": [
+   {
+    "key": "IBM+PRM100EN",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "USMx+PMPREP01",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "RITx+PM9001x",
+    "level": "Intermediate",
+    "step": 3
+   },
+   {
+    "key": "IDBx+IDB34.2x",
+    "level": "Intermediate",
+    "step": 4
+   },
+   {
+    "key": "DelftX+MEP201x",
+    "level": "Advanced",
+    "step": 5
+   }
+  ],
+  "dropped_steps": [
+   3,
+   4
+  ],
+  "item_id": "S01-3-ladder",
+  "replacements": {
+   "3": "SkillUp-EdTech+AI0282EN",
+   "4": "USMx+ENCE627.2X"
+  },
+  "suggestions": {},
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Project Manager",
+  "courses": [
+   {
+    "key": "IBM+PRM100EN",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "AdelaideX+Project101x",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "GTx+PMF1000xII",
+    "level": "Introductory",
+    "step": 3
+   },
+   {
+    "key": "RITx+PM9001x",
+    "level": "Intermediate",
+    "step": 4
+   },
+   {
+    "key": "USMx+ENCE627.2X",
+    "level": "Intermediate",
+    "step": 5
+   }
+  ],
+  "dropped_steps": [
+   2,
+   4
+  ],
+  "item_id": "S01-4-other",
+  "replacements": {
+   "2": "SkillUp-EdTech+PRM231EN",
+   "4": "SkillUp-EdTech+AI0282EN"
+  },
+  "suggestions": {},
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Sales Representative",
+  "courses": [
+   {
+    "key": "State-Bank-of-India+SBSC0015x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "Microsoft+MS-133",
+    "level": "Introductory",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [
+   2
+  ],
+  "item_id": "S02-1-intro",
+  "replacements": {
+   "2": "Microsoft+MS-144"
+  },
+  "suggestions": {},
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Sales Representative",
+  "courses": [
+   {
+    "key": "Microsoft+MS-AI-114",
+    "level": "Intermediate",
+    "step": 1
+   },
+   {
+    "key": "Microsoft+MS-125",
+    "level": "Intermediate",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [
+   2
+  ],
+  "item_id": "S02-2-inter",
+  "replacements": {
+   "2": "WOBI+WOBI003"
+  },
+  "suggestions": {},
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Sales Representative",
+  "courses": [
+   {
+    "key": "State-Bank-of-India+SBSC0015x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "Microsoft+MS-137",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "Microsoft+MS-AI-114",
+    "level": "Intermediate",
+    "step": 3
+   },
+   {
+    "key": "WOBI+WOBI003",
+    "level": "Intermediate",
+    "step": 4
+   },
+   {
+    "key": "CFI+001",
+    "level": "Advanced",
+    "step": 5
+   }
+  ],
+  "dropped_steps": [
+   2
+  ],
+  "item_id": "S02-3-ladder",
+  "replacements": {
+   "2": "HarvardX+ENTMR"
+  },
+  "suggestions": {},
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Sales Representative",
+  "courses": [
+   {
+    "key": "State-Bank-of-India+SBSC0015x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "Microsoft+MS-137",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "Microsoft+MS-AI-114",
+    "level": "Intermediate",
+    "step": 3
+   }
+  ],
+  "dropped_steps": [
+   2
+  ],
+  "item_id": "S02-4-other",
+  "replacements": {
+   "2": "HarvardX+ENTMR"
+  },
+  "suggestions": {},
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Sales Manager",
+  "courses": [
+   {
+    "key": "State-Bank-of-India+SBSC0015x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "Microsoft+MS-133",
+    "level": "Introductory",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [
+   1,
+   2
+  ],
+  "item_id": "S03-1-intro",
+  "replacements": {
+   "1": "USMx+ENES608.5",
+   "2": "HarvardX+ENTMR"
+  },
+  "suggestions": {},
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Sales Manager",
+  "courses": [
+   {
+    "key": "WOBI+WOBI003",
+    "level": "Intermediate",
+    "step": 1
+   },
+   {
+    "key": "Microsoft+MS-124",
+    "level": "Intermediate",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "S03-2-inter",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Sales Manager",
+  "courses": [
+   {
+    "key": "State-Bank-of-India+SBSC0015x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "Microsoft+MS-AI-114",
+    "level": "Intermediate",
+    "step": 2
+   },
+   {
+    "key": "Microsoft+MS-124",
+    "level": "Intermediate",
+    "step": 3
+   },
+   {
+    "key": "CFI+001",
+    "level": "Advanced",
+    "step": 4
+   }
+  ],
+  "dropped_steps": [
+   1
+  ],
+  "item_id": "S03-3-ladder",
+  "replacements": {
+   "1": "Microsoft+MS-144"
+  },
+  "suggestions": {},
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Sales Manager",
+  "courses": [
+   {
+    "key": "State-Bank-of-India+SBSC0015x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "ISCEA+CFDP02",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "USMx+DM04",
+    "level": "Introductory",
+    "step": 3
+   },
+   {
+    "key": "Microsoft+MS-AI-114",
+    "level": "Intermediate",
+    "step": 4
+   },
+   {
+    "key": "Microsoft+MS-124",
+    "level": "Intermediate",
+    "step": 5
+   }
+  ],
+  "dropped_steps": [
+   1
+  ],
+  "item_id": "S03-4-other",
+  "replacements": {
+   "1": "Microsoft+MS-144"
+  },
+  "suggestions": {},
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Software Engineer",
+  "courses": [
+   {
+    "key": "IBM+CS0131EN",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "Codio+cpp1.1",
+    "level": "Introductory",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [
+   1,
+   2
+  ],
+  "item_id": "S04-1-intro",
+  "replacements": {
+   "1": "AI+genai1x",
+   "2": "HarvardX+CS50P"
+  },
+  "suggestions": {},
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Software Engineer",
+  "courses": [
+   {
+    "key": "Codio+CPP-DSA-1",
+    "level": "Intermediate",
+    "step": 1
+   },
+   {
+    "key": "IBM+AI0274EN",
+    "level": "Intermediate",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [
+   1
+  ],
+  "item_id": "S04-2-inter",
+  "replacements": {
+   "1": "CodeSignal+5"
+  },
+  "suggestions": {},
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Software Engineer",
+  "courses": [
+   {
+    "key": "IBM+CS0131EN",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "Codio+CPP-DSA-1",
+    "level": "Intermediate",
+    "step": 2
+   },
+   {
+    "key": "CodeSignal+535",
+    "level": "Advanced",
+    "step": 3
+   }
+  ],
+  "dropped_steps": [
+   1,
+   2
+  ],
+  "item_id": "S04-3-ladder",
+  "replacements": {
+   "1": "HarvardX+CS50P",
+   "2": "edX+EDX-RapidAI"
+  },
+  "suggestions": {},
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Software Engineer",
+  "courses": [
+   {
+    "key": "IBM+CS0131EN",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "Codio+cpp1.1",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "UC3Mx+IT.1.2x",
+    "level": "Introductory",
+    "step": 3
+   },
+   {
+    "key": "Codio+CPP-DSA-1",
+    "level": "Intermediate",
+    "step": 4
+   },
+   {
+    "key": "CodeSignal+68",
+    "level": "Intermediate",
+    "step": 5
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "S04-4-other",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Operations Manager",
+  "courses": [
+   {
+    "key": "ISCEA+CLSSYB01",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "TUMx+QPLS1x",
+    "level": "Introductory",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [
+   2
+  ],
+  "item_id": "S05-1-intro",
+  "replacements": {
+   "2": ""
+  },
+  "suggestions": {},
+  "verdict": "skip"
+ },
+ {
+  "career": "Operations Manager",
+  "courses": [
+   {
+    "key": "TUMx+QPLS4x",
+    "level": "Intermediate",
+    "step": 1
+   },
+   {
+    "key": "IIMBx+OM101.1x",
+    "level": "Intermediate",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "S05-2-inter",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "skip"
+ },
+ {
+  "career": "Operations Manager",
+  "courses": [
+   {
+    "key": "ISCEA+CLSSYB01",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "ISCEA+CSCA03",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "IIMBx+OM101.1x",
+    "level": "Intermediate",
+    "step": 3
+   },
+   {
+    "key": "TUMx+QPLS4x",
+    "level": "Intermediate",
+    "step": 4
+   },
+   {
+    "key": "Microsoft+MS-AI-134",
+    "level": "Advanced",
+    "step": 5
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "S05-3-ladder",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "skip"
+ },
+ {
+  "career": "Operations Manager",
+  "courses": [
+   {
+    "key": "ISCEA+CSCA03",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "TUMx+QPLS1x",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "IIMBx+OM101.1x",
+    "level": "Intermediate",
+    "step": 3
+   },
+   {
+    "key": "TUMx+QPLS4x",
+    "level": "Intermediate",
+    "step": 4
+   },
+   {
+    "key": "ISCEA+CPLM02",
+    "level": "Intermediate",
+    "step": 5
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "S05-4-other",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "skip"
+ },
+ {
+  "career": "Program Manager",
+  "courses": [
+   {
+    "key": "AdelaideX+Project101x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "IBM+PRM100EN",
+    "level": "Introductory",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [
+   2
+  ],
+  "item_id": "S06-1-intro",
+  "replacements": {
+   "2": "USMx+PMCOMM02"
+  },
+  "suggestions": {},
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Program Manager",
+  "courses": [
+   {
+    "key": "RITx+PM9001x",
+    "level": "Intermediate",
+    "step": 1
+   },
+   {
+    "key": "USMx+ENCE627.1X",
+    "level": "Intermediate",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [
+   2
+  ],
+  "item_id": "S06-2-inter",
+  "replacements": {
+   "2": "SkillUp-EdTech+AI0289EN"
+  },
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Program Manager",
+  "courses": [
+   {
+    "key": "IBM+PRM100EN",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "USMx+PMCOMM01",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "RITx+PM9001x",
+    "level": "Intermediate",
+    "step": 3
+   },
+   {
+    "key": "SkillUp-EdTech+AI0289EN",
+    "level": "Intermediate",
+    "step": 4
+   },
+   {
+    "key": "USMx+PGPM661.1x",
+    "level": "Advanced",
+    "step": 5
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "S06-3-ladder",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Program Manager",
+  "courses": [
+   {
+    "key": "AdelaideX+Project101x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "USMx+PMCOMM01",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "RITx+PM9001x",
+    "level": "Intermediate",
+    "step": 3
+   }
+  ],
+  "dropped_steps": [
+   3
+  ],
+  "item_id": "S06-4-other",
+  "replacements": {
+   "3": "SkillUp-EdTech+AI0289EN"
+  },
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Sales Specialist",
+  "courses": [
+   {
+    "key": "State-Bank-of-India+SBSC0015x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "BoxPlay+1.0X",
+    "level": "Introductory",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [
+   1,
+   2
+  ],
+  "item_id": "S07-1-intro",
+  "replacements": {
+   "1": "USMx+PMPREP02",
+   "2": "__none__"
+  },
+  "suggestions": {},
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Sales Specialist",
+  "courses": [
+   {
+    "key": "Microsoft+MS-AI-114",
+    "level": "Intermediate",
+    "step": 1
+   },
+   {
+    "key": "Microsoft+MS-124",
+    "level": "Intermediate",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "S07-2-inter",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Sales Specialist",
+  "courses": [
+   {
+    "key": "State-Bank-of-India+SBSC0015x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "Microsoft+MS-AI-114",
+    "level": "Intermediate",
+    "step": 2
+   },
+   {
+    "key": "Microsoft+MS-124",
+    "level": "Intermediate",
+    "step": 3
+   },
+   {
+    "key": "USMx+ENCE607.4x",
+    "level": "Advanced",
+    "step": 4
+   }
+  ],
+  "dropped_steps": [
+   1
+  ],
+  "item_id": "S07-3-ladder",
+  "replacements": {
+   "1": "USMx+PMPREP02"
+  },
+  "suggestions": {},
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Sales Specialist",
+  "courses": [
+   {
+    "key": "State-Bank-of-India+SBSC0015x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "BoxPlay+1.0X",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "Microsoft+MS-AI-114",
+    "level": "Intermediate",
+    "step": 3
+   }
+  ],
+  "dropped_steps": [
+   1
+  ],
+  "item_id": "S07-4-other",
+  "replacements": {
+   "1": "USMx+PMPREP02"
+  },
+  "suggestions": {},
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Product Manager",
+  "courses": [
+   {
+    "key": "USMx+ENES608.1",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "SkillUp-EdTech+PDM151EN",
+    "level": "Introductory",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "S08-1-intro",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Product Manager",
+  "courses": [
+   {
+    "key": "USMx+ENES608.4",
+    "level": "Intermediate",
+    "step": 1
+   },
+   {
+    "key": "SkillUp-EdTech+AI0282EN",
+    "level": "Intermediate",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "S08-2-inter",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Product Manager",
+  "courses": [
+   {
+    "key": "SkillUp-EdTech+PDM151EN",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "Microsoft+MS-123",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "USMx+ENES680.1x",
+    "level": "Intermediate",
+    "step": 3
+   },
+   {
+    "key": "SkillUp-EdTech+AI0282EN",
+    "level": "Intermediate",
+    "step": 4
+   },
+   {
+    "key": "USMx+ENCE607.1x",
+    "level": "Advanced",
+    "step": 5
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "S08-3-ladder",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Product Manager",
+  "courses": [
+   {
+    "key": "IBM+PDM101EN",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "SkillUp-EdTech+PDM151EN",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "USMx+ENES608.4",
+    "level": "Intermediate",
+    "step": 3
+   },
+   {
+    "key": "SkillUp-EdTech+AI0282EN",
+    "level": "Intermediate",
+    "step": 4
+   },
+   {
+    "key": "CodeSignal+249",
+    "level": "Intermediate",
+    "step": 5
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "S08-4-other",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Business Analyst",
+  "courses": [
+   {
+    "key": "IBM+DA0100",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "IBM+CD0116EN",
+    "level": "Introductory",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "S09-1-intro",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Business Analyst",
+  "courses": [
+   {
+    "key": "UC3Mx+IM.1x",
+    "level": "Intermediate",
+    "step": 1
+   },
+   {
+    "key": "Microsoft+MS-108",
+    "level": "Intermediate",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "S09-2-inter",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Business Analyst",
+  "courses": [
+   {
+    "key": "IBM+DA0100",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "Microsoft+MS-108",
+    "level": "Intermediate",
+    "step": 2
+   },
+   {
+    "key": "USMx+ENCE607.2x",
+    "level": "Advanced",
+    "step": 3
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "S09-3-ladder",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Business Analyst",
+  "courses": [
+   {
+    "key": "IBM+DB0111EN",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "CodeSignal+164",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "Microsoft+MS-108",
+    "level": "Intermediate",
+    "step": 3
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "S09-4-other",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Sales Consultant",
+  "courses": [
+   {
+    "key": "State-Bank-of-India+SBSC0015x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "Microsoft+MS-133",
+    "level": "Introductory",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [
+   2
+  ],
+  "item_id": "S10-1-intro",
+  "replacements": {
+   "2": "Microsoft+MS-144"
+  },
+  "suggestions": {},
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Sales Consultant",
+  "courses": [
+   {
+    "key": "Microsoft+MS-AI-114",
+    "level": "Intermediate",
+    "step": 1
+   },
+   {
+    "key": "WOBI+WOBI003",
+    "level": "Intermediate",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "S10-2-inter",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Sales Consultant",
+  "courses": [
+   {
+    "key": "State-Bank-of-India+SBSC0015x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "HarvardX+ENTMR",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "Microsoft+MS-AI-141",
+    "level": "Intermediate",
+    "step": 3
+   },
+   {
+    "key": "Microsoft+MS-AI-114",
+    "level": "Intermediate",
+    "step": 4
+   },
+   {
+    "key": "CFI+001",
+    "level": "Advanced",
+    "step": 5
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "S10-3-ladder",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Sales Consultant",
+  "courses": [
+   {
+    "key": "State-Bank-of-India+SBSC0015x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "HarvardX+ENTMR",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "Microsoft+MS-AI-141",
+    "level": "Intermediate",
+    "step": 3
+   },
+   {
+    "key": "Microsoft+MS-AI-114",
+    "level": "Intermediate",
+    "step": 4
+   },
+   {
+    "key": "WOBI+WOBI003",
+    "level": "Intermediate",
+    "step": 5
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "S10-4-other",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Automation Engineer",
+  "courses": [
+   {
+    "key": "RedHat+RH094x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "GoogleCloud+CALP5x",
+    "level": "Introductory",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [
+   2
+  ],
+  "item_id": "S11-1-intro",
+  "replacements": {
+   "2": "LinuxFoundationX+LFS162x"
+  },
+  "suggestions": {},
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Automation Engineer",
+  "courses": [
+   {
+    "key": "FedericaX+51",
+    "level": "Intermediate",
+    "step": 1
+   },
+   {
+    "key": "IBM+CD0215EN",
+    "level": "Intermediate",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [
+   1
+  ],
+  "item_id": "S11-2-inter",
+  "replacements": {
+   "1": "IBM+AI0325EN"
+  },
+  "suggestions": {},
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Automation Engineer",
+  "courses": [
+   {
+    "key": "RedHat+RH094x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "GoogleCloud+CALP5x",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "IBM+CC0201EN",
+    "level": "Intermediate",
+    "step": 3
+   },
+   {
+    "key": "IBM+CD0215EN",
+    "level": "Intermediate",
+    "step": 4
+   },
+   {
+    "key": "Microsoft+MS-110",
+    "level": "Advanced",
+    "step": 5
+   }
+  ],
+  "dropped_steps": [
+   5
+  ],
+  "item_id": "S11-3-ladder",
+  "replacements": {
+   "5": ""
+  },
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Automation Engineer",
+  "courses": [
+   {
+    "key": "RedHat+RH094x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "FedericaX+51",
+    "level": "Intermediate",
+    "step": 2
+   },
+   {
+    "key": "IBM+CD0215EN",
+    "level": "Intermediate",
+    "step": 3
+   }
+  ],
+  "dropped_steps": [
+   2
+  ],
+  "item_id": "S11-4-other",
+  "replacements": {
+   "2": "IBM+AI0274EN"
+  },
+  "suggestions": {},
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Security Engineer",
+  "courses": [
+   {
+    "key": "USMx+IS4551",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "IBM+Cybfun.6.0",
+    "level": "Introductory",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [
+   1
+  ],
+  "item_id": "S12-1-intro",
+  "replacements": {
+   "1": "IBM+CS0221EN"
+  },
+  "suggestions": {},
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Security Engineer",
+  "courses": [
+   {
+    "key": "IBM+CD0267EN",
+    "level": "Intermediate",
+    "step": 1
+   },
+   {
+    "key": "Microsoft+AZ-500-103",
+    "level": "Intermediate",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "S12-2-inter",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Security Engineer",
+  "courses": [
+   {
+    "key": "IBM+Cybfun.6.0",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "IBM+CS0221EN",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "Microsoft+AZ-500-103",
+    "level": "Intermediate",
+    "step": 3
+   },
+   {
+    "key": "Microsoft+SC-200-102",
+    "level": "Intermediate",
+    "step": 4
+   },
+   {
+    "key": "GoogleCloud+MSIGCL1x",
+    "level": "Advanced",
+    "step": 5
+   }
+  ],
+  "dropped_steps": [
+   4,
+   5
+  ],
+  "item_id": "S12-3-ladder",
+  "replacements": {
+   "4": "IBM+Cybfun.5.0",
+   "5": "__none__"
+  },
+  "suggestions": {},
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Security Engineer",
+  "courses": [
+   {
+    "key": "WisconsinX+LS0009",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "IBM+Cybfun.6.0",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "IBM+CS0221EN",
+    "level": "Introductory",
+    "step": 3
+   },
+   {
+    "key": "Microsoft+AZ-500-103",
+    "level": "Intermediate",
+    "step": 4
+   },
+   {
+    "key": "Microsoft+SC-200-102",
+    "level": "Intermediate",
+    "step": 5
+   }
+  ],
+  "dropped_steps": [
+   3
+  ],
+  "item_id": "S12-4-other",
+  "replacements": {
+   "3": "Microsoft+MS-CC-141"
+  },
+  "suggestions": {},
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Physician Assistant",
+  "courses": [
+   {
+    "key": "OsmosisFromElsevier+HS2",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "OsmosisFromElsevier+HS3",
+    "level": "Introductory",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "S13-1-intro",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Physician Assistant",
+  "courses": [
+   {
+    "key": "HKPolyUx+PACEx101x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "OsmosisFromElsevier+HS3",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "HarvardX+AT1x",
+    "level": "Intermediate",
+    "step": 3
+   },
+   {
+    "key": "StanfordOnline+CME.20952",
+    "level": "Advanced",
+    "step": 4
+   },
+   {
+    "key": "StanfordOnline+CME.20868",
+    "level": "Advanced",
+    "step": 5
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "S13-3-ladder",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Physician Assistant",
+  "courses": [
+   {
+    "key": "HarvardX+AT1x",
+    "level": "Intermediate",
+    "step": 1
+   },
+   {
+    "key": "StanfordOnline+CME.20868",
+    "level": "Advanced",
+    "step": 2
+   },
+   {
+    "key": "StanfordOnline+SOM-YCME0045",
+    "level": "Advanced",
+    "step": 3
+   }
+  ],
+  "dropped_steps": [
+   3
+  ],
+  "item_id": "S13-4-other",
+  "replacements": {
+   "3": "StanfordOnline+CME.20758"
+  },
+  "suggestions": {},
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Team Lead",
+  "courses": [
+   {
+    "key": "IIMBx+HR101x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "AdelaideX+PerformaX",
+    "level": "Introductory",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "S14-1-intro",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Team Lead",
+  "courses": [
+   {
+    "key": "IIMBx+OB252x",
+    "level": "Intermediate",
+    "step": 1
+   },
+   {
+    "key": "DartmouthX+SCC3",
+    "level": "Intermediate",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "S14-2-inter",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Team Lead",
+  "courses": [
+   {
+    "key": "IIMBx+HR101x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "IIMBx+OB252x",
+    "level": "Intermediate",
+    "step": 2
+   },
+   {
+    "key": "DartmouthX+SCC3",
+    "level": "Intermediate",
+    "step": 3
+   },
+   {
+    "key": "CodeSignal+548",
+    "level": "Advanced",
+    "step": 4
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "S14-3-ladder",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Team Lead",
+  "courses": [
+   {
+    "key": "IIMBx+HR101x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "AdelaideX+PerformaX",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "LSE+LSEMPT01",
+    "level": "Introductory",
+    "step": 3
+   },
+   {
+    "key": "IIMBx+OB252x",
+    "level": "Intermediate",
+    "step": 4
+   },
+   {
+    "key": "DartmouthX+SCC3",
+    "level": "Intermediate",
+    "step": 5
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "S14-4-other",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Data Analyst",
+  "courses": [
+   {
+    "key": "HarvardX+PH125.1x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "IBM+DA0151EN",
+    "level": "Introductory",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "S15-1-intro",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Data Analyst",
+  "courses": [
+   {
+    "key": "Microsoft+MS-108",
+    "level": "Intermediate",
+    "step": 1
+   },
+   {
+    "key": "IBM+DA0101EN",
+    "level": "Intermediate",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "S15-2-inter",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Data Analyst",
+  "courses": [
+   {
+    "key": "GoogleCloud+PIATPCDAJ1x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "Microsoft+MS-CC-134",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "Microsoft+MS-108",
+    "level": "Intermediate",
+    "step": 3
+   },
+   {
+    "key": "IBM+DA0101EN",
+    "level": "Intermediate",
+    "step": 4
+   },
+   {
+    "key": "IBM+DA0321",
+    "level": "Advanced",
+    "step": 5
+   }
+  ],
+  "dropped_steps": [
+   5
+  ],
+  "item_id": "S15-3-ladder",
+  "replacements": {
+   "5": "__none__"
+  },
+  "suggestions": {},
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Data Analyst",
+  "courses": [
+   {
+    "key": "HarvardX+PH125.1x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "IBM+DA0100",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "GoogleCloud+AVDTGW1x",
+    "level": "Introductory",
+    "step": 3
+   },
+   {
+    "key": "Microsoft+MS-108",
+    "level": "Intermediate",
+    "step": 4
+   },
+   {
+    "key": "USMx+IS6754",
+    "level": "Intermediate",
+    "step": 5
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "S15-4-other",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Solutions Architect",
+  "courses": [
+   {
+    "key": "Microsoft+MS-CC-148",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "AI+aws1x",
+    "level": "Introductory",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "S16-1-intro",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Solutions Architect",
+  "courses": [
+   {
+    "key": "GoogleCloud+CALP6x",
+    "level": "Intermediate",
+    "step": 1
+   },
+   {
+    "key": "Microsoft+AZ-305-101",
+    "level": "Intermediate",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [
+   1,
+   2
+  ],
+  "item_id": "S16-2-inter",
+  "replacements": {
+   "1": "Microsoft+MS-AI-130",
+   "2": ""
+  },
+  "suggestions": {},
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Solutions Architect",
+  "courses": [
+   {
+    "key": "GoogleCloud+CALP5x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "AI+aws1x",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "GoogleCloud+CALP6x",
+    "level": "Intermediate",
+    "step": 3
+   },
+   {
+    "key": "Microsoft+AZ-305-101",
+    "level": "Intermediate",
+    "step": 4
+   },
+   {
+    "key": "Microsoft+AZ-305-103",
+    "level": "Advanced",
+    "step": 5
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "S16-3-ladder",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Solutions Architect",
+  "courses": [
+   {
+    "key": "IBM+CC0101EN",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "Microsoft+MS-CC-148",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "GoogleCloud+CALP5x",
+    "level": "Introductory",
+    "step": 3
+   },
+   {
+    "key": "Microsoft+AZ-305-101",
+    "level": "Intermediate",
+    "step": 4
+   },
+   {
+    "key": "GoogleCloud+CALP6x",
+    "level": "Intermediate",
+    "step": 5
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "S16-4-other",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Strategy Manager",
+  "courses": [
+   {
+    "key": "IIMBx+ST101x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "SkillUp-EdTech+PGM131EN",
+    "level": "Introductory",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "S17-1-intro",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Strategy Manager",
+  "courses": [
+   {
+    "key": "USMx+ENCE627.3X",
+    "level": "Intermediate",
+    "step": 1
+   },
+   {
+    "key": "RITx+PM9001x",
+    "level": "Intermediate",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "S17-2-inter",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Strategy Manager",
+  "courses": [
+   {
+    "key": "IIMBx+ST101x",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "SkillUp-EdTech+AI0289EN",
+    "level": "Intermediate",
+    "step": 2
+   },
+   {
+    "key": "RITx+PM9001x",
+    "level": "Intermediate",
+    "step": 3
+   },
+   {
+    "key": "USMx+PGPM661.3x",
+    "level": "Advanced",
+    "step": 4
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "S17-3-ladder",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Strategy Manager",
+  "courses": [
+   {
+    "key": "SkillUp-EdTech+AI0289EN",
+    "level": "Intermediate",
+    "step": 1
+   },
+   {
+    "key": "USMx+PGPM661.3x",
+    "level": "Advanced",
+    "step": 2
+   },
+   {
+    "key": "IIMBx+ST104x",
+    "level": "Advanced",
+    "step": 3
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "S17-4-other",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Application Developer",
+  "courses": [
+   {
+    "key": "Microsoft+MS-CC-124",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "Microsoft+MS-CC-137",
+    "level": "Introductory",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "S18-1-intro",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Application Developer",
+  "courses": [
+   {
+    "key": "IBM+CD0215EN",
+    "level": "Intermediate",
+    "step": 1
+   },
+   {
+    "key": "GoogleCloud+BSJMSBSC1x",
+    "level": "Intermediate",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [
+   2
+  ],
+  "item_id": "S18-2-inter",
+  "replacements": {
+   "2": "IBM+CAD250EN"
+  },
+  "suggestions": {},
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Application Developer",
+  "courses": [
+   {
+    "key": "IBM+CS0131EN",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "IBM+CD0215EN",
+    "level": "Intermediate",
+    "step": 2
+   },
+   {
+    "key": "GoogleCloud+BSJMSBSC1x",
+    "level": "Intermediate",
+    "step": 3
+   },
+   {
+    "key": "Microsoft+AZ-400-102",
+    "level": "Advanced",
+    "step": 4
+   }
+  ],
+  "dropped_steps": [
+   3,
+   4
+  ],
+  "item_id": "S18-3-ladder",
+  "replacements": {
+   "3": "CodeSignal+68",
+   "4": "GoogleCloud+BUAGWAGDK1x"
+  },
+  "suggestions": {},
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Application Developer",
+  "courses": [
+   {
+    "key": "IBM+CS0131EN",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "Microsoft+MS-CC-124",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "IBM+CAD201EN",
+    "level": "Intermediate",
+    "step": 3
+   },
+   {
+    "key": "GoogleCloud+BSJMSBSC1x",
+    "level": "Intermediate",
+    "step": 4
+   }
+  ],
+  "dropped_steps": [
+   1,
+   2,
+   3,
+   4
+  ],
+  "item_id": "S18-4-other",
+  "replacements": {
+   "1": "AI+genai5x",
+   "2": "HarvardX+CS50P",
+   "3": "CodeSignal+68",
+   "4": "DelftX+UnixTx"
+  },
+  "suggestions": {},
+  "verdict": "needs_work"
+ },
+ {
+  "career": "Demand Planning Manager",
+  "courses": [
+   {
+    "key": "ISCEA+CFDP01",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "ISCEA+CFDP03",
+    "level": "Introductory",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "S19-1-intro",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Demand Planning Manager",
+  "courses": [
+   {
+    "key": "DartmouthX+RFundX",
+    "level": "Intermediate",
+    "step": 1
+   },
+   {
+    "key": "Microsoft+MS-AI-115",
+    "level": "Intermediate",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "S19-2-inter",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Demand Planning Manager",
+  "courses": [
+   {
+    "key": "ISCEA+CFDP01",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "ISCEA+CPSCAI01",
+    "level": "Intermediate",
+    "step": 2
+   },
+   {
+    "key": "Microsoft+MS-AI-115",
+    "level": "Intermediate",
+    "step": 3
+   },
+   {
+    "key": "USMx+PGPM661.3x",
+    "level": "Advanced",
+    "step": 4
+   }
+  ],
+  "dropped_steps": [
+   3
+  ],
+  "item_id": "S19-3-ladder",
+  "replacements": {
+   "3": "ISCEA+ISC-AI01"
+  },
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "Demand Planning Manager",
+  "courses": [
+   {
+    "key": "ISCEA+CFDP02",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "ISCEA+CFDP01",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "Microsoft+MS-AI-115",
+    "level": "Intermediate",
+    "step": 3
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "S19-4-other",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "PLM Solution Architect",
+  "courses": [
+   {
+    "key": "Microsoft+MS-CC-148",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "GoogleCloud+CALP4x",
+    "level": "Introductory",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [
+   2
+  ],
+  "item_id": "S20-1-intro",
+  "replacements": {
+   "2": "SkillUp-EdTech+PDM131EN"
+  },
+  "suggestions": {},
+  "verdict": "needs_work"
+ },
+ {
+  "career": "PLM Solution Architect",
+  "courses": [
+   {
+    "key": "USMx+ENES680.2x",
+    "level": "Intermediate",
+    "step": 1
+   },
+   {
+    "key": "DelftX+CPSS1x",
+    "level": "Intermediate",
+    "step": 2
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "S20-2-inter",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ },
+ {
+  "career": "PLM Solution Architect",
+  "courses": [
+   {
+    "key": "Microsoft+MS-CC-148",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "GoogleCloud+CALP6x",
+    "level": "Intermediate",
+    "step": 2
+   },
+   {
+    "key": "Microsoft+MS-125",
+    "level": "Intermediate",
+    "step": 3
+   },
+   {
+    "key": "SkillUp-EdTech+DM0201EN",
+    "level": "Advanced",
+    "step": 4
+   }
+  ],
+  "dropped_steps": [
+   2
+  ],
+  "item_id": "S20-3-ladder",
+  "replacements": {
+   "2": "USMx+ENES608.4"
+  },
+  "suggestions": {},
+  "verdict": "needs_work"
+ },
+ {
+  "career": "PLM Solution Architect",
+  "courses": [
+   {
+    "key": "Microsoft+MS-CC-148",
+    "level": "Introductory",
+    "step": 1
+   },
+   {
+    "key": "Microsoft+MS-CC-147",
+    "level": "Introductory",
+    "step": 2
+   },
+   {
+    "key": "AI+gcp1x",
+    "level": "Introductory",
+    "step": 3
+   },
+   {
+    "key": "GoogleCloud+CALP6x",
+    "level": "Intermediate",
+    "step": 4
+   },
+   {
+    "key": "GoogleCloud+NLPOGC1x",
+    "level": "Intermediate",
+    "step": 5
+   }
+  ],
+  "dropped_steps": [],
+  "item_id": "S20-4-other",
+  "replacements": {},
+  "suggestions": {},
+  "verdict": "good"
+ }
+]

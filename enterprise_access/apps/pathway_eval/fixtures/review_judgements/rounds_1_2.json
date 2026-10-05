@@ -1,0 +1,3896 @@
+{
+ "built_from": {
+  "counts": {
+   "calibration": {
+    "careers": 9,
+    "contested": 5,
+    "endorsed": 48,
+    "rejected": 12,
+    "slots": 20
+   },
+   "careers": 20,
+   "careers_with_judgements": 20,
+   "contested": 22,
+   "endorsed": 179,
+   "held_out": {
+    "careers": 11,
+    "contested": 17,
+    "endorsed": 131,
+    "rejected": 21,
+    "slots": 31
+   },
+   "rejected": 33,
+   "slots": 51,
+   "unplaced_judgements": 0,
+   "votes": 167,
+   "votes_by_round": {
+    "1": 79,
+    "2": 88
+   },
+   "votes_with_a_career": 167
+  },
+  "database": "default.db",
+  "sources": {
+   "blind_key.json": "d2fcc5f4d43759bd3f61b01e6ec5a4183aab07eb1085751e349eecedc6b31cca",
+   "careers.txt": "d53eb6fbf247b34e44c5f54e4e331372ab50c0b9284132f2ce470cabd7e68872"
+  },
+  "votes_export_sha256": "8b717180c9153995e676c8d24ff86dd86b8e1afe01c2b83a86cb5cb6bdd3ecd5"
+ },
+ "careers": {
+  "Application Developer": {
+   "levels": {
+    "Advanced": {
+     "contested": [],
+     "endorsed": [
+      {
+       "items": [
+        "S18-3-ladder"
+       ],
+       "key": "GoogleCloud+BUAGWAGDK1x",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "best_pick"
+       ]
+      },
+      {
+       "items": [
+        "R2-18-3a",
+        "R2-18-3b"
+       ],
+       "key": "Microsoft+MS-146",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "best_pick"
+       ]
+      }
+     ],
+     "rejected": [
+      {
+       "items": [
+        "R2-18-3b",
+        "S18-3-ladder"
+       ],
+       "key": "Microsoft+AZ-400-102",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "dropped"
+       ]
+      },
+      {
+       "items": [
+        "R2-18-3a"
+       ],
+       "key": "Microsoft+MS-112",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "dropped"
+       ]
+      }
+     ]
+    },
+    "Intermediate": {
+     "contested": [
+      {
+       "endorsed_in": [
+        "R2-18-2a",
+        "R2-18-2b",
+        "R2-18-4b"
+       ],
+       "key": "GoogleCloud+BSJMSBSC1x",
+       "rejected_in": [
+        "R2-18-3a",
+        "R2-18-3b",
+        "R2-18-4a",
+        "S18-2-inter",
+        "S18-3-ladder",
+        "S18-4-other"
+       ],
+       "rounds": [
+        1,
+        2
+       ]
+      }
+     ],
+     "endorsed": [
+      {
+       "items": [
+        "R2-18-2a",
+        "R2-18-4b",
+        "S18-3-ladder",
+        "S18-4-other"
+       ],
+       "key": "CodeSignal+68",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "best_pick",
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "R2-18-3a",
+        "R2-18-3b",
+        "R2-18-4a",
+        "R2-18-4b",
+        "S18-4-other"
+       ],
+       "key": "DelftX+UnixTx",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "also_fine",
+        "best_pick",
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "S18-2-inter"
+       ],
+       "key": "IBM+CAD250EN",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "best_pick"
+       ]
+      },
+      {
+       "items": [
+        "R2-18-2b",
+        "R2-18-3a"
+       ],
+       "key": "IBM+CD0215EN",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "best_pick",
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "R2-18-3a",
+        "R2-18-3b",
+        "R2-18-4a",
+        "R2-18-4b"
+       ],
+       "key": "IBM+CD0267EN",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "also_fine",
+        "best_pick",
+        "suggestion"
+       ]
+      }
+     ],
+     "rejected": [
+      {
+       "items": [
+        "S18-4-other"
+       ],
+       "key": "IBM+CAD201EN",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "dropped"
+       ]
+      }
+     ]
+    },
+    "Introductory": {
+     "contested": [
+      {
+       "endorsed_in": [
+        "R2-18-1a",
+        "R2-18-1b",
+        "R2-18-3a",
+        "R2-18-3b",
+        "S18-1-intro"
+       ],
+       "key": "Microsoft+MS-CC-124",
+       "rejected_in": [
+        "S18-4-other"
+       ],
+       "rounds": [
+        1,
+        2
+       ]
+      }
+     ],
+     "endorsed": [
+      {
+       "items": [
+        "R2-18-1b",
+        "S18-4-other"
+       ],
+       "key": "AI+genai5x",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "also_fine",
+        "best_pick"
+       ]
+      },
+      {
+       "items": [
+        "R2-18-1b",
+        "R2-18-3a",
+        "R2-18-3b",
+        "R2-18-4a",
+        "R2-18-4b"
+       ],
+       "key": "Codio+python3.1",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "also_fine",
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-18-3b",
+        "R2-18-4a",
+        "R2-18-4b",
+        "S18-4-other"
+       ],
+       "key": "HarvardX+CS50P",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "best_pick",
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "R2-18-4b"
+       ],
+       "key": "KULeuvenX+MERODEx",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "R2-18-1a",
+        "R2-18-1b",
+        "R2-18-4b",
+        "S18-1-intro"
+       ],
+       "key": "Microsoft+MS-CC-137",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "best_pick",
+        "kept_in_good"
+       ]
+      }
+     ],
+     "rejected": [
+      {
+       "items": [
+        "R2-18-1b",
+        "R2-18-3b",
+        "R2-18-4a",
+        "S18-4-other"
+       ],
+       "key": "IBM+CS0131EN",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "dropped"
+       ]
+      }
+     ]
+    }
+   },
+   "rank": 18,
+   "split": "held_out"
+  },
+  "Automation Engineer": {
+   "levels": {
+    "Advanced": {
+     "contested": [],
+     "endorsed": [
+      {
+       "items": [
+        "R2-11-3a"
+       ],
+       "key": "HarvardX+TinyML4",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "best_pick"
+       ]
+      },
+      {
+       "items": [
+        "R2-11-3a",
+        "R2-11-3b"
+       ],
+       "key": "Microsoft+MS-AI-133",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "also_fine",
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-11-3a",
+        "R2-11-3b"
+       ],
+       "key": "Microsoft+MS-AI-134",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "also_fine",
+        "suggestion"
+       ]
+      }
+     ],
+     "rejected": [
+      {
+       "items": [
+        "S11-3-ladder"
+       ],
+       "key": "Microsoft+MS-110",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "dropped"
+       ]
+      },
+      {
+       "items": [
+        "R2-11-3a"
+       ],
+       "key": "Microsoft+MS-116",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "dropped"
+       ]
+      }
+     ]
+    },
+    "Intermediate": {
+     "contested": [
+      {
+       "endorsed_in": [
+        "R2-11-4a"
+       ],
+       "key": "FedericaX+51",
+       "rejected_in": [
+        "S11-2-inter",
+        "S11-4-other"
+       ],
+       "rounds": [
+        1,
+        2
+       ]
+      }
+     ],
+     "endorsed": [
+      {
+       "items": [
+        "R2-11-2a",
+        "R2-11-2b",
+        "R2-11-3a",
+        "R2-11-3b",
+        "R2-11-4a",
+        "R2-11-4b"
+       ],
+       "key": "DelftX+IEPG1x",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-11-2a",
+        "R2-11-2b",
+        "R2-11-3a",
+        "R2-11-3b",
+        "R2-11-4a",
+        "R2-11-4b",
+        "S11-4-other"
+       ],
+       "key": "IBM+AI0274EN",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "best_pick",
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "S11-2-inter"
+       ],
+       "key": "IBM+AI0325EN",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "best_pick"
+       ]
+      },
+      {
+       "items": [
+        "R2-11-2a",
+        "R2-11-2b",
+        "R2-11-3a",
+        "S11-3-ladder"
+       ],
+       "key": "IBM+CC0201EN",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "kept_in_good",
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-11-2a",
+        "R2-11-4a",
+        "S11-3-ladder"
+       ],
+       "key": "IBM+CD0215EN",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "kept_in_good",
+        "suggestion"
+       ]
+      }
+     ],
+     "rejected": []
+    },
+    "Introductory": {
+     "contested": [
+      {
+       "endorsed_in": [
+        "R2-11-1a",
+        "S11-3-ladder"
+       ],
+       "key": "GoogleCloud+CALP5x",
+       "rejected_in": [
+        "R2-11-3b",
+        "S11-1-intro"
+       ],
+       "rounds": [
+        1,
+        2
+       ]
+      }
+     ],
+     "endorsed": [
+      {
+       "items": [
+        "R2-11-1a",
+        "R2-11-1b",
+        "R2-11-3a",
+        "R2-11-3b",
+        "R2-11-4a",
+        "R2-11-4b"
+       ],
+       "key": "AI+mlops1x",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "also_fine",
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-11-1a",
+        "R2-11-1b",
+        "R2-11-3a",
+        "R2-11-3b",
+        "R2-11-4a",
+        "R2-11-4b"
+       ],
+       "key": "AI+rust3x",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "also_fine",
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-11-1b",
+        "S11-1-intro"
+       ],
+       "key": "LinuxFoundationX+LFS162x",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "best_pick",
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "R2-11-1a",
+        "R2-11-1b",
+        "R2-11-3a",
+        "R2-11-3b",
+        "R2-11-4a",
+        "R2-11-4b"
+       ],
+       "key": "Microsoft+MS-CC-119",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "also_fine",
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-11-1a",
+        "R2-11-1b",
+        "R2-11-3a",
+        "R2-11-3b",
+        "R2-11-4a",
+        "R2-11-4b"
+       ],
+       "key": "Microsoft+MS-CC-146",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "best_pick",
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-11-1a",
+        "R2-11-1b",
+        "R2-11-4a",
+        "S11-3-ladder"
+       ],
+       "key": "RedHat+RH094x",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      }
+     ],
+     "rejected": [
+      {
+       "items": [
+        "R2-11-4b"
+       ],
+       "key": "Microsoft+MS-122",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "dropped"
+       ]
+      }
+     ]
+    }
+   },
+   "rank": 11,
+   "split": "held_out"
+  },
+  "Business Analyst": {
+   "levels": {
+    "Advanced": {
+     "contested": [],
+     "endorsed": [
+      {
+       "items": [
+        "S09-3-ladder"
+       ],
+       "key": "USMx+ENCE607.2x",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      }
+     ],
+     "rejected": []
+    },
+    "Intermediate": {
+     "contested": [],
+     "endorsed": [
+      {
+       "items": [
+        "R2-09-4b"
+       ],
+       "key": "IBM+DB260EN",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-09-4a",
+        "R2-09-4b",
+        "S09-2-inter",
+        "S09-3-ladder",
+        "S09-4-other"
+       ],
+       "key": "Microsoft+MS-108",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "R2-09-4b"
+       ],
+       "key": "Microsoft+MS-AI-123",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "S09-2-inter"
+       ],
+       "key": "UC3Mx+IM.1x",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      }
+     ],
+     "rejected": []
+    },
+    "Introductory": {
+     "contested": [],
+     "endorsed": [
+      {
+       "items": [
+        "R2-09-4b",
+        "S09-4-other"
+       ],
+       "key": "CodeSignal+164",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "R2-09-4b"
+       ],
+       "key": "DavidsonX+DavidsonX_D007",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "S09-1-intro"
+       ],
+       "key": "IBM+CD0116EN",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "R2-09-4b",
+        "S09-1-intro",
+        "S09-3-ladder"
+       ],
+       "key": "IBM+DA0100",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "kept_in_good",
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-09-4a",
+        "R2-09-4b",
+        "S09-4-other"
+       ],
+       "key": "IBM+DB0111EN",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "R2-09-4a"
+       ],
+       "key": "USMx+DIGITAL01",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      }
+     ],
+     "rejected": []
+    }
+   },
+   "rank": 9,
+   "split": "calibration"
+  },
+  "Data Analyst": {
+   "levels": {
+    "Advanced": {
+     "contested": [
+      {
+       "endorsed_in": [
+        "R2-15-3b"
+       ],
+       "key": "IBM+DA0321",
+       "rejected_in": [
+        "R2-15-3a",
+        "S15-3-ladder"
+       ],
+       "rounds": [
+        1,
+        2
+       ]
+      }
+     ],
+     "endorsed": [],
+     "rejected": []
+    },
+    "Intermediate": {
+     "contested": [],
+     "endorsed": [
+      {
+       "items": [
+        "R2-15-4a",
+        "R2-15-4b"
+       ],
+       "key": "CodeSignal+34",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-15-4a",
+        "R2-15-4b"
+       ],
+       "key": "GoogleCloud+TPOSHVDC1x",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-15-4a",
+        "R2-15-4b"
+       ],
+       "key": "IBM+AI0272EN",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-15-2b"
+       ],
+       "key": "IBM+AI0273EN",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "R2-15-2a",
+        "R2-15-2b",
+        "R2-15-3b",
+        "R2-15-4a",
+        "R2-15-4b",
+        "S15-2-inter"
+       ],
+       "key": "IBM+DA0101EN",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "kept_in_good",
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-15-2a",
+        "R2-15-3b",
+        "S15-2-inter",
+        "S15-4-other"
+       ],
+       "key": "Microsoft+MS-108",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "R2-15-4a",
+        "S15-4-other"
+       ],
+       "key": "USMx+IS6754",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "kept_in_good",
+        "suggestion"
+       ]
+      }
+     ],
+     "rejected": []
+    },
+    "Introductory": {
+     "contested": [
+      {
+       "endorsed_in": [
+        "S15-4-other"
+       ],
+       "key": "GoogleCloud+AVDTGW1x",
+       "rejected_in": [
+        "R2-15-4b"
+       ],
+       "rounds": [
+        1,
+        2
+       ]
+      },
+      {
+       "endorsed_in": [
+        "S15-1-intro",
+        "S15-4-other"
+       ],
+       "key": "HarvardX+PH125.1x",
+       "rejected_in": [
+        "R2-15-1b",
+        "R2-15-4a"
+       ],
+       "rounds": [
+        1,
+        2
+       ]
+      },
+      {
+       "endorsed_in": [
+        "S15-4-other"
+       ],
+       "key": "IBM+DA0100",
+       "rejected_in": [
+        "R2-15-4b"
+       ],
+       "rounds": [
+        1,
+        2
+       ]
+      },
+      {
+       "endorsed_in": [
+        "R2-15-1b",
+        "R2-15-3a",
+        "R2-15-3b",
+        "R2-15-4a",
+        "R2-15-4b",
+        "S15-1-intro"
+       ],
+       "key": "IBM+DA0151EN",
+       "rejected_in": [
+        "R2-15-1a"
+       ],
+       "rounds": [
+        1,
+        2
+       ]
+      }
+     ],
+     "endorsed": [
+      {
+       "items": [
+        "R2-15-1a",
+        "R2-15-3b"
+       ],
+       "key": "GoogleCloud+PIATPCDAJ1x",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "best_pick",
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "R2-15-1a",
+        "R2-15-1b",
+        "R2-15-3a",
+        "R2-15-3b",
+        "R2-15-4a",
+        "R2-15-4b"
+       ],
+       "key": "IBM+DV0130",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "also_fine",
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-15-4a",
+        "R2-15-4b"
+       ],
+       "key": "Microsoft+MS-CC-113",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "also_fine",
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-15-1a",
+        "R2-15-1b"
+       ],
+       "key": "Microsoft+MS-CC-127",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "also_fine",
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-15-1a",
+        "R2-15-1b",
+        "R2-15-3a",
+        "R2-15-3b",
+        "R2-15-4a",
+        "R2-15-4b"
+       ],
+       "key": "Microsoft+MS-CC-133",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "also_fine",
+        "best_pick",
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-15-3b"
+       ],
+       "key": "Microsoft+MS-CC-134",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      }
+     ],
+     "rejected": []
+    }
+   },
+   "rank": 15,
+   "split": "held_out"
+  },
+  "Demand Planning Manager": {
+   "levels": {
+    "Advanced": {
+     "contested": [],
+     "endorsed": [
+      {
+       "items": [
+        "R2-19-3b"
+       ],
+       "key": "USMx+PGPM661.2x",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "S19-3-ladder"
+       ],
+       "key": "USMx+PGPM661.3x",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      }
+     ],
+     "rejected": []
+    },
+    "Intermediate": {
+     "contested": [
+      {
+       "endorsed_in": [
+        "R2-19-2a",
+        "R2-19-2b",
+        "R2-19-3b",
+        "R2-19-4a",
+        "R2-19-4b",
+        "S19-2-inter",
+        "S19-4-other"
+       ],
+       "key": "Microsoft+MS-AI-115",
+       "rejected_in": [
+        "R2-19-3a",
+        "S19-3-ladder"
+       ],
+       "rounds": [
+        1,
+        2
+       ]
+      }
+     ],
+     "endorsed": [
+      {
+       "items": [
+        "R2-19-2b",
+        "S19-2-inter"
+       ],
+       "key": "DartmouthX+RFundX",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "R2-19-2b",
+        "S19-3-ladder"
+       ],
+       "key": "ISCEA+CPSCAI01",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "kept_in_good",
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-19-2a",
+        "R2-19-2b",
+        "R2-19-3a",
+        "R2-19-3b",
+        "R2-19-4a",
+        "R2-19-4b"
+       ],
+       "key": "ISCEA+CPSP03",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "best_pick",
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-19-2a"
+       ],
+       "key": "ISCEA+CSCTP02",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "R2-19-2a",
+        "R2-19-2b",
+        "R2-19-3a",
+        "R2-19-3b",
+        "S19-3-ladder"
+       ],
+       "key": "ISCEA+ISC-AI01",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "also_fine",
+        "best_pick",
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-19-2a",
+        "R2-19-2b",
+        "R2-19-3a",
+        "R2-19-3b",
+        "R2-19-4a",
+        "R2-19-4b"
+       ],
+       "key": "ISCEA+SSCP02",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "also_fine",
+        "kept_in_good",
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-19-3b"
+       ],
+       "key": "USMx+ENES680.1x",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      }
+     ],
+     "rejected": []
+    },
+    "Introductory": {
+     "contested": [],
+     "endorsed": [
+      {
+       "items": [
+        "R2-19-1a",
+        "R2-19-1b",
+        "R2-19-3b",
+        "R2-19-4a",
+        "R2-19-4b",
+        "S19-1-intro",
+        "S19-3-ladder",
+        "S19-4-other"
+       ],
+       "key": "ISCEA+CFDP01",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "R2-19-1b",
+        "R2-19-3b",
+        "R2-19-4b",
+        "S19-4-other"
+       ],
+       "key": "ISCEA+CFDP02",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "R2-19-1a",
+        "R2-19-4a",
+        "S19-1-intro"
+       ],
+       "key": "ISCEA+CFDP03",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      }
+     ],
+     "rejected": []
+    }
+   },
+   "rank": 19,
+   "split": "held_out"
+  },
+  "Operations Manager": {
+   "levels": {
+    "Introductory": {
+     "contested": [],
+     "endorsed": [],
+     "rejected": [
+      {
+       "items": [
+        "S05-1-intro"
+       ],
+       "key": "TUMx+QPLS1x",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "dropped"
+       ]
+      }
+     ]
+    }
+   },
+   "rank": 5,
+   "split": "calibration"
+  },
+  "PLM Solution Architect": {
+   "levels": {
+    "Intermediate": {
+     "contested": [
+      {
+       "endorsed_in": [
+        "S20-4-other"
+       ],
+       "key": "GoogleCloud+CALP6x",
+       "rejected_in": [
+        "S20-3-ladder"
+       ],
+       "rounds": [
+        1
+       ]
+      }
+     ],
+     "endorsed": [
+      {
+       "items": [
+        "R2-20-2a",
+        "S20-2-inter"
+       ],
+       "key": "DelftX+CPSS1x",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "S20-4-other"
+       ],
+       "key": "GoogleCloud+NLPOGC1x",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "R2-20-2b",
+        "R2-20-3a",
+        "R2-20-3b",
+        "R2-20-4a",
+        "R2-20-4b"
+       ],
+       "key": "IBM+AI0223EN",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "also_fine",
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "S20-3-ladder"
+       ],
+       "key": "USMx+ENES608.4",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "best_pick"
+       ]
+      },
+      {
+       "items": [
+        "R2-20-2a",
+        "R2-20-2b"
+       ],
+       "key": "USMx+ENES680.1x",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "kept_in_good",
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-20-2a",
+        "R2-20-2b",
+        "S20-2-inter"
+       ],
+       "key": "USMx+ENES680.2x",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "best_pick",
+        "kept_in_good"
+       ]
+      }
+     ],
+     "rejected": [
+      {
+       "items": [
+        "R2-20-2b"
+       ],
+       "key": "CodeSignal+68",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "dropped"
+       ]
+      }
+     ]
+    },
+    "Introductory": {
+     "contested": [],
+     "endorsed": [
+      {
+       "items": [
+        "S20-4-other"
+       ],
+       "key": "AI+gcp1x",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "R2-20-1b",
+        "R2-20-3a",
+        "R2-20-3b",
+        "R2-20-4a",
+        "R2-20-4b"
+       ],
+       "key": "Microsoft+MS-CC-115",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "also_fine",
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-20-1b",
+        "R2-20-3a",
+        "R2-20-3b",
+        "R2-20-4a",
+        "R2-20-4b"
+       ],
+       "key": "Microsoft+MS-CC-120",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "also_fine",
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-20-1a",
+        "R2-20-1b",
+        "S20-4-other"
+       ],
+       "key": "Microsoft+MS-CC-147",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "best_pick",
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "R2-20-1a",
+        "S20-4-other"
+       ],
+       "key": "Microsoft+MS-CC-148",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "R2-20-1b",
+        "R2-20-3a",
+        "R2-20-3b",
+        "R2-20-4a",
+        "R2-20-4b",
+        "S20-1-intro"
+       ],
+       "key": "SkillUp-EdTech+PDM131EN",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "also_fine",
+        "best_pick",
+        "suggestion"
+       ]
+      }
+     ],
+     "rejected": [
+      {
+       "items": [
+        "R2-20-1b",
+        "S20-1-intro"
+       ],
+       "key": "GoogleCloud+CALP4x",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "dropped"
+       ]
+      }
+     ]
+    }
+   },
+   "rank": 20,
+   "split": "held_out"
+  },
+  "Physician Assistant": {
+   "levels": {
+    "Advanced": {
+     "contested": [
+      {
+       "endorsed_in": [
+        "R2-13-3a",
+        "S13-3-ladder"
+       ],
+       "key": "StanfordOnline+CME.20952",
+       "rejected_in": [
+        "R2-13-3b"
+       ],
+       "rounds": [
+        1,
+        2
+       ]
+      },
+      {
+       "endorsed_in": [
+        "R2-13-3a",
+        "R2-13-3b",
+        "R2-13-4a"
+       ],
+       "key": "StanfordOnline+SOM-YCME0045",
+       "rejected_in": [
+        "S13-4-other"
+       ],
+       "rounds": [
+        1,
+        2
+       ]
+      }
+     ],
+     "endorsed": [
+      {
+       "items": [
+        "R2-13-4b"
+       ],
+       "key": "StanfordOnline+CME.20666",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "also_fine"
+       ]
+      },
+      {
+       "items": [
+        "R2-13-3a",
+        "R2-13-3b",
+        "R2-13-4a",
+        "R2-13-4b",
+        "S13-4-other"
+       ],
+       "key": "StanfordOnline+CME.20758",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "also_fine",
+        "best_pick",
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-13-3a",
+        "R2-13-3b",
+        "R2-13-4a",
+        "R2-13-4b"
+       ],
+       "key": "StanfordOnline+CME.20775",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "also_fine",
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-13-3a",
+        "R2-13-4a",
+        "S13-3-ladder"
+       ],
+       "key": "StanfordOnline+CME.20868",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "kept_in_good",
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-13-4b"
+       ],
+       "key": "StanfordOnline+SOM-YCME0044",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "also_fine"
+       ]
+      }
+     ],
+     "rejected": [
+      {
+       "items": [
+        "R2-13-4b"
+       ],
+       "key": "StanfordOnline+CME.20968",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "dropped"
+       ]
+      }
+     ]
+    },
+    "Intermediate": {
+     "contested": [],
+     "endorsed": [
+      {
+       "items": [
+        "R2-13-3a",
+        "R2-13-4a",
+        "S13-3-ladder"
+       ],
+       "key": "HarvardX+AT1x",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      }
+     ],
+     "rejected": []
+    },
+    "Introductory": {
+     "contested": [],
+     "endorsed": [
+      {
+       "items": [
+        "R2-13-1a",
+        "R2-13-3a",
+        "S13-3-ladder"
+       ],
+       "key": "HKPolyUx+PACEx101x",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "kept_in_good",
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-13-3a",
+        "R2-13-3b"
+       ],
+       "key": "OsmosisFromElsevier+HS1",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-13-1a",
+        "R2-13-1b",
+        "R2-13-3a",
+        "S13-1-intro"
+       ],
+       "key": "OsmosisFromElsevier+HS2",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "R2-13-1b",
+        "R2-13-3a",
+        "S13-1-intro",
+        "S13-3-ladder"
+       ],
+       "key": "OsmosisFromElsevier+HS3",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "kept_in_good",
+        "suggestion"
+       ]
+      }
+     ],
+     "rejected": []
+    }
+   },
+   "rank": 13,
+   "split": "held_out"
+  },
+  "Product Manager": {
+   "levels": {
+    "Advanced": {
+     "contested": [],
+     "endorsed": [
+      {
+       "items": [
+        "S08-3-ladder"
+       ],
+       "key": "USMx+ENCE607.1x",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      }
+     ],
+     "rejected": []
+    },
+    "Intermediate": {
+     "contested": [],
+     "endorsed": [
+      {
+       "items": [
+        "S08-4-other"
+       ],
+       "key": "CodeSignal+249",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "S08-2-inter",
+        "S08-3-ladder",
+        "S08-4-other"
+       ],
+       "key": "SkillUp-EdTech+AI0282EN",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "S08-2-inter",
+        "S08-4-other"
+       ],
+       "key": "USMx+ENES608.4",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "S08-3-ladder"
+       ],
+       "key": "USMx+ENES680.1x",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      }
+     ],
+     "rejected": []
+    },
+    "Introductory": {
+     "contested": [],
+     "endorsed": [
+      {
+       "items": [
+        "S08-4-other"
+       ],
+       "key": "IBM+PDM101EN",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "S08-3-ladder"
+       ],
+       "key": "Microsoft+MS-123",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "S08-1-intro",
+        "S08-3-ladder",
+        "S08-4-other"
+       ],
+       "key": "SkillUp-EdTech+PDM151EN",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "S08-1-intro"
+       ],
+       "key": "USMx+ENES608.1",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      }
+     ],
+     "rejected": []
+    }
+   },
+   "rank": 8,
+   "split": "calibration"
+  },
+  "Program Manager": {
+   "levels": {
+    "Advanced": {
+     "contested": [],
+     "endorsed": [
+      {
+       "items": [
+        "S06-3-ladder"
+       ],
+       "key": "USMx+PGPM661.1x",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      }
+     ],
+     "rejected": []
+    },
+    "Intermediate": {
+     "contested": [
+      {
+       "endorsed_in": [
+        "S06-2-inter",
+        "S06-3-ladder"
+       ],
+       "key": "RITx+PM9001x",
+       "rejected_in": [
+        "S06-4-other"
+       ],
+       "rounds": [
+        1
+       ]
+      }
+     ],
+     "endorsed": [
+      {
+       "items": [
+        "S06-2-inter",
+        "S06-3-ladder",
+        "S06-4-other"
+       ],
+       "key": "SkillUp-EdTech+AI0289EN",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "best_pick",
+        "kept_in_good"
+       ]
+      }
+     ],
+     "rejected": [
+      {
+       "items": [
+        "S06-2-inter"
+       ],
+       "key": "USMx+ENCE627.1X",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "dropped"
+       ]
+      }
+     ]
+    },
+    "Introductory": {
+     "contested": [
+      {
+       "endorsed_in": [
+        "S06-3-ladder"
+       ],
+       "key": "IBM+PRM100EN",
+       "rejected_in": [
+        "S06-1-intro"
+       ],
+       "rounds": [
+        1
+       ]
+      }
+     ],
+     "endorsed": [
+      {
+       "items": [
+        "S06-4-other"
+       ],
+       "key": "AdelaideX+Project101x",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "S06-3-ladder",
+        "S06-4-other"
+       ],
+       "key": "USMx+PMCOMM01",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "S06-1-intro"
+       ],
+       "key": "USMx+PMCOMM02",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "best_pick"
+       ]
+      }
+     ],
+     "rejected": []
+    }
+   },
+   "rank": 6,
+   "split": "calibration"
+  },
+  "Project Manager": {
+   "levels": {
+    "Intermediate": {
+     "contested": [],
+     "endorsed": [
+      {
+       "items": [
+        "S01-3-ladder",
+        "S01-4-other"
+       ],
+       "key": "SkillUp-EdTech+AI0282EN",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "best_pick"
+       ]
+      },
+      {
+       "items": [
+        "S01-3-ladder"
+       ],
+       "key": "USMx+ENCE627.2X",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "best_pick"
+       ]
+      },
+      {
+       "items": [
+        "S01-2-inter"
+       ],
+       "key": "USMx+EVPM01",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "best_pick"
+       ]
+      }
+     ],
+     "rejected": [
+      {
+       "items": [
+        "S01-2-inter",
+        "S01-3-ladder"
+       ],
+       "key": "IDBx+IDB34.2x",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "dropped"
+       ]
+      },
+      {
+       "items": [
+        "S01-3-ladder",
+        "S01-4-other"
+       ],
+       "key": "RITx+PM9001x",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "dropped"
+       ]
+      }
+     ]
+    },
+    "Introductory": {
+     "contested": [],
+     "endorsed": [
+      {
+       "items": [
+        "S01-1-intro"
+       ],
+       "key": "GTx+PMF1000xII",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "S01-4-other"
+       ],
+       "key": "SkillUp-EdTech+PRM231EN",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "best_pick"
+       ]
+      },
+      {
+       "items": [
+        "S01-1-intro"
+       ],
+       "key": "USMx+PMPREP01",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      }
+     ],
+     "rejected": [
+      {
+       "items": [
+        "S01-4-other"
+       ],
+       "key": "AdelaideX+Project101x",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "dropped"
+       ]
+      }
+     ]
+    }
+   },
+   "rank": 1,
+   "split": "calibration"
+  },
+  "Sales Consultant": {
+   "levels": {
+    "Advanced": {
+     "contested": [],
+     "endorsed": [
+      {
+       "items": [
+        "R2-10-3a",
+        "R2-10-3b",
+        "S10-3-ladder"
+       ],
+       "key": "CFI+001",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "R2-10-3b"
+       ],
+       "key": "NYIF+FAIC.PC1x",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "suggestion"
+       ]
+      }
+     ],
+     "rejected": []
+    },
+    "Intermediate": {
+     "contested": [],
+     "endorsed": [
+      {
+       "items": [
+        "R2-10-3a",
+        "R2-10-3b",
+        "R2-10-4b"
+       ],
+       "key": "BabsonX+MKT01x",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-10-3a",
+        "R2-10-3b",
+        "R2-10-4b"
+       ],
+       "key": "Microsoft+MS-124",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-10-2a",
+        "R2-10-2b",
+        "R2-10-3a",
+        "R2-10-3b",
+        "R2-10-4b",
+        "S10-2-inter",
+        "S10-3-ladder",
+        "S10-4-other"
+       ],
+       "key": "Microsoft+MS-AI-114",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "R2-10-3a",
+        "R2-10-3b",
+        "R2-10-4b",
+        "S10-3-ladder",
+        "S10-4-other"
+       ],
+       "key": "Microsoft+MS-AI-141",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "kept_in_good",
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-10-4b"
+       ],
+       "key": "USMx+ENES680.2x",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-10-2a",
+        "R2-10-2b",
+        "R2-10-3a",
+        "R2-10-3b",
+        "R2-10-4b",
+        "S10-2-inter",
+        "S10-4-other"
+       ],
+       "key": "WOBI+WOBI003",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "kept_in_good",
+        "suggestion"
+       ]
+      }
+     ],
+     "rejected": []
+    },
+    "Introductory": {
+     "contested": [],
+     "endorsed": [
+      {
+       "items": [
+        "R2-10-1a",
+        "R2-10-1b",
+        "R2-10-3a",
+        "R2-10-3b",
+        "R2-10-4b",
+        "S10-3-ladder",
+        "S10-4-other"
+       ],
+       "key": "HarvardX+ENTMR",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "also_fine",
+        "kept_in_good",
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-10-4a"
+       ],
+       "key": "IBM+CB0103EN",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "also_fine"
+       ]
+      },
+      {
+       "items": [
+        "R2-10-3a",
+        "R2-10-3b",
+        "R2-10-4b"
+       ],
+       "key": "IIMBx+MK101x",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "also_fine",
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-10-3b",
+        "R2-10-4a"
+       ],
+       "key": "ISCEA+CFDP02",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "also_fine",
+        "best_pick"
+       ]
+      },
+      {
+       "items": [
+        "R2-10-1a",
+        "R2-10-1b",
+        "R2-10-3a",
+        "R2-10-3b",
+        "R2-10-4a",
+        "R2-10-4b",
+        "S10-1-intro"
+       ],
+       "key": "Microsoft+MS-144",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "also_fine",
+        "best_pick",
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-10-1b",
+        "R2-10-3a",
+        "R2-10-3b"
+       ],
+       "key": "OxfordX+OXFAIM01",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "also_fine",
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-10-3a",
+        "R2-10-4b",
+        "S10-3-ladder",
+        "S10-4-other"
+       ],
+       "key": "State-Bank-of-India+SBSC0015x",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "R2-10-1b",
+        "R2-10-4a"
+       ],
+       "key": "logycaX+SCD_01",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "also_fine"
+       ]
+      }
+     ],
+     "rejected": [
+      {
+       "items": [
+        "R2-10-4a"
+       ],
+       "key": "Microsoft+MS-132",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "dropped"
+       ]
+      },
+      {
+       "items": [
+        "R2-10-1b",
+        "R2-10-3b",
+        "S10-1-intro"
+       ],
+       "key": "Microsoft+MS-133",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "dropped"
+       ]
+      }
+     ]
+    }
+   },
+   "rank": 10,
+   "split": "held_out"
+  },
+  "Sales Manager": {
+   "levels": {
+    "Intermediate": {
+     "contested": [],
+     "endorsed": [
+      {
+       "items": [
+        "S03-2-inter"
+       ],
+       "key": "Microsoft+MS-124",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "S03-2-inter"
+       ],
+       "key": "WOBI+WOBI003",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      }
+     ],
+     "rejected": []
+    },
+    "Introductory": {
+     "contested": [],
+     "endorsed": [
+      {
+       "items": [
+        "S03-1-intro"
+       ],
+       "key": "HarvardX+ENTMR",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "best_pick"
+       ]
+      },
+      {
+       "items": [
+        "S03-3-ladder",
+        "S03-4-other"
+       ],
+       "key": "Microsoft+MS-144",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "best_pick"
+       ]
+      },
+      {
+       "items": [
+        "S03-1-intro"
+       ],
+       "key": "USMx+ENES608.5",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "best_pick"
+       ]
+      }
+     ],
+     "rejected": [
+      {
+       "items": [
+        "S03-1-intro"
+       ],
+       "key": "Microsoft+MS-133",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "dropped"
+       ]
+      },
+      {
+       "items": [
+        "S03-1-intro",
+        "S03-3-ladder",
+        "S03-4-other"
+       ],
+       "key": "State-Bank-of-India+SBSC0015x",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "dropped"
+       ]
+      }
+     ]
+    }
+   },
+   "rank": 3,
+   "split": "calibration"
+  },
+  "Sales Representative": {
+   "levels": {
+    "Intermediate": {
+     "contested": [],
+     "endorsed": [
+      {
+       "items": [
+        "S02-2-inter"
+       ],
+       "key": "WOBI+WOBI003",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "best_pick"
+       ]
+      }
+     ],
+     "rejected": [
+      {
+       "items": [
+        "S02-2-inter"
+       ],
+       "key": "Microsoft+MS-125",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "dropped"
+       ]
+      }
+     ]
+    },
+    "Introductory": {
+     "contested": [],
+     "endorsed": [
+      {
+       "items": [
+        "S02-3-ladder",
+        "S02-4-other"
+       ],
+       "key": "HarvardX+ENTMR",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "best_pick"
+       ]
+      },
+      {
+       "items": [
+        "S02-1-intro"
+       ],
+       "key": "Microsoft+MS-144",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "best_pick"
+       ]
+      }
+     ],
+     "rejected": [
+      {
+       "items": [
+        "S02-1-intro"
+       ],
+       "key": "Microsoft+MS-133",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "dropped"
+       ]
+      },
+      {
+       "items": [
+        "S02-3-ladder",
+        "S02-4-other"
+       ],
+       "key": "Microsoft+MS-137",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "dropped"
+       ]
+      }
+     ]
+    }
+   },
+   "rank": 2,
+   "split": "calibration"
+  },
+  "Sales Specialist": {
+   "levels": {
+    "Intermediate": {
+     "contested": [],
+     "endorsed": [
+      {
+       "items": [
+        "S07-2-inter"
+       ],
+       "key": "Microsoft+MS-124",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "S07-2-inter"
+       ],
+       "key": "Microsoft+MS-AI-114",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      }
+     ],
+     "rejected": []
+    },
+    "Introductory": {
+     "contested": [],
+     "endorsed": [
+      {
+       "items": [
+        "S07-1-intro",
+        "S07-3-ladder",
+        "S07-4-other"
+       ],
+       "key": "USMx+PMPREP02",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "best_pick"
+       ]
+      }
+     ],
+     "rejected": [
+      {
+       "items": [
+        "S07-1-intro"
+       ],
+       "key": "BoxPlay+1.0X",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "dropped"
+       ]
+      },
+      {
+       "items": [
+        "S07-1-intro",
+        "S07-3-ladder",
+        "S07-4-other"
+       ],
+       "key": "State-Bank-of-India+SBSC0015x",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "dropped"
+       ]
+      }
+     ]
+    }
+   },
+   "rank": 7,
+   "split": "calibration"
+  },
+  "Security Engineer": {
+   "levels": {
+    "Advanced": {
+     "contested": [],
+     "endorsed": [
+      {
+       "items": [
+        "R2-12-3a",
+        "R2-12-3b"
+       ],
+       "key": "Microsoft+MS-AI-134",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "also_fine",
+        "best_pick"
+       ]
+      },
+      {
+       "items": [
+        "R2-12-3a",
+        "R2-12-3b"
+       ],
+       "key": "Microsoft+MS-AI-137",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "also_fine",
+        "best_pick"
+       ]
+      }
+     ],
+     "rejected": [
+      {
+       "items": [
+        "R2-12-3b",
+        "S12-3-ladder"
+       ],
+       "key": "GoogleCloud+MSIGCL1x",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "dropped"
+       ]
+      },
+      {
+       "items": [
+        "R2-12-3a"
+       ],
+       "key": "GoogleCloud+SBPIGC1x",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "dropped"
+       ]
+      }
+     ]
+    },
+    "Intermediate": {
+     "contested": [
+      {
+       "endorsed_in": [
+        "R2-12-2b",
+        "S12-2-inter"
+       ],
+       "key": "Microsoft+AZ-500-103",
+       "rejected_in": [
+        "R2-12-3b",
+        "R2-12-4b"
+       ],
+       "rounds": [
+        1,
+        2
+       ]
+      }
+     ],
+     "endorsed": [
+      {
+       "items": [
+        "R2-12-2a"
+       ],
+       "key": "IBM+AI0275EN",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "R2-12-2a",
+        "R2-12-2b",
+        "S12-2-inter"
+       ],
+       "key": "IBM+CD0267EN",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "kept_in_good",
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-12-2a",
+        "R2-12-2b",
+        "R2-12-3a",
+        "R2-12-3b"
+       ],
+       "key": "IBM+CS0112EN",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "best_pick",
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-12-2a",
+        "S12-3-ladder"
+       ],
+       "key": "IBM+Cybfun.5.0",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "best_pick",
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "R2-12-2a",
+        "R2-12-2b",
+        "R2-12-3a",
+        "R2-12-3b",
+        "R2-12-4a",
+        "R2-12-4b"
+       ],
+       "key": "SkillUp-EdTech+DM0101EN",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "also_fine",
+        "best_pick",
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-12-2a",
+        "R2-12-2b",
+        "R2-12-3a",
+        "R2-12-3b",
+        "R2-12-4a",
+        "R2-12-4b"
+       ],
+       "key": "USMx+IS6593",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "also_fine",
+        "suggestion"
+       ]
+      }
+     ],
+     "rejected": [
+      {
+       "items": [
+        "R2-12-4a"
+       ],
+       "key": "Microsoft+AZ-500-102",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "dropped"
+       ]
+      },
+      {
+       "items": [
+        "R2-12-3b",
+        "R2-12-4b",
+        "S12-3-ladder"
+       ],
+       "key": "Microsoft+SC-200-102",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "dropped"
+       ]
+      }
+     ]
+    },
+    "Introductory": {
+     "contested": [
+      {
+       "endorsed_in": [
+        "R2-12-1a",
+        "S12-1-intro"
+       ],
+       "key": "IBM+CS0221EN",
+       "rejected_in": [
+        "R2-12-3a",
+        "R2-12-4a",
+        "R2-12-4b",
+        "S12-4-other"
+       ],
+       "rounds": [
+        1,
+        2
+       ]
+      }
+     ],
+     "endorsed": [
+      {
+       "items": [
+        "R2-12-1a",
+        "R2-12-1b",
+        "R2-12-3a",
+        "R2-12-3b",
+        "R2-12-4a",
+        "R2-12-4b"
+       ],
+       "key": "IBM+Cybfun.3.0",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "also_fine",
+        "best_pick",
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-12-1a",
+        "R2-12-1b"
+       ],
+       "key": "IBM+Cybfun.4.0",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-12-3a"
+       ],
+       "key": "IBM+Cybfun.6.0",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "also_fine",
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-12-1a",
+        "R2-12-1b",
+        "R2-12-3a",
+        "R2-12-3b",
+        "R2-12-4a",
+        "R2-12-4b"
+       ],
+       "key": "Microsoft+MS-CC-130",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "also_fine",
+        "best_pick",
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-12-1a",
+        "R2-12-1b",
+        "R2-12-3a",
+        "R2-12-3b",
+        "R2-12-4a",
+        "R2-12-4b",
+        "S12-4-other"
+       ],
+       "key": "Microsoft+MS-CC-141",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "also_fine",
+        "best_pick",
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-12-1a",
+        "R2-12-1b"
+       ],
+       "key": "WisconsinX+LS0009",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "suggestion"
+       ]
+      }
+     ],
+     "rejected": [
+      {
+       "items": [
+        "R2-12-4a"
+       ],
+       "key": "GoogleCloud+CALP4x",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "dropped"
+       ]
+      },
+      {
+       "items": [
+        "S12-1-intro"
+       ],
+       "key": "USMx+IS4551",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "dropped"
+       ]
+      }
+     ]
+    }
+   },
+   "rank": 12,
+   "split": "held_out"
+  },
+  "Software Engineer": {
+   "levels": {
+    "Intermediate": {
+     "contested": [
+      {
+       "endorsed_in": [
+        "S04-4-other"
+       ],
+       "key": "Codio+CPP-DSA-1",
+       "rejected_in": [
+        "S04-2-inter",
+        "S04-3-ladder"
+       ],
+       "rounds": [
+        1
+       ]
+      }
+     ],
+     "endorsed": [
+      {
+       "items": [
+        "S04-2-inter"
+       ],
+       "key": "CodeSignal+5",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "best_pick"
+       ]
+      },
+      {
+       "items": [
+        "S04-4-other"
+       ],
+       "key": "CodeSignal+68",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "S04-3-ladder"
+       ],
+       "key": "edX+EDX-RapidAI",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "best_pick"
+       ]
+      }
+     ],
+     "rejected": []
+    },
+    "Introductory": {
+     "contested": [
+      {
+       "endorsed_in": [
+        "S04-4-other"
+       ],
+       "key": "Codio+cpp1.1",
+       "rejected_in": [
+        "S04-1-intro"
+       ],
+       "rounds": [
+        1
+       ]
+      },
+      {
+       "endorsed_in": [
+        "S04-4-other"
+       ],
+       "key": "IBM+CS0131EN",
+       "rejected_in": [
+        "S04-1-intro",
+        "S04-3-ladder"
+       ],
+       "rounds": [
+        1
+       ]
+      }
+     ],
+     "endorsed": [
+      {
+       "items": [
+        "S04-1-intro"
+       ],
+       "key": "AI+genai1x",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "best_pick"
+       ]
+      },
+      {
+       "items": [
+        "S04-1-intro",
+        "S04-3-ladder"
+       ],
+       "key": "HarvardX+CS50P",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "best_pick"
+       ]
+      },
+      {
+       "items": [
+        "S04-4-other"
+       ],
+       "key": "UC3Mx+IT.1.2x",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      }
+     ],
+     "rejected": []
+    }
+   },
+   "rank": 4,
+   "split": "calibration"
+  },
+  "Solutions Architect": {
+   "levels": {
+    "Intermediate": {
+     "contested": [
+      {
+       "endorsed_in": [
+        "R2-16-2b"
+       ],
+       "key": "Microsoft+AZ-305-101",
+       "rejected_in": [
+        "S16-2-inter"
+       ],
+       "rounds": [
+        1,
+        2
+       ]
+      }
+     ],
+     "endorsed": [
+      {
+       "items": [
+        "S16-2-inter"
+       ],
+       "key": "Microsoft+MS-AI-130",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "best_pick"
+       ]
+      },
+      {
+       "items": [
+        "R2-16-2b"
+       ],
+       "key": "Microsoft+MS-AI-136",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      }
+     ],
+     "rejected": [
+      {
+       "items": [
+        "S16-2-inter"
+       ],
+       "key": "GoogleCloud+CALP6x",
+       "rounds": [
+        1
+       ],
+       "via": [
+        "dropped"
+       ]
+      }
+     ]
+    },
+    "Introductory": {
+     "contested": [],
+     "endorsed": [
+      {
+       "items": [
+        "R2-16-1a",
+        "R2-16-1b",
+        "S16-1-intro"
+       ],
+       "key": "AI+aws1x",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "kept_in_good",
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-16-1a",
+        "R2-16-1b",
+        "R2-16-3a",
+        "R2-16-3b",
+        "R2-16-4a",
+        "R2-16-4b"
+       ],
+       "key": "AI+azure1x",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-16-1a",
+        "R2-16-1b",
+        "R2-16-3a",
+        "R2-16-3b",
+        "R2-16-4a"
+       ],
+       "key": "GoogleCloud+CALP4x",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-16-1a",
+        "R2-16-1b",
+        "R2-16-3a",
+        "R2-16-3b",
+        "R2-16-4a",
+        "R2-16-4b"
+       ],
+       "key": "Microsoft+MS-CC-120",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-16-1a",
+        "R2-16-1b",
+        "S16-1-intro"
+       ],
+       "key": "Microsoft+MS-CC-148",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "best_pick",
+        "kept_in_good",
+        "suggestion"
+       ]
+      }
+     ],
+     "rejected": [
+      {
+       "items": [
+        "R2-16-1a"
+       ],
+       "key": "AI+rust5x",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "dropped"
+       ]
+      }
+     ]
+    }
+   },
+   "rank": 16,
+   "split": "held_out"
+  },
+  "Strategy Manager": {
+   "levels": {
+    "Advanced": {
+     "contested": [],
+     "endorsed": [
+      {
+       "items": [
+        "R2-17-3a",
+        "R2-17-4a",
+        "R2-17-4b",
+        "S17-4-other"
+       ],
+       "key": "IIMBx+ST104x",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "R2-17-3b",
+        "R2-17-4a",
+        "R2-17-4b",
+        "S17-3-ladder",
+        "S17-4-other"
+       ],
+       "key": "USMx+PGPM661.3x",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      }
+     ],
+     "rejected": []
+    },
+    "Intermediate": {
+     "contested": [],
+     "endorsed": [
+      {
+       "items": [
+        "R2-17-2a"
+       ],
+       "key": "DartmouthX+ROmniX",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "R2-17-2b",
+        "R2-17-3a",
+        "R2-17-3b",
+        "S17-2-inter",
+        "S17-3-ladder"
+       ],
+       "key": "RITx+PM9001x",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "R2-17-3b",
+        "R2-17-4b",
+        "S17-3-ladder",
+        "S17-4-other"
+       ],
+       "key": "SkillUp-EdTech+AI0289EN",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "R2-17-2a",
+        "R2-17-2b",
+        "R2-17-3a",
+        "S17-2-inter"
+       ],
+       "key": "USMx+ENCE627.3X",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      }
+     ],
+     "rejected": []
+    },
+    "Introductory": {
+     "contested": [
+      {
+       "endorsed_in": [
+        "S17-1-intro"
+       ],
+       "key": "SkillUp-EdTech+PGM131EN",
+       "rejected_in": [
+        "R2-17-1b"
+       ],
+       "rounds": [
+        1,
+        2
+       ]
+      }
+     ],
+     "endorsed": [
+      {
+       "items": [
+        "R2-17-3a",
+        "R2-17-3b",
+        "S17-1-intro",
+        "S17-3-ladder"
+       ],
+       "key": "IIMBx+ST101x",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "R2-17-1a",
+        "R2-17-1b",
+        "R2-17-3a",
+        "R2-17-3b"
+       ],
+       "key": "USMx+AHA04",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "best_pick",
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-17-1a",
+        "R2-17-1b"
+       ],
+       "key": "WOBI+WOBI009",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "also_fine",
+        "suggestion"
+       ]
+      }
+     ],
+     "rejected": [
+      {
+       "items": [
+        "R2-17-1a"
+       ],
+       "key": "AdelaideX+DataAnaX",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "dropped"
+       ]
+      }
+     ]
+    }
+   },
+   "rank": 17,
+   "split": "held_out"
+  },
+  "Team Lead": {
+   "levels": {
+    "Advanced": {
+     "contested": [],
+     "endorsed": [
+      {
+       "items": [
+        "R2-14-3a",
+        "R2-14-3b",
+        "S14-3-ladder"
+       ],
+       "key": "CodeSignal+548",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      }
+     ],
+     "rejected": []
+    },
+    "Intermediate": {
+     "contested": [],
+     "endorsed": [
+      {
+       "items": [
+        "R2-14-2b",
+        "R2-14-3a",
+        "R2-14-3b",
+        "R2-14-4a",
+        "R2-14-4b"
+       ],
+       "key": "BabsonX+MOB01x",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "kept_in_good",
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-14-2a",
+        "R2-14-3a",
+        "R2-14-3b",
+        "R2-14-4b",
+        "S14-2-inter",
+        "S14-3-ladder",
+        "S14-4-other"
+       ],
+       "key": "DartmouthX+SCC3",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "R2-14-3a",
+        "R2-14-3b",
+        "R2-14-4a",
+        "R2-14-4b"
+       ],
+       "key": "GoogleCloud+ITSITWOAI1x",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-14-2a",
+        "R2-14-2b",
+        "R2-14-3a",
+        "R2-14-3b",
+        "R2-14-4a",
+        "R2-14-4b",
+        "S14-2-inter",
+        "S14-3-ladder",
+        "S14-4-other"
+       ],
+       "key": "IIMBx+OB252x",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "R2-14-3a",
+        "R2-14-3b",
+        "R2-14-4a",
+        "R2-14-4b"
+       ],
+       "key": "ISCEA+CPSCAI02",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-14-3a",
+        "R2-14-3b",
+        "R2-14-4a",
+        "R2-14-4b"
+       ],
+       "key": "StellenboschX+Analytics.1",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "suggestion"
+       ]
+      }
+     ],
+     "rejected": []
+    },
+    "Introductory": {
+     "contested": [],
+     "endorsed": [
+      {
+       "items": [
+        "R2-14-1a",
+        "R2-14-1b",
+        "R2-14-3a",
+        "R2-14-3b",
+        "R2-14-4a"
+       ],
+       "key": "AdelaideX+EmpowerX",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "kept_in_good",
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-14-1a",
+        "R2-14-1b",
+        "R2-14-4b",
+        "S14-1-intro",
+        "S14-4-other"
+       ],
+       "key": "AdelaideX+PerformaX",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "R2-14-1a",
+        "R2-14-1b",
+        "R2-14-3b",
+        "R2-14-4a",
+        "R2-14-4b",
+        "S14-1-intro",
+        "S14-3-ladder",
+        "S14-4-other"
+       ],
+       "key": "IIMBx+HR101x",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "kept_in_good"
+       ]
+      },
+      {
+       "items": [
+        "R2-14-1a",
+        "R2-14-1b",
+        "R2-14-3a",
+        "R2-14-3b",
+        "R2-14-4a",
+        "R2-14-4b"
+       ],
+       "key": "IUx+BUSM-E102",
+       "rounds": [
+        2
+       ],
+       "via": [
+        "suggestion"
+       ]
+      },
+      {
+       "items": [
+        "R2-14-1a",
+        "R2-14-1b",
+        "R2-14-3a",
+        "R2-14-4b",
+        "S14-4-other"
+       ],
+       "key": "LSE+LSEMPT01",
+       "rounds": [
+        1,
+        2
+       ],
+       "via": [
+        "kept_in_good",
+        "suggestion"
+       ]
+      }
+     ],
+     "rejected": []
+    }
+   },
+   "rank": 14,
+   "split": "held_out"
+  }
+ },
+ "reviewer": "reviewer-1",
+ "schema": 1,
+ "split_rule": "careers ranked 1-9 in careers.txt are calibration; the rest are held_out"
+}
