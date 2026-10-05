@@ -8,6 +8,7 @@ candidates the reviewer saw, without re-retrieving or re-ranking. Issues paid ca
 before each career against an upper bound of what it can cost. See
 ``review_feedback.replay_career``.
 """
+import argparse
 import hashlib
 import json
 from functools import partial
@@ -18,6 +19,7 @@ from django.core.management.base import BaseCommand, CommandError
 from enterprise_access.apps.pathway_eval import review_feedback, variant_collection
 from enterprise_access.apps.pathway_eval.shape_review import REVIEW_SHAPES, REVIEW_STRATEGIES
 from enterprise_access.apps.pathways import judging, pathway_variants
+from enterprise_access.apps.pathways.ecosystems import resolve_single_ecosystem
 
 
 class Command(BaseCommand):
@@ -41,9 +43,11 @@ class Command(BaseCommand):
                                  'the review shapes.')
         parser.add_argument('--editorial-snapshot',
                             help='An editorial policy snapshot (JSON), loaded with EditorialPolicy.from_dict.')
-        parser.add_argument('--single-ecosystem', action='store_true',
+        parser.add_argument('--single-ecosystem', action=argparse.BooleanOptionalAction, default=None,
                             help="Refuse a course that would leave a pathway spanning two vendors' "
-                                 'products (see pathways.ecosystems).')
+                                 'products (see pathways.ecosystems). --no-single-ecosystem turns the rule '
+                                 'off; omitted, the app\'s default applies: on, unless the kill switch '
+                                 'learner_pathways_disable_single_ecosystem is on.')
         parser.add_argument('--career-context',
                             help='The review queue (queue.json): each career\'s description and family titles, '
                                  'passed to the arms and the judge.')
@@ -159,7 +163,10 @@ class Command(BaseCommand):
 
         return {
             'strategies': strategies, 'shapes': shapes, 'rubrics': rubrics, 'policy': policy,
-            'single_ecosystem': options['single_ecosystem'],
+            # Passed to the app as given -- None leaves the choice to its default -- and resolved
+            # here only so the summary and each replay record say what actually ran.
+            'single_ecosystem': options.get('single_ecosystem'),
+            'single_ecosystem_resolved': resolve_single_ecosystem(options.get('single_ecosystem')),
             'snapshot': snapshot, 'contexts': contexts,
             'bound': review_feedback.replay_call_bound(strategies=strategies, shapes=shapes, rubrics=rubrics),
         }
@@ -218,6 +225,7 @@ class Command(BaseCommand):
         except Exception as exc:  # pylint: disable=broad-except
             return 'ERROR', f'replay failed ({type(exc).__name__}): {exc}', None
         replay['replay']['editorial_snapshot'] = plan['snapshot']
+        replay['replay']['single_ecosystem'] = plan['single_ecosystem_resolved']
         replay['replay']['call_bound'] = plan['bound']
         judged = sum(1 for variant in replay['variants'] if variant.get(
             review_feedback.judgement_field(plan['rubrics'][0])))
@@ -231,7 +239,8 @@ class Command(BaseCommand):
         write('SHAPE REVIEW REPLAY' + ('  (DRY RUN -- no lookups, no calls)' if options['dry_run'] else ''))
         write(f'  careers: {n_runs}  strategies: {plan["strategies"]}  rubrics: {plan["rubrics"]}  '
               f'editorial policy: {"yes" if plan["policy"] is not None else "no"}  '
-              f'single ecosystem: {"yes" if plan["single_ecosystem"] else "no"}  '
+              f'single ecosystem: {"yes" if plan["single_ecosystem_resolved"] else "no"}'
+              f'{"" if plan["single_ecosystem"] is not None else " (default)"}  '
               f'career context: {"yes" if plan["contexts"] else "no"}')
         write(f'  shapes: {plan["shapes"]}')
         write(f'  up to {plan["bound"]} paid call(s) per career; {plan["bound"] * n_runs} for the whole list')

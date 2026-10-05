@@ -15,6 +15,7 @@ from unittest import mock
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.test import TestCase
+from edx_toggles.toggles.testutils import override_waffle_switch
 
 from enterprise_access.apps.pathway_eval import review_feedback, variant_collection
 from enterprise_access.apps.pathway_eval.review_feedback import append_replay, load_replays
@@ -34,6 +35,7 @@ from enterprise_access.apps.pathway_eval.tests.test_review_feedback import (
 )
 from enterprise_access.apps.pathways import pathway_variants
 from enterprise_access.apps.pathways.pathway_variants import Variant
+from enterprise_access.toggles import LEARNER_PATHWAYS_DISABLE_SINGLE_ECOSYSTEM
 
 PATCH_LOOKUP = 'enterprise_access.apps.pathway_eval.variant_collection.lookup_career'
 
@@ -179,6 +181,50 @@ class TestReplayShapeReviewCommand(TestCase):
         self.assertEqual(kwargs['career_description'], 'Alpha Analysts do alpha work.')
         self.assertEqual(kwargs['family_size'], 2)
         self.assertEqual(replays[0]['replay']['editorial_snapshot']['policy'], {'excluded_keys': ['RuriX+I2']})
+
+    def replay_ecosystem(self, *args, **kwargs):
+        """Replay ALPHA with the given flag; ``(what build_variants got, summary text, replay)``."""
+        with tempfile.TemporaryDirectory() as tmp:
+            files = InputFiles(tmp)
+            output = files.dir / 'replay.jsonl'
+            stdout = StringIO()
+            with mock.patch(PATCH_LOOKUP, return_value={'name': ALPHA, 'skills': ['alpha']}), \
+                    mock.patch.object(pathway_variants, 'build_variants', side_effect=replay_variants) as build, \
+                    mock.patch.object(review_feedback.judging, 'judge_pathway', side_effect=fake_judgement):
+                call_command('replay_shape_review', *args, stdout=stdout, checkpoint=str(files.checkpoint),
+                             careers_file=str(files.careers), careers=[ALPHA], variant_strategies=['shape_cut'],
+                             variant_shapes=['2/0/0'], output_checkpoint=str(output), **kwargs)
+                replays = load_replays(output)
+        return build.call_args.kwargs['single_ecosystem'], stdout.getvalue(), replays[0]['replay']
+
+    def test_single_ecosystem_on(self):
+        passed, text, replay = self.replay_ecosystem('--single-ecosystem')
+
+        self.assertIs(passed, True)
+        self.assertIn('single ecosystem: yes  ', text)
+        self.assertIs(replay['single_ecosystem'], True)
+
+    def test_single_ecosystem_off(self):
+        passed, text, replay = self.replay_ecosystem('--no-single-ecosystem')
+
+        self.assertIs(passed, False)
+        self.assertIn('single ecosystem: no  ', text)
+        self.assertIs(replay['single_ecosystem'], False)
+
+    def test_single_ecosystem_omitted_leaves_it_to_the_app_and_says_what_that_resolved_to(self):
+        passed, text, replay = self.replay_ecosystem()
+
+        self.assertIsNone(passed)
+        self.assertIn('single ecosystem: yes (default)', text)
+        self.assertIs(replay['single_ecosystem'], True)
+
+    def test_single_ecosystem_omitted_follows_the_kill_switch(self):
+        with override_waffle_switch(LEARNER_PATHWAYS_DISABLE_SINGLE_ECOSYSTEM, True):
+            passed, text, replay = self.replay_ecosystem()
+
+        self.assertIsNone(passed)
+        self.assertIn('single ecosystem: no (default)', text)
+        self.assertIs(replay['single_ecosystem'], False)
 
     def test_bad_requests_are_command_errors(self):
         with tempfile.TemporaryDirectory() as tmp:

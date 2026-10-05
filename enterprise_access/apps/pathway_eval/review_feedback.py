@@ -854,7 +854,7 @@ def _course_details(keys, candidates_by_key, fallback: dict | None = None) -> li
 
 def replay_career(run: dict, *, strategies, shapes, career_skills, career_description: str = '',
                   family_titles=(), family_size: int = 0, policy=None, rubrics=(RUBRIC_V1,),
-                  variant_backend=None, judge_backend=None, single_ecosystem: bool = False) -> dict:
+                  variant_backend=None, judge_backend=None, single_ecosystem: bool | None = None) -> dict:
     """
     Re-run selection and judging on one career's stored window, without retrieval or re-rank.
 
@@ -870,6 +870,8 @@ def replay_career(run: dict, *, strategies, shapes, career_skills, career_descri
         career_description, family_titles, family_size: Career context for the arms and the
             judge, passed where the app takes them.
         policy: An editorial policy for the arms that read one.
+        single_ecosystem: Passed to ``build_variants`` as given: ``True`` or ``False`` decides,
+            and ``None`` leaves it to the app's default (on, unless its kill switch is on).
         rubrics: ``v1`` and/or ``v2``; each lands in ``judgement_field(rubric)``.
 
     Returns:
