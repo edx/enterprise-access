@@ -1,0 +1,32 @@
+{
+ "alternates": {
+  "Introductory": [
+    {"key": "GoogleCloud+CALP5x", "level_type": "Introductory", "partner": "Google Cloud", "skill_names": ["Google Cloud", "Application Environments", "DevOps", "Autoscaling", "Infrastructure Automation", "Solution Architecture", "Networking Hardware", "Google Cloud Platform (GCP)", "Automation", "Load Balancing"], "title": "Elastic Google Cloud Infrastructure: Scaling and Automation", "window_rank": 2},
+    {"key": "GoogleCloud+CALP4x", "level_type": "Introductory", "partner": "Google Cloud", "skill_names": ["Encryption", "Google Cloud", "DevOps", "Application Environments", "Management", "Solution Architecture", "Billing", "Google Cloud Platform (GCP)"], "title": "Essential Google Cloud Infrastructure: Core Services", "window_rank": 6},
+    {"key": "Microsoft+MS-CC-140", "level_type": "Introductory", "partner": "Microsoft", "skill_names": ["CI/CD", "Case Study", "DevOps", "Scalability", "Workflow Management", "Microsoft Azure", "Github", "Event-Driven Programming", "Authentications", "Azure Functions"], "title": "Real Life Applications of Software Developer Skills", "window_rank": 8},
+    {"key": "Microsoft+MS-CC-120", "level_type": "Introductory", "partner": "Microsoft", "skill_names": ["Cloud Computing", "System Administration", "Governance", "Solution Architecture", "Microsoft Azure", "Communication", "Systems Engineering", "Business Continuity", "Cloud Computing Architecture", "Gap Analysis"], "title": "Finding Your Solution Architect Role", "window_rank": 9},
+    {"key": "Microsoft+AZSANA", "level_type": "Introductory", "partner": "Microsoft", "skill_names": ["Azure Synapse Analytics", "Microsoft Azure", "SQL (Programming Language)", "Data Integration", "Serverless Computing", "Synapse Citrix", "Data Analysis"], "title": "Azure Synapse Analytics: Data integration, HTAP, and warehousing", "window_rank": 14},
+    {"key": "AI+rust5x", "level_type": "Introductory", "partner": "Pragmatic AI Labs", "skill_names": ["Chatbot", "CI/CD", "System Programming", "Open Neural Network Exchange (ONNX)", "Artificial Intelligence Development", "DevOps", "Artificial Intelligence", "BERT (NLP Model)", "Amazon Web Services", "Machine Learning"], "title": "Rust for Large Language Model Operations (LLMOps)", "window_rank": 22},
+    {"key": "IBM+CC0101EN", "level_type": "Introductory", "partner": "IBM", "skill_names": ["Cloud Security Infrastructure", "Public Cloud", "Cloud Security", "Business Case", "Case Study", "Cloud Computing", "Platform As A Service (PaaS)", "Infrastructure As A Service (IaaS)", "Multi-Cloud", "Virtualization"], "title": "Introduction to Cloud Computing", "window_rank": 23},
+    {"key": "AI+azure1x", "level_type": "Introductory", "partner": "Pragmatic AI Labs", "skill_names": ["Large Language Modeling", "Scalability", "Microsoft Azure", "Architectural Patterns"], "title": "Azure Fundamentals", "window_rank": 24},
+    {"key": "Microsoft+MS-103", "level_type": "Introductory", "partner": "Microsoft", "skill_names": ["Health Insurance Portability And Accountability Act (HIPAA) Compliance", "Cyber Security", "Security Information And Event Management (SIEM)", "Azure Security", "Threat Detection", "Microsoft Sentinel", "Identity And Access Management", "Incident Response", "Cloud-Native Computing", "Mechanics"], "title": "Azure Security Operations Foundation", "window_rank": 27},
+    {"key": "AI+bedrock1x", "level_type": "Introductory", "partner": "Pragmatic AI Labs", "skill_names": ["Infrastructure as Code (IaC)", "MLOps (Machine Learning Operations)", "Trustworthiness", "Applications Of Artificial Intelligence", "DevOps", "DataOps", "Data Engineering", "Amazon Web Services", "Artificial Intelligence", "Dashboard"], "title": "Building AI with Bedrock Agent", "window_rank": 28},
+    {"key": "Microsoft+AZFAS", "level_type": "Introductory", "partner": "Microsoft", "skill_names": ["Microsoft Azure Expressroute", "Microsoft Azure", "Single Sign-On (SSO)", "Windows Defender", "Identity And Access Management", "Virtual Machines", "Data Migration", "Azure Security", "Access Controls", "Role-Based Access Control (RBAC)"], "title": "Microsoft Azure Fundamentals: Describe Azure services", "window_rank": 30},
+    {"key": "GoogleCloud+GCIAMNAWSPR1x", "level_type": "Introductory", "partner": "Google Cloud", "skill_names": ["Google Cloud Platform (GCP)", "Identity And Access Management", "Amazon Web Services", "Management"], "title": "Google Cloud IAM and Networking for AWS Professionals", "window_rank": 31}
+  ]
+ },
+ "arm": "old",
+ "built_from": {"blind_key.json": "d2fcc5f4d43759bd3f61b01e6ec5a4183aab07eb1085751e349eecedc6b31cca", "checkpoint.jsonl": "431d95d3ee4f5c7610b09cf271d9527cf857daccc862da0dca101d570429ab62", "queue-round2.json": "5f97a593706e5d9dd15d7f2f216a598137ca20ca37ea5ada0680efa5a123db54", "replay-round2-new.jsonl": "41b11e0935decc8fac9d41d97ebca16415a7a6d60558a2ed09cef2497f7a794d"},
+ "career": "Solutions Architect",
+ "courses": [
+   {"key": "Microsoft+MS-CC-148", "level_type": "Introductory", "partner": "Microsoft", "skill_names": ["Software As A Service (SaaS)", "Scalability", "Platform As A Service (PaaS)", "Solution Architecture", "Compliance Risk", "Microsoft Azure", "Functional Requirement", "Infrastructure As A Service (IaaS)", "Cloud Services", "Business Requirements"], "step": 1, "title": "Real Life Applications of Solution Architect Skills", "window_rank": 0},
+   {"key": "AI+aws1x", "level_type": "Introductory", "partner": "Pragmatic AI Labs", "skill_names": ["AWS Networking", "Fault Tolerance", "Scalability Design", "Amazon Elastic Compute Cloud", "AWS Certified Solutions Architect Professional", "Cloud Computing Architecture", "Amazon Web Services", "Machine Learning", "AWS Big Data", "Data Analysis"], "step": 2, "title": "Authoritative AWS", "window_rank": 5}
+ ],
+ "ecosystems": ["Amazon", "Microsoft"],
+ "item_id": "R2-16-1b",
+ "offending_keys": ["Microsoft+MS-CC-148", "AI+aws1x"],
+ "reviewed": true,
+ "round": 2,
+ "shape": "2/0/0",
+ "tier": "intro"
+}

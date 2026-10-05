@@ -1,0 +1,32 @@
+{
+ "alternates": {
+  "Introductory": [
+    {"key": "GoogleCloud+CALP5x", "level_type": "Introductory", "partner": "Google Cloud", "skill_names": ["Google Cloud", "Application Environments", "DevOps", "Autoscaling", "Infrastructure Automation", "Solution Architecture", "Networking Hardware", "Google Cloud Platform (GCP)", "Automation", "Load Balancing"], "title": "Elastic Google Cloud Infrastructure: Scaling and Automation", "window_rank": 2},
+    {"key": "Microsoft+MS-CC-147", "level_type": "Introductory", "partner": "Microsoft", "skill_names": ["DevOps", "Communication", "Analytical Thinking", "Gap Analysis", "Solution Architecture", "System Administration", "Quality Assurance"], "title": "Career of a Solution Architect", "window_rank": 4},
+    {"key": "Microsoft+MS-CC-120", "level_type": "Introductory", "partner": "Microsoft", "skill_names": ["Cloud Computing", "System Administration", "Governance", "Solution Architecture", "Microsoft Azure", "Communication", "Systems Engineering", "Business Continuity", "Cloud Computing Architecture", "Gap Analysis"], "title": "Finding Your Solution Architect Role", "window_rank": 5},
+    {"key": "AI+gcp1x", "level_type": "Introductory", "partner": "Pragmatic AI Labs", "skill_names": ["Network Topology", "Google Cloud Platform (GCP)", "Google Professional Cloud Architect", "Scalability"], "title": "Authoritative GCP", "window_rank": 6},
+    {"key": "Microsoft+MS-CC-128", "level_type": "Introductory", "partner": "Microsoft", "skill_names": ["DevOps", "Technical Documentation", "Decision Making", "Project Communications"], "title": "Preparing For DevOps Engineer Interviews and Assignments", "window_rank": 21},
+    {"key": "Microsoft+MS-CC-115", "level_type": "Introductory", "partner": "Microsoft", "skill_names": ["Business Process Automation", "Business Operations", "Power BI", "Communication", "Microsoft Power Platform", "Gap Analysis", "Application Development", "Problem Solving", "Strategic Planning"], "title": "Finding Your Applications Developer Role", "window_rank": 23},
+    {"key": "AI+azure1x", "level_type": "Introductory", "partner": "Pragmatic AI Labs", "skill_names": ["Large Language Modeling", "Scalability", "Microsoft Azure", "Architectural Patterns"], "title": "Azure Fundamentals", "window_rank": 24},
+    {"key": "AI+LLMOPS2x", "level_type": "Introductory", "partner": "Pragmatic AI Labs", "skill_names": ["Microsoft Azure", "Language Model", "Artificial Intelligence", "Azure Machine Learning", "Workflow Management", "Github", "Master Of Laws", "Generative Artificial Intelligence", "Architectural Patterns", "MLOps (Machine Learning Operations)"], "title": "LLMOps with Azure", "window_rank": 27},
+    {"key": "Microsoft+MS-CC-116", "level_type": "Introductory", "partner": "Microsoft", "skill_names": ["Programming Languages", "Leadership", "Software Development", "Timelines", "Full Stack Development", "Software Quality (SQA/SQC)", "Communication", "Quality Assurance", "Software Engineering", "Front End (Software Engineering)"], "title": "Finding Your Software Developer Role", "window_rank": 29},
+    {"key": "IBM+Cybfun.3.0", "level_type": "Introductory", "partner": "IBM", "skill_names": ["Patch Management", "Auditing", "Server Administration", "IT Service Management", "Governance", "Endpoint Security", "Artificial Intelligence", "General Data Protection Regulation (GDPR)", "Vulnerability", "Control Objectives For Information And Related Technology (COBIT)"], "title": "Cybersecurity Compliance and Framework", "window_rank": 31},
+    {"key": "SkillUp-EdTech+PDM131EN", "level_type": "Introductory", "partner": "SkillUp EdTech LLC", "skill_names": ["Project Charter", "SWOT Analysis", "Planning", "Business Case", "Agile Methodology", "Product Management", "Financial Analysis", "Product Strategy"], "title": "Product Management: Initial Product Strategy and Plan", "window_rank": 32},
+    {"key": "DavidsonX+DavidsonX.D005", "level_type": "Introductory", "partner": "Davidson College", "skill_names": ["Virtual Machines", "Infographics", "Report Writing", "Business Analytics", "Data Analysis", "Power BI", "Data Visualization", "Microsoft 365"], "title": "Analyzing and Visualizing Data with Power BI", "window_rank": 36}
+  ]
+ },
+ "arm": "old",
+ "built_from": {"blind_key.json": "d2fcc5f4d43759bd3f61b01e6ec5a4183aab07eb1085751e349eecedc6b31cca", "checkpoint.jsonl": "431d95d3ee4f5c7610b09cf271d9527cf857daccc862da0dca101d570429ab62", "queue-round2.json": "5f97a593706e5d9dd15d7f2f216a598137ca20ca37ea5ada0680efa5a123db54", "replay-round2-new.jsonl": "41b11e0935decc8fac9d41d97ebca16415a7a6d60558a2ed09cef2497f7a794d"},
+ "career": "PLM Solution Architect",
+ "courses": [
+   {"key": "Microsoft+MS-CC-148", "level_type": "Introductory", "partner": "Microsoft", "skill_names": ["Software As A Service (SaaS)", "Scalability", "Platform As A Service (PaaS)", "Solution Architecture", "Compliance Risk", "Microsoft Azure", "Functional Requirement", "Infrastructure As A Service (IaaS)", "Cloud Services", "Business Requirements"], "step": 1, "title": "Real Life Applications of Solution Architect Skills", "window_rank": 0},
+   {"key": "GoogleCloud+CALP4x", "level_type": "Introductory", "partner": "Google Cloud", "skill_names": ["Encryption", "Google Cloud", "DevOps", "Application Environments", "Management", "Solution Architecture", "Billing", "Google Cloud Platform (GCP)"], "step": 2, "title": "Essential Google Cloud Infrastructure: Core Services", "window_rank": 3}
+ ],
+ "ecosystems": ["Google", "Microsoft"],
+ "item_id": "R2-20-1b",
+ "offending_keys": ["Microsoft+MS-CC-148", "GoogleCloud+CALP4x"],
+ "reviewed": true,
+ "round": 2,
+ "shape": "2/0/0",
+ "tier": "intro"
+}

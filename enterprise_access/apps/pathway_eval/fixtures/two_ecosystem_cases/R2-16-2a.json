@@ -1,0 +1,31 @@
+{
+ "alternates": {
+  "Intermediate": [
+    {"key": "Microsoft+MS-AI-136", "level_type": "Intermediate", "partner": "Microsoft", "skill_names": ["Governance", "Scalability", "Artificial Intelligence", "Microsoft Azure", "LLaMA (Language Model)", "Digital Transformation", "Generative Artificial Intelligence", "Responsible AI", "Azure Kubernetes Service", "Application Programming Interface (API)"], "title": "Generative AI on Azure: Build, Secure, & Scale Solutions", "window_rank": 11},
+    {"key": "Microsoft+MS-AI-130", "level_type": "Intermediate", "partner": "Microsoft", "skill_names": ["Semantic Kernel", "Artificial Intelligence", "Large Language Modeling", "Retrieval Augmented Generation", "Planning", "Prompt Engineering", "Scalability", "Microsoft Azure", "Memory Management", "Multi-Agent Systems"], "title": "AI Agent Development", "window_rank": 12},
+    {"key": "Microsoft+CLD-106", "level_type": "Intermediate", "partner": "Microsoft", "skill_names": ["Microsoft Azure", "ASP.NET", "Cloud-Native Computing", "Cloud Development", "Microsoft Graph", "Cloud Technologies", "Scalability"], "title": "Cloud: Develop in Cloud", "window_rank": 15},
+    {"key": "IBM+AI0275EN", "level_type": "Intermediate", "partner": "IBM", "skill_names": ["Machine Learning", "Physical Security Operations", "Artificial Intelligence", "Incident Response", "Demand Generation", "Cyber Defense", "Natural Language Processing", "Forecasting", "Workflow Management", "Cyber Threat Intelligence"], "title": "Mastering Generative AI for Cybersecurity", "window_rank": 20},
+    {"key": "Microsoft+MS-AI-148", "level_type": "Intermediate", "partner": "Microsoft", "skill_names": ["Remote Direct Memory Access", "Low Latency", "Microsoft Azure Expressroute", "Virtual Private Networks (VPN)", "Virtual Machines", "Communication", "Computer Networks", "Network Virtualization", "Artificial Intelligence", "Subnetwork"], "title": "Data Network Administration for AI", "window_rank": 21},
+    {"key": "Microsoft+MS-108", "level_type": "Intermediate", "partner": "Microsoft", "skill_names": ["Relational Databases", "Business Intelligence", "SQL (Programming Language)", "Window Function", "Microsoft Azure", "Transact-SQL", "Operations Analytics", "Outliers", "Data Import/Export", "Time Series"], "title": "SQL and Data Querying for Business Insights", "window_rank": 26},
+    {"key": "Microsoft+SC-200-102", "level_type": "Intermediate", "partner": "Microsoft", "skill_names": ["Threat Detection", "Microsoft Sentinel", "Cloud-Native Computing", "Automation", "Microsoft Defender Antivirus", "Physical Security Operations", "Data Ingestion", "Cyber Threat Intelligence", "Security Orchestration Automation and Response (SOAR)", "Microsoft Azure"], "title": "SC-200: Master Microsoft Sentinel", "window_rank": 32},
+    {"key": "Microsoft+CAAAS", "level_type": "Intermediate", "partner": "Microsoft", "skill_names": ["Microsoft Azure", "Artificial Intelligence"], "title": "Azure AI Services: Core applications", "window_rank": 37},
+    {"key": "Microsoft+AZSSQL", "level_type": "Intermediate", "partner": "Microsoft", "skill_names": ["Azure Synapse Analytics", "Microsoft Azure", "SQL (Programming Language)", "Synapse Citrix", "Data Analysis", "Workflow Management", "Serverless Computing", "Data Processing", "Writing", "Teaching"], "title": "Azure Synapse Serverless SQL: Build data analytics solutions", "window_rank": 42},
+    {"key": "Microsoft+AZ-500-102", "level_type": "Intermediate", "partner": "Microsoft", "skill_names": ["Encryption", "Cloud Security Infrastructure", "Virtual Machines", "Access Controls", "Firewall", "Microsoft Azure", "Cloud Infrastructure", "Network Security"], "title": "AZ-500: Secure networking, compute, and storage in Azure", "window_rank": 44},
+    {"key": "Microsoft+MS-AI-113", "level_type": "Intermediate", "partner": "Microsoft", "skill_names": ["Expectation Management", "Artificial Intelligence", "Retrieval Augmented Generation", "Scalability", "Safety Standards", "Microsoft Azure", "Strategic Decision Making", "Artificial Intelligence Product Management", "Reliability", "Responsible AI"], "title": "AI for Product Professionals", "window_rank": 46}
+  ]
+ },
+ "arm": "old",
+ "built_from": {"blind_key.json": "d2fcc5f4d43759bd3f61b01e6ec5a4183aab07eb1085751e349eecedc6b31cca", "checkpoint.jsonl": "431d95d3ee4f5c7610b09cf271d9527cf857daccc862da0dca101d570429ab62", "queue-round2.json": "5f97a593706e5d9dd15d7f2f216a598137ca20ca37ea5ada0680efa5a123db54", "replay-round2-new.jsonl": "41b11e0935decc8fac9d41d97ebca16415a7a6d60558a2ed09cef2497f7a794d"},
+ "career": "Solutions Architect",
+ "courses": [
+   {"key": "GoogleCloud+CALP6x", "level_type": "Intermediate", "partner": "Google Cloud", "skill_names": ["Google Cloud", "DevOps", "Application Environments", "Solution Architecture", "Operations", "Technical Requirements", "Google Compute Engine (GCE)", "Google Cloud Platform (GCP)", "Presentations", "Google Kubernetes Engine (GKE)"], "step": 1, "title": "Reliable Google Cloud Infrastructure: Design and Process", "window_rank": 1},
+   {"key": "Microsoft+AZ-305-101", "level_type": "Intermediate", "partner": "Microsoft", "skill_names": ["Network Security", "Access Controls", "Microsoft Azure", "Subnetwork", "Authorization (Computing)", "Traffic Flow", "File Systems", "Virtual Machines", "Authentications", "Azure Active Directory"], "step": 2, "title": "AZ-305: Microsoft Azure Architect Design Prerequisites", "window_rank": 7}
+ ],
+ "ecosystems": ["Google", "Microsoft"],
+ "item_id": "R2-16-2a",
+ "offending_keys": ["GoogleCloud+CALP6x", "Microsoft+AZ-305-101"],
+ "reviewed": true,
+ "round": 2,
+ "shape": "0/2/0",
+ "tier": "intermediate"
+}
