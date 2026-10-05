@@ -2,10 +2,14 @@
 Which vendor's world a course lives in, and why a pathway should stay in one of them.
 
 Bench round 2 (2026-09-29) measured this and it is the largest effect the reviews have turned
-up. Of 81 rated pathways, the 16 that spanned two vendors' products were rated good 25% of the
-time against 69% for the rest; within the same career, where "this career is simply harder"
-cannot explain it, 26% against 62%. They also drew four times the corrections: 1.00 dropped
-courses per pathway against 0.25.
+up. Re-measured with the detector below (title and skill tags; fixtures
+``pathway_eval/fixtures/review_judgements/rounds_1_2.votes.json`` and
+``pathway_eval/fixtures/two_ecosystem_cases/``): of 81 rated pathways, the 14 that span two
+vendors' products (19 of 88 counting the skipped ones) were rated good 2 of 14 times, 14%,
+against 47 of 67, 70%, for the rest. Within the same careers, where "this career is simply
+harder" cannot explain it, 14% against 56% (15 of 27). They also drew far more corrections:
+1.21 dropped courses per pathway against 0.33. (An earlier count of 16 such pathways was made
+under an earlier reading of the detector, before it read skill tags.)
 
 The reviewer's own words for it:
 
@@ -17,29 +21,39 @@ The reviewer's own words for it:
 
     "too much mixed tech.. We have the courses, its moer how it's assembled."
 
-The last is the point. For every one of those 16 pathways a course from the same vendor, or
-from none, was already sitting in the same rung of the same retrieved window -- and for 9 of
-them the reviewer had already marked one of those courses acceptable himself. Nothing had to be
+The last is the point. For every one of those pathways a course from the same vendor, or from
+none, was already sitting in the same rung of the same retrieved window. Nothing had to be
 found; the wrong one was chosen.
 
 **A rule in code, not a line in a prompt.** The second selection prompt already asks for exactly
 this ("prefer transferable skills over one vendor's product", "stay on the same programming
-language or technical stack") and 16 pathways mixed anyway. This belongs with the provider cap
+language or technical stack") and pathways mixed anyway. This belongs with the provider cap
 and the level quota, which assembly guarantees, rather than with the things a model is asked for
 and may or may not do.
 
 **A course's ecosystem comes from what it teaches, not from who published it.** IBM publishes
 plenty of courses that teach nothing of IBM's -- "Project Management Basics" is one -- and
 penalising those would be reading the byline rather than the content. So the patterns below are
-matched against the title and the skill tags. Measured both ways on the round-2 reviews, the
-stricter reading separates the verdicts better (25% against 69%, versus 30% against 76% when the
-publisher counts), which is what a rule should be built on.
+matched against the title and the skill tags. Measured both ways on the round-2 reviews, this
+content reading separated the verdicts better than counting the publisher did, which is what a
+rule should be built on.
 
 Nothing here prefers a vendor-free course to a vendor's one; that was considered and set aside
 (Brian, 2026-09-29). The rule is only that a pathway may not span two.
+
+**On by default, everywhere** (Brian, 2026-10-05). Round 2's rejected courses point the same
+way: 62% of the courses the reviewer dropped were vendor-specific, against 19% of those he
+endorsed. So the rule applies to the delivered pathway (``pathway_assembly.assemble_pathway``)
+and to every experiment arm unless a caller says otherwise. ``single_ecosystem=None`` -- the
+default wherever the parameter appears -- means "whatever the kill switch says"; an explicit
+``True`` or ``False`` wins over the switch, so a test or an experiment replay can still run
+without it. The switch is ``enterprise_access.learner_pathways_disable_single_ecosystem``
+(``toggles.py``): off, the rule applies; on, it is off for every caller that did not choose.
 """
 
 import re
+
+from enterprise_access.toggles import learner_pathways_single_ecosystem_enabled
 
 #: Product and platform names, by the ecosystem they belong to. Matched case-insensitively
 #: against a course's title and skill tags. A name only earns a place here if a course teaching
@@ -59,6 +73,18 @@ _COMPILED = {name: re.compile(pattern, re.IGNORECASE) for name, pattern in ECOSY
 
 #: What a rejected course is counted under, beside ``provider_cap`` and the rest.
 ECOSYSTEM_DROP = 'other_ecosystem'
+
+
+def resolve_single_ecosystem(single_ecosystem=None) -> bool:
+    """
+    Whether the rule applies to a call: its explicit choice, else the kill switch's default.
+
+    Resolved once per pathway (or per ``build_variants`` run) and passed down as a plain bool,
+    so one run never reads the switch twice and cannot change its mind halfway.
+    """
+    if single_ecosystem is None:
+        return learner_pathways_single_ecosystem_enabled()
+    return bool(single_ecosystem)
 
 
 def ecosystems_of(title: str = '', skill_names=()) -> frozenset:
@@ -112,8 +138,8 @@ class EcosystemTracker:
     building, so the rule holds however the courses were chosen.
     """
 
-    def __init__(self, enabled: bool = True, courses=()):
-        self.enabled = enabled
+    def __init__(self, enabled: bool | None = None, courses=()):
+        self.enabled = resolve_single_ecosystem(enabled)
         self.chosen = frozenset()
         self.refused = 0
         for course in courses:

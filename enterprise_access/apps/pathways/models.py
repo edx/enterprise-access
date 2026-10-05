@@ -779,6 +779,13 @@ class AssemblePathwayOutput(BaseInputOutput):
     ``violations`` carries the Tier 1 gate results. They are persisted rather than raised
     because a pathway that fails a correctness gate is a bug worth *seeing* in a harness
     run -- raising would hide it behind a failed workflow with no comparable trace.
+
+    ``refused`` counts the eligible courses a placement rule turned away, by reason --
+    ``other_ecosystem`` (the one-ecosystem rule) and ``level_mismatch`` (a title that
+    contradicts its rung) -- so the rules' cost is observable per run; ``ineligible`` keeps
+    counting what never reached assembly, capstones among them. ``single_ecosystem`` records
+    whether the one-ecosystem rule ran, since its kill switch can turn it off. Both are
+    defaulted, so outputs persisted before them still load and read as built without them.
     """
     KEY = 'assemble_pathway_output'
 
@@ -788,6 +795,8 @@ class AssemblePathwayOutput(BaseInputOutput):
     level_mix: dict = field(factory=dict)
     ineligible: dict = field(factory=dict)
     violations: list[str] = field(factory=list, validator=_is_str_list)
+    refused: dict = field(factory=dict)
+    single_ecosystem: bool = field(default=False, validator=validators.instance_of(bool))
 
 
 @define
@@ -964,6 +973,10 @@ class AssemblePathwayStep(AbstractWorkflowStep):
     Reads the re-rank order when it ran and falls back to retrieval order when it did not,
     so a disabled or skipped model call still yields a pathway.
 
+    The content rules apply here as in every experiment arm (see ``pathway_assembly``): no
+    capstones, one vendor ecosystem unless the kill switch
+    ``learner_pathways_disable_single_ecosystem`` is on, and level honesty from title cues.
+
     .. no_pii: This model has no PII
     """
     exception_class = AssemblePathwayStepException
@@ -1008,6 +1021,8 @@ class AssemblePathwayStep(AbstractWorkflowStep):
             level_mix=assembly.realised_level_mix,
             ineligible=assembly.ineligible,
             violations=violations,
+            refused=assembly.refused,
+            single_ecosystem=assembly.single_ecosystem,
         )
 
     @staticmethod

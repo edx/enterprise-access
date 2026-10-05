@@ -49,7 +49,8 @@ def hits_spanning_levels():
         hit('A+3', title='More Data', partner='Microsoft'),
         hit('B+1', title='Applied Data', level=LEVEL_INTERMEDIATE, partner='IBM'),
         hit('B+2', title='Data Engineering', level=LEVEL_INTERMEDIATE, partner='Delft'),
-        hit('C+1', title='Data Capstone', level=LEVEL_ADVANCED, partner='IBM'),
+        # Not 'Data Capstone', as it once was: capstones are now ineligible everywhere.
+        hit('C+1', title='Advanced Data Strategy', level=LEVEL_ADVANCED, partner='IBM'),
     ]
 
 
@@ -182,7 +183,7 @@ class TestAssemblePathway(TestCase):
             hit('A+5', title='Intro 5', partner='P4'),
             # Scarce higher rungs, only available from IBM.
             hit('B+1', title='Applied', level=LEVEL_INTERMEDIATE, partner='IBM'),
-            hit('C+1', title='Capstone', level=LEVEL_ADVANCED, partner='IBM'),
+            hit('C+1', title='Advanced Topics', level=LEVEL_ADVANCED, partner='IBM'),
         ])
 
         mix = assembly.realised_level_mix
@@ -214,16 +215,21 @@ class TestAssemblePathway(TestCase):
     def test_title_cues_break_ties_within_a_rung(self):
         """
         `level_type` is 19-36% unreliable, so a title that clearly reads as introductory
-        sorts ahead of one that reads as advanced at the same tagged level.
+        sorts ahead of one that says nothing at the same tagged level.
+
+        This once paired 'Advanced Widgets' with the introduction on the Introductory rung.
+        Level honesty now refuses that placement outright, so the tie it broke cannot arise;
+        the tie that remains is between an introductory cue and none.
         """
         assembly = assemble_pathway([
-            hit('A+1', title='Advanced Widgets', partner='P1'),
+            hit('A+1', title='Widgets in Practice', partner='P1'),
             hit('A+2', title='Introduction to Widgets', partner='P2'),
             hit('B+1', title='Applied Widgets', level=LEVEL_INTERMEDIATE, partner='P3'),
             hit('B+2', title='Widget Systems', level=LEVEL_INTERMEDIATE, partner='P4'),
-            hit('C+1', title='Widget Capstone', level=LEVEL_ADVANCED, partner='P5'),
+            hit('C+1', title='Advanced Widget Design', level=LEVEL_ADVANCED, partner='P5'),
         ])
 
+        self.assertTrue(assembly.is_complete)
         self.assertEqual(assembly.courses[0].key, 'A+2')
 
     def test_too_few_eligible_candidates_yields_an_incomplete_assembly(self):
@@ -281,7 +287,8 @@ class TestValidatePathway(TestCase):
             Candidate(key='A+2', title='Intro 2', level_type=LEVEL_INTRODUCTORY, partner='P2', language='English'),
             Candidate(key='B+1', title='Applied', level_type=LEVEL_INTERMEDIATE, partner='P3', language='English'),
             Candidate(key='B+2', title='More', level_type=LEVEL_INTERMEDIATE, partner='P4', language='English'),
-            Candidate(key='C+1', title='Capstone', level_type=LEVEL_ADVANCED, partner='P5', language='English'),
+            Candidate(key='C+1', title='Advanced Topics', level_type=LEVEL_ADVANCED, partner='P5',
+                      language='English'),
         ]
 
     def test_a_well_formed_pathway_has_no_violations(self):

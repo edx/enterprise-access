@@ -103,6 +103,33 @@ LEARNER_PATHWAYS_PATHWAY_EXPERIMENTS = WaffleSwitch(
     __name__,
 )
 
+# A kill switch with the re-rank switch's polarity, for the same reason: ``False`` leaves the
+# rule **on**. A product rule that has to be remembered to be switched on is a rule that is
+# off somewhere.
+#
+# The rule (``apps/pathways/ecosystems.py``): a pathway may teach one vendor's products, or
+# none, but not two. In review round 2 (2026-09-29) pathways spanning two vendors were rated
+# good 14% of the time against 70% for the rest (14% against 56% within the same careers), and
+# 62% of the courses the reviewer rejected were vendor-specific against 19% of those he
+# endorsed.
+#
+# .. toggle_name: enterprise_access.learner_pathways_disable_single_ecosystem
+# .. toggle_implementation: WaffleSwitch
+# .. toggle_default: False
+# .. toggle_description: Kill switch for the learner pathways one-ecosystem rule. Default
+#     False, meaning the rule applies to the delivered pathway and to every experiment arm:
+#     a course that would leave a pathway teaching two vendors' products (Microsoft and
+#     Google, say) is refused, counted as ``other_ecosystem``, and the pathway fills from
+#     the next allowed candidate. Turn it ON to stop applying the rule everywhere at once,
+#     for instance if it is found to empty rungs for a vendor-defined career. A caller that
+#     passes ``single_ecosystem`` explicitly (tests, experiment replays) is not affected.
+# .. toggle_use_cases: open_edx
+# .. toggle_creation_date: 2026-10-05
+LEARNER_PATHWAYS_DISABLE_SINGLE_ECOSYSTEM = WaffleSwitch(
+    f'{ENTERPRISE_ACCESS_NAMESPACE}.learner_pathways_disable_single_ecosystem',
+    __name__,
+)
+
 
 def learner_pathways_server_pipeline_enabled():
     """Return whether the server-side learner pathways pipeline is enabled."""
@@ -122,3 +149,13 @@ def learner_pathways_candidate_rerank_enabled():
 def learner_pathways_pathway_experiments_enabled():
     """Return whether API callers may request pathway size variants and judge scores."""
     return LEARNER_PATHWAYS_PATHWAY_EXPERIMENTS.is_enabled()
+
+
+def learner_pathways_single_ecosystem_enabled():
+    """
+    Return whether the one-ecosystem rule applies by default.
+
+    Reads the kill switch and inverts it, as ``learner_pathways_candidate_rerank_enabled``
+    does, so callers ask the positive question.
+    """
+    return not LEARNER_PATHWAYS_DISABLE_SINGLE_ECOSYSTEM.is_enabled()

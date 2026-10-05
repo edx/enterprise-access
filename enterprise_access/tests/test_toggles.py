@@ -27,6 +27,7 @@ def test_enable_multi_license_entitlements_bff_disabled(monkeypatch):
 @pytest.mark.parametrize('switch', [
     toggles.LEARNER_PATHWAYS_SERVER_PIPELINE,
     toggles.LEARNER_PATHWAYS_DISABLE_CANDIDATE_RERANK,
+    toggles.LEARNER_PATHWAYS_DISABLE_SINGLE_ECOSYSTEM,
 ])
 def test_the_pathway_toggles_are_switches_not_flags(switch):
     """
@@ -71,3 +72,18 @@ def test_reranking_is_on_by_default_because_its_switch_is_a_kill_switch():
 def test_reranking_stops_when_the_kill_switch_is_on():
     with override_waffle_switch(toggles.LEARNER_PATHWAYS_DISABLE_CANDIDATE_RERANK, True):
         assert toggles.learner_pathways_candidate_rerank_enabled() is False
+
+
+@pytest.mark.django_db
+def test_the_single_ecosystem_rule_is_on_by_default_because_its_switch_is_a_kill_switch():
+    """
+    The rule is an agreed product rule (review round 2, 2026-09-29), so it must not depend on
+    someone remembering to switch it on.
+    """
+    assert toggles.learner_pathways_single_ecosystem_enabled() is True
+
+
+@pytest.mark.django_db
+def test_the_single_ecosystem_rule_stops_when_its_kill_switch_is_on():
+    with override_waffle_switch(toggles.LEARNER_PATHWAYS_DISABLE_SINGLE_ECOSYSTEM, True):
+        assert toggles.learner_pathways_single_ecosystem_enabled() is False

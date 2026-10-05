@@ -43,12 +43,37 @@ tagged ``Introductory`` -- ``Advanced Project Management``, ``Data Science: Caps
 reliable enough in aggregate to drive the quota (the table above works), and not reliable
 enough to order five specific courses, so ``TITLE_LEVEL_CUES`` breaks ties within a rung
 and the result is not claimed to be a guaranteed difficulty ordering.
+
+Three content rules, on by default (2026-10-05)
+-----------------------------------------------
+A product reviewer rated 167 generated pathways over two rounds; three of his findings are
+now rules here rather than requests in a prompt:
+
+* **No capstone courses.** Agreed with product on 2026-09-10 and never implemented, and
+  raised again in round 2 ("no capstone courses!"). A capstone assumes the program it caps,
+  which a pathway assembled from several providers is not. ``eligible_candidates`` rejects a
+  course whose *title* names it a capstone (``CAPSTONE_TITLE``), as reason ``capstone``,
+  so it is out of every arm and the delivered pathway; ``validate_pathway`` treats one in a
+  pathway as a Tier 1 violation. Always on: it is an agreed rule, not an experiment.
+* **One vendor's products, or none.** See ``ecosystems``. Applied to the delivered pathway
+  here, alongside the provider cap, and on by default with a kill switch.
+* **Level honesty.** ``level_type`` disagrees with the title 19-36% of the time (see above).
+  A course whose title cue reads advanced is not placed on an Introductory place, nor one
+  whose cue reads introductory on an Advanced place (``title_contradicts_level``), counted
+  as ``level_mismatch``.
+
+  The limit, stated plainly: title cues catch only an *explicit* contradiction -- "Advanced
+  Project Management" tagged Introductory. A course that is hard by subject rather than by
+  wording ("Introduction to Post-Quantum Cryptography" on an introductory place) reads as
+  introductory to this rule and passes. Catching those needs a different signal, such as a
+  calibrated judge's per-course level flag, which this rule does not provide.
 """
 import logging
 import re
 from dataclasses import dataclass, field
 
 from enterprise_access.apps.pathways.content_keys import is_valid_course_key
+from enterprise_access.apps.pathways.ecosystems import ECOSYSTEM_DROP, EcosystemTracker, resolve_single_ecosystem
 
 logger = logging.getLogger(__name__)
 
@@ -80,13 +105,58 @@ MAX_PER_PARTNER = 2
 # translation of the record is served) -- see ``docs/references/algolia_search.md``.
 SUPPORTED_LANGUAGE = 'English'
 
-# Title cues used only to break ties inside a rung, never to override ``level_type``.
+# Title cues. They break ties inside a rung, and they veto a placement the title flatly
+# contradicts (``title_contradicts_level``); they never move a course to another rung.
 TITLE_LEVEL_CUES = (
     (re.compile(r'\b(introduction|introductory|intro|basics?|fundamentals?|foundations?|'
                 r'beginner|getting started|101)\b', re.IGNORECASE), -1),
     (re.compile(r'\b(advanced|expert|mastering|masterclass|capstone|deep dive)\b',
                 re.IGNORECASE), 1),
 )
+
+# A title that names the introductory material in order to go past it ("Moving Beyond QI
+# Basics") is not an introductory cue. Struck out before the honesty check reads the title;
+# one of the stored review windows has exactly this course tagged Advanced.
+_PAST_THE_BASICS = re.compile(
+    r'\bbeyond\s+(?:\w+\s+){0,2}?(introduction|intro|basics?|fundamentals?|foundations?)\b', re.IGNORECASE,
+)
+
+# A course whose title names it a capstone. Matched on the title only, on word boundaries and
+# ignoring case. ``final project`` is here because it is the same thing under another name; a
+# bare "Project" is not, since project-management courses use the word throughout.
+CAPSTONE_TITLE = re.compile(r'\b(capstone|final project)\b', re.IGNORECASE)
+
+#: What a course refused for its title contradicting its rung is counted under.
+LEVEL_MISMATCH_DROP = 'level_mismatch'
+#: What a capstone course is counted under, among ``eligible_candidates``' reasons.
+CAPSTONE_DROP = 'capstone'
+
+
+def is_capstone(title: str) -> bool:
+    """Whether a course's title names it a capstone."""
+    return bool(CAPSTONE_TITLE.search(title or ''))
+
+
+def title_contradicts_level(title: str, level: str) -> bool:
+    """
+    Whether a title flatly contradicts the rung a course would be placed on.
+
+    True for an advanced cue on an ``Introductory`` place, or an introductory cue on an
+    ``Advanced`` place. A title carrying both cues ("Advanced Python Fundamentals") is
+    ambiguous and contradicts neither; an ``Intermediate`` place is never contradicted, since
+    neither cue rules a course out of the middle.
+
+    Only explicit wording is read. A course hard by subject but plainly titled -- "Introduction
+    to Post-Quantum Cryptography" -- passes on an introductory place; see the module docstring.
+    """
+    if level not in (LEVEL_INTRODUCTORY, LEVEL_ADVANCED):
+        return False
+    text = _PAST_THE_BASICS.sub(' ', title or '')
+    intro_pattern, advanced_pattern = TITLE_LEVEL_CUES[0][0], TITLE_LEVEL_CUES[1][0]
+    reads_intro, reads_advanced = bool(intro_pattern.search(text)), bool(advanced_pattern.search(text))
+    if reads_intro == reads_advanced:
+        return False
+    return reads_advanced if level == LEVEL_INTRODUCTORY else reads_intro
 
 
 @dataclass(frozen=True)
@@ -151,6 +221,12 @@ class PathwayAssembly:
     courses: list = field(default_factory=list)
     unfilled_rungs: list = field(default_factory=list)
     ineligible: dict = field(default_factory=dict)
+    #: Eligible courses assembly turned away for a placement rule, by reason
+    #: (``other_ecosystem``, ``level_mismatch``), each course counted once. Unlike
+    #: ``ineligible`` these depend on what else was chosen, or on the rung.
+    refused: dict = field(default_factory=dict)
+    #: Whether the one-ecosystem rule applied, so a run records what it ran under.
+    single_ecosystem: bool = False
 
     @property
     def is_complete(self) -> bool:
@@ -182,6 +258,9 @@ def eligible_candidates(hits, *, supported_language: str = SUPPORTED_LANGUAGE,
     ignoring case and surrounding space, as the editorial app matches them, so a key typed
     in another case cannot slip past the fill. Empty unless a caller opts in, so the
     delivered pathway is unaffected by default.
+
+    A course whose title names it a capstone is rejected as ``capstone``, always (see the
+    module docstring). It is checked last, so every other reason counts what it always did.
     """
     candidates = []
     ineligible: dict = {}
@@ -205,6 +284,9 @@ def eligible_candidates(hits, *, supported_language: str = SUPPORTED_LANGUAGE,
         if supported_language and candidate.language and candidate.language != supported_language:
             reject('unsupported_language')
             continue
+        if is_capstone(candidate.title):
+            reject(CAPSTONE_DROP)
+            continue
         seen.add(candidate.key)
         candidates.append(candidate)
 
@@ -212,7 +294,8 @@ def eligible_candidates(hits, *, supported_language: str = SUPPORTED_LANGUAGE,
 
 
 def assemble_pathway(hits, *, level_quota=None, max_per_partner: int = MAX_PER_PARTNER,
-                     excluded_keys=frozenset()):
+                     excluded_keys=frozenset(), single_ecosystem: bool | None = None,
+                     level_honesty: bool = True):
     """
     Select ``PATHWAY_SIZE`` courses spanning the level quota, capped per provider.
 
@@ -240,23 +323,52 @@ def assemble_pathway(hits, *, level_quota=None, max_per_partner: int = MAX_PER_P
     pathway, per Decision 3.
 
     ``excluded_keys`` is passed to ``eligible_candidates``; empty unless a caller opts in.
+
+    Two placement rules apply in both passes, beside the provider cap, and a course either
+    refuses is skipped so the next allowed candidate takes the place -- a refusal shortens the
+    pathway only when no allowed course is left:
+
+    * ``single_ecosystem`` (see ``ecosystems``): ``None``, the default, follows the kill
+      switch, which leaves the rule on; an explicit ``True`` or ``False`` wins.
+    * ``level_honesty`` (see ``title_contradicts_level``): on unless a caller turns it off.
+      The backfill pass applies it too, because a backfilled course is still shown on its
+      own ``level_type`` rung.
+
+    What they refused is ``PathwayAssembly.refused``, each course counted once.
     """
     quota = dict(level_quota or DEFAULT_LEVEL_QUOTA)
     candidates, ineligible = eligible_candidates(hits, excluded_keys=excluded_keys)
+    single_ecosystem = resolve_single_ecosystem(single_ecosystem)
+    stack = EcosystemTracker(single_ecosystem)
 
     chosen: list = []
     per_partner: dict = {}
     chosen_keys = set()
+    refused_keys: dict = {}
 
     def take(candidate):
         chosen.append(candidate)
         chosen_keys.add(candidate.key)
         per_partner[candidate.partner] = per_partner.get(candidate.partner, 0) + 1
+        stack.take(candidate)
 
     def partner_is_full(candidate):
         # An unattributed course cannot be attributed to a provider, so it cannot be
         # counted against one either.
         return bool(candidate.partner) and per_partner.get(candidate.partner, 0) >= max_per_partner
+
+    def refuses(candidate):
+        """Whether a placement rule turns this course away, recording the reason once."""
+        # The level check first: it depends only on the course, so a course it refuses is
+        # refused for that in both passes rather than counted under two reasons.
+        if level_honesty and title_contradicts_level(candidate.title, candidate.level_type):
+            reason = LEVEL_MISMATCH_DROP
+        elif stack.refuses(candidate):
+            reason = ECOSYSTEM_DROP
+        else:
+            return False
+        refused_keys.setdefault(reason, set()).add(candidate.key)
+        return True
 
     by_rung = {
         level: [c for c in candidates if c.level_type == level]
@@ -275,7 +387,7 @@ def assemble_pathway(hits, *, level_quota=None, max_per_partner: int = MAX_PER_P
         for candidate in by_rung[level]:
             if len(chosen) >= PATHWAY_SIZE or quota[level] <= 0:
                 break
-            if partner_is_full(candidate):
+            if partner_is_full(candidate) or refuses(candidate):
                 continue
             quota[level] -= 1
             take(candidate)
@@ -285,7 +397,7 @@ def assemble_pathway(hits, *, level_quota=None, max_per_partner: int = MAX_PER_P
     for candidate in candidates:
         if len(chosen) >= PATHWAY_SIZE:
             break
-        if candidate.key in chosen_keys or partner_is_full(candidate):
+        if candidate.key in chosen_keys or partner_is_full(candidate) or refuses(candidate):
             continue
         take(candidate)
 
@@ -293,11 +405,14 @@ def assemble_pathway(hits, *, level_quota=None, max_per_partner: int = MAX_PER_P
         courses=sorted(chosen, key=lambda candidate: candidate.difficulty_rank),
         unfilled_rungs=unfilled,
         ineligible=ineligible,
+        refused={reason: len(keys) for reason, keys in sorted(refused_keys.items())},
+        single_ecosystem=single_ecosystem,
     )
     if not assembly.is_complete:
         logger.info(
-            'Assembled %d of %d courses from %d eligible candidates (%d hits, ineligible: %s).',
+            'Assembled %d of %d courses from %d eligible candidates (%d hits, ineligible: %s, refused: %s).',
             len(assembly.courses), PATHWAY_SIZE, len(candidates), len(hits), ineligible or {},
+            assembly.refused or {},
         )
     return assembly
 
@@ -317,6 +432,9 @@ def validate_pathway(courses, *, customer_catalog_keys=None,
     ``customer_catalog_keys`` is optional because proving catalog membership needs a
     browse-scoped key (Open Decision 6); when it is not supplied that gate is skipped
     rather than assumed to pass.
+
+    A capstone course (``is_capstone``) is a violation: excluding them is an agreed product
+    rule, so one reaching a pathway is a bug in whatever chose it.
 
     The size gate defaults to Decision 3's exactly-five. ``expected_size`` and
     ``size_range`` exist for the size variants in ``pathway_variants``, which are built
@@ -343,6 +461,10 @@ def validate_pathway(courses, *, customer_catalog_keys=None,
     duplicates = {key for key in keys if keys.count(key) > 1}
     for key in sorted(duplicates):
         violations.append(f'{key!r} appears more than once')
+
+    for course in courses:
+        if is_capstone(getattr(course, 'title', '')):
+            violations.append(f'{course.key!r} is a capstone course ({course.title!r})')
 
     for course in courses:
         if course.language and course.language != supported_language:

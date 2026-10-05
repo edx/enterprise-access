@@ -181,7 +181,9 @@ seated course makes it worse. On the bench windows (2026-09-29), a seated course
 provider that dominated the window led the model to choose two more from that provider, and
 the cap left 9 of Sales Manager's 12 shapes short. So when the code refuses picks for breaking
 a stated rule, `shape_pick_v2` asks once more. Those rules are the provider cap, a rung's
-count, a repeat, or a key it was never shown (`REPAIRABLE_DROPS`, plus fabrications).
+count, a repeat, or a key it was never shown (`REPAIRABLE_DROPS`, plus fabrications). The
+two content rules below (`other_ecosystem`, `level_mismatch`) are in `REPAIRABLE_DROPS` too:
+the model is not told them, but the gap is ours to fill.
 
 - The repair call shows everything accepted so far as `already_chosen`.
 - It asks only for the places still open.
@@ -226,6 +228,66 @@ titles, the career description and eight career skills.
 
 The collection's CSV adds `seats` and `verdict_v2` as its last two columns. Its summary
 counts v2 verdicts separately (`good_v2`, `weak_v2`, `bad_v2`).
+
+## Content rules, on by default (2026-10-05)
+
+A product reviewer rated 167 generated pathways over two review rounds. Three of his findings
+are now rules in code. They apply to the delivered pathway (`assemble_pathway`) **and** to
+every arm here, so an arm compared with the delivered pathway is compared under the same
+rules.
+
+| Rule | Where it applies | Counted as | Off switch |
+| --- | --- | --- | --- |
+| No capstone courses | `eligible_candidates` (everything), and a Tier 1 violation in `validate_pathway` | `capstone` (in `ineligible`) | None: always on |
+| One vendor ecosystem | Assembly (both passes), `ranked_cut`, `shape_cut`, `apply_selection` (every model arm), the repair round | `other_ecosystem` | Kill switch, or `single_ecosystem=False` per call |
+| Level honesty | Assembly (both passes), `shape_cut`, `apply_selection` under a rung quota (`shape_pick`, `shape_pick_v2`, repair) | `level_mismatch` | `level_honesty=False` per call |
+
+- **No capstones.** Agreed with product on 2026-09-10 and never implemented. The reviewer
+  asked again in round 2 ("no capstone courses!"). A course is a capstone when its *title*
+  matches `capstone` or `final project` (whole words, any case). On the 20 stored round-2
+  windows (539 distinct courses) that removes 11 courses, 21 window places, all of them named
+  capstones. Before the rule, 2 of 20 delivered pathways and 28 of 500 variants contained one.
+- **One ecosystem** (`ecosystems.py`): a pathway may teach one vendor's products (Microsoft,
+  Google, AWS and others), or none, but not two. In round 2, the 14 of 81 rated pathways that
+  spanned two vendors were rated good 14% of the time (2 of 14), against 70% for the rest (47
+  of 67). Within the same careers it was 14% against 56%, and they drew 1.21 dropped courses per
+  pathway against 0.33. These figures were re-measured with the current detector (title plus
+  skill tags). An earlier count of 16 pathways (25% against 69%) used an older reading. Also,
+  62% of the courses he rejected were vendor-specific, against 19% of those he endorsed. A refused course is skipped and the place goes to the next allowed candidate. In
+  assembly that means the delivered pathway is shortened only when no allowed course is left.
+- **Level honesty.** `level_type` disagrees with the title 19–36% of the time. A course whose
+  title cue reads advanced (`TITLE_LEVEL_CUES`) is not placed on an Introductory place, and
+  one whose cue reads introductory is not placed on an Advanced place. A title with both cues,
+  or "beyond the basics", is left alone. On the stored windows, 6 eligible courses (12 window
+  places) would ever be refused. **The limit:** this rule catches only an explicit
+  contradiction in the wording. A course that is hard by subject, such as "Introduction to
+  Post-Quantum Cryptography" on an introductory place, passes. Catching those needs a
+  different signal, such as a calibrated judge's level flag.
+
+**Kill switch:** `enterprise_access.learner_pathways_disable_single_ecosystem` (a
+`WaffleSwitch`). Off, which is the default, means the rule applies. On turns the rule off for
+every caller that does not choose for itself. An explicit `single_ecosystem=True` or `False`
+wins over the switch. That is how an experiment replay compares with and without the rule. The
+delivered pathway records what happened on `AssemblePathwayOutput`: `refused` holds the counts
+by reason, and `single_ecosystem` says whether the rule ran.
+
+**Effect on the stored windows** (20 round-2 careers, replayed through the app's code):
+- **Delivered pathway:** 10 of 20 change, and none becomes incomplete. 21 courses are refused
+  for ecosystem, and 3 for level.
+- **`shape_cut`:** 17 of the 240 shapes come up short, against 9 before. The 8 new shortfalls
+  break down as follows:
+  - 2 from capstones (Data Analyst `0/0/2`, `0/1/2`).
+  - 1 from the ecosystem rule (Solutions Architect `2/3/0`).
+  - 4 from level honesty (Sales Consultant and Sales Manager `0/0/2`, `0/1/2`, where "Equity
+    Markets Fundamentals" was the second Advanced course).
+  - 1 from the ecosystem and level rules together (Solutions Architect `0/1/2`).
+
+  `shape_cut` never backfills, so this is the expected cost.
+
+**Replays.** `replay_shape_review --single-ecosystem` turns the rule on and
+`--no-single-ecosystem` turns it off. Without either flag the app's default applies. The
+summary line prints the value that was resolved, and each replay record stores it as
+`replay.single_ecosystem`.
 
 ## Running it
 

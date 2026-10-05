@@ -1201,8 +1201,8 @@ class TestSingleEcosystem(TestCase):
     """
     Scenario: a pathway may teach one vendor's products or none, never two.
 
-    Bench round 2: pathways spanning two were rated good 25% of the time against 69% for the
-    rest, and drew four times the corrections.
+    Bench round 2, re-measured with the current detector: pathways spanning two were rated good
+    14% of the time against 70% for the rest, and drew 1.21 dropped courses each against 0.33.
     """
 
     def keys_for(self, arm, **kwargs):
@@ -1218,7 +1218,9 @@ class TestSingleEcosystem(TestCase):
 
     @ddt.data('ranked_cut', 'shape_cut')
     def test_without_the_rule_a_pathway_may_span_two(self, arm):
-        self.assertGreaterEqual(len(self.spanned(self.keys_for(arm))), 2)
+        # Explicitly off: the rule is on by default since 2026-10-05, so leaving the argument
+        # out no longer means "without the rule".
+        self.assertGreaterEqual(len(self.spanned(self.keys_for(arm, single_ecosystem=False))), 2)
 
     @ddt.data('ranked_cut', 'shape_cut')
     def test_with_the_rule_the_second_ecosystem_is_refused(self, arm):

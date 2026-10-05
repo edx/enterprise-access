@@ -22,9 +22,10 @@ this module runs three answers side by side so they can be compared on the same 
     Ask a model for two to five courses, including only those that genuinely fit. One call;
     the model decides the length. This is the relaxed rule stated directly.
 
-All three share the delivered pathway's eligibility rules (valid key, no duplicate, English)
-and provider cap, enforced here in code whatever a model returns. Level is not constrained:
-the relaxed rule allows any level, and the realised mix is recorded rather than gated.
+All three share the delivered pathway's eligibility rules (valid key, no duplicate, English,
+no capstone) and provider cap, enforced here in code whatever a model returns. Level is not
+constrained: the relaxed rule allows any level, and the realised mix is recorded rather than
+gated.
 
 Two further arms build a pathway to a fixed **shape** -- a number of courses per rung, written
 ``Introductory/Intermediate/Advanced`` as everywhere else in this app, so ``2/0/0`` is two
@@ -65,6 +66,21 @@ Given an editorial ``policy`` (from ``pathway_editorial``; see ``resolve_editori
 
 Without a policy none of this runs, and every arm behaves exactly as it did before.
 
+Content rules, on by default
+----------------------------
+Every arm holds to the three content rules ``pathway_assembly`` describes, as the delivered
+pathway does:
+
+* **No capstones**: ineligible in ``eligible_candidates``, so no arm ever sees one.
+* **One ecosystem** (``ecosystems``): every arm, refused as ``other_ecosystem``.
+  ``single_ecosystem=None`` follows the kill switch (rule on); an explicit ``False`` turns
+  it off for that call, which is how an experiment compares with and without it.
+* **Level honesty** (``title_contradicts_level``): wherever a course is placed on a rung --
+  ``shape_cut`` and ``apply_selection`` under a ``level_quota`` (so ``shape_pick``,
+  ``shape_pick_v2`` and its repair round) -- refused as ``level_mismatch``. The size arms
+  place no course on a rung, so it does not apply to them. ``level_honesty=False`` turns
+  it off.
+
 Nothing here reaches the learner. Variants are persisted on the run and returned only when a
 caller asks for them, so an experiment can never change what the endpoint delivers.
 """
@@ -74,13 +90,15 @@ from dataclasses import dataclass, field
 
 from django.conf import settings
 
-from enterprise_access.apps.pathways.ecosystems import ECOSYSTEM_DROP, EcosystemTracker
+from enterprise_access.apps.pathways.ecosystems import ECOSYSTEM_DROP, EcosystemTracker, resolve_single_ecosystem
 from enterprise_access.apps.pathways.judging import normalise_rubrics
 from enterprise_access.apps.pathways.model_backends import ModelBackendError, get_direct_backend
 from enterprise_access.apps.pathways.pathway_assembly import (
+    LEVEL_MISMATCH_DROP,
     LEVEL_ORDER,
     MAX_PER_PARTNER,
     eligible_candidates,
+    title_contradicts_level,
     validate_pathway
 )
 from enterprise_access.apps.pathways.prompts import (
@@ -494,7 +512,7 @@ def place_seats(candidates, shape, seats=(), *, max_per_partner: int = MAX_PER_P
 
 
 def ranked_cut(candidates, size: int, *, max_per_partner: int = MAX_PER_PARTNER,
-               single_ecosystem: bool = False) -> Variant:
+               single_ecosystem: bool | None = None) -> Variant:
     """
     Take the ``size`` most relevant eligible candidates, honouring the provider cap.
 
@@ -503,7 +521,7 @@ def ranked_cut(candidates, size: int, *, max_per_partner: int = MAX_PER_PARTNER,
             the re-rank order when it ran, retrieval order otherwise.
         size: How many courses to take.
         single_ecosystem: Refuse a course that would leave the pathway spanning two vendors'
-            products. See ``ecosystems``.
+            products. See ``ecosystems``. ``None`` follows the kill switch: on by default.
     """
     chosen, per_partner, skipped_for_cap = [], {}, 0
     stack = EcosystemTracker(single_ecosystem)
@@ -530,7 +548,7 @@ def ranked_cut(candidates, size: int, *, max_per_partner: int = MAX_PER_PARTNER,
 
 
 def shape_cut(candidates, shape, *, max_per_partner: int = MAX_PER_PARTNER, seats=(),
-              single_ecosystem: bool = False) -> Variant:
+              single_ecosystem: bool | None = None, level_honesty: bool = True) -> Variant:
     """
     Fill each rung's quota from the relevance order, honouring the provider cap.
 
@@ -547,6 +565,10 @@ def shape_cut(candidates, shape, *, max_per_partner: int = MAX_PER_PARTNER, seat
             filled as without them.
         single_ecosystem: Refuse a course that would leave the pathway spanning two vendors'
             products. Seats are placed before it applies, so an editorial rule still wins.
+            ``None`` follows the kill switch: on by default.
+        level_honesty: Refuse a course whose title contradicts its rung, as
+            ``level_mismatch`` (``pathway_assembly.title_contradicts_level``). Seats are
+            exempt, as from the ecosystem rule.
     """
     placement = place_seats(candidates, shape, seats, max_per_partner=max_per_partner)
     seated_keys = {candidate.key for candidate in placement.seated}
@@ -562,6 +584,7 @@ def shape_cut(candidates, shape, *, max_per_partner: int = MAX_PER_PARTNER, seat
 
     chosen, per_partner, skipped_for_cap = list(placement.seated), dict(placement.per_partner), 0
     stack = EcosystemTracker(single_ecosystem, placement.seated)
+    level_refused = 0
     for level in rung_order:
         taken = 0
         for candidate in by_rung[level]:
@@ -569,6 +592,9 @@ def shape_cut(candidates, shape, *, max_per_partner: int = MAX_PER_PARTNER, seat
                 break
             if candidate.partner and per_partner.get(candidate.partner, 0) >= max_per_partner:
                 skipped_for_cap += 1
+                continue
+            if level_honesty and title_contradicts_level(candidate.title, level):
+                level_refused += 1
                 continue
             if stack.refuses(candidate):
                 stack.refuse()
@@ -581,6 +607,8 @@ def shape_cut(candidates, shape, *, max_per_partner: int = MAX_PER_PARTNER, seat
 
     dropped = {'provider_cap': skipped_for_cap} if skipped_for_cap else {}
     dropped.update(stack.dropped)
+    if level_refused:
+        dropped[LEVEL_MISMATCH_DROP] = level_refused
     if placement.rejected:
         dropped['seat_rejected'] = placement.rejected
     return Variant(
@@ -594,7 +622,8 @@ def shape_cut(candidates, shape, *, max_per_partner: int = MAX_PER_PARTNER, seat
 
 
 def apply_selection(candidates, keys, *, max_size: int, max_per_partner: int = MAX_PER_PARTNER,
-                    level_quota: dict | None = None, seated=(), single_ecosystem: bool = False):
+                    level_quota: dict | None = None, seated=(), single_ecosystem: bool | None = None,
+                    level_honesty: bool = True):
     """
     Turn a model's chosen keys into courses, enforcing every rule the model was told.
 
@@ -610,6 +639,12 @@ def apply_selection(candidates, keys, *, max_size: int, max_per_partner: int = M
 
     With ``single_ecosystem``, a key whose course would leave the pathway spanning two vendors'
     products is dropped as ``other_ecosystem``, whatever the model returned. See ``ecosystems``.
+    ``None``, the default, follows the kill switch, which leaves the rule on.
+
+    With a ``level_quota`` and ``level_honesty`` (the default), a key whose course's title
+    contradicts the rung it would fill is dropped as ``level_mismatch`` -- see
+    ``pathway_assembly.title_contradicts_level``. Without a quota no course is placed on a
+    rung, so the check does not apply.
     """
     by_key = {candidate.key: candidate for candidate in candidates}
     remaining = dict(level_quota) if level_quota is not None else None
@@ -643,6 +678,9 @@ def apply_selection(candidates, keys, *, max_size: int, max_per_partner: int = M
             continue
         if candidate.partner and per_partner.get(candidate.partner, 0) >= max_per_partner:
             drop('provider_cap')
+            continue
+        if remaining is not None and level_honesty and title_contradicts_level(candidate.title, candidate.level_type):
+            drop(LEVEL_MISMATCH_DROP)
             continue
         if stack.refuses(candidate):
             drop(ECOSYSTEM_DROP)
@@ -807,14 +845,19 @@ def get_variant_backend():
 # so refusing its choice is not it breaking a promise -- but the gap is ours to fill, and the
 # repair round is shown only courses the rule already allows, so whatever comes back complies.
 # Without it the rule cost eight of 48 pathways a course they could have had (2026-09-30).
-REPAIRABLE_DROPS = ('provider_cap', 'over_level_quota', 'already_seated', 'duplicate', ECOSYSTEM_DROP)
+#
+# ``level_mismatch`` is here for the same reason: the model is shown ``level_type``, not told
+# that a title can veto it, and the repair round shows only courses the check allows.
+REPAIRABLE_DROPS = (
+    'provider_cap', 'over_level_quota', 'already_seated', 'duplicate', ECOSYSTEM_DROP, LEVEL_MISMATCH_DROP,
+)
 
 
 def model_select(*, strategy: str, requested_size: int | None, career_name: str,
                  career_skills: list[str], candidate_dicts: list[dict], eligible: list,
                  trace_id: str, backend=None, shape: tuple | None = None, seats=(),
                  career_description: str = '', family_titles=(), family_size: int = 0,
-                 single_ecosystem: bool = False) -> Variant:
+                 single_ecosystem: bool | None = None, level_honesty: bool = True) -> Variant:
     """
     Ask a model to choose a pathway from the candidate window.
 
@@ -831,10 +874,14 @@ def model_select(*, strategy: str, requested_size: int | None, career_name: str,
     them. When the code refused some of its picks for breaking a stated rule, it gets one
     repair round (``_repair_shape_pick``) instead of coming back short.
 
+    ``single_ecosystem`` (``None`` follows the kill switch) and ``level_honesty`` are enforced
+    on the model's picks in ``apply_selection``, and on the repair round's.
+
     A backend, parse or configuration failure yields a variant with no courses and the
     failure in ``error``, never an exception: one failed arm must not cost the run the
     others, or the pathway that is actually delivered.
     """
+    single_ecosystem = resolve_single_ecosystem(single_ecosystem)
     variant = Variant(strategy=strategy, requested_size=requested_size, shape=shape)
     level_quota = dict(zip(LEVEL_ORDER, shape)) if shape is not None else None
     # Seats belong to a shape; a size arm has no rungs to seat them on.
@@ -902,7 +949,7 @@ def model_select(*, strategy: str, requested_size: int | None, career_name: str,
 
     courses, dropped, fabricated = apply_selection(
         eligible, keys, max_size=requested_size or MAX_PATHWAY_SIZE, level_quota=level_quota,
-        seated=placement.seated, single_ecosystem=single_ecosystem,
+        seated=placement.seated, single_ecosystem=single_ecosystem, level_honesty=level_honesty,
     )
     if fabricated:
         logger.warning('Variant selection returned %d key(s) absent from the candidates; dropped.',
@@ -914,14 +961,14 @@ def model_select(*, strategy: str, requested_size: int | None, career_name: str,
             variant, backend=model_backend, trace_id=trace_id, eligible=eligible, candidate_dicts=candidate_dicts,
             level_quota=level_quota, requested_size=requested_size, career_name=career_name,
             career_skills=career_skills, career_description=career_description, family_titles=family_titles,
-            family_size=family_size, single_ecosystem=single_ecosystem,
+            family_size=family_size, single_ecosystem=single_ecosystem, level_honesty=level_honesty,
         )
     return variant
 
 
 def _repair_shape_pick(variant, *, backend, trace_id, eligible, candidate_dicts, level_quota, requested_size,
                        career_name, career_skills, career_description, family_titles, family_size,
-                       single_ecosystem=False):
+                       single_ecosystem=None, level_honesty=True):
     """
     Ask once more for the places the code had to refuse, with the rules now impossible to break.
 
@@ -944,6 +991,8 @@ def _repair_shape_pick(variant, *, backend, trace_id, eligible, candidate_dicts,
 
     def allowed_now(candidate):
         if candidate.key in chosen_keys or open_quota.get(candidate.level_type, 0) <= 0:
+            return False
+        if level_honesty and title_contradicts_level(candidate.title, candidate.level_type):
             return False
         return not (candidate.partner and per_partner.get(candidate.partner, 0) >= MAX_PER_PARTNER)
 
@@ -978,7 +1027,7 @@ def _repair_shape_pick(variant, *, backend, trace_id, eligible, candidate_dicts,
         return
     courses, dropped, fabricated = apply_selection(
         allowed, keys, max_size=requested_size or MAX_PATHWAY_SIZE, level_quota=level_quota, seated=chosen,
-        single_ecosystem=single_ecosystem,
+        single_ecosystem=single_ecosystem, level_honesty=level_honesty,
     )
     variant.repair.update({
         'added': len(courses) - len(chosen), 'dropped': dropped, 'fabricated_keys': fabricated,
@@ -1036,7 +1085,8 @@ def plan_shape_seats(*, policy, shape: tuple, ordered_candidates: list[dict], ca
 def build_variants(*, career_name: str, career_skills: list[str], ordered_candidates: list[dict],
                    sizes, strategies, trace_prefix: str, backend=None, shapes=(), policy=None,
                    career_description: str = '', family_titles=(), family_size: int = 0,
-                   seat_planner=None, single_ecosystem: bool = False) -> list[Variant]:
+                   seat_planner=None, single_ecosystem: bool | None = None,
+                   level_honesty: bool = True) -> list[Variant]:
     """
     Build every requested variant from one candidate window.
 
@@ -1053,6 +1103,11 @@ def build_variants(*, career_name: str, career_skills: list[str], ordered_candid
         career_description, family_titles, family_size: What ``shape_pick_v2`` shows of
             the career and the job titles its pathway serves.
         seat_planner: Overrides ``pathway_editorial.api.plan_seats``, with its signature.
+        single_ecosystem: The one-ecosystem rule for every arm. ``None``, the default,
+            follows the kill switch (rule on), read once for the whole run; ``False`` turns
+            it off, which is how an experiment measures it.
+        level_honesty: The title-cue level check for every arm that places courses on
+            rungs. On by default.
 
     Returns:
         Variants in a stable order: by strategy as listed in ``ALL_STRATEGIES``, then by
@@ -1061,6 +1116,7 @@ def build_variants(*, career_name: str, career_skills: list[str], ordered_candid
     sizes = normalise_sizes(sizes)
     strategies = normalise_strategies(strategies)
     shapes = [parse_shape(shape) for shape in normalise_shapes(shapes)]
+    single_ecosystem = resolve_single_ecosystem(single_ecosystem)
     eligible, _ = eligible_candidates(
         [_assembly_hit(candidate) for candidate in ordered_candidates],
         excluded_keys=policy_excluded_keys(policy),
@@ -1086,13 +1142,16 @@ def build_variants(*, career_name: str, career_skills: list[str], ordered_candid
         if error:
             return Variant(strategy=strategy, requested_size=sum(shape), shape=shape, error=error)
         if strategy == STRATEGY_SHAPE_CUT:
-            return shape_cut(eligible, shape, seats=seats, single_ecosystem=single_ecosystem)
+            return shape_cut(
+                eligible, shape, seats=seats, single_ecosystem=single_ecosystem, level_honesty=level_honesty,
+            )
         return model_select(
             strategy=strategy,
             requested_size=sum(shape),
             shape=shape,
             seats=seats,
             single_ecosystem=single_ecosystem,
+            level_honesty=level_honesty,
             career_name=career_name,
             career_skills=career_skills,
             career_description=career_description,
