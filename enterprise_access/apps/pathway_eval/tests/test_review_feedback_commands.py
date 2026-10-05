@@ -182,6 +182,28 @@ class TestReplayShapeReviewCommand(TestCase):
         self.assertEqual(kwargs['family_size'], 2)
         self.assertEqual(replays[0]['replay']['editorial_snapshot']['policy'], {'excluded_keys': ['RuriX+I2']})
 
+    def test_a_family_searched_with_pooled_skills_replays_with_them_and_its_context(self):
+        """Looking the career up by name would return its own skills, which the pooling replaced."""
+        with tempfile.TemporaryDirectory() as tmp:
+            files = InputFiles(tmp)
+            pooled = dict(make_runs()[0], career_name='Alpha Display Career', skill_source='pooled',
+                          career_skills=['pooled skill', 'another'], members=['Alpha Display Career'])
+            checkpoint = files.dir / 'pooled.jsonl'
+            variant_collection.append_checkpoint(checkpoint, variant_collection.CareerRun.from_dict(pooled))
+            output = files.dir / 'replay.jsonl'
+            with mock.patch(PATCH_LOOKUP) as lookup, \
+                    mock.patch.object(pathway_variants, 'build_variants', side_effect=replay_variants) as build, \
+                    mock.patch.object(review_feedback.judging, 'judge_pathway', side_effect=fake_judgement):
+                self.run_replay(files, checkpoint=str(checkpoint), careers=[ALPHA], output_checkpoint=str(output),
+                                career_context=str(files.queue))
+                replays = load_replays(output)
+        lookup.assert_not_called()
+        kwargs = build.call_args.kwargs
+        self.assertEqual(kwargs['career_skills'], ['pooled skill', 'another'])
+        self.assertEqual(kwargs['career_description'], 'Alpha Analysts do alpha work.')
+        self.assertEqual(kwargs['family_size'], 2)
+        self.assertEqual(replays[0]['replay']['career_skills'], ['pooled skill', 'another'])
+
     def replay_ecosystem(self, *args, **kwargs):
         """Replay ALPHA with the given flag; ``(what build_variants got, summary text, replay)``."""
         with tempfile.TemporaryDirectory() as tmp:

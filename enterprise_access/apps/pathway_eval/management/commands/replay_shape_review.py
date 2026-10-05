@@ -202,18 +202,27 @@ class Command(BaseCommand):
         """
         Look the career's skills up and replay it; ``(status, detail, replay or None)``.
 
+        A run whose window was searched with a family's pooled skills replays with those, as
+        recorded: a lookup by name would return the one career's own skills, the very list the
+        pooling replaced. Career context is matched on the requested name first, which is the
+        family's, then on the career's.
+
         ``SKIPPED`` issued nothing. ``ERROR`` may have: the replay started and then failed, which
         costs that career and not the batch.
         """
-        try:
-            career = variant_collection.lookup_career(name)
-        except Exception as exc:  # pylint: disable=broad-except
-            return 'SKIPPED', f'career lookup failed ({type(exc).__name__}): {exc}', None
+        if run.get('skill_source') == variant_collection.SKILLS_POOLED and run.get('career_skills'):
+            career = {'name': name, 'skills': list(run['career_skills'])}
+        else:
+            try:
+                career = variant_collection.lookup_career(name)
+            except Exception as exc:  # pylint: disable=broad-except
+                return 'SKIPPED', f'career lookup failed ({type(exc).__name__}): {exc}', None
         if career is None:
             return 'SKIPPED', variant_collection.NO_CAREER, None
         if not career.get('skills'):
             return 'SKIPPED', variant_collection.NO_SKILLS, None
-        context = plan['contexts'].get(name.lower()) or {}
+        contexts = plan['contexts']
+        context = contexts.get((run.get('requested_name') or '').lower()) or contexts.get(name.lower()) or {}
         try:
             replay = review_feedback.replay_career(
                 run, strategies=plan['strategies'], shapes=plan['shapes'], career_skills=career['skills'],
