@@ -6,6 +6,8 @@
 #
 2u-enterprise-subsidy-client==2.2.1
     # via -r requirements/base.txt
+algoliasearch==3.0.0
+    # via -r requirements/base.in
 amqp==5.4.0
     # via
     #   -r requirements/base.txt
@@ -493,6 +495,7 @@ pytz==2026.4
     #   snowflake-connector-python
 pyyaml==6.0.3
     # via
+    #   -r requirements/base.in
     #   -r requirements/base.txt
     #   code-annotations
     #   drf-spectacular
@@ -507,6 +510,7 @@ referencing==0.37.0
     #   jsonschema-specifications
 requests==2.34.2
     # via
+    #   algoliasearch
     #   -r requirements/base.txt
     #   analytics-python
     #   confluent-kafka
