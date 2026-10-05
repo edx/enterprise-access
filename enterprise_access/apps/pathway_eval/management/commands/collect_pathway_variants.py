@@ -16,8 +16,10 @@ from enterprise_access.apps.pathway_eval.retrieval_diagnostic import validate_cu
 from enterprise_access.apps.pathway_eval.variant_collection import (
     VariantCollector,
     append_checkpoint,
+    family_lookup,
     load_career_names,
     load_checkpoint,
+    load_families,
     summarise,
     write_csv
 )
@@ -82,6 +84,12 @@ class Command(BaseCommand):
             '--judge-rubric', action='append', dest='judge_rubrics', choices=JUDGE_RUBRICS,
             help='A rubric to judge under, with --judge. Repeatable; defaults to v1, the '
                  'calibrated rubric. Each rubric is a separate paid call per pathway.',
+        )
+        parser.add_argument(
+            '--families-file',
+            help='JSON list of {family, career, members}. A career named here as a family is '
+                 'run under its "career"\'s name and description but searched with the pooled '
+                 'skills of its members, instead of that one career\'s own.',
         )
         parser.add_argument(
             '--editorial-policy', action='store_true',
@@ -162,6 +170,7 @@ class Command(BaseCommand):
         if options.get('judge_rubrics') and not options['judge']:
             raise CommandError('--judge-rubric needs --judge.')
         editorial_snapshot = self._load_snapshot(options.get('editorial_snapshot'))
+        lookup = self._load_family_lookup(options.get('families_file'))
         done = load_checkpoint(options['checkpoint']) if options['resume'] else {}
         on_run = None
         if options.get('checkpoint') and not options['dry_run']:
@@ -185,6 +194,7 @@ class Command(BaseCommand):
                 editorial_policy=options['editorial_policy'],
                 editorial_snapshot=editorial_snapshot,
                 judge_rubrics=options.get('judge_rubrics') or None,
+                lookup=lookup,
             )
         except ValueError as exc:
             raise CommandError(str(exc)) from exc
@@ -203,6 +213,16 @@ class Command(BaseCommand):
             path.parent.mkdir(parents=True, exist_ok=True)
             rows = write_csv(result['runs'], path)
             self.stdout.write(f'  wrote {rows} pathway row(s) to {path}')
+
+    @staticmethod
+    def _load_family_lookup(path):
+        """A lookup that searches the ``--families-file`` families with pooled skills, or ``None``."""
+        if not path:
+            return None
+        try:
+            return family_lookup(load_families(path))
+        except (OSError, ValueError) as exc:
+            raise CommandError(f'Could not read --families-file: {exc}') from exc
 
     @staticmethod
     def _load_snapshot(path) -> dict | None:

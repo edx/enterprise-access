@@ -16,11 +16,16 @@ none.
 Two opt-ins reach the workflow unchanged: an editorial policy (the active one, or a fixed
 snapshot of one) and the judge rubrics to score under. The career's Lightcast description,
 read at lookup, is passed along for the arms and rubric that show it.
+
+A third changes what is searched for: a families file (``family_lookup``) runs a career family
+under one career's name and description but with its members' pooled skills
+(``pathways.skill_pooling``), instead of that one career's own.
 """
 import csv
 import json
 import logging
 from dataclasses import dataclass, field, fields
+from pathlib import Path
 
 from enterprise_access.apps.api_client.algolia_client import AlgoliaSearchClient
 from enterprise_access.apps.pathways import api as pathways_api
@@ -39,6 +44,7 @@ from enterprise_access.apps.pathways.pathway_variants import (
     resolve_shape_request,
     resolve_variant_request
 )
+from enterprise_access.apps.pathways.skill_pooling import pool_member_skills
 from enterprise_access.apps.workflow.exceptions import UnitOfWorkException
 
 logger = logging.getLogger(__name__)
@@ -86,14 +92,14 @@ def load_career_names(path) -> list[str]:
     return list(dict.fromkeys(name for name in names if name))
 
 
-def lookup_career(name: str) -> dict | None:
+def lookup_career_hit(name: str) -> dict | None:
     """
-    Find a career by exact name (case-insensitive) in the English jobs index.
+    The raw jobs-index record for a career, by exact name (case-insensitive), or ``None``.
 
-    Returns a ``career_candidate_from_hit`` dict, preferring a match that carries skills,
-    or ``None`` when no record has that exact name. Exact rather than best match: a nearest
-    neighbour would quietly collect variants for a different career than the one asked
-    about. The name is re-checked on the way out, so a facet quirk cannot widen the match.
+    Prefers a record that carries skills. Exact rather than best match: a nearest neighbour
+    would quietly collect variants for a different career than the one asked about. The name
+    is re-checked on the way out, so a facet quirk cannot widen the match. Raw, because skill
+    pooling reads each skill's posting count, which the career candidate leaves out.
     """
     quoted = '"' + name.strip().replace('"', '\\"') + '"'
     response = AlgoliaSearchClient().search_jobs_index(
@@ -106,15 +112,92 @@ def lookup_career(name: str) -> dict | None:
         ),
     )
     wanted = name.strip().lower()
-    matches = [
-        candidate for candidate in (
-            pathways_api.career_candidate_from_hit(hit)
-            for hit in response.get('hits') or [] if isinstance(hit, dict)
-        )
-        if candidate and candidate['name'].strip().lower() == wanted
-    ]
-    with_skills = [candidate for candidate in matches if candidate['skills']]
-    return (with_skills or matches or [None])[0]
+    matches = []
+    for hit in response.get('hits') or []:
+        candidate = pathways_api.career_candidate_from_hit(hit) if isinstance(hit, dict) else None
+        if candidate and candidate['name'].strip().lower() == wanted:
+            matches.append((hit, candidate))
+    with_skills = [hit for hit, candidate in matches if candidate['skills']]
+    return (with_skills or [hit for hit, _ in matches] or [None])[0]
+
+
+def lookup_career(name: str) -> dict | None:
+    """
+    Find a career by exact name (case-insensitive) in the English jobs index.
+
+    Returns a ``career_candidate_from_hit`` dict, preferring a match that carries skills, or
+    ``None`` when no record has that exact name; see ``lookup_career_hit``.
+    """
+    hit = lookup_career_hit(name)
+    return pathways_api.career_candidate_from_hit(hit) if hit else None
+
+
+# ---------------------------------------------------------------------------------------------
+# Career families searched with pooled skills
+# ---------------------------------------------------------------------------------------------
+
+#: ``CareerRun.skill_source`` for a career searched with its own skills, and for a family.
+SKILLS_OWN = 'own'
+SKILLS_POOLED = 'pooled'
+
+
+def load_families(path) -> dict[str, dict]:
+    """
+    A families file: a JSON list of ``{"family", "career", "members"}``, keyed by family.
+
+    ``family`` is the name a careers file lists and the run is recorded under; ``career`` is the
+    jobs-index career whose name and description the workflow is given; ``members`` are the
+    careers whose skills are pooled. Raises ``ValueError`` on a malformed entry or a family named
+    twice, so a typo cannot quietly fall back to a career's own skills.
+    """
+    entries = json.loads(Path(path).read_text(encoding='utf-8'))
+    if not isinstance(entries, list):
+        raise ValueError('A families file is a JSON list of {family, career, members}.')
+    families = {}
+    for index, entry in enumerate(entries, 1):
+        if not isinstance(entry, dict):
+            raise ValueError(f'Family #{index} is not an object.')
+        family = (entry.get('family') or '').strip() if isinstance(entry.get('family'), str) else ''
+        career = (entry.get('career') or '').strip() if isinstance(entry.get('career'), str) else ''
+        members = pathways_api.dedupe_names(entry.get('members') or [])
+        if not family or not career or not members:
+            raise ValueError(f'Family #{index} needs a family, a career and at least one member.')
+        if family in families:
+            raise ValueError(f'Family {family!r} is named twice.')
+        families[family] = {'family': family, 'career': career, 'members': members}
+    return families
+
+
+def family_lookup(families: dict[str, dict], *, fetch_hit=None, fallback=None):
+    """
+    A ``VariantCollector`` lookup that searches a listed family with its members' pooled skills.
+
+    For a name in ``families``, the family's ``career`` supplies the name, id and description
+    the workflow is given, and its skills are replaced by ``pool_member_skills`` over the
+    members the index holds. The result records ``skill_source``, the members pooled and any
+    the index does not hold. A name not in ``families`` falls back to ``lookup_career``.
+    """
+    fetch_hit = fetch_hit or lookup_career_hit
+    fallback = fallback or lookup_career
+
+    def lookup(name: str) -> dict | None:
+        family = families.get(name.strip())
+        if family is None:
+            return fallback(name)
+        career_hit = fetch_hit(family['career'])
+        career = pathways_api.career_candidate_from_hit(career_hit) if career_hit else None
+        if career is None:
+            return None
+        hits = {member: fetch_hit(member) for member in family['members']}
+        return {
+            **career,
+            'skills': pool_member_skills(hit for hit in hits.values() if hit),
+            'skill_source': SKILLS_POOLED,
+            'members': [member for member, hit in hits.items() if hit],
+            'members_missing': [member for member, hit in hits.items() if not hit],
+        }
+
+    return lookup
 
 
 @dataclass
@@ -139,6 +222,11 @@ class CareerRun:
     career_skills: list = field(default_factory=list)
     #: The delivered pathway's v2 judgement, when the collection judged under v2.
     judgement_v2: dict | None = None
+    #: Where ``career_skills`` came from: the career's own (``own``) or its family's pool
+    #: (``pooled``), with the members pooled and any the index did not hold.
+    skill_source: str = ''
+    members: list = field(default_factory=list)
+    members_missing: list = field(default_factory=list)
 
     def to_dict(self) -> dict:
         """Plain dict for JSON export."""
@@ -157,6 +245,9 @@ class CareerRun:
             'error': self.error,
             'career_description': self.career_description,
             'career_skills': list(self.career_skills),
+            'skill_source': self.skill_source,
+            'members': list(self.members),
+            'members_missing': list(self.members_missing),
         }
 
     @classmethod
@@ -357,6 +448,9 @@ class VariantCollector:
         run.skill_count = len(career['skills'])
         run.career_description = career.get('description') or ''
         run.career_skills = list(career['skills'])
+        run.skill_source = career.get('skill_source') or SKILLS_OWN
+        run.members = list(career.get('members') or [])
+        run.members_missing = list(career.get('members_missing') or [])
         workflow = PathwayAssemblyWorkflow.objects.create(
             input_data=PathwayAssemblyWorkflow.generate_input_dict(
                 career_name=career['name'],
