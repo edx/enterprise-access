@@ -104,27 +104,66 @@ def _get_enrollment_deadline_date(assignment, content_metadata):
     return strategy.get_enrollment_deadline(assignment, content_metadata)
 
 
+def _get_latest_course_run_end_date(content_metadata):
+    """
+    Return the latest end datetime across all known course runs, or None if there are no known runs
+    or any known run lacks a (valid) end date.
+
+    The returned date may be in the future; callers decide whether it has passed. Note this
+    intentionally considers every run of the course, even for assignments of a specific run,
+    so a course with any open-ended run never expires for this reason.
+    """
+    # Import here to avoid circular import
+    # pylint: disable=import-outside-toplevel
+    from enterprise_access.apps.content_assignments.content_metadata_api import get_run_dates
+
+    try:
+        run_end_dates = get_run_dates(content_metadata, 'end_date')
+    except ValueError:
+        logger.warning('Bad course run end date for content %s', (content_metadata or {}).get('key'))
+        return None
+
+    if not run_end_dates or None in run_end_dates:
+        return None
+
+    return max(run_end_dates)
+
+
 def get_automatic_expiration_date_and_reason(
     assignment,
-    content_metadata: dict = None
+    content_metadata: dict = None,
+    *,
+    use_catalog_agnostic_fallback: bool = False,
+    include_course_run_end: bool = True,
 ):
     """
     For the given assignment, returns the date at which this assignment expires due to:
     * subsidy expiration
     * content enrollment deadline
+    * course run end date
     * 90-day timeout from allocation
 
-    Whichever of the three above dates is the earliest is returned, along with the reason
+    Whichever of the four above dates is the earliest is returned, along with the reason
     for the expiration as a dictionary.
 
     Arguments:
         assignment (LearnerContentAssignment): The assignment to check for expiration.
         [content_metadata] (dict): Content metadata for the assignment's content key. If not provided, it will be
             fetched and subsequently cached from the content metadata API.
+        [use_catalog_agnostic_fallback] (bool): Whether to fall back to a catalog-/customer-agnostic content
+            metadata lookup when the assignment's policy catalog has no metadata for the content. This makes a
+            synchronous call to enterprise-catalog, so it should only be set for the automatic-expiration path,
+            not for read endpoints or other callers of this function.
+        [include_course_run_end] (bool): Whether the course run end date competes as an expiration date. Set to
+            False to reproduce how legacy assignments (expired before the reason was recorded on the audit
+            action) were evaluated before COURSE_RUN_ENDED existed.
     """
     # Import here to avoid circular import
     # pylint: disable=import-outside-toplevel
-    from enterprise_access.apps.content_assignments.content_metadata_api import get_content_metadata_for_assignments
+    from enterprise_access.apps.content_assignments.content_metadata_api import (
+        get_catalog_agnostic_content_metadata_for_assignment,
+        get_content_metadata_for_assignments
+    )
 
     assignment_configuration = assignment.assignment_configuration
     # pylint: disable=no-member,useless-suppression
@@ -141,14 +180,26 @@ def get_automatic_expiration_date_and_reason(
             assignments=[assignment],
         )
         content_metadata = content_metadata_by_key.get(content_key)
+
+    # The catalog-agnostic fallback is only used to learn when course runs ended. The enrollment deadline
+    # always comes from the policy catalog's metadata, so content that left the catalog is not expired
+    # as ENROLLMENT_DATE_PASSED (which would never get its PII cleared).
+    course_run_metadata = content_metadata
+    if not course_run_metadata and use_catalog_agnostic_fallback:
+        course_run_metadata = get_catalog_agnostic_content_metadata_for_assignment(assignment)
+
     enrollment_deadline_datetime = _get_enrollment_deadline_date(assignment, content_metadata)
     if enrollment_deadline_datetime:
         enrollment_deadline_datetime = enrollment_deadline_datetime.replace(tzinfo=UTC)
 
+    course_run_ended_datetime = (
+        _get_latest_course_run_end_date(course_run_metadata) if include_course_run_end else None
+    )
+
     # 90-day timeout from allocation
     timeout_expiration_datetime = assignment.get_allocation_timeout_expiration()
 
-    # Determine which of the three expiration dates is the earliest
+    # Determine which of the four expiration dates is the earliest
     subsidy_expiration = {
         'date': subsidy_expiration_datetime,
         'reason': AssignmentAutomaticExpiredReason.SUBSIDY_EXPIRED,
@@ -157,11 +208,15 @@ def get_automatic_expiration_date_and_reason(
         'date': enrollment_deadline_datetime,
         'reason': AssignmentAutomaticExpiredReason.ENROLLMENT_DATE_PASSED,
     }
+    course_run_ended = {
+        'date': course_run_ended_datetime,
+        'reason': AssignmentAutomaticExpiredReason.COURSE_RUN_ENDED,
+    }
     timeout_expiration = {
         'date': timeout_expiration_datetime,
         'reason': AssignmentAutomaticExpiredReason.NINETY_DAYS_PASSED,
     }
-    expiration_dates = [subsidy_expiration, enrollment_deadline, timeout_expiration]
+    expiration_dates = [subsidy_expiration, enrollment_deadline, course_run_ended, timeout_expiration]
     sorted_available_expiration_dates = sorted(
         filter(lambda x: x['date'] is not None, expiration_dates),
         key=lambda x: x['date'],
@@ -169,13 +224,15 @@ def get_automatic_expiration_date_and_reason(
     action_required_by = sorted_available_expiration_dates[0]
     message = (
         'action_required_by assignment=%s: subsidy_expiration=%s, enrollment_deadline=%s, '
-        'timeout_expiration_date=%s, action_required_by_datetime=%s, action_required_by_reason=%s',
+        'course_run_ended=%s, timeout_expiration_date=%s, action_required_by_datetime=%s, '
+        'action_required_by_reason=%s'
     )
     logger.info(
         message,
         assignment.uuid,
         subsidy_expiration_datetime,
         enrollment_deadline_datetime,
+        course_run_ended_datetime,
         timeout_expiration_datetime,
         action_required_by['date'],
         action_required_by['reason'],

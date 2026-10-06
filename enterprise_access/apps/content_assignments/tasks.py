@@ -36,7 +36,7 @@ from .constants import (
     AssignmentSources,
     LearnerContentAssignmentStateChoices
 )
-from .models import AssignmentConfiguration
+from .models import AssignmentConfiguration, LearnerContentAssignmentAction
 from .utils import get_self_paced_normalized_start_date
 
 logger = logging.getLogger(__name__)
@@ -161,7 +161,7 @@ class BrazeCampaignSender:
             )
             log_message = (
                 'Successfully sent Braze campaign message for assignment %s, recipient %s, '
-                'campaign %s, with trigger properties %s',
+                'campaign %s, with trigger properties %s'
             )
             logger.info(
                 log_message,
@@ -721,13 +721,48 @@ def send_bnr_automatically_expired_email(learner_credit_request_uuid):
     )
 
 
-def _should_clear_pii_for_assignment(assignment, content_metadata):
+PII_CLEARABLE_EXPIRATION_REASONS = (
+    AssignmentAutomaticExpiredReason.NINETY_DAYS_PASSED,
+    AssignmentAutomaticExpiredReason.COURSE_RUN_ENDED,
+)
+
+
+_NOT_PRELOADED = object()
+
+
+def _get_expiration_action_info(assignments):
+    """
+    Bulk-load, in one query, what ``_should_clear_pii_for_assignment`` needs from the EXPIRED audit actions.
+
+    Returns:
+        tuple: (set of assignment ids that have a successful "expiration email sent" action,
+                dict of assignment id -> ``expiration_reason`` recorded by ``expire_assignment()``).
+                Mirrors ``get_last_successful_expiration_action`` and ``get_last_scheduled_expiration_action``.
+    """
+    emailed_assignment_ids = set()
+    recorded_reasons = {}
+    expired_actions = LearnerContentAssignmentAction.objects.filter(
+        assignment__in=assignments,
+        action_type=AssignmentActions.EXPIRED,
+    ).order_by('completed_at').values('assignment_id', 'source', 'error_reason', 'metadata')
+    for action in expired_actions:
+        if action['source'] == AssignmentSources.SCHEDULED_JOB:
+            recorded_reasons[action['assignment_id']] = (action['metadata'] or {}).get('expiration_reason')
+        elif action['error_reason'] is None:
+            emailed_assignment_ids.add(action['assignment_id'])
+    return emailed_assignment_ids, recorded_reasons
+
+
+def _should_clear_pii_for_assignment(
+    assignment, content_metadata, expiration_email_sent=_NOT_PRELOADED, recorded_reason=_NOT_PRELOADED,
+):
     """
     Determine if PII should be cleared for the given expired assignment.
 
     PII should only be cleared if:
     1. A successful expiration email has been sent
-    2. The assignment expired due to NINETY_DAYS_PASSED reason
+    2. The assignment expired due to a PII-clearable reason (NINETY_DAYS_PASSED or COURSE_RUN_ENDED),
+       as recorded on the expiration audit action
 
     Note: The ORM query in clear_pii_for_expired_assignments already filters for
     expired assignments with non-cleared PII, so those checks are not duplicated here.
@@ -735,26 +770,41 @@ def _should_clear_pii_for_assignment(assignment, content_metadata):
     Args:
         assignment: LearnerContentAssignment instance
         content_metadata: dict of content metadata for the assignment
+        expiration_email_sent: optional preloaded bool, to avoid a per-assignment query
+        recorded_reason: optional preloaded expiration reason (or None), to avoid a per-assignment query
 
     Returns:
         bool: True if PII should be cleared, False otherwise
     """
     # No source filter here beyond what get_last_successful_expiration_action() already applies:
     # legacy rows recorded before ``source`` existed on this action must still count.
-    if not assignment.get_last_successful_expiration_action():
+    if expiration_email_sent is _NOT_PRELOADED:
+        expiration_email_sent = bool(assignment.get_last_successful_expiration_action())
+    if not expiration_email_sent:
         logger.info(
             'No successful expiration email sent for assignment %s, skipping PII clearing.',
             assignment.uuid
         )
         return False
 
-    # Check the expiration reason - only clear PII for NINETY_DAYS_PASSED
-    expiration_date_and_reason = get_automatic_expiration_date_and_reason(assignment, content_metadata)
-    expiration_reason = expiration_date_and_reason.get('reason')
+    # Use the reason recorded when the assignment was expired, so that this decision doesn't depend on
+    # today's catalog data. Legacy rows without a recorded reason fall back to recomputing it, without the
+    # course run end date: those rows expired before COURSE_RUN_ENDED existed, so it can't have been their reason.
+    if recorded_reason is _NOT_PRELOADED:
+        scheduled_expiration_action = assignment.get_last_scheduled_expiration_action()
+        recorded_reason = (
+            (scheduled_expiration_action.metadata or {}).get('expiration_reason')
+            if scheduled_expiration_action else None
+        )
+    expiration_reason = recorded_reason
+    if not expiration_reason:
+        expiration_reason = get_automatic_expiration_date_and_reason(
+            assignment, content_metadata, include_course_run_end=False,
+        ).get('reason')
 
-    if expiration_reason != AssignmentAutomaticExpiredReason.NINETY_DAYS_PASSED:
+    if expiration_reason not in PII_CLEARABLE_EXPIRATION_REASONS:
         logger.info(
-            'Assignment %s expired due to %s, not NINETY_DAYS_PASSED. Skipping PII clearing.',
+            'Assignment %s expired due to %s, which is not eligible for PII clearing. Skipping.',
             assignment.uuid,
             expiration_reason
         )
@@ -766,7 +816,8 @@ def _should_clear_pii_for_assignment(assignment, content_metadata):
 @shared_task(base=LoggedTaskWithRetry)
 def clear_pii_for_expired_assignments(dry_run=False):
     """
-    Clears PII from assignments that have expired due to the 90-day timeout.
+    Clears PII from assignments that have expired due to the 90-day timeout (NINETY_DAYS_PASSED)
+    or because all known course runs ended (COURSE_RUN_ENDED).
 
     This task should be run daily, after the automatic expiration job has completed
     and expiration emails have been sent. It ensures that:
@@ -777,7 +828,7 @@ def clear_pii_for_expired_assignments(dry_run=False):
     - Are in EXPIRED state
     - Have not already had PII cleared
     - Have had a successful expiration email sent
-    - Expired due to NINETY_DAYS_PASSED reason (not enrollment deadline or subsidy expiration)
+    - Expired due to NINETY_DAYS_PASSED or COURSE_RUN_ENDED (not enrollment deadline or subsidy expiration)
 
     Args:
         dry_run: If True, log what would be done without making changes
@@ -827,10 +878,17 @@ def clear_pii_for_expired_assignments(dry_run=False):
             expired_assignments
         )
 
+        emailed_assignment_ids, recorded_reasons = _get_expiration_action_info(expired_assignments)
+
         for assignment in expired_assignments:
             content_metadata = content_metadata_for_assignments.get(assignment.content_key, {})
 
-            if _should_clear_pii_for_assignment(assignment, content_metadata):
+            if _should_clear_pii_for_assignment(
+                assignment,
+                content_metadata,
+                expiration_email_sent=assignment.uuid in emailed_assignment_ids,
+                recorded_reason=recorded_reasons.get(assignment.uuid),
+            ):
                 if dry_run:
                     logger.info(
                         '[CLEAR_PII_FOR_EXPIRED_ASSIGNMENTS] [DRY RUN] Would clear PII for assignment %s',

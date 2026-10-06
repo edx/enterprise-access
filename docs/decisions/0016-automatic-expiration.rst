@@ -3,7 +3,7 @@
 
 Status
 ======
-Accepted - January 2024
+Accepted - January 2024 (amended October 2026, see below)
 
 Context
 =======
@@ -34,6 +34,37 @@ Scrubbing the learner email
 ---------------------------
 Note that, to remove learner email PII, we change the value to a "tombstone" - ``retired_user@retired.invalid``.
 This is done so that the ``learner_email`` database column can continue to have a non-null constraint.
+
+Amendment - October 2026: ``COURSE_RUN_ENDED`` expiration reason
+================================================================
+A fourth condition now moves ``ALLOCATED`` assignments to ``EXPIRED``:
+
+4. All known course runs for the assigned course have ended. Conditions (1) through (4) are all computed,
+   and the earliest resulting date determines when, and why, the assignment expires. Condition (4) can
+   therefore expire an assignment before the 90-day timeout of condition (1) is reached.
+
+The reasons recorded on the assignment's expiration audit action are, respectively: ``NINETY_DAYS_PASSED``,
+``ENROLLMENT_DATE_PASSED``, ``SUBSIDY_EXPIRED``, and ``COURSE_RUN_ENDED``.
+
+PII is now also cleared for assignments that expired as ``COURSE_RUN_ENDED``. Previously only
+``NINETY_DAYS_PASSED`` qualified. This moves PII clearing earlier for those assignments: shortly after the
+course runs end rather than 90 days after allocation.
+
+Details that affect which assignments have PII cleared:
+
+* The PII-clearing decision uses the ``expiration_reason`` recorded when the assignment expired, rather
+  than recomputing it from today's catalog data. Assignments that expired as ``ENROLLMENT_DATE_PASSED``
+  or ``SUBSIDY_EXPIRED`` therefore never have PII cleared, even if their content later leaves the catalog.
+  (Legacy rows with no recorded reason still fall back to recomputing it, but without the course run end
+  date, i.e. exactly as they were evaluated before ``COURSE_RUN_ENDED`` existed. A legacy row that really
+  expired as ``SUBSIDY_EXPIRED`` can therefore never be recomputed as ``COURSE_RUN_ENDED`` and have its PII
+  cleared.)
+* Content that is no longer in the policy's catalog is looked up in a catalog-agnostic way, but only to
+  determine course run end dates. The enrollment deadline is still derived from the policy catalog's
+  metadata, so such assignments expire as ``COURSE_RUN_ENDED`` (and have PII cleared) rather than as
+  ``ENROLLMENT_DATE_PASSED``.
+* No backfill is required: the daily ``automatically_expire_assignments`` job evaluates existing
+  ``ALLOCATED`` assignments with the new rule.
 
 Consequences
 ============

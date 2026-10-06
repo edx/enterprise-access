@@ -5,7 +5,7 @@ Management command to automatically expire assignment records and then send emai
 import datetime
 import logging
 
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 from django.core.paginator import Paginator
 
 from enterprise_access.apps.content_assignments.api import expire_assignment
@@ -59,6 +59,7 @@ class Command(BaseCommand):
         expired, and then expiring them if so.
         """
         dry_run = options['dry_run']
+        failed_assignment_uuids = []
 
         for assignment_configuration in AssignmentConfiguration.objects.filter(active=True):
             subsidy_access_policy = assignment_configuration.subsidy_access_policy
@@ -66,7 +67,7 @@ class Command(BaseCommand):
 
             message = (
                 '[AUTOMATICALLY_EXPIRE_ASSIGNMENTS] Assignment Configuration. UUID: [%s], '
-                'Policy: [%s], Catalog: [%s], Enterprise: [%s], dry_run [%s]',
+                'Policy: [%s], Catalog: [%s], Enterprise: [%s], dry_run [%s]'
             )
             logger.info(
                 message,
@@ -92,8 +93,23 @@ class Command(BaseCommand):
 
                 for assignment in assignments:
                     content_metadata = content_metadata_for_assignments.get(assignment.content_key, {})
-                    expire_assignment(
-                        assignment,
-                        content_metadata,
-                        modify_assignment=not dry_run,
-                    )
+                    try:
+                        expire_assignment(
+                            assignment,
+                            content_metadata,
+                            modify_assignment=not dry_run,
+                        )
+                    except Exception:  # pylint: disable=broad-except
+                        logger.exception(
+                            '[AUTOMATICALLY_EXPIRE_ASSIGNMENTS] Failed to expire assignment %s',
+                            assignment.uuid,
+                        )
+                        failed_assignment_uuids.append(assignment.uuid)
+
+        if failed_assignment_uuids:
+            logger.error(
+                '[AUTOMATICALLY_EXPIRE_ASSIGNMENTS] Failed to expire %d assignments: %s',
+                len(failed_assignment_uuids),
+                failed_assignment_uuids,
+            )
+            raise CommandError(f'Failed to expire {len(failed_assignment_uuids)} assignments.')

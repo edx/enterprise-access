@@ -3,12 +3,19 @@ Tests for Enterprise Access content_assignments utils.
 """
 
 import uuid
+from datetime import datetime, timedelta
+from types import SimpleNamespace
+from unittest import mock
 
 import ddt
 from django.test import TestCase
+from pytz import UTC
 
 from enterprise_access.apps.api_client.tests.test_constants import DATE_FORMAT_ISO_8601
-from enterprise_access.apps.content_assignments.constants import BRAZE_TIMESTAMP_FORMAT
+from enterprise_access.apps.content_assignments.constants import (
+    BRAZE_TIMESTAMP_FORMAT,
+    AssignmentAutomaticExpiredReason
+)
 from enterprise_access.apps.content_assignments.content_metadata_api import get_normalized_metadata_for_assignment
 from enterprise_access.apps.content_assignments.tests.factories import LearnerContentAssignmentFactory
 from enterprise_access.apps.content_assignments.utils import (
@@ -16,7 +23,18 @@ from enterprise_access.apps.content_assignments.utils import (
     has_time_to_complete,
     is_within_minimum_start_date_threshold
 )
-from enterprise_access.utils import _curr_date, _days_from_now, get_course_run_metadata_for_assignment
+from enterprise_access.utils import (
+    _curr_date,
+    _days_from_now,
+    _get_latest_course_run_end_date,
+    get_automatic_expiration_date_and_reason,
+    get_course_run_metadata_for_assignment
+)
+
+UTILS_MODULE = 'enterprise_access.utils'
+CONTENT_METADATA_API_MODULE = 'enterprise_access.apps.content_assignments.content_metadata_api'
+RUN_1 = 'course-v1:edX+Test+1'
+RUN_2 = 'course-v1:edX+Test+2'
 
 mock_course_run_1 = {
     'start_date': _days_from_now(-370, DATE_FORMAT_ISO_8601),
@@ -372,3 +390,105 @@ class UtilsTests(TestCase):
             content_metadata=content_metadata
         )
         self.assertEqual(course_run_metadata, expected_output)
+
+
+def _iso(days_from_now):
+    return (datetime.now(UTC) + timedelta(days=days_from_now)).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+
+@ddt.ddt
+class TestGetLatestCourseRunEndDate(TestCase):
+    """
+    Tests for ``_get_latest_course_run_end_date``.
+    """
+
+    @ddt.data(
+        {},
+        None,
+        {'key': RUN_1, 'normalized_metadata_by_run': {RUN_1: {'end_date': 'not-a-real-date'}}},
+        {'key': RUN_1, 'normalized_metadata_by_run': {RUN_1: {'end_date': None}}},
+        # one run without an end date (e.g. self-paced) blocks the reason, even if other runs ended
+        {'normalized_metadata_by_run': {RUN_1: {'end_date': _iso(-30)}, RUN_2: {'end_date': None}}},
+    )
+    def test_returns_none(self, content_metadata):
+        assert _get_latest_course_run_end_date(content_metadata) is None
+
+    def test_returns_latest_end_date_when_all_runs_ended(self):
+        content_metadata = {
+            'normalized_metadata_by_run': {
+                RUN_1: {'end_date': '2020-01-01T00:00:00Z'},
+                RUN_2: {'end_date': '2020-06-01T00:00:00Z'},
+            },
+        }
+        assert _get_latest_course_run_end_date(content_metadata) == datetime(2020, 6, 1, tzinfo=UTC)
+
+    def test_returns_future_end_date_when_a_run_has_not_ended(self):
+        """Callers decide whether the date has passed, so a future date is returned as-is."""
+        content_metadata = {
+            'normalized_metadata_by_run': {
+                RUN_1: {'end_date': '2020-01-01T00:00:00Z'},
+                RUN_2: {'end_date': '2099-01-01T00:00:00Z'},
+            },
+        }
+        assert _get_latest_course_run_end_date(content_metadata) == datetime(2099, 1, 1, tzinfo=UTC)
+
+
+@ddt.ddt
+class TestCatalogAgnosticFallback(TestCase):
+    """
+    ``use_catalog_agnostic_fallback`` gates the synchronous catalog-agnostic lookup, and the fallback
+    metadata may only inform the course-run-ended date, never the enrollment deadline.
+    """
+
+    @staticmethod
+    def _fake_assignment():
+        policy = SimpleNamespace(catalog_uuid='catalog-uuid')
+        return SimpleNamespace(
+            uuid='assignment-uuid',
+            content_key=RUN_1,
+            assignment_configuration=SimpleNamespace(subsidy_access_policy=policy),
+            get_allocation_timeout_expiration=lambda: datetime.now(UTC) + timedelta(days=90),
+        )
+
+    def _get_expiration(self, fallback_metadata, use_fallback=True):
+        """
+        Run get_automatic_expiration_date_and_reason for content missing from the policy catalog.
+        Returns (result, fallback mock).
+        """
+        fallback_path = f'{CONTENT_METADATA_API_MODULE}.get_catalog_agnostic_content_metadata_for_assignment'
+        with mock.patch(f'{UTILS_MODULE}._get_subsidy_expiration', return_value=None), \
+             mock.patch(f'{CONTENT_METADATA_API_MODULE}.get_content_metadata_for_assignments', return_value={}), \
+             mock.patch(fallback_path, return_value=fallback_metadata) as mock_fallback:
+            result = get_automatic_expiration_date_and_reason(
+                self._fake_assignment(),
+                use_catalog_agnostic_fallback=use_fallback,
+            )
+        return result, mock_fallback
+
+    @ddt.data(
+        (False, False, AssignmentAutomaticExpiredReason.NINETY_DAYS_PASSED),
+        (True, True, AssignmentAutomaticExpiredReason.COURSE_RUN_ENDED),
+    )
+    @ddt.unpack
+    def test_fallback_only_used_when_flag_set(self, use_fallback, expect_fallback_called, expected_reason):
+        ended_metadata = {
+            'normalized_metadata': {'enroll_by_date': None},
+            'normalized_metadata_by_run': {RUN_1: {'end_date': _iso(-1)}},
+        }
+        result, mock_fallback = self._get_expiration(ended_metadata, use_fallback=use_fallback)
+
+        assert mock_fallback.called is expect_fallback_called
+        assert result['reason'] == expected_reason
+
+    def test_fallback_metadata_enroll_by_date_is_ignored(self):
+        """
+        A past ``enroll_by_date`` in the fallback metadata must not win over the course run end date,
+        otherwise the assignment would expire as ENROLLMENT_DATE_PASSED and never have its PII cleared.
+        """
+        ended_metadata = {
+            'normalized_metadata': {'enroll_by_date': _iso(-5)},
+            'normalized_metadata_by_run': {RUN_1: {'enroll_by_date': _iso(-5), 'end_date': _iso(-1)}},
+        }
+        result, _ = self._get_expiration(ended_metadata)
+
+        assert result['reason'] == AssignmentAutomaticExpiredReason.COURSE_RUN_ENDED
