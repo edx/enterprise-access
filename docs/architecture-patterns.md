@@ -114,6 +114,35 @@ Uses `edx-rbac` for fine-grained permissions with:
 - A degraded mode (unscoped search) requires both a settings flag and an explicit call-site
   argument, and is never reached by fallback — missing or expired scoping raises
 
+### 18. Isolate per-subsidy failures when fanning out to enterprise-subsidy
+A customer can own several subsidies, and one can become unreachable on its own — 404 once it is
+soft-deleted, 403 when the requester has no RBAC context for it — while the others stay healthy.
+Any loop that calls enterprise-subsidy once per subsidy should drop just the failing subsidy rather
+than aborting, so the learner still gets an answer for the healthy ones (ENT-12350).
+
+Two things make this easy to get wrong:
+
+- **`can-redeem` fans out at two independent points.**
+  `get_redemptions_by_content_and_policy_for_learner()` fetches the learner's transactions per subsidy,
+  and `evaluate_policies()` separately calls `policy.can_redeem()` per policy, which hits the subsidy's
+  `can_redeem` endpoint. `evaluate_policies()` re-reads `get_queryset()`, so it has no idea the first
+  fan-out failed. Guarding only the first loop leaves the second one to fail the request anyway — the
+  failing subsidy's policies must be excluded from evaluation too.
+- **Exclude unreachable policies *before* sorting, not during the loop.**
+  `sort_subsidy_access_policies_for_redemption()` sorts on `subsidy_expiration_datetime` and
+  `subsidy_balance()`, which both read `subsidy_record()`. That returns `{}` for an unreachable subsidy,
+  so those keys become `None`/`0` and sorting them alongside a healthy policy's real values raises
+  `TypeError: '<' not supported between instances of 'NoneType' and 'str'`.
+
+Only isolate status codes that are scoped to one subsidy (403/404). A 5xx means enterprise-subsidy
+itself is unhealthy and affects every subsidy; swallowing it would quietly tell learners they have
+nothing available during an outage, so it should still fail loudly. See
+`UNREACHABLE_SUBSIDY_STATUS_CODES` in `subsidy_access_policy/subsidy_api.py`.
+
+Note that `subsidy_record()` already swallows HTTPError and returns `{}`, so a dead subsidy makes a
+policy look like it has no balance rather than raising — which is why the symptom reported for
+ENT-12350 was "not enough funds" rather than an obvious error.
+
 ### Key Takeaways for Implementation:
 - Check permissions early using `@permission_required` decorator
 - Use separate serializers for request/response
