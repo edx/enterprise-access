@@ -1,0 +1,49 @@
+# Persona 6 - Chatty Cathy
+#
+# Imported from "Learner Rec Persona Testing.xlsx", authored by the product team. Expected-
+# course titles were resolved to catalog course keys against the live index on 2026-09-09; only
+# exact title matches were kept.
+id: p006-chatty-data-analyst
+domain: technology
+tier: core
+
+inputs:
+  selected_goals: >-
+    I want to be a better team member to my current team, maybe getting a promotion since we
+    might have more budget opening up soon, but I also want to bulk up my resume if something
+    were to happen if I got laid off (god forbid). I want to learn more about how to use the
+    tools I use everyday better.
+  free_text: >-
+    So many things are motivating me! Ever since I was a girl I absolutely loved learning and
+    school. My favorite class was English but math was a close second. In college, I majored
+    in Math but wasn't really sure what I was going to do with it, but I want to spend my
+    whole life constantly learning.
+  known_context: >-
+    I'm a Data Analyst and I've worked at Big Data Corporation LLC for 5 years with some
+    really amazing people who are so lovely. The first couple years were hard, but I really
+    found my stride when I moved teams, and I got to work on mySQL more and became a certified
+    database wizard (in my own opinion).
+  interested_industries: >-
+    The big data corporation is technology but I'd be open to working in any industry and any
+    field, I'm very flexible and I have no idea where the world might take me!
+
+expected:
+  ground_truth_status: placeholder
+  expect_no_coverage: false
+  careers: []
+  courses: []
+
+catalog:
+  snapshot_date: 2026-09-09
+
+notes: >-
+  **No expected courses authored yet** -- loads, but reports has_ground_truth false and must
+  not be scored as a miss.
+  
+  Its value is as an input-shape test case: the four fields total ~1,100 characters of
+  conversational prose. That directly exercises the most consequential retrieval defect found
+  -- the catalog index ANDs every query word, so a query built from this input returns ZERO
+  hits (8+ words is already 0). Keep this persona even once ground truth is authored.
+  
+  No expected career recorded: "Data Analyst" has no exact Lightcast entry (314 qualified
+  variants only).
