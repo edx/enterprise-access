@@ -188,6 +188,11 @@ REST_FRAMEWORK = {
         'ssp_product': '120/hour',
         'learner_pathways_learning_intent': '100/hour',
         'learner_pathways_recommendation_feedback': '100/hour',
+        'learner_pathways_careers': '100/hour',
+        # Tighter than the others on purpose: a pathway request runs a five-step workflow
+        # with several Algolia searches and, when the re-rank backend is enabled, a paid
+        # model call. The cost per request is an order of magnitude above the others here.
+        'learner_pathways_pathway': '30/hour',
         # Deliberately low: the deployed gunicorn config runs 2 synchronous workers with a 300s timeout
         # (docker_gunicorn_configuration.py), so each export occupies a worker for the whole download and a
         # couple of concurrent exports can starve every other request.
