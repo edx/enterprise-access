@@ -154,18 +154,20 @@ def get_subsidy_transactions_export(
     if end_date:
         query_params['end_date'] = end_date.isoformat()
 
+    # Production settings are loaded from YAML, which can only express a sequence as a list, and requests
+    # raises a bare ValueError (not a RequestException) for a list timeout. Normalise it so overriding the
+    # setting in config can't turn every export into a 500.
+    timeout = settings.SUBSIDY_TRANSACTIONS_EXPORT_TIMEOUT
+    if isinstance(timeout, (list, tuple)):
+        timeout = tuple(timeout)
+
     try:
         # OAuthAPIClient only sets a timeout on its token fetch, so set one explicitly for this potentially slow call.
-        response = client.client.get(
-            export_url,
-            params=query_params,
-            stream=True,
-            timeout=settings.SUBSIDY_TRANSACTIONS_EXPORT_TIMEOUT,
-        )
+        response = client.client.get(export_url, params=query_params, stream=True, timeout=timeout)
     except requests.exceptions.RequestException as exc:
-        logger.exception(
-            'Subsidy API transactions export request to %s failed with params %s', export_url, query_params,
-        )
+        # Deliberately no query params: ``search`` is matched against learner emails upstream, so admins type
+        # email addresses into it and they must not reach the logs. The view logs the request's context.
+        logger.exception('Subsidy API transactions export request to %s failed.', export_url)
         raise SubsidyAPIHTTPError('HTTPError occurred in Subsidy API request.') from exc
 
     try:
@@ -173,10 +175,6 @@ def get_subsidy_transactions_export(
     except requests.exceptions.HTTPError as exc:
         # With stream=True the body hasn't been read, so the pooled connection isn't released until we close it.
         response.close()
-        logger.error(
-            'Subsidy API transactions export %s returned %s for params %s',
-            export_url, response.status_code, query_params,
-        )
         raise SubsidyAPIHTTPError('HTTPError occurred in Subsidy API request.') from exc
     return response
 

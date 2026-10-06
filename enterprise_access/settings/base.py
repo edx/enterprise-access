@@ -186,6 +186,10 @@ REST_FRAMEWORK = {
         'ssp_product': '120/hour',
         'learner_pathways_learning_intent': '100/hour',
         'learner_pathways_recommendation_feedback': '100/hour',
+        # Deliberately low: the deployed gunicorn config runs 2 synchronous workers with a 300s timeout
+        # (docker_gunicorn_configuration.py), so each export occupies a worker for the whole download and a
+        # couple of concurrent exports can starve every other request.
+        'learner_credit_transactions_export': '12/hour',
     },
 }
 
@@ -508,9 +512,9 @@ LMS_CLIENT_TIMEOUT = os.environ.get('LMS_CLIENT_TIMEOUT', 45)
 ECOMMERCE_CLIENT_TIMEOUT = os.environ.get('ECOMMERCE_CLIENT_TIMEOUT', 45)
 DISCOVERY_CLIENT_TIMEOUT = os.environ.get('DISCOVERY_CLIENT_TIMEOUT', 45)
 SUBSIDY_CLIENT_TIMEOUT = os.environ.get('SUBSIDY_CLIENT_TIMEOUT', 45)
-# (connect, read) timeout in seconds for the Learner Credit spend CSV export, which can take a while to generate
-# upstream. Keep the read timeout under gunicorn's worker timeout so a slow export can't hold a worker indefinitely.
-SUBSIDY_TRANSACTIONS_EXPORT_TIMEOUT = (10, 120)
+# Longer than the client timeouts above because the export can take a while to generate upstream. This bounds
+# the gap between two reads, not the total download time, so a slow but steady stream can still outlive it.
+SUBSIDY_TRANSACTIONS_EXPORT_TIMEOUT = int(os.environ.get('SUBSIDY_TRANSACTIONS_EXPORT_TIMEOUT', 120))
 XPERT_REQUEST_TIMEOUT = os.environ.get('XPERT_REQUEST_TIMEOUT', 45)
 
 # Xpert API service settings

@@ -585,26 +585,31 @@ rules.add_perm(
 )
 
 
+# Enterprise admins reach policy-admin capabilities through CONTENT_ASSIGNMENTS_ADMIN_ROLE, because
+# SYSTEM_ENTERPRISE_ADMIN_ROLE deliberately maps to SUBSIDY_ACCESS_POLICY_*LEARNER*_ROLE and there is no
+# policy-admin feature role.
+has_policy_admin_or_operator_access = (
+    has_content_assignments_operator_access |
+    has_content_assignments_admin_access |
+    has_subsidy_access_policy_operator_access
+)
+
 # Grants permission to allocate assignments from a policy if the user is a content assignment configuration admin.
 rules.add_perm(
     constants.SUBSIDY_ACCESS_POLICY_ALLOCATION_PERMISSION,
-    (
-        has_content_assignments_operator_access |
-        has_content_assignments_admin_access |
-        has_subsidy_access_policy_operator_access
-    ),
+    has_policy_admin_or_operator_access,
 )
 
-# Grants permission to export a subsidy's Learner Credit spend report (learner emails and amounts) to enterprise
-# admins and operators. This is deliberately its own permission so that who can export learner spend PII can change
-# independently of other features' roles (e.g. Browse & Request).
+# Grants permission to export a subsidy's Learner Credit spend report, which contains learner emails.
+#
+# This has its own permission so that it can be narrowed later without touching other features, but note that it
+# is NOT yet independent of them: it reuses the same roles as assignment allocation above, so anyone granted
+# CONTENT_ASSIGNMENTS_ADMIN_ROLE (including by an explicit database role assignment) can export learner emails.
+# Decoupling it properly means adding a dedicated feature role and mapping the system roles to it in
+# SYSTEM_TO_FEATURE_ROLE_MAPPING.
 rules.add_perm(
     constants.SUBSIDY_ACCESS_POLICY_TRANSACTIONS_EXPORT_PERMISSION,
-    (
-        has_content_assignments_operator_access |
-        has_content_assignments_admin_access |
-        has_subsidy_access_policy_operator_access
-    ),
+    has_policy_admin_or_operator_access,
 )
 
 # Grants permission to acknowledge assignments if the user is linked to the enterprise customer

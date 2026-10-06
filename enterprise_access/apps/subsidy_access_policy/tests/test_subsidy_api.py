@@ -240,3 +240,46 @@ class TransactionsExportTests(TestCase):
 
         assert context.exception.__cause__ is http_error
         response.close.assert_called_once_with()
+
+
+@override_settings(SUBSIDY_TRANSACTIONS_EXPORT_TIMEOUT=[1, 2])
+@mock.patch('enterprise_access.apps.subsidy_access_policy.subsidy_api.get_versioned_subsidy_client')
+class TransactionsExportTimeoutAndLoggingTests(TestCase):
+    """
+    Guards two ways the export could misbehave in production specifically.
+    """
+    LIST_ENDPOINT = 'http://subsidy/api/v2/subsidies/{subsidy_uuid}/admin/transactions/'
+
+    def _mock_client(self, mock_client_getter):
+        mock_client = mock_client_getter.return_value
+        mock_client.TRANSACTIONS_LIST_ENDPOINT = self.LIST_ENDPOINT
+        return mock_client
+
+    def test_list_timeout_from_yaml_config_is_normalised(self, mock_client_getter):
+        """
+        Production settings come from YAML, which can only express a sequence as a list, and requests raises a
+        bare ValueError (not a RequestException) for a list timeout -- which would escape the handler as a 500.
+        """
+        mock_client = self._mock_client(mock_client_getter)
+
+        get_subsidy_transactions_export(subsidy_uuid=uuid.uuid4(), enterprise_customer_uuid=uuid.uuid4())
+
+        assert mock_client.client.get.call_args.kwargs['timeout'] == (1, 2)
+
+    @mock.patch('enterprise_access.apps.subsidy_access_policy.subsidy_api.logger')
+    def test_search_value_never_reaches_the_logs(self, mock_logger, mock_client_getter):
+        """
+        Upstream matches ``search`` against learner emails, so admins type email addresses into it. It must not
+        be logged, even when the request fails.
+        """
+        self._mock_client(mock_client_getter).client.get.side_effect = requests.Timeout()
+
+        with self.assertRaises(SubsidyAPIHTTPError):
+            get_subsidy_transactions_export(
+                subsidy_uuid=uuid.uuid4(),
+                enterprise_customer_uuid=uuid.uuid4(),
+                search='learner@example.com',
+            )
+
+        logged = ' '.join(str(arg) for call in mock_logger.mock_calls for arg in call.args)
+        assert 'learner@example.com' not in logged

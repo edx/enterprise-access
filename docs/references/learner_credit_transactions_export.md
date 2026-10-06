@@ -48,13 +48,29 @@ Dates are interpreted in UTC by enterprise-subsidy.
   `enterprise_customer_uuid`, and enterprise-subsidy is called with all-access operator credentials. The view proves
   the subsidy belongs to the enterprise by looking for a `SubsidyAccessPolicy` with both values, and answers 404 so it
   doesn't reveal that another customer's subsidy exists.
-- **Dedicated permission:** `SUBSIDY_ACCESS_POLICY_TRANSACTIONS_EXPORT_PERMISSION` is granted to content-assignment
-  admins/operators and policy operators (`core/rules.py`). Don't reuse another feature's permission (e.g. Browse &
-  Request's `REQUESTS_ADMIN_ACCESS_PERMISSION`) for it, because the report contains learner emails.
+- **Dedicated permission, shared roles:** `SUBSIDY_ACCESS_POLICY_TRANSACTIONS_EXPORT_PERMISSION` has its own
+  permission name so it can be narrowed later, but it is **not** yet independent of other features: it reuses the
+  same predicate as `SUBSIDY_ACCESS_POLICY_ALLOCATION_PERMISSION` (content-assignment admins/operators and policy
+  operators), so anyone holding `CONTENT_ASSIGNMENTS_ADMIN_ROLE` — including via an explicit database role
+  assignment — can export learner emails. Enterprise admins only reach it that way, because
+  `SYSTEM_ENTERPRISE_ADMIN_ROLE` maps to the policy *learner* role and there is no policy-admin feature role.
+  Decoupling properly needs a dedicated feature role in `SYSTEM_TO_FEATURE_ROLE_MAPPING`.
 - **Streaming:** the upstream response is opened with `stream=True` and relayed in chunks. It is always closed:
   on upstream error statuses (in `get_subsidy_transactions_export`), when the client aborts, and when the stream
   fails partway through. A mid-stream failure is logged and re-raised so the download aborts instead of looking
   complete.
 - **Timeout:** `OAuthAPIClient` only applies a timeout to its token fetch, so the export call sets
-  `SUBSIDY_TRANSACTIONS_EXPORT_TIMEOUT` explicitly. Keep its read timeout under gunicorn's worker timeout.
+  `SUBSIDY_TRANSACTIONS_EXPORT_TIMEOUT` explicitly. This is requests' *read* timeout, which bounds the gap
+  between two reads rather than the total download, so a slow but steady stream can still outlive it. With
+  synchronous workers each download occupies a worker for its whole duration, and a download longer than the
+  deployed worker timeout is killed, giving the admin a truncated file. There is no rate limit on this endpoint
+  yet; `ScopedRateThrottle` (see `customer_billing.py`) is the repo's precedent if one is needed.
+- **Streaming and the upstream connection:** the upstream response is relayed by `UpstreamCsvStream`, whose
+  `close()` Django registers as a resource closer, so the connection is released even if the response is
+  discarded before its first chunk. `Content-Length` is not forwarded: the upstream streams its response and
+  never sends one. `Cache-Control: no-store` is set because the file contains learner emails.
+- **Content negotiation:** the view renders `text/csv` as well as JSON, so a client sending
+  `Accept: text/csv` is not refused with a 406 during negotiation.
+- **Logging:** the `search` value never reaches the logs, because upstream matches it against learner emails;
+  the audit line records only whether a search was used.
 - **Audit:** each export logs the requesting user id, enterprise, subsidy and policy.

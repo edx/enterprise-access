@@ -24,7 +24,9 @@ from rest_framework import authentication, mixins, permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import APIException, NotFound
 from rest_framework.generics import get_object_or_404
+from rest_framework.renderers import BrowsableAPIRenderer, JSONRenderer
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_csv.renderers import CSVRenderer
 
 from enterprise_access.apps.api import filters, serializers, utils
@@ -455,6 +457,35 @@ class SubsidyAccessPolicyLockedException(APIException):
 class AllocationRequestException(APIException):
     status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
     default_detail = 'Could not allocate'
+
+
+class UpstreamCsvStream:
+    """
+    Iterates the upstream CSV in chunks and releases the upstream response when the Django response closes.
+
+    A generator's ``finally`` only runs once iteration has started, so a response discarded before its first
+    chunk would leak the upstream connection. Django registers ``close()`` on whatever it is given as the
+    streaming content, so a class with a ``close()`` method is released either way.
+    """
+    def __init__(self, subsidy_response, chunk_size, log_context):
+        self.subsidy_response = subsidy_response
+        self.log_context = log_context
+        self._chunks = subsidy_response.iter_content(chunk_size=chunk_size)
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        try:
+            return next(self._chunks)
+        except RequestException:
+            # The 200 headers are already sent, so the status can't change. Log it and re-raise, which aborts
+            # the client's download rather than silently ending a truncated report.
+            logger.exception(f'Learner credit transactions export failed mid-stream: {self.log_context}')
+            raise
+
+    def close(self):
+        self.subsidy_response.close()
 
 
 class TransactionsExportRequestException(APIException):
@@ -1371,9 +1402,33 @@ class SubsidyAccessPolicyTransactionsViewset(PermissionRequiredMixin, viewsets.G
     permission_classes = (permissions.IsAuthenticated,)
     authentication_classes = (JwtAuthentication, authentication.SessionAuthentication)
     permission_required = SUBSIDY_ACCESS_POLICY_TRANSACTIONS_EXPORT_PERMISSION
+    # DRF negotiates the response format in ``initial()``, before the view method runs, so a download client
+    # sending ``Accept: text/csv`` would be refused with a 406 unless that media type is renderable here. A
+    # successful export returns a StreamingHttpResponse and never reaches a renderer; CSVRenderer only ever
+    # renders error payloads, which it turns into a header row plus the message. JSON stays first so it
+    # remains the default when the client has no preference.
+    renderer_classes = (JSONRenderer, CSVRenderer, BrowsableAPIRenderer)
+    # DRF maps HEAD onto the GET handler, which would run a whole export (and write an audit line) for a
+    # request that discards the body.
+    http_method_names = ['get', 'options']
+    # The export is expensive both here and upstream, and the deployed gunicorn config runs 2 synchronous
+    # workers, so each download occupies one for its whole duration. Throttle it so a handful of concurrent
+    # exports can't starve the rest of the service.
+    throttle_classes = (ScopedRateThrottle,)
+    throttle_scope = 'learner_credit_transactions_export'
 
     # Size of the chunks in which the upstream CSV is relayed to the client.
     STREAM_CHUNK_SIZE = 8192
+
+    def permission_denied(self, request, message=None, code=None):
+        """
+        Record refused attempts to export learner spend, which the permission layer would otherwise drop silently.
+        """
+        logger.warning(
+            'Learner credit transactions export refused (%s) for user_id=%s on enterprise_customer_uuid=%s',
+            message, getattr(request.user, 'id', None), request.query_params.get('enterprise_customer_uuid'),
+        )
+        super().permission_denied(request, message=message, code=code)
 
     def get_permission_object(self):
         """
@@ -1419,11 +1474,15 @@ class SubsidyAccessPolicyTransactionsViewset(PermissionRequiredMixin, viewsets.G
             end_date: (Optional) Only include transactions created on/before this date, inclusive (YYYY-MM-DD).
         """
         validated_data = self.validated_export_params
+        # ``search`` is matched against learner emails upstream, so record only whether one was used.
         log_context = (
             f'user_id={request.user.id}, '
             f'enterprise_customer_uuid={validated_data["enterprise_customer_uuid"]}, '
             f'subsidy_uuid={validated_data["subsidy_uuid"]}, '
-            f'subsidy_access_policy_uuid={validated_data.get("subsidy_access_policy_uuid")}'
+            f'subsidy_access_policy_uuid={validated_data.get("subsidy_access_policy_uuid")}, '
+            f'start_date={validated_data.get("start_date")}, '
+            f'end_date={validated_data.get("end_date")}, '
+            f'searched={bool(validated_data.get("search"))}'
         )
 
         # The permission check only covers enterprise_customer_uuid, and the Subsidy API is called with this service's
@@ -1437,6 +1496,7 @@ class SubsidyAccessPolicyTransactionsViewset(PermissionRequiredMixin, viewsets.G
         if validated_data.get('subsidy_access_policy_uuid'):
             policy_lookup['uuid'] = validated_data['subsidy_access_policy_uuid']
         if not SubsidyAccessPolicy.objects.filter(**policy_lookup).exists():
+            logger.warning(f'Learner credit transactions export refused (unknown subsidy or policy): {log_context}')
             raise NotFound('No subsidy or policy found for the given enterprise_customer_uuid and subsidy_uuid.')
 
         try:
@@ -1460,33 +1520,16 @@ class SubsidyAccessPolicyTransactionsViewset(PermissionRequiredMixin, viewsets.G
         logger.info(f'Learner credit transactions export started: {log_context}')
 
         response = StreamingHttpResponse(
-            self._stream_and_close(subsidy_response, log_context),
+            UpstreamCsvStream(subsidy_response, self.STREAM_CHUNK_SIZE, log_context),
             content_type=subsidy_response.headers.get('Content-Type', 'text/csv; charset=utf-8'),
         )
         response['Content-Disposition'] = subsidy_response.headers.get(
             'Content-Disposition',
             f'attachment; filename="spent_report_{validated_data["subsidy_uuid"]}.csv"',
         )
-        # Forward the length so clients can detect a truncated download. Skip it if the upstream body was compressed,
-        # because ``iter_content()`` decompresses and the upstream length would no longer match what we send.
-        if 'Content-Length' in subsidy_response.headers and 'Content-Encoding' not in subsidy_response.headers:
-            response['Content-Length'] = subsidy_response.headers['Content-Length']
+        # The report contains learner emails, so keep it out of shared and browser caches.
+        response['Cache-Control'] = 'no-store'
         return response
-
-    def _stream_and_close(self, subsidy_response, log_context):
-        """
-        Yield the upstream CSV in chunks, releasing the upstream connection even if the client aborts the download.
-
-        A failure after the 200 headers are sent can't change the status code, so it's logged and re-raised, which
-        aborts the client's download instead of silently ending a truncated report.
-        """
-        try:
-            yield from subsidy_response.iter_content(chunk_size=self.STREAM_CHUNK_SIZE)
-        except RequestException:
-            logger.exception(f'Learner credit transactions export failed mid-stream: {log_context}')
-            raise
-        finally:
-            subsidy_response.close()
 
     @cached_property
     def validated_export_params(self):

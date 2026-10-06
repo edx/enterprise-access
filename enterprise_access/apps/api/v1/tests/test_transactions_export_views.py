@@ -6,6 +6,7 @@ from uuid import uuid4
 
 import ddt
 import requests
+from django.core.cache import cache
 from django.test import TestCase
 from rest_framework import status
 from rest_framework.reverse import reverse
@@ -46,6 +47,10 @@ class TestTransactionsExportView(APITestWithMocks):
 
     def setUp(self):
         super().setUp()
+        # The export is rate limited and DRF counts requests in the default cache, which otherwise persists
+        # between test methods.
+        cache.clear()
+        self.addCleanup(cache.clear)
         self.enterprise_uuid = uuid4()
         self.subsidy_uuid = uuid4()
         self.policy = PerLearnerSpendCapLearnerCreditAccessPolicyFactory(
@@ -105,28 +110,75 @@ class TestTransactionsExportView(APITestWithMocks):
 
     @mock.patch(EXPORT_FUNCTION_PATH)
     def test_upstream_headers_are_passed_through(self, mock_export):
-        """The upstream filename, charset and length are relayed to the client."""
+        """The upstream filename and charset are relayed to the client."""
         self._mock_upstream(mock_export, chunks=[b'0123456789'], headers={
             'Content-Type': 'text/csv; charset=utf-8',
             'Content-Disposition': 'attachment; filename="upstream.csv"',
-            'Content-Length': '10',
         })
 
         response = self._get()
 
         assert response['Content-Type'] == 'text/csv; charset=utf-8'
         assert response['Content-Disposition'] == 'attachment; filename="upstream.csv"'
-        assert response['Content-Length'] == '10'
 
     @mock.patch(EXPORT_FUNCTION_PATH)
-    def test_content_length_not_forwarded_for_compressed_upstream(self, mock_export):
-        """iter_content() decompresses the body, so a compressed upstream's length wouldn't match what we send."""
-        self._mock_upstream(mock_export, headers={'Content-Length': '10', 'Content-Encoding': 'gzip'})
+    def test_content_length_is_never_forwarded(self, mock_export):
+        """
+        The upstream streams its response and never sends Content-Length, and ``iter_content()`` would
+        decompress a compressed body anyway, so relaying a length could only ever be wrong.
+        """
+        self._mock_upstream(mock_export, headers={'Content-Length': '10'})
 
         response = self._get()
 
         assert response.status_code == status.HTTP_200_OK
         assert not response.has_header('Content-Length')
+
+    @mock.patch(EXPORT_FUNCTION_PATH)
+    def test_download_is_not_cached(self, mock_export):
+        """The report contains learner emails, so it must not sit in a shared or browser cache."""
+        self._mock_upstream(mock_export)
+
+        response = self._get()
+
+        assert response['Cache-Control'] == 'no-store'
+
+    @mock.patch(EXPORT_FUNCTION_PATH)
+    def test_accept_text_csv_is_not_rejected(self, mock_export):
+        """A download client asking for text/csv must not be refused by content negotiation."""
+        self._mock_upstream(mock_export)
+
+        response = self.client.get(
+            self.url,
+            {'enterprise_customer_uuid': self.enterprise_uuid, 'subsidy_uuid': self.subsidy_uuid},
+            HTTP_ACCEPT='text/csv',
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+
+    @mock.patch(EXPORT_FUNCTION_PATH)
+    def test_head_request_does_not_run_an_export(self, mock_export):
+        """DRF maps HEAD onto GET, which would run a whole export for a request that discards the body."""
+        response = self.client.head(
+            self.url,
+            {'enterprise_customer_uuid': self.enterprise_uuid, 'subsidy_uuid': self.subsidy_uuid},
+        )
+
+        assert response.status_code == status.HTTP_405_METHOD_NOT_ALLOWED
+        mock_export.assert_not_called()
+
+    @mock.patch(EXPORT_FUNCTION_PATH)
+    def test_upstream_is_closed_even_if_the_response_is_never_read(self, mock_export):
+        """
+        A generator's ``finally`` only runs once iteration has started, so the upstream response would leak if
+        the response were discarded before its first chunk.
+        """
+        upstream = self._mock_upstream(mock_export, chunks=[b'header\n', b'row\n'])
+
+        response = self._get()
+        response.close()
+
+        upstream.close.assert_called_once_with()
 
     @mock.patch(VIEW_LOGGER_PATH)
     @mock.patch(EXPORT_FUNCTION_PATH)
@@ -178,12 +230,12 @@ class TestTransactionsExportView(APITestWithMocks):
 
         response = self._get()
         assert next(iter(response.streaming_content)) == b'header\n'
-        upstream.close.assert_not_called()
 
-        # Django closes the response (and with it the streaming generator) when the client disconnects.
+        # Django closes the response (and with it the upstream stream) when the client disconnects.
         response.close()
 
-        upstream.close.assert_called_once_with()
+        # ``requests.Response.close()`` is idempotent, so only that it happened matters, not how often.
+        assert upstream.close.called
 
     @mock.patch(VIEW_LOGGER_PATH)
     @mock.patch(EXPORT_FUNCTION_PATH)
