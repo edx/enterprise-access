@@ -279,6 +279,36 @@ class TestTransactionsExportView(APITestWithMocks):
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         mock_export.assert_not_called()
 
+    @mock.patch(EXPORT_FUNCTION_PATH)
+    def test_export_is_rate_limited(self, mock_export):
+        """
+        The export is expensive here and upstream, so one admin can't run it repeatedly. The configured rate is
+        12/hour, and the 13th request in that window is refused.
+        """
+        self._mock_upstream(mock_export)
+
+        statuses = [self._get().status_code for _ in range(13)]
+
+        assert statuses[:12] == [status.HTTP_200_OK] * 12
+        assert statuses[12] == status.HTTP_429_TOO_MANY_REQUESTS
+        assert mock_export.call_count == 12
+
+    @mock.patch(VIEW_LOGGER_PATH)
+    @mock.patch(EXPORT_FUNCTION_PATH)
+    def test_refused_attempt_is_logged(self, mock_export, mock_logger):
+        """A refused attempt to export learner emails must leave a trace, not fail silently."""
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE,
+            'context': self.enterprise_uuid,
+        }])
+
+        response = self._get()
+
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+        mock_logger.warning.assert_called_once()
+        assert 'refused' in mock_logger.warning.call_args.args[0]
+        mock_export.assert_not_called()
+
     def test_unauthenticated_request_returns_unauthorized(self):
         self.client.cookies.clear()
 

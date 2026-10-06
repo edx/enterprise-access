@@ -1412,8 +1412,8 @@ class SubsidyAccessPolicyTransactionsViewset(PermissionRequiredMixin, viewsets.G
     # request that discards the body.
     http_method_names = ['get', 'options']
     # The export is expensive both here and upstream, and the deployed gunicorn config runs 2 synchronous
-    # workers, so each download occupies one for its whole duration. Throttle it so a handful of concurrent
-    # exports can't starve the rest of the service.
+    # workers, so each download occupies one for its whole duration. ScopedRateThrottle keys on the user, so
+    # this caps how often a single admin can export; it does not limit how many exports run concurrently.
     throttle_classes = (ScopedRateThrottle,)
     throttle_scope = 'learner_credit_transactions_export'
 

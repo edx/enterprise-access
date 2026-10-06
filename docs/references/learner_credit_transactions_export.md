@@ -36,7 +36,7 @@ Dates are interpreted in UTC by enterprise-subsidy.
 
 | Status | When |
 |---|---|
-| 200 | CSV streamed through from enterprise-subsidy. `Content-Type`, `Content-Disposition` and (when the upstream body isn't compressed) `Content-Length` are passed through. |
+| 200 | CSV streamed through from enterprise-subsidy. `Content-Type` and `Content-Disposition` are passed through. |
 | 400 | Missing/invalid params. Validated **before** the upstream call, so a typo is never reported as an outage. |
 | 401 / 403 | Not authenticated / lacks `SUBSIDY_ACCESS_POLICY_TRANSACTIONS_EXPORT_PERMISSION` for `enterprise_customer_uuid`. |
 | 404 | No policy links `subsidy_uuid` (and `subsidy_access_policy_uuid`, if given) to `enterprise_customer_uuid`. |
@@ -63,8 +63,9 @@ Dates are interpreted in UTC by enterprise-subsidy.
   `SUBSIDY_TRANSACTIONS_EXPORT_TIMEOUT` explicitly. This is requests' *read* timeout, which bounds the gap
   between two reads rather than the total download, so a slow but steady stream can still outlive it. With
   synchronous workers each download occupies a worker for its whole duration, and a download longer than the
-  deployed worker timeout is killed, giving the admin a truncated file. There is no rate limit on this endpoint
-  yet; `ScopedRateThrottle` (see `customer_billing.py`) is the repo's precedent if one is needed.
+  deployed worker timeout is killed, giving the admin a truncated file. The endpoint is throttled
+  (`learner_credit_transactions_export`, 12/hour), but note `ScopedRateThrottle` keys on the user, so it caps how
+  often one admin can export rather than how many exports run at once.
 - **Streaming and the upstream connection:** the upstream response is relayed by `UpstreamCsvStream`, whose
   `close()` Django registers as a resource closer, so the connection is released even if the response is
   discarded before its first chunk. `Content-Length` is not forwarded: the upstream streams its response and

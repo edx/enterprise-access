@@ -165,9 +165,9 @@ def get_subsidy_transactions_export(
         # OAuthAPIClient only sets a timeout on its token fetch, so set one explicitly for this potentially slow call.
         response = client.client.get(export_url, params=query_params, stream=True, timeout=timeout)
     except requests.exceptions.RequestException as exc:
-        # Deliberately no query params: ``search`` is matched against learner emails upstream, so admins type
-        # email addresses into it and they must not reach the logs. The view logs the request's context.
-        logger.exception('Subsidy API transactions export request to %s failed.', export_url)
+        # Not logged here: the view logs every failure with the request's full context. Logging again would
+        # duplicate the traceback, and the query params must not be logged at all because ``search`` is matched
+        # against learner emails upstream, so admins type email addresses into it.
         raise SubsidyAPIHTTPError('HTTPError occurred in Subsidy API request.') from exc
 
     try:
