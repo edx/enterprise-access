@@ -1458,6 +1458,9 @@ class SubsidyAccessPolicyTransactionsViewset(PermissionRequiredMixin, viewsets.G
             status.HTTP_404_NOT_FOUND: OpenApiResponse(
                 description='The subsidy (or policy) does not belong to the given enterprise customer.',
             ),
+            status.HTTP_429_TOO_MANY_REQUESTS: OpenApiResponse(
+                description='The requester has exceeded the export rate limit.',
+            ),
             status.HTTP_502_BAD_GATEWAY: OpenApiResponse(description='The Subsidy API export request failed.'),
         },
     )

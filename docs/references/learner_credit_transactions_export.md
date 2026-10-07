@@ -40,6 +40,7 @@ Dates are interpreted in UTC by enterprise-subsidy.
 | 400 | Missing/invalid params. Validated **before** the upstream call, so a typo is never reported as an outage. |
 | 401 / 403 | Not authenticated / lacks `SUBSIDY_ACCESS_POLICY_TRANSACTIONS_EXPORT_PERMISSION` for `enterprise_customer_uuid`. |
 | 404 | No policy links `subsidy_uuid` (and `subsidy_access_policy_uuid`, if given) to `enterprise_customer_uuid`. |
+| 429 | The same user has exported more than 12 times in the past hour (`learner_credit_transactions_export` throttle scope). |
 | 502 | Any upstream failure. Only a generic message is returned; upstream bodies are never passed through. |
 
 ## Gotchas
