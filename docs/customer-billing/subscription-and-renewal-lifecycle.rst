@@ -247,8 +247,10 @@ The handler also idempotently reactivates the most recently processed renewal's 
 Renewal rows are only created for the initial trial-to-paid transition, so later paid invoices never match one.
 If no processed renewal exists, the handler still raises so Stripe retries (the ``invoice.created`` out-of-order
 case). Redeliveries are detected via ``StripeEventData.handled_at`` for the Stripe event ID, so the notice is
-queued at most once per event. The same check guards the finalized-cancelation and ended emails in
-``customer.subscription.deleted``.
+not re-queued on a sequential redelivery. The check is best-effort and non-atomic: two concurrent deliveries
+of the same event can both queue the email, so configure a Braze frequency cap on the campaign.
+The same check guards only the new ended email in ``customer.subscription.deleted``;
+the existing finalized-cancelation and trial-ended emails are not gated.
 
 **Trigger properties for the paid lifecycle campaigns**
 

@@ -480,6 +480,10 @@ def _event_already_handled(event: stripe.Event) -> bool:
 
     ``handled_at`` is only set after the handler finishes without raising, so a handler that failed
     partway (for example, while enqueueing) is still retried by Stripe.
+
+    This is a best-effort, non-atomic check: it deduplicates sequential redeliveries, but two concurrent
+    deliveries of the same event can both read ``handled_at`` as null and both queue the email. Configure a
+    Braze frequency cap on the affected campaigns to absorb that rare duplicate.
     """
     return StripeEventData.objects.filter(event_id=event.id, handled_at__isnull=False).exists()
 
@@ -973,10 +977,6 @@ class StripeEventHandler:
         # https://docs.stripe.com/api/subscriptions/object#subscription_object-ended_at
         ended_at = subscription.get("ended_at") or timezone.now().timestamp()
 
-        # Stripe redelivers events; don't re-send the cancellation/ended emails for an already-handled event.
-        if _event_already_handled(event):
-            return
-
         if previous_status == StripeSubscriptionStatus.TRIALING:
             logger.info(
                 "Queuing trial ended cancellation email for checkout_intent uuid=%s",
@@ -988,6 +988,7 @@ class StripeEventHandler:
             return
 
         if previous_status == StripeSubscriptionStatus.ACTIVE:
+            # Pre-existing behavior, intentionally not gated on redelivery.
             logger.info(
                 "Queuing cancelation finalization email for checkout_intent uuid=%s",
                 checkout_intent.uuid,
@@ -1000,9 +1001,12 @@ class StripeEventHandler:
         # An ACTIVE status, or a processed renewal, means the subscription was paid. The latter covers
         # subscriptions that lapsed through past_due/unpaid before deletion, where the immediately
         # previous status alone can't tell us it was ever paid.
+        # Stripe redelivers events; only the new ended email is deduplicated on redelivery.
         if (
-            previous_status == StripeSubscriptionStatus.ACTIVE or
-            checkout_intent.renewals.filter(processed_at__isnull=False).exists()
+            not _event_already_handled(event) and (
+                previous_status == StripeSubscriptionStatus.ACTIVE or
+                checkout_intent.renewals.filter(processed_at__isnull=False).exists()
+            )
         ):
             logger.info(
                 "Queuing paid subscription ended email for checkout_intent uuid=%s",

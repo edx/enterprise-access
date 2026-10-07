@@ -2722,12 +2722,16 @@ class TestStripeEventHandler(TestCase):
     def test_subscription_deleted_active_queues_finalized_and_ended_emails(
         self, mock_finalized_task, mock_ended_task, _mock_cancel, **subscription_extra,
     ):
-        """An ended ACTIVE subscription queues both emails once, regardless of reason or redelivery."""
+        """
+        An ended ACTIVE subscription queues both emails regardless of reason. On redelivery only the new
+        ended email is deduplicated; the pre-existing finalized email is unchanged.
+        """
         self._dispatch_subscription_deleted(
             "sub_test_active_deleted_both", StripeSubscriptionStatus.ACTIVE, deliveries=2, **subscription_extra,
         )
 
-        mock_finalized_task.delay.assert_called_once_with(
+        self.assertEqual(mock_finalized_task.delay.call_count, 2)
+        mock_finalized_task.delay.assert_called_with(
             checkout_intent_id=self.checkout_intent.id, ended_at_timestamp=1234567890,
         )
         mock_ended_task.delay.assert_called_once_with(
@@ -2747,18 +2751,6 @@ class TestStripeEventHandler(TestCase):
         mock_trial_ended_task.delay.assert_called_once()
         mock_finalized_task.delay.assert_not_called()
         mock_ended_task.delay.assert_not_called()
-
-    @mock.patch(f"{HANDLERS}cancel_all_future_plans")
-    @mock.patch(f"{HANDLERS}send_trial_ended_cancellation_email_task")
-    def test_subscription_deleted_trialing_redelivery_queues_trial_ended_email_once(
-        self, mock_trial_ended_task, _mock_cancel,
-    ):
-        """A redelivered trial subscription deletion does not re-send the trial ended email."""
-        self._dispatch_subscription_deleted(
-            "sub_test_trialing_redelivery", StripeSubscriptionStatus.TRIALING, deliveries=2,
-        )
-
-        mock_trial_ended_task.delay.assert_called_once_with(checkout_intent_id=self.checkout_intent.id)
 
     @ddt.data(
         (StripeSubscriptionStatus.PAST_DUE, True),
