@@ -174,6 +174,7 @@ class TestStripePricingAPI(TestCase):
             slug='quarterly_license_plan',
             stripe_price_lookup_key=MOCK_SSP_PRODUCTS['quarterly_license_plan']['lookup_key'],
             is_active=True,
+            catalog_query_id=42,
             catalog_query_uuid=uuid.uuid4(),
         )
         SspProduct.objects.create(
@@ -199,6 +200,7 @@ class TestStripePricingAPI(TestCase):
         # Check that SSP-specific metadata is added and quantity_range is sourced from settings
         quarterly_data = result['quarterly_license_plan']
         self.assertEqual(quarterly_data['ssp_product_key'], 'quarterly_license_plan')
+        self.assertEqual(quarterly_data['catalog_query_id'], 42)
         self.assertEqual(quarterly_data.get('quantity_range'), [5, 50])
 
     def test_calculate_subtotal_basic_format(self):

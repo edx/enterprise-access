@@ -171,6 +171,7 @@ class TestCheckoutContextHandler(APITest):
                 'unit_amount': 10000,
                 'unit_amount_decimal': Decimal('100.00'),
                 'lookup_key': 'valid_key',
+                'catalog_query_id': 42,
             },
             'other_valid_product': {
                 'id': 'price_456',
@@ -193,6 +194,8 @@ class TestCheckoutContextHandler(APITest):
         self.assertIn('default_by_lookup_key', pricing)
         self.assertIn('prices', pricing)
         self.assertEqual(len(pricing['prices']), 2)
+        prices_by_id = {price['id']: price for price in pricing['prices']}
+        self.assertEqual(prices_by_id['price_123']['catalog_query_id'], 42)
 
     def test_get_field_constraints_default_values(self):
         """
