@@ -435,7 +435,7 @@ def _handle_invoice_paid_status_updated(
         stripe_invoice_id=stripe_invoice_id,
     ).first()
 
-    if not renewal and _handle_annual_renewal_invoice(event, invoice, checkout_intent):
+    if not renewal and _handle_annual_renewal_invoice(event, invoice, checkout_intent, stripe_subscription_id):
         return
 
     if not renewal:
@@ -488,13 +488,16 @@ def _event_already_handled(event: stripe.Event) -> bool:
     return StripeEventData.objects.filter(event_id=event.id, handled_at__isnull=False).exists()
 
 
-def _handle_annual_renewal_invoice(event: stripe.Event, invoice, checkout_intent: CheckoutIntent) -> bool:
+def _handle_annual_renewal_invoice(
+    event: stripe.Event, invoice, checkout_intent: CheckoutIntent, stripe_subscription_id: str,
+) -> bool:
     """
     Handle a paid annual renewal invoice that has no ``SelfServiceSubscriptionRenewal``.
 
     Renewal rows are only created for the initial trial->paid transition, so a later
     ``subscription_cycle`` invoice never matches one. Such an invoice is a renewal if the trial->paid
-    transition was already processed. For these invoices we:
+    transition was already processed for the same Stripe subscription (an intent can have renewal rows
+    for other subscriptions or terms, whose plans must not be touched). For these invoices we:
 
     - idempotently reactivate the paid plan, since it may have been deactivated during a past_due episode
     - queue the renewal notice email, unless this is a redelivery of an already-handled event
@@ -505,6 +508,7 @@ def _handle_annual_renewal_invoice(event: stripe.Event, invoice, checkout_intent
     if invoice.get('billing_reason') != 'subscription_cycle':
         return False
     processed_renewal = checkout_intent.renewals.filter(
+        stripe_subscription_id=stripe_subscription_id,
         processed_at__isnull=False,
     ).order_by('-processed_at').first()
     if not processed_renewal:

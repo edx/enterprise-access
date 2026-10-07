@@ -239,14 +239,14 @@ i.e. the second and ensuing paid periods. TBD on the actual flow, here.
 
 When an ``invoice.paid`` event (amount > $0) with ``billing_reason == "subscription_cycle"`` arrives and no
 ``SelfServiceSubscriptionRenewal`` matches the invoice, it is treated as an annual renewal if the trial-to-paid
-transition was already processed for the checkout intent.
+transition was already processed for the same Stripe subscription of the checkout intent.
 ``BRAZE_ENTERPRISE_PROVISION_SUBSCRIPTION_RENEWAL_NOTICE_CAMPAIGN`` is then sent in addition to the payment receipt.
 The handler also idempotently reactivates the most recently processed renewal's paid plan, because
 ``cancel_all_future_plans`` may have deactivated it during a ``past_due`` episode.
 
 Renewal rows are only created for the initial trial-to-paid transition, so later paid invoices never match one.
-If no processed renewal exists, the handler still raises so Stripe retries (the ``invoice.created`` out-of-order
-case). Redeliveries are detected via ``StripeEventData.handled_at`` for the Stripe event ID, so the notice is
+If no processed renewal exists for the invoice's Stripe subscription, the handler still raises so Stripe retries
+(the ``invoice.created`` out-of-order case). Redeliveries are detected via ``StripeEventData.handled_at`` for the Stripe event ID, so the notice is
 not re-queued on a sequential redelivery. The check is best-effort and non-atomic: two concurrent deliveries
 of the same event can both queue the email, so configure a Braze frequency cap on the campaign.
 The same check guards only the new ended email in ``customer.subscription.deleted``;

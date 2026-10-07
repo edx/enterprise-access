@@ -2675,7 +2675,9 @@ class TestStripeEventHandler(TestCase):
         for _ in range(deliveries):
             StripeEventHandler.dispatch(event)
 
-    def _create_processed_renewal(self, event_id, renewed_plan_uuid=None):
+    def _create_processed_renewal(
+        self, event_id, renewed_plan_uuid=None, stripe_subscription_id='sub_test_renewal_notice',
+    ):
         """Create a processed (trial->paid) renewal for the checkout intent."""
         return SelfServiceSubscriptionRenewal.objects.create(
             checkout_intent=self.checkout_intent,
@@ -2686,6 +2688,7 @@ class TestStripeEventHandler(TestCase):
             stripe_event_data=StripeEventData.objects.create(
                 event_id=event_id, event_type='invoice.paid', checkout_intent=self.checkout_intent,
             ),
+            stripe_subscription_id=stripe_subscription_id,
             stripe_invoice_id=f'in_{event_id}',
         )
 
@@ -2866,6 +2869,23 @@ class TestStripeEventHandler(TestCase):
                 StripeEventHandler.dispatch(event)
             mock_renewal_notice_task.delay.assert_not_called()
             mock_lm_client.return_value.update_subscription_plan.assert_not_called()
+
+    @mock.patch(f"{HANDLERS}LicenseManagerApiClient")
+    @mock.patch(f"{HANDLERS}send_paid_subscription_renewal_notice_email_task")
+    @mock.patch(f"{HANDLERS}send_payment_receipt_email")
+    def test_invoice_paid_annual_renewal_ignores_processed_renewal_of_other_subscription(
+        self, _mock_receipt_task, mock_renewal_notice_task, mock_lm_client,
+    ):
+        """A processed renewal for a different Stripe subscription is not reactivated and sends no notice."""
+        self._create_processed_renewal(
+            'evt_test_other_sub_renewal', uuid.uuid4(), stripe_subscription_id='sub_some_other_subscription',
+        )
+
+        with self.assertRaises(SelfServiceSubscriptionRenewal.DoesNotExist):
+            StripeEventHandler.dispatch(self._create_cycle_invoice_paid_event())
+
+        mock_lm_client.return_value.update_subscription_plan.assert_not_called()
+        mock_renewal_notice_task.delay.assert_not_called()
 
     @mock.patch(f"{HANDLERS}LicenseManagerApiClient")
     @mock.patch(f"{HANDLERS}send_paid_subscription_renewal_notice_email_task")
