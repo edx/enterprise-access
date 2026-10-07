@@ -1,7 +1,10 @@
 """
 Tests for the Learner Credit spent transactions CSV export endpoint.
 """
+import io
+import logging
 from unittest import mock
+from urllib.parse import quote
 from uuid import uuid4
 
 import ddt
@@ -28,6 +31,7 @@ from test_utils import APITestWithMocks
 
 EXPORT_FUNCTION_PATH = 'enterprise_access.apps.api.v1.views.subsidy_access_policy.get_subsidy_transactions_export'
 VIEW_LOGGER_PATH = 'enterprise_access.apps.api.v1.views.subsidy_access_policy.logger'
+SUBSIDY_CLIENT_GETTER_PATH = 'enterprise_access.apps.subsidy_access_policy.subsidy_api.get_versioned_subsidy_client'
 
 
 def _subsidy_api_error(status_code, body='<html><body>Internal permission subsidy.can_read</body></html>'):
@@ -430,6 +434,42 @@ class TestTransactionsExportView(APITestWithMocks):
         response = self._get()
 
         assert response.status_code == status.HTTP_502_BAD_GATEWAY
+
+    @ddt.data('error_status', 'connection_error')
+    @mock.patch(SUBSIDY_CLIENT_GETTER_PATH)
+    def test_upstream_failure_logs_never_contain_search(self, failure, mock_client_getter):
+        """
+        Admins type learner emails into ``search``, and the requests error behind an upstream failure names the full
+        upstream URL, query string included. Nothing logged for that failure, traceback included, may carry it.
+        """
+        search = 'learner@example.com'
+        mock_client = mock_client_getter.return_value
+        mock_client.TRANSACTIONS_LIST_ENDPOINT = 'http://subsidy/api/v2/subsidies/{subsidy_uuid}/admin/transactions/'
+        upstream_url = requests.Request(
+            'GET',
+            mock_client.TRANSACTIONS_LIST_ENDPOINT.format(subsidy_uuid=self.subsidy_uuid) + 'export/',
+            params={'search': search},
+        ).prepare().url
+        if failure == 'error_status':
+            # A real Response, so the message comes from requests' own raise_for_status().
+            upstream_response = requests.Response()
+            upstream_response.status_code = 503
+            upstream_response.url = upstream_url
+            upstream_response.raw = io.BytesIO()
+            mock_client.client.get.return_value = upstream_response
+        else:
+            mock_client.client.get.side_effect = requests.ConnectionError(
+                f'Max retries exceeded with url: {upstream_url}'
+            )
+
+        with self.assertLogs('enterprise_access', level=logging.INFO) as logs:
+            response = self._get(search=search)
+
+        assert response.status_code == status.HTTP_502_BAD_GATEWAY
+        logged = '\n'.join(logging.Formatter().format(record) for record in logs.records)
+        assert 'export failed upstream' in logged
+        assert search not in logged
+        assert quote(search) not in logged
 
 
 @ddt.ddt

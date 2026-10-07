@@ -1510,9 +1510,11 @@ class SubsidyAccessPolicyTransactionsViewset(PermissionRequiredMixin, viewsets.G
             )
         except SubsidyAPIHTTPError as exc:
             upstream_status_code = getattr(exc.error_response, 'status_code', None)
-            logger.exception(
-                f'Learner credit transactions export failed upstream (subsidy_status_code={upstream_status_code}): '
-                f'{log_context}'
+            # No traceback: the chained requests error's message contains the upstream URL, and its query string
+            # carries ``search``. Log the error type and status code only.
+            logger.error(
+                f'Learner credit transactions export failed upstream (subsidy_status_code={upstream_status_code}, '
+                f'error={type(exc.__cause__).__name__}): {log_context}'
             )
             raise TransactionsExportRequestException() from exc
 

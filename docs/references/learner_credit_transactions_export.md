@@ -73,5 +73,7 @@ Dates are interpreted in UTC by enterprise-subsidy.
 - **Content negotiation:** the view renders `text/csv` as well as JSON, so a client sending
   `Accept: text/csv` is not refused with a 406 during negotiation.
 - **Logging:** the `search` value never reaches the logs, because upstream matches it against learner emails;
-  the audit line records only whether a search was used.
+  the audit line records only whether a search was used. Upstream failures are logged without a traceback
+  (no `logger.exception`), because the chained `requests` error's message includes the full upstream URL, query
+  string and `search` included.
 - **Audit:** each export logs the requesting user id, enterprise, subsidy and policy.
