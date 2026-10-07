@@ -203,6 +203,9 @@ class TestStripePricingAPI(TestCase):
         self.assertEqual(quarterly_data['catalog_query_id'], 42)
         self.assertEqual(quarterly_data.get('quantity_range'), [5, 50])
 
+        # A product left at the default catalog_query_id (0) is exposed as None
+        self.assertIsNone(result['yearly_license_plan']['catalog_query_id'])
+
     def test_calculate_subtotal_basic_format(self):
         """Test subtotal calculation with basic format."""
         price_data = {

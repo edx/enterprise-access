@@ -284,7 +284,7 @@ def get_ssp_product_pricing() -> Dict[str, Dict]:
         price_data = all_stripe_prices[lookup_key].copy()
         # Add SSP-specific metadata
         price_data['ssp_product_key'] = ssp_product.slug
-        price_data['catalog_query_id'] = ssp_product.catalog_query_id
+        price_data['catalog_query_id'] = ssp_product.catalog_query_id or None
         price_data['quantity_range'] = default_quantity_range
         ssp_pricing[ssp_product.slug] = price_data
 
