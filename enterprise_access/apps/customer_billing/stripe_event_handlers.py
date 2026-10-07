@@ -1002,14 +1002,16 @@ class StripeEventHandler:
                 ended_at_timestamp=ended_at,
             )
 
-        # An ACTIVE status, or a processed renewal, means the subscription was paid. The latter covers
+        # An ACTIVE status, or a processed renewal for this subscription, means it was paid. The latter covers
         # subscriptions that lapsed through past_due/unpaid before deletion, where the immediately
         # previous status alone can't tell us it was ever paid.
         # Stripe redelivers events; only the new ended email is deduplicated on redelivery.
         if (
             not _event_already_handled(event) and (
                 previous_status == StripeSubscriptionStatus.ACTIVE or
-                checkout_intent.renewals.filter(processed_at__isnull=False).exists()
+                checkout_intent.renewals.filter(
+                    stripe_subscription_id=subscription['id'], processed_at__isnull=False,
+                ).exists()
             )
         ):
             logger.info(

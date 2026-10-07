@@ -218,7 +218,7 @@ On subscription deletion:
 
 * **Previously active subscriptions only:** ``BRAZE_SSP_CANCELATION_FINALIZATION_CAMPAIGN`` - Final confirmation that subscription has ended
 * **Previously active or previously paid subscriptions:** ``BRAZE_ENTERPRISE_PROVISION_SUBSCRIPTION_ENDED_AND_CANCELLED_CAMPAIGN`` - Notice that the
-  paid term has ended. Also sent for subscriptions that lapsed through ``past_due``/``unpaid`` when a processed renewal exists. Shared by Teams and Essentials (``product_type`` trigger property), sent to enterprise admins.
+  paid term has ended. Also sent for subscriptions that lapsed through ``past_due``/``unpaid`` when a processed renewal exists for that subscription. Shared by Teams and Essentials (``product_type`` trigger property), sent to enterprise admins.
 * **Trial subscriptions:** No finalization email (they already received the trial cancellation email)
 
 **Paid Cancellation Email Sequence**

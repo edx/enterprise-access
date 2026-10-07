@@ -2755,6 +2755,18 @@ class TestStripeEventHandler(TestCase):
         mock_finalized_task.delay.assert_not_called()
         mock_ended_task.delay.assert_not_called()
 
+    @mock.patch(f"{HANDLERS}cancel_all_future_plans")
+    @mock.patch(f"{HANDLERS}send_paid_subscription_ended_email_task")
+    def test_subscription_deleted_ignores_processed_renewal_of_other_subscription(
+        self, mock_ended_task, _mock_cancel,
+    ):
+        """A processed renewal for a different Stripe subscription doesn't make the deleted one count as paid."""
+        self._create_processed_renewal('evt_other_sub_renewal', stripe_subscription_id="sub_some_other_subscription")
+
+        self._dispatch_subscription_deleted("sub_test_lapsed_other", StripeSubscriptionStatus.PAST_DUE)
+
+        mock_ended_task.delay.assert_not_called()
+
     @ddt.data(
         (StripeSubscriptionStatus.PAST_DUE, True),
         (StripeSubscriptionStatus.UNPAID, True),
@@ -2773,7 +2785,9 @@ class TestStripeEventHandler(TestCase):
         determined from a processed renewal rather than the immediately previous status.
         """
         if has_processed_renewal:
-            self._create_processed_renewal(f'evt_lapse_renewal_{previous_status}')
+            self._create_processed_renewal(
+                f'evt_lapse_renewal_{previous_status}', stripe_subscription_id="sub_test_lapsed_deleted",
+            )
 
         self._dispatch_subscription_deleted("sub_test_lapsed_deleted", previous_status)
 
