@@ -688,18 +688,6 @@ class LearnerContentAssignment(TimeStampedModel):
             source=AssignmentSources.SCHEDULED_JOB,
         ).order_by('-completed_at').first()
 
-    def get_last_scheduled_expiration_action(self):
-        """
-        Returns the scheduled_job-sourced EXPIRED LearnerContentAssignmentAction written by
-        expire_assignment() at state-transition time (its metadata records the ``expiration_reason``),
-        or None if no such record exists. This is the counterpart of the row that
-        get_last_successful_expiration_action() excludes.
-        """
-        return self.actions.filter(
-            action_type=AssignmentActions.EXPIRED,
-            source=AssignmentSources.SCHEDULED_JOB,
-        ).order_by('-completed_at').first()
-
     def add_successful_expiration_action(self):
         """
         Adds a successful expiration LearnerContentAssignmentAction for this assignment record,
