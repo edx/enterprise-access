@@ -171,7 +171,14 @@ class XpertLearnerPathwaysSystemPromptAdminTests(TestCase):
         self.assertIsNotNone(prompt1.uuid)
         self.assertIsNotNone(prompt2.uuid)
         self.assertNotEqual(prompt1.uuid, prompt2.uuid)
-        self.assertEqual(XpertLearnerPathwaysSystemPrompt.objects.count(), 2)
+        # Counted per type rather than over the whole table: migration 0003 seeds a
+        # candidate_rerank row, and this test is about types coexisting, not table size.
+        self.assertEqual(
+            XpertLearnerPathwaysSystemPrompt.objects.filter(
+                prompt_type__in=[PromptType.LEARNER_INTENT, PromptType.RECOMMENDATIONS_FEEDBACK],
+            ).count(),
+            2,
+        )
 
     def test_form_uses_pretty_json_widget(self):
         """Test that the form uses PrettyJSONWidget for output_schema field."""

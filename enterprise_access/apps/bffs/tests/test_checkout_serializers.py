@@ -2,6 +2,7 @@ from django.test import TestCase
 
 from enterprise_access.apps.bffs.checkout.serializers import (
     CheckoutIntentMinimalResponseSerializer,
+    PriceSerializer,
     PricingDataSerializer
 )
 
@@ -83,3 +84,42 @@ class TestPricingDataSerializer(TestCase):
             serializer.validated_data['default_by_lookup_key'],
             'teams_subscription_license_yearly',
         )
+
+
+class TestPriceSerializer(TestCase):
+    """
+    Unit tests for PriceSerializer, in particular the `catalog_query_id` field
+    added to carry the Segment `sku` product parameter (ENT-12328 follow-up).
+    """
+
+    def _valid_payload(self, **overrides):
+        base = {
+            'id': 'price_123',
+            'product': 'prod_123',
+            'lookup_key': 'teams_subscription_license_yearly',
+            'recurring': {'interval': 'year', 'interval_count': 1},
+            'currency': 'usd',
+            'unit_amount': 10000,
+            'unit_amount_decimal': '100.00',
+            'catalog_query_id': 10,
+        }
+        base.update(overrides)
+        return base
+
+    def test_catalog_query_id_present_and_serialized(self):
+        """catalog_query_id must round-trip as an int when provided."""
+        serializer = PriceSerializer(data=self._valid_payload())
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        self.assertEqual(serializer.validated_data['catalog_query_id'], 10)
+
+    def test_catalog_query_id_absent_is_invalid(self):
+        """
+        catalog_query_id omitted entirely must produce a validation error —
+        it's sourced from a non-nullable SspProduct field, so every real
+        price dict should always carry it.
+        """
+        payload = self._valid_payload()
+        payload.pop('catalog_query_id')
+        serializer = PriceSerializer(data=payload)
+        self.assertFalse(serializer.is_valid())
+        self.assertIn('catalog_query_id', serializer.errors)
