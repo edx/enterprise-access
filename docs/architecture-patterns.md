@@ -115,33 +115,25 @@ Uses `edx-rbac` for fine-grained permissions with:
   argument, and is never reached by fallback — missing or expired scoping raises
 
 ### 18. Isolate per-subsidy failures when fanning out to enterprise-subsidy
-A customer can own several subsidies, and one can become unreachable on its own — 404 once it is
-soft-deleted, 403 when the requester has no RBAC context for it — while the others stay healthy.
-Any loop that calls enterprise-subsidy once per subsidy should drop just the failing subsidy rather
-than aborting, so the learner still gets an answer for the healthy ones (ENT-12350).
+A customer can own several subsidies, and one can become unreachable on its own while the others stay healthy.
+Any loop that calls enterprise-subsidy once per subsidy should drop just the failing subsidy rather than abort,
+so the learner still gets an answer for the healthy ones.
 
-Two things make this easy to get wrong:
-
+- **Know which status codes mean "this one subsidy".** A soft-deleted (or unknown) subsidy answers **403**, not
+  404: enterprise-subsidy resolves the RBAC context through `Subsidy.objects`, which hides soft-deleted rows, so
+  the permission check fails before the view runs. 404 only covers a subsidy that disappears after that check.
+- **A 403 from every subsidy is not per-subsidy.** It looks the same as our own service credentials losing their
+  role, so when *every* subsidy is unreachable, re-raise instead of degrading. Otherwise learners are quietly
+  told nothing is available during what is really an outage. A 5xx always affects every subsidy and is always
+  re-raised. See `UNREACHABLE_SUBSIDY_STATUS_CODES` in `subsidy_access_policy/subsidy_api.py`.
 - **`can-redeem` fans out at two independent points.**
-  `get_redemptions_by_content_and_policy_for_learner()` fetches the learner's transactions per subsidy,
-  and `evaluate_policies()` separately calls `policy.can_redeem()` per policy, which hits the subsidy's
-  `can_redeem` endpoint. `evaluate_policies()` re-reads `get_queryset()`, so it has no idea the first
-  fan-out failed. Guarding only the first loop leaves the second one to fail the request anyway — the
-  failing subsidy's policies must be excluded from evaluation too.
-- **Exclude unreachable policies *before* sorting, not during the loop.**
-  `sort_subsidy_access_policies_for_redemption()` sorts on `subsidy_expiration_datetime` and
-  `subsidy_balance()`, which both read `subsidy_record()`. That returns `{}` for an unreachable subsidy,
-  so those keys become `None`/`0` and sorting them alongside a healthy policy's real values raises
-  `TypeError: '<' not supported between instances of 'NoneType' and 'str'`.
-
-Only isolate status codes that are scoped to one subsidy (403/404). A 5xx means enterprise-subsidy
-itself is unhealthy and affects every subsidy; swallowing it would quietly tell learners they have
-nothing available during an outage, so it should still fail loudly. See
-`UNREACHABLE_SUBSIDY_STATUS_CODES` in `subsidy_access_policy/subsidy_api.py`.
-
-Note that `subsidy_record()` already swallows HTTPError and returns `{}`, so a dead subsidy makes a
-policy look like it has no balance rather than raising — which is why the symptom reported for
-ENT-12350 was "not enough funds" rather than an obvious error.
+  `get_redemptions_by_content_and_policy_for_learner()` fetches the learner's transactions per subsidy, and
+  `evaluate_policies()` separately calls `policy.can_redeem()` per policy, which calls the subsidy's `can_redeem`
+  endpoint and doesn't catch `HTTPError`. `evaluate_policies()` re-reads `get_queryset()`, so the failing
+  subsidy's policies must be excluded there too, or the second fan-out fails the request anyway.
+- **`subsidy_record()` swallows `HTTPError` and returns `{}`,** so a dead subsidy's policy reports a null
+  expiration and a zero balance rather than raising. Code that compares those fields across policies (for
+  example `sort_subsidy_access_policies_for_redemption()`) must tolerate nulls.
 
 ### Key Takeaways for Implementation:
 - Check permissions early using `@permission_required` decorator

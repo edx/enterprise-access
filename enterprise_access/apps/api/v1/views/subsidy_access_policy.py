@@ -509,8 +509,8 @@ class SubsidyAccessPolicyRedeemViewset(UserDetailsFromJwtMixin, PermissionRequir
         and content.
 
         Policies funded by a subsidy in ``unreachable_subsidy_uuids`` are excluded, because we could not read the
-        learner's existing transactions for those subsidies and so cannot evaluate them coherently. They are
-        excluded from the queryset before sorting, since sorting itself reads subsidy fields that are unavailable.
+        learner's existing transactions for those subsidies, and ``policy.can_redeem()`` would call the same
+        unreachable subsidy again and fail the whole request.
 
         Note: Calling this will cause multiple backend API calls to the enterprise-subsidy can_redeem endpoint, one for
         each access policy evaluated.
@@ -529,10 +529,8 @@ class SubsidyAccessPolicyRedeemViewset(UserDetailsFromJwtMixin, PermissionRequir
         """
         redeemable_policies = []
         non_redeemable_policies = defaultdict(list)
-        # Drop policies funded by an unreachable subsidy before sorting, not during the loop below. Sorting reads
-        # each policy's subsidy expiration and balance, which for an unreachable subsidy come back as None/0 from
-        # ``subsidy_record()``; mixing those with a healthy policy's real values makes ``sorted()`` compare None
-        # against a datetime string and raise TypeError.
+        # Drop policies funded by an unreachable subsidy: ``policy.can_redeem()`` below calls that subsidy's
+        # can_redeem endpoint, which fails for it just as the transactions lookup did.
         policies_queryset = self.get_queryset()
         if unreachable_subsidy_uuids:
             policies_queryset = policies_queryset.exclude(subsidy_uuid__in=unreachable_subsidy_uuids)

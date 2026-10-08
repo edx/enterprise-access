@@ -21,11 +21,12 @@ REQUEST_CACHE_NAMESPACE = 'subsidy_access_policy'
 
 CACHE_MISS = object()
 
-# Subsidy API status codes that mean one particular subsidy is unreachable for this request, rather than the
-# Subsidy API being unhealthy: 404 once a subsidy has been soft-deleted, 403 when the requester has no RBAC
-# context for it. Both are scoped to a single subsidy, so we can drop just that subsidy and carry on. Any other
-# failure (notably a 5xx outage) affects every subsidy, and silently reporting "nothing available" to the learner
-# would be worse than failing, so those are re-raised.
+# Subsidy API status codes that can mean one particular subsidy is unreachable, rather than the Subsidy API being
+# unhealthy. A soft-deleted or unknown subsidy answers 403, because enterprise-subsidy resolves the permission
+# context through a manager that hides soft-deleted rows; 404 covers a subsidy that disappears after that check.
+# A 403 is also what we'd get if our own access to enterprise-subsidy broke, so these are only isolated while at
+# least one subsidy is still reachable. Any other failure (notably a 5xx outage) affects every subsidy and is
+# re-raised.
 UNREACHABLE_SUBSIDY_STATUS_CODES = frozenset({403, 404})
 
 
@@ -149,7 +150,8 @@ def get_redemptions_by_content_and_policy_for_learner(policies, lms_user_id):
 
     Raises:
         SubsidyAPIHTTPError: if fetching a subsidy's transactions failed for any other reason, e.g. a 5xx
-            from the Subsidy API, which affects every subsidy rather than just one.
+            from the Subsidy API, which affects every subsidy rather than just one; or if every subsidy was
+            unreachable.
     """
     policies_by_subsidy_uuid = defaultdict(set)
     for policy in policies:
@@ -157,20 +159,21 @@ def get_redemptions_by_content_and_policy_for_learner(policies, lms_user_id):
 
     result = defaultdict(lambda: defaultdict(list))
     unreachable_subsidy_uuids = set()
+    last_unreachable_error = None
 
     for subsidy_uuid, policies_with_subsidy in policies_by_subsidy_uuid.items():
         logger.info(f'Fetching learner transactions for subsidy {subsidy_uuid} via policies {policies_with_subsidy}')
         try:
             transactions_in_subsidy = get_and_cache_transactions_for_learner(subsidy_uuid, lms_user_id)['transactions']
         except SubsidyAPIHTTPError as exc:
-            error_response = getattr(exc.__cause__, 'response', None)
-            status_code = getattr(error_response, 'status_code', None)
+            status_code = getattr(exc.error_response, 'status_code', None)
             if status_code not in UNREACHABLE_SUBSIDY_STATUS_CODES:
                 raise
             # A subsidy can become unreachable independently of the policies that still reference it, for example
-            # when it is soft-deleted (404) or the requester has no RBAC context for it (403). Isolating the failure
-            # here keeps the customer's remaining, healthy subsidies evaluable instead of failing the whole request.
+            # when it is soft-deleted. Isolating the failure here keeps the customer's remaining, healthy subsidies
+            # evaluable instead of failing the whole request.
             unreachable_subsidy_uuids.add(subsidy_uuid)
+            last_unreachable_error = exc
             logger.warning(
                 'Could not fetch learner transactions for subsidy %s (subsidy_status_code=%s). Excluding its '
                 'policies %s from redeemability evaluation for lms_user_id %s.',
@@ -199,6 +202,11 @@ def get_redemptions_by_content_and_policy_for_learner(policies, lms_user_id):
                     f"Transaction {transaction_uuid} has unmatched policy uuid for subsidy {subsidy_uuid}: "
                     f"Found policy uuid {subsidy_access_policy_uuid} that is no longer tied to this subsidy."
                 )
+
+    if last_unreachable_error and unreachable_subsidy_uuids == set(policies_by_subsidy_uuid):
+        # Every subsidy refused us, which more likely means our own access to enterprise-subsidy is broken than
+        # that every subsidy was deleted. Fail loudly rather than tell the learner nothing is available.
+        raise last_unreachable_error
 
     return result, unreachable_subsidy_uuids
 
