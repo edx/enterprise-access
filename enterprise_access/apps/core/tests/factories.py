@@ -25,7 +25,10 @@ class UserFactory(factory.django.DjangoModelFactory):
     is_active = True
     is_staff = False
     is_superuser = False
-    lms_user_id = factory.LazyAttribute(lambda x: FAKER.pyint())
+    # A sequence, not a random int: FAKER.pyint() draws from 0-9999, so a suite that
+    # builds a few users per test collides often enough to break any view looking a
+    # user up by lms_user_id. Offset past the ids tests hardcode (max 98123).
+    lms_user_id = factory.Sequence(lambda n: 10000000 + n)
 
     class Meta:
         model = User

@@ -1,0 +1,42 @@
+# Persona 1 — Insurance adjustor → Financial advisor
+#
+# Imported from "Learner Rec Persona Testing.xlsx", authored by the product team. Expected-
+# course titles were resolved to catalog course keys against the live index on 2026-09-09; only
+# exact title matches were kept.
+id: p001-insurance-to-financial-advisor
+domain: finance
+tier: core
+
+inputs:
+  selected_goals: >-
+    Become a certified financial advisor
+  free_text: >-
+    Make more money, have more prestige
+  known_context: >-
+    9 years of insurance sales and insurance adjusting
+  interested_industries: >-
+    Finance, accounting
+
+expected:
+  ground_truth_status: expert_authored
+  expect_no_coverage: false
+  careers:
+    - external_id: "ETF27C4D9C94A7F49A"
+      name: "Financial Advisor"
+  courses:
+    - key: "NYIF+ECS-IBFx"
+      title: "Essential Career Skills for Investment Banking and Finance"
+    - key: "UniversityofCambridge+2122edx010"
+      title: "Foundations of Corporate Finance"
+    - key: "UniversityofCambridge+FNFM"
+      title: "Finance for Non-finance Professionals"
+    - key: "OxfordX+OXFALG01"
+      title: "Finance Fundamentals: Classical and Behavioural Finance"
+
+catalog:
+  snapshot_date: 2026-09-09
+
+notes: >-
+  Authored ground truth. All four expected courses resolved to exact title matches in the
+  catalog index. Observed-run note: "Two of the 5 courses are in different languages" --
+  language contamination, seen independently in personas 2 and 5 as well.

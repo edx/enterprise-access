@@ -5,6 +5,7 @@ from enterprise_access.settings.base import *
 
 INSTALLED_APPS += (
     'enterprise_access.apps.workflow.tests',
+    'enterprise_access.apps.pathways.tests',
 )
 
 # IN-MEMORY TEST DATABASE

@@ -39,6 +39,9 @@ class PriceSerializer(serializers.Serializer):
         allow_null=True,
         help_text="SSP product slug"
     )
+    catalog_query_id = serializers.IntegerField(
+        help_text="enterprise-catalog CatalogQuery.id for this product; serialized to Segment as 'sku'."
+    )
     currency = serializers.CharField(help_text="Currency code (e.g. 'usd')")
     unit_amount = serializers.IntegerField(help_text="Price amount in cents")
     unit_amount_decimal = serializers.DecimalField(

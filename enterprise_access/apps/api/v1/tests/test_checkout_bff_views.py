@@ -205,7 +205,8 @@ class CheckoutBFFViewSetTests(APITest):
             },
             'currency': 'usd',
             'unit_amount': 10000,
-            'unit_amount_decimal': '10000'
+            'unit_amount_decimal': '10000',
+            'catalog_query_id': 10,
         }
 
         serializer = PriceSerializer(data=sample_data)
