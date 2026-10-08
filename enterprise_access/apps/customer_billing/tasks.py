@@ -592,7 +592,7 @@ def _send_admin_campaign(
         checkout_intent_id (int): ID of the CheckoutIntent record
         campaign_id (str): Braze campaign UUID to trigger
         email_description (str): Human-readable description used for logging
-        extra_properties (dict): Optional additional trigger properties, merged over the common ones
+        extra_properties (dict): Optional additional trigger properties (must not repeat the common keys)
     """
     checkout_intent = _get_checkout_intent_with_product(checkout_intent_id)
     enterprise_slug = checkout_intent.enterprise_slug
@@ -618,12 +618,10 @@ def _send_admin_campaign(
     braze_trigger_properties = _build_common_trigger_properties(
         ssp_product=checkout_intent.ssp_product,
         organization_name=checkout_intent.enterprise_name,
-        **{
-            'product_type': product_type,
-            'product_type_display': product_type.capitalize(),
-            'enterprise_admin_portal_url': f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/{enterprise_slug}',
-            **(extra_properties or {}),
-        },
+        product_type=product_type,
+        product_type_display=product_type.capitalize(),
+        enterprise_admin_portal_url=f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/{enterprise_slug}',
+        **(extra_properties or {}),
     )
 
     send_campaign_message(

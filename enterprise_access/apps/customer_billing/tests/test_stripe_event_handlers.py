@@ -2660,9 +2660,9 @@ class TestStripeEventHandler(TestCase):
         self.assertEqual(event_data.checkout_intent, self.checkout_intent)
         self.assertIsNotNone(event_data.handled_at)
 
-    def _dispatch_subscription_deleted(self, subscription_id, prior_status, deliveries=1, **subscription_extra):
+    def _dispatch_subscription_deleted(self, subscription_id, prior_status, **subscription_extra):
         """
-        Dispatch a customer.subscription.deleted event (``deliveries`` times) after a ``prior_status`` event.
+        Dispatch a customer.subscription.deleted event after a ``prior_status`` event.
         A ``prior_status`` of None records no earlier subscription event.
         """
         if prior_status is not None:
@@ -2676,8 +2676,7 @@ class TestStripeEventHandler(TestCase):
             "metadata": self._create_mock_stripe_subscription(self.checkout_intent),
             **subscription_extra,
         })
-        for _ in range(deliveries):
-            StripeEventHandler.dispatch(event)
+        StripeEventHandler.dispatch(event)
 
     def _create_processed_renewal(
         self, event_id, renewed_plan_uuid=None, stripe_subscription_id='sub_test_renewal_notice',
@@ -2795,9 +2794,11 @@ class TestStripeEventHandler(TestCase):
             "sub_test_paid_deleted", subscription_status=StripeSubscriptionStatus.ACTIVE,
         )
         # Newer than the deleted subscription's ACTIVE summary, but for an unrelated subscription.
-        self._create_existing_event_data_records(
+        _, other_summary = self._create_existing_event_data_records(
             "sub_some_other_trialing", subscription_status=StripeSubscriptionStatus.TRIALING,
         )
+        other_summary.stripe_event_created_at += timedelta(minutes=5)
+        other_summary.save()
 
         self._dispatch_subscription_deleted("sub_test_paid_deleted", None)
 
@@ -2891,7 +2892,7 @@ class TestStripeEventHandler(TestCase):
     @mock.patch(f"{HANDLERS}send_payment_receipt_email")
     def test_invoice_paid_queues_renewal_notice_for_unmatched_cycle_invoice(
         self, billing_reason, has_prior_processed_renewal, expect_notice,
-        _mock_receipt_task, mock_renewal_notice_task, mock_lm_client,
+        mock_receipt_task, mock_renewal_notice_task, mock_lm_client,
     ):
         """
         Annual renewal invoices have no SelfServiceSubscriptionRenewal row. They are recognized as renewals
@@ -2915,6 +2916,8 @@ class TestStripeEventHandler(TestCase):
             with self.assertRaises(SelfServiceSubscriptionRenewal.DoesNotExist):
                 StripeEventHandler.dispatch(event)
             mock_renewal_notice_task.delay.assert_not_called()
+        # The receipt is sent first, and independently of the renewal notice.
+        mock_receipt_task.delay.assert_called_once()
         mock_lm_client.return_value.update_subscription_plan.assert_not_called()
 
     @mock.patch(f"{HANDLERS}LicenseManagerApiClient")

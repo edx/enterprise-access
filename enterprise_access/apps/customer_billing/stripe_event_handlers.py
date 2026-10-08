@@ -385,22 +385,14 @@ def _valid_invoice_event_type(event: stripe.Event):
         return False
 
 
-def _reactivate_renewed_plan(
-    client: LicenseManagerApiClient, renewal: SelfServiceSubscriptionRenewal, context: str,
-) -> None:
+def _has_processed_renewal(checkout_intent: CheckoutIntent, stripe_subscription_id: str) -> bool:
     """
-    Idempotently activate the paid plan of a processed renewal, in case it was deactivated
-    during a past_due episode. Logs an error if the renewal has no plan UUID.
+    True if the trial->paid transition was already processed for this Stripe subscription, i.e. it was paid.
+    An intent can have renewal rows for other subscriptions, which must not count.
     """
-    plan_to_reactivate = renewal.renewed_subscription_plan_uuid
-    if not plan_to_reactivate:
-        logger.error(
-            "SelfServiceSubscriptionRenewal %s record does not have renewed_subscription_plan_uuid",
-            renewal,
-        )
-        return
-    logger.info("Activating PAID subscription plan %s for %s", plan_to_reactivate, context)
-    client.update_subscription_plan(str(plan_to_reactivate), is_active=True)
+    return checkout_intent.renewals.filter(
+        stripe_subscription_id=stripe_subscription_id, processed_at__isnull=False,
+    ).exists()
 
 
 def _handle_invoice_paid_status_updated(
@@ -453,7 +445,19 @@ def _handle_invoice_paid_status_updated(
     if renewal.processed_at:
         # Already processed — idempotently reactivate the paid plan in case
         # it was deactivated during a past_due episode.
-        _reactivate_renewed_plan(client, renewal, f"Stripe subscription {stripe_subscription_id} (post-trial)")
+        plan_to_reactivate = renewal.renewed_subscription_plan_uuid
+        if plan_to_reactivate:
+            logger.info(
+                "Activating PAID subscription plan %s for Stripe subscription %s (post-trial)",
+                plan_to_reactivate,
+                stripe_subscription_id,
+            )
+            client.update_subscription_plan(str(plan_to_reactivate), is_active=True)
+        else:
+            logger.error(
+                "SelfServiceSubscriptionRenewal %s record does not have renewed_subscription_plan_uuid",
+                renewal,
+            )
     else:
         # First paid invoice — process the trial→paid transition.
         logger.info(
@@ -491,11 +495,7 @@ def _handle_annual_renewal_invoice(
     """
     if invoice.get('billing_reason') != 'subscription_cycle':
         return False
-    processed_renewal = checkout_intent.renewals.filter(
-        stripe_subscription_id=stripe_subscription_id,
-        processed_at__isnull=False,
-    ).order_by('-processed_at').first()
-    if not processed_renewal:
+    if not _has_processed_renewal(checkout_intent, stripe_subscription_id):
         return False
 
     # This service creates no license-manager plan for renewed terms yet, so the notice below goes out for
@@ -997,9 +997,7 @@ class StripeEventHandler:
         # previous status alone can't tell us it was ever paid.
         if (
             previous_status == StripeSubscriptionStatus.ACTIVE or
-            checkout_intent.renewals.filter(
-                stripe_subscription_id=subscription['id'], processed_at__isnull=False,
-            ).exists()
+            _has_processed_renewal(checkout_intent, subscription['id'])
         ):
             logger.info(
                 "Queuing paid subscription ended email for checkout_intent uuid=%s",
