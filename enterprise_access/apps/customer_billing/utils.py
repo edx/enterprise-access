@@ -60,8 +60,8 @@ CAMPAIGN_SETTINGS_MAP = {
     ('trial_end_subscription_started', 'teams'): 'BRAZE_ENTERPRISE_PROVISION_TRIAL_END_SUBSCRIPTION_STARTED_CAMPAIGN',
     ('billing_error', 'teams'): 'BRAZE_BILLING_ERROR_CAMPAIGN',
     ('paid_cancellation', 'teams'): 'BRAZE_PAID_CANCELLATION_CAMPAIGN',
-    ('subscription_ended', 'teams'): 'BRAZE_ENTERPRISE_PROVISION_SUBSCRIPTION_ENDED_AND_CANCELLED_CAMPAIGN',
-    ('subscription_renewal_notice', 'teams'): 'BRAZE_ENTERPRISE_PROVISION_SUBSCRIPTION_RENEWAL_NOTICE_CAMPAIGN',
+    ('paid_subscription_ended', 'teams'): 'BRAZE_ENTERPRISE_PROVISION_SUBSCRIPTION_ENDED_AND_CANCELLED_CAMPAIGN',
+    ('paid_subscription_renewal_notice', 'teams'): 'BRAZE_ENTERPRISE_PROVISION_SUBSCRIPTION_RENEWAL_NOTICE_CAMPAIGN',
 
     # Essentials campaigns (new)
     ('signup_confirmation', 'essentials'): 'BRAZE_ESSENTIALS_SIGNUP_CONFIRMATION_CAMPAIGN',
@@ -72,8 +72,10 @@ CAMPAIGN_SETTINGS_MAP = {
     ('trial_end_subscription_started', 'essentials'): 'BRAZE_ESSENTIALS_TRIAL_END_SUBSCRIPTION_STARTED_CAMPAIGN',
     ('billing_error', 'essentials'): 'BRAZE_ESSENTIALS_BILLING_ERROR_CAMPAIGN',
     ('paid_cancellation', 'essentials'): 'BRAZE_ESSENTIALS_PAID_CANCELLATION_CAMPAIGN',
-    ('subscription_ended', 'essentials'): 'BRAZE_ENTERPRISE_PROVISION_SUBSCRIPTION_ENDED_AND_CANCELLED_CAMPAIGN',
-    ('subscription_renewal_notice', 'essentials'): 'BRAZE_ENTERPRISE_PROVISION_SUBSCRIPTION_RENEWAL_NOTICE_CAMPAIGN',
+    ('paid_subscription_ended', 'essentials'): 'BRAZE_ENTERPRISE_PROVISION_SUBSCRIPTION_ENDED_AND_CANCELLED_CAMPAIGN',
+    ('paid_subscription_renewal_notice', 'essentials'): (
+        'BRAZE_ENTERPRISE_PROVISION_SUBSCRIPTION_RENEWAL_NOTICE_CAMPAIGN'
+    ),
 }
 
 
@@ -92,7 +94,7 @@ def get_campaign_id(email_type, ssp_product: 'SspProduct | None' = None):
         email_type (str): One of 'signup_confirmation', 'trial_ending_soon',
             'trial_cancellation', 'trial_ended_cancellation', 'payment_receipt',
             'trial_end_subscription_started', 'billing_error',
-            'paid_cancellation', 'subscription_ended', 'subscription_renewal_notice'.
+            'paid_cancellation', 'paid_subscription_ended', 'paid_subscription_renewal_notice'.
         ssp_product (SspProduct|None): The CheckoutIntent's product.
 
     Returns:

@@ -217,47 +217,24 @@ On subscription deletion:
 *Braze Emails:*
 
 * **Previously active subscriptions only:** ``BRAZE_SSP_CANCELATION_FINALIZATION_CAMPAIGN`` - Final confirmation that subscription has ended
-* **Previously active or previously paid subscriptions:** ``BRAZE_ENTERPRISE_PROVISION_SUBSCRIPTION_ENDED_AND_CANCELLED_CAMPAIGN`` - Notice that the
-  paid term has ended. Also sent for subscriptions that lapsed through ``past_due``/``unpaid`` when a processed renewal exists for that subscription. Shared by Teams and Essentials (``product_type`` trigger property), sent to enterprise admins.
 * **Trial subscriptions:** No finalization email (they already received the trial cancellation email)
-
-**Paid Cancellation Email Sequence**
-
-An admin who cancels a paid subscription receives two separate emails, from two separate Celery tasks:
-
-1. Cancel scheduled (``customer.subscription.updated``) → ``BRAZE_PAID_CANCELLATION_CAMPAIGN``, sent immediately.
-   The subscription stays active until the end of the term.
-2. Term end (``customer.subscription.deleted``) → ``BRAZE_ENTERPRISE_PROVISION_SUBSCRIPTION_ENDED_AND_CANCELLED_CAMPAIGN``.
-
-The ended email does not depend on ``cancellation_details.reason`` and is not suppressed when a cancellation
-email was already sent: it is queued for every previously active subscription that ends, whether it was
-cancelled or lapsed. Trialing subscriptions never trigger it.
+* **Previously active subscriptions the customer cancelled** (Stripe ``cancellation_details.reason`` is
+  ``cancellation_requested``): ``BRAZE_ENTERPRISE_PROVISION_SUBSCRIPTION_ENDED_AND_CANCELLED_CAMPAIGN`` - Paid
+  subscription ended notice, sent in addition to the finalization email. Subscriptions ended by a failed payment
+  do not get it. One campaign serves Teams and Essentials, told apart by the ``product_type`` trigger property.
 
 **Annual Renewals**
 
-i.e. the second and ensuing paid periods. TBD on the actual flow, here.
+i.e. the second and ensuing paid periods. TBD on the actual flow, here. So far only the notification exists:
 
-When an ``invoice.paid`` event (amount > $0) with ``billing_reason == "subscription_cycle"`` arrives and no
-``SelfServiceSubscriptionRenewal`` matches the invoice, it is treated as an annual renewal if the trial-to-paid
-transition was already processed for the same Stripe subscription of the checkout intent.
-``BRAZE_ENTERPRISE_PROVISION_SUBSCRIPTION_RENEWAL_NOTICE_CAMPAIGN`` is then sent in addition to the payment receipt.
-The handler does not touch license-manager plans; this service does not yet provision a plan for the renewed term,
-so it logs a warning for each annual renewal invoice to make unprovisioned renewals findable.
+When a paid ``invoice.paid`` (amount > $0) has ``billing_reason == 'subscription_cycle'`` and the same Stripe
+subscription was already paid by an earlier invoice, it is an annual renewal. No ``SelfServiceSubscriptionRenewal``
+exists for it (those only track trial→paid), so the handler does not look one up and no License Manager plan is
+created or activated here. Admins get the payment receipt plus
+``BRAZE_ENTERPRISE_PROVISION_SUBSCRIPTION_RENEWAL_NOTICE_CAMPAIGN`` (shared by Teams and Essentials via ``product_type``).
 
-Renewal rows are only created for the initial trial-to-paid transition, so later paid invoices never match one.
-If no processed renewal exists for the invoice's Stripe subscription, the handler still raises so Stripe retries
-(the ``invoice.created`` out-of-order case). Stripe redeliveries can re-queue the notice; as with the
-other lifecycle emails, rely on a Braze frequency cap on the campaign.
-
-**Trigger properties for the paid lifecycle campaigns**
-
-Both campaigns send ``organization``, ``product_type`` (lowercase: ``teams`` or ``essentials``),
-``product_type_display`` (capitalized; Braze templates should compare against this), ``academy_name`` (when the
-product has an academy) and ``enterprise_admin_portal_url``. The ended email adds ``subscription_end_date``. The
-renewal notice adds ``renewal_date``, ``total_license``, ``billing_amount`` (no ``$``; the template adds it),
-``subscription_start_period``, ``subscription_end_period`` and ``next_payment_date`` (ISO 8601 timestamps, since the
-template applies Liquid ``date`` filters; the next payment date is the end of the renewed term), taken from the
-renewal invoice.
+*Gotcha:* the first paid invoice at the end of the trial also has ``billing_reason == 'subscription_cycle'``; the
+"earlier paid invoice" check is what keeps it on the trial→paid path.
 
 Braze Campaign Summary
 ----------------------
@@ -287,9 +264,9 @@ Key: ``[BEP] = BRAZE_ENTERPRISE_PROVISION``
 +--------------------------------------+-----------------------------------------------------------------+--------------------------------------------------------+
 | Active subscription deleted          | ``BRAZE_SSP_CANCELATION_FINALIZATION_CAMPAIGN``                 | Final cancellation confirmation                        |
 +--------------------------------------+-----------------------------------------------------------------+--------------------------------------------------------+
-| Active subscription term ends        | ``[BEP]_SUBSCRIPTION_ENDED_AND_CANCELLED_CAMPAIGN``             | Paid term ended notice (Teams and Essentials)          |
+| Cancelled paid subscription ends     | ``[BEP]_SUBSCRIPTION_ENDED_AND_CANCELLED_CAMPAIGN``             | Paid subscription ended notice                         |
 +--------------------------------------+-----------------------------------------------------------------+--------------------------------------------------------+
-| Paid subscription renews             | ``[BEP]_SUBSCRIPTION_RENEWAL_NOTICE_CAMPAIGN``                  | Renewal notice, in addition to the receipt             |
+| Annual renewal invoice paid          | ``[BEP]_SUBSCRIPTION_RENEWAL_NOTICE_CAMPAIGN``                  | Paid subscription renewal notice                       |
 +--------------------------------------+-----------------------------------------------------------------+--------------------------------------------------------+
 
 Event Processing Flows

@@ -385,14 +385,21 @@ def _valid_invoice_event_type(event: stripe.Event):
         return False
 
 
-def _has_processed_renewal(checkout_intent: CheckoutIntent, stripe_subscription_id: str) -> bool:
+def _is_annual_renewal_invoice(invoice, subscription_details) -> bool:
     """
-    True if the trial->paid transition was already processed for this Stripe subscription, i.e. it was paid.
-    An intent can have renewal rows for other subscriptions, which must not count.
+    Determine whether a paid invoice renews an already paid subscription (its second or later paid term).
+
+    Stripe also uses ``billing_reason == 'subscription_cycle'`` for the first paid invoice, issued when
+    the trial ends, so the reason alone is not enough. The subscription must also have been paid by an
+    earlier invoice, otherwise the trial→paid transition (or its retry) would be skipped.
     """
-    return checkout_intent.renewals.filter(
-        stripe_subscription_id=stripe_subscription_id, processed_at__isnull=False,
-    ).exists()
+    if invoice.get('billing_reason') != 'subscription_cycle':
+        return False
+    return StripeEventSummary.objects.filter(
+        stripe_subscription_id=subscription_details.get('subscription'),
+        event_type='invoice.paid',
+        invoice_amount_paid__gt=0,
+    ).exclude(stripe_invoice_id=invoice['id']).exists()
 
 
 def _handle_invoice_paid_status_updated(
@@ -426,9 +433,6 @@ def _handle_invoice_paid_status_updated(
     renewal = SelfServiceSubscriptionRenewal.objects.filter(
         stripe_invoice_id=stripe_invoice_id,
     ).first()
-
-    if not renewal and _handle_annual_renewal_invoice(invoice, checkout_intent, stripe_subscription_id):
-        return
 
     if not renewal:
         # If invoice.created hasn't linked the renewal yet (out-of-order delivery),
@@ -476,58 +480,6 @@ def _handle_invoice_paid_status_updated(
             subscription_id=stripe_subscription_id,
             checkout_intent_id=checkout_intent.id,
         )
-
-
-def _handle_annual_renewal_invoice(
-    invoice, checkout_intent: CheckoutIntent, stripe_subscription_id: str,
-) -> bool:
-    """
-    Handle a paid annual renewal invoice that has no ``SelfServiceSubscriptionRenewal``.
-
-    Renewal rows are only created for the initial trial->paid transition, so a later
-    ``subscription_cycle`` invoice never matches one. Such an invoice is a renewal if the trial->paid
-    transition was already processed for the same Stripe subscription (an intent can have renewal rows
-    for other subscriptions or terms). For these invoices we queue the renewal notice email and return
-    successfully rather than raising for a Stripe retry.
-
-    Returns:
-        True if the invoice was recognized as an annual renewal.
-    """
-    if invoice.get('billing_reason') != 'subscription_cycle':
-        return False
-    if not _has_processed_renewal(checkout_intent, stripe_subscription_id):
-        return False
-
-    # This service creates no license-manager plan for renewed terms yet, so the notice below goes out for
-    # a term that has to be provisioned elsewhere. Warn so unprovisioned renewals can be found in the logs.
-    logger.warning(
-        "Annual renewal invoice %s paid for checkout_intent uuid=%s: no subscription plan is provisioned "
-        "for the renewed term by this service",
-        invoice['id'],
-        checkout_intent.uuid,
-    )
-
-    # _valid_invoice_event_type guarantees a first line item exists; its period may still be absent.
-    period = invoice['lines']['data'][0].get('period')
-    if not period:
-        logger.error(
-            "Renewal notice email not queued: invoice %s has no line item period (checkout_intent uuid=%s)",
-            invoice['id'],
-            checkout_intent.uuid,
-        )
-        return True
-    logger.info(
-        "Queuing paid subscription renewal notice email for checkout_intent uuid=%s",
-        checkout_intent.uuid,
-    )
-    send_paid_subscription_renewal_notice_email_task.delay(
-        checkout_intent_id=checkout_intent.id,
-        renewed_at_timestamp=invoice['created'],
-        invoice_id=invoice['id'],
-        period_start_timestamp=period['start'],
-        period_end_timestamp=period['end'],
-    )
-    return True
 
 
 def _handle_subscription_updated_status_updates(
@@ -658,6 +610,18 @@ class StripeEventHandler:
                 enterprise_customer_name=checkout_intent.enterprise_name,
                 enterprise_slug=checkout_intent.enterprise_slug,
             )
+            if _is_annual_renewal_invoice(invoice, subscription_details):
+                # Renewal records only track the trial→paid transition, so later paid terms have nothing
+                # to process. Just let the admins know the subscription renewed.
+                logger.info(
+                    'Queuing paid subscription renewal notice email for checkout_intent uuid=%s',
+                    checkout_intent.uuid,
+                )
+                send_paid_subscription_renewal_notice_email_task.delay(
+                    checkout_intent_id=checkout_intent.id,
+                    invoice_data=invoice.to_dict(),
+                )
+                return
             # only update status for non-trial invoice.paid events
             _handle_invoice_paid_status_updated(event, checkout_intent)
             return
@@ -963,50 +927,37 @@ class StripeEventHandler:
             )
         _update_renewal_cancellation_state(checkout_intent, is_canceled=True, subscription_cancel_at=None)
 
-        # A checkout intent can have several Stripe subscriptions, so every status decision below must be based
-        # on the previous summary of the deleted subscription itself.
-        previous_summary = checkout_intent.previous_summary(
-            event, stripe_object_type='subscription', stripe_subscription_id=subscription['id'],
-        )
-        previous_status = previous_summary.subscription_status if previous_summary else None
-        # https://docs.stripe.com/api/subscriptions/object#subscription_object-ended_at
-        ended_at = subscription.get("ended_at") or timezone.now().timestamp()
-
-        if previous_status == StripeSubscriptionStatus.TRIALING:
-            logger.info(
-                "Queuing trial ended cancellation email for checkout_intent uuid=%s",
-                checkout_intent.uuid,
-            )
-            send_trial_ended_cancellation_email_task.delay(
-                checkout_intent_id=checkout_intent.id,
-            )
-            return
-
-        if previous_status == StripeSubscriptionStatus.ACTIVE:
-            logger.info(
-                "Queuing cancelation finalization email for checkout_intent uuid=%s",
-                checkout_intent.uuid,
-            )
-            send_finalized_cancelation_email_task.delay(
-                checkout_intent_id=checkout_intent.id,
-                ended_at_timestamp=ended_at,
-            )
-
-        # An ACTIVE status, or a processed renewal for this subscription, means it was paid. The latter covers
-        # subscriptions that lapsed through past_due/unpaid before deletion, where the immediately
-        # previous status alone can't tell us it was ever paid.
-        if (
-            previous_status == StripeSubscriptionStatus.ACTIVE or
-            _has_processed_renewal(checkout_intent, subscription['id'])
-        ):
-            logger.info(
-                "Queuing paid subscription ended email for checkout_intent uuid=%s",
-                checkout_intent.uuid,
-            )
-            send_paid_subscription_ended_email_task.delay(
-                checkout_intent_id=checkout_intent.id,
-                ended_at_timestamp=ended_at,
-            )
+        previous_summary = checkout_intent.previous_summary(event, stripe_object_type='subscription')
+        if previous_summary:
+            if previous_summary.subscription_status == StripeSubscriptionStatus.ACTIVE:
+                # https://docs.stripe.com/api/subscriptions/object#subscription_object-ended_at
+                ended_at = subscription.get("ended_at") or timezone.now().timestamp()
+                logger.info(
+                    "Queuing cancelation finalization email for checkout_intent uuid=%s",
+                    checkout_intent.uuid,
+                )
+                send_finalized_cancelation_email_task.delay(
+                    checkout_intent_id=checkout_intent.id,
+                    ended_at_timestamp=ended_at,
+                )
+                # Only when the customer cancelled (not e.g. a failed payment).
+                if (cancellation_details or {}).get('reason') == 'cancellation_requested':
+                    logger.info(
+                        "Queuing paid subscription ended email for checkout_intent uuid=%s",
+                        checkout_intent.uuid,
+                    )
+                    send_paid_subscription_ended_email_task.delay(
+                        checkout_intent_id=checkout_intent.id,
+                        ended_at_timestamp=ended_at,
+                    )
+            elif previous_summary.subscription_status == StripeSubscriptionStatus.TRIALING:
+                logger.info(
+                    "Queuing trial ended cancellation email for checkout_intent uuid=%s",
+                    checkout_intent.uuid,
+                )
+                send_trial_ended_cancellation_email_task.delay(
+                    checkout_intent_id=checkout_intent.id,
+                )
 
 
 def _process_trial_to_paid_renewal(
