@@ -979,11 +979,15 @@ class StripeEventHandler:
                 ended_at_timestamp=ended_at,
             )
 
-        # An ACTIVE status, or a processed renewal for this subscription, means it was paid. The latter covers
-        # subscriptions that lapsed through past_due/unpaid before deletion, where the immediately
-        # previous status alone can't tell us it was ever paid.
+        # An ACTIVE status for this same subscription, or a processed renewal for it, means it was paid. The
+        # latter covers subscriptions that lapsed through past_due/unpaid before deletion, where the immediately
+        # previous status alone can't tell us it was ever paid. previous_summary is scoped to the checkout
+        # intent, which can have several Stripe subscriptions, so the ACTIVE summary must match this one.
         if (
-            previous_status == StripeSubscriptionStatus.ACTIVE or
+            (
+                previous_status == StripeSubscriptionStatus.ACTIVE and
+                previous_summary.stripe_subscription_id == subscription['id']
+            ) or
             checkout_intent.renewals.filter(
                 stripe_subscription_id=subscription['id'], processed_at__isnull=False,
             ).exists()

@@ -2769,6 +2769,20 @@ class TestStripeEventHandler(TestCase):
 
         mock_ended_task.delay.assert_not_called()
 
+    @mock.patch(f"{HANDLERS}cancel_all_future_plans")
+    @mock.patch(f"{HANDLERS}send_paid_subscription_ended_email_task")
+    def test_subscription_deleted_ignores_active_status_of_other_subscription(
+        self, mock_ended_task, _mock_cancel,
+    ):
+        """An ACTIVE summary for a different Stripe subscription doesn't make the deleted one count as paid."""
+        self._create_existing_event_data_records(
+            "sub_some_other_active", subscription_status=StripeSubscriptionStatus.ACTIVE,
+        )
+
+        self._dispatch_subscription_deleted("sub_test_never_paid", None)
+
+        mock_ended_task.delay.assert_not_called()
+
     @ddt.data(
         (None, True),
         (None, False),
