@@ -2783,6 +2783,28 @@ class TestStripeEventHandler(TestCase):
 
         mock_ended_task.delay.assert_not_called()
 
+    @mock.patch(f"{HANDLERS}cancel_all_future_plans")
+    @mock.patch(f"{HANDLERS}send_paid_subscription_ended_email_task")
+    @mock.patch(f"{HANDLERS}send_trial_ended_cancellation_email_task")
+    @mock.patch(f"{HANDLERS}send_finalized_cancelation_email_task")
+    def test_subscription_deleted_uses_previous_summary_of_deleted_subscription(
+        self, mock_finalized_task, mock_trial_ended_task, mock_ended_task, _mock_cancel,
+    ):
+        """A newer summary of another subscription neither suppresses nor redirects the deleted one's emails."""
+        self._create_existing_event_data_records(
+            "sub_test_paid_deleted", subscription_status=StripeSubscriptionStatus.ACTIVE,
+        )
+        # Newer than the deleted subscription's ACTIVE summary, but for an unrelated subscription.
+        self._create_existing_event_data_records(
+            "sub_some_other_trialing", subscription_status=StripeSubscriptionStatus.TRIALING,
+        )
+
+        self._dispatch_subscription_deleted("sub_test_paid_deleted", None)
+
+        mock_ended_task.delay.assert_called_once()
+        mock_finalized_task.delay.assert_called_once()
+        mock_trial_ended_task.delay.assert_not_called()
+
     @ddt.data(
         (None, True),
         (None, False),

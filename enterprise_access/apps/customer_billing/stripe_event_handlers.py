@@ -954,7 +954,11 @@ class StripeEventHandler:
             )
         _update_renewal_cancellation_state(checkout_intent, is_canceled=True, subscription_cancel_at=None)
 
-        previous_summary = checkout_intent.previous_summary(event, stripe_object_type='subscription')
+        # A checkout intent can have several Stripe subscriptions, so every status decision below must be based
+        # on the previous summary of the deleted subscription itself.
+        previous_summary = checkout_intent.previous_summary(
+            event, stripe_object_type='subscription', stripe_subscription_id=subscription['id'],
+        )
         previous_status = previous_summary.subscription_status if previous_summary else None
         # https://docs.stripe.com/api/subscriptions/object#subscription_object-ended_at
         ended_at = subscription.get("ended_at") or timezone.now().timestamp()
@@ -979,15 +983,11 @@ class StripeEventHandler:
                 ended_at_timestamp=ended_at,
             )
 
-        # An ACTIVE status for this same subscription, or a processed renewal for it, means it was paid. The
-        # latter covers subscriptions that lapsed through past_due/unpaid before deletion, where the immediately
-        # previous status alone can't tell us it was ever paid. previous_summary is scoped to the checkout
-        # intent, which can have several Stripe subscriptions, so the ACTIVE summary must match this one.
+        # An ACTIVE status, or a processed renewal for this subscription, means it was paid. The latter covers
+        # subscriptions that lapsed through past_due/unpaid before deletion, where the immediately
+        # previous status alone can't tell us it was ever paid.
         if (
-            (
-                previous_status == StripeSubscriptionStatus.ACTIVE and
-                previous_summary.stripe_subscription_id == subscription['id']
-            ) or
+            previous_status == StripeSubscriptionStatus.ACTIVE or
             checkout_intent.renewals.filter(
                 stripe_subscription_id=subscription['id'], processed_at__isnull=False,
             ).exists()
