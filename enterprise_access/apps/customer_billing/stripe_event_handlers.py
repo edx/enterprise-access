@@ -393,10 +393,10 @@ def _is_annual_renewal_invoice(invoice, subscription_details) -> bool:
     the trial ends, so the reason alone is not enough. The subscription must also have been paid by an
     earlier invoice, otherwise the trial→paid transition (or its retry) would be skipped.
     """
-    if invoice.get('billing_reason') != 'subscription_cycle':
+    if invoice.to_dict().get('billing_reason') != 'subscription_cycle':
         return False
     return StripeEventSummary.objects.filter(
-        stripe_subscription_id=subscription_details.get('subscription'),
+        stripe_subscription_id=subscription_details.to_dict().get('subscription'),
         event_type='invoice.paid',
         invoice_amount_paid__gt=0,
     ).exclude(stripe_invoice_id=invoice['id']).exists()
