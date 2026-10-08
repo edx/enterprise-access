@@ -44,6 +44,11 @@ def _format_currency_for_braze(amount_cents, suffix=''):
     )
 
 
+def _format_braze_date(timestamp):
+    """Format a Unix timestamp as the human-readable date Braze templates display."""
+    return format_datetime_obj(datetime_from_timestamp(timestamp), output_pattern=BRAZE_DATE_FORMAT_2)
+
+
 def _format_braze_timestamp(timestamp):
     """Format a Unix timestamp as the ISO-8601 string Braze templates pipe through Liquid date filters."""
     return format_datetime_obj(datetime_from_timestamp(timestamp), output_pattern=BRAZE_TIMESTAMP_FORMAT)
@@ -362,10 +367,7 @@ def _send_cancelation_campaign(checkout_intent, ending_timestamp, campaign_ident
     )
 
     # Format end date for email template
-    ending_date = format_datetime_obj(
-        datetime_from_timestamp(ending_timestamp),
-        output_pattern=BRAZE_DATE_FORMAT_2
-    )
+    ending_date = _format_braze_date(ending_timestamp)
 
     ssp_product = checkout_intent.ssp_product
     braze_trigger_properties = _build_common_trigger_properties(
@@ -438,11 +440,6 @@ def send_trial_ended_cancellation_email_task(checkout_intent_id: int):
     )
 
 
-def _format_braze_date(timestamp):
-    """Format a Unix timestamp as the human-readable date Braze templates display."""
-    return format_datetime_obj(datetime_from_timestamp(timestamp), output_pattern=BRAZE_DATE_FORMAT_2)
-
-
 @shared_task(base=LoggedTaskWithRetry)
 def send_paid_subscription_ended_email_task(checkout_intent_id, ended_at_timestamp):
     """
@@ -461,7 +458,7 @@ def send_paid_subscription_ended_email_task(checkout_intent_id, ended_at_timesta
     """
     _send_admin_campaign(
         checkout_intent_id,
-        lambda ssp_product: get_campaign_id('subscription_ended', ssp_product),
+        get_campaign_id('subscription_ended'),
         'paid subscription ended email',
         extra_properties={'subscription_end_date': _format_braze_date(ended_at_timestamp)},
     )
@@ -500,7 +497,7 @@ def send_paid_subscription_renewal_notice_email_task(
 
     _send_admin_campaign(
         checkout_intent_id,
-        lambda ssp_product: get_campaign_id('subscription_renewal_notice', ssp_product),
+        get_campaign_id('subscription_renewal_notice'),
         'paid subscription renewal notice email',
         extra_properties={
             'renewal_date': _format_braze_date(renewed_at_timestamp),
@@ -583,7 +580,7 @@ def send_billing_error_email_task(checkout_intent_id: int):
 
 
 def _send_admin_campaign(
-    checkout_intent_id: int, campaign_id, email_description: str, extra_properties: dict = None,
+    checkout_intent_id: int, campaign_id: str, email_description: str, extra_properties: dict = None,
 ):
     """
     Shared logic for sending a Braze email to an enterprise's admins for a given campaign.
@@ -593,15 +590,12 @@ def _send_admin_campaign(
 
     Args:
         checkout_intent_id (int): ID of the CheckoutIntent record
-        campaign_id (str or callable): Braze campaign UUID to trigger, or a callable that resolves it
-            from the checkout intent's ``ssp_product`` (avoids loading the intent twice)
+        campaign_id (str): Braze campaign UUID to trigger
         email_description (str): Human-readable description used for logging
         extra_properties (dict): Optional additional trigger properties, merged over the common ones
     """
     checkout_intent = _get_checkout_intent_with_product(checkout_intent_id)
     enterprise_slug = checkout_intent.enterprise_slug
-    if callable(campaign_id):
-        campaign_id = campaign_id(checkout_intent.ssp_product)
 
     admin_users = get_enterprise_admins(enterprise_slug, raise_if_empty=True)
     braze_client = BrazeApiClient()
@@ -624,10 +618,12 @@ def _send_admin_campaign(
     braze_trigger_properties = _build_common_trigger_properties(
         ssp_product=checkout_intent.ssp_product,
         organization_name=checkout_intent.enterprise_name,
-        product_type=product_type,
-        product_type_display=product_type.capitalize(),
-        enterprise_admin_portal_url=f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/{enterprise_slug}',
-        **(extra_properties or {}),
+        **{
+            'product_type': product_type,
+            'product_type_display': product_type.capitalize(),
+            'enterprise_admin_portal_url': f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/{enterprise_slug}',
+            **(extra_properties or {}),
+        },
     )
 
     send_campaign_message(

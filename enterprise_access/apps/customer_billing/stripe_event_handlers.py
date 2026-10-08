@@ -435,7 +435,7 @@ def _handle_invoice_paid_status_updated(
         stripe_invoice_id=stripe_invoice_id,
     ).first()
 
-    if not renewal and _handle_annual_renewal_invoice(event, invoice, checkout_intent, stripe_subscription_id):
+    if not renewal and _handle_annual_renewal_invoice(invoice, checkout_intent, stripe_subscription_id):
         return
 
     if not renewal:
@@ -474,22 +474,8 @@ def _handle_invoice_paid_status_updated(
         )
 
 
-def _event_already_handled(event: stripe.Event) -> bool:
-    """
-    True if this exact Stripe event was already handled to completion, i.e. this is a redelivery.
-
-    ``handled_at`` is only set after the handler finishes without raising, so a handler that failed
-    partway (for example, while enqueueing) is still retried by Stripe.
-
-    This is a best-effort, non-atomic check: it deduplicates sequential redeliveries, but two concurrent
-    deliveries of the same event can both read ``handled_at`` as null and both queue the email. Configure a
-    Braze frequency cap on the affected campaigns to absorb that rare duplicate.
-    """
-    return StripeEventData.objects.filter(event_id=event.id, handled_at__isnull=False).exists()
-
-
 def _handle_annual_renewal_invoice(
-    event: stripe.Event, invoice, checkout_intent: CheckoutIntent, stripe_subscription_id: str,
+    invoice, checkout_intent: CheckoutIntent, stripe_subscription_id: str,
 ) -> bool:
     """
     Handle a paid annual renewal invoice that has no ``SelfServiceSubscriptionRenewal``.
@@ -497,10 +483,8 @@ def _handle_annual_renewal_invoice(
     Renewal rows are only created for the initial trial->paid transition, so a later
     ``subscription_cycle`` invoice never matches one. Such an invoice is a renewal if the trial->paid
     transition was already processed for the same Stripe subscription (an intent can have renewal rows
-    for other subscriptions or terms, whose plans must not be touched). For these invoices we:
-
-    - idempotently reactivate the paid plan, since it may have been deactivated during a past_due episode
-    - queue the renewal notice email, unless this is a redelivery of an already-handled event
+    for other subscriptions or terms). For these invoices we queue the renewal notice email and return
+    successfully rather than raising for a Stripe retry.
 
     Returns:
         True if the invoice was recognized as an annual renewal.
@@ -514,32 +498,26 @@ def _handle_annual_renewal_invoice(
     if not processed_renewal:
         return False
 
-    _reactivate_renewed_plan(
-        LicenseManagerApiClient(), processed_renewal, f"annual renewal invoice {invoice['id']}",
-    )
-
-    if not _event_already_handled(event):
-        # _valid_invoice_event_type guarantees a first line item exists; its period may still be absent.
-        period = invoice['lines']['data'][0].get('period')
-        if not period:
-            # Raising here would make Stripe retry the whole webhook, repeating the plan reactivation.
-            logger.error(
-                "Renewal notice email not queued: invoice %s has no line item period (checkout_intent uuid=%s)",
-                invoice['id'],
-                checkout_intent.uuid,
-            )
-            return True
-        logger.info(
-            "Queuing paid subscription renewal notice email for checkout_intent uuid=%s",
+    # _valid_invoice_event_type guarantees a first line item exists; its period may still be absent.
+    period = invoice['lines']['data'][0].get('period')
+    if not period:
+        logger.error(
+            "Renewal notice email not queued: invoice %s has no line item period (checkout_intent uuid=%s)",
+            invoice['id'],
             checkout_intent.uuid,
         )
-        send_paid_subscription_renewal_notice_email_task.delay(
-            checkout_intent_id=checkout_intent.id,
-            renewed_at_timestamp=invoice['created'],
-            invoice_id=invoice['id'],
-            period_start_timestamp=period['start'],
-            period_end_timestamp=period['end'],
-        )
+        return True
+    logger.info(
+        "Queuing paid subscription renewal notice email for checkout_intent uuid=%s",
+        checkout_intent.uuid,
+    )
+    send_paid_subscription_renewal_notice_email_task.delay(
+        checkout_intent_id=checkout_intent.id,
+        renewed_at_timestamp=invoice['created'],
+        invoice_id=invoice['id'],
+        period_start_timestamp=period['start'],
+        period_end_timestamp=period['end'],
+    )
     return True
 
 
@@ -992,7 +970,6 @@ class StripeEventHandler:
             return
 
         if previous_status == StripeSubscriptionStatus.ACTIVE:
-            # Pre-existing behavior, intentionally not gated on redelivery.
             logger.info(
                 "Queuing cancelation finalization email for checkout_intent uuid=%s",
                 checkout_intent.uuid,
@@ -1005,14 +982,11 @@ class StripeEventHandler:
         # An ACTIVE status, or a processed renewal for this subscription, means it was paid. The latter covers
         # subscriptions that lapsed through past_due/unpaid before deletion, where the immediately
         # previous status alone can't tell us it was ever paid.
-        # Stripe redelivers events; only the new ended email is deduplicated on redelivery.
         if (
-            not _event_already_handled(event) and (
-                previous_status == StripeSubscriptionStatus.ACTIVE or
-                checkout_intent.renewals.filter(
-                    stripe_subscription_id=subscription['id'], processed_at__isnull=False,
-                ).exists()
-            )
+            previous_status == StripeSubscriptionStatus.ACTIVE or
+            checkout_intent.renewals.filter(
+                stripe_subscription_id=subscription['id'], processed_at__isnull=False,
+            ).exists()
         ):
             logger.info(
                 "Queuing paid subscription ended email for checkout_intent uuid=%s",
