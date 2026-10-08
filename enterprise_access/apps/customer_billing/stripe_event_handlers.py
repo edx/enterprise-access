@@ -498,6 +498,15 @@ def _handle_annual_renewal_invoice(
     if not processed_renewal:
         return False
 
+    # This service creates no license-manager plan for renewed terms yet, so the notice below goes out for
+    # a term that has to be provisioned elsewhere. Warn so unprovisioned renewals can be found in the logs.
+    logger.warning(
+        "Annual renewal invoice %s paid for checkout_intent uuid=%s: no subscription plan is provisioned "
+        "for the renewed term by this service",
+        invoice['id'],
+        checkout_intent.uuid,
+    )
+
     # _valid_invoice_event_type guarantees a first line item exists; its period may still be absent.
     period = invoice['lines']['data'][0].get('period')
     if not period:

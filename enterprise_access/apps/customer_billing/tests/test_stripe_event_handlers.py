@@ -2955,6 +2955,25 @@ class TestStripeEventHandler(TestCase):
         mock_lm_client.return_value.update_subscription_plan.assert_not_called()
         mock_renewal_notice_task.delay.assert_not_called()
 
+    @mock.patch(f"{HANDLERS}LicenseManagerApiClient")
+    @mock.patch(f"{HANDLERS}send_paid_subscription_renewal_notice_email_task")
+    @mock.patch(f"{HANDLERS}send_payment_receipt_email")
+    def test_invoice_paid_annual_renewal_warns_that_renewed_term_is_not_provisioned(
+        self, _mock_receipt_task, mock_renewal_notice_task, mock_lm_client,
+    ):
+        """An annual renewal queues the notice but logs a warning, since no plan is provisioned for the new term."""
+        self._create_processed_renewal('evt_test_prior_renewal_warn', uuid.uuid4())
+        event = self._create_cycle_invoice_paid_event()
+
+        with self.assertLogs(
+            'enterprise_access.apps.customer_billing.stripe_event_handlers', level='WARNING',
+        ) as logs:
+            StripeEventHandler.dispatch(event)
+
+        self.assertTrue(any('no subscription plan is provisioned' in line for line in logs.output))
+        mock_renewal_notice_task.delay.assert_called_once()
+        mock_lm_client.return_value.update_subscription_plan.assert_not_called()
+
 
 class TestInvoiceCreatedHandler(TestCase):
     """

@@ -241,7 +241,8 @@ When an ``invoice.paid`` event (amount > $0) with ``billing_reason == "subscript
 ``SelfServiceSubscriptionRenewal`` matches the invoice, it is treated as an annual renewal if the trial-to-paid
 transition was already processed for the same Stripe subscription of the checkout intent.
 ``BRAZE_ENTERPRISE_PROVISION_SUBSCRIPTION_RENEWAL_NOTICE_CAMPAIGN`` is then sent in addition to the payment receipt.
-The handler does not touch license-manager plans; this service does not yet provision a plan for the renewed term.
+The handler does not touch license-manager plans; this service does not yet provision a plan for the renewed term,
+so it logs a warning for each annual renewal invoice to make unprovisioned renewals findable.
 
 Renewal rows are only created for the initial trial-to-paid transition, so later paid invoices never match one.
 If no processed renewal exists for the invoice's Stripe subscription, the handler still raises so Stripe retries
