@@ -49,6 +49,7 @@ urlpatterns = oauth2_urlpatterns + make_docs_urls(api_info) + [
     path('auto_auth/', core_views.AutoAuth.as_view(), name='auto_auth'),
     path('', include('csrf.urls')),  # Include csrf urls from edx-drf-extensions
     path('health/', core_views.health, name='health'),
+    path('pathway-review/', include('enterprise_access.apps.pathway_review.urls')),
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
     path('api/schema/redoc/', spec_redoc_view.as_view(url_name='schema'), name='redoc'),
 ]

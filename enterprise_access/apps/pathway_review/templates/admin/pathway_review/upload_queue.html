@@ -1,0 +1,60 @@
+{% extends "admin/base_site.html" %}
+{% comment %}
+  Upload a queue JSON file produced by a pathway run. Previewing is the default: the form
+  reports what a file would change and rolls it back, so a queue can be rehearsed before a
+  round begins.
+{% endcomment %}
+
+{% block breadcrumbs %}
+  <div class="breadcrumbs">
+    <a href="{% url 'admin:index' %}">Home</a>
+    &rsaquo; <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a>
+    &rsaquo; <a href="{% url 'admin:pathway_review_pathwayreviewitem_changelist' %}">{{ opts.verbose_name_plural|capfirst }}</a>
+    &rsaquo; {{ title }}
+  </div>
+{% endblock %}
+
+{% block content %}
+  <p style="max-width:52em">
+    Load the pathways a run produced. The file is the JSON with a <code>ladders</code> list;
+    each record becomes one pathway a reviewer is shown. Nothing is assembled or judged here.
+  </p>
+
+  <form method="post" enctype="multipart/form-data">
+    {% csrf_token %}
+    {{ form.non_field_errors }}
+    <fieldset class="module aligned">
+      {% for field in form %}
+        <div class="form-row{% if field.errors %} errors{% endif %}">
+          {{ field.errors }}
+          {{ field.label_tag }}
+          {{ field }}
+          {% if field.help_text %}<div class="help">{{ field.help_text }}</div>{% endif %}
+        </div>
+      {% endfor %}
+    </fieldset>
+    <div class="submit-row">
+      <input type="submit" value="Upload" class="default">
+      <a href="{% url 'admin:pathway_review_pathwayreviewitem_changelist' %}" class="button cancel-link">Cancel</a>
+    </div>
+  </form>
+
+  {% if report %}
+    <div class="module" style="margin-top:1.5em;max-width:52em">
+      <h2>{% if report.dry_run %}Preview{% else %}Loaded{% endif %}</h2>
+      <table>
+        <tr><th>New pathways</th><td>{{ report.created }}</td></tr>
+        <tr><th>Updated</th><td>{{ report.updated }}</td></tr>
+        <tr><th>{% if report.dry_run %}Would be retired{% else %}Retired{% endif %}</th>
+            <td>{% if report.dry_run %}{{ report.would_deactivate }}{% else %}{{ report.deactivated }}{% endif %}</td></tr>
+        <tr><th>Seeded controls</th><td>{{ report.controls }}</td></tr>
+        <tr><th>In the queue now</th><td>{{ report.active }}</td></tr>
+      </table>
+      {% if report.dry_run %}
+        <p class="help" style="padding:0 1em 1em">
+          Nothing was written. Clear <b>Preview only</b> and upload the same file to load it.
+        </p>
+      {% endif %}
+    </div>
+  {% endif %}
+{% endblock %}
