@@ -962,39 +962,33 @@ class GroupMemberWithAggregatesRequestSerializer(serializers.Serializer):
 
 class TransactionsExportRequestSerializer(serializers.Serializer):
     """
-    Request Serializer to validate ``export_transactions`` endpoint GET data.
-
-    For view: SubsidyAccessPolicyTransactionsViewset.export_transactions
+    Query params for SubsidyAccessPolicyTransactionsViewset.export_transactions.
     """
     enterprise_customer_uuid = serializers.UUIDField(
         required=True,
-        help_text='The enterprise customer for which to export Learner Credit spent transactions.',
+        help_text='The enterprise customer that owns the subsidy.',
     )
     subsidy_uuid = serializers.UUIDField(
         required=True,
-        help_text='The subsidy whose spent transactions should be exported.',
+        help_text='The subsidy whose spend to export.',
     )
     subsidy_access_policy_uuid = serializers.UUIDField(
         required=False,
-        help_text=(
-            'Only export transactions redeemed via this policy (budget). It must belong to the given enterprise '
-            'customer and subsidy. Omit it to export spend across every budget funded by the subsidy.'
-        ),
+        help_text='Only export spend from this policy (budget). Omit to export every budget on the subsidy.',
     )
     search = serializers.CharField(
         required=False,
         max_length=320,
-        help_text='Free-text search filter, forwarded as-is to the Subsidy API.',
+        help_text='Matches learner email or course title.',
     )
-    # Validated here, not just forwarded, so a malformed date is reported as the client's 400 rather than surfacing
-    # as an upstream failure (502).
+    # Validated here so a bad date is a 400, not an upstream 502.
     start_date = serializers.DateField(
         required=False,
-        help_text='Only include transactions created on/after this date (YYYY-MM-DD, UTC).',
+        help_text='Only include spend on/after this date (YYYY-MM-DD, UTC).',
     )
     end_date = serializers.DateField(
         required=False,
-        help_text='Only include transactions created on/before this date, inclusive (YYYY-MM-DD, UTC).',
+        help_text='Only include spend on/before this date, inclusive (YYYY-MM-DD, UTC).',
     )
 
     def validate(self, attrs):

@@ -193,9 +193,7 @@ REST_FRAMEWORK = {
         # with several Algolia searches and, when the re-rank backend is enabled, a paid
         # model call. The cost per request is an order of magnitude above the others here.
         'learner_pathways_pathway': '30/hour',
-        # Deliberately low: the deployed gunicorn config runs 2 synchronous workers with a 300s timeout
-        # (docker_gunicorn_configuration.py), so each export occupies a worker for the whole download and a
-        # couple of concurrent exports can starve every other request.
+        # Low on purpose: each export holds one of the 2 sync gunicorn workers for the whole download.
         'learner_credit_transactions_export': '12/hour',
     },
 }
@@ -519,8 +517,7 @@ LMS_CLIENT_TIMEOUT = os.environ.get('LMS_CLIENT_TIMEOUT', 45)
 ECOMMERCE_CLIENT_TIMEOUT = os.environ.get('ECOMMERCE_CLIENT_TIMEOUT', 45)
 DISCOVERY_CLIENT_TIMEOUT = os.environ.get('DISCOVERY_CLIENT_TIMEOUT', 45)
 SUBSIDY_CLIENT_TIMEOUT = os.environ.get('SUBSIDY_CLIENT_TIMEOUT', 45)
-# Longer than the client timeouts above because the export can take a while to generate upstream. This bounds
-# the gap between two reads, not the total download time, so a slow but steady stream can still outlive it.
+# Read timeout (between chunks, not total) for the spend export, which can be slow to generate upstream.
 SUBSIDY_TRANSACTIONS_EXPORT_TIMEOUT = int(os.environ.get('SUBSIDY_TRANSACTIONS_EXPORT_TIMEOUT', 120))
 XPERT_REQUEST_TIMEOUT = os.environ.get('XPERT_REQUEST_TIMEOUT', 45)
 

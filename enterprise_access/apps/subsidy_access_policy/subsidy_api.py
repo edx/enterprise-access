@@ -21,6 +21,8 @@ REQUEST_CACHE_NAMESPACE = 'subsidy_access_policy'
 
 CACHE_MISS = object()
 
+SUBSIDY_API_HTTP_ERROR_MESSAGE = 'HTTPError occurred in Subsidy API request.'
+
 
 class TransactionPolicyMismatchError(Exception):
     """
@@ -53,7 +55,7 @@ def get_and_cache_subsidy_learners_aggregate_data(subsidy_uuid, policy_uuid=None
             policy_uuid,
         )
     except requests.exceptions.HTTPError as exc:
-        raise SubsidyAPIHTTPError('HTTPError occurred in Subsidy API request.') from exc
+        raise SubsidyAPIHTTPError(SUBSIDY_API_HTTP_ERROR_MESSAGE) from exc
 
     results = {}
     for aggregated_data in response_payload:
@@ -84,7 +86,7 @@ def get_and_cache_transactions_for_learner(subsidy_uuid, lms_user_id):
             include_aggregates=False,
         )
     except requests.exceptions.HTTPError as exc:
-        raise SubsidyAPIHTTPError('HTTPError occurred in Subsidy API request.') from exc
+        raise SubsidyAPIHTTPError(SUBSIDY_API_HTTP_ERROR_MESSAGE) from exc
 
     result = {
         'transactions': response_payload['results'],
@@ -119,27 +121,13 @@ def get_subsidy_transactions_export(
     end_date=None,
 ):
     """
-    Fetch a CSV export of Learner Credit spent transactions for a subsidy from enterprise-subsidy.
+    Opens a streamed CSV export of a subsidy's spend from enterprise-subsidy. ``enterprise_customer_uuid`` is always
+    forwarded so enterprise-subsidy also checks ownership.
 
-    Arguments are keyword-only, since several are optional values of the same type that are easy to swap.
-
-    Arguments:
-        subsidy_uuid (str|UUID): The subsidy whose spent transactions should be exported.
-        enterprise_customer_uuid (str|UUID): The enterprise that owns the subsidy. Always forwarded so that
-            enterprise-subsidy also scopes the export to this enterprise (defense in depth for cross-customer access).
-        subsidy_access_policy_uuid (str|UUID, optional): Only export transactions redeemed via this policy (budget).
-        search (str, optional): Free-text search filter, forwarded as-is to enterprise-subsidy.
-        start_date (date, optional): Only include transactions created on/after this date.
-        end_date (date, optional): Only include transactions created on/before this date (inclusive).
-
-    Returns:
-        requests.Response: the open, streamed CSV response from enterprise-subsidy, including its headers.
-        The caller is responsible for closing it.
-
-    Raises:
-        SubsidyAPIHTTPError: if the Subsidy API request failed. The upstream response, if any, is already closed.
+    Returns the open ``requests.Response``; the caller must close it.
+    Raises ``SubsidyAPIHTTPError`` on failure, with any upstream response already closed.
     """
-    # The export is a v2 admin endpoint (it needs admin-level access to the subsidy), so always use the v2 client.
+    # The export is a v2 admin endpoint.
     client = get_versioned_subsidy_client(version=2)
     export_url = client.TRANSACTIONS_LIST_ENDPOINT.format(subsidy_uuid=subsidy_uuid) + 'export/'
     query_params = {
@@ -154,28 +142,22 @@ def get_subsidy_transactions_export(
     if end_date:
         query_params['end_date'] = end_date.isoformat()
 
-    # Production settings are loaded from YAML, which can only express a sequence as a list, and requests
-    # raises a bare ValueError (not a RequestException) for a list timeout. Normalise it so overriding the
-    # setting in config can't turn every export into a 500.
+    # YAML config can only give a list, which requests rejects with a ValueError (not a RequestException).
     timeout = settings.SUBSIDY_TRANSACTIONS_EXPORT_TIMEOUT
     if isinstance(timeout, (list, tuple)):
         timeout = tuple(timeout)
 
+    response = None
     try:
-        # OAuthAPIClient only sets a timeout on its token fetch, so set one explicitly for this potentially slow call.
+        # OAuthAPIClient only times out its token fetch, so set one here.
         response = client.client.get(export_url, params=query_params, stream=True, timeout=timeout)
-    except requests.exceptions.RequestException as exc:
-        # Not logged here: the view logs every failure with the request's full context. Logging again would
-        # duplicate the traceback, and the query params must not be logged at all because ``search`` is matched
-        # against learner emails upstream, so admins type email addresses into it.
-        raise SubsidyAPIHTTPError('HTTPError occurred in Subsidy API request.') from exc
-
-    try:
         response.raise_for_status()
-    except requests.exceptions.HTTPError as exc:
-        # With stream=True the body hasn't been read, so the pooled connection isn't released until we close it.
-        response.close()
-        raise SubsidyAPIHTTPError('HTTPError occurred in Subsidy API request.') from exc
+    except requests.exceptions.RequestException as exc:
+        # With stream=True the connection is only released once the response is closed.
+        if response is not None:
+            response.close()
+        # Not logged: the view logs failures, and the params include ``search`` (possibly an email).
+        raise SubsidyAPIHTTPError(SUBSIDY_API_HTTP_ERROR_MESSAGE) from exc
     return response
 
 

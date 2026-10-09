@@ -207,59 +207,37 @@ class TransactionsExportTests(TestCase):
         response.raise_for_status.assert_called_once_with()
         response.close.assert_not_called()
 
-    def test_optional_filters_are_omitted(self, mock_client_getter):
-        mock_client = self._mock_client(mock_client_getter)
-        subsidy_uuid = uuid.uuid4()
-
-        get_subsidy_transactions_export(subsidy_uuid=subsidy_uuid, enterprise_customer_uuid='enterprise-uuid')
-
-        assert mock_client.client.get.call_args.kwargs['params'] == {
-            'enterprise_customer_uuid': 'enterprise-uuid',
-        }
-
     @ddt.data(
         (120, 120),      # the production shape: a plain int from the setting
         ([1, 2], (1, 2)),  # YAML config can only express a pair as a list
         ((1, 2), (1, 2)),
     )
     @ddt.unpack
-    def test_timeout_is_normalised_for_requests(self, configured, expected, mock_client_getter):
-        """
-        ``requests`` rejects a list timeout with a bare ValueError rather than a RequestException, so a value
-        overridden in YAML config would otherwise escape the handler and turn every export into a 500.
-        """
+    def test_timeout_is_normalised_and_optional_filters_omitted(self, configured, expected, mock_client_getter):
+        """A list timeout from YAML config is converted, since requests would raise a ValueError."""
         mock_client = self._mock_client(mock_client_getter)
 
         with override_settings(SUBSIDY_TRANSACTIONS_EXPORT_TIMEOUT=configured):
-            get_subsidy_transactions_export(subsidy_uuid=uuid.uuid4(), enterprise_customer_uuid=uuid.uuid4())
+            get_subsidy_transactions_export(subsidy_uuid=uuid.uuid4(), enterprise_customer_uuid='enterprise-uuid')
 
         assert mock_client.client.get.call_args.kwargs['timeout'] == expected
+        assert mock_client.client.get.call_args.kwargs['params'] == {'enterprise_customer_uuid': 'enterprise-uuid'}
 
     @mock.patch('enterprise_access.apps.subsidy_access_policy.subsidy_api.logger')
-    def test_search_value_never_reaches_the_logs(self, mock_logger, mock_client_getter):
-        """
-        Upstream matches ``search`` against learner emails, so admins type addresses into it. It must not be
-        logged, even when the request fails.
-        """
+    def test_transport_error_is_wrapped_without_logging_search(self, mock_logger, mock_client_getter):
+        """Transport errors are wrapped, and ``search`` (possibly an email) is never logged."""
         self._mock_client(mock_client_getter).client.get.side_effect = requests.Timeout()
 
-        with self.assertRaises(SubsidyAPIHTTPError):
+        with self.assertRaises(SubsidyAPIHTTPError) as context:
             get_subsidy_transactions_export(
                 subsidy_uuid=uuid.uuid4(),
                 enterprise_customer_uuid=uuid.uuid4(),
                 search='learner@example.com',
             )
 
+        assert isinstance(context.exception.__cause__, requests.Timeout)
         logged = ' '.join(str(arg) for call in mock_logger.mock_calls for arg in call.args)
         assert 'learner@example.com' not in logged
-
-    def test_transport_error_is_wrapped(self, mock_client_getter):
-        self._mock_client(mock_client_getter).client.get.side_effect = requests.Timeout()
-
-        with self.assertRaises(SubsidyAPIHTTPError) as context:
-            get_subsidy_transactions_export(subsidy_uuid=uuid.uuid4(), enterprise_customer_uuid=uuid.uuid4())
-
-        assert isinstance(context.exception.__cause__, requests.Timeout)
 
     def test_error_status_closes_streamed_response_and_is_wrapped(self, mock_client_getter):
         """With stream=True, an unread error response must be closed to release its pooled connection."""

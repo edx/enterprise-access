@@ -461,11 +461,8 @@ class AllocationRequestException(APIException):
 
 class UpstreamCsvStream:
     """
-    Iterates the upstream CSV in chunks and releases the upstream response when the Django response closes.
-
-    A generator's ``finally`` only runs once iteration has started, so a response discarded before its first
-    chunk would leak the upstream connection. Django registers ``close()`` on whatever it is given as the
-    streaming content, so a class with a ``close()`` method is released either way.
+    Relays the upstream CSV in chunks. Django calls ``close()`` even if the response is never read, which a
+    generator's ``finally`` wouldn't, so the upstream connection is always released.
     """
     def __init__(self, subsidy_response, chunk_size, log_context):
         self.subsidy_response = subsidy_response
@@ -479,8 +476,7 @@ class UpstreamCsvStream:
         try:
             return next(self._chunks)
         except RequestException:
-            # The 200 headers are already sent, so the status can't change. Log it and re-raise, which aborts
-            # the client's download rather than silently ending a truncated report.
+            # Headers are already sent; re-raise so the download aborts instead of looking complete.
             logger.exception(f'Learner credit transactions export failed mid-stream: {self.log_context}')
             raise
 
@@ -490,9 +486,7 @@ class UpstreamCsvStream:
 
 class TransactionsExportRequestException(APIException):
     """
-    Raised when the Subsidy API export request fails. Request params are validated before the upstream call, so an
-    upstream failure is a gateway error (502), and only a generic message is returned so upstream error bodies
-    (HTML error pages, internal permission names) aren't passed through to clients.
+    The Subsidy API export failed. Returns a generic message so upstream error bodies never reach the client.
     """
     status_code = status.HTTP_502_BAD_GATEWAY
     default_detail = 'Failed to export transactions from the Subsidy API.'
@@ -1397,32 +1391,23 @@ class SubsidyAccessPolicyGroupViewset(UserDetailsFromJwtMixin, PermissionRequire
 
 class SubsidyAccessPolicyTransactionsViewset(PermissionRequiredMixin, viewsets.GenericViewSet):
     """
-    Viewset that gateways/proxies Learner Credit spent-transaction exports from the enterprise-subsidy service.
+    Proxies Learner Credit spend CSV exports from enterprise-subsidy.
     """
     permission_classes = (permissions.IsAuthenticated,)
     authentication_classes = (JwtAuthentication, authentication.SessionAuthentication)
     permission_required = SUBSIDY_ACCESS_POLICY_TRANSACTIONS_EXPORT_PERMISSION
-    # DRF negotiates the response format in ``initial()``, before the view method runs, so a download client
-    # sending ``Accept: text/csv`` would be refused with a 406 unless that media type is renderable here. A
-    # successful export returns a StreamingHttpResponse and never reaches a renderer; CSVRenderer only ever
-    # renders error payloads, which it turns into a header row plus the message. JSON stays first so it
-    # remains the default when the client has no preference.
+    # CSVRenderer only renders errors (the export itself streams); it stops ``Accept: text/csv`` getting a 406.
     renderer_classes = (JSONRenderer, CSVRenderer, BrowsableAPIRenderer)
-    # DRF maps HEAD onto the GET handler, which would run a whole export (and write an audit line) for a
-    # request that discards the body.
+    # DRF maps HEAD onto GET, which would run a whole export for nothing.
     http_method_names = ['get', 'options']
-    # The export is expensive both here and upstream, and the deployed gunicorn config runs 2 synchronous
-    # workers, so each download occupies one for its whole duration. ScopedRateThrottle keys on the user, so
-    # this caps how often a single admin can export; it does not limit how many exports run concurrently.
+    # Per-user limit on how often an admin can export; it doesn't cap concurrent exports.
     throttle_classes = (ScopedRateThrottle,)
     throttle_scope = 'learner_credit_transactions_export'
-
-    # Size of the chunks in which the upstream CSV is relayed to the client.
     STREAM_CHUNK_SIZE = 8192
 
     def permission_denied(self, request, message=None, code=None):
         """
-        Record refused attempts to export learner spend, which the permission layer would otherwise drop silently.
+        Log refused export attempts, which the permission layer would otherwise drop silently.
         """
         logger.warning(
             'Learner credit transactions export refused (%s) for user_id=%s on enterprise_customer_uuid=%s',
@@ -1432,13 +1417,13 @@ class SubsidyAccessPolicyTransactionsViewset(PermissionRequiredMixin, viewsets.G
 
     def get_permission_object(self):
         """
-        Returns the enterprise uuid to verify that the requesting user possesses the enterprise admin/operator role.
+        The enterprise to check the requester's admin/operator role against.
         """
         return str(self.validated_export_params['enterprise_customer_uuid'])
 
     def get_queryset(self):
         """
-        Required by Django Generic Viewsets, since this data is fetched remotely there is no internal queryset.
+        Required by GenericViewSet; the data comes from enterprise-subsidy.
         """
 
     @extend_schema(
@@ -1466,18 +1451,10 @@ class SubsidyAccessPolicyTransactionsViewset(PermissionRequiredMixin, viewsets.G
     )
     def export_transactions(self, request):
         """
-        Proxies a CSV export of Learner Credit spent transactions from the enterprise-subsidy service.
-
-        Params:
-            enterprise_customer_uuid: (required) The enterprise customer for which to export transactions.
-            subsidy_uuid: (required) The subsidy whose spent transactions should be exported.
-            subsidy_access_policy_uuid: (Optional) Only export spend from this policy (budget) of the subsidy.
-            search: (Optional) Free-text search filter, forwarded to enterprise-subsidy.
-            start_date: (Optional) Only include transactions created on/after this date (YYYY-MM-DD).
-            end_date: (Optional) Only include transactions created on/before this date, inclusive (YYYY-MM-DD).
+        Streams the subsidy's spend report as a CSV attachment. Params are described by the request serializer.
         """
         validated_data = self.validated_export_params
-        # ``search`` is matched against learner emails upstream, so record only whether one was used.
+        # ``search`` may be a learner email, so only record whether one was used.
         log_context = (
             f'user_id={request.user.id}, '
             f'enterprise_customer_uuid={validated_data["enterprise_customer_uuid"]}, '
@@ -1488,10 +1465,8 @@ class SubsidyAccessPolicyTransactionsViewset(PermissionRequiredMixin, viewsets.G
             f'searched={bool(validated_data.get("search"))}'
         )
 
-        # The permission check only covers enterprise_customer_uuid, and the Subsidy API is called with this service's
-        # own (operator) credentials, so we must verify the requested subsidy belongs to that enterprise. Respond with
-        # a 404 rather than a 403 so the existence of other customers' subsidies isn't revealed. When a policy (budget)
-        # is requested, it must also belong to that same enterprise and subsidy.
+        # The Subsidy API is called with operator credentials, so check the subsidy (and policy, if given) belongs
+        # to the enterprise. 404 rather than 403, so other customers' subsidies aren't revealed.
         policy_lookup = {
             'enterprise_customer_uuid': validated_data['enterprise_customer_uuid'],
             'subsidy_uuid': validated_data['subsidy_uuid'],
@@ -1513,15 +1488,13 @@ class SubsidyAccessPolicyTransactionsViewset(PermissionRequiredMixin, viewsets.G
             )
         except SubsidyAPIHTTPError as exc:
             upstream_status_code = getattr(exc.error_response, 'status_code', None)
-            # No traceback: the chained requests error's message contains the upstream URL, and its query string
-            # carries ``search``. Log the error type and status code only.
+            # No traceback: the chained requests error names the upstream URL, including ``search``.
             logger.error(
                 f'Learner credit transactions export failed upstream (subsidy_status_code={upstream_status_code}, '
                 f'error={type(exc.__cause__).__name__}): {log_context}'
             )
             raise TransactionsExportRequestException() from exc
 
-        # Audit trail for bulk exports of learner emails and spend.
         logger.info(f'Learner credit transactions export started: {log_context}')
 
         response = StreamingHttpResponse(
@@ -1532,7 +1505,7 @@ class SubsidyAccessPolicyTransactionsViewset(PermissionRequiredMixin, viewsets.G
             'Content-Disposition',
             f'attachment; filename="spent_report_{validated_data["subsidy_uuid"]}.csv"',
         )
-        # The report contains learner emails, so keep it out of shared and browser caches.
+        # Contains learner emails, so keep it out of caches.
         response['Cache-Control'] = 'no-store'
         return response
 
