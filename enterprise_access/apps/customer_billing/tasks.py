@@ -521,8 +521,8 @@ def send_paid_subscription_renewal_notice_email_task(checkout_intent_id: int, in
     line_item = ((invoice_data.get('lines') or {}).get('data') or [{}])[0]
     period = line_item.get('period') or {}
     properties = {
-        'number_of_licenses': line_item.get('quantity'),
-        'total_billing_amount_formatted': _format_currency_for_braze(invoice_data.get('amount_paid')),
+        'total_license': line_item.get('quantity'),
+        'billing_amount_formatted': _format_currency_for_braze(invoice_data.get('amount_paid')),
         'invoice_url': invoice_data.get('hosted_invoice_url'),
     }
     # Absent timestamps are left out, as the common properties builder drops None values.

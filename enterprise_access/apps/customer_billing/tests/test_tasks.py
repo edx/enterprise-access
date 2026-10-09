@@ -504,8 +504,8 @@ class TestSendPaidSubscriptionLifecycleEmailTasks(TestCase):
         self.assertEqual(renewal_props['subscription_start_period'], '2026-01-01T00:00:00Z')
         self.assertEqual(renewal_props['subscription_end_period'], '2027-01-01T00:00:00Z')
         self.assertEqual(renewal_props['next_payment_date'], '2027-01-01T00:00:00Z')
-        self.assertEqual(renewal_props['number_of_licenses'], 10)
-        self.assertEqual(renewal_props['total_billing_amount_formatted'], '$5,000')
+        self.assertEqual(renewal_props['total_license'], 10)
+        self.assertEqual(renewal_props['billing_amount_formatted'], '$5,000')
         self.assertEqual(renewal_props['invoice_url'], 'https://invoice.stripe.com/i/test')
 
     @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
@@ -521,7 +521,7 @@ class TestSendPaidSubscriptionLifecycleEmailTasks(TestCase):
 
         props = mock_braze_client.return_value.send_campaign_message.call_args[1]['trigger_properties']
         self.assertEqual(props['renewal_date'], 'Jan 01, 2026')
-        for key in ('subscription_start_period', 'subscription_end_period', 'next_payment_date', 'number_of_licenses'):
+        for key in ('subscription_start_period', 'subscription_end_period', 'next_payment_date', 'total_license'):
             self.assertNotIn(key, props)
 
     @ddt.data(
