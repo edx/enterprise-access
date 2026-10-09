@@ -607,6 +607,10 @@ BRAZE_ENTERPRISE_SSP_TRIAL_SUBSCRIPTION_REINSTATED_CAMPAIGN = ''
 BRAZE_ENTERPRISE_SSP_PAID_SUBSCRIPTION_REINSTATED_CAMPAIGN = ''
 # Shared Braze campaign for trial-ended cancellation emails, used by both Teams and Essentials.
 BRAZE_ENTERPRISE_PROVISION_TRIAL_END_SUBSCRIPTION_ENDED_CAMPAIGN = ''
+# Shared Braze campaigns for paid subscription ended (after cancellation) and renewal notice emails,
+# used by both Teams and Essentials.
+BRAZE_ENTERPRISE_PROVISION_SUBSCRIPTION_ENDED_AND_CANCELLED_CAMPAIGN = ''
+BRAZE_ENTERPRISE_PROVISION_SUBSCRIPTION_RENEWAL_NOTICE_CAMPAIGN = ''
 
 # ============================================================
 # SSP Essentials Braze Campaign Settings
