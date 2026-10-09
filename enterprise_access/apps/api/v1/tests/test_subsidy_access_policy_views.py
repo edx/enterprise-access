@@ -42,7 +42,7 @@ from enterprise_access.apps.subsidy_access_policy.constants import (
     PolicyTypes,
     TransactionStateChoices
 )
-from enterprise_access.apps.subsidy_access_policy.exceptions import ContentPriceNullException
+from enterprise_access.apps.subsidy_access_policy.exceptions import ContentPriceNullException, SubsidyAPIHTTPError
 from enterprise_access.apps.subsidy_access_policy.models import (
     PerLearnerSpendCreditAccessPolicy,
     PolicyGroupAssociation,
@@ -1962,6 +1962,139 @@ class TestSubsidyAccessPolicyCanRedeemView(BaseCanRedeemTestMixin, APITestWithMo
         self.mock_enterprise_user_record = enterprise_user_record_patcher.start()
         self.mock_enterprise_user_record.return_value = TEST_USER_RECORD
         self.addCleanup(enterprise_user_record_patcher.stop)
+
+    @mock.patch('enterprise_access.apps.api.v1.views.subsidy_access_policy.LmsApiClient', return_value=mock.MagicMock())
+    @mock.patch('enterprise_access.apps.subsidy_access_policy.subsidy_api.get_and_cache_transactions_for_learner')
+    def test_can_redeem_isolates_unreachable_subsidy(
+        self, mock_transactions_cache_for_learner, mock_lms_client,
+    ):  # pylint: disable=unused-argument
+        """
+        One soft-deleted subsidy (which enterprise-subsidy answers with 403) must not fail the whole can-redeem
+        request. Only the policies funded by it are excluded; the customer's remaining healthy policy is still
+        evaluated and returned.
+
+        This also pins that they are excluded from evaluation. ``policy.can_redeem()`` calls the subsidy's
+        ``can_redeem`` endpoint, which fails for the dead subsidy just like the transactions lookup, so the stub
+        client raises for it here as it would in production.
+
+        Unlike the other tests here this one lets ``subsidy_record()`` run for real against a stubbed client, so
+        the dead subsidy genuinely yields {} rather than a MagicMock that happens to compare cleanly.
+        """
+        test_content_key = "course-v1:edX+Privacy101+3T2020"
+        unreachable_policy = PerLearnerEnrollmentCapLearnerCreditAccessPolicyFactory(
+            enterprise_customer_uuid=self.enterprise_uuid,
+            spend_limit=500000,
+        )
+
+        def fake_transactions_for_learner(subsidy_uuid, lms_user_id):  # pylint: disable=unused-argument
+            if subsidy_uuid == unreachable_policy.subsidy_uuid:
+                downstream_error = HTTPError(
+                    'Fake HTTP Error Message',
+                    response=MockResponse({'detail': 'forbidden'}, status.HTTP_403_FORBIDDEN),
+                )
+                raise SubsidyAPIHTTPError('HTTPError occurred in Subsidy API request.') from downstream_error
+            return {'transactions': [], 'aggregates': {'total_quantity': 0}}
+
+        mock_transactions_cache_for_learner.side_effect = fake_transactions_for_learner
+
+        def fake_retrieve_subsidy(subsidy_uuid):
+            """The soft-deleted subsidy 403s, so subsidy_record() returns {} and its sort keys become None/0."""
+            if str(subsidy_uuid) == str(unreachable_policy.subsidy_uuid):
+                raise HTTPError('403 soft-deleted')
+            return {
+                'uuid': str(subsidy_uuid),
+                'is_active': True,
+                'current_balance': 500000,
+                'active_datetime': '2020-01-01T00:00:00Z',
+                'expiration_datetime': '2030-01-01T00:00:00Z',
+            }
+
+        def mock_get_subsidy_content_data(*args):
+            if test_content_key in args:
+                return {
+                    "content_uuid": str(uuid4()),
+                    "content_key": test_content_key,
+                    "source": "edX",
+                    "content_price": 29900,
+                }
+            return {}
+
+        self.mock_get_content_metadata.side_effect = mock_get_subsidy_content_data
+
+        with mock.patch.object(
+            SubsidyAccessPolicy, 'subsidy_client', new_callable=mock.PropertyMock,
+        ) as mock_subsidy_client_property:
+            stub_client = mock.MagicMock()
+            stub_client.retrieve_subsidy.side_effect = fake_retrieve_subsidy
+            stub_client.list_subsidy_transactions.return_value = {
+                'results': [],
+                'aggregates': {'total_quantity': 0},
+            }
+
+            def fake_can_redeem(subsidy_uuid, lms_user_id, content_key):  # pylint: disable=unused-argument
+                if str(subsidy_uuid) == str(unreachable_policy.subsidy_uuid):
+                    raise HTTPError('403 soft-deleted')
+                return {
+                    'can_redeem': True,
+                    'active': True,
+                    'content_price': 29900,
+                    'unit': 'usd_cents',
+                    'all_transactions': [],
+                }
+
+            stub_client.can_redeem.side_effect = fake_can_redeem
+            mock_subsidy_client_property.return_value = stub_client
+            with mock.patch(
+                'enterprise_access.apps.subsidy_access_policy.content_metadata_api.get_and_cache_content_metadata',
+                side_effect=mock_get_subsidy_content_data,
+            ):
+                response = self.client.get(
+                    self.subsidy_access_policy_can_redeem_endpoint,
+                    {'content_key': [test_content_key]},
+                )
+
+        assert response.status_code == status.HTTP_200_OK
+        response_list = response.json()
+        assert len(response_list) == 1
+
+        # The healthy policy is still evaluated and resolved...
+        assert response_list[0]["can_redeem"] is True
+        assert response_list[0]["redeemable_subsidy_access_policy"]["uuid"] == str(self.redeemable_policy.uuid)
+        # ...and the unreachable subsidy's policy was excluded entirely, so it is neither offered to the
+        # learner nor reported as a reason they cannot redeem.
+        assert str(unreachable_policy.uuid) not in response.content.decode()
+
+    @mock.patch('enterprise_access.apps.api.v1.views.subsidy_access_policy.LmsApiClient', return_value=mock.MagicMock())
+    @mock.patch('enterprise_access.apps.subsidy_access_policy.subsidy_api.get_and_cache_transactions_for_learner')
+    def test_can_redeem_with_every_subsidy_unreachable(
+        self, mock_transactions_cache_for_learner, mock_lms_client,
+    ):  # pylint: disable=unused-argument
+        """
+        When every subsidy for the customer answers 403/404, that may mean our own access to enterprise-subsidy is
+        broken rather than that every subsidy was deleted, so the request fails as it did before isolation was
+        added, instead of telling the learner there is nothing available.
+        """
+        test_content_key = "course-v1:edX+Privacy101+3T2020"
+
+        def fail_everything(subsidy_uuid, lms_user_id):  # pylint: disable=unused-argument
+            downstream_error = HTTPError(
+                'Fake HTTP Error Message',
+                response=MockResponse({'detail': 'forbidden'}, status.HTTP_403_FORBIDDEN),
+            )
+            raise SubsidyAPIHTTPError('HTTPError occurred in Subsidy API request.') from downstream_error
+
+        mock_transactions_cache_for_learner.side_effect = fail_everything
+
+        response = self.client.get(
+            self.subsidy_access_policy_can_redeem_endpoint,
+            {'content_key': [test_content_key]},
+        )
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.json() == {
+            'detail': 'Subsidy Transaction API error: forbidden',
+            'subsidy_status_code': '403',
+        }
 
     def test_can_redeem_policy_missing_params(self):
         """

@@ -19,6 +19,22 @@ from ..subsidy_api import (
 )
 from .factories import PerLearnerSpendCapLearnerCreditAccessPolicyFactory
 
+TRANSACTION_FETCH_PATH = (
+    'enterprise_access.apps.subsidy_access_policy.subsidy_api.get_and_cache_transactions_for_learner'
+)
+
+
+def _unreachable_subsidy_error(status_code):
+    """
+    Build the ``SubsidyAPIHTTPError`` that ``get_and_cache_transactions_for_learner`` raises when the
+    Subsidy API rejects the request, e.g. for a soft-deleted subsidy (403) or one that disappears later (404).
+    """
+    downstream_error = requests.HTTPError()
+    downstream_error.response = mock.Mock(status_code=status_code)
+    wrapped_error = SubsidyAPIHTTPError('HTTPError occurred in Subsidy API request.')
+    wrapped_error.__cause__ = downstream_error
+    return wrapped_error
+
 
 class TransactionsForLearnerTests(TestCase):
     """
@@ -148,7 +164,7 @@ class TransactionsForLearnerTests(TestCase):
             {'transactions': mock_cake_transactions, 'aggregates': {}},
         ]
 
-        result = get_redemptions_by_content_and_policy_for_learner(
+        result, unreachable_subsidy_uuids = get_redemptions_by_content_and_policy_for_learner(
             [cherry_policy, apple_policy, german_chocolate_policy],
             123,
         )
@@ -161,6 +177,107 @@ class TransactionsForLearnerTests(TestCase):
             },
             result,
         )
+        self.assertEqual(set(), unreachable_subsidy_uuids)
+
+
+@ddt.ddt
+class RedemptionsFailureIsolationTests(TestCase):
+    """
+    Tests that one unreachable subsidy does not fail the whole per-subsidy fan-out in
+    ``get_redemptions_by_content_and_policy_for_learner``.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.healthy_subsidy_uuid = uuid.uuid4()
+        self.unreachable_subsidy_uuid = uuid.uuid4()
+        self.healthy_policy = PerLearnerSpendCapLearnerCreditAccessPolicyFactory(
+            subsidy_uuid=self.healthy_subsidy_uuid,
+        )
+        self.unreachable_policy = PerLearnerSpendCapLearnerCreditAccessPolicyFactory(
+            subsidy_uuid=self.unreachable_subsidy_uuid,
+        )
+        self.healthy_transaction = {
+            'uuid': 'alpha',
+            'content_key': 'content-1',
+            'subsidy_access_policy_uuid': str(self.healthy_policy.uuid),
+        }
+
+    def _fetch_side_effect(self, unreachable_uuids, status_code=404):
+        """Return a ``get_and_cache_transactions_for_learner`` stub that fails for the given subsidies."""
+        def fetch(subsidy_uuid, lms_user_id):  # pylint: disable=unused-argument
+            if subsidy_uuid in unreachable_uuids:
+                raise _unreachable_subsidy_error(status_code)
+            return {'transactions': [self.healthy_transaction], 'aggregates': {}}
+        return fetch
+
+    @ddt.data(403, 404)
+    @mock.patch(TRANSACTION_FETCH_PATH)
+    def test_unreachable_subsidy_does_not_fail_healthy_subsidies(self, status_code, mock_fetch):
+        """A subsidy that answers 403 (e.g. soft-deleted) or 404 drops only its own policies."""
+        mock_fetch.side_effect = self._fetch_side_effect({self.unreachable_subsidy_uuid}, status_code)
+
+        result, unreachable_subsidy_uuids = get_redemptions_by_content_and_policy_for_learner(
+            [self.unreachable_policy, self.healthy_policy],
+            123,
+        )
+
+        # The healthy subsidy's redemptions still come back...
+        self.assertEqual({'content-1': {self.healthy_policy: [self.healthy_transaction]}}, result)
+        # ...and the caller is told which subsidy to exclude from evaluation.
+        self.assertEqual({self.unreachable_subsidy_uuid}, unreachable_subsidy_uuids)
+
+    @ddt.data(403, 404)
+    @mock.patch(TRANSACTION_FETCH_PATH)
+    def test_all_subsidies_unreachable_still_fails_the_request(self, status_code, mock_fetch):
+        """
+        enterprise-subsidy answers 403 both for a soft-deleted subsidy and for a requester that has lost its
+        permissions, so a 403 from every subsidy may mean our own access is broken. Degrading would hide that
+        from the learner as "nothing available", so the error must still propagate.
+        """
+        mock_fetch.side_effect = self._fetch_side_effect(
+            {self.unreachable_subsidy_uuid, self.healthy_subsidy_uuid}, status_code,
+        )
+
+        with self.assertRaises(SubsidyAPIHTTPError) as raised:
+            get_redemptions_by_content_and_policy_for_learner(
+                [self.unreachable_policy, self.healthy_policy],
+                123,
+            )
+        self.assertEqual(status_code, raised.exception.error_response.status_code)
+
+    @mock.patch('enterprise_access.apps.subsidy_access_policy.subsidy_api.logger')
+    @mock.patch(TRANSACTION_FETCH_PATH)
+    def test_unreachable_subsidy_is_logged_with_impacted_policy_uuids(self, mock_fetch, mock_logger):
+        """The condition must be visible in logs, naming the subsidy and the policies it took down."""
+        mock_fetch.side_effect = self._fetch_side_effect({self.unreachable_subsidy_uuid}, 404)
+
+        get_redemptions_by_content_and_policy_for_learner(
+            [self.unreachable_policy, self.healthy_policy],
+            123,
+        )
+
+        mock_logger.warning.assert_called_once()
+        log_args = mock_logger.warning.call_args.args
+        self.assertEqual(self.unreachable_subsidy_uuid, log_args[1])
+        self.assertEqual(404, log_args[2])
+        self.assertEqual([str(self.unreachable_policy.uuid)], log_args[3])
+        self.assertEqual(123, log_args[4])
+
+    @ddt.data(500, 502, 503)
+    @mock.patch(TRANSACTION_FETCH_PATH)
+    def test_subsidy_api_outage_still_fails_the_request(self, status_code, mock_fetch):
+        """
+        A 5xx means the Subsidy API itself is unhealthy, which affects every subsidy. Degrading would tell the
+        learner they have nothing available during an outage, so these must still propagate.
+        """
+        mock_fetch.side_effect = self._fetch_side_effect({self.unreachable_subsidy_uuid}, status_code)
+
+        with self.assertRaises(SubsidyAPIHTTPError):
+            get_redemptions_by_content_and_policy_for_learner(
+                [self.unreachable_policy, self.healthy_policy],
+                123,
+            )
 
 
 @ddt.ddt
