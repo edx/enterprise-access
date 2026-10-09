@@ -1472,6 +1472,14 @@ class TestStripeEventHandler(TestCase):
                 'feedback': 'too_expensive'
             }
         },
+        # Not cancelled by the customer
+        {
+            'cancellation_details': {
+                'reason': 'payment_failed',
+                'comment': None,
+                'feedback': None
+            }
+        },
         {
             'cancellation_details': {
                 'reason': None,
@@ -1496,8 +1504,12 @@ class TestStripeEventHandler(TestCase):
     @mock.patch(
         "enterprise_access.apps.customer_billing.stripe_event_handlers.send_finalized_cancelation_email_task"
     )
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_paid_subscription_ended_email_task"
+    )
     def test_subscription_deleted_tracks_cancellation_event_when_cancel_at_set(
-        self, mock_send_cancelation_email, mock_cancel, mock_track_cancellation, cancellation_details,
+        self, mock_send_ended_email, mock_send_cancelation_email, mock_cancel, mock_track_cancellation,
+        cancellation_details,
     ):
         """Subscription deleted event tracks cancellation event when cancellation_details are present."""
         subscription_id = "sub_test_track_cancellation_123"
@@ -1542,6 +1554,15 @@ class TestStripeEventHandler(TestCase):
         call_kwargs = mock_send_cancelation_email.delay.call_args.kwargs
         self.assertEqual(call_kwargs.get('checkout_intent_id'), self.checkout_intent.id)
         self.assertEqual(call_kwargs.get('ended_at_timestamp'), 1234567890)
+
+        # The paid subscription ended email is only for subscriptions the customer cancelled.
+        if (cancellation_details or {}).get('reason') == 'cancellation_requested':
+            mock_send_ended_email.delay.assert_called_once_with(
+                checkout_intent_id=self.checkout_intent.id,
+                ended_at_timestamp=1234567890,
+            )
+        else:
+            mock_send_ended_email.delay.assert_not_called()
 
     @mock.patch(
         "enterprise_access.apps.customer_billing.stripe_event_handlers.send_trial_ending_reminder_email_task"
@@ -2566,6 +2587,78 @@ class TestStripeEventHandler(TestCase):
         # License Manager should NOT be called (no plan UUID to reactivate)
         mock_client_instance = mock_license_manager_client.return_value
         mock_client_instance.update_subscription_plan.assert_not_called()
+
+    @ddt.data(
+        # Annual renewal: a cycle invoice after an earlier paid invoice of the same subscription
+        {'billing_reason': 'subscription_cycle', 'earlier_paid_subscription': 'same', 'expect_notice': True},
+        # First paid invoice at trial end has the same billing reason but no earlier paid invoice
+        {'billing_reason': 'subscription_cycle', 'earlier_paid_subscription': None, 'expect_notice': False},
+        # Earlier paid invoice belongs to another subscription
+        {'billing_reason': 'subscription_cycle', 'earlier_paid_subscription': 'other', 'expect_notice': False},
+        # Not a billing cycle invoice
+        {'billing_reason': 'subscription_update', 'earlier_paid_subscription': 'same', 'expect_notice': False},
+    )
+    @ddt.unpack
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_paid_subscription_renewal_notice_email_task"
+    )
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_payment_receipt_email"
+    )
+    def test_invoice_paid_annual_renewal_sends_renewal_notice(
+        self, mock_send_payment_receipt_email, mock_send_renewal_notice,
+        billing_reason, earlier_paid_subscription, expect_notice,
+    ):
+        """
+        A paid billing cycle invoice of an already paid subscription sends the renewal notice (and the
+        receipt) instead of failing on the missing renewal record. Anything else keeps the existing
+        behavior of raising for a Stripe retry.
+        """
+        stripe_subscription_id = 'sub_test_annual_renewal'
+        if earlier_paid_subscription:
+            _, earlier_summary = self._create_existing_event_data_records(
+                'sub_test_annual_renewal' if earlier_paid_subscription == 'same' else 'sub_test_other',
+                event_type='invoice.paid',
+                stripe_object_type='invoice',
+            )
+            earlier_summary.stripe_invoice_id = 'in_test_first_paid'
+            earlier_summary.invoice_amount_paid = 5000
+            earlier_summary.save()
+
+        invoice_data = {
+            'id': 'in_test_annual_renewal',
+            'customer': 'cus_test_customer_456',
+            'object': 'invoice',
+            'billing_reason': billing_reason,
+            'parent': {
+                'subscription_details': {
+                    'metadata': self._create_mock_stripe_subscription(self.checkout_intent),
+                    'subscription': stripe_subscription_id,
+                },
+            },
+            'lines': {
+                'data': [{
+                    'parent': {'type': SUBSCRIPTION_ITEM_TYPE},
+                    'pricing': {'unit_amount': 42, 'unit_amount_decimal': 42.0},
+                    'quantity': 10,
+                }],
+            },
+            'total': 5000,
+        }
+        mock_event = self._create_mock_stripe_event('invoice.paid', invoice_data)
+
+        if expect_notice:
+            StripeEventHandler.dispatch(mock_event)
+            mock_send_renewal_notice.delay.assert_called_once()
+            call_kwargs = mock_send_renewal_notice.delay.call_args.kwargs
+            self.assertEqual(call_kwargs['checkout_intent_id'], self.checkout_intent.id)
+            self.assertEqual(call_kwargs['invoice_data']['id'], 'in_test_annual_renewal')
+        else:
+            with self.assertRaises(SelfServiceSubscriptionRenewal.DoesNotExist):
+                StripeEventHandler.dispatch(mock_event)
+            mock_send_renewal_notice.delay.assert_not_called()
+
+        mock_send_payment_receipt_email.delay.assert_called_once()
 
     @mock.patch('stripe.Subscription.modify')
     def test_subscription_created_handler_success(self, mock_stripe_modify):
