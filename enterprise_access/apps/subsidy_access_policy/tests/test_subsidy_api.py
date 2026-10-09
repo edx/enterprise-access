@@ -2,11 +2,21 @@
 Tests for the subsidy_api module.
 """
 import uuid
+from datetime import date
 from unittest import mock
 
-from django.test import TestCase
+import ddt
+import requests
+from django.test import TestCase, override_settings
 
-from ..subsidy_api import get_and_cache_transactions_for_learner, get_redemptions_by_content_and_policy_for_learner
+from enterprise_access.settings import base as base_settings
+
+from ..exceptions import SubsidyAPIHTTPError
+from ..subsidy_api import (
+    get_and_cache_transactions_for_learner,
+    get_redemptions_by_content_and_policy_for_learner,
+    get_subsidy_transactions_export
+)
 from .factories import PerLearnerSpendCapLearnerCreditAccessPolicyFactory
 
 
@@ -151,3 +161,96 @@ class TransactionsForLearnerTests(TestCase):
             },
             result,
         )
+
+
+@ddt.ddt
+@override_settings(SUBSIDY_TRANSACTIONS_EXPORT_TIMEOUT=(1, 2))
+@mock.patch('enterprise_access.apps.subsidy_access_policy.subsidy_api.get_versioned_subsidy_client')
+class TransactionsExportTests(TestCase):
+    """
+    Tests the ``get_subsidy_transactions_export`` function.
+    """
+    LIST_ENDPOINT = 'http://subsidy/api/v2/subsidies/{subsidy_uuid}/admin/transactions/'
+
+    def _mock_client(self, mock_client_getter):
+        mock_client = mock_client_getter.return_value
+        mock_client.TRANSACTIONS_LIST_ENDPOINT = self.LIST_ENDPOINT
+        return mock_client
+
+    def test_builds_streamed_request_with_timeout(self, mock_client_getter):
+        subsidy_uuid = uuid.uuid4()
+        policy_uuid = uuid.uuid4()
+        mock_client = self._mock_client(mock_client_getter)
+        response = mock_client.client.get.return_value
+
+        result = get_subsidy_transactions_export(
+            subsidy_uuid=subsidy_uuid,
+            enterprise_customer_uuid='enterprise-uuid',
+            subsidy_access_policy_uuid=policy_uuid,
+            search='learner',
+            start_date=date(2026, 1, 1),
+            end_date=date(2026, 1, 31),
+        )
+
+        assert result is response
+        mock_client_getter.assert_called_once_with(version=2)
+        mock_client.client.get.assert_called_once_with(
+            f'http://subsidy/api/v2/subsidies/{subsidy_uuid}/admin/transactions/export/',
+            params={
+                'enterprise_customer_uuid': 'enterprise-uuid',
+                'subsidy_access_policy_uuid': str(policy_uuid),
+                'search': 'learner',
+                'start_date': '2026-01-01',
+                'end_date': '2026-01-31',
+            },
+            stream=True,
+            timeout=(1, 2),
+        )
+        response.raise_for_status.assert_called_once_with()
+        response.close.assert_not_called()
+
+    @ddt.data(
+        (base_settings.SUBSIDY_TRANSACTIONS_EXPORT_TIMEOUT, (10, 120)),  # the default: a short connect timeout
+        (120, 120),  # a scalar override still works
+        ([1, 2], (1, 2)),  # YAML config can only express a pair as a list
+        ((1, 2), (1, 2)),
+    )
+    @ddt.unpack
+    def test_timeout_is_normalised_and_optional_filters_omitted(self, configured, expected, mock_client_getter):
+        """A list timeout from YAML config is converted, since requests would raise a ValueError."""
+        mock_client = self._mock_client(mock_client_getter)
+
+        with override_settings(SUBSIDY_TRANSACTIONS_EXPORT_TIMEOUT=configured):
+            get_subsidy_transactions_export(subsidy_uuid=uuid.uuid4(), enterprise_customer_uuid='enterprise-uuid')
+
+        assert mock_client.client.get.call_args.kwargs['timeout'] == expected
+        assert mock_client.client.get.call_args.kwargs['params'] == {'enterprise_customer_uuid': 'enterprise-uuid'}
+
+    @mock.patch('enterprise_access.apps.subsidy_access_policy.subsidy_api.logger')
+    def test_transport_error_is_wrapped_without_logging_search(self, mock_logger, mock_client_getter):
+        """Transport errors are wrapped, and ``search`` (possibly an email) is never logged."""
+        self._mock_client(mock_client_getter).client.get.side_effect = requests.Timeout()
+
+        with self.assertRaises(SubsidyAPIHTTPError) as context:
+            get_subsidy_transactions_export(
+                subsidy_uuid=uuid.uuid4(),
+                enterprise_customer_uuid=uuid.uuid4(),
+                search='learner@example.com',
+            )
+
+        assert isinstance(context.exception.__cause__, requests.Timeout)
+        logged = ' '.join(str(arg) for call in mock_logger.mock_calls for arg in call.args)
+        assert 'learner@example.com' not in logged
+
+    def test_error_status_closes_streamed_response_and_is_wrapped(self, mock_client_getter):
+        """With stream=True, an unread error response must be closed to release its pooled connection."""
+        response = self._mock_client(mock_client_getter).client.get.return_value
+        response.status_code = 503
+        http_error = requests.HTTPError(response=response)
+        response.raise_for_status.side_effect = http_error
+
+        with self.assertRaises(SubsidyAPIHTTPError) as context:
+            get_subsidy_transactions_export(subsidy_uuid=uuid.uuid4(), enterprise_customer_uuid=uuid.uuid4())
+
+        assert context.exception.__cause__ is http_error
+        response.close.assert_called_once_with()

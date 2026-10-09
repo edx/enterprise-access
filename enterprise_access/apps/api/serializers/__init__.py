@@ -74,7 +74,8 @@ from .subsidy_access_policy import (
     SubsidyAccessPolicyRedeemRequestSerializer,
     SubsidyAccessPolicyRedemptionRequestSerializer,
     SubsidyAccessPolicyResponseSerializer,
-    SubsidyAccessPolicyUpdateRequestSerializer
+    SubsidyAccessPolicyUpdateRequestSerializer,
+    TransactionsExportRequestSerializer
 )
 from .subsidy_requests import (
     CouponCodeRequestSerializer,
