@@ -10,7 +10,10 @@ from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 from rest_framework.exceptions import APIException
 
-from enterprise_access.apps.customer_billing.constants import ALLOWED_CHECKOUT_INTENT_STATE_TRANSITIONS
+from enterprise_access.apps.customer_billing.constants import (
+    ALLOWED_CHECKOUT_INTENT_STATE_TRANSITIONS,
+    ATTRIBUTION_KEYS
+)
 from enterprise_access.apps.customer_billing.embargo import get_embargoed_countries
 from enterprise_access.apps.customer_billing.models import (
     CheckoutIntent,
@@ -19,6 +22,7 @@ from enterprise_access.apps.customer_billing.models import (
     SspProduct,
     StripeEventSummary
 )
+from enterprise_access.apps.customer_billing.segment_payloads import strip_query_and_fragment
 
 
 class RecordConflictError(APIException):
@@ -222,9 +226,30 @@ class CheckoutIntentCreateRequestSerializer(CountryFieldMixin, serializers.Model
                 'quantity',
                 'country',
                 'terms_metadata',
+                'attribution',
                 'ssp_product'
             ]
         ]
+
+    def validate_attribution(self, value):
+        """
+        Only accept a flat dict of the known attribution keys with string values, with the
+        referrer's query string and fragment removed.
+        Returns None if none of the known keys are present.
+        """
+        if value is None:
+            return value
+        if not isinstance(value, dict):
+            raise serializers.ValidationError('attribution must be a dictionary/object.')
+        cleaned = {
+            key: str(value[key])[:500]
+            for key in ATTRIBUTION_KEYS
+            if value.get(key) not in (None, '')
+        }
+        if 'referrer' in cleaned:
+            # A referrer URL's query string or fragment can carry PII (e.g. ?email=...); never store it.
+            cleaned['referrer'] = strip_query_and_fragment(cleaned['referrer'])
+        return cleaned or None
 
     # Put some reasonable validation bounds at this layer, and let
     # the customer_billing.api business logic handle more detailed validation
@@ -268,6 +293,7 @@ class CheckoutIntentCreateRequestSerializer(CountryFieldMixin, serializers.Model
                 country=validated_data.get('country'),
                 terms_metadata=validated_data.get('terms_metadata'),
                 ssp_product=ssp_product,
+                attribution=validated_data.get('attribution'),
             )
 
         # Catch exceptions that should return 422:

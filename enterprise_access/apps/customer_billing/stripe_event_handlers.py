@@ -7,12 +7,15 @@ from functools import wraps
 from uuid import UUID
 
 import stripe
+from django.conf import settings
 from django.utils import timezone
 from simple_history.utils import bulk_update_with_history
 
 from enterprise_access.apps.api_client.license_manager_client import LicenseManagerApiClient
 from enterprise_access.apps.customer_billing.constants import (
+    ORDER_COMPLETED_BILLING_REASONS,
     SUBSCRIPTION_ITEM_TYPE,
+    CheckoutSegmentEvents,
     StripeSegmentEvents,
     StripeSubscriptionStatus
 )
@@ -25,6 +28,7 @@ from enterprise_access.apps.customer_billing.models import (
 from enterprise_access.apps.customer_billing.stripe_event_types import StripeEventType
 from enterprise_access.apps.customer_billing.tasks import (
     send_billing_error_email_task,
+    send_checkout_segment_event_task,
     send_finalized_cancelation_email_task,
     send_paid_cancellation_email_task,
     send_paid_reinstatement_email_task,
@@ -309,6 +313,27 @@ def _try_enable_pending_updates(stripe_subscription_id):
         logger.info('Successfully enabled pending updates for subscription %s', stripe_subscription_id)
     except stripe.StripeError as e:
         logger.error('Failed to enable pending updates for subscription %s: %s', stripe_subscription_id, e)
+
+
+def enqueue_checkout_segment_event(event_name: str, checkout_intent: CheckoutIntent, invoice_id: str | None):
+    """
+    Queue a server-side checkout Segment event. Never raises: analytics must not break webhook processing.
+    """
+    if not getattr(settings, 'FEATURE_SSP_CHECKOUT_SEGMENT_EVENTS_V2', False):
+        return
+    if not invoice_id:
+        logger.warning(
+            'Skipping Segment event %s for checkout_intent %s: no invoice id', event_name, checkout_intent.id,
+        )
+        return
+    try:
+        send_checkout_segment_event_task.delay(
+            event_name=event_name,
+            checkout_intent_id=checkout_intent.id,
+            invoice_id=invoice_id,
+        )
+    except Exception:  # pylint: disable=broad-except
+        logger.exception('Failed to enqueue %s for checkout_intent %s', event_name, checkout_intent.id)
 
 
 def track_subscription_cancellation(checkout_intent: CheckoutIntent, cancellation_details: dict):
@@ -610,7 +635,15 @@ class StripeEventHandler:
                 enterprise_customer_name=checkout_intent.enterprise_name,
                 enterprise_slug=checkout_intent.enterprise_slug,
             )
-            if _is_annual_renewal_invoice(invoice, subscription_details):
+            # order_completed fires once, on the first paid invoice of a subscription: the
+            # creation invoice, or the subscription_cycle invoice issued when a trial ends.
+            # Annual renewals, license changes (subscription_update) and one-off/manual
+            # invoices are not new orders.
+            is_annual_renewal = _is_annual_renewal_invoice(invoice, subscription_details)
+            is_order_billing_reason = invoice.get('billing_reason') in ORDER_COMPLETED_BILLING_REASONS
+            if is_order_billing_reason and not is_annual_renewal:
+                enqueue_checkout_segment_event(CheckoutSegmentEvents.ORDER_COMPLETED, checkout_intent, invoice.id)
+            if is_annual_renewal:
                 # Renewal records only track the trial→paid transition, so later paid terms have nothing
                 # to process. Just let the admins know the subscription renewed.
                 logger.info(
@@ -912,6 +945,17 @@ class StripeEventHandler:
         # Track cancellation event if cancellation details are present
         if cancellation_details:
             track_subscription_cancellation(checkout_intent, cancellation_details)
+
+        # TODO(ENT-12377): order_id and revenue come from the subscription's ``latest_invoice``. After a
+        # renewal or license change that is NOT the invoice sent on order_completed, so the two events
+        # may not match. Awaiting a product decision (Karthik) between: (a) storing the original
+        # order_completed invoice ID on CheckoutIntent and reusing it here, or (b) keeping latest_invoice.
+        # See docs/references/checkout-segment-events.md.
+        enqueue_checkout_segment_event(
+            CheckoutSegmentEvents.ORDER_CANCELLED,
+            checkout_intent,
+            subscription.get('latest_invoice'),
+        )
 
         enterprise_uuid = checkout_intent.enterprise_uuid
         if enterprise_uuid:

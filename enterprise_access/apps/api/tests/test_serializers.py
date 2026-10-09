@@ -10,7 +10,9 @@ import ddt
 from django.conf import settings
 from django.test import TestCase
 from freezegun import freeze_time
+from rest_framework.exceptions import ValidationError
 
+from enterprise_access.apps.api.serializers.customer_billing import CheckoutIntentCreateRequestSerializer
 from enterprise_access.apps.api.serializers.subsidy_access_policy import (
     SubsidyAccessPolicyAggregatesSerializer,
     SubsidyAccessPolicyCreditsAvailableResponseSerializer,
@@ -574,3 +576,48 @@ class TestLearnerCreditRequestBulkCancelSerializer(TestCase):
         serializer = LearnerCreditRequestBulkCancelSerializer(data=data)
         self.assertFalse(serializer.is_valid())
         self.assertIn('learner_credit_request_uuids', serializer.errors)
+
+
+@ddt.ddt
+class CheckoutIntentAttributionValidationTests(TestCase):
+    """Tests for CheckoutIntentCreateRequestSerializer.validate_attribution."""
+
+    @ddt.data(
+        {},
+        {'unknown_key': 'x'},
+        {'utm_source': '', 'utm_medium': None},
+    )
+    def test_returns_none_when_no_known_keys_present(self, value):
+        serializer = CheckoutIntentCreateRequestSerializer()
+        self.assertIsNone(serializer.validate_attribution(value))
+
+    def test_keeps_only_known_keys(self):
+        serializer = CheckoutIntentCreateRequestSerializer()
+        result = serializer.validate_attribution({'utm_source': 'google', 'unknown_key': 'x'})
+        self.assertEqual(result, {'utm_source': 'google'})
+
+    @ddt.data(
+        ('https://www.google.com/search?email=foo@bar.com#frag', 'https://www.google.com/search'),
+        ('https://example.com/page?email=foo@bar.com', 'https://example.com/page'),
+        ('https://example.com/page', 'https://example.com/page'),
+    )
+    @ddt.unpack
+    def test_referrer_query_and_fragment_are_never_stored(self, referrer, expected):
+        serializer = CheckoutIntentCreateRequestSerializer()
+        result = serializer.validate_attribution({'referrer': referrer, 'utm_source': 'google'})
+        self.assertEqual(result, {'referrer': expected, 'utm_source': 'google'})
+
+    def test_none_is_allowed(self):
+        serializer = CheckoutIntentCreateRequestSerializer()
+        self.assertIsNone(serializer.validate_attribution(None))
+
+    @ddt.data(['utm_source'], 'utm_source=google', 123)
+    def test_rejects_non_dict(self, value):
+        serializer = CheckoutIntentCreateRequestSerializer()
+        with self.assertRaises(ValidationError):
+            serializer.validate_attribution(value)
+
+    def test_values_are_truncated_to_500_chars(self):
+        serializer = CheckoutIntentCreateRequestSerializer()
+        result = serializer.validate_attribution({'utm_campaign': 'x' * 600})
+        self.assertEqual(len(result['utm_campaign']), 500)

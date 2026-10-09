@@ -1,5 +1,6 @@
 from unittest import mock
 
+import pytest
 from django.test import override_settings
 
 from enterprise_access.apps.track.segment import track_event
@@ -23,4 +24,14 @@ def test_track_event_no_segment_key(mock_logger):
 def test_track_event_catches_exceptions(mock_analytics, mock_logger):
     mock_analytics.track.side_effect = Exception('Something went wrong')
     track_event(mock_lms_user_id, mock_event_name, {})
+    mock_logger.exception.assert_called()
+
+
+@override_settings(SEGMENT_KEY='123')
+@mock.patch('enterprise_access.apps.track.segment.logger', return_value=mock.MagicMock())
+@mock.patch('enterprise_access.apps.track.segment.analytics', return_value=mock.MagicMock())
+def test_track_event_raises_when_requested(mock_analytics, mock_logger):
+    mock_analytics.track.side_effect = ValueError('Something went wrong')
+    with pytest.raises(ValueError):
+        track_event(mock_lms_user_id, mock_event_name, {}, raise_on_error=True)
     mock_logger.exception.assert_called()

@@ -742,6 +742,9 @@ STRIPE_PRICE_DATA_CACHE_TIMEOUT = 300
 
 ENABLE_STRIPE_EVENT_SUMMARIES = False
 
+# Send server-side Segment events (order_completed / order_cancelled) for SSP checkout.
+FEATURE_SSP_CHECKOUT_SEGMENT_EVENTS_V2 = False
+
 # Allows us to do per-environment exception raising vs. returning in our event handlers
 STRIPE_GRACEFUL_EXCEPTION_MODE = False
 

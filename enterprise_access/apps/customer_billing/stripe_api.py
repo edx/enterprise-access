@@ -209,6 +209,30 @@ def get_stripe_invoice(invoice_id) -> stripe.Invoice:
     return stripe.Invoice.retrieve(invoice_id)
 
 
+def get_stripe_invoice_for_segment(invoice_id) -> stripe.Invoice:
+    """
+    Retrieve a Stripe Invoice (uncached) with the paying charge expanded, so the
+    payment method type is available without extra Stripe calls.
+
+    Stripe rejects the whole request if an expand path is invalid (the path below is at Stripe's
+    4-level expansion limit), so on ``InvalidRequestError`` this retries without ``expand``. The
+    unexpanded invoice has no payment method details, so ``payment_method`` is left out of the payload.
+
+    Docs: https://docs.stripe.com/api/invoices/retrieve
+    """
+    try:
+        return stripe.Invoice.retrieve(
+            invoice_id,
+            expand=['payments.data.payment.payment_intent.latest_charge'],
+        )
+    except stripe.InvalidRequestError as exc:
+        logger.warning(
+            'Could not expand the paying charge on invoice %s (%s); retrying without expand.',
+            invoice_id, exc,
+        )
+        return stripe.Invoice.retrieve(invoice_id)
+
+
 @stripe_cache()
 def get_stripe_payment_method(payment_method_id) -> stripe.PaymentMethod:
     """

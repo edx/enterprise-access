@@ -93,6 +93,25 @@ class StripeSegmentEvents:
     SUBSCRIPTION_CANCELED = 'edx.server.enterprise-access.stripe.subscription.canceled'
 
 
+class CheckoutSegmentEvents:
+    """
+    Final checkout events sent to Segment from the server (flag: FEATURE_SSP_CHECKOUT_SEGMENT_EVENTS_V2).
+    """
+    ORDER_COMPLETED = 'edx.ui.enterprise.checkout.order_completed'
+    ORDER_CANCELLED = 'edx.ui.enterprise.checkout.order_cancelled'
+
+
+# Invoice billing reasons that can be the first paid invoice of a new order:
+# the creation invoice, or the subscription_cycle invoice issued when a trial ends.
+# Annual renewals are also subscription_cycle; those are excluded separately
+# via _is_annual_renewal_invoice.
+ORDER_COMPLETED_BILLING_REASONS = ('subscription_create', 'subscription_cycle')
+
+
+# Keys of ``CheckoutIntent.attribution`` that are passed through to Segment.
+ATTRIBUTION_KEYS = ('utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'referrer')
+
+
 ALLOWED_CHECKOUT_INTENT_STATE_TRANSITIONS = {
     CheckoutIntentState.CREATED: [
         CheckoutIntentState.PAID,
