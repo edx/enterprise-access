@@ -9,6 +9,8 @@ import ddt
 import requests
 from django.test import TestCase, override_settings
 
+from enterprise_access.settings import base as base_settings
+
 from ..exceptions import SubsidyAPIHTTPError
 from ..subsidy_api import (
     get_and_cache_transactions_for_learner,
@@ -208,7 +210,8 @@ class TransactionsExportTests(TestCase):
         response.close.assert_not_called()
 
     @ddt.data(
-        (120, 120),      # the production shape: a plain int from the setting
+        (base_settings.SUBSIDY_TRANSACTIONS_EXPORT_TIMEOUT, (10, 120)),  # the default: a short connect timeout
+        (120, 120),  # a scalar override still works
         ([1, 2], (1, 2)),  # YAML config can only express a pair as a list
         ((1, 2), (1, 2)),
     )

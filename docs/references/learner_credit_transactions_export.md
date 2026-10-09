@@ -58,7 +58,8 @@ Dates are interpreted in UTC by enterprise-subsidy.
   discarded before its first chunk. A mid-stream failure is logged and re-raised so the download aborts instead of
   looking complete. `Content-Length` is never forwarded, and `Cache-Control: no-store` is set (learner emails).
 - **Timeout and workers:** `OAuthAPIClient` only times out its token fetch, so the call sets
-  `SUBSIDY_TRANSACTIONS_EXPORT_TIMEOUT`, a *read* timeout between chunks rather than for the whole download. Each
+  `SUBSIDY_TRANSACTIONS_EXPORT_TIMEOUT`: a 10s connect timeout, so an unreachable upstream fails fast, and a
+  120s *read* timeout between chunks rather than for the whole download. Each
   download holds a synchronous worker throughout, and one longer than the worker timeout is truncated. The
   12/hour throttle is per user, so it limits how often one admin exports, not how many exports run at once.
 - **Content negotiation:** `text/csv` is renderable, so `Accept: text/csv` isn't refused with a 406.

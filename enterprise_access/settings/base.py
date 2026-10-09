@@ -517,8 +517,9 @@ LMS_CLIENT_TIMEOUT = os.environ.get('LMS_CLIENT_TIMEOUT', 45)
 ECOMMERCE_CLIENT_TIMEOUT = os.environ.get('ECOMMERCE_CLIENT_TIMEOUT', 45)
 DISCOVERY_CLIENT_TIMEOUT = os.environ.get('DISCOVERY_CLIENT_TIMEOUT', 45)
 SUBSIDY_CLIENT_TIMEOUT = os.environ.get('SUBSIDY_CLIENT_TIMEOUT', 45)
-# Read timeout (between chunks, not total) for the spend export, which can be slow to generate upstream.
-SUBSIDY_TRANSACTIONS_EXPORT_TIMEOUT = int(os.environ.get('SUBSIDY_TRANSACTIONS_EXPORT_TIMEOUT', 120))
+# (connect, read) timeouts for the spend export. Connecting should be quick; the read timeout (between chunks, not
+# total) is longer because the export can be slow to generate upstream.
+SUBSIDY_TRANSACTIONS_EXPORT_TIMEOUT = (10, int(os.environ.get('SUBSIDY_TRANSACTIONS_EXPORT_TIMEOUT', 120)))
 XPERT_REQUEST_TIMEOUT = os.environ.get('XPERT_REQUEST_TIMEOUT', 45)
 
 # Xpert API service settings
