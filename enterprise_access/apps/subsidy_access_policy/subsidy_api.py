@@ -28,6 +28,7 @@ CACHE_MISS = object()
 # least one subsidy is still reachable. Any other failure (notably a 5xx outage) affects every subsidy and is
 # re-raised.
 UNREACHABLE_SUBSIDY_STATUS_CODES = frozenset({403, 404})
+SUBSIDY_API_HTTP_ERROR_MESSAGE = 'HTTPError occurred in Subsidy API request.'
 
 
 class TransactionPolicyMismatchError(Exception):
@@ -61,7 +62,7 @@ def get_and_cache_subsidy_learners_aggregate_data(subsidy_uuid, policy_uuid=None
             policy_uuid,
         )
     except requests.exceptions.HTTPError as exc:
-        raise SubsidyAPIHTTPError('HTTPError occurred in Subsidy API request.') from exc
+        raise SubsidyAPIHTTPError(SUBSIDY_API_HTTP_ERROR_MESSAGE) from exc
 
     results = {}
     for aggregated_data in response_payload:
@@ -92,7 +93,7 @@ def get_and_cache_transactions_for_learner(subsidy_uuid, lms_user_id):
             include_aggregates=False,
         )
     except requests.exceptions.HTTPError as exc:
-        raise SubsidyAPIHTTPError('HTTPError occurred in Subsidy API request.') from exc
+        raise SubsidyAPIHTTPError(SUBSIDY_API_HTTP_ERROR_MESSAGE) from exc
 
     result = {
         'transactions': response_payload['results'],
@@ -115,6 +116,56 @@ def get_and_cache_transactions_for_learner(subsidy_uuid, lms_user_id):
     )
     request_cache(namespace=REQUEST_CACHE_NAMESPACE).set(cache_key, result)
     return result
+
+
+def get_subsidy_transactions_export(
+    *,
+    subsidy_uuid,
+    enterprise_customer_uuid,
+    subsidy_access_policy_uuid=None,
+    search=None,
+    start_date=None,
+    end_date=None,
+):
+    """
+    Opens a streamed CSV export of a subsidy's spend from enterprise-subsidy. ``enterprise_customer_uuid`` is always
+    forwarded so enterprise-subsidy also checks ownership.
+
+    Returns the open ``requests.Response``; the caller must close it.
+    Raises ``SubsidyAPIHTTPError`` on failure, with any upstream response already closed.
+    """
+    # The export is a v2 admin endpoint.
+    client = get_versioned_subsidy_client(version=2)
+    export_url = client.TRANSACTIONS_LIST_ENDPOINT.format(subsidy_uuid=subsidy_uuid) + 'export/'
+    query_params = {
+        'enterprise_customer_uuid': str(enterprise_customer_uuid),
+    }
+    if subsidy_access_policy_uuid:
+        query_params['subsidy_access_policy_uuid'] = str(subsidy_access_policy_uuid)
+    if search:
+        query_params['search'] = search
+    if start_date:
+        query_params['start_date'] = start_date.isoformat()
+    if end_date:
+        query_params['end_date'] = end_date.isoformat()
+
+    # YAML config can only give a list, which requests rejects with a ValueError (not a RequestException).
+    timeout = settings.SUBSIDY_TRANSACTIONS_EXPORT_TIMEOUT
+    if isinstance(timeout, (list, tuple)):
+        timeout = tuple(timeout)
+
+    response = None
+    try:
+        # OAuthAPIClient only times out its token fetch, so set one here.
+        response = client.client.get(export_url, params=query_params, stream=True, timeout=timeout)
+        response.raise_for_status()
+    except requests.exceptions.RequestException as exc:
+        # With stream=True the connection is only released once the response is closed.
+        if response is not None:
+            response.close()
+        # Not logged: the view logs failures, and the params include ``search`` (possibly an email).
+        raise SubsidyAPIHTTPError(SUBSIDY_API_HTTP_ERROR_MESSAGE) from exc
+    return response
 
 
 def get_redemptions_by_content_and_policy_for_learner(policies, lms_user_id):
