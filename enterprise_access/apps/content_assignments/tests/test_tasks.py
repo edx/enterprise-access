@@ -1382,6 +1382,48 @@ class TestClearPiiForExpiredAssignmentsTask(APITestWithMocks):
         assert self.expired_assignment.learner_email == original_email
         assert result['cleared_count'] == 0
 
+    @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient')
+    @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_client')
+    def test_clear_pii_skipped_when_expiration_email_failed(self, mock_subsidy_client, mock_catalog_client):
+        """An EXPIRED action that recorded an email error does not count as a sent expiration email."""
+        self.expired_assignment.actions.create(
+            action_type=AssignmentActions.EXPIRED,
+            completed_at=now(),
+            error_reason=AssignmentActionErrors.EMAIL_ERROR,
+        )
+        mock_subsidy_client.retrieve_subsidy.return_value = {
+            'enterprise_customer_uuid': str(self.enterprise_uuid),
+            'expiration_datetime': (now() + timedelta(days=365)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            'is_active': True,
+        }
+        mock_catalog_client.return_value.catalog_content_metadata.return_value = {'count': 0, 'results': []}
+        original_email = self.expired_assignment.learner_email
+
+        result = clear_pii_for_expired_assignments(dry_run=False)
+
+        self.expired_assignment.refresh_from_db()
+        assert self.expired_assignment.learner_email == original_email
+        assert result['cleared_count'] == 0
+
+    @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient')
+    @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_client')
+    def test_clear_pii_dry_run_does_not_clear(self, mock_subsidy_client, mock_catalog_client):
+        """In dry-run mode an eligible assignment is reported but its PII is left intact."""
+        assignment = self._make_expired_assignment(
+            'dry-run@test.com', AssignmentAutomaticExpiredReason.COURSE_RUN_ENDED,
+        )
+        mock_subsidy_client.retrieve_subsidy.return_value = {
+            'enterprise_customer_uuid': str(self.enterprise_uuid),
+            'expiration_datetime': (now() + timedelta(days=365)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            'is_active': True,
+        }
+        mock_catalog_client.return_value.catalog_content_metadata.return_value = {'count': 0, 'results': []}
+
+        clear_pii_for_expired_assignments(dry_run=True)
+
+        assignment.refresh_from_db()
+        assert assignment.learner_email == 'dry-run@test.com'
+
     def _make_expired_assignment(self, email, recorded_reason):
         """
         Helper: an expired assignment with a sent expiration email and the system audit action that
