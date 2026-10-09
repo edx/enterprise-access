@@ -344,6 +344,14 @@ class CheckoutIntent(TimeStampedModel):
         blank=True,
         help_text="Metadata relating to the terms and conditions accepted by the user.",
     )
+    attribution = models.JSONField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Marketing attribution for the checkout session: utm_source, utm_medium, "
+            "utm_campaign, utm_content, utm_term, referrer."
+        ),
+    )
 
     history = HistoricalRecords()
 
@@ -754,6 +762,7 @@ class CheckoutIntent(TimeStampedModel):
         country: str | None = None,
         terms_metadata: dict | None = None,
         ssp_product: 'SspProduct | None' = None,
+        attribution: dict | None = None,
     ) -> Self:
         """
         Create or update a checkout intent for a user with the given enterprise details.
@@ -866,6 +875,8 @@ class CheckoutIntent(TimeStampedModel):
                 existing_intent.terms_metadata = (existing_intent.terms_metadata or {}) | (terms_metadata or {})
                 if ssp_product is not None:
                     existing_intent.ssp_product = ssp_product
+                if attribution:
+                    existing_intent.attribution = (existing_intent.attribution or {}) | attribution
                 existing_intent.save()
                 logger.info(
                     'create_intent for user %s: updated existing intent %s with slug=%s, name=%s, quantity=%s',
@@ -882,6 +893,7 @@ class CheckoutIntent(TimeStampedModel):
                 'expires_at': expires_at,
                 'country': country,
                 'terms_metadata': terms_metadata,
+                'attribution': attribution,
             }
             if ssp_product is not None:
                 create_kwargs['ssp_product'] = ssp_product

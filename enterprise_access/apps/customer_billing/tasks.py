@@ -9,16 +9,23 @@ import stripe
 from braze.exceptions import BrazeClientError
 from celery import shared_task
 from django.conf import settings
+from django.core.cache import cache
 
 from enterprise_access.apps.api_client.braze_client import BrazeApiClient
 from enterprise_access.apps.api_client.lms_client import LmsApiClient
 from enterprise_access.apps.customer_billing.constants import (
     BRAZE_DATE_FORMAT_1,
     BRAZE_DATE_FORMAT_2,
-    BRAZE_TIMESTAMP_FORMAT
+    BRAZE_TIMESTAMP_FORMAT,
+    CheckoutSegmentEvents
 )
 from enterprise_access.apps.customer_billing.models import CheckoutIntent, StripeEventSummary
+from enterprise_access.apps.customer_billing.segment_payloads import (
+    build_order_completed_properties,
+    build_order_properties
+)
 from enterprise_access.apps.customer_billing.stripe_api import (
+    get_stripe_invoice_for_segment,
     get_stripe_payment_intent,
     get_stripe_payment_method,
     get_stripe_subscription,
@@ -26,6 +33,7 @@ from enterprise_access.apps.customer_billing.stripe_api import (
 )
 from enterprise_access.apps.customer_billing.utils import datetime_from_timestamp, get_campaign_id, get_product_type
 from enterprise_access.apps.provisioning.utils import validate_trial_subscription
+from enterprise_access.apps.track.segment import track_event
 from enterprise_access.tasks import LoggedTaskWithRetry
 from enterprise_access.utils import cents_to_dollars, format_cents_for_user_display, format_datetime_obj
 
@@ -1102,3 +1110,67 @@ def send_payment_receipt_email(
         organization_name=enterprise_customer_name,
         email_description='payment receipt email',
     )
+
+
+CHECKOUT_SEGMENT_EVENT_IDEMPOTENCY_TTL = 60 * 60 * 24 * 30  # 30 days
+
+
+def _checkout_segment_event_cache_key(event_name, order_id):
+    return f'checkout-segment-event:{event_name}:{order_id}'
+
+
+@shared_task(
+    base=LoggedTaskWithRetry,
+    autoretry_for=(Exception,),
+    retry_kwargs={'max_retries': settings.TASK_MAX_RETRIES},
+    retry_backoff=60,
+    retry_jitter=True,
+)
+def send_checkout_segment_event_task(event_name, checkout_intent_id, invoice_id):
+    """
+    Send a final checkout event (order_completed / order_cancelled) to Segment, exactly once per
+    ``order_id`` (the Stripe invoice ID) and event name.
+
+    Runs outside the webhook request. Stripe failures raise so Celery retries with exponential backoff.
+    Idempotency uses a cache key claimed just before sending and released if sending fails, so
+    webhook redeliveries never produce duplicates and exhausted retries never leave a stuck key.
+    """
+    if not getattr(settings, 'FEATURE_SSP_CHECKOUT_SEGMENT_EVENTS_V2', False):
+        return
+
+    cache_key = _checkout_segment_event_cache_key(event_name, invoice_id)
+    if cache.get(cache_key):
+        logger.info('Segment event %s already sent for order %s, skipping', event_name, invoice_id)
+        return
+
+    try:
+        checkout_intent = CheckoutIntent.objects.select_related('ssp_product', 'user').get(id=checkout_intent_id)
+    except CheckoutIntent.DoesNotExist:
+        # Retrying cannot make a missing row appear.
+        logger.error('Skipping Segment event %s: CheckoutIntent %s does not exist', event_name, checkout_intent_id)
+        return
+    lms_user_id = checkout_intent.user.lms_user_id
+    if not lms_user_id:
+        logger.warning(
+            'Skipping Segment event %s: CheckoutIntent %s has no lms_user_id', event_name, checkout_intent_id,
+        )
+        return
+    invoice = get_stripe_invoice_for_segment(invoice_id)
+    if event_name == CheckoutSegmentEvents.ORDER_COMPLETED:
+        properties = build_order_completed_properties(checkout_intent, invoice)
+    else:
+        properties = build_order_properties(checkout_intent, invoice)
+
+    # Atomic claim; loses the race if a concurrent delivery already claimed it.
+    if not cache.add(cache_key, True, CHECKOUT_SEGMENT_EVENT_IDEMPOTENCY_TTL):
+        return
+    try:
+        track_event(
+            lms_user_id=str(lms_user_id),
+            event_name=event_name,
+            properties=properties,
+            raise_on_error=True,
+        )
+    except Exception:
+        cache.delete(cache_key)
+        raise

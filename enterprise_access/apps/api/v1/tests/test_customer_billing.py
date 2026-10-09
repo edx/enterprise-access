@@ -376,6 +376,18 @@ class StripeWebhookTests(APITest):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         mock_dispatch.assert_called_once_with(mock_event)
 
+    @override_settings(STRIPE_WEBHOOK_ENDPOINT_SECRET='whsec_test_secret', FEATURE_SSP_CHECKOUT_SEGMENT_EVENTS_V2=True)
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_event_handlers.send_checkout_segment_event_task')
+    @mock.patch('stripe.Webhook.construct_event')
+    def test_invalid_signature_rejected_and_no_segment_event(self, mock_construct_event, mock_segment_task):
+        """An invalid signature is rejected before any processing and queues no Segment event."""
+        mock_construct_event.side_effect = stripe.SignatureVerificationError('Invalid signature', 'sig_header')
+
+        response = self._post_webhook_with_signature(self.valid_event_payload, 't=1,v1=bad')
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        mock_segment_task.delay.assert_not_called()
+
     @override_settings(STRIPE_WEBHOOK_ENDPOINT_SECRET='whsec_test_secret')
     @mock.patch('stripe.Webhook.construct_event')
     def test_webhook_fails_with_invalid_signature(self, mock_construct_event):
