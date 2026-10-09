@@ -20,7 +20,7 @@ TRANSACTION_FETCH_PATH = (
 def _unreachable_subsidy_error(status_code):
     """
     Build the ``SubsidyAPIHTTPError`` that ``get_and_cache_transactions_for_learner`` raises when the
-    Subsidy API rejects the request, e.g. for a soft-deleted subsidy (404) or a missing RBAC context (403).
+    Subsidy API rejects the request, e.g. for a soft-deleted subsidy (403) or one that disappears later (404).
     """
     downstream_error = requests.HTTPError()
     downstream_error.response = mock.Mock(status_code=status_code)
