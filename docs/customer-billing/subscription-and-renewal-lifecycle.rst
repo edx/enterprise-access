@@ -218,10 +218,23 @@ On subscription deletion:
 
 * **Previously active subscriptions only:** ``BRAZE_SSP_CANCELATION_FINALIZATION_CAMPAIGN`` - Final confirmation that subscription has ended
 * **Trial subscriptions:** No finalization email (they already received the trial cancellation email)
+* **Previously active subscriptions the customer cancelled** (Stripe ``cancellation_details.reason`` is
+  ``cancellation_requested``): ``BRAZE_ENTERPRISE_PROVISION_SUBSCRIPTION_ENDED_AND_CANCELLED_CAMPAIGN`` - Paid
+  subscription ended notice, sent in addition to the finalization email. Subscriptions ended by a failed payment
+  do not get it. One campaign serves Teams and Essentials, told apart by the ``product_type`` trigger property.
 
 **Annual Renewals**
 
-i.e. the second and ensuing paid periods. TBD on the actual flow, here.
+i.e. the second and ensuing paid periods. TBD on the actual flow, here. So far only the notification exists:
+
+When a paid ``invoice.paid`` (amount > $0) has ``billing_reason == 'subscription_cycle'`` and the same Stripe
+subscription was already paid by an earlier invoice, it is an annual renewal. No ``SelfServiceSubscriptionRenewal``
+exists for it (those only track trial→paid), so the handler does not look one up and no License Manager plan is
+created or activated here. Admins get the payment receipt plus
+``BRAZE_ENTERPRISE_PROVISION_SUBSCRIPTION_RENEWAL_NOTICE_CAMPAIGN`` (shared by Teams and Essentials via ``product_type``).
+
+*Gotcha:* the first paid invoice at the end of the trial also has ``billing_reason == 'subscription_cycle'``; the
+"earlier paid invoice" check is what keeps it on the trial→paid path.
 
 Braze Campaign Summary
 ----------------------
@@ -250,6 +263,10 @@ Key: ``[BEP] = BRAZE_ENTERPRISE_PROVISION``
 | Paid plan cancellation reversed      | ``BRAZE_ENTERPRISE_SSP_PAID_SUBSCRIPTION_REINSTATED_CAMPAIGN``  | Paid subscription restored confirmation                |
 +--------------------------------------+-----------------------------------------------------------------+--------------------------------------------------------+
 | Active subscription deleted          | ``BRAZE_SSP_CANCELATION_FINALIZATION_CAMPAIGN``                 | Final cancellation confirmation                        |
++--------------------------------------+-----------------------------------------------------------------+--------------------------------------------------------+
+| Cancelled paid subscription ends     | ``[BEP]_SUBSCRIPTION_ENDED_AND_CANCELLED_CAMPAIGN``             | Paid subscription ended notice                         |
++--------------------------------------+-----------------------------------------------------------------+--------------------------------------------------------+
+| Annual renewal invoice paid          | ``[BEP]_SUBSCRIPTION_RENEWAL_NOTICE_CAMPAIGN``                  | Paid subscription renewal notice                       |
 +--------------------------------------+-----------------------------------------------------------------+--------------------------------------------------------+
 
 Event Processing Flows

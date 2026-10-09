@@ -30,6 +30,7 @@ from .subsidy_access_policy import (
     SubsidyAccessPolicyAllocateViewset,
     SubsidyAccessPolicyGroupViewset,
     SubsidyAccessPolicyRedeemViewset,
+    SubsidyAccessPolicyTransactionsViewset,
     SubsidyAccessPolicyViewSet
 )
 from .testimonials import TestimonialViewSet
