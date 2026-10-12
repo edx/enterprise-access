@@ -12,6 +12,7 @@ from celery import states as celery_states
 from django.conf import settings
 from django.utils.timezone import now, timedelta
 from edx_django_utils.cache import TieredCache
+from edx_toggles.toggles.testutils import override_waffle_switch
 from requests.exceptions import HTTPError
 from rest_framework import status
 
@@ -46,6 +47,7 @@ from enterprise_access.apps.subsidy_access_policy.models import REQUEST_CACHE_NA
 from enterprise_access.apps.subsidy_access_policy.tests.factories import AssignedLearnerCreditAccessPolicyFactory
 from enterprise_access.apps.subsidy_request.tests.factories import LearnerCreditRequestFactory
 from enterprise_access.cache_utils import request_cache
+from enterprise_access.toggles import ENABLE_COURSE_RUN_ENDED_ASSIGNMENT_EXPIRATION
 from enterprise_access.utils import format_datetime_obj, get_automatic_expiration_date_and_reason
 from test_utils import APITestWithMocks
 
@@ -1173,6 +1175,7 @@ class TestBrazeEmailTasks(APITestWithMocks):
         )
         self.assertEqual(expected_result, action_required_by)
 
+    @override_waffle_switch(ENABLE_COURSE_RUN_ENDED_ASSIGNMENT_EXPIRATION, True)
     @mock.patch('enterprise_access.apps.content_assignments.tasks.LmsApiClient')
     @mock.patch('enterprise_access.apps.content_assignments.tasks.BrazeApiClient')
     @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient')
@@ -1405,6 +1408,7 @@ class TestClearPiiForExpiredAssignmentsTask(APITestWithMocks):
         assert self.expired_assignment.learner_email == original_email
         assert result['cleared_count'] == 0
 
+    @override_waffle_switch(ENABLE_COURSE_RUN_ENDED_ASSIGNMENT_EXPIRATION, True)
     @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient')
     @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_client')
     def test_clear_pii_dry_run_does_not_clear(self, mock_subsidy_client, mock_catalog_client):
@@ -1449,10 +1453,14 @@ class TestClearPiiForExpiredAssignmentsTask(APITestWithMocks):
         return assignment
 
     @ddt.data(
-        (AssignmentAutomaticExpiredReason.COURSE_RUN_ENDED, True),
-        (AssignmentAutomaticExpiredReason.NINETY_DAYS_PASSED, True),
-        (AssignmentAutomaticExpiredReason.ENROLLMENT_DATE_PASSED, False),
-        (AssignmentAutomaticExpiredReason.SUBSIDY_EXPIRED, False),
+        # recorded_reason, switch_enabled, expect_cleared
+        (AssignmentAutomaticExpiredReason.COURSE_RUN_ENDED, True, True),
+        (AssignmentAutomaticExpiredReason.NINETY_DAYS_PASSED, True, True),
+        (AssignmentAutomaticExpiredReason.ENROLLMENT_DATE_PASSED, True, False),
+        (AssignmentAutomaticExpiredReason.SUBSIDY_EXPIRED, True, False),
+        # turning the switch off also stops PII clearing for assignments that already expired as COURSE_RUN_ENDED
+        (AssignmentAutomaticExpiredReason.COURSE_RUN_ENDED, False, False),
+        (AssignmentAutomaticExpiredReason.NINETY_DAYS_PASSED, False, True),
     )
     @ddt.unpack
     @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient')
@@ -1460,6 +1468,7 @@ class TestClearPiiForExpiredAssignmentsTask(APITestWithMocks):
     def test_clear_pii_uses_reason_recorded_at_expiry_even_if_content_left_catalog(
         self,
         recorded_reason,
+        switch_enabled,
         expect_cleared,
         mock_subsidy_client,
         mock_catalog_client,
@@ -1478,11 +1487,56 @@ class TestClearPiiForExpiredAssignmentsTask(APITestWithMocks):
         mock_catalog_client.return_value.catalog_content_metadata.return_value = {'count': 0, 'results': []}
 
         original_email = assignment.learner_email
+        with override_waffle_switch(ENABLE_COURSE_RUN_ENDED_ASSIGNMENT_EXPIRATION, switch_enabled):
+            clear_pii_for_expired_assignments(dry_run=False)
+
+        assignment.refresh_from_db()
+        assert (assignment.learner_email != original_email) is expect_cleared
+
+    @ddt.data(
+        # earlier_reason, later_reason, expect_cleared
+        (AssignmentAutomaticExpiredReason.SUBSIDY_EXPIRED, AssignmentAutomaticExpiredReason.COURSE_RUN_ENDED, True),
+        (AssignmentAutomaticExpiredReason.COURSE_RUN_ENDED, AssignmentAutomaticExpiredReason.SUBSIDY_EXPIRED, False),
+    )
+    @ddt.unpack
+    @override_waffle_switch(ENABLE_COURSE_RUN_ENDED_ASSIGNMENT_EXPIRATION, True)
+    @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient')
+    @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_client')
+    def test_clear_pii_uses_latest_recorded_reason(
+        self,
+        earlier_reason,
+        later_reason,
+        expect_cleared,
+        mock_subsidy_client,
+        mock_catalog_client,
+    ):
+        """
+        An EXPIRED assignment can be reallocated and expire again, leaving several scheduled-job EXPIRED
+        actions. The reason recorded by the most recently completed one decides PII clearing, regardless of
+        the order the rows were inserted in.
+        """
+        assignment = self._make_expired_assignment('re-expired@test.com', later_reason)
+        assignment.actions.create(
+            action_type=AssignmentActions.EXPIRED,
+            actor_type=AssignmentActorTypes.SYSTEM,
+            source=AssignmentSources.SCHEDULED_JOB,
+            metadata={'expiration_reason': earlier_reason},
+            completed_at=now() - timedelta(days=30),
+        )
+        mock_subsidy_client.retrieve_subsidy.return_value = {
+            'enterprise_customer_uuid': str(self.enterprise_uuid),
+            'expiration_datetime': (now() + timedelta(days=365)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            'is_active': True,
+        }
+        mock_catalog_client.return_value.catalog_content_metadata.return_value = {'count': 0, 'results': []}
+
+        original_email = assignment.learner_email
         clear_pii_for_expired_assignments(dry_run=False)
 
         assignment.refresh_from_db()
         assert (assignment.learner_email != original_email) is expect_cleared
 
+    @override_waffle_switch(ENABLE_COURSE_RUN_ENDED_ASSIGNMENT_EXPIRATION, True)
     @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient')
     @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_client')
     def test_clear_pii_legacy_row_ignores_course_run_end(self, mock_subsidy_client, mock_catalog_client):

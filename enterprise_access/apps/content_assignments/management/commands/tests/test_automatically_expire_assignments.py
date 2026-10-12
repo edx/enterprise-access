@@ -9,6 +9,7 @@ from uuid import uuid4
 import pytest
 from django.core.management import CommandError, call_command
 from django.utils import timezone
+from edx_toggles.toggles.testutils import override_waffle_switch
 
 from enterprise_access.apps.content_assignments.constants import (
     AssignmentAutomaticExpiredReason,
@@ -21,6 +22,7 @@ from enterprise_access.apps.content_assignments.tests.factories import (
     LearnerContentAssignmentFactory
 )
 from enterprise_access.apps.subsidy_access_policy.tests.factories import AssignedLearnerCreditAccessPolicyFactory
+from enterprise_access.toggles import ENABLE_COURSE_RUN_ENDED_ASSIGNMENT_EXPIRATION
 
 COMMAND_PATH = 'enterprise_access.apps.content_assignments.management.commands.automatically_expire_assignments'
 
@@ -67,10 +69,6 @@ class TestAutomaticallyExpireAssignmentCommand(TestCase):
             state=LearnerContentAssignmentStateChoices.ALLOCATED,
         )
 
-    @mock.patch(
-        'enterprise_access.apps.content_assignments.content_metadata_api.'
-        'get_catalog_agnostic_content_metadata_for_assignment'
-    )
     @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient')
     @mock.patch('enterprise_access.apps.content_assignments.api.send_assignment_automatically_expired_email.delay')
     @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_client')
@@ -79,16 +77,10 @@ class TestAutomaticallyExpireAssignmentCommand(TestCase):
         mock_subsidy_client,
         mock_send_assignment_automatically_expired_email_task,
         mock_catalog_client,
-        mock_catalog_agnostic_metadata,
     ):
         """
         Verify that management command work as expected in dry run mode.
         """
-        # Alice's content key is intentionally absent from the mocked catalog response below, so the
-        # code falls back to a catalog-agnostic metadata lookup. Mock that fallback here to avoid a
-        # real network call; returning no useful metadata means alice's expiration falls back to the
-        # 90-day timeout, as originally intended by this test (see `self.alice_assignment.created` below).
-        mock_catalog_agnostic_metadata.return_value = {}
         enrollment_end = timezone.now() - timezone.timedelta(days=5)
         enrollment_end = enrollment_end.replace(microsecond=0)
         subsidy_expiry = timezone.now() + timezone.timedelta(days=5)
@@ -238,6 +230,7 @@ class TestAutomaticallyExpireAssignmentCommand(TestCase):
         ])
         assert any(str(self.alice_assignment.uuid) in line for line in logs.output)
 
+    @override_waffle_switch(ENABLE_COURSE_RUN_ENDED_ASSIGNMENT_EXPIRATION, True)
     @mock.patch(
         'enterprise_access.apps.content_assignments.content_metadata_api.'
         'get_catalog_agnostic_content_metadata_for_assignment'

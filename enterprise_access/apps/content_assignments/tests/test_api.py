@@ -7,6 +7,7 @@ from uuid import uuid4
 import ddt
 from django.test import TestCase
 from django.utils import timezone
+from edx_toggles.toggles.testutils import override_waffle_switch
 
 from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.subsidy_access_policy.tests.factories import AssignedLearnerCreditAccessPolicyFactory
@@ -15,6 +16,7 @@ from enterprise_access.apps.subsidy_request.tests.factories import (
     LearnerCreditRequestConfigurationFactory,
     LearnerCreditRequestFactory
 )
+from enterprise_access.toggles import ENABLE_COURSE_RUN_ENDED_ASSIGNMENT_EXPIRATION
 from enterprise_access.utils import get_automatic_expiration_date_and_reason
 
 from ..api import (
@@ -1228,6 +1230,7 @@ class TestAssignmentExpiration(TestCase):
             'is_assigned_course_run': False,
         },
     )
+    @override_waffle_switch(ENABLE_COURSE_RUN_ENDED_ASSIGNMENT_EXPIRATION, True)
     @mock.patch('enterprise_access.apps.content_assignments.api.send_assignment_automatically_expired_email')
     def test_expire_assignment_when_all_known_course_runs_have_ended(
         self,
@@ -1284,6 +1287,7 @@ class TestAssignmentExpiration(TestCase):
             )
             mock_expired_email.delay.assert_called_once_with(assignment.uuid)
 
+    @override_waffle_switch(ENABLE_COURSE_RUN_ENDED_ASSIGNMENT_EXPIRATION, True)
     def test_course_run_ended_reason_loses_to_earlier_enrollment_date_passed(self):
         """
         When a course's runs have all ended, but its enrollment deadline passed even earlier,
@@ -1312,6 +1316,7 @@ class TestAssignmentExpiration(TestCase):
 
         self.assertEqual(expiration['reason'], AssignmentAutomaticExpiredReason.ENROLLMENT_DATE_PASSED)
 
+    @override_waffle_switch(ENABLE_COURSE_RUN_ENDED_ASSIGNMENT_EXPIRATION, True)
     def test_course_run_ended_reason_loses_to_earlier_ninety_days_passed(self):
         """
         When a course's runs have all ended, but the 90-day allocation timeout passed even
@@ -1344,6 +1349,7 @@ class TestAssignmentExpiration(TestCase):
 
         self.assertEqual(expiration['reason'], AssignmentAutomaticExpiredReason.NINETY_DAYS_PASSED)
 
+    @override_waffle_switch(ENABLE_COURSE_RUN_ENDED_ASSIGNMENT_EXPIRATION, True)
     @mock.patch('enterprise_access.apps.content_assignments.api.send_assignment_automatically_expired_email')
     def test_does_not_expire_assignment_when_a_run_is_still_active(self, mock_expired_email):
         """
@@ -1393,6 +1399,7 @@ class TestAssignmentExpiration(TestCase):
             self.assertGreater(expiration['date'], timezone.now())
             mock_expired_email.delay.assert_not_called()
 
+    @override_waffle_switch(ENABLE_COURSE_RUN_ENDED_ASSIGNMENT_EXPIRATION, True)
     @mock.patch('enterprise_access.apps.content_assignments.api.send_assignment_automatically_expired_email')
     @mock.patch(
         'enterprise_access.apps.content_assignments.content_metadata_api.get_and_cache_content_metadata'
@@ -1450,21 +1457,57 @@ class TestAssignmentExpiration(TestCase):
         )
         mock_expired_email.delay.assert_called_once_with(assignment.uuid)
 
+    @override_waffle_switch(ENABLE_COURSE_RUN_ENDED_ASSIGNMENT_EXPIRATION, False)
     @mock.patch('enterprise_access.apps.content_assignments.api.send_assignment_automatically_expired_email')
     @mock.patch(
         'enterprise_access.apps.content_assignments.content_metadata_api.get_and_cache_content_metadata'
     )
     @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient')
-    def test_catalog_agnostic_fallback_does_not_supply_enrollment_deadline(
+    def test_switch_off_does_not_expire_for_ended_course_runs(
         self,
         mock_catalog_client,
         mock_get_and_cache_content_metadata,
         mock_expired_email,
     ):
         """
-        Content that left the policy catalog is expired as COURSE_RUN_ENDED, even when the fallback metadata
-        also carries a (realistic) past ``enroll_by_date``. The fallback must not supply the enrollment
-        deadline, otherwise the assignment would expire as ENROLLMENT_DATE_PASSED and never have PII cleared.
+        With the switch off, content that left the policy catalog isn't looked up catalog-agnostically and its
+        ended course runs don't expire the assignment, exactly as before COURSE_RUN_ENDED existed.
+        """
+        assignment = LearnerContentAssignmentFactory.create(
+            content_key='course-v1:edX+DemoX+T2024',
+            parent_content_key='edX+DemoX',
+            is_assigned_course_run=True,
+            assignment_configuration=self.assignment_configuration,
+            state=LearnerContentAssignmentStateChoices.ALLOCATED,
+        )
+        assignment.add_successful_notified_action()
+        mock_catalog_client.return_value.catalog_content_metadata.return_value = {'count': 0, 'results': []}
+
+        subsidy_record = {'expiration_datetime': delta_t(days=100, as_string=True)}
+        with mock.patch.object(type(self.policy), 'subsidy_record', return_value=subsidy_record):
+            self.assertIsNone(expire_assignment(assignment, content_metadata={}, modify_assignment=True))
+
+        assignment.refresh_from_db()
+        self.assertEqual(assignment.state, LearnerContentAssignmentStateChoices.ALLOCATED)
+        mock_get_and_cache_content_metadata.assert_not_called()
+        mock_expired_email.delay.assert_not_called()
+
+    @override_waffle_switch(ENABLE_COURSE_RUN_ENDED_ASSIGNMENT_EXPIRATION, True)
+    @mock.patch('enterprise_access.apps.content_assignments.api.send_assignment_automatically_expired_email')
+    @mock.patch(
+        'enterprise_access.apps.content_assignments.content_metadata_api.get_and_cache_content_metadata'
+    )
+    @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient')
+    def test_catalog_agnostic_fallback_supplies_enrollment_deadline(
+        self,
+        mock_catalog_client,
+        mock_get_and_cache_content_metadata,
+        mock_expired_email,
+    ):
+        """
+        For content that left the policy catalog, a past ``enroll_by_date`` in the fallback metadata competes
+        just as it would from the policy catalog, so the earlier enrollment deadline wins over the course run
+        end date: the expiration reason (and PII outcome) doesn't depend on catalog membership.
         """
         course_key = 'edX+DemoX'
         run_key = 'course-v1:edX+DemoX+T2024'
@@ -1502,7 +1545,7 @@ class TestAssignmentExpiration(TestCase):
                 action_type=AssignmentActions.EXPIRED,
                 source=AssignmentSources.SCHEDULED_JOB,
             ).metadata['expiration_reason'],
-            AssignmentAutomaticExpiredReason.COURSE_RUN_ENDED,
+            AssignmentAutomaticExpiredReason.ENROLLMENT_DATE_PASSED,
         )
         mock_expired_email.delay.assert_called_once_with(assignment.uuid)
 

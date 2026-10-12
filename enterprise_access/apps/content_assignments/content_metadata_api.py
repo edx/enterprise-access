@@ -79,7 +79,11 @@ def get_catalog_agnostic_content_metadata_for_assignment(assignment):
     called from the automatic-expiration path.
 
     Returns:
-        dict: content metadata, or an empty dict if nothing could be fetched.
+        dict: content metadata, or an empty dict if the catalog doesn't know the content.
+
+    Raises:
+        HTTPError: for any enterprise-catalog error other than a 404, so that the caller retries the
+            assignment later instead of evaluating it without the content's dates.
     """
     content_identifiers = []
     if assignment.content_key:
@@ -98,6 +102,8 @@ def get_catalog_agnostic_content_metadata_for_assignment(assignment):
                 coerce_to_parent_course=True,
             )
         except HTTPError as exc:  # connection errors and timeouts are retried by the catalog client
+            if exc.response.status_code != 404:
+                raise
             logger.warning(
                 'Could not fetch catalog-agnostic content metadata for %s: %s',
                 content_identifier,

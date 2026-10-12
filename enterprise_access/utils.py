@@ -18,6 +18,7 @@ from enterprise_access.apps.enterprise_groups.constants import (
     BRAZE_GROUPS_EMAIL_CAMPAIGNS_THIRD_REMINDER_DAY
 )
 from enterprise_access.apps.subsidy_request.constants import SubsidyTypeChoices
+from enterprise_access.toggles import course_run_ended_assignment_expiration_enabled
 
 _MEMO_MISS = object()
 
@@ -151,12 +152,17 @@ def get_automatic_expiration_date_and_reason(
         [content_metadata] (dict): Content metadata for the assignment's content key. If not provided, it will be
             fetched and subsequently cached from the content metadata API.
         [use_catalog_agnostic_fallback] (bool): Whether to fall back to a catalog-/customer-agnostic content
-            metadata lookup when the assignment's policy catalog has no metadata for the content. This makes a
+            metadata lookup when the assignment's policy catalog has no metadata for the content. The fallback
+            metadata then supplies every content date (enrollment deadline and course run end dates), so the
+            expiration reason doesn't depend on whether the content is still in the catalog. This makes a
             synchronous call to enterprise-catalog, so it should only be set for the automatic-expiration path,
             not for read endpoints or other callers of this function.
         [include_course_run_end] (bool): Whether the course run end date competes as an expiration date. Set to
             False to reproduce how legacy assignments (expired before the reason was recorded on the audit
             action) were evaluated before COURSE_RUN_ENDED existed.
+
+    The course run end date and the catalog-agnostic fallback only apply while the
+    ``enable_course_run_ended_assignment_expiration`` switch is on.
     """
     # Import here to avoid circular import
     # pylint: disable=import-outside-toplevel
@@ -181,20 +187,17 @@ def get_automatic_expiration_date_and_reason(
         )
         content_metadata = content_metadata_by_key.get(content_key)
 
-    # The catalog-agnostic fallback is only used to learn when course runs ended. The enrollment deadline
-    # always comes from the policy catalog's metadata, so content that left the catalog is not expired
-    # as ENROLLMENT_DATE_PASSED (which would never get its PII cleared).
-    course_run_metadata = content_metadata
-    if not course_run_metadata and use_catalog_agnostic_fallback:
-        course_run_metadata = get_catalog_agnostic_content_metadata_for_assignment(assignment)
+    course_run_ended_enabled = course_run_ended_assignment_expiration_enabled()
+    if not content_metadata and use_catalog_agnostic_fallback and course_run_ended_enabled:
+        content_metadata = get_catalog_agnostic_content_metadata_for_assignment(assignment)
 
     enrollment_deadline_datetime = _get_enrollment_deadline_date(assignment, content_metadata)
     if enrollment_deadline_datetime:
         enrollment_deadline_datetime = enrollment_deadline_datetime.replace(tzinfo=UTC)
 
-    course_run_ended_datetime = (
-        _get_latest_course_run_end_date(course_run_metadata) if include_course_run_end else None
-    )
+    course_run_ended_datetime = None
+    if include_course_run_end and course_run_ended_enabled:
+        course_run_ended_datetime = _get_latest_course_run_end_date(content_metadata)
 
     # 90-day timeout from allocation
     timeout_expiration_datetime = assignment.get_allocation_timeout_expiration()

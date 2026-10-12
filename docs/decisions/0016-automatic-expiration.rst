@@ -50,6 +50,11 @@ PII is now also cleared for assignments that expired as ``COURSE_RUN_ENDED``. Pr
 ``NINETY_DAYS_PASSED`` qualified. This moves PII clearing earlier for those assignments: shortly after the
 course runs end rather than 90 days after allocation.
 
+All of this is gated by the ``enterprise_access.enable_course_run_ended_assignment_expiration``
+``WaffleSwitch``, which is off by default because PII clearing cannot be undone. While it is off, condition (4)
+is not computed, no catalog-agnostic lookup is made, and assignments that already expired as
+``COURSE_RUN_ENDED`` are not PII-cleared: expiration and PII clearing behave as they did before this amendment.
+
 Details that affect which assignments have PII cleared:
 
 * The PII-clearing decision uses the ``expiration_reason`` recorded when the assignment expired, rather
@@ -59,10 +64,13 @@ Details that affect which assignments have PII cleared:
   date, i.e. exactly as they were evaluated before ``COURSE_RUN_ENDED`` existed. A legacy row that really
   expired as ``SUBSIDY_EXPIRED`` can therefore never be recomputed as ``COURSE_RUN_ENDED`` and have its PII
   cleared.)
-* Content that is no longer in the policy's catalog is looked up in a catalog-agnostic way, but only to
-  determine course run end dates. The enrollment deadline is still derived from the policy catalog's
-  metadata, so such assignments expire as ``COURSE_RUN_ENDED`` (and have PII cleared) rather than as
-  ``ENROLLMENT_DATE_PASSED``.
+* Content that is no longer in the policy's catalog is looked up in a catalog-agnostic way, and that
+  metadata supplies every content date: the enrollment deadline as well as the course run end dates. An
+  assignment's expiration reason, and so whether its PII is cleared, therefore depends only on its dates,
+  not on whether its content is still in the catalog. One consequence: if such content's enrollment deadline
+  passed first, the assignment expires as ``ENROLLMENT_DATE_PASSED`` and keeps its email. Before this
+  amendment the deadline was unknown for content outside the catalog, so such an assignment expired at the
+  90-day timeout (and had its PII cleared) or at subsidy expiry, whichever came first.
 * No backfill is required: the daily ``automatically_expire_assignments`` job evaluates existing
   ``ALLOCATED`` assignments with the new rule.
 

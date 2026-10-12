@@ -9,6 +9,7 @@ from unittest import mock
 
 import ddt
 from django.test import TestCase
+from edx_toggles.toggles.testutils import override_waffle_switch
 from pytz import UTC
 
 from enterprise_access.apps.api_client.tests.test_constants import DATE_FORMAT_ISO_8601
@@ -23,6 +24,7 @@ from enterprise_access.apps.content_assignments.utils import (
     has_time_to_complete,
     is_within_minimum_start_date_threshold
 )
+from enterprise_access.toggles import ENABLE_COURSE_RUN_ENDED_ASSIGNMENT_EXPIRATION
 from enterprise_access.utils import (
     _curr_date,
     _days_from_now,
@@ -436,9 +438,14 @@ class TestGetLatestCourseRunEndDate(TestCase):
 @ddt.ddt
 class TestCatalogAgnosticFallback(TestCase):
     """
-    ``use_catalog_agnostic_fallback`` gates the synchronous catalog-agnostic lookup, and the fallback
-    metadata may only inform the course-run-ended date, never the enrollment deadline.
+    The catalog-agnostic lookup is only made when both ``use_catalog_agnostic_fallback`` and the
+    ``enable_course_run_ended_assignment_expiration`` switch are set, and its metadata then supplies every
+    content date, so the expiration reason doesn't depend on catalog membership.
     """
+    ENDED_METADATA = {
+        'normalized_metadata': {'enroll_by_date': None},
+        'normalized_metadata_by_run': {RUN_1: {'end_date': _iso(-1)}},
+    }
 
     @staticmethod
     def _fake_assignment():
@@ -446,18 +453,22 @@ class TestCatalogAgnosticFallback(TestCase):
         return SimpleNamespace(
             uuid='assignment-uuid',
             content_key=RUN_1,
+            preferred_course_run_key=None,
             assignment_configuration=SimpleNamespace(subsidy_access_policy=policy),
             get_allocation_timeout_expiration=lambda: datetime.now(UTC) + timedelta(days=90),
         )
 
-    def _get_expiration(self, fallback_metadata, use_fallback=True):
+    def _get_expiration(self, fallback_metadata, use_fallback=True, switch_enabled=True, catalog_metadata=None):
         """
-        Run get_automatic_expiration_date_and_reason for content missing from the policy catalog.
+        Run get_automatic_expiration_date_and_reason, by default for content missing from the policy catalog.
         Returns (result, fallback mock).
         """
+        catalog_path = f'{CONTENT_METADATA_API_MODULE}.get_content_metadata_for_assignments'
         fallback_path = f'{CONTENT_METADATA_API_MODULE}.get_catalog_agnostic_content_metadata_for_assignment'
-        with mock.patch(f'{UTILS_MODULE}._get_subsidy_expiration', return_value=None), \
-             mock.patch(f'{CONTENT_METADATA_API_MODULE}.get_content_metadata_for_assignments', return_value={}), \
+        catalog_metadata_by_key = {RUN_1: catalog_metadata} if catalog_metadata else {}
+        with override_waffle_switch(ENABLE_COURSE_RUN_ENDED_ASSIGNMENT_EXPIRATION, switch_enabled), \
+             mock.patch(f'{UTILS_MODULE}._get_subsidy_expiration', return_value=None), \
+             mock.patch(catalog_path, return_value=catalog_metadata_by_key), \
              mock.patch(fallback_path, return_value=fallback_metadata) as mock_fallback:
             result = get_automatic_expiration_date_and_reason(
                 self._fake_assignment(),
@@ -466,24 +477,35 @@ class TestCatalogAgnosticFallback(TestCase):
         return result, mock_fallback
 
     @ddt.data(
-        (False, False, AssignmentAutomaticExpiredReason.NINETY_DAYS_PASSED),
-        (True, True, AssignmentAutomaticExpiredReason.COURSE_RUN_ENDED),
+        # use_fallback, switch_enabled, expect_fallback_called, expected_reason
+        (False, True, False, AssignmentAutomaticExpiredReason.NINETY_DAYS_PASSED),
+        (True, False, False, AssignmentAutomaticExpiredReason.NINETY_DAYS_PASSED),
+        (True, True, True, AssignmentAutomaticExpiredReason.COURSE_RUN_ENDED),
     )
     @ddt.unpack
-    def test_fallback_only_used_when_flag_set(self, use_fallback, expect_fallback_called, expected_reason):
-        ended_metadata = {
-            'normalized_metadata': {'enroll_by_date': None},
-            'normalized_metadata_by_run': {RUN_1: {'end_date': _iso(-1)}},
-        }
-        result, mock_fallback = self._get_expiration(ended_metadata, use_fallback=use_fallback)
+    def test_fallback_only_used_when_flag_and_switch_set(
+        self, use_fallback, switch_enabled, expect_fallback_called, expected_reason,
+    ):
+        result, mock_fallback = self._get_expiration(
+            self.ENDED_METADATA, use_fallback=use_fallback, switch_enabled=switch_enabled,
+        )
 
         assert mock_fallback.called is expect_fallback_called
         assert result['reason'] == expected_reason
 
-    def test_fallback_metadata_enroll_by_date_is_ignored(self):
+    def test_switch_off_ignores_course_run_end_in_catalog_metadata(self):
+        """With the switch off, ended course runs don't compete even when the policy catalog has the content."""
+        result, mock_fallback = self._get_expiration(
+            None, switch_enabled=False, catalog_metadata=self.ENDED_METADATA,
+        )
+
+        assert not mock_fallback.called
+        assert result['reason'] == AssignmentAutomaticExpiredReason.NINETY_DAYS_PASSED
+
+    def test_fallback_metadata_supplies_enrollment_deadline(self):
         """
-        A past ``enroll_by_date`` in the fallback metadata must not win over the course run end date,
-        otherwise the assignment would expire as ENROLLMENT_DATE_PASSED and never have its PII cleared.
+        A past ``enroll_by_date`` in the fallback metadata competes like one from the policy catalog would,
+        so the earlier enrollment deadline wins over the course run end date.
         """
         ended_metadata = {
             'normalized_metadata': {'enroll_by_date': _iso(-5)},
@@ -491,4 +513,4 @@ class TestCatalogAgnosticFallback(TestCase):
         }
         result, _ = self._get_expiration(ended_metadata)
 
-        assert result['reason'] == AssignmentAutomaticExpiredReason.COURSE_RUN_ENDED
+        assert result['reason'] == AssignmentAutomaticExpiredReason.ENROLLMENT_DATE_PASSED

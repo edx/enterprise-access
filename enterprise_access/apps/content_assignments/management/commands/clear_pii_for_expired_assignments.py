@@ -19,7 +19,8 @@ class Command(BaseCommand):
     - Are in EXPIRED state
     - Have not already had PII cleared
     - Have had a successful expiration email sent
-    - Expired due to NINETY_DAYS_PASSED or COURSE_RUN_ENDED (not enrollment deadline or subsidy expiration)
+    - Expired due to NINETY_DAYS_PASSED, or COURSE_RUN_ENDED while its switch is on
+      (not enrollment deadline or subsidy expiration)
 
     See: ``docs/decisions/0016_automatic_expiration.rst`` and
          ``docs/decisions/0035-separate-clear-pii-task.md`` for more details.

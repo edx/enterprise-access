@@ -90,6 +90,31 @@ LEARNER_PATHWAYS_DISABLE_CANDIDATE_RERANK = WaffleSwitch(
 )
 
 
+# A ``WaffleSwitch`` for the same reason as the pathways pipeline switch above: it must be readable
+# off-request, from the ``automatically_expire_assignments`` command and the PII-clearing Celery task.
+#
+# .. toggle_name: enterprise_access.enable_course_run_ended_assignment_expiration
+# .. toggle_implementation: WaffleSwitch
+# .. toggle_default: False
+# .. toggle_description: Enables the COURSE_RUN_ENDED automatic expiration reason for ALLOCATED
+#     assignments (see ADR 0016). When enabled, the latest end date across all known course runs competes
+#     with the other expiration dates, the nightly expiration job looks up metadata for content that has
+#     left the policy catalog, and assignments that expired as COURSE_RUN_ENDED have their learner email
+#     PII cleared. When disabled, expiration and PII clearing behave as they did before COURSE_RUN_ENDED
+#     existed. Off by default because PII clearing cannot be undone.
+# .. toggle_use_cases: open_edx
+# .. toggle_creation_date: 2026-10-12
+ENABLE_COURSE_RUN_ENDED_ASSIGNMENT_EXPIRATION = WaffleSwitch(
+    f'{ENTERPRISE_ACCESS_NAMESPACE}.enable_course_run_ended_assignment_expiration',
+    __name__,
+)
+
+
+def course_run_ended_assignment_expiration_enabled():
+    """Return whether the COURSE_RUN_ENDED automatic expiration reason is enabled."""
+    return ENABLE_COURSE_RUN_ENDED_ASSIGNMENT_EXPIRATION.is_enabled()
+
+
 def learner_pathways_server_pipeline_enabled():
     """Return whether the server-side learner pathways pipeline is enabled."""
     return LEARNER_PATHWAYS_SERVER_PIPELINE.is_enabled()

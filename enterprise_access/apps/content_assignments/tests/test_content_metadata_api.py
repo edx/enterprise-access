@@ -145,14 +145,28 @@ class TestGetCatalogAgnosticContentMetadata(TestCase):
         assert result == {}
         mock_get.assert_called_once_with(self.COURSE_KEY, coerce_to_parent_course=True)
 
-    @ddt.data(
-        HTTPError(response=mock.Mock(status_code=404)),
-        HTTPError(response=mock.Mock(status_code=500)),
-    )
-    def test_request_errors_are_swallowed(self, error):
+    def test_not_found_is_treated_as_a_miss(self):
         assignment = SimpleNamespace(content_key=self.RUN_KEY, parent_content_key=self.COURSE_KEY)
-        with mock.patch(self.GET_METADATA, side_effect=error) as mock_get:
+        with mock.patch(self.GET_METADATA, side_effect=HTTPError(response=mock.Mock(status_code=404))) as mock_get:
             result = get_catalog_agnostic_content_metadata_for_assignment(assignment)
 
         assert result == {}
         assert mock_get.call_count == 2
+
+    @ddt.data(400, 403, 500, 503)
+    def test_other_request_errors_are_raised_and_not_remembered(self, status_code):
+        """
+        Anything but a 404 propagates, so the assignment is retried on a later run rather than evaluated
+        without its content's dates, and it isn't cached as a miss.
+        """
+        assignment = SimpleNamespace(content_key=self.RUN_KEY, parent_content_key=self.COURSE_KEY)
+        error = HTTPError(response=mock.Mock(status_code=status_code))
+        with mock.patch(self.GET_METADATA, side_effect=[error, {'key': self.COURSE_KEY}]) as mock_get:
+            with self.assertRaises(HTTPError):
+                get_catalog_agnostic_content_metadata_for_assignment(assignment)
+            assert get_catalog_agnostic_content_metadata_for_assignment(assignment) == {'key': self.COURSE_KEY}
+
+        mock_get.assert_has_calls([
+            mock.call(self.RUN_KEY, coerce_to_parent_course=True),
+            mock.call(self.RUN_KEY, coerce_to_parent_course=True),
+        ])

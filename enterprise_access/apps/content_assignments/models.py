@@ -36,6 +36,15 @@ logger = logging.getLogger(__name__)
 
 BULK_OPERATION_BATCH_SIZE = 50
 
+# LearnerContentAssignmentAction rows that record a successfully sent expiration email. Excludes the
+# scheduled_job-sourced EXPIRED row expire_assignment() writes at state-transition time: same action_type,
+# different event. Like ``.exclude()``, ``~Q`` on the nullable ``source`` still matches legacy rows recorded
+# before ``source`` existed.
+SUCCESSFUL_EXPIRATION_EMAIL_ACTIONS = Q(
+    action_type=AssignmentActions.EXPIRED,
+    error_reason=None,
+) & ~Q(source=AssignmentSources.SCHEDULED_JOB)
+
 
 class AssignmentConfiguration(TimeStampedModel):
     """
@@ -679,14 +688,9 @@ class LearnerContentAssignment(TimeStampedModel):
         Excludes the scheduled_job-sourced EXPIRED row expire_assignment() writes at state-
         transition time: same action_type, different event, and without this exclusion it could
         race the real "email sent" row on completed_at and corrupt acknowledgment/PII-clearing
-        eligibility, which both key off this method.
+        eligibility, which both key off ``SUCCESSFUL_EXPIRATION_EMAIL_ACTIONS``.
         """
-        return self.actions.filter(
-            action_type=AssignmentActions.EXPIRED,
-            error_reason=None,
-        ).exclude(
-            source=AssignmentSources.SCHEDULED_JOB,
-        ).order_by('-completed_at').first()
+        return self.actions.filter(SUCCESSFUL_EXPIRATION_EMAIL_ACTIONS).order_by('-completed_at').first()
 
     def add_successful_expiration_action(self):
         """
