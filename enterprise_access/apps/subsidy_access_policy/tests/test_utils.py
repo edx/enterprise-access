@@ -5,6 +5,7 @@ import uuid
 from datetime import datetime, timedelta
 from unittest.mock import patch
 
+import ddt
 from django.test import TestCase
 
 from enterprise_access.apps.subsidy_access_policy.models import SubsidyAccessPolicy
@@ -19,6 +20,7 @@ from enterprise_access.apps.subsidy_access_policy.utils import (
 )
 
 
+@ddt.ddt
 class SubsidyAccessPolicyUtilsTests(TestCase):
     """
     SubsidyAccessPolicy utils tests.
@@ -194,68 +196,31 @@ class SubsidyAccessPolicyUtilsTests(TestCase):
         sorted_policies = sort_subsidy_access_policies_for_redemption(queryset=queryset)
         assert sorted_policies[0] == self.policy_two
 
-    def test_sort_subsidy_access_policies_for_redemption_null_expiration_sorts_last(self):
+    @ddt.data(
+        # A dated expiration sorts before "never expires"...
+        ({'policy_three': None}, ['policy_three', 'policy_one'], ['policy_one', 'policy_three']),
+        # ...including the ISO string the Subsidy API actually returns.
+        (
+            {'policy_one': '2030-01-01T00:00:00Z', 'policy_three': None},
+            ['policy_three', 'policy_one'],
+            ['policy_one', 'policy_three'],
+        ),
+        # All null: falls through to the balance (policy_two has 50, policy_one 100).
+        ({'policy_one': None, 'policy_two': None}, ['policy_one', 'policy_two'], ['policy_two', 'policy_one']),
+    )
+    @ddt.unpack
+    def test_sort_subsidy_access_policies_for_redemption_null_expiration(self, expirations, policies, expected):
         """
-        A null expiration means the subsidy never expires, and is also what an unreachable subsidy yields
-        (``subsidy_record()`` returns {} on HTTPError). Sorting it against a real expiration used to raise
-        TypeError; it must now sort after the dated one, since "sooner to expire" comes first.
+        A null expiration (never expires, or an unreachable subsidy's {} record) sorts last instead of raising.
         """
-        # policy_one and policy_three share a priority; blank out policy_three's expiration.
-        self.policy_subsidy_map[self.policy_three.pk] = {
-            **self.mock_subsidy_three,
-            'expiration_datetime': None,
-        }
-        queryset = SubsidyAccessPolicy.objects.filter(pk__in=[
-            self.policy_three.pk,
-            self.policy_one.pk,
-        ])
+        for name, expiration in expirations.items():
+            pk = getattr(self, name).pk
+            self.policy_subsidy_map[pk] = {**self.policy_subsidy_map[pk], 'expiration_datetime': expiration}
+        queryset = SubsidyAccessPolicy.objects.filter(pk__in=[getattr(self, name).pk for name in policies])
 
         sorted_policies = sort_subsidy_access_policies_for_redemption(queryset=queryset)
 
-        assert sorted_policies[0] == self.policy_one
-        assert sorted_policies[1] == self.policy_three
-
-    def test_sort_subsidy_access_policies_for_redemption_string_expirations(self):
-        """
-        ``subsidy_record()`` holds the parsed JSON from the Subsidy API, so in production
-        ``expiration_datetime`` is an ISO **string**, not a datetime. The fixtures above use datetimes, so this
-        pins the shape the service actually returns: a string next to a null must still sort rather than raise
-        ``TypeError: '<' not supported between instances of 'str' and 'NoneType'``.
-        """
-        self.policy_subsidy_map[self.policy_one.pk] = {
-            **self.mock_subsidy_one,
-            'expiration_datetime': '2030-01-01T00:00:00Z',
-        }
-        self.policy_subsidy_map[self.policy_three.pk] = {
-            **self.mock_subsidy_three,
-            'expiration_datetime': None,
-        }
-        queryset = SubsidyAccessPolicy.objects.filter(pk__in=[
-            self.policy_three.pk,
-            self.policy_one.pk,
-        ])
-
-        sorted_policies = sort_subsidy_access_policies_for_redemption(queryset=queryset)
-
-        # The dated subsidy expires sooner than "never", so it comes first.
-        assert sorted_policies[0] == self.policy_one
-        assert sorted_policies[1] == self.policy_three
-
-    def test_sort_subsidy_access_policies_for_redemption_all_null_expirations(self):
-        """
-        With every expiration null there is nothing to order on but the balance, and still no TypeError.
-        """
-        self.policy_subsidy_map[self.policy_one.pk] = {**self.mock_subsidy_one, 'expiration_datetime': None}
-        self.policy_subsidy_map[self.policy_two.pk] = {**self.mock_subsidy_two, 'expiration_datetime': None}
-        queryset = SubsidyAccessPolicy.objects.filter(pk__in=[
-            self.policy_one.pk,
-            self.policy_two.pk,
-        ])
-
-        sorted_policies = sort_subsidy_access_policies_for_redemption(queryset=queryset)
-
-        # policy_two has the lower balance (50 vs 100), so it comes first.
-        assert sorted_policies[0] == self.policy_two
+        assert list(sorted_policies) == [getattr(self, name) for name in expected]
 
     def test_sort_subsidy_access_policies_for_redemption_expiration(self):
         """

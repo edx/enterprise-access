@@ -214,70 +214,38 @@ class RedemptionsFailureIsolationTests(TestCase):
     @ddt.data(403, 404)
     @mock.patch(TRANSACTION_FETCH_PATH)
     def test_unreachable_subsidy_does_not_fail_healthy_subsidies(self, status_code, mock_fetch):
-        """A subsidy that answers 403 (e.g. soft-deleted) or 404 drops only its own policies."""
+        """A subsidy answering 403 (e.g. soft-deleted) or 404 drops only its own policies, and is logged."""
         mock_fetch.side_effect = self._fetch_side_effect({self.unreachable_subsidy_uuid}, status_code)
 
-        result, unreachable_subsidy_uuids = get_redemptions_by_content_and_policy_for_learner(
-            [self.unreachable_policy, self.healthy_policy],
-            123,
-        )
+        with self.assertLogs('enterprise_access.apps.subsidy_access_policy.subsidy_api', level='WARNING') as logs:
+            result, unreachable_subsidy_uuids = get_redemptions_by_content_and_policy_for_learner(
+                [self.unreachable_policy, self.healthy_policy],
+                123,
+            )
 
-        # The healthy subsidy's redemptions still come back...
         self.assertEqual({'content-1': {self.healthy_policy: [self.healthy_transaction]}}, result)
-        # ...and the caller is told which subsidy to exclude from evaluation.
         self.assertEqual({self.unreachable_subsidy_uuid}, unreachable_subsidy_uuids)
+        self.assertIn(str(self.unreachable_subsidy_uuid), logs.output[0])
+        self.assertIn(str(self.unreachable_policy.uuid), logs.output[0])
 
-    @ddt.data(403, 404)
+    @ddt.data(
+        # A 5xx means the Subsidy API is down, so even one failure fails the request.
+        (False, 500), (False, 502), (False, 503),
+        # A 403/404 from *every* subsidy may mean our own access is broken.
+        (True, 403), (True, 404),
+    )
+    @ddt.unpack
     @mock.patch(TRANSACTION_FETCH_PATH)
-    def test_all_subsidies_unreachable_still_fails_the_request(self, status_code, mock_fetch):
-        """
-        enterprise-subsidy answers 403 both for a soft-deleted subsidy and for a requester that has lost its
-        permissions, so a 403 from every subsidy may mean our own access is broken. Degrading would hide that
-        from the learner as "nothing available", so the error must still propagate.
-        """
-        mock_fetch.side_effect = self._fetch_side_effect(
-            {self.unreachable_subsidy_uuid, self.healthy_subsidy_uuid}, status_code,
-        )
+    def test_failure_not_isolated_to_one_subsidy_still_fails(self, every_subsidy_fails, status_code, mock_fetch):
+        """Only a 403/404 from some, not all, subsidies is isolated; anything else still fails the request."""
+        failing = {self.unreachable_subsidy_uuid}
+        if every_subsidy_fails:
+            failing.add(self.healthy_subsidy_uuid)
+        mock_fetch.side_effect = self._fetch_side_effect(failing, status_code)
 
         with self.assertRaises(SubsidyAPIHTTPError) as raised:
-            get_redemptions_by_content_and_policy_for_learner(
-                [self.unreachable_policy, self.healthy_policy],
-                123,
-            )
+            get_redemptions_by_content_and_policy_for_learner([self.unreachable_policy, self.healthy_policy], 123)
         self.assertEqual(status_code, raised.exception.error_response.status_code)
-
-    @mock.patch('enterprise_access.apps.subsidy_access_policy.subsidy_api.logger')
-    @mock.patch(TRANSACTION_FETCH_PATH)
-    def test_unreachable_subsidy_is_logged_with_impacted_policy_uuids(self, mock_fetch, mock_logger):
-        """The condition must be visible in logs, naming the subsidy and the policies it took down."""
-        mock_fetch.side_effect = self._fetch_side_effect({self.unreachable_subsidy_uuid}, 404)
-
-        get_redemptions_by_content_and_policy_for_learner(
-            [self.unreachable_policy, self.healthy_policy],
-            123,
-        )
-
-        mock_logger.warning.assert_called_once()
-        log_args = mock_logger.warning.call_args.args
-        self.assertEqual(self.unreachable_subsidy_uuid, log_args[1])
-        self.assertEqual(404, log_args[2])
-        self.assertEqual([str(self.unreachable_policy.uuid)], log_args[3])
-        self.assertEqual(123, log_args[4])
-
-    @ddt.data(500, 502, 503)
-    @mock.patch(TRANSACTION_FETCH_PATH)
-    def test_subsidy_api_outage_still_fails_the_request(self, status_code, mock_fetch):
-        """
-        A 5xx means the Subsidy API itself is unhealthy, which affects every subsidy. Degrading would tell the
-        learner they have nothing available during an outage, so these must still propagate.
-        """
-        mock_fetch.side_effect = self._fetch_side_effect({self.unreachable_subsidy_uuid}, status_code)
-
-        with self.assertRaises(SubsidyAPIHTTPError):
-            get_redemptions_by_content_and_policy_for_learner(
-                [self.unreachable_policy, self.healthy_policy],
-                123,
-            )
 
 
 @ddt.ddt

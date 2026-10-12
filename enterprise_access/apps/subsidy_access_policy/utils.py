@@ -56,19 +56,14 @@ def sort_subsidy_access_policies_for_redemption(queryset):
            - expiration, sooner to expire first
            - balance, lower balance first
 
-    ``subsidy_expiration_datetime`` can legitimately be null, which means the subsidy never expires. It is
-    also what an unreachable subsidy yields, because ``subsidy_record()`` returns ``{}`` on HTTPError. Sorting
-    a null expiration directly against a real one raises ``TypeError: '<' not supported between instances of
-    'NoneType' and ...``, so the key sorts "never expires" after every dated expiration instead of comparing
-    the two. Ordering is unchanged when no expiration is null.
+    A null expiration (never expires, or an unreachable subsidy's ``{}`` record) sorts last rather than being
+    compared, which would raise TypeError.
     """
     if queryset.count() <= 1:
         return queryset
 
     def sort_key(policy):
         expiration = policy.subsidy_expiration_datetime
-        # The ``is None`` flag decides before ``expiration`` is ever compared, so a null never has to be
-        # ordered against a datetime; two nulls compare equal and fall through to the balance.
         return (policy.priority, expiration is None, expiration, policy.subsidy_balance())
 
     return sorted(queryset, key=sort_key)

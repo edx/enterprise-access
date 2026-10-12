@@ -549,9 +549,7 @@ class SubsidyAccessPolicyRedeemViewset(UserDetailsFromJwtMixin, PermissionRequir
         Evaluate all policies for the given enterprise customer to check if it can be redeemed against the given learner
         and content.
 
-        Policies funded by a subsidy in ``unreachable_subsidy_uuids`` are excluded, because we could not read the
-        learner's existing transactions for those subsidies, and ``policy.can_redeem()`` would call the same
-        unreachable subsidy again and fail the whole request.
+        Policies funded by a subsidy in ``unreachable_subsidy_uuids`` are skipped.
 
         Note: Calling this will cause multiple backend API calls to the enterprise-subsidy can_redeem endpoint, one for
         each access policy evaluated.
@@ -570,8 +568,7 @@ class SubsidyAccessPolicyRedeemViewset(UserDetailsFromJwtMixin, PermissionRequir
         """
         redeemable_policies = []
         non_redeemable_policies = defaultdict(list)
-        # Drop policies funded by an unreachable subsidy: ``policy.can_redeem()`` below calls that subsidy's
-        # can_redeem endpoint, which fails for it just as the transactions lookup did.
+        # policy.can_redeem() below would call the unreachable subsidy again and fail the request.
         policies_queryset = self.get_queryset()
         if unreachable_subsidy_uuids:
             policies_queryset = policies_queryset.exclude(subsidy_uuid__in=unreachable_subsidy_uuids)
@@ -741,8 +738,7 @@ class SubsidyAccessPolicyRedeemViewset(UserDetailsFromJwtMixin, PermissionRequir
         for the given learner, filtered to only those transactions associated with **subsidies**
         to which any of the given **policies** are associated.
 
-        Also returns the set of subsidy uuids that could not be reached, whose policies the caller
-        should exclude from redeemability evaluation.
+        Also returns the unreachable subsidy uuids, whose policies the caller should skip.
         """
         try:
             redemptions_map, unreachable_subsidy_uuids = get_redemptions_by_content_and_policy_for_learner(

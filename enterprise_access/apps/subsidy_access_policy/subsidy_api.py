@@ -21,12 +21,8 @@ REQUEST_CACHE_NAMESPACE = 'subsidy_access_policy'
 
 CACHE_MISS = object()
 
-# Subsidy API status codes that can mean one particular subsidy is unreachable, rather than the Subsidy API being
-# unhealthy. A soft-deleted or unknown subsidy answers 403, because enterprise-subsidy resolves the permission
-# context through a manager that hides soft-deleted rows; 404 covers a subsidy that disappears after that check.
-# A 403 is also what we'd get if our own access to enterprise-subsidy broke, so these are only isolated while at
-# least one subsidy is still reachable. Any other failure (notably a 5xx outage) affects every subsidy and is
-# re-raised.
+# Statuses that can mean one subsidy is unreachable (a soft-deleted subsidy answers 403). Isolated only while
+# at least one subsidy is still reachable; anything else, e.g. a 5xx, is re-raised.
 UNREACHABLE_SUBSIDY_STATUS_CODES = frozenset({403, 404})
 SUBSIDY_API_HTTP_ERROR_MESSAGE = 'HTTPError occurred in Subsidy API request.'
 
@@ -191,18 +187,11 @@ def get_redemptions_by_content_and_policy_for_learner(policies, lms_user_id):
     spend caps and learner limits based on that mapping.
 
     Returns:
-        2-tuple of (dict, set):
-            * the mapping of content_key -> {policy -> [transactions]} described above, and
-            * the set of subsidy uuids that were individually unreachable (see
-              ``UNREACHABLE_SUBSIDY_STATUS_CODES``). Those subsidies' policies are absent from the mapping,
-              and callers should exclude them from redeemability evaluation: without the learner's
-              transactions we can't compute spend against them, and evaluating them would call the same
-              unreachable subsidy again.
+        (mapping, unreachable_subsidy_uuids): unreachable subsidies' policies are left out of the mapping, and
+        callers should skip them.
 
     Raises:
-        SubsidyAPIHTTPError: if fetching a subsidy's transactions failed for any other reason, e.g. a 5xx
-            from the Subsidy API, which affects every subsidy rather than just one; or if every subsidy was
-            unreachable.
+        SubsidyAPIHTTPError: for any other failure (e.g. a 5xx), or if every subsidy is unreachable.
     """
     policies_by_subsidy_uuid = defaultdict(set)
     for policy in policies:
@@ -220,9 +209,7 @@ def get_redemptions_by_content_and_policy_for_learner(policies, lms_user_id):
             status_code = getattr(exc.error_response, 'status_code', None)
             if status_code not in UNREACHABLE_SUBSIDY_STATUS_CODES:
                 raise
-            # A subsidy can become unreachable independently of the policies that still reference it, for example
-            # when it is soft-deleted. Isolating the failure here keeps the customer's remaining, healthy subsidies
-            # evaluable instead of failing the whole request.
+            # e.g. soft-deleted: skip it so the customer's healthy subsidies are still evaluated.
             unreachable_subsidy_uuids.add(subsidy_uuid)
             last_unreachable_error = exc
             logger.warning(
@@ -255,8 +242,7 @@ def get_redemptions_by_content_and_policy_for_learner(policies, lms_user_id):
                 )
 
     if last_unreachable_error and unreachable_subsidy_uuids == set(policies_by_subsidy_uuid):
-        # Every subsidy refused us, which more likely means our own access to enterprise-subsidy is broken than
-        # that every subsidy was deleted. Fail loudly rather than tell the learner nothing is available.
+        # More likely our own access is broken than every subsidy deleted, so fail rather than show nothing.
         raise last_unreachable_error
 
     return result, unreachable_subsidy_uuids
