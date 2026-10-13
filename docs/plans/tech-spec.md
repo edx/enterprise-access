@@ -18,7 +18,7 @@
 | Engineering Lead | rthota-sonata@2u.com |
 | Reviewers | TBD |
 | Created | 2026-09-24 |
-| Last Updated | 2026-09-28 |
+| Last Updated | 2026-10-13 |
 
 ## Background & Context
 
@@ -55,7 +55,7 @@ follows once the admin portal's card-only ADR is satisfied; billing history come
 
 | Phase | What ships | Requirements | Must be resolved first |
 | --- | --- | --- | --- |
-| **1 — Card top-ups + Salesforce** (launch) | "Add Funds" on Budget List and Budget Detail, with eligibility gating · amount selection · pre-charge review and legal agreement · discount carry-forward · card payment (Stripe Elements), saved to the Stripe customer · SDN screening · balance and spend limit raised within 30 s, safe to retry · async Salesforce opportunity · card receipt and payment-failure emails · green confirmation banner · feature flag | R-01 (card), R-02–R-06, R-08 (card), R-09, R-10, **R-11**, R-14, R-16, R-19 · UX-01–UX-03, UX-04 (card) · NFR-01–NFR-05 (NFR-04 without `PendingTopUp`) · S-01–S-04 | OQ-3 (discount and quote source) · OQ-4 (SDN) · OQ-5 (Salesforce route) · OQ-6 (billing-management API on in production) · OQ-7 (credit vs. charge amount) · OQ-8 (standing and agreement-type data) · OQ-9 (enterprise-access's operator access to enterprise-subsidy) |
+| **1 — Card top-ups + Salesforce** (launch) | "Add Funds" on Budget List and Budget Detail, with eligibility gating · amount selection · pre-charge review and legal agreement · discount carry-forward · card payment (Stripe Elements), saved to the Stripe customer · SDN screening · balance and spend limit raised within 30 s, safe to retry · async Salesforce opportunity · card receipt and payment-failure emails · green confirmation banner · feature flag | R-01 (card), R-02–R-06, R-08 (card), R-09, R-10, **R-11**, R-14, R-16, R-19 · UX-01–UX-03, UX-04 (card) · NFR-01–NFR-05 (NFR-04 without `PendingTopUp`) · S-01–S-04 | OQ-3 (discount and quote source) · OQ-4 (SDN) · OQ-5 (Salesforce route) · OQ-6 (billing-management API on in production) · OQ-8 (standing and agreement-type data) · OQ-9 (enterprise-access's operator access to enterprise-subsidy) |
 | **2 — ACH** | Bank payment via Stripe Financial Connections, with the 3–4 business-day notice · "Pending Credits" on Budget List and Budget Detail · ACH-initiated and ACH-cleared emails · amber pending banner · pending state on the success screen · failure email extended to ACH returns | R-01 (ACH), R-06 (pending), R-07, R-08 (bank), R-12, R-17, R-18, R-19 (ACH) · UX-04 (ACH) · NFR-04 (`PendingTopUp`) | Phase 1 live · admin-portal ADR 0012 conditions met: security review and pentest, NACHA audit, Legal review of the authorization wording · a new ADR superseding ADR 0012 |
 | **3 — Billing history** | Top-up transactions on the Billing screen (date, description, amount, "Paid") · Billing entry point hidden until the admin's first top-up | R-13 | Phase 1 live · OQ-6 (are the billing-management API and native billing on in production?) |
 
@@ -316,7 +316,7 @@ item (OQ-1).
 | NFR-02 | Security: PCI-DSS (no raw card data on edX servers), SDN screening per transaction, RBAC via JWT (`SYSTEM_ENTERPRISE_ADMIN_ROLE`), idempotency keys against double charges, and a security review before release. | NFR | 1 | PRD NFR-02 |
 | NFR-03 | Accessibility, WCAG 2.1 AA: full keyboard navigation, screen-reader tested, contrast of at least 4.5:1, status changes announced, color never the only signal. Paragon components only. | NFR | 1 | PRD NFR-03 |
 | NFR-04 | Scalability: balance writes are atomic and race-free under concurrent load; a `PendingTopUp` model tracks in-flight ACH and soft-deletes after 30 days; Celery absorbs Salesforce-event backpressure. | NFR | 1 · 2 (`PendingTopUp`) | PRD NFR-04 |
-| NFR-05 | Compatibility: Chrome, Firefox, Safari, Edge (latest 2 versions); responsive down to 375 px; behind `FEATURE_LEARNER_CREDIT_TOP_UP`, and with the flag off all entry points are hidden and requests return 404. | NFR | 1 | PRD NFR-05 |
+| NFR-05 | Compatibility: Chrome, Firefox, Safari, Edge (latest 2 versions); responsive down to 375 px; behind `FEATURE_TOP_UP_LEARNER_CREDIT`, and with the flag off all entry points are hidden and requests return 404. | NFR | 1 | PRD NFR-05 (flag renamed; see below) |
 | UX-01 | Checkout is an in-portal, full-content-area flow (not a modal) with a breadcrumb and a 3-step stepper: Select Amount → Billing Details → Confirmation. A live order-summary sidebar shows on the first two steps. | Functional (UX) | 1 | PRD UX-01 |
 | UX-02 | Add Funds appears on Budget List and Budget Detail. For an ineligible budget it is disabled, with an inline warning explaining why. | Functional (UX) | 1 | PRD UX-02 |
 | UX-03 | Failures show inline: a declined card gets an alert to retry or switch payment method; an ineligible budget gets a warning banner. | Functional (UX) | 1 | PRD UX-03 |
@@ -336,6 +336,12 @@ item (OQ-1).
   not soft-deleted after 30 days, because of S-01 (Data Model). To be confirmed with the PM in Phase 2
   design.
 - R-09 and R-10 depend on data or checks that don't exist yet (OQ-8, OQ-4).
+- NFR-05, flag name: the PRD calls the flag `FEATURE_LEARNER_CREDIT_TOP_UP`. This spec uses
+  `FEATURE_TOP_UP_LEARNER_CREDIT`, the name the admin portal already ships
+  (`AP:src/config/index.js:76` as of `ac9849ae`, #183), so the portal and the backend use one name
+  (Eng Lead, 2026-10-13). How enterprise-access reads the flag is still open (Feature Flags).
+  **Note:** `FEATURE_LEARNER_CREDIT_TOP_UP` = `FEATURE_TOP_UP_LEARNER_CREDIT`. Both names refer to
+  the same flag; wherever the PRD says `FEATURE_LEARNER_CREDIT_TOP_UP`, read `FEATURE_TOP_UP_LEARNER_CREDIT`.
 
 ## Key Decisions
 
@@ -361,13 +367,90 @@ what grounding found — so the reasoning survives the rewrite.*
 
 ### High-Level Architecture
 
+**Top-up flow (Phase 1, card).** This is the whole path, from the Add Funds button to spendable
+funds. Endpoints are in API Contracts, states in the `LearnerCreditTopUp` state machine, and the
+deposit and spend-limit steps in the Fulfillment rules (Data Model). Dashed boxes depend on an
+open question that still blocks Phase 1.
+
 ```mermaid
 flowchart TD
-    CLIENT[Client] --> API[API Layer]
-    API --> SERVICE[Service Layer]
-    SERVICE --> DB[(Database)]
-    SERVICE --> EXTERNAL[External Service]
+    subgraph SG_AP["Admin portal"]
+        A1["Budget List / Budget Detail<br/>Add Funds (UX-02)"]
+        A0["Add Funds disabled<br/>with a warning (UX-02)"]
+        A2["Step 1 · Select Amount<br/>$500 to $20,000 (R-02)"]
+        A3["Step 2 · Billing Details<br/>review · legal agreement · card<br/>saved cards listed (R-03, R-04, R-08, OQ-6)"]
+        A4["3DS challenge with the client_secret<br/>Visa Secure · Mastercard Identity Check<br/>American Express SafeKey"]
+        A6["Inline alert (UX-03)<br/>decline: retry or switch card<br/>ineligible: warning"]
+        A5["Step 3 · Confirmation<br/>success screen · green banner (UX-04)<br/>budgets query invalidated (NFR-01)"]
+    end
+
+    subgraph SG_EA["enterprise-access"]
+        E1{"GET eligibility<br/>active · 40+ days left<br/>standing and agreement type (OQ-8)"}
+        E2["POST quote: state created<br/>discount and quote number (OQ-3)<br/>balances · Stripe customer (KD-4)"]
+        E3{"POST pay<br/>re-check eligibility<br/>SDN screening (OQ-4)"}
+        E4["Deposit step<br/>key lc-top-up-uuid<br/>quantity = amount_cents (full amount, OQ-7)"]
+        E5["Spend-limit step: state fulfilled<br/>spend_limit += amount_cents<br/>one atomic block, select_for_update"]
+        E7["Celery fulfillment task<br/>retries with backoff"]
+        E6["errored_fulfillment<br/>pages on-call · ops re-run or refund"]
+    end
+
+    subgraph SG_STRIPE["Stripe"]
+        S1{"One PaymentIntent (KD-3)<br/>charge_amount_cents<br/>create and confirm, idempotency keys"}
+        S2["Webhook: payment_intent.succeeded"]
+        S3["Webhook: payment_intent.payment_failed"]
+    end
+
+    subgraph SG_ES["enterprise-subsidy"]
+        D1{"POST admin/deposits/ (KD-5)<br/>needs operator access (OQ-9)"}
+    end
+
+    subgraph SG_SIDE["Notifications and records"]
+        N1["Receipt email, Braze (R-16)"]
+        N2["Salesforce opportunity, async (R-11, OQ-5)"]
+        N3["Segment events (S-03)"]
+        N4["Failure email, Braze (R-19)"]
+    end
+
+    A1 --> E1
+    E1 -->|"eligible"| A2
+    E1 -->|"not eligible"| A0
+    A2 --> E2
+    E2 --> A3
+    A3 -->|"Pay, with payment_attempt_id"| E3
+    E3 -->|"fails: 403"| A6
+    E3 -->|"passes"| S1
+    S1 -->|"declined: 402, stays created"| A6
+    A6 -->|"retry"| A3
+    S1 -->|"requires_action"| A4
+    A4 -->|"challenge passed"| S2
+    S1 -.->|"declined"| S3
+    S3 --> N4
+    S1 -->|"succeeded: state paid,<br/>fulfill in the same request"| E4
+    S2 -->|"backstop"| E7
+    E7 --> E4
+    E4 --> D1
+    D1 -->|"201, or 200 on replay:<br/>state deposited"| E5
+    D1 -->|"429 ledger locked"| E7
+    D1 -->|"409 or 422"| E6
+    E7 -->|"retries exhausted"| E6
+    E5 --> A5
+    E5 --> N1
+    E5 --> N2
+    E5 --> N3
+
+    classDef gated stroke-dasharray: 5 5
+    class A3,E1,E2,E3,D1,N2 gated
 ```
+
+- **Two amounts (OQ-7).** Stripe charges `charge_amount_cents`, the discounted total. The deposit
+  and the `spend_limit` increase both use `amount_cents`, the full selected amount.
+- **When fulfillment doesn't finish in the `pay` request**, the response says `paid` and the portal
+  polls `GET /learner-credit-top-ups/<uuid>/` until the top-up is `fulfilled`. It does the same after
+  a 3DS challenge, where the webhook queues fulfillment.
+- **Every retry is safe.** The PaymentIntent can succeed only once, and the deposit key returns the
+  same deposit on replay. The spend-limit step runs only from `deposited`, so it runs once.
+- **Phase 2** adds ACH: `payment_intent.processing` moves the top-up to `processing` (Pending
+  Credits), and fulfillment waits for the payment to settle.
 
 ### Data Model
 
@@ -380,7 +463,7 @@ impl-plan.*
 | --- | --- | --- | --- |
 | `LearnerCreditTopUp` (EA `customer_billing`) | See the field table below | FK → `SubsidyAccessPolicy` (PROTECT); FK → `User` (SET_NULL) | One row per top-up, from quote to fulfillment. This is the audit record for every self-service deposit (S-01), and rows are never deleted. `TimeStampedModel` + `HistoricalRecords` with a UUID primary key, like `ForcedPolicyRedemption` (`EA:.../subsidy_access_policy/models.py:2152-2229`). State changes go through an allowed-transitions table, as `CheckoutIntent` does (`EA:.../customer_billing/constants.py:96-121`; `models.py:371-396`). |
 | `EnterpriseStripeCustomer` (EA `customer_billing`) | `enterprise_customer_uuid` (UUID, unique) · `stripe_customer_id` (char 255, unique) · `source` (`checkout_intent_backfill` / `created_for_top_up`) | None; the enterprise is referenced by UUID, as elsewhere in EA | KD-4. `TimeStampedModel` + `HistoricalRecords`. `_get_stripe_customer_id_for_enterprise` reads this table first and falls back to `CheckoutIntent` (`EA:.../views/customer_billing.py:816-842`). |
-| enterprise-subsidy: no new table | — | — | One new data row: a `SalesContractReferenceProvider` with slug `stripe_payment_intent` (KD-5; slugs are limited to 32 characters, `LED:openedx_ledger/models.py:683-685`). Each top-up is an ordinary ledger `Deposit` + `Transaction` (`LED:openedx_ledger/models.py:701-756`), so top-up funds are interchangeable with the original funds (PRD A-3). |
+| enterprise-subsidy: no new table | — | — | One new data row: a `SalesContractReferenceProvider` with slug `stripe_payment_intent` (KD-5; slugs are limited to 32 characters, `LED:openedx_ledger/models.py:683-685`). The slug is its own constant, not added to `SubsidyReferenceChoices`, because that list is also the set of allowed `Subsidy.reference_type` values (`ES:enterprise_subsidy/apps/subsidy/models.py:63-70, 176`) and a subsidy is never created by a PaymentIntent (Eng Lead, 2026-10-13). Each top-up is an ordinary ledger `Deposit` + `Transaction` (`LED:openedx_ledger/models.py:701-756`), so top-up funds are interchangeable with the original funds (PRD A-3). |
 
 **`LearnerCreditTopUp` fields**
 
@@ -392,9 +475,9 @@ impl-plan.*
 | `subsidy_uuid` | UUID, indexed | Copy of `policy.subsidy_uuid` taken when the top-up is created; this is where the deposit goes. |
 | `initiated_by` / `initiated_by_lms_user_id` | FK `User` (SET_NULL) / integer | The integer ID is kept after the user is retired (`EA:enterprise_access/apps/core/models.py:20`). Needs a `.. pii:` annotation, as on `StripeEventData` (`EA:.../customer_billing/models.py:1050`). |
 | `state` | char, indexed, choices | See the state machine below. Only the server writes it; clients can never set it (see the `CheckoutIntent` PATCH gap in Current State). |
-| `amount_cents` | BigInteger | Credit added to the budget. It is used three times: as the ES `desired_deposit_quantity`, as the `spend_limit` increase, and as the amount validated against the 50,000–2,000,000 range (R-02). |
+| `amount_cents` | BigInteger | Credit added to the budget: the full selected amount, not the discounted amount (OQ-7). It is used three times: as the ES `desired_deposit_quantity`, as the `spend_limit` increase, and as the amount validated against the 50,000–2,000,000 range (R-02). |
 | `discount_rate` | Decimal(5,4), null | Copied at quote time (R-05). `NULL` means no discount is on record, so the discount row is hidden. `0` is a real 0% rate and is never used as a default for `NULL` (RK-05). Source: OQ-3. |
-| `discount_cents` / `charge_amount_cents` | BigInteger | The card is charged `amount_cents − discount_cents`. `[Assumed]` The admin pays the discounted price and receives the full credit amount. See OQ-7. |
+| `discount_cents` / `charge_amount_cents` | BigInteger | The card is charged `amount_cents − discount_cents`. The admin pays the discounted price and receives the full selected amount as credit (OQ-7, resolved 2026-10-12). With no discount on record, the two amounts are equal. |
 | `currency` | char(3) | `usd` only. |
 | `sales_quote_number` | char, null | Copied at quote time for the legal agreement (R-04). Source: OQ-3. |
 | `agreement_version` / `agreement_accepted_at` | char / datetime, null | Set when the admin pays (R-04). |
@@ -430,6 +513,12 @@ stateDiagram-v2
     errored_fulfillment --> refunded: ops refund
     fulfilled --> [*]
 ```
+
+**3DS** (3-D Secure) is the card issuer's authentication challenge. The card networks brand it as
+**Visa Secure**, **Mastercard Identity Check**, and **American Express SafeKey**, so an admin may see
+any of these names on their bank's challenge screen. All of them reach this design the same way:
+the PaymentIntent returns `requires_action`, and the portal completes the challenge with the
+`client_secret` (Stripe reference: `https://docs.stripe.com/payments/3d-secure`).
 
 A declined card leaves the top-up in `created`, because the PaymentIntent returns to
 `requires_payment_method`, so the admin can retry or switch cards. Phase 2 adds two states:
@@ -538,6 +627,7 @@ flag is off (NFR-05); the flag mechanism is set in Feature Flags.*
 ```
 
 - `discount_rate` and `discount_cents` are `null` when there is no discount (R-05).
+- `new_balance_cents` adds the full `amount_cents`, not `charge_amount_cents` (OQ-7).
 - `client_secret` is set only in `requires_action`.
 - The balances are computed from `spend_available` at quote time (`EA:.../subsidy_access_policy/models.py:573-594`).
 - Stripe IDs other than the `client_secret` are not exposed.
@@ -555,6 +645,9 @@ flag is off (NFR-05); the flag mechanism is set in Feature Flags.*
 - These apply only when the caller sends an explicit `idempotency_key`. If a deposit with that key
   already exists with the same quantity, reference ID and provider, the endpoint returns 200 with
   that deposit. This uses the unused path at `deposit.py:58-67, 92-94`.
+- That replay check runs before the expired-subsidy check (`deposit.py:86-90`), so a replay still
+  returns 200 after the subsidy expires. Returning an existing deposit adds no money; a 422 there
+  would push a funded top-up into `errored_fulfillment` (Eng Lead, 2026-10-13).
 - The same key with different values returns 409 `deposit_idempotency_conflict`.
 - Lock contention returns 429 `ledger_lock_error`. The ledger library wraps the lock error in its
   own exception, so the view checks the wrapped cause (`LED:openedx_ledger/api.py:317-320`), as the
@@ -691,7 +784,7 @@ chunk that cannot proceed until this resolves — this is what the Ready-to-Buil
 | OQ-4 | Does Stripe's own screening satisfy R-10 (SDN per transaction and per payment-method change), or is a separate check required? | High — compliance gate before any charge | SDN design; security review; **blocks Phase 1** | Legal / Compliance | TBD |
 | OQ-5 | How is the Salesforce opportunity (`is_commission_eligible: false`) created: Stripe's connector per EA ADR 0026, or a new outbound integration? | High — R-11 is now Phase 1 (KD-1) | Salesforce integration design; **blocks Phase 1** | Justin Grabowski | TBD |
 | OQ-6 | Are `ENABLE_BILLING_MANAGEMENT_API` (enterprise-access) and `ENABLE_NATIVE_BILLING` (admin portal) on in production? | High — Phase 1 lists saved cards through `billing-management/payment-methods` (API Contracts). It also decides whether billing history (R-13) can reuse the existing page and API. | Saved-card pre-selection (R-08), **blocks Phase 1**; billing history decision, gates Phase 3 | rthota-sonata@2u.com | TBD |
-| OQ-7 | Does a top-up add the full selected amount as credit while charging the card the discounted total (for example, $1,000 of credit for $900)? The Data Model assumes so (`amount_cents` vs. `charge_amount_cents`). | High — sets both the deposit and the charge, and the two failure modes are defined against these numbers | Data Model; pricing design; **blocks Phase 1** | Alberto Del Toro, with Finance | TBD |
+| OQ-7 | **Resolved 2026-10-12.** Does a top-up add the full selected amount as credit while charging the card the discounted total (for example, $1,000 of credit for $900)? Yes. The total (full selected) amount is credited, not the discounted amount. `amount_cents` is the ES deposit quantity and the `spend_limit` increase; the card is charged `charge_amount_cents` = `amount_cents − discount_cents` (Data Model). | High — sets both the deposit and the charge, and the two failure modes are defined against these numbers | Data Model; pricing design; no longer blocks Phase 1 | Alberto Del Toro, with Finance | Closed |
 | OQ-8 | Where do "account standing" and "agreement type" (R-09) come from? No service stores either (Current State). Salesforce is likely, alongside OQ-3. | High — the `account_not_eligible` check can't be computed | Eligibility endpoint; **blocks Phase 1** | rthota-sonata@2u.com with Justin Grabowski | TBD |
 | OQ-9 | Does enterprise-access's backend-service OAuth user hold `enterprise_openedx_operator` in enterprise-subsidy in production? The deposit endpoint requires operator access (`ES:enterprise_subsidy/apps/subsidy/rules.py:101-105`). The Deposit Funds tool depends on it, but no repo shows the grant (grep in ES → 0 hits). `[Assumed]` it is granted. | High — without it, every fulfillment deposit gets a 403 | Deposit step; **blocks Phase 1** | rthota-sonata@2u.com | TBD |
 | OQ-10 | How does top-up data reach Snowflake for K-04 (repeat top-ups per admin) and K-05 (enterprises with at least one top-up)? Either the Segment events land there, or the `LearnerCreditTopUp` table is replicated from the enterprise-access database. Nothing in these repos shows either (Current State). `[Assumed]` one of them exists. | Medium — without it, two KPIs can't be measured. It doesn't block the build. | S-03 event design (Event / Message Contracts); needed before GA metrics reporting | Alberto Del Toro, with the data team | TBD |
@@ -700,21 +793,48 @@ chunk that cannot proceed until this resolves — this is what the Ready-to-Buil
 
 | Dependency | Type (Internal / External) | Owner | What We Need | By When | Status |
 | --- | --- | --- | --- | --- | --- |
-| | | | | | |
+| Salesforce | External | Justin Grabowski (RevOps), with rthota-sonata@2u.com | (1) Each enterprise's discount rate and quote number, read when a quote is made (R-04, R-05); Salesforce is the source, and the access route is open (OQ-3). (2) An opportunity for every top-up, created asynchronously with `is_commission_eligible: false` (R-11), either through Stripe's Salesforce connector (EA ADR 0026) or a new outbound integration (OQ-5). (3) Probably account standing and agreement type for the eligibility check (R-09, OQ-8). | Phase 1 launch: OQ-3, OQ-5 and OQ-8 all block Phase 1 | Partly answered: Salesforce is the pricing source (OQ-3, 2026-09-25). The access route, the opportunity route and the standing data are still open. An action item and a ticket with the Salesforce team exist (ticket ID TBD). |
+| Stripe | External | TBD (Stripe account and webhook configuration) | (1) One-time card charges: one PaymentIntent per top-up, created and confirmed on the server with idempotency keys (KD-3). Today only subscription checkout exists. (2) The webhook endpoint subscribed to `payment_intent.*` events (API Contracts, Modified Endpoints). (3) A Stripe customer for every enterprise, created when missing (KD-4). (4) Whether Stripe's own screening covers SDN screening (R-10, OQ-4). (5) Phase 2: Financial Connections and ACH bank payments (R-07). | (1)–(4) Phase 1 launch; (5) Phase 2 | Already integrated for subscriptions: signed webhooks and saved payment methods (Current State). One-time charges, `payment_intent` handling and Financial Connections are net-new. OQ-4 is open with Legal / Compliance. |
 
 ## Operational Design
 
 ### Monitoring & Alerting
 
+*Signals come from `LearnerCreditTopUp` state changes, recorded the way `CheckoutIntent` already
+sends its lifecycle state to monitoring as custom attributes
+(`EA:enterprise_access/apps/customer_billing/signals.py:22-35`; keys at `constants.py:154-155`),
+and from the error codes in API Contracts. Severities are proposed: **P1** pages on-call, **P2**
+alerts the team in business hours, **P3** is dashboard only. A threshold marked "not set" is still
+the Eng Lead's to decide.*
+
+**Payment**
+
 | Metric / Alert | Condition | Severity (P1 / P2 / P3) | Response |
 | --- | --- | --- | --- |
-| | | | |
+| Charged but not credited | A top-up stays in `paid` or `deposited` past the threshold (Fulfillment rule 4). Threshold not set. | P1 | Page on-call. Check `last_error` and whether ES already holds a deposit for `lc-top-up-<uuid>`, then run the ops re-run, which is idempotent. Refund only if fulfillment can't complete. |
+| Fulfillment failed | Any top-up reaches `errored_fulfillment` | P1 | Page on-call. Re-run fulfillment or refund, per the state machine. |
+| Payment taken, top-up not moved | A periodic reconciliation finds a succeeded PaymentIntent carrying `learner_credit_top_up_uuid` whose top-up is not `paid`, `deposited` or `fulfilled`: both the `pay` request and the webhook missed it. This includes a charge that succeeds after its quote expired, such as a 3DS challenge finished after `expires_at`; the state machine has no `expired → paid` path yet. | P1 | Page on-call. Fulfill the top-up by hand, then find out why the webhook missed it (Stripe webhook delivery, below). |
+| Failed-payment rate (guardrail) | Declined or failed payments (402 `payment_declined` and `payment_intent.payment_failed`) are more than 5% of payment attempts (S-04, PRD guardrail) | P2 | Break the failures down by `decline_code` to tell issuer declines from an integration fault, and check Stripe's status. Tell the PM: this is a launch guardrail. |
+| SDN screening failures (guardrail) | The `payment_screening_failed` rate rises above its normal level (S-04: no upward anomaly). The baseline is set after launch. | P2 | Tell Compliance, and check the screening source (OQ-4) for false positives. |
+| 3DS completion | The share of top-ups that reach `requires_action` and then `expired` instead of `paid` | P3 | Dashboard only. A rise points to a problem in the portal's challenge step or with an issuer. |
+| Time to spendable funds (NFR-01) | p95 time from `paid` to `fulfilled` | P3 | Dashboard only. The target for a card is 30 seconds. |
+
+**Dependencies**
+
+| Metric / Alert | Condition | Severity (P1 / P2 / P3) | Response |
+| --- | --- | --- | --- |
+| Stripe API errors | Sustained 503 `payment_provider_unavailable` from the quote or `pay` endpoints. Threshold not set. | P2 | Check Stripe's status page. Admins can retry: every Stripe write uses an idempotency key, so a retry never charges twice. |
+| Stripe webhook delivery | `payment_intent.*` events fail the signature check or return errors, or Stripe reports failed deliveries to the endpoint | P2 | Check the endpoint's `payment_intent.*` subscription and its signing secret. Most fulfillment runs in the `pay` request, but the 3DS path and the failure email depend on the webhook. |
+| enterprise-subsidy deposit access | Any deposit call returns 403 | P1 | No deposit can succeed: the service user has lost operator access in enterprise-subsidy (OQ-9). Restore the grant, then re-run the affected top-ups. |
+| enterprise-subsidy deposit errors | Sustained 5xx, or 429 `ledger_lock_error` beyond what the Celery retries absorb | P2 | Retries back off on their own. Persistent failures end in `errored_fulfillment`, which pages (Payment, above). |
+| Pricing source | 503 `pricing_source_unavailable` or 422 `pricing_unavailable` when a quote is created | P2 | Admins can't start a top-up. Check the pricing source (OQ-3) and the enterprise's Salesforce record. |
+| Salesforce opportunity sync | A `fulfilled` top-up still has no `salesforce_synced_at` after the threshold. The threshold and the check depend on OQ-5. | P3 | It never blocks the admin (R-11). Re-queue the sync. If it persists, tell RevOps (Justin Grabowski): revenue attribution (K-03) depends on it. |
 
 ### Feature Flags
 
 | Flag Name | Default | Controls | Rollback Behavior |
 | --- | --- | --- | --- |
-| | OFF | | |
+| `FEATURE_TOP_UP_LEARNER_CREDIT` (the same flag as the PRD's `FEATURE_LEARNER_CREDIT_TOP_UP`; see NFR-05) | OFF | **Admin portal:** every top-up entry point, meaning Add Funds on Budget List and Budget Detail and the checkout route. The portal reads it as a build-time setting or through `hasFeatureFlagEnabled('TOP_UP_LEARNER_CREDIT')` (`AP:src/config/index.js:76` as of `ac9849ae`, #183). **enterprise-access:** every `/api/v1/learner-credit-top-ups/` endpoint returns 404 when it is off (NFR-05). How enterprise-access reads the flag, per enterprise or globally, is still open: it has no per-enterprise flag mechanism today (Current State). | Turning it off hides the entry points and makes the endpoints return 404; nothing is migrated or deleted. Proposed: the `payment_intent.*` webhook handlers and the fulfillment task ignore the flag, so a top-up that was already paid is still credited, and turning the flag off can't cause "charged but not credited". |
 
 ### Rollback Plan
 
@@ -729,7 +849,7 @@ sequencing only; build order within each phase is set after Proposed Design.*
 
 | Phase | What's Built | Depends On | Enables |
 | --- | --- | --- | --- |
-| Phase 1 | Card top-ups + Salesforce opportunity | OQ-3 through OQ-9 | Phase 2, Phase 3 |
+| Phase 1 | Card top-ups + Salesforce opportunity | OQ-3 to OQ-6, OQ-8, OQ-9 | Phase 2, Phase 3 |
 | Phase 2 | ACH + Pending Credits | Phase 1; admin-portal ADR 0012 conditions | — |
 | Phase 3 | Billing history | Phase 1; OQ-6 | — |
 
@@ -779,3 +899,11 @@ gate's grounding bar is the same whether you co-authored or handcrafted.*
 | 2026-09-28 | Data Model and API Contracts drafted. KD-2 to KD-5 recorded. Current State extended: deposit replay path, reserved metadata keys, provider cascade, unhandled `payment_intent` events, admin-portal payload. `SCL` added to the grounding baseline. OQ-6 now also blocks Phase 1. OQ-7 to OQ-9 opened. Phase 1 blockers updated. | Session 3: the Eng Lead chose where top-ups live (KD-2), the charge flow (KD-3), the Stripe-customer mapping (KD-4), and deposit idempotency (KD-5). |
 | 2026-09-28 | Re-baselined enterprise-access to `main@67499592`. Eight `customer_billing/models.py` citations moved down 5 lines; the cited code itself is unchanged. The admin-portal `master` gained only a browserslist update, which touches no cited file. | Session 4: `main` moved after grounding (#298, academy course count). |
 | 2026-09-28 | Requirements table written. REQ-IDs are the PRD's own IDs; S-01 to S-04 added (auditable deposit, never adds time, KPI events, guardrails); a Phase column replaces Priority. Phased Delivery Phase 1 now lists S-01 to S-04. The old "auditable-deposit requirement" references now point to S-01, which also cites the repo PRD's Outcome 2. Current State: the balance path has no server cache (the portal's react-query cache is what NFR-01 invalidates), and the Segment and portal event infrastructure is documented. OQ-10 opened. | Session 4: the Eng Lead chose the PRD IDs as they are, the four S-requirements, and phase-based priority. |
+| 2026-10-12 | OQ-7 resolved: the full selected amount is credited, not the discounted amount; the card is charged the discounted total. The `[Assumed]` tag on `discount_cents` / `charge_amount_cents` is removed, `amount_cents` and the response body say which amount is credited, and OQ-7 no longer blocks Phase 1 (Phased Delivery, Build Phases). Added a 3DS note under the state diagram naming the card-network programs: Visa Secure, Mastercard Identity Check, American Express SafeKey. | Eng Lead answer to OQ-7; 3DS note added at the Eng Lead's request, for reference. |
+| 2026-10-13 | High-Level Architecture: replaced the template placeholder with the Phase 1 card top-up flow, from Add Funds to fulfillment. It shows the portal, enterprise-access, Stripe and enterprise-subsidy steps, the 3DS, decline, retry and error paths, and the side effects; boxes gated by a Phase 1 open question (OQ-3, OQ-4, OQ-5, OQ-6, OQ-8, OQ-9) are dashed. Notes cover the two amounts (OQ-7), polling, retry safety, and what Phase 2 adds. | Eng Lead asked for the flow diagram in the spec. |
+| 2026-10-13 | NFR-05: the feature flag is now `FEATURE_TOP_UP_LEARNER_CREDIT`, not the PRD's `FEATURE_LEARNER_CREDIT_TOP_UP`; the rename is listed under "Where the design reads the PRD differently", with a note that both names refer to the same flag. | Eng Lead decision: use the name the admin portal already ships (#183). |
+| 2026-10-13 | Dependencies: added Salesforce (pricing data, the top-up opportunity, likely the standing data) and Stripe (one-time charges, `payment_intent` webhooks, a customer per enterprise, SDN question, Phase 2 Financial Connections), each tied to its open questions. | Eng Lead request. |
+| 2026-10-13 | Monitoring & Alerting filled: a Payment table (charged but not credited, failed fulfillment, a Stripe-to-top-up reconciliation, the S-04 failed-payment and SDN guardrails, 3DS completion, time to spendable funds) and a Dependencies table (Stripe API and webhooks, enterprise-subsidy deposits, the pricing source, the Salesforce sync). Severities are proposed; the stuck-top-up threshold is still not set. Writing the reconciliation row exposed a gap: a charge can succeed after its quote expired, and the state machine has no `expired → paid` path. | Eng Lead request. |
+| 2026-10-13 | Feature Flags: added `FEATURE_TOP_UP_LEARNER_CREDIT` (default OFF), what it controls in the portal and in enterprise-access, and its rollback behavior. Proposed that the webhook handlers and fulfillment ignore the flag, so paid top-ups are still credited after it is turned off. How enterprise-access reads the flag is still open. | Eng Lead request. |
+| 2026-10-13 | Deposit endpoint changes: the replay check runs before the expired-subsidy check, so a replay still returns 200 after the subsidy expires. | Eng Lead decision (impl-plan Open Items item 6). |
+| 2026-10-13 | Data Model: the `stripe_payment_intent` slug is its own constant, kept out of `SubsidyReferenceChoices`. | Eng Lead decision (impl-plan Open Items item 8). |

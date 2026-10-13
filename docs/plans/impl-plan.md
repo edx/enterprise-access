@@ -1,0 +1,730 @@
+# Implementation Plan: Learner Credit Self-Service Top Up
+
+<!-- Ported from Confluence "Implementation Plan Template - Agentic SDLC" and reconciled to Inner Loop v7. -->
+
+> **Document Classification**
+> **Type:** Plan Document (pre-build intent) + Living Execution Tracker.
+> Created during Sprint Alignment with pre-build intent; updated during build with status; becomes historical after release; retro appended at sprint end.
+
+| Field | Value |
+| --- | --- |
+| PRD Link | PRD (V2): Learner Credit Top Up — `https://2u-internal.atlassian.net/wiki/spaces/SOL/pages/4004348117/PRD+V2+Learner+Credit+Top+Up` |
+| Tech Spec Link | `docs/plans/tech-spec.md` — built against commit `fdc62085` (2026-09-28) plus the uncommitted spec edits of 2026-10-12 (OQ-7 resolved, 3DS note) and 2026-10-13 (top-up flow diagram, flag name, Dependencies, Monitoring & Alerting, Feature Flags), all reflected here. If the spec changes after that, this plan is stale: reconcile it before adding to it. |
+| Engineering Lead | rthota-sonata@2u.com |
+| Sprint | TBD |
+| Status | Planning |
+| Created | 2026-09-30 |
+| Last Updated | 2026-10-13 |
+
+**Scope** (Eng Lead, 2026-09-30): Phase 1 (card top-ups + Salesforce) is chunked in full. Phases 2
+and 3 are placeholder chunks, to be chunked once their gates clear (see the spec's Phased Delivery).
+Work blocked on an open question gets its interface built now and its implementation in a separate
+chunk that waits on that question.
+
+## Chunk Summary
+
+Chunks are numbered in build order and grouped: **A** enterprise-subsidy (deploys first) · **B**
+enterprise-access foundations · **C** money movement · **D** rest of Phase 1 · **E** admin portal.
+🔒 = the build waits on an open question. An OQ marked *(launch)* doesn't block the build, only the
+release.
+
+| # | Chunk | Status | Owner | Reviewer | Depends On | Unblocks | Est. Size |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 0 | E · Portal flag + disabled "Add funds" on the Budget List card (#183, `ac9849ae`) | ✅ | tsunkara-sonata | — (merged) | — | 21 | — |
+| 1 | A · Keyed deposit requests are safe to retry | 🔲 | Ganesh | rthota-sonata (Eng Lead) | — | 8 | M |
+| 2 | A · Reject deposit metadata keys that clash with ledger columns | 🔲 | Vineeth | rthota-sonata (Eng Lead) | — | Release | S |
+| 3 | A · Add the `stripe_payment_intent` reference provider | 🔲 | Ramesh | rthota-sonata (Eng Lead) | — | 8 | S |
+| 4 | B · Every enterprise maps to one Stripe customer | 🔲 | Ganesh | rthota-sonata (Eng Lead) | — | 7, 23 | M |
+| 5 | B · `LearnerCreditTopUp` model and state machine | 🔲 | Vineeth | rthota-sonata (Eng Lead) | — | 7, 8, 9 | M |
+| 6 | B · Budget eligibility endpoint, permission and backend flag | 🔲 | Ramesh | rthota-sonata (Eng Lead) | — · flag decision (KD-6, pending) | 7, 11, 19, 21 | M |
+| 7 | B · Create and read a top-up quote | 🔲 | Ganesh | rthota-sonata (Eng Lead) | 4, 5, 6 | 11, 17, 22 | L |
+| 8 | C · Deposit step (`paid → deposited`) | 🔲 | Vineeth | rthota-sonata (Eng Lead) | 1, 3, 5 · OQ-9 *(launch)* | 10 | M |
+| 9 | C · Spend-limit step (`deposited → fulfilled`) | 🔲 | Ramesh | rthota-sonata (Eng Lead) | 5 | 10 | M |
+| 10 | C · Fulfillment retry task and ops re-run | 🔲 | Ganesh | rthota-sonata (Eng Lead) | 8, 9 | 11, 12, 14, 16, 20 | M |
+| 11 | C · Pay for a quote with a saved card | 🔲 | Vineeth | rthota-sonata (Eng Lead) | 6, 7, 10 | 13, 15, 18, 25 | L |
+| 12 | C · `payment_intent.succeeded` webhook for top-ups | 🔲 | Ramesh | rthota-sonata (Eng Lead) | 10 | 13, 14 | M |
+| 13 | C · 3DS (`requires_action`) completion | 🔲 | Ganesh | rthota-sonata (Eng Lead) | 11, 12 | 25 | M |
+| 14 | C · Receipt and payment-failure emails | 🔲 | Vineeth | rthota-sonata (Eng Lead) | 10, 12 | Release | S |
+| 15 | D · Server-side tracking events (S-03, S-04) | 🔲 | Ramesh | rthota-sonata (Eng Lead) | 11 · spec Event Contracts (empty) | Release | S |
+| 16 | D · Stuck-top-up alert | 🔲 | Ganesh | rthota-sonata (Eng Lead) | 10 · spec alert threshold (empty) | Release | S |
+| 17 | D · Pricing source | 🔲 | Vineeth | rthota-sonata (Eng Lead) | 7 · 🔒 OQ-3 | Release | M |
+| 18 | D · SDN screening | 🔲 | Ramesh | rthota-sonata (Eng Lead) | 11 · 🔒 OQ-4 | Release | M |
+| 19 | D · Account standing and agreement type | 🔲 | Ganesh | rthota-sonata (Eng Lead) | 6 · 🔒 OQ-8 | Release | M |
+| 20 | D · Salesforce opportunity | 🔲 | Vineeth | rthota-sonata (Eng Lead) | 10 · 🔒 OQ-5 | Release | Unsized until OQ-5 |
+| 21 | E · Add Funds entry points driven by eligibility | 🔲 | Ramesh | rthota-sonata (Eng Lead) | 0, 6 | 22 | M |
+| 22 | E · Checkout route, stepper and Select Amount | 🔲 | Ganesh | rthota-sonata (Eng Lead) | 7, 21 | 23 | L |
+| 23 | E · Billing Details: review, agreement, saved card | 🔲 | Vineeth | rthota-sonata (Eng Lead) | 4, 22 · OQ-6 *(launch)* | 24, 25 | M |
+| 24 | E · Pay with a new card (reuse `AddPaymentMethodModal`) | 🔲 | Ramesh | rthota-sonata (Eng Lead) | 23 | Release | S |
+| 25 | E · Pay and its outcomes (decline, 3DS, polling) | 🔲 | Ganesh | rthota-sonata (Eng Lead) | 11, 13, 23 | 26 | M |
+| 26 | E · Confirmation step, green banner, budgets refresh | 🔲 | Vineeth | rthota-sonata (Eng Lead) | 25 | 27 | M |
+| 27 | E · Portal funnel events (K-01) | 🔲 | Ramesh | rthota-sonata (Eng Lead) | 26 | Release | S |
+| P2 | Phase 2 placeholder — ACH and Pending Credits | 🔲 | TBD | rthota-sonata (Eng Lead) | Phase 1 live · ADR 0012 conditions | — | Chunk later |
+| P3 | Phase 3 placeholder — Billing history | 🔲 | TBD | rthota-sonata (Eng Lead) | Phase 1 live · OQ-6 | — | Chunk later |
+
+*Status legend: 🔲 Not Started / 🔨 In Progress / ✅ Done*
+
+*Est. Size: S / M / L — level of effort, sized to reviewable surface and blast radius, not calendar time.*
+
+## Why These Boundaries
+
+*Proposed in session 1 (2026-09-30) and accepted as proposed: the Eng Lead's answer was "go". The
+reasons are the ones given then. A dash means no boundary question came up for that chunk.*
+
+| # | Scope as agreed | Why the boundary is here |
+| --- | --- | --- |
+| 1 | Retry rules for keyed deposit calls: 200 on replay, 409 on conflict, 429 on a ledger lock, 200 for the loser of a race. Unkeyed calls unchanged. | The whole retry contract enterprise-access relies on, and it all lives in one 97-line file (`deposit.py`). |
+| 2 | 400 for deposit metadata keys that clash with ledger columns | A different purpose from chunk 1: bad data, not retries. |
+| 3 | The `stripe_payment_intent` provider, in a data migration whose reverse does nothing | Reviewed for safety, not behavior: reversing it would delete every top-up deposit. |
+| 4 | New table, backfill, lookup reads the table first, Stripe customer created if missing | It changes a live lookup (saved payment methods), so it ships and settles before any top-up code uses it. |
+| 5 | `LearnerCreditTopUp` model, history, allowed state changes | Every later backend chunk writes to it. It has no behavior yet, so it's light to review. |
+| 6 | Eligibility endpoint, new permission, backend flag (404 when off), account-standing interface (OQ-8) | The first endpoint, so it carries the permission and the flag. It doesn't need the model, so it can run alongside 4 and 5. |
+| 7 | Quote create, detail and list. The pricing interface (OQ-3) fails with 422 until a real source exists; a settings-based source serves devstack and stage. | Kept at L with the list endpoint inside (see below). |
+| 8 | `paid → deposited`: a keyed call to enterprise-subsidy | Isolates failure mode 1, charged but not credited. |
+| 9 | `deposited → fulfilled`, with a row lock and a fresh `total_deposits` | Failure mode 2, credited but not spendable, plus a locking pattern new to the repo. Can run alongside 8. |
+| 10 | Retries with backoff, `errored_fulfillment` on permanent failure, an ops "re-run" action | — |
+| 11 | Create and confirm the PaymentIntent with both idempotency keys, agreement check, 402 on decline, SDN interface (OQ-4), fulfillment in the same request | Kept at L with the pre-charge checks inside (see below). |
+| 12 | Filter on metadata, store the event, queue fulfillment | It shares the live subscription webhook, so it's kept apart from pay. |
+| 13 | `requires_action` with a `client_secret`, completed through the webhook | — |
+| 14 | Card receipt on `fulfilled`; failure email from `payment_intent.payment_failed` | — |
+| 15 | Server-side tracking events (S-03, S-04) | The spec's Event Contracts section is still empty; it gets filled when this chunk starts. |
+| 16 | Stuck-top-up alert | Needs the alert threshold the spec leaves open. |
+| 17 | Pricing source | 🔒 OQ-3. |
+| 18 | SDN screening | 🔒 OQ-4. Could shrink to S if Stripe's own screening is enough. |
+| 19 | Account standing and agreement type | 🔒 OQ-8. Could merge with 17 if both come from Salesforce. |
+| 20 | Salesforce opportunity | 🔒 OQ-5, with no interface-now chunk (see below). |
+| 21 | Add Funds on Budget List and Budget Detail, driven by the eligibility endpoint; disabled with the reason shown | Replaces #183's local check, which #183's own TODO says to do. |
+| 22 | Checkout route, stepper, and Select Amount with the order summary; Continue creates the quote | Kept at L with the route and stepper inside (see below). |
+| 23 | Pre-charge review, legal agreement, choice of saved card | Needs the billing-management API on in production (OQ-6). |
+| 24 | Pay with a new card | Small, because the Billing page already has Stripe Elements: it reuses `AddPaymentMethodModal` and `StripeProvider`. |
+| 25 | Decline alert, 3DS, polling while fulfillment finishes | — |
+| 26 | Confirmation step, green banner, refresh of the cached budgets | — |
+| 27 | Portal funnel events (K-01) | — |
+
+Chunk types, from the sizing guide's taxonomy: 3 is a migration, 4 a migration plus a refactor, 5
+scaffold, 8, 10, 12 and 14 integration glue, and 1, 2, 6, 7, 9, 11 and 13 net-new logic. Portal
+chunks carry their own accessibility criteria (NFR-03) rather than sharing a separate
+accessibility chunk.
+
+**Boundaries challenged in session 1, all kept as proposed:**
+
+- **Chunks 2 and 3 stay separate.** They have the same reviewer and are each about 30 lines, but
+  they serve different purposes.
+- **Chunks 8 and 9 split fulfillment along the two failure modes**, rather than forming one
+  "fulfillment" chunk. This was the strongest recommendation.
+- **Chunk 7 keeps the list endpoint**, although only ops uses it in Phase 1.
+- **Chunk 11 keeps the SDN interface and the agreement check**, rather than a separate
+  "pre-charge checks" chunk.
+- **Chunk 22 keeps the route and stepper** with the Select Amount step.
+- **Chunk 20 gets no interface up front**, unlike the other blocked chunks. If OQ-5's answer is
+  Stripe's Salesforce connector (enterprise-access ADR 0026), enterprise-access may need nothing
+  beyond PaymentIntent metadata, and an interface built now could end up as dead code.
+
+## Sequencing
+
+*From session 1 (2026-09-30). The Dependency Graph shows the full order.*
+
+- **Deploy order** follows the spec (Data Model, Migrations Required): enterprise-subsidy first
+  (group A), then the enterprise-access migrations, then the enterprise-access code behind the
+  flag, then the portal.
+- **First end-to-end demo:** a top-up by API on stage with a test card. It needs chunks 1 and
+  3–11. Chunk 2 is defense in depth, so the demo doesn't need it.
+- **The portal starts early.** Chunk 21 can start once chunk 6 lands, building against the API
+  contract from there.
+- **Chunk 5 unblocks the most work.**
+- **Riskiest to get wrong:** chunks 8 and 9 (one failure mode each) and 12 (it shares the live
+  subscription webhook).
+- **Parallel work:** chunk 6 runs alongside 4 and 5; chunk 9 alongside 8.
+- **Blocked chunks** 17–19 build against interfaces defined in chunks 7, 11 and 6; chunk 20 has no
+  interface. All four gate the release, not the demo.
+
+## Top-Up Flow
+
+*The spec's top-up flow (High-Level Architecture), with each step labeled by the chunk that builds
+it. The flow itself lives in the spec; this copy only adds the chunk numbers. Dashed boxes are
+chunks whose build waits on an open question. Every enterprise-access step reads and writes the
+`LearnerCreditTopUp` model and its states (chunk 5).*
+
+```mermaid
+flowchart TD
+    subgraph SG_AP["Admin portal"]
+        BTN["Add Funds on Budget List / Budget Detail<br/>flag and button · 0 ✅<br/>enabled or disabled from eligibility · 21"]
+        AMT["Step 1 · Select Amount · 22"]
+        BILL["Step 2 · Billing Details<br/>review, agreement, saved card · 23<br/>new card · 24"]
+        TDS["3DS challenge · 25"]
+        ALERT["Decline or ineligible alert · 25"]
+        DONE["Step 3 · Confirmation, green banner,<br/>budgets refresh · 26"]
+        FUN["Funnel events, K-01 · 27"]
+    end
+
+    subgraph SG_EA["enterprise-access"]
+        ELIG{"GET eligibility, permission,<br/>backend flag · 6"}
+        ACCT["Account standing and<br/>agreement type · 19 · OQ-8"]
+        QUOTE["POST quote · 7<br/>Stripe customer map · 4"]
+        PRICE["Pricing source · 17 · OQ-3"]
+        PAY{"POST pay with a saved card · 11<br/>client_secret for 3DS · 13"}
+        SDN["SDN screening · 18 · OQ-4"]
+        EVT["Server tracking events · 15"]
+        HOOK["payment_intent.succeeded<br/>webhook · 12"]
+        TASK["Fulfillment retry task,<br/>ops re-run · 10"]
+        STUCK["Stuck-top-up alert · 16"]
+        DEP["Deposit step<br/>paid to deposited · 8"]
+        SPEND["Spend-limit step<br/>deposited to fulfilled · 9"]
+        MAIL["Receipt and payment-failure<br/>emails · 14"]
+        SF["Salesforce opportunity · 20 · OQ-5"]
+    end
+
+    subgraph SG_STRIPE["Stripe"]
+        PI{"PaymentIntent<br/>charge_amount_cents"}
+    end
+
+    subgraph SG_ES["enterprise-subsidy"]
+        ESDEP["POST admin/deposits/<br/>keyed requests safe to retry · 1<br/>reserved metadata keys · 2<br/>stripe_payment_intent provider · 3"]
+    end
+
+    BTN --> ELIG
+    ACCT -.-> ELIG
+    ELIG -->|"eligible"| AMT
+    AMT --> QUOTE
+    PRICE -.-> QUOTE
+    QUOTE --> BILL
+    BILL -->|"Pay"| PAY
+    SDN -.-> PAY
+    PAY --> PI
+    PAY --> EVT
+    PI -->|"declined"| ALERT
+    ALERT -->|"retry"| BILL
+    PI -->|"requires_action"| TDS
+    TDS -->|"challenge passed"| HOOK
+    PI -.->|"payment_failed webhook"| MAIL
+    PI -->|"succeeded, same request"| DEP
+    HOOK --> TASK
+    TASK --> DEP
+    DEP -->|"quantity = amount_cents"| ESDEP
+    ESDEP -->|"201, or 200 on replay"| SPEND
+    ESDEP -->|"429"| TASK
+    TASK -->|"stuck or errored"| STUCK
+    SPEND --> DONE
+    SPEND --> MAIL
+    SPEND --> SF
+    DONE --> FUN
+
+    classDef blocked stroke-dasharray: 5 5
+    class ACCT,PRICE,SDN,SF blocked
+```
+
+**Amounts (OQ-7, resolved 2026-10-12).** The budget gets the full selected amount as credit, not
+the discounted amount. `amount_cents` is both the ES deposit quantity (chunk 8) and the
+`spend_limit` increase (chunk 9). The card is charged `charge_amount_cents` =
+`amount_cents − discount_cents` (chunks 7 and 11). With no discount on record, the two are equal.
+
+**3DS (3-D Secure).** The card networks brand 3DS as Visa Secure, Mastercard Identity Check and
+American Express SafeKey, so an admin may see any of these names on their bank's challenge screen.
+They all reach this plan the same way, as Stripe's `requires_action` (chunks 13 and 25).
+
+## Open Items
+
+*Carried over from session 1 (2026-09-30). The plan doesn't invent answers to spec gaps: when a
+gap's chunk is reached, the Eng Lead decides, the answer goes into the spec as a Key Decision, and
+this plan follows.*
+
+| # | Item | Resolves at | Status |
+| --- | --- | --- | --- |
+| 1 | **Backend feature flag.** NFR-05 wants a per-enterprise flag, but enterprise-access has no per-enterprise flag mechanism; its one flag is a global waffle flag (`EA:enterprise_access/toggles.py:18`). The portal already has a build-time flag from #183, `FEATURE_TOP_UP_LEARNER_CREDIT` (or `hasFeatureFlagEnabled('TOP_UP_LEARNER_CREDIT')`). The name is settled: `FEATURE_TOP_UP_LEARNER_CREDIT` everywhere (Eng Lead, 2026-10-13; spec NFR-05). **Note:** `FEATURE_LEARNER_CREDIT_TOP_UP` (the PRD's name) = `FEATURE_TOP_UP_LEARNER_CREDIT`; both refer to the same flag. Still open: how enterprise-access reads it, per enterprise. | Chunk 6: options and a recommendation, recorded in the spec as KD-6 | Open (name settled) |
+| 2 | **Stuck-top-up alert threshold.** The "charged but not credited" alarm (spec Fulfillment rule 4) has no threshold, and the spec's Monitoring & Alerting is empty. | Chunk 16, recorded in the spec | Open |
+| 3 | **Response time for `pay`.** The spec says the conflict between same-request fulfillment and NFR-01's 500 ms target is "settled in the Performance Budget", which is still blank. | Chunk 11, recorded in the spec | Open |
+| 4 | **Event contracts.** The spec's Event / Message Contracts section is empty. OQ-10 (how the data reaches Snowflake) feeds it. | Chunk 15 | Open |
+| 5 | **Spec fix: lock-error detection.** The spec's deposit-endpoint changes say the view detects the wrapped lock error "as the v2 transaction view does". It doesn't: the deposit path wraps the error twice, while the transaction view catches it directly (see chunk 1's notes). | Proposed: fix alongside the KD-6 edit in group B | Open. A 2026-10-12 spec re-baseline fixed it, but that edit was lost. |
+| 6 | **Replay before the expiry check** (chunk 1). The "already exists?" lookup runs before the expired-subsidy check, so a paid, already-deposited top-up whose retry arrives after expiry gets 200, not 422, and isn't marked as failed. This goes beyond the spec. | Eng Lead confirmation | Resolved 2026-10-13: confirmed, and added to the spec's deposit endpoint changes |
+| 7 | **429 for unkeyed calls too?** (chunk 1) The spec leaves unkeyed calls unchanged, but a lock conflict is always worth retrying. The only unkeyed caller, the Deposit Funds admin tool, treats every error the same (`EA:enterprise_access/apps/subsidy_access_policy/models.py:1188-1192`), so changing it breaks nothing. Recommendation: 429 for all callers. Until decided, chunk 1's scenarios cover keyed calls only. | Eng Lead decision | Awaiting Eng Lead |
+| 8 | **Provider slug outside `SubsidyReferenceChoices`** (chunk 3). That list also sets which reference types a subsidy can have, so adding the slug to it would change them. | Eng Lead confirmation | Resolved 2026-10-13: kept as written, and added to the spec's Data Model |
+| 9 | **Reviewers.** The Ready-to-Build gate needs a named reviewer for every chunk. Resolved 2026-10-13: the Eng Lead (rthota-sonata) reviews every chunk, including chunks 1–3 as the enterprise-subsidy owner. | Before the Ready-to-Build gate | Resolved |
+| 10 | **Tickets.** The earlier `tickets.md` was built straight from the spec, before this plan, and no longer exists. Tickets follow the plan: generate them with the `ticket-generator` skill once the chunk contracts are done. Chunks won't match the old tickets one-to-one. | After groups B–E are drafted | Open |
+| 11 | **Monitoring with no chunk yet.** The spec's Monitoring & Alerting now has payment and dependency alerts. Chunk 16 covers only the stuck-top-up alert; the Stripe-to-top-up reconciliation (P1), the guardrail rates and the dependency alerts belong to no chunk. Decide whether to widen chunk 16 or add a chunk. | Before the group D contracts | Open |
+| 12 | **A charge can succeed after its quote expired.** A 3DS challenge finished after `expires_at` charges the card, but the state machine has no `expired → paid` path (spec state diagram). Either cancel the PaymentIntent when a quote expires, or allow `expired → paid`. | Chunk 5 (state machine), recorded in the spec | Open |
+
+**Next:** the group B contracts, starting with chunk 6's flag decision (item 1).
+
+## Chunks
+
+*Chunk contracts are added here as each group is agreed. Group A is drafted; groups B–E are next.*
+
+*Group A citations are against enterprise-subsidy `origin/main@78f9af7` (the spec's baseline) and
+openedx-ledger `2.0.0`. `ES` = enterprise-subsidy, `LED` = openedx-ledger, `EA` = enterprise-access,
+as in the spec.*
+
+### Chunk 1: Keyed deposit requests are safe to retry
+
+| Field | Value |
+| --- | --- |
+| Purpose | Make a deposit request that carries an `idempotency_key` safe to retry (KD-5). |
+| Exit Criteria | A replay of a keyed deposit returns 200 with the original deposit; the same key with different values returns 409; ledger-lock contention returns 429; the loser of a same-key race returns 200; an unkeyed duplicate still returns 422. Scenarios below. |
+| Blast Radius | enterprise-subsidy only: `ES:enterprise_subsidy/apps/api/v2/views/deposit.py`, `ES:.../api/v2/serializers/deposits.py`, `ES:.../api/exceptions.py` (a new error code), and `ES:.../api/v2/tests/test_deposit_views.py`. No model, migration, or openedx-ledger change. **What could break:** a replay that returns 200 for a request that doesn't match exactly would hide a real mismatch, so the comparison must cover quantity, reference ID and provider. The only known caller, EA's Django-admin Deposit Funds tool, sends no key and handles every HTTP error the same way (`EA:enterprise_access/apps/subsidy_access_policy/models.py:1188-1192`). |
+| Reviewer | rthota-sonata (Eng Lead) — the enterprise-subsidy owner; the chunk needs enterprise-subsidy and openedx-ledger knowledge |
+| Depends On | — |
+| Unblocks | 8 |
+| Estimated Size | M — about 100 changed lines across two files, but the race handling is subtle. |
+| Jira Ticket | Added when tickets are generated from this plan |
+| Status | 🔲 Not Started |
+
+#### Exit Criteria (Detailed)
+
+```gherkin
+Feature: Keyed deposit requests are safe to retry
+
+  Background:
+    Given an active, unexpired subsidy with a ledger
+    And a client with operator access to the subsidy's enterprise
+
+  Scenario: The first keyed request creates the deposit
+    When the client POSTs a deposit with idempotency_key "K", quantity 100000, reference "R" and the existing provider
+    Then the response status is 201
+    And exactly one Deposit and one committed Transaction exist in the ledger with idempotency_key "K"
+
+  Scenario: A replay returns the original deposit
+    Given a deposit was created with idempotency_key "K", quantity 100000, reference "R" and the existing provider
+    When the client POSTs the same request again
+    Then the response status is 200
+    And the response body is the original deposit, with the same uuid and transaction
+    And the ledger balance has increased by 100000 exactly once
+
+  Scenario: A replay still returns 200 after the subsidy expires
+    Given a deposit was created with idempotency_key "K"
+    And the subsidy has since expired
+    When the client POSTs the same request again
+    Then the response status is 200 with the original deposit
+
+  Scenario Outline: The same key with different values is a conflict
+    Given a deposit was created with idempotency_key "K", quantity 100000, reference "R" and the existing provider
+    When the client POSTs idempotency_key "K" with <field> changed
+    Then the response status is 409 with code "deposit_idempotency_conflict"
+    And no new Deposit or Transaction is created
+
+    Examples:
+      | field                             |
+      | desired_deposit_quantity          |
+      | sales_contract_reference_id       |
+      | sales_contract_reference_provider |
+
+  Scenario: Ledger-lock contention is retryable
+    Given the ledger lock is held by another request
+    When the client POSTs a keyed deposit
+    Then the response status is 429 with code "ledger_lock_error"
+    And no Deposit is created
+    And the same request returns 201 once the lock is released
+
+  Scenario: The loser of a same-key race gets the winner's deposit
+    Given two identical requests with idempotency_key "K" both pass the replay check before either commits
+    When the second insert fails on the ledger's (ledger, idempotency_key) unique constraint
+    Then the second response status is 200 with the first request's deposit
+    And exactly one Deposit exists for idempotency_key "K"
+
+  Scenario: Unkeyed duplicates are still rejected
+    Given a deposit was created without an idempotency_key
+    When the client POSTs the same request again without a key
+    Then the response status is 422 with code "deposit_creation_error"
+```
+
+#### Files to Change
+
+*Populated during "Plan Before Building" (Step 7 / Agentic Build)*
+
+| File | Change | Why |
+| --- | --- | --- |
+| | | |
+
+#### Notes / Decisions During Build
+
+*Append as you go:*
+
+- *Planning, 2026-09-30:* The lock error reaches the view wrapped twice.
+  `LedgerLockAttemptFailed` (`LED:openedx_ledger/models.py:247`) is wrapped by the ledger's
+  `DepositCreationError` (`LED:openedx_ledger/api.py:317-320`), then by the serializer's
+  (`ES:.../api/v2/serializers/deposits.py:133-139`). The view must walk the `__cause__` chain. The
+  v2 transaction view is the precedent only for the 429 response itself (`Throttled` with
+  `ledger_lock_error`, `ES:.../api/v2/views/transaction.py:192-196`); it catches the lock error
+  directly because nothing wraps it on that path.
+- *Planning, 2026-09-30:* A same-key race resolves through the ledger's `unique_together =
+  [('ledger', 'idempotency_key')]` on `Transaction` (`LED:openedx_ledger/models.py:345`). The lock
+  is released before `create_deposit`'s outer `atomic()` commits (`LED:openedx_ledger/api.py:298-320`
+  with `create_transaction`'s `ledger.lock()`), so the losing insert waits on the winner's row and
+  then fails. `ATOMIC_REQUESTS` is off, so re-reading after that failure is safe.
+- *Planning, 2026-09-30 (confirmed by the Eng Lead 2026-10-13):* The replay lookup runs before the expired-subsidy check
+  (`ES:.../api/v2/views/deposit.py:86-90`). Returning an existing deposit is a read, and returning
+  422 for it would push a funded top-up into `errored_fulfillment`.
+
+### Chunk 2: Reject deposit metadata keys that clash with ledger columns
+
+| Field | Value |
+| --- | --- |
+| Purpose | Reject deposit `metadata` keys that would be written to ledger columns instead of stored as metadata. |
+| Exit Criteria | A deposit whose `metadata` contains any ledger parameter name returns 400 naming the key, and nothing is created. Ordinary keys are still stored as metadata. The reserved set tracks the ledger library's signatures. Scenarios below. |
+| Blast Radius | enterprise-subsidy only: `ES:.../api/v2/serializers/deposits.py` (`metadata` validation) and its tests. **What could break:** a caller that sends one of these keys today would start getting 400. The only known caller sends `metadata=None` (`EA:enterprise_access/apps/subsidy_access_policy/admin/views.py:143-147`). Direct operator API use is unknown. |
+| Reviewer | rthota-sonata (Eng Lead) — same as chunk 1 |
+| Depends On | — |
+| Unblocks | Release (defense in depth; chunk 8 sends only safe keys regardless) |
+| Estimated Size | S |
+| Jira Ticket | Added when tickets are generated from this plan |
+| Status | 🔲 Not Started |
+
+#### Exit Criteria (Detailed)
+
+```gherkin
+Feature: Deposit metadata can't overwrite ledger columns
+
+  Background:
+    Given an active, unexpired subsidy with a ledger
+    And a client with operator access to the subsidy's enterprise
+
+  Scenario Outline: A reserved metadata key is rejected
+    When the client POSTs a deposit whose metadata contains "<key>"
+    Then the response status is 400
+    And the error names "<key>"
+    And no Deposit or Transaction is created
+
+    Examples:
+      | key                        |
+      | subsidy_access_policy_uuid |
+      | lms_user_id                |
+      | deposit_uuid               |
+      | state                      |
+      | quantity                   |
+
+  Scenario: Ordinary metadata is stored as metadata
+    When the client POSTs a deposit with metadata {"source": "learner_credit_top_up", "top_up_policy_uuid": "<uuid>"}
+    Then the response status is 201
+    And the new Transaction's metadata contains both keys
+    And the new Transaction's subsidy_access_policy_uuid is null
+
+  Scenario: The reserved set tracks the ledger library
+    Given the named parameters of openedx_ledger.api.create_deposit and openedx_ledger.api.create_transaction
+    Then every one of them is in the reserved set
+```
+
+#### Files to Change
+
+*Populated during "Plan Before Building" (Step 7 / Agentic Build)*
+
+| File | Change | Why |
+| --- | --- | --- |
+| | | |
+
+#### Notes / Decisions During Build
+
+*Append as you go:*
+
+- *Planning, 2026-09-30:* The reserved names are every named parameter of `create_deposit`
+  (`LED:openedx_ledger/api.py:274-282`, which includes `deposit_uuid`) and `create_transaction`
+  (`LED:openedx_ledger/api.py:52-65`). Today some of them fail with a `TypeError` that surfaces
+  as 422 (`quantity`, `state`), and the rest are silently written to columns
+  (`subsidy_access_policy_uuid`, `lms_user_id`, `deposit_uuid`, …). Deriving the set with
+  `inspect.signature` keeps it correct across ledger upgrades.
+
+### Chunk 3: Add the `stripe_payment_intent` reference provider
+
+| Field | Value |
+| --- | --- |
+| Purpose | Register `stripe_payment_intent` as a sales-contract reference provider so top-up deposits can cite their PaymentIntent (KD-5). |
+| Exit Criteria | The forward migration creates exactly one provider row and is safe to re-run. The reverse migration deletes nothing. A deposit can cite the provider with a `pi_…` reference. The subsidy's own reference-type choices are unchanged. Scenarios below. |
+| Blast Radius | enterprise-subsidy only: a new data migration `ES:enterprise_subsidy/apps/subsidy/migrations/0024_…` (the latest is `0023_mariadb_uuid_conversion`), a slug constant, and a migration test. One row is added to openedx-ledger's `SalesContractReferenceProvider` table. **What could break:** deleting the row, by reversing the migration or by hand, cascades to every top-up deposit (`LED:openedx_ledger/models.py:746-751`). |
+| Reviewer | rthota-sonata (Eng Lead) — same as chunk 1 |
+| Depends On | — |
+| Unblocks | 8 |
+| Estimated Size | S — reviewed for safety, not behavior |
+| Jira Ticket | Added when tickets are generated from this plan |
+| Status | 🔲 Not Started |
+
+#### Exit Criteria (Detailed)
+
+```gherkin
+Feature: Top-up deposits can cite a Stripe PaymentIntent
+
+  Scenario: The forward migration adds the provider
+    Given the subsidy app is migrated to 0023
+    When migration 0024 runs
+    Then exactly one SalesContractReferenceProvider with slug "stripe_payment_intent" exists
+
+  Scenario: Re-running the forward step is harmless
+    Given the "stripe_payment_intent" provider already exists
+    When the forward step runs again
+    Then exactly one provider with that slug exists
+
+  Scenario: Reversing the migration deletes nothing
+    Given a Deposit that cites the "stripe_payment_intent" provider
+    When the subsidy app is migrated back to 0023
+    Then the provider row still exists
+    And the Deposit still exists
+
+  Scenario: A deposit can cite a PaymentIntent
+    Given the migration has run
+    When an operator POSTs a deposit with provider "stripe_payment_intent" and reference "pi_3Qexample"
+    Then the response status is 201
+    And the deposit's sales_contract_reference_provider is "stripe_payment_intent"
+
+  Scenario: The subsidy's reference-type choices are unchanged
+    Then "stripe_payment_intent" is not a choice for Subsidy.reference_type
+    And makemigrations --check reports no pending changes
+```
+
+#### Files to Change
+
+*Populated during "Plan Before Building" (Step 7 / Agentic Build)*
+
+| File | Change | Why |
+| --- | --- | --- |
+| | | |
+
+#### Notes / Decisions During Build
+
+*Append as you go:*
+
+- *Planning, 2026-09-30 (confirmed by the Eng Lead 2026-10-13):* The slug is defined outside `SubsidyReferenceChoices`. That enum is
+  also the choice list for `Subsidy.reference_type` (`ES:enterprise_subsidy/apps/subsidy/models.py:63-70, 176`),
+  and a subsidy's reference is its Salesforce line item, never a PaymentIntent. Migration 0022
+  copies that enum into the provider table (`ES:.../subsidy/migrations/0022_backfill_initial_deposits.py:34-37`).
+  The new migration uses a hard-coded slug with `get_or_create` and `migrations.RunPython.noop` as
+  its reverse.
+- *Planning, 2026-09-30:* `Deposit.sales_contract_reference_id` is a 255-character field
+  (`LED:openedx_ledger/models.py:735-736`), so it fits a `pi_…` ID.
+- *Ops note:* The provider row must never be deleted, including from the Django admin. This goes
+  into the runbook (Ops Readiness).
+
+## Data Model
+
+**New Models**
+
+| Model | Fields | Relationships | Constraints | Notes |
+| --- | --- | --- | --- | --- |
+| | | | | |
+
+*ERD: Generated during Technical Readiness (Step 4): `Generate ERD from the data model section of impl-plan.md`*
+
+```mermaid
+erDiagram
+%% Replace with actual ERD
+```
+
+**Migrations**
+
+| Migration | Description | Risk | Rollback | Chunk |
+| --- | --- | --- | --- | --- |
+| | | | | |
+
+## Test Plan
+
+**Unit Tests**
+
+| Area | Scenarios | Chunk | Owner |
+| --- | --- | --- | --- |
+| | | | |
+
+**Integration Tests**
+
+| Scenario | Systems Involved | Setup Required | Chunk | Owner |
+| --- | --- | --- | --- | --- |
+| | | | | |
+
+**Edge Case Tests**
+
+| Edge Case | Expected Behavior | Test Type (Unit / Integration / Manual) | Chunk |
+| --- | --- | --- | --- |
+| | | | |
+
+**Test Data Requirements**
+
+| Data | Source (Factory / Fixture / Seed / Mock) | Setup Method | Teardown |
+| --- | --- | --- | --- |
+| | | | |
+
+## Ops Readiness
+
+**Monitoring**
+
+| Metric | Dashboard | Alert Threshold | Severity |
+| --- | --- | --- | --- |
+| | | | |
+
+**Alerts**
+
+| Alert Name | Condition | Who Gets Paged | Response |
+| --- | --- | --- | --- |
+| | | | |
+
+**Runbook**
+
+*If this breaks at 2am, what does on-call do?*
+
+1. Symptom:
+2. Diagnosis steps:
+3. Remediation:
+4. Escalation path:
+
+**Rollback Plan**
+
+1.
+2.
+3.
+
+**Feature Flags**
+
+| Flag | Default | Chunk | Rollback Behavior |
+| --- | --- | --- | --- |
+| `FEATURE_TOP_UP_LEARNER_CREDIT` | OFF | 0 (portal flag, done), 6 (backend flag and the 404s), 21 (entry points) | Off hides the entry points and returns 404 from the top-up endpoints. Proposed in the spec: webhooks and fulfillment ignore the flag, so paid top-ups are still credited. |
+
+## Dependency Graph
+
+*Dashed borders are chunks whose build waits on an open question.*
+
+```mermaid
+graph LR
+    subgraph A[A · enterprise-subsidy]
+        C1[1 Keyed deposit retry]
+        C2[2 Reserved metadata keys]
+        C3[3 PaymentIntent provider]
+    end
+    subgraph B[B · enterprise-access foundations]
+        C4[4 Stripe customer map]
+        C5[5 Top-up model]
+        C6[6 Eligibility + flag]
+        C7[7 Quote]
+    end
+    subgraph C[C · money movement]
+        C8[8 Deposit step]
+        C9[9 Spend-limit step]
+        C10[10 Fulfillment task]
+        C11[11 Pay, saved card]
+        C12[12 Webhook]
+        C13[13 3DS]
+        C14[14 Emails]
+    end
+    subgraph D[D · rest of Phase 1]
+        C15[15 Server events]
+        C16[16 Stuck alert]
+        C17[17 Pricing source]
+        C18[18 SDN]
+        C19[19 Account standing]
+        C20[20 Salesforce]
+    end
+    subgraph E[E · admin portal]
+        C0[0 Flag + button ✅]
+        C21[21 Entry points]
+        C22[22 Select Amount]
+        C23[23 Billing Details]
+        C24[24 New card]
+        C25[25 Pay outcomes]
+        C26[26 Confirmation]
+        C27[27 Funnel events]
+    end
+
+    C1 --> C8
+    C3 --> C8
+    C5 --> C8
+    C5 --> C9
+    C4 --> C7
+    C5 --> C7
+    C6 --> C7
+    C8 --> C10
+    C9 --> C10
+    C6 --> C11
+    C7 --> C11
+    C10 --> C11
+    C10 --> C12
+    C11 --> C13
+    C12 --> C13
+    C10 --> C14
+    C12 --> C14
+    C11 --> C15
+    C10 --> C16
+    C7 --> C17
+    C11 --> C18
+    C6 --> C19
+    C10 --> C20
+    C0 --> C21
+    C6 --> C21
+    C7 --> C22
+    C21 --> C22
+    C4 --> C23
+    C22 --> C23
+    C23 --> C24
+    C11 --> C25
+    C13 --> C25
+    C23 --> C25
+    C25 --> C26
+    C26 --> C27
+
+    C2 & C14 & C15 & C16 & C17 & C18 & C19 & C20 & C24 & C27 --> RELEASE([Phase 1 release])
+    RELEASE --> P2[P2 ACH + Pending Credits]
+    RELEASE --> P3[P3 Billing history]
+
+    classDef blocked stroke-dasharray: 5 5
+    class C17,C18,C19,C20 blocked
+```
+
+## Retro
+
+*Appended at sprint end (Retro, Step 20). Target: 3–5 actionable items.*
+
+| Field | Value |
+| --- | --- |
+| Date | |
+| Participants | |
+
+### What Went Well
+
+-
+
+### What Didn't Go Well
+
+-
+
+### What Surprised Us
+
+-
+
+### Action Items
+
+| # | Action | Owner | Target | Routed To (CLAUDE.md / Skills / Arch MD / KB) |
+| --- | --- | --- | --- | --- |
+| 1 | | | | |
+
+## AI Prompts for This Document
+
+*Chunking is a **judgment you make with the AI, not a layout it hands you** — the plan is only
+useful if you understand why each chunk is scoped the way it is. Have the AI propose, then
+interrogate the boundaries together before you accept them.*
+
+### Step 1 (Sprint Alignment) — co-author the chunking
+
+- `Propose a chunking of tech-spec.md into single-responsibility chunks with Gherkin exit criteria. For each, explain why you drew the boundary there — then let me adjust before you finalize.`
+- `Talk me through the dependency order. Which chunk unblocks the most others, and what's the riskiest one to get wrong?`
+- `For each chunk, identify blast radius — what services/components are touched?`
+
+### Step 2 (Chunk Review)
+
+- `Pre-screen impl-plan chunks: flag any that span unrelated subsystems, exceed one-sitting reviewable surface, have ambiguous exit criteria, or are missing reviewer/blast-radius fields`
+
+### Step 4 (Technical Readiness)
+
+- `Generate ERD from the data model section of impl-plan.md`
+- `Generate test plan from exit criteria — cover unit, integration, and edge cases`
+
+### Step 7 (Agentic Build)
+
+- `Build chunk [N] from impl-plan.md. Follow patterns in CLAUDE.md. Run unit tests after each file change.`
+
+## Changelog
+
+| Date | Change | Why |
+| --- | --- | --- |
+| 2026-09-30 | Scaffolded from the template. Scope set: Phase 1 in full, Phases 2–3 as placeholders; blocked work split into interface-now and implement-later chunks; reviewers TBD. | Session 1 kickoff: the Eng Lead accepted the proposed defaults. |
+| 2026-09-30 | Decomposition agreed: chunks 0–27 plus placeholders P2 and P3, in groups A–E; Chunk Summary and Dependency Graph written. Chunk 0 records portal work already merged (#183). Chunk 20 (Salesforce) has no interface-now chunk, because OQ-5's answer may mean enterprise-access needs no code. | The Eng Lead accepted the proposal as-is ("go"), including keeping chunks 2/3, 8/9 split and 7, 11, 22 at L. |
+| 2026-09-30 | Group A contracts drafted (chunks 1–3), grounded against enterprise-subsidy `origin/main@78f9af7` and openedx-ledger `2.0.0`. Three calls made in the drafting, awaiting the Eng Lead's confirmation: the replay check runs before the expired-subsidy check; lock contention answers 429 for keyed calls (unkeyed calls still open); the provider slug lives outside `SubsidyReferenceChoices`. | Session 1. |
+| 2026-10-13 | Reconciled with the current spec. OQ-7 is resolved, so chunks 7 and 11 no longer depend on it and the *(assumed)* marker is gone. Added Top-Up Flow: the spec's new flow diagram with each step labeled by its chunk, plus notes on the two amounts (OQ-7) and the 3DS brand names. Tech Spec Link updated. | The spec changed after this plan was written: the OQ-7 answer and 3DS note (2026-10-12) and the flow diagram (2026-10-13). This file had been overwritten on 2026-10-12 with its 2026-09-30 copy, which lost the plan's own 2026-10-12 reconciliation. |
+| 2026-10-13 | Rebuilt Why These Boundaries, Sequencing and Open Items from the session 1 transcript (`claude/conversation/impl-plan.rst`). The spec-fix item (lock-error detection) is open again, because the spec re-baseline that fixed it was lost too. | The 2026-10-12 overwrite lost these sections; the Eng Lead asked for them to be rebuilt from the transcript. |
+| 2026-10-13 | Open Items, item 1: the flag name is settled as `FEATURE_TOP_UP_LEARNER_CREDIT`, matching #183 and the spec's NFR-05, with a note that the PRD's `FEATURE_LEARNER_CREDIT_TOP_UP` is the same flag; how enterprise-access reads it is still open. Tech Spec Link updated. | Eng Lead decision; the spec's NFR-05 was renamed to match. |
+| 2026-10-13 | Chunk owners assigned in sequence by chunk number: Ganesh, Vineeth, Ramesh, repeating (chunks 1–27). Chunk 0 keeps tsunkara-sonata; placeholders P2 and P3 stay TBD until they're chunked. Reviewers are still TBD. | Eng Lead assignment. |
+| 2026-10-13 | Reviewer set to the Eng Lead (rthota-sonata) for chunks 1–27 and placeholders P2 and P3, in the Chunk Summary and in chunk 1–3 contracts. Open Items item 9 resolved. | Eng Lead decision. |
+| 2026-10-13 | Tech Spec Link updated: the spec gained a Dependencies table (Salesforce, Stripe). No chunk changes: the Salesforce needs are chunks 17, 19 and 20, and the Stripe needs are chunks 4, 11, 12 and 18. | Keeping the plan in step with the spec. |
+| 2026-10-13 | Tech Spec Link updated for the spec's new Monitoring & Alerting tables. Open Items 11 (monitoring with no chunk) and 12 (a charge can succeed after its quote expired) added. | The spec's monitoring work exposed both. |
+| 2026-10-13 | Ops Readiness, Feature Flags: added `FEATURE_TOP_UP_LEARNER_CREDIT` (default OFF), built by chunks 0, 6 and 21. Tech Spec Link updated for the spec's new Feature Flags row. | Eng Lead request. |
+| 2026-10-13 | Open Items item 6 resolved: the replay check runs before the expired-subsidy check. Chunk 1's scenario and note stand; the note is marked confirmed, and the spec now states the order. | Eng Lead decision. |
+| 2026-10-13 | Open Items item 8 resolved: the provider slug stays outside `SubsidyReferenceChoices`. Chunk 3 is unchanged; its note is marked confirmed, and the spec's Data Model now states it. | Eng Lead decision ("leave as it is"). |
