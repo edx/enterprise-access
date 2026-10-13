@@ -2,21 +2,46 @@
 Python API for interacting with SubsidyAccessPolicy records.
 """
 import logging
-from typing import Iterable
+from typing import Iterable, TypedDict
 
 from django.core.exceptions import ValidationError
 from django.db import DatabaseError
+from django.utils import timezone
 from requests.exceptions import HTTPError
 from rest_framework import status
 
 from enterprise_access.apps.content_assignments.api import AllocationException
 from enterprise_access.apps.content_assignments.constants import AssignmentSources
+from enterprise_access.apps.core.models import User
 from enterprise_access.apps.subsidy_request.models import LearnerCreditRequest
+from enterprise_access.utils import format_traceback, localized_utcnow
 
-from .exceptions import ContentPriceNullException, PriceValidationError, SubisidyAccessPolicyRequestApprovalError
-from .models import SubsidyAccessPolicy
+from .exceptions import (
+    ContentPriceNullException,
+    PriceValidationError,
+    SubisidyAccessPolicyRequestApprovalError,
+    SubsidyAccessPolicyLockAttemptFailed,
+    SubsidyAPIHTTPError
+)
+from .models import ForcedPolicyRedemption, SubsidyAccessPolicy
 
 logger = logging.getLogger(__name__)
+
+FORCED_REDEMPTION_CURRENT_TIME_KEY = 'geag_terms_accepted_at'
+FORCED_REDEMPTION_DATA_SHARE_CONSENT_KEY = 'geag_data_share_consent'
+FORCED_REDEMPTION_EMAIL_KEY = 'geag_email'
+GEAG_DATETIME_FMT = '%Y-%m-%dT%H:%M:%SZ'
+
+
+class GeagMetadata(TypedDict, total=False):
+    """
+    Exec Ed (GEAG) values a forced redemption copies into its transaction metadata. They're learner PII and
+    aren't persisted on ``ForcedPolicyRedemption``. All values are strings, so this can be passed to a celery task.
+    """
+    geag_first_name: str
+    geag_last_name: str
+    geag_date_of_birth: str  # YYYY-MM-DD
+    fallback_external_fulfillment_reference_id: str  # UUID of an existing GEAG order
 
 
 def get_subsidy_access_policy(uuid):
@@ -126,3 +151,37 @@ def validate_and_allocate(
             message=str(exc),
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         ) from exc
+
+
+def force_redeem_with_geag_metadata(
+    forced_redemption: ForcedPolicyRedemption,
+    geag_metadata: GeagMetadata,
+    actor_lms_user_id: int | None,
+    suppress_assignment_email: bool = False,
+) -> None:
+    """
+    Calls ``forced_redemption.force_redeem()``. If ``geag_metadata`` has any non-empty values, they're added to
+    the transaction metadata along with the other fields GEAG requires (terms acceptance, consent, email).
+
+    Any failure is recorded on the record (``errored_at``/``traceback``) and re-raised.
+    """
+    try:
+        # Drop empty values so callers like admin forms can pass '' for blank fields.
+        extra_metadata: dict = {key: value for key, value in geag_metadata.items() if value}
+        if extra_metadata:
+            user_record = User.objects.get(lms_user_id=forced_redemption.lms_user_id)
+            extra_metadata[FORCED_REDEMPTION_CURRENT_TIME_KEY] = timezone.now().strftime(GEAG_DATETIME_FMT)
+            extra_metadata[FORCED_REDEMPTION_DATA_SHARE_CONSENT_KEY] = True
+            extra_metadata[FORCED_REDEMPTION_EMAIL_KEY] = user_record.email
+        forced_redemption.force_redeem(
+            extra_metadata=extra_metadata or None,
+            actor_lms_user_id=actor_lms_user_id,
+            suppress_assignment_email=suppress_assignment_email,
+        )
+    except (SubsidyAccessPolicyLockAttemptFailed, SubsidyAPIHTTPError):
+        raise  # force_redeem() already recorded these, with the subsidy API response payload.
+    except Exception as exc:
+        forced_redemption.errored_at = localized_utcnow()
+        forced_redemption.traceback = format_traceback(exc)
+        forced_redemption.save()
+        raise

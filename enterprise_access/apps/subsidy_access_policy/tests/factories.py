@@ -91,4 +91,4 @@ class ForcedPolicyRedemptionFactory(factory.django.DjangoModelFactory):
 
     lms_user_id = factory.LazyAttribute(lambda _: FAKER.pyint(min_value=1))
     course_run_key = factory.LazyAttribute(lambda _: random_content_key())
-    content_price_cents = factory.LazyAttribute(lambda _: FAKER.pytint(min_value=1, max_value=1000))
+    content_price_cents = factory.LazyAttribute(lambda _: FAKER.pyint(min_value=1, max_value=1000))
