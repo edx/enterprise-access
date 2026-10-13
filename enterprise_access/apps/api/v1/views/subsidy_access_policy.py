@@ -541,10 +541,15 @@ class SubsidyAccessPolicyRedeemViewset(UserDetailsFromJwtMixin, PermissionRequir
             enterprise_customer_uuid=self.enterprise_customer_uuid,
         ).order_by('-created')
 
-    def evaluate_policies(self, enterprise_customer_uuid, lms_user_id, content_key, skip_customer_user_check=False):
+    def evaluate_policies(
+        self, enterprise_customer_uuid, lms_user_id, content_key,
+        skip_customer_user_check=False, unreachable_subsidy_uuids=None,
+    ):
         """
         Evaluate all policies for the given enterprise customer to check if it can be redeemed against the given learner
         and content.
+
+        Policies funded by a subsidy in ``unreachable_subsidy_uuids`` are skipped.
 
         Note: Calling this will cause multiple backend API calls to the enterprise-subsidy can_redeem endpoint, one for
         each access policy evaluated.
@@ -563,12 +568,16 @@ class SubsidyAccessPolicyRedeemViewset(UserDetailsFromJwtMixin, PermissionRequir
         """
         redeemable_policies = []
         non_redeemable_policies = defaultdict(list)
+        # policy.can_redeem() below would call the unreachable subsidy again and fail the request.
+        policies_queryset = self.get_queryset()
+        if unreachable_subsidy_uuids:
+            policies_queryset = policies_queryset.exclude(subsidy_uuid__in=unreachable_subsidy_uuids)
         # Sort policies by:
         # - priority (of type)
         # - expiration, sooner to expire first
         # - balance, lower balance first
         all_sorted_policies_for_enterprise = sort_subsidy_access_policies_for_redemption(
-            queryset=self.get_queryset()
+            queryset=policies_queryset
         )
         for policy in all_sorted_policies_for_enterprise:
             try:
@@ -728,9 +737,13 @@ class SubsidyAccessPolicyRedeemViewset(UserDetailsFromJwtMixin, PermissionRequir
         Returns a mapping of content keys to a mapping of policy uuids to lists of transactions
         for the given learner, filtered to only those transactions associated with **subsidies**
         to which any of the given **policies** are associated.
+
+        Also returns the unreachable subsidy uuids, whose policies the caller should skip.
         """
         try:
-            redemptions_map = get_redemptions_by_content_and_policy_for_learner(policies, lms_user_id)
+            redemptions_map, unreachable_subsidy_uuids = get_redemptions_by_content_and_policy_for_learner(
+                policies, lms_user_id,
+            )
         except SubsidyAPIHTTPError as exc:
             logger.exception(f'{exc} when fetching redemptions from subsidy API')
             error_payload = exc.error_payload()
@@ -752,7 +765,7 @@ class SubsidyAccessPolicyRedeemViewset(UserDetailsFromJwtMixin, PermissionRequir
                         f"courses/{content_key}/courseware/",
                     )
 
-        return redemptions_map
+        return redemptions_map, unreachable_subsidy_uuids
 
     def _get_list_price_for_catalog_course_metadata(self, course_metadata, content_key):
         """
@@ -824,7 +837,7 @@ class SubsidyAccessPolicyRedeemViewset(UserDetailsFromJwtMixin, PermissionRequir
         if not policies_for_customer:
             raise NotFound(detail='No active policies for this customer')
 
-        redemptions_by_content_and_policy = self.get_existing_redemptions(
+        redemptions_by_content_and_policy, unreachable_subsidy_uuids = self.get_existing_redemptions(
             policies_for_customer,
             lms_user_id
         )
@@ -871,6 +884,7 @@ class SubsidyAccessPolicyRedeemViewset(UserDetailsFromJwtMixin, PermissionRequir
                     lms_user_id, content_key,
                     # don't skip the customer user check if we're using an override lms_user_id
                     skip_customer_user_check=not bool(lms_user_id_override),
+                    unreachable_subsidy_uuids=unreachable_subsidy_uuids,
                 )
 
             if not successful_redemptions and not redeemable_policies:

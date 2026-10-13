@@ -55,13 +55,18 @@ def sort_subsidy_access_policies_for_redemption(queryset):
            - priority (of type)
            - expiration, sooner to expire first
            - balance, lower balance first
+
+    A null expiration (never expires, or an unreachable subsidy's ``{}`` record) sorts last rather than being
+    compared, which would raise TypeError.
     """
     if queryset.count() <= 1:
         return queryset
-    return sorted(
-        queryset,
-        key=lambda p: (p.priority, p.subsidy_expiration_datetime, p.subsidy_balance())
-    )
+
+    def sort_key(policy):
+        expiration = policy.subsidy_expiration_datetime
+        return (policy.priority, expiration is None, expiration, policy.subsidy_balance())
+
+    return sorted(queryset, key=sort_key)
 
 
 class ProxyAwareHistoricalRecords(HistoricalRecords):

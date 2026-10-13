@@ -114,6 +114,27 @@ Uses `edx-rbac` for fine-grained permissions with:
 - A degraded mode (unscoped search) requires both a settings flag and an explicit call-site
   argument, and is never reached by fallback — missing or expired scoping raises
 
+### 18. Isolate per-subsidy failures when fanning out to enterprise-subsidy
+A customer can own several subsidies, and one can become unreachable on its own while the others stay healthy.
+Any loop that calls enterprise-subsidy once per subsidy should drop just the failing subsidy rather than abort,
+so the learner still gets an answer for the healthy ones.
+
+- **Know which status codes mean "this one subsidy".** A soft-deleted (or unknown) subsidy answers **403**, not
+  404: enterprise-subsidy resolves the RBAC context through `Subsidy.objects`, which hides soft-deleted rows, so
+  the permission check fails before the view runs. 404 only covers a subsidy that disappears after that check.
+- **A 403 from every subsidy is not per-subsidy.** It looks the same as our own service credentials losing their
+  role, so when *every* subsidy is unreachable, re-raise instead of degrading. Otherwise learners are quietly
+  told nothing is available during what is really an outage. A 5xx always affects every subsidy and is always
+  re-raised. See `UNREACHABLE_SUBSIDY_STATUS_CODES` in `subsidy_access_policy/subsidy_api.py`.
+- **`can-redeem` fans out at two independent points.**
+  `get_redemptions_by_content_and_policy_for_learner()` fetches the learner's transactions per subsidy, and
+  `evaluate_policies()` separately calls `policy.can_redeem()` per policy, which calls the subsidy's `can_redeem`
+  endpoint and doesn't catch `HTTPError`. `evaluate_policies()` re-reads `get_queryset()`, so the failing
+  subsidy's policies must be excluded there too, or the second fan-out fails the request anyway.
+- **`subsidy_record()` swallows `HTTPError` and returns `{}`,** so a dead subsidy's policy reports a null
+  expiration and a zero balance rather than raising. Code that compares those fields across policies (for
+  example `sort_subsidy_access_policies_for_redemption()`) must tolerate nulls.
+
 ### Key Takeaways for Implementation:
 - Check permissions early using `@permission_required` decorator
 - Use separate serializers for request/response

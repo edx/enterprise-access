@@ -19,6 +19,22 @@ from ..subsidy_api import (
 )
 from .factories import PerLearnerSpendCapLearnerCreditAccessPolicyFactory
 
+TRANSACTION_FETCH_PATH = (
+    'enterprise_access.apps.subsidy_access_policy.subsidy_api.get_and_cache_transactions_for_learner'
+)
+
+
+def _unreachable_subsidy_error(status_code):
+    """
+    Build the ``SubsidyAPIHTTPError`` that ``get_and_cache_transactions_for_learner`` raises when the
+    Subsidy API rejects the request, e.g. for a soft-deleted subsidy (403) or one that disappears later (404).
+    """
+    downstream_error = requests.HTTPError()
+    downstream_error.response = mock.Mock(status_code=status_code)
+    wrapped_error = SubsidyAPIHTTPError('HTTPError occurred in Subsidy API request.')
+    wrapped_error.__cause__ = downstream_error
+    return wrapped_error
+
 
 class TransactionsForLearnerTests(TestCase):
     """
@@ -148,7 +164,7 @@ class TransactionsForLearnerTests(TestCase):
             {'transactions': mock_cake_transactions, 'aggregates': {}},
         ]
 
-        result = get_redemptions_by_content_and_policy_for_learner(
+        result, unreachable_subsidy_uuids = get_redemptions_by_content_and_policy_for_learner(
             [cherry_policy, apple_policy, german_chocolate_policy],
             123,
         )
@@ -161,6 +177,75 @@ class TransactionsForLearnerTests(TestCase):
             },
             result,
         )
+        self.assertEqual(set(), unreachable_subsidy_uuids)
+
+
+@ddt.ddt
+class RedemptionsFailureIsolationTests(TestCase):
+    """
+    Tests that one unreachable subsidy does not fail the whole per-subsidy fan-out in
+    ``get_redemptions_by_content_and_policy_for_learner``.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.healthy_subsidy_uuid = uuid.uuid4()
+        self.unreachable_subsidy_uuid = uuid.uuid4()
+        self.healthy_policy = PerLearnerSpendCapLearnerCreditAccessPolicyFactory(
+            subsidy_uuid=self.healthy_subsidy_uuid,
+        )
+        self.unreachable_policy = PerLearnerSpendCapLearnerCreditAccessPolicyFactory(
+            subsidy_uuid=self.unreachable_subsidy_uuid,
+        )
+        self.healthy_transaction = {
+            'uuid': 'alpha',
+            'content_key': 'content-1',
+            'subsidy_access_policy_uuid': str(self.healthy_policy.uuid),
+        }
+
+    def _fetch_side_effect(self, unreachable_uuids, status_code=404):
+        """Return a ``get_and_cache_transactions_for_learner`` stub that fails for the given subsidies."""
+        def fetch(subsidy_uuid, lms_user_id):  # pylint: disable=unused-argument
+            if subsidy_uuid in unreachable_uuids:
+                raise _unreachable_subsidy_error(status_code)
+            return {'transactions': [self.healthy_transaction], 'aggregates': {}}
+        return fetch
+
+    @ddt.data(403, 404)
+    @mock.patch(TRANSACTION_FETCH_PATH)
+    def test_unreachable_subsidy_does_not_fail_healthy_subsidies(self, status_code, mock_fetch):
+        """A subsidy answering 403 (e.g. soft-deleted) or 404 drops only its own policies, and is logged."""
+        mock_fetch.side_effect = self._fetch_side_effect({self.unreachable_subsidy_uuid}, status_code)
+
+        with self.assertLogs('enterprise_access.apps.subsidy_access_policy.subsidy_api', level='WARNING') as logs:
+            result, unreachable_subsidy_uuids = get_redemptions_by_content_and_policy_for_learner(
+                [self.unreachable_policy, self.healthy_policy],
+                123,
+            )
+
+        self.assertEqual({'content-1': {self.healthy_policy: [self.healthy_transaction]}}, result)
+        self.assertEqual({self.unreachable_subsidy_uuid}, unreachable_subsidy_uuids)
+        self.assertIn(str(self.unreachable_subsidy_uuid), logs.output[0])
+        self.assertIn(str(self.unreachable_policy.uuid), logs.output[0])
+
+    @ddt.data(
+        # A 5xx means the Subsidy API is down, so even one failure fails the request.
+        (False, 500), (False, 502), (False, 503),
+        # A 403/404 from *every* subsidy may mean our own access is broken.
+        (True, 403), (True, 404),
+    )
+    @ddt.unpack
+    @mock.patch(TRANSACTION_FETCH_PATH)
+    def test_failure_not_isolated_to_one_subsidy_still_fails(self, every_subsidy_fails, status_code, mock_fetch):
+        """Only a 403/404 from some, not all, subsidies is isolated; anything else still fails the request."""
+        failing = {self.unreachable_subsidy_uuid}
+        if every_subsidy_fails:
+            failing.add(self.healthy_subsidy_uuid)
+        mock_fetch.side_effect = self._fetch_side_effect(failing, status_code)
+
+        with self.assertRaises(SubsidyAPIHTTPError) as raised:
+            get_redemptions_by_content_and_policy_for_learner([self.unreachable_policy, self.healthy_policy], 123)
+        self.assertEqual(status_code, raised.exception.error_response.status_code)
 
 
 @ddt.ddt
