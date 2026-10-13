@@ -4,6 +4,7 @@ Tests the ForcedPolicyRedemption model.
 from unittest import mock
 from uuid import uuid4
 
+import ddt
 from django.test import TestCase
 from django.utils import timezone
 
@@ -181,6 +182,7 @@ class ForcedPolicyRedemptionPerLearnerSpendTests(BaseForcedRedemptionTestCase):
             self.assertIn('HTTPError occurred in Subsidy API request', forced_redemption_record.traceback)
 
 
+@ddt.ddt
 class ForcedPolicyRedemptionAssignmentTests(BaseForcedRedemptionTestCase):
     """
     Tests forced redemption against Assignment-based policies.
@@ -229,11 +231,12 @@ class ForcedPolicyRedemptionAssignmentTests(BaseForcedRedemptionTestCase):
             **policy_kwargs,
         )
 
+    @ddt.data(False, True)
     @mock.patch('enterprise_access.apps.content_assignments.api.send_email_for_new_assignment')
     @mock.patch(
         'enterprise_access.apps.content_assignments.api.create_pending_enterprise_learner_for_assignment_task'
     )
-    def test_force_redemption_with_assignment_happy_path(self, mock_pending_learner_task, mock_send_email):
+    def test_force_redemption_with_assignment_happy_path(self, suppress, mock_pending_learner_task, mock_send_email):
         """
         Starting from a clean, unspent state of some policy's subsidy,
         test that we can force redemption.
@@ -249,7 +252,9 @@ class ForcedPolicyRedemptionAssignmentTests(BaseForcedRedemptionTestCase):
         )
 
         with self.captureOnCommitCallbacks(execute=True):
-            forced_redemption_record.force_redeem(actor_lms_user_id=ADMIN_LMS_USER_ID)
+            forced_redemption_record.force_redeem(
+                actor_lms_user_id=ADMIN_LMS_USER_ID, suppress_assignment_email=suppress,
+            )
 
         forced_redemption_record.refresh_from_db()
         self.assertEqual(MOCK_DATETIME_1, forced_redemption_record.redeemed_at)
@@ -268,7 +273,7 @@ class ForcedPolicyRedemptionAssignmentTests(BaseForcedRedemptionTestCase):
         assignment = LearnerContentAssignment.objects.filter(lms_user_id=self.lms_user_id).first()
         self.assertEqual(assignment.content_key, self.course_run_key)
         self.assertEqual(assignment.learner_email, 'Alice@foo.com')
-        mock_send_email.delay.assert_called_once_with(assignment.uuid)
+        self.assertEqual(mock_send_email.delay.call_args_list, [] if suppress else [mock.call(assignment.uuid)])
         mock_pending_learner_task.delay.assert_called_once_with(assignment.uuid)
 
         # A forced redemption is driven by an admin via Django admin, not the learner themselves, so the

@@ -1,0 +1,57 @@
+{% extends "admin/base_site.html" %}
+{% load i18n static admin_urls %}
+
+{% block extrastyle %}
+  <style>
+    .forms-panel .helptext {
+      display: block;
+      font-size: 0.8em;
+      color: #bbb;
+    }
+  </style>
+{% endblock %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">{% trans "Home" %}</a>
+  &rsaquo; <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a>
+  &rsaquo; <a href="{% url opts|admin_urlname:'changelist' %}">{{ opts.verbose_name_plural|capfirst }}</a>
+  &rsaquo; {% trans "Bulk create" %}
+</div>
+{% endblock %}
+
+{% block content %}
+<div id="content-main">
+  <div class="forms-panel">
+    <p>
+      Each object below is saved as if it had been entered in the "Add forced policy redemption" form, so each
+      one is redeemed on save unless <code>wait_to_redeem</code> is true. Keys are that form's field names;
+      <code>subsidy_access_policy</code> is the policy UUID, and the <code>geag_*</code> and
+      <code>fallback_external_fulfillment_reference_id</code> keys are for Exec Ed only. Set
+      <code>suppress_assignment_email</code> to <code>true</code> to skip the "new assignment" email on
+      assignment-based budgets.
+    </p>
+    <p>
+      Nothing is saved unless every row is valid. Resubmitting rows (e.g. after a timeout) is safe: a learner who
+      already has an unreversed charge for the course run is never charged twice.
+    </p>
+<pre>[
+  {
+    "subsidy_access_policy": "3743d238-90ee-40a3-99e5-7af4d9ad3984",
+    "lms_user_id": 12345,
+    "course_run_key": "course-v1:edX+DemoX+1T2042",
+    "content_price_cents": 385000,
+    "geag_first_name": "Ada",
+    "geag_last_name": "Lovelace",
+    "geag_date_of_birth": "1990-12-10",
+    "suppress_assignment_email": true
+  }
+]</pre>
+    <form action="" method="post" id="bulk-create-forced-redemptions-form">
+      {% csrf_token %}
+      {{ form.as_p }}
+      <input type="submit" value="{% trans 'Save and redeem' %}"/>
+    </form>
+  </div>
+</div>
+{% endblock %}

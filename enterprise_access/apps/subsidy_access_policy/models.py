@@ -2242,10 +2242,14 @@ class ForcedPolicyRedemption(TimeStampedModel):
             f'lms_user_id={self.lms_user_id}, course_run_key={self.course_run_key}>'
         )
 
-    def create_assignment(self):
+    def create_assignment(self, suppress_email=False):
         """
         For assignment-based policies, an allocated ``LearnerContentAssignment`` must exist
         before redemption can occur.
+
+        Args:
+            suppress_email: If True, don't send the learner a "new assignment" email for a created or
+                re-allocated assignment.
         """
         assignment_configuration = self.subsidy_access_policy.assignment_configuration
         # Ensure that the requested content key is available for the related customer.
@@ -2272,18 +2276,25 @@ class ForcedPolicyRedemption(TimeStampedModel):
             self.course_run_key,
             self.content_price_cents,
             known_lms_user_ids=[self.lms_user_id],
+            suppress_email=suppress_email,
         )
 
-    def force_redeem(self, extra_metadata=None, actor_lms_user_id=None):
+    def force_redeem(self, extra_metadata=None, actor_lms_user_id=None, suppress_assignment_email=False):
         """
         Forces redemption for the requested course run key in the associated policy.
+
+        Args:
+            extra_metadata: Additional transaction metadata (e.g. GEAG learner fields for Exec Ed).
+            actor_lms_user_id: The lms_user_id of the admin requesting the redemption.
+            suppress_assignment_email: For assignment-based policies, don't send the learner a
+                "new assignment" email when the assignment is created or re-allocated.
         """
         if self.redeemed_at and self.transaction_uuid:
             # Just return if we've already got a successful redemption.
             return
 
         if self.subsidy_access_policy.access_method == AccessMethods.ASSIGNED:
-            self.create_assignment()
+            self.create_assignment(suppress_email=suppress_assignment_email)
 
         try:
             with self.subsidy_access_policy.lock():

@@ -1,6 +1,8 @@
 """
 Forms to be used for subsidy_access_policy django admin.
 """
+import json
+
 import requests
 from django import forms
 from django.conf import settings
@@ -101,6 +103,14 @@ class ForcedPolicyRedemptionForm(forms.ModelForm):
         ),
         required=False,
     )
+    suppress_assignment_email = forms.BooleanField(
+        label=_("Suppress 'new assignment' email"),
+        help_text=_(
+            "For assignment-based budgets, don't email the learner when their assignment is created or "
+            "re-allocated by this redemption. Like the fields above, this value is not persisted."
+        ),
+        required=False,
+    )
 
     class Meta:
         model = ForcedPolicyRedemption
@@ -132,3 +142,67 @@ class SubsidyAccessPolicyForm(forms.ModelForm):
     class Meta:
         model = SubsidyAccessPolicy
         fields = '__all__'
+
+
+class BulkForcedPolicyRedemptionForm(forms.Form):
+    """
+    Admin form to create many ForcedPolicyRedemption records from a JSON list.
+
+    Each object in the list holds the fields of the single-record ``ForcedPolicyRedemptionForm``
+    and is validated by that form.
+    """
+    MAX_ROWS = 25
+
+    redemptions_json = forms.CharField(
+        label=_("Forced redemptions (JSON)"),
+        widget=forms.Textarea(attrs={'rows': 20, 'cols': 120, 'style': 'font-family: monospace;'}),
+        help_text=_("A JSON list with one object per forced redemption, at most {max_rows}.").format(
+            max_rows=MAX_ROWS,
+        ),
+    )
+
+    def clean_redemptions_json(self):
+        """
+        Parses the JSON, validates every row with ``ForcedPolicyRedemptionForm``, and returns the row forms.
+        """
+        try:
+            rows = json.loads(self.cleaned_data['redemptions_json'])
+        except json.JSONDecodeError as exc:
+            raise ValidationError(f'Invalid JSON: {exc}') from exc
+        if not isinstance(rows, list) or not rows:
+            raise ValidationError('Expected a non-empty JSON list of objects.')
+        if len(rows) > self.MAX_ROWS:
+            raise ValidationError(f'Got {len(rows)} rows; at most {self.MAX_ROWS} are allowed per submission.')
+
+        allowed_keys = set(ForcedPolicyRedemptionForm().fields) - {'redeemed_at', 'errored_at'}  # admin read-only
+        errors = []
+        row_forms = []
+        seen = {}
+        for row_number, row in enumerate(rows, start=1):
+            if not isinstance(row, dict):
+                errors.append(f'Row {row_number}: expected an object.')
+                continue
+            unknown_keys = sorted(set(row) - allowed_keys)
+            if unknown_keys:
+                # Catches typos such as "lms_userid", which the form would otherwise silently ignore.
+                errors.append(f'Row {row_number}: unknown keys {unknown_keys}.')
+                continue
+            row_form = ForcedPolicyRedemptionForm(data=row)
+            if not row_form.is_valid():
+                for field, field_errors in row_form.errors.items():
+                    errors.append(f'Row {row_number}: {field}: {" ".join(field_errors)}')
+                continue
+            identity = (
+                row_form.cleaned_data['subsidy_access_policy'].uuid,
+                row_form.cleaned_data['lms_user_id'],
+                row_form.cleaned_data['course_run_key'],
+            )
+            if identity in seen:
+                errors.append(f'Row {row_number}: duplicates row {seen[identity]}.')
+                continue
+            seen[identity] = row_number
+            row_forms.append(row_form)
+
+        if errors:
+            raise ValidationError(errors)
+        return row_forms

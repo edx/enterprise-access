@@ -2,10 +2,13 @@
 import json
 import logging
 from typing import Any, Dict
+from uuid import uuid4
 
 from django.conf import settings
 from django.contrib import admin, messages
+from django.core.exceptions import PermissionDenied
 from django.http import HttpResponseRedirect
+from django.template.response import TemplateResponse
 from django.urls import re_path, reverse
 from django.utils import timezone
 from django.utils.safestring import mark_safe
@@ -27,8 +30,9 @@ from enterprise_access.apps.subsidy_access_policy.admin.views import (
     SubsidyAccessPolicySetLateRedemptionView
 )
 from enterprise_access.apps.subsidy_access_policy.utils import cents_to_usd_string
+from enterprise_access.cache_utils import request_cache
 
-from .forms import ForcedPolicyRedemptionForm, SubsidyAccessPolicyForm
+from .forms import BulkForcedPolicyRedemptionForm, ForcedPolicyRedemptionForm, SubsidyAccessPolicyForm
 
 logger = logging.getLogger(__name__)
 
@@ -421,11 +425,15 @@ class SubsidAccessPolicyAdmin(admin.ModelAdmin):
 
 
 @admin.register(models.ForcedPolicyRedemption)
-class ForcedPolicyRedemptionAdmin(DjangoQLSearchMixin, SimpleHistoryAdmin):
+class ForcedPolicyRedemptionAdmin(DjangoObjectActions, DjangoQLSearchMixin, SimpleHistoryAdmin):
     """
     Admin class for the forced redemption model/logic.
     """
     form = ForcedPolicyRedemptionForm
+
+    changelist_actions = (
+        'bulk_create_forced_redemptions',
+    )
 
     djangoql_completion_enabled_by_default = False
     search_fields = [
@@ -457,6 +465,90 @@ class ForcedPolicyRedemptionAdmin(DjangoQLSearchMixin, SimpleHistoryAdmin):
         'traceback',
     ]
 
+    @action(
+        label='Bulk create from JSON',
+        description='Create (and redeem) many forced redemptions from a JSON list'
+    )
+    def bulk_create_forced_redemptions(self, request, queryset):  # pylint: disable=unused-argument
+        """
+        Object tool handler method - redirects to the bulk create view.
+        """
+        return HttpResponseRedirect(reverse('admin:' + UrlNames.BULK_CREATE_FORCED_REDEMPTIONS))
+
+    def get_urls(self):
+        """
+        Returns the additional urls used by the custom object tools.
+        """
+        additional_urls = [
+            re_path(
+                r"^bulk_create/$",
+                self.admin_site.admin_view(self.bulk_create_view),
+                name=UrlNames.BULK_CREATE_FORCED_REDEMPTIONS,
+            ),
+        ]
+        return additional_urls + super().get_urls()
+
+    def bulk_create_view(self, request):
+        """
+        Creates one ForcedPolicyRedemption per row of a JSON list, saving each exactly as the add form would
+        (via ``save_model()``, which redeems it unless ``wait_to_redeem`` is set).
+
+        Rows are validated up front, and nothing is saved unless every row is valid. There's deliberately no
+        skip for earlier records (their redemption may since have been reversed); the subsidy service's redeem()
+        returns any existing unreversed transaction instead of charging again.
+        """
+        if not self.has_add_permission(request):
+            raise PermissionDenied
+
+        form = BulkForcedPolicyRedemptionForm(request.POST or None)
+        if request.method == 'POST' and form.is_valid():
+            # One ID per submission, so every log line for a batch can be found and reconciled together.
+            batch_id = uuid4()
+            row_forms = form.cleaned_data['redemptions_json']
+            redeemed, not_redeemed = 0, 0
+            for row_number, row_form in enumerate(row_forms, start=1):
+                request_cache(namespace=models.REQUEST_CACHE_NAMESPACE).clear()  # spend checks must see prior rows
+                obj = row_form.save(commit=False)
+                self.save_model(request, obj, row_form, change=False)
+                self.log_addition(request, obj, [{'added': {}}])
+                log_args = (
+                    batch_id, row_number, len(row_forms), obj.uuid, obj.subsidy_access_policy_id,
+                    obj.lms_user_id, obj.course_run_key, obj.content_price_cents,
+                )
+                if obj.transaction_uuid:
+                    redeemed += 1
+                    logger.info(
+                        '[BULK FORCED REDEMPTION] batch=%s row=%s/%s REDEEMED forced_redemption=%s policy=%s '
+                        'lms_user_id=%s course_run_key=%s content_price_cents=%s transaction_uuid=%s',
+                        *log_args, obj.transaction_uuid,
+                    )
+                else:
+                    not_redeemed += 1
+                    logger.error(
+                        '[BULK FORCED REDEMPTION] batch=%s row=%s/%s NOT_REDEEMED forced_redemption=%s policy=%s '
+                        'lms_user_id=%s course_run_key=%s content_price_cents=%s wait_to_redeem=%s',
+                        *log_args, obj.wait_to_redeem,
+                    )
+            logger.info(
+                '[BULK FORCED REDEMPTION] batch=%s finished by lms_user_id=%s: %s rows, %s redeemed, %s not redeemed',
+                batch_id, request.user.lms_user_id, len(row_forms), redeemed, not_redeemed,
+            )
+
+            summary = gettext_lazy(
+                "Bulk create: {redeemed} redeemed, {not_redeemed} saved but not redeemed (see messages above; "
+                "those records have an empty 'redeemed at')."
+            ).format(redeemed=redeemed, not_redeemed=not_redeemed)
+            self.message_user(request, summary, messages.WARNING if not_redeemed else messages.SUCCESS)
+            return HttpResponseRedirect(reverse('admin:subsidy_access_policy_forcedpolicyredemption_changelist'))
+
+        context = {
+            **self.admin_site.each_context(request),
+            'title': 'Bulk create forced redemptions',
+            'opts': self.model._meta,
+            'form': form,
+        }
+        return TemplateResponse(request, 'subsidy_access_policy/admin/bulk_create_forced_redemptions.html', context)
+
     def save_model(self, request, obj, form, change) -> None:
         """
         If this record has not been successfully redeemed yet,
@@ -480,6 +572,7 @@ class ForcedPolicyRedemptionAdmin(DjangoQLSearchMixin, SimpleHistoryAdmin):
             return
 
         form.full_clean()  # populates cleaned_data below
+        suppress_assignment_email = bool(form.cleaned_data.get('suppress_assignment_email'))
         try:
             extra_metadata: Dict[str, Any] = {
                 key: str(form.cleaned_data.get(key))
@@ -491,9 +584,11 @@ class ForcedPolicyRedemptionAdmin(DjangoQLSearchMixin, SimpleHistoryAdmin):
                 extra_metadata[FORCED_REDEMPTION_CURRENT_TIME_KEY] = timezone.now().strftime(GEAG_DATETIME_FMT)
                 extra_metadata[FORCED_REDEMPTION_DATA_SHARE_CONSENT_KEY] = True
                 extra_metadata[FORCED_REDEMPTION_EMAIL_KEY] = user_record.email
-                obj.force_redeem(extra_metadata=extra_metadata, actor_lms_user_id=request.user.lms_user_id)
-            else:
-                obj.force_redeem(actor_lms_user_id=request.user.lms_user_id)
+            obj.force_redeem(
+                extra_metadata=extra_metadata or None,
+                actor_lms_user_id=request.user.lms_user_id,
+                suppress_assignment_email=suppress_assignment_email,
+            )
         except Exception as exc:  # pylint: disable=broad-except
             message = gettext_lazy("{} Failure reason: {}".format(obj, exc))
             self.message_user(request, message, messages.ERROR)
