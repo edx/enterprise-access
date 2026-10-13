@@ -12,6 +12,7 @@ from celery import states as celery_states
 from django.conf import settings
 from django.utils.timezone import now, timedelta
 from edx_django_utils.cache import TieredCache
+from edx_toggles.toggles.testutils import override_waffle_switch
 from requests.exceptions import HTTPError
 from rest_framework import status
 
@@ -23,6 +24,7 @@ from enterprise_access.apps.content_assignments.constants import (
     AssignmentActionErrors,
     AssignmentActions,
     AssignmentActorTypes,
+    AssignmentAutomaticExpiredReason,
     AssignmentSources,
     LearnerContentAssignmentStateChoices
 )
@@ -45,6 +47,7 @@ from enterprise_access.apps.subsidy_access_policy.models import REQUEST_CACHE_NA
 from enterprise_access.apps.subsidy_access_policy.tests.factories import AssignedLearnerCreditAccessPolicyFactory
 from enterprise_access.apps.subsidy_request.tests.factories import LearnerCreditRequestFactory
 from enterprise_access.cache_utils import request_cache
+from enterprise_access.toggles import ASSIGNMENT_COURSE_RUN_ENDED_EXPIRATION
 from enterprise_access.utils import format_datetime_obj, get_automatic_expiration_date_and_reason
 from test_utils import APITestWithMocks
 
@@ -500,6 +503,97 @@ class TestBrazeEmailTasks(APITestWithMocks):
         assert errored_action.actor_lms_user_id == 999
         assert errored_action.actor_type == AssignmentActorTypes.ADMIN
         assert errored_action.source == AssignmentSources.API
+
+    @mock.patch('enterprise_access.apps.content_assignments.tasks.get_catalog_agnostic_content_metadata_for_assignment')
+    @mock.patch('enterprise_access.apps.content_assignments.tasks.get_content_metadata_for_assignments')
+    @mock.patch('enterprise_access.apps.content_assignments.tasks.LmsApiClient')
+    @mock.patch('enterprise_access.apps.content_assignments.tasks.BrazeApiClient')
+    def test_reminder_skipped_when_content_metadata_is_unavailable(
+        self, mock_braze_client_class, mock_lms_client, mock_policy_metadata, mock_agnostic_metadata,
+    ):  # pylint: disable=unused-argument
+        """
+        Regression test for ENT-12316: the course left the catalog and no catalog-agnostic metadata exists
+        either. The reminder is skipped, nothing is sent, and the assignment is not marked errored.
+        """
+        mock_policy_metadata.return_value = {}
+        mock_agnostic_metadata.return_value = {}
+        assignment = self.assignment_course
+
+        send_reminder_email_for_pending_assignment(assignment.uuid)
+
+        mock_braze_client_class.return_value.send_campaign_message.assert_not_called()
+        assignment.refresh_from_db()
+        assert assignment.state != LearnerContentAssignmentStateChoices.ERRORED
+        # The skip leaves a trace: one errored REMINDED action, and no successful one.
+        reminded_actions = assignment.actions.filter(action_type=AssignmentActions.REMINDED)
+        assert reminded_actions.count() == 1
+        assert reminded_actions.get().error_reason == AssignmentActionErrors.INTERNAL_API_ERROR
+
+    @override_waffle_switch(ASSIGNMENT_COURSE_RUN_ENDED_EXPIRATION, True)
+    @mock.patch('enterprise_access.apps.content_assignments.tasks.get_catalog_agnostic_content_metadata_for_assignment')
+    @mock.patch('enterprise_access.apps.content_assignments.tasks.get_content_metadata_for_assignments')
+    @mock.patch('enterprise_access.apps.content_assignments.tasks.LmsApiClient')
+    @mock.patch('enterprise_access.apps.content_assignments.tasks.BrazeApiClient')
+    @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_client')
+    def test_action_required_by_matches_nightly_job_for_content_that_left_the_catalog(
+        self, mock_subsidy_client, mock_braze_client_class, mock_lms_client,  # pylint: disable=unused-argument
+        mock_policy_metadata, mock_agnostic_metadata,
+    ):
+        """
+        The content left the policy catalog and its only run has ended. The reminder must show the course run end
+        date, as the nightly job (which expires the assignment then) does, not the later 90-day date.
+        """
+        run_end = now() - timedelta(days=1)
+        mock_subsidy_client.retrieve_subsidy.return_value = {
+            'expiration_datetime': (now() + timedelta(days=365)).strftime('%Y-%m-%dT%H:%M:%SZ'),
+        }
+        mock_policy_metadata.return_value = {}
+        mock_agnostic_metadata.return_value = {
+            'key': self.assignment_course.content_key,
+            'normalized_metadata_by_run': {TEST_COURSE_RUN_KEY: {'end_date': run_end.strftime('%Y-%m-%dT%H:%M:%SZ')}},
+        }
+
+        timestamp = BrazeCampaignSender(self.assignment_course).get_action_required_by_timestamp()
+
+        assert timestamp == run_end.strftime(BRAZE_TIMESTAMP_FORMAT)
+
+    @mock.patch('enterprise_access.apps.content_assignments.tasks.get_catalog_agnostic_content_metadata_for_assignment')
+    @mock.patch('enterprise_access.apps.content_assignments.tasks.get_content_metadata_for_assignments')
+    @mock.patch('enterprise_access.apps.content_assignments.tasks.LmsApiClient')
+    @mock.patch('enterprise_access.apps.content_assignments.tasks.BrazeApiClient')
+    def test_catalog_agnostic_fallback_is_for_display_fields_only(
+        self, mock_braze_client_class, mock_lms_client, mock_policy_metadata, mock_agnostic_metadata,
+    ):  # pylint: disable=unused-argument
+        """
+        For content that left the policy catalog, display fields may use the fallback metadata, but the
+        enrollment deadline stays on policy-catalog metadata so it agrees with the nightly job.
+        """
+        mock_policy_metadata.return_value = {}
+        mock_agnostic_metadata.return_value = {
+            'key': self.assignment_course.content_key,
+            'normalized_metadata': {'enroll_by_date': '2021-01-01 12:00:00Z', 'start_date': '2020-01-01 12:00:00Z'},
+            'card_image_url': 'https://itsanimage.com',
+        }
+        sender = BrazeCampaignSender(self.assignment_course)
+
+        assert sender.get_enrollment_deadline() is None
+        assert sender.get_course_card_image() == 'https://itsanimage.com'
+
+    @mock.patch('enterprise_access.apps.content_assignments.tasks.get_catalog_agnostic_content_metadata_for_assignment')
+    @mock.patch('enterprise_access.apps.content_assignments.tasks.get_content_metadata_for_assignments')
+    @mock.patch('enterprise_access.apps.content_assignments.tasks.LmsApiClient')
+    @mock.patch('enterprise_access.apps.content_assignments.tasks.BrazeApiClient')
+    def test_course_metadata_falls_back_to_catalog_agnostic_lookup(
+        self, mock_braze_client_class, mock_lms_client, mock_policy_metadata, mock_agnostic_metadata,
+    ):  # pylint: disable=unused-argument
+        """Content that left the policy catalog still resolves, so the reminder properties can be built."""
+        mock_policy_metadata.return_value = {}
+        mock_agnostic_metadata.return_value = {'key': self.assignment_course.content_key}
+
+        sender = BrazeCampaignSender(self.assignment_course)
+
+        assert sender.course_metadata == {'key': self.assignment_course.content_key}
+        mock_agnostic_metadata.assert_called_once_with(self.assignment_course)
 
     @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_client')
     @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient')
@@ -1079,13 +1173,13 @@ class TestBrazeEmailTasks(APITestWithMocks):
             'key': assignment.content_key,
             'normalized_metadata': {
                 'start_date': '2020-01-01 12:00:00Z',
-                'end_date': '2022-01-01 12:00:00Z',
+                'end_date': '2099-12-31 12:00:00Z',
                 'enroll_by_date': formatted_yesterday,
             },
             'normalized_metadata_by_run': {
                 TEST_COURSE_RUN_KEY: {
                     'start_date': '2020-01-01 12:00:00Z',
-                    'end_date': '2022-01-01 12:00:00Z',
+                    'end_date': '2099-12-31 12:00:00Z',
                     'enroll_by_date': formatted_yesterday,
                 },
             }
@@ -1137,13 +1231,13 @@ class TestBrazeEmailTasks(APITestWithMocks):
             'key': assignment.content_key,
             'normalized_metadata': {
                 'start_date': '2020-01-01 12:00:00Z',
-                'end_date': '2022-01-01 12:00:00Z',
+                'end_date': '2099-12-31 12:00:00Z',
                 'enroll_by_date': the_future.strftime('%Y-%m-%d %H:%M:%SZ'),
             },
             'normalized_metadata_by_run': {
                 TEST_COURSE_RUN_KEY: {
                     'start_date': '2020-01-01 12:00:00Z',
-                    'end_date': '2022-01-01 12:00:00Z',
+                    'end_date': '2099-12-31 12:00:00Z',
                     'enroll_by_date': the_future.strftime('%Y-%m-%d %H:%M:%SZ'),
                 },
             },
@@ -1171,6 +1265,55 @@ class TestBrazeEmailTasks(APITestWithMocks):
             output_pattern=BRAZE_TIMESTAMP_FORMAT
         )
         self.assertEqual(expected_result, action_required_by)
+
+    @override_waffle_switch(ASSIGNMENT_COURSE_RUN_ENDED_EXPIRATION, True)
+    @mock.patch('enterprise_access.apps.content_assignments.tasks.LmsApiClient')
+    @mock.patch('enterprise_access.apps.content_assignments.tasks.BrazeApiClient')
+    @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient')
+    @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_client')
+    def test_get_action_required_by_course_run_ended_soonest(
+        self,
+        mock_subsidy_client,
+        mock_catalog_client,
+        # pylint: disable=unused-argument
+        mock_braze_client_class, mock_lms_client_class,
+    ):
+        """
+        When all runs of the course have ended, the (past) latest run end date is the earliest
+        expiration and is what the reminder email reports as the action-required-by time.
+        """
+        the_future = now() + timedelta(days=120)
+        run_end_date = now() - timedelta(days=1)
+        assignment = self.assignment_course
+        mock_metadata = {
+            'key': assignment.content_key,
+            'normalized_metadata': {'enroll_by_date': None},
+            'normalized_metadata_by_run': {
+                TEST_COURSE_RUN_KEY: {
+                    'enroll_by_date': None,
+                    'end_date': run_end_date.strftime('%Y-%m-%d %H:%M:%SZ'),
+                },
+            },
+        }
+        mock_catalog_client.return_value.catalog_content_metadata.return_value = {
+            'count': 1,
+            'results': [mock_metadata],
+        }
+        mock_subsidy_client.retrieve_subsidy.return_value = {
+            'uuid': self.policy.subsidy_uuid,
+            'expiration_datetime': the_future.strftime('%Y-%m-%d %H:%M:%SZ'),
+        }
+        assignment.add_successful_notified_action()
+
+        expiration = get_automatic_expiration_date_and_reason(assignment)
+        assert expiration['reason'] == AssignmentAutomaticExpiredReason.COURSE_RUN_ENDED
+
+        action_required_by = BrazeCampaignSender(assignment).get_action_required_by_timestamp()
+
+        self.assertEqual(
+            format_datetime_obj(expiration['date'], output_pattern=BRAZE_TIMESTAMP_FORMAT),
+            action_required_by,
+        )
 
     @mock.patch('enterprise_access.apps.content_assignments.tasks.LmsApiClient')
     @mock.patch('enterprise_access.apps.content_assignments.tasks.BrazeApiClient')
@@ -1202,6 +1345,7 @@ class TestBrazeEmailTasks(APITestWithMocks):
 
 
 @ddt.ddt
+@override_waffle_switch(ASSIGNMENT_COURSE_RUN_ENDED_EXPIRATION, True)
 class TestClearPiiForExpiredAssignmentsTask(APITestWithMocks):
     """
     Tests for clear_pii_for_expired_assignments task.
@@ -1237,6 +1381,16 @@ class TestClearPiiForExpiredAssignmentsTask(APITestWithMocks):
         )
         self.expired_assignment.created = now() - timedelta(days=100)
         self.expired_assignment.save()
+
+    def tearDown(self):
+        super().tearDown()
+        # Content metadata fetched via get_and_cache_catalog_content_metadata() is cached
+        # per (catalog_uuid, content_key). Every test in this class shares the same
+        # assignment_configuration/catalog (set in setUpTestData) and TEST_COURSE_KEY, so
+        # without clearing the cache here, whichever test runs first "wins" and later tests
+        # silently reuse its mocked metadata instead of their own.
+        request_cache(namespace=REQUEST_CACHE_NAMESPACE).clear()
+        TieredCache.dangerous_clear_all_tiers()
 
     @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient')
     @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_client')
@@ -1322,6 +1476,218 @@ class TestClearPiiForExpiredAssignmentsTask(APITestWithMocks):
         self.expired_assignment.refresh_from_db()
         assert self.expired_assignment.learner_email == original_email
         assert result['cleared_count'] == 0
+
+    @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient')
+    @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_client')
+    def test_clear_pii_skipped_when_expiration_email_failed(self, mock_subsidy_client, mock_catalog_client):
+        """An EXPIRED action that recorded an email error does not count as a sent expiration email."""
+        self.expired_assignment.actions.create(
+            action_type=AssignmentActions.EXPIRED,
+            completed_at=now(),
+            error_reason=AssignmentActionErrors.EMAIL_ERROR,
+        )
+        mock_subsidy_client.retrieve_subsidy.return_value = {
+            'enterprise_customer_uuid': str(self.enterprise_uuid),
+            'expiration_datetime': (now() + timedelta(days=365)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            'is_active': True,
+        }
+        mock_catalog_client.return_value.catalog_content_metadata.return_value = {'count': 0, 'results': []}
+        original_email = self.expired_assignment.learner_email
+
+        result = clear_pii_for_expired_assignments(dry_run=False)
+
+        self.expired_assignment.refresh_from_db()
+        assert self.expired_assignment.learner_email == original_email
+        assert result['cleared_count'] == 0
+
+    @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient')
+    @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_client')
+    def test_clear_pii_dry_run_does_not_clear(self, mock_subsidy_client, mock_catalog_client):
+        """In dry-run mode an eligible assignment is reported but its PII is left intact."""
+        assignment = self._make_expired_assignment(
+            'dry-run@test.com', AssignmentAutomaticExpiredReason.COURSE_RUN_ENDED,
+        )
+        mock_subsidy_client.retrieve_subsidy.return_value = {
+            'enterprise_customer_uuid': str(self.enterprise_uuid),
+            'expiration_datetime': (now() + timedelta(days=365)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            'is_active': True,
+        }
+        mock_catalog_client.return_value.catalog_content_metadata.return_value = {'count': 0, 'results': []}
+
+        result = clear_pii_for_expired_assignments(dry_run=True)
+
+        # The assignment was eligible (reported as cleared), yet nothing was actually changed.
+        assert result['cleared_count'] == 1
+        assert result['assignment_uuids_cleared'] == [str(assignment.uuid)]
+        assignment.refresh_from_db()
+        assert assignment.learner_email == 'dry-run@test.com'
+        assert not assignment.actions.filter(action_type=AssignmentActions.RETIRED).exists()
+
+    def _make_expired_assignment(self, email, recorded_reason, lms_user_id=TEST_LMS_USER_ID_2):
+        """
+        Helper: an expired assignment with a sent expiration email and the system audit action that
+        ``expire_assignment()`` records at expiry time, carrying ``recorded_reason``.
+        """
+        assignment = LearnerContentAssignmentFactory(
+            assignment_configuration=self.assignment_configuration,
+            learner_email=email,
+            lms_user_id=lms_user_id,
+            content_key=TEST_COURSE_KEY,
+            content_title='Test Course',
+            content_quantity=-100,
+            state=LearnerContentAssignmentStateChoices.EXPIRED,
+            expired_at=now() - timedelta(hours=2),
+        )
+        assignment.add_successful_expiration_action()
+        assignment.add_audit_action(
+            action_type=AssignmentActions.EXPIRED,
+            actor_type=AssignmentActorTypes.SYSTEM,
+            source=AssignmentSources.SCHEDULED_JOB,
+            metadata={'expiration_reason': recorded_reason},
+        )
+        return assignment
+
+    @ddt.data(
+        (AssignmentAutomaticExpiredReason.COURSE_RUN_ENDED, True),
+        (AssignmentAutomaticExpiredReason.NINETY_DAYS_PASSED, True),
+        (AssignmentAutomaticExpiredReason.ENROLLMENT_DATE_PASSED, False),
+        (AssignmentAutomaticExpiredReason.SUBSIDY_EXPIRED, False),
+    )
+    @ddt.unpack
+    @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient')
+    @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_client')
+    def test_clear_pii_uses_reason_recorded_at_expiry_even_if_content_left_catalog(
+        self,
+        recorded_reason,
+        expect_cleared,
+        mock_subsidy_client,
+        mock_catalog_client,
+    ):
+        """
+        PII clearing follows the reason stored on the expiration audit action, not a recomputation from
+        today's catalog data. Here the catalog has no metadata for the content at all, which would
+        recompute as NINETY_DAYS_PASSED (and wrongly clear PII for every reason).
+        """
+        assignment = self._make_expired_assignment('recorded-reason@test.com', recorded_reason)
+        mock_subsidy_client.retrieve_subsidy.return_value = {
+            'enterprise_customer_uuid': str(self.enterprise_uuid),
+            'expiration_datetime': (now() + timedelta(days=365)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            'is_active': True,
+        }
+        mock_catalog_client.return_value.catalog_content_metadata.return_value = {'count': 0, 'results': []}
+
+        original_email = assignment.learner_email
+        clear_pii_for_expired_assignments(dry_run=False)
+
+        assignment.refresh_from_db()
+        assert (assignment.learner_email != original_email) is expect_cleared
+
+    # Patched rather than ``override_waffle_switch(..., False)``: nesting that inside the class-level override
+    # would leave the switch unset for the tests that run after it.
+    @mock.patch(
+        'enterprise_access.apps.content_assignments.tasks.assignment_course_run_ended_expiration_enabled',
+        return_value=False,
+    )
+    @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_client')
+    def test_clear_pii_leaves_course_run_ended_rows_alone_when_switch_is_off(
+        self, mock_subsidy_client, mock_switch,  # pylint: disable=unused-argument
+    ):
+        """PII clearing is irreversible, so turning the switch off must stop it for COURSE_RUN_ENDED rows too."""
+        mock_subsidy_client.retrieve_subsidy.return_value = {'is_active': True}
+        course_run_ended = self._make_expired_assignment(
+            'course-run-ended@test.com', AssignmentAutomaticExpiredReason.COURSE_RUN_ENDED,
+        )
+        ninety_days = self._make_expired_assignment(
+            'ninety-days@test.com', AssignmentAutomaticExpiredReason.NINETY_DAYS_PASSED,
+            lms_user_id=TEST_LMS_USER_ID_2 + 1000,
+        )
+
+        clear_pii_for_expired_assignments(dry_run=False)
+
+        course_run_ended.refresh_from_db()
+        ninety_days.refresh_from_db()
+        assert course_run_ended.learner_email == 'course-run-ended@test.com'
+        assert ninety_days.learner_email != 'ninety-days@test.com'
+
+    @mock.patch('enterprise_access.apps.content_assignments.tasks.get_content_metadata_for_assignments')
+    @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_client')
+    def test_clear_pii_skips_catalog_lookup_when_reason_recorded_or_no_email(
+        self, mock_subsidy_client, mock_get_metadata,
+    ):
+        """
+        The policy-catalog metadata lookup is only for legacy rows needing recomputation. Rows with a recorded
+        reason, and rows that were never emailed, are decided from audit actions alone.
+        """
+        mock_subsidy_client.retrieve_subsidy.return_value = {'is_active': True}
+        recorded = self._make_expired_assignment('recorded@test.com', AssignmentAutomaticExpiredReason.COURSE_RUN_ENDED)
+        # self.expired_assignment (from setUp) has no expiration email action at all.
+
+        result = clear_pii_for_expired_assignments(dry_run=False)
+
+        mock_get_metadata.assert_not_called()
+        assert result['assignment_uuids_cleared'] == [str(recorded.uuid)]
+
+    @mock.patch('enterprise_access.apps.content_assignments.content_metadata_api.get_content_metadata_for_assignments')
+    @mock.patch('enterprise_access.apps.content_assignments.tasks.get_content_metadata_for_assignments')
+    @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_client')
+    def test_clear_pii_looks_up_catalog_only_for_legacy_rows(
+        self, mock_subsidy_client, mock_get_metadata, mock_utils_get_metadata,
+    ):
+        """Only the emailed row with no recorded reason is passed to the metadata lookup, and it still clears."""
+        mock_subsidy_client.retrieve_subsidy.return_value = {
+            'enterprise_customer_uuid': str(self.enterprise_uuid),
+            'expiration_datetime': (now() + timedelta(days=365)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            'is_active': True,
+        }
+        mock_get_metadata.return_value = {}
+        mock_utils_get_metadata.return_value = {}  # the recomputation's own lookup, for the empty metadata
+        recorded = self._make_expired_assignment('recorded@test.com', AssignmentAutomaticExpiredReason.SUBSIDY_EXPIRED)
+        legacy = self._make_expired_assignment('legacy2@test.com', None, lms_user_id=TEST_LMS_USER_ID_2 + 100)
+        legacy.actions.filter(action_type=AssignmentActions.EXPIRED, source=AssignmentSources.SCHEDULED_JOB).delete()
+
+        result = clear_pii_for_expired_assignments(dry_run=False)
+
+        mock_get_metadata.assert_called_once()
+        looked_up = mock_get_metadata.call_args.args[1]
+        assert [a.uuid for a in looked_up] == [legacy.uuid]
+        # no metadata + future subsidy => legacy recomputation yields NINETY_DAYS_PASSED => cleared;
+        # the recorded SUBSIDY_EXPIRED row is not.
+        assert result['assignment_uuids_cleared'] == [str(legacy.uuid)]
+        recorded.refresh_from_db()
+        assert recorded.learner_email == 'recorded@test.com'
+
+    @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient')
+    @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_client')
+    def test_clear_pii_legacy_row_ignores_course_run_end(self, mock_subsidy_client, mock_catalog_client):
+        """
+        A legacy row (no recorded reason) that expired because the subsidy expired must not be recomputed as
+        COURSE_RUN_ENDED just because all course runs ended before the subsidy did.
+        """
+        assignment = self._make_expired_assignment('legacy@test.com', None)
+        assignment.actions.filter(
+            action_type=AssignmentActions.EXPIRED, source=AssignmentSources.SCHEDULED_JOB,
+        ).delete()
+        mock_subsidy_client.retrieve_subsidy.return_value = {
+            'enterprise_customer_uuid': str(self.enterprise_uuid),
+            'expiration_datetime': (now() - timedelta(days=10)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            'is_active': True,
+        }
+        mock_catalog_client.return_value.catalog_content_metadata.return_value = {
+            'count': 1,
+            'results': [{
+                'key': TEST_COURSE_KEY,
+                'normalized_metadata': {'enroll_by_date': None, 'content_price': 100},
+                'normalized_metadata_by_run': {
+                    'course-v1:edX+Test+1': {'end_date': (now() - timedelta(days=20)).strftime("%Y-%m-%dT%H:%M:%SZ")},
+                },
+            }],
+        }
+
+        original_email = assignment.learner_email
+        clear_pii_for_expired_assignments(dry_run=False)
+
+        assignment.refresh_from_db()
+        assert assignment.learner_email == original_email
 
     @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient')
     @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_client')

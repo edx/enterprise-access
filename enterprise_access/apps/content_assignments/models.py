@@ -681,11 +681,8 @@ class LearnerContentAssignment(TimeStampedModel):
         race the real "email sent" row on completed_at and corrupt acknowledgment/PII-clearing
         eligibility, which both key off this method.
         """
-        return self.actions.filter(
-            action_type=AssignmentActions.EXPIRED,
-            error_reason=None,
-        ).exclude(
-            source=AssignmentSources.SCHEDULED_JOB,
+        return LearnerContentAssignmentAction.filter_successful_expiration_email_actions(
+            self.actions.all()
         ).order_by('-completed_at').first()
 
     def add_successful_expiration_action(self):
@@ -1038,6 +1035,23 @@ class LearnerContentAssignmentAction(TimeStampedModel):
                 name='lcaa_customer_created_idx',
             ),
         ]
+
+    @staticmethod
+    def filter_successful_expiration_email_actions(actions):
+        """
+        Narrow an ``actions`` queryset to the successful "expiration email sent" rows.
+
+        This is the single definition shared by ``get_last_successful_expiration_action()`` and the bulk
+        PII-clearing lookup. It excludes the scheduled_job-sourced EXPIRED row that ``expire_assignment()``
+        writes at state-transition time (a different event), and keeps rows whose ``source`` is null so that
+        legacy rows recorded before ``source`` existed still count.
+        """
+        return actions.filter(
+            action_type=AssignmentActions.EXPIRED,
+            error_reason=None,
+        ).exclude(
+            source=AssignmentSources.SCHEDULED_JOB,
+        )
 
     def __str__(self):
         return (

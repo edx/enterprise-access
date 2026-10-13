@@ -103,3 +103,24 @@ def learner_pathways_candidate_rerank_enabled():
     this module has to know about the polarity.
     """
     return not LEARNER_PATHWAYS_DISABLE_CANDIDATE_RERANK.is_enabled()
+
+
+# .. toggle_name: enterprise_access.assignment_course_run_ended_expiration
+# .. toggle_implementation: WaffleSwitch
+# .. toggle_default: False
+# .. toggle_description: Enables expiring assignments (and clearing their PII) once all known runs of
+#     the assigned course have ended (COURSE_RUN_ENDED). When disabled, the nightly expiration job
+#     ignores course run end dates, and PII is not cleared for assignments already recorded as
+#     COURSE_RUN_ENDED. PII clearing is irreversible, so this stays off until product signs off, and
+#     turning it off again is the rollback.
+# .. toggle_use_cases: open_edx
+# .. toggle_creation_date: 2026-10-13
+ASSIGNMENT_COURSE_RUN_ENDED_EXPIRATION = WaffleSwitch(
+    f'{ENTERPRISE_ACCESS_NAMESPACE}.assignment_course_run_ended_expiration',
+    __name__,
+)
+
+
+def assignment_course_run_ended_expiration_enabled():
+    """Return whether assignments expire (and have PII cleared) when their course runs have ended."""
+    return ASSIGNMENT_COURSE_RUN_ENDED_EXPIRATION.is_enabled()

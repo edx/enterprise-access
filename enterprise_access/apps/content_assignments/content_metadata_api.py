@@ -3,10 +3,17 @@ API file interacting with assignment metadata (created to avoid a circular
 import error)
 """
 import datetime
+from http import HTTPStatus
 
 from django.utils import timezone
+from edx_django_utils.cache import TieredCache
+from requests.exceptions import HTTPError
 
-from enterprise_access.apps.content_metadata.api import get_and_cache_catalog_content_metadata
+from enterprise_access.apps.content_metadata.api import (
+    get_and_cache_catalog_content_metadata,
+    get_and_cache_content_metadata
+)
+from enterprise_access.cache_utils import versioned_cache_key
 
 DATE_INPUT_PATTERNS = [
     '%Y-%m-%dT%H:%M:%SZ',
@@ -15,6 +22,9 @@ DATE_INPUT_PATTERNS = [
     '%Y-%m-%d %H:%M:%S.%fZ',
 ]
 DEFAULT_STRFTIME_PATTERN = '%b %d, %Y'
+# How long a catalog-agnostic lookup miss is remembered, so that many assignments for the same content
+# don't each repeat the call in one nightly run.
+CATALOG_AGNOSTIC_MISS_CACHE_TIMEOUT = 60 * 60
 
 
 def _content_metadata_for_assignment(assignment, course_metadata_list):
@@ -55,6 +65,70 @@ def get_content_metadata_for_assignments(enterprise_catalog_uuid, assignments):
         for assignment in assignments
     }
     return metadata_by_key
+
+
+def get_catalog_agnostic_content_metadata_for_assignment(assignment):
+    """
+    Fetch content metadata without relying on the assignment's policy catalog.
+
+    Tries the assignment's content key, then its parent content key, each with
+    ``coerce_to_parent_course=True`` so that run keys resolve to the parent course (which carries the
+    per-run data). Misses are not cached by ``get_and_cache_content_metadata``, so this should only be
+    called from the automatic-expiration path.
+
+    Returns:
+        dict: content metadata, or an empty dict if the catalog has none for the assignment's content.
+
+    Raises:
+        HTTPError: If the catalog call fails, so callers can skip the assignment and retry it later.
+    """
+    content_identifiers = []
+    if assignment.content_key:
+        content_identifiers.append(assignment.content_key)
+    if assignment.parent_content_key and assignment.parent_content_key not in content_identifiers:
+        content_identifiers.append(assignment.parent_content_key)
+
+    for content_identifier in content_identifiers:
+        miss_cache_key = versioned_cache_key('catalog_agnostic_content_metadata_miss', content_identifier)
+        if TieredCache.get_cached_response(miss_cache_key).is_found:
+            continue
+
+        try:
+            content_metadata = get_and_cache_content_metadata(
+                content_identifier,
+                coerce_to_parent_course=True,
+            )
+        except HTTPError as exc:
+            # Only a 404 means the catalog has no such content. Any other failure propagates on purpose: a
+            # transient outage must not look like "no metadata", or the assignment would be expired with the
+            # course run end date missing (and the wrong reason recorded).
+            if getattr(exc.response, 'status_code', None) != HTTPStatus.NOT_FOUND:
+                raise
+            content_metadata = None
+        if content_metadata:
+            return content_metadata
+
+        TieredCache.set_all_tiers(
+            miss_cache_key, True, django_cache_timeout=CATALOG_AGNOSTIC_MISS_CACHE_TIMEOUT,
+        )
+
+    return {}
+
+
+def get_run_dates(content_metadata, date_field):
+    """
+    Parse ``date_field`` (e.g. ``enroll_by_date`` or ``end_date``) from every run in a content metadata
+    record's ``normalized_metadata_by_run``.
+
+    Returns:
+        list: one UTC datetime per run, in run order, with None for runs that lack the field.
+            Empty if there are no runs. Raises ValueError if a present value can't be parsed.
+    """
+    runs_metadata = (content_metadata or {}).get('normalized_metadata_by_run') or {}
+    return [
+        parse_datetime_string(run_metadata.get(date_field), set_to_utc=True)
+        for run_metadata in runs_metadata.values()
+    ]
 
 
 def get_card_image_url(content_metadata):

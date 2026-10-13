@@ -5,10 +5,10 @@ Management command to automatically expire assignment records and then send emai
 import datetime
 import logging
 
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 from django.core.paginator import Paginator
 
-from enterprise_access.apps.content_assignments.api import expire_assignment
+from enterprise_access.apps.content_assignments.api import expire_assignment, requeue_missing_expiration_emails
 from enterprise_access.apps.content_assignments.constants import LearnerContentAssignmentStateChoices
 from enterprise_access.apps.content_assignments.content_metadata_api import get_content_metadata_for_assignments
 from enterprise_access.apps.content_assignments.models import AssignmentConfiguration
@@ -59,6 +59,8 @@ class Command(BaseCommand):
         expired, and then expiring them if so.
         """
         dry_run = options['dry_run']
+        failed_assignment_uuids = []
+        failed_reconciliations = 0
 
         for assignment_configuration in AssignmentConfiguration.objects.filter(active=True):
             subsidy_access_policy = assignment_configuration.subsidy_access_policy
@@ -66,7 +68,7 @@ class Command(BaseCommand):
 
             message = (
                 '[AUTOMATICALLY_EXPIRE_ASSIGNMENTS] Assignment Configuration. UUID: [%s], '
-                'Policy: [%s], Catalog: [%s], Enterprise: [%s], dry_run [%s]',
+                'Policy: [%s], Catalog: [%s], Enterprise: [%s], dry_run [%s]'
             )
             logger.info(
                 message,
@@ -77,13 +79,21 @@ class Command(BaseCommand):
                 dry_run,
             )
 
-            assignments_to_possibly_expire = assignment_configuration.assignments.filter(
-                state__in=LearnerContentAssignmentStateChoices.EXPIRABLE_STATES,
-            ).order_by('created')
+            # Freeze the candidates up front. Expiring an assignment removes it from this filter, so paging by
+            # offset over the live queryset would skip the assignments that slide into already-read pages.
+            assignment_ids_to_possibly_expire = list(
+                assignment_configuration.assignments.filter(
+                    state__in=LearnerContentAssignmentStateChoices.EXPIRABLE_STATES,
+                ).order_by('created').values_list('pk', flat=True)
+            )
 
-            paginator = Paginator(assignments_to_possibly_expire, 100)
+            paginator = Paginator(assignment_ids_to_possibly_expire, 100)
             for page_number in paginator.page_range:
-                assignments = paginator.page(page_number)
+                assignments = list(
+                    assignment_configuration.assignments.filter(
+                        pk__in=paginator.page(page_number).object_list,
+                    ).order_by('created')
+                )
 
                 content_metadata_for_assignments = get_content_metadata_for_assignments(
                     enterprise_catalog_uuid,
@@ -92,8 +102,37 @@ class Command(BaseCommand):
 
                 for assignment in assignments:
                     content_metadata = content_metadata_for_assignments.get(assignment.content_key, {})
-                    expire_assignment(
-                        assignment,
-                        content_metadata,
-                        modify_assignment=not dry_run,
-                    )
+                    try:
+                        expire_assignment(
+                            assignment,
+                            content_metadata,
+                            modify_assignment=not dry_run,
+                        )
+                    except Exception:  # pylint: disable=broad-except
+                        logger.exception(
+                            '[AUTOMATICALLY_EXPIRE_ASSIGNMENTS] Failed to expire assignment %s',
+                            assignment.uuid,
+                        )
+                        failed_assignment_uuids.append(assignment.uuid)
+
+            try:
+                requeue_missing_expiration_emails(assignment_configuration, dry_run=dry_run)
+            except Exception:  # pylint: disable=broad-except
+                logger.exception(
+                    '[AUTOMATICALLY_EXPIRE_ASSIGNMENTS] Failed to reconcile expiration emails for configuration %s',
+                    assignment_configuration.uuid,
+                )
+                failed_reconciliations += 1
+
+        errors = []
+        if failed_assignment_uuids:
+            logger.error(
+                '[AUTOMATICALLY_EXPIRE_ASSIGNMENTS] Failed to expire %d assignments: %s',
+                len(failed_assignment_uuids),
+                failed_assignment_uuids,
+            )
+            errors.append(f'Failed to expire {len(failed_assignment_uuids)} assignments.')
+        if failed_reconciliations:
+            errors.append(f'Failed to reconcile expiration emails for {failed_reconciliations} configurations.')
+        if errors:
+            raise CommandError(' '.join(errors))

@@ -8,8 +8,12 @@ from django.apps import apps
 from django.conf import settings
 from django.test import TestCase
 
+from enterprise_access.apps.content_assignments.tasks import ContentMetadataUnavailableError
 from enterprise_access.apps.core.tests.factories import UserFactory
-from enterprise_access.apps.subsidy_request.tasks import send_learner_credit_bnr_decline_notification_task
+from enterprise_access.apps.subsidy_request.tasks import (
+    send_learner_credit_bnr_decline_notification_task,
+    send_reminder_email_for_pending_learner_credit_request
+)
 
 
 class TestSendLearnerCreditBNRDeclineNotificationTask(TestCase):
@@ -68,3 +72,26 @@ class TestSendLearnerCreditBNRDeclineNotificationTask(TestCase):
         self.assertEqual(trigger_props["decline_reason"], "Budget constraints")
         self.assertIn("enterprise_dashboard_url", trigger_props)
         self.assertIn("contact_admin_link", trigger_props)
+
+
+class TestSendReminderEmailForPendingLearnerCreditRequest(TestCase):
+    """Tests for send_reminder_email_for_pending_learner_credit_request."""
+
+    @mock.patch('enterprise_access.apps.subsidy_request.tasks.record_skipped_reminder')
+    @mock.patch('enterprise_access.apps.subsidy_request.tasks._get_assignment_or_raise')
+    @mock.patch('enterprise_access.apps.subsidy_request.tasks._prepare_braze_sender')
+    def test_reminder_is_skipped_when_content_metadata_is_unavailable(
+        self, mock_prepare_braze_sender, mock_get_assignment, mock_record_skipped,
+    ):
+        """
+        Regression test for ENT-12316: an approved B&R request whose course left the catalog must not make the
+        reminder task raise (which would also mark the assignment errored); it is skipped instead.
+        """
+        mock_prepare_braze_sender.side_effect = ContentMetadataUnavailableError('no metadata')
+
+        result = send_reminder_email_for_pending_learner_credit_request(str(uuid4()))
+
+        assert result is None
+        mock_record_skipped.assert_called_once_with(
+            mock_get_assignment.return_value, mock_prepare_braze_sender.side_effect,
+        )
