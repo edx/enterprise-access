@@ -15,8 +15,10 @@ from enterprise_access.apps.api_client.lms_client import LmsApiClient
 from enterprise_access.apps.content_assignments.tasks import (
     _BRAZE_COURSE_PROPS,
     BrazeCampaignSender,
+    ContentMetadataUnavailableError,
     _get_assignment_or_raise,
-    _prepare_braze_sender
+    _prepare_braze_sender,
+    record_skipped_reminder
 )
 from enterprise_access.apps.subsidy_request.constants import (
     LearnerCreditRequestActionErrorReasons,
@@ -386,9 +388,14 @@ def send_reminder_email_for_pending_learner_credit_request(assignment_uuid):
     Args:
         assignment_uuid (str): The UUID of the LearnerContentAssignment associated with the LCR.
     """
-    assignment, campaign_sender, braze_trigger_properties = _prepare_braze_sender(
-        assignment_uuid, *_BRAZE_COURSE_PROPS,
-    )
+    try:
+        assignment, campaign_sender, braze_trigger_properties = _prepare_braze_sender(
+            assignment_uuid, *_BRAZE_COURSE_PROPS,
+        )
+    except ContentMetadataUnavailableError as exc:
+        # Nothing to remind about, and retrying or failing the task would not help.
+        record_skipped_reminder(_get_assignment_or_raise(assignment_uuid), exc)
+        return
     campaign_uuid = settings.BRAZE_LEARNER_CREDIT_BNR_REMIND_NOTIFICATION_CAMPAIGN
     campaign_sender.send_campaign_message(
         braze_trigger_properties,

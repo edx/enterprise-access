@@ -197,6 +197,55 @@ class TestAssignmentActions(TestCase):
         email_sent_action = self.assignment.add_successful_expiration_action()
         self.assertEqual(self.assignment.get_last_successful_expiration_action(), email_sent_action)
 
+    def test_successful_expiration_email_filter_and_bulk_lookup_agree(self):
+        """
+        The model helper and the bulk PII-clearing lookup share one definition of "expiration email sent":
+        scheduled_job rows and errored rows don't count; null-source (legacy) and celery_task rows do.
+        """
+        # imported here: tasks.py imports the models module
+        from ..tasks import _get_expiration_action_info  # pylint: disable=import-outside-toplevel
+
+        def make_assignment():
+            return LearnerContentAssignmentFactory.create(assignment_configuration=self.assignment_configuration)
+
+        only_scheduled = make_assignment()
+        only_errored = make_assignment()
+        legacy_null_source = make_assignment()
+        emailed = make_assignment()
+
+        only_scheduled.add_audit_action(
+            action_type=AssignmentActions.EXPIRED, actor_type=AssignmentActorTypes.SYSTEM,
+            source=AssignmentSources.SCHEDULED_JOB, metadata={'expiration_reason': 'COURSE_RUN_ENDED'},
+        )
+        only_errored.add_audit_action(
+            action_type=AssignmentActions.EXPIRED, actor_type=AssignmentActorTypes.SYSTEM,
+            source=AssignmentSources.CELERY_TASK, error_reason=AssignmentActionErrors.EMAIL_ERROR,
+        )
+        LearnerContentAssignmentAction.objects.create(
+            assignment=legacy_null_source, action_type=AssignmentActions.EXPIRED,
+            completed_at=timezone.now(), source=None,
+        )
+        emailed.add_successful_expiration_action()
+        emailed.add_audit_action(
+            action_type=AssignmentActions.EXPIRED, actor_type=AssignmentActorTypes.SYSTEM,
+            source=AssignmentSources.SCHEDULED_JOB, metadata={'expiration_reason': 'NINETY_DAYS_PASSED'},
+        )
+
+        assignments = [only_scheduled, only_errored, legacy_null_source, emailed]
+        emailed_ids, recorded_reasons = _get_expiration_action_info(assignments)
+
+        expected_emailed = {legacy_null_source.uuid, emailed.uuid}
+        self.assertEqual(emailed_ids, expected_emailed)
+        for assignment in assignments:
+            self.assertEqual(
+                assignment.get_last_successful_expiration_action() is not None,
+                assignment.uuid in emailed_ids,
+            )
+        self.assertEqual(recorded_reasons, {
+            only_scheduled.uuid: 'COURSE_RUN_ENDED',
+            emailed.uuid: 'NINETY_DAYS_PASSED',
+        })
+
     def test_add_audit_action_with_error(self):
         """add_audit_action creates an audit action with error details."""
         traceback_str = "Traceback (most recent call last):\n  File \"test.py\", line 1, in <module>"

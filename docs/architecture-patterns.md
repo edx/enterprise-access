@@ -135,6 +135,34 @@ so the learner still gets an answer for the healthy ones.
   expiration and a zero balance rather than raising. Code that compares those fields across policies (for
   example `sort_subsidy_access_policies_for_redemption()`) must tolerate nulls.
 
+### 19. Multi-write state transitions that also queue a Celery task: atomic writes, task on commit
+
+When a job changes state, writes an audit row and then queues a Celery task (e.g. `expire_assignment()`), do the
+writes inside `transaction.atomic()` and register the `.delay()` with `transaction.on_commit()`. Queuing inside the
+block lets a fast worker run before the state is visible, and still sends the task if the commit then fails. The
+trade-off is that a broker failure after the commit leaves the record in its final state with no task queued; the
+exception surfaces to the caller (the nightly command reports it as a failure), but nothing retries it
+automatically. The rollback only restores the database, so don't reuse a mutated in-memory model after the block
+fails: load it again before retrying (the nightly job does this by reading fresh rows on its next run). In tests,
+`TestCase` never runs `on_commit` callbacks on its own: wrap the call in `self.captureOnCommitCallbacks(execute=True)`.
+
+### 20. Irreversible behavior ships behind a WaffleSwitch
+
+PII clearing cannot be undone, so behavior that extends it (e.g. `COURSE_RUN_ENDED` expiration) is gated by a
+switch in `enterprise_access/toggles.py`, off by default, and the switch must also stop PII clearing for rows
+already recorded under that behavior. Use `override_waffle_switch` on the test class to turn it on.
+
+### 21. Catalog lookups on scheduled jobs: only a 404 is "no metadata"
+
+A transient catalog failure must not be treated as "no metadata", or the job acts on incomplete data and records a
+reason that is never recomputed. Let non-404 `HTTPError`s propagate so the per-item error handling skips the item
+and the next run retries it, and never cache a failure as a miss.
+
+### 22. Don't offset-paginate a queryset the loop shrinks
+
+Expiring a record removes it from the filter that selected it, so `Paginator` over the live queryset skips records.
+Freeze the primary keys first (`list(qs.values_list('pk', flat=True))`) and page over that.
+
 ### Key Takeaways for Implementation:
 - Check permissions early using `@permission_required` decorator
 - Use separate serializers for request/response
