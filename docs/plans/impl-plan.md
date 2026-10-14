@@ -9,12 +9,12 @@
 | Field | Value |
 | --- | --- |
 | PRD Link | PRD (V2): Learner Credit Top Up — `https://2u-internal.atlassian.net/wiki/spaces/SOL/pages/4004348117/PRD+V2+Learner+Credit+Top+Up` |
-| Tech Spec Link | `docs/plans/tech-spec.md` — built against commit `fdc62085` (2026-09-28) plus the uncommitted spec edits of 2026-10-12 (OQ-7 resolved, 3DS note) and 2026-10-13 (top-up flow diagram, flag name, Dependencies, Monitoring & Alerting, Feature Flags), all reflected here. If the spec changes after that, this plan is stale: reconcile it before adding to it. |
+| Tech Spec Link | `docs/plans/tech-spec.md` — built against commit `133021b5` (2026-10-13), which includes the spec edits of 2026-10-12 (OQ-7 resolved, 3DS note) and 2026-10-13 (top-up flow diagram, flag name, Dependencies, Monitoring & Alerting, Feature Flags, the two Group A decisions), all reflected here. If the spec changes after that, this plan is stale: reconcile it before adding to it. |
 | Engineering Lead | rthota-sonata@2u.com |
 | Sprint | TBD |
 | Status | Planning |
 | Created | 2026-09-30 |
-| Last Updated | 2026-10-13 |
+| Last Updated | 2026-10-14 |
 
 **Scope** (Eng Lead, 2026-09-30): Phase 1 (card top-ups + Salesforce) is chunked in full. Phases 2
 and 3 are placeholder chunks, to be chunked once their gates clear (see the spec's Phased Delivery).
@@ -46,7 +46,7 @@ release.
 | 13 | C · 3DS (`requires_action`) completion | 🔲 | Ganesh | rthota-sonata (Eng Lead) | 11, 12 | 25 | M |
 | 14 | C · Receipt and payment-failure emails | 🔲 | Vineeth | rthota-sonata (Eng Lead) | 10, 12 | Release | S |
 | 15 | D · Server-side tracking events (S-03, S-04) | 🔲 | Ramesh | rthota-sonata (Eng Lead) | 11 · spec Event Contracts (empty) | Release | S |
-| 16 | D · Stuck-top-up alert | 🔲 | Ganesh | rthota-sonata (Eng Lead) | 10 · spec alert threshold (empty) | Release | S |
+| 16 | D · Stuck-top-up alert | 🔲 | Ganesh | rthota-sonata (Eng Lead) | 10 · spec alert threshold (not set) | Release | S |
 | 17 | D · Pricing source | 🔲 | Vineeth | rthota-sonata (Eng Lead) | 7 · 🔒 OQ-3 | Release | M |
 | 18 | D · SDN screening | 🔲 | Ramesh | rthota-sonata (Eng Lead) | 11 · 🔒 OQ-4 | Release | M |
 | 19 | D · Account standing and agreement type | 🔲 | Ganesh | rthota-sonata (Eng Lead) | 6 · 🔒 OQ-8 | Release | M |
@@ -230,7 +230,7 @@ this plan follows.*
 | # | Item | Resolves at | Status |
 | --- | --- | --- | --- |
 | 1 | **Backend feature flag.** NFR-05 wants a per-enterprise flag, but enterprise-access has no per-enterprise flag mechanism; its one flag is a global waffle flag (`EA:enterprise_access/toggles.py:18`). The portal already has a build-time flag from #183, `FEATURE_TOP_UP_LEARNER_CREDIT` (or `hasFeatureFlagEnabled('TOP_UP_LEARNER_CREDIT')`). The name is settled: `FEATURE_TOP_UP_LEARNER_CREDIT` everywhere (Eng Lead, 2026-10-13; spec NFR-05). **Note:** `FEATURE_LEARNER_CREDIT_TOP_UP` (the PRD's name) = `FEATURE_TOP_UP_LEARNER_CREDIT`; both refer to the same flag. Still open: how enterprise-access reads it, per enterprise. | Chunk 6: options and a recommendation, recorded in the spec as KD-6 | Open (name settled) |
-| 2 | **Stuck-top-up alert threshold.** The "charged but not credited" alarm (spec Fulfillment rule 4) has no threshold, and the spec's Monitoring & Alerting is empty. | Chunk 16, recorded in the spec | Open |
+| 2 | **Stuck-top-up alert threshold.** The "charged but not credited" alarm (spec Fulfillment rule 4) has no threshold. The spec's Monitoring & Alerting now lists it as P1 but marks the threshold "not set". | Chunk 16, recorded in the spec | Open |
 | 3 | **Response time for `pay`.** The spec says the conflict between same-request fulfillment and NFR-01's 500 ms target is "settled in the Performance Budget", which is still blank. | Chunk 11, recorded in the spec | Open |
 | 4 | **Event contracts.** The spec's Event / Message Contracts section is empty. OQ-10 (how the data reaches Snowflake) feeds it. | Chunk 15 | Open |
 | 5 | **Spec fix: lock-error detection.** The spec's deposit-endpoint changes say the view detects the wrapped lock error "as the v2 transaction view does". It doesn't: the deposit path wraps the error twice, while the transaction view catches it directly (see chunk 1's notes). | Proposed: fix alongside the KD-6 edit in group B | Open. A 2026-10-12 spec re-baseline fixed it, but that edit was lost. |
@@ -239,8 +239,9 @@ this plan follows.*
 | 8 | **Provider slug outside `SubsidyReferenceChoices`** (chunk 3). That list also sets which reference types a subsidy can have, so adding the slug to it would change them. | Eng Lead confirmation | Resolved 2026-10-13: kept as written, and added to the spec's Data Model |
 | 9 | **Reviewers.** The Ready-to-Build gate needs a named reviewer for every chunk. Resolved 2026-10-13: the Eng Lead (rthota-sonata) reviews every chunk, including chunks 1–3 as the enterprise-subsidy owner. | Before the Ready-to-Build gate | Resolved |
 | 10 | **Tickets.** The earlier `tickets.md` was built straight from the spec, before this plan, and no longer exists. Tickets follow the plan: generate them with the `ticket-generator` skill once the chunk contracts are done. Chunks won't match the old tickets one-to-one. | After groups B–E are drafted | Open |
-| 11 | **Monitoring with no chunk yet.** The spec's Monitoring & Alerting now has payment and dependency alerts. Chunk 16 covers only the stuck-top-up alert; the Stripe-to-top-up reconciliation (P1), the guardrail rates and the dependency alerts belong to no chunk. Decide whether to widen chunk 16 or add a chunk. | Before the group D contracts | Open |
+| 11 | **Monitoring with no chunk yet.** Ops Readiness, Monitoring maps the spec's 13 signals to chunks. Chunk 16 covers the two Fulfillment rule 4 alerts (stuck in `paid` or `deposited`, and `errored_fulfillment`). The other 11 have no chunk, including two P1s (the Stripe-to-top-up reconciliation and the enterprise-subsidy 403), and neither does sending the state-change signals they all read. Decide whether to widen chunk 16 or add a chunk. | Before the group D contracts | Open |
 | 12 | **A charge can succeed after its quote expired.** A 3DS challenge finished after `expires_at` charges the card, but the state machine has no `expired → paid` path (spec state diagram). Either cancel the PaymentIntent when a quote expires, or allow `expired → paid`. | Chunk 5 (state machine), recorded in the spec | Open |
+| 13 | **Is `discount_cents` nullable?** The spec's field table types it as a plain BigInteger and says the two amounts are equal when there is no discount, but its API contract says `discount_cents` is `null` when there is no discount. Found while drawing the ERD. | Chunk 5 (model), recorded in the spec | Open |
 
 **Next:** the group B contracts, starting with chunk 6's flag decision (item 1).
 
@@ -490,24 +491,85 @@ Feature: Top-up deposits can cite a Stripe PaymentIntent
 
 ## Data Model
 
+*Projected from the spec's Data Model (KD-2 to KD-5), which keeps the per-field notes, the state
+machine and the fulfillment rules. This section adds what the spec leaves to the plan: constraints
+and indexes in one place, the ERD, and the chunk that builds each piece. Generated for the Eng Lead
+to validate; the chunk 4 and 5 contracts finalize it.*
+
 **New Models**
 
 | Model | Fields | Relationships | Constraints | Notes |
 | --- | --- | --- | --- | --- |
-| | | | | |
+| `LearnerCreditTopUp` (EA `customer_billing`), chunk 5 | The 30 fields in the spec's field table, plus `created` / `modified` | FK → `SubsidyAccessPolicy` (PROTECT); FK → `User` as `initiated_by` (SET_NULL) | PK `uuid`. Unique: `stripe_payment_intent_id`. Indexed: `enterprise_customer_uuid`, `subsidy_uuid`, `state`, `stripe_customer_id`, and `(subsidy_access_policy, state)`. `state` changes only through the allowed-transitions table. | `TimeStampedModel` (django-extensions) + `HistoricalRecords`. Rows are never deleted (S-01). `initiated_by_lms_user_id` needs a `.. pii:` annotation. |
+| `EnterpriseStripeCustomer` (EA `customer_billing`), chunk 4 | `enterprise_customer_uuid`, `stripe_customer_id`, `source` (`checkout_intent_backfill` / `created_for_top_up`), plus `created` / `modified` | None; the enterprise is referenced by UUID | Unique: `enterprise_customer_uuid`, `stripe_customer_id` | `TimeStampedModel` + `HistoricalRecords`. `_get_stripe_customer_id_for_enterprise` reads it first and falls back to `CheckoutIntent`. |
+| enterprise-subsidy: no new table, chunk 3 | One `SalesContractReferenceProvider` row with slug `stripe_payment_intent` | Every top-up `Deposit` points at it (CASCADE) | Slug of at most 32 characters | Its own constant, outside `SubsidyReferenceChoices`. The row must never be deleted. |
 
-*ERD: Generated during Technical Readiness (Step 4): `Generate ERD from the data model section of impl-plan.md`*
+*ERD. Solid lines are foreign keys; dotted lines are values copied across a table or service
+boundary with no foreign key. `null` marks nullable columns, as the spec's field table gives them.*
 
 ```mermaid
 erDiagram
-%% Replace with actual ERD
+    SubsidyAccessPolicy ||--o{ LearnerCreditTopUp : "budget, PROTECT"
+    User |o--o{ LearnerCreditTopUp : "initiated_by, SET_NULL"
+    EnterpriseStripeCustomer ||..o{ LearnerCreditTopUp : "stripe_customer_id copied"
+    LearnerCreditTopUp |o..o| Deposit : "deposit_uuid, in enterprise-subsidy"
+    Deposit ||--|| Transaction : "one-to-one"
+    SalesContractReferenceProvider ||--o{ Deposit : "stripe_payment_intent, CASCADE"
+
+    LearnerCreditTopUp {
+        uuid uuid PK
+        uuid enterprise_customer_uuid "indexed"
+        foreignkey subsidy_access_policy FK "PROTECT"
+        uuid subsidy_uuid "indexed"
+        foreignkey initiated_by FK "null"
+        int initiated_by_lms_user_id "pii"
+        char state "indexed"
+        bigint amount_cents "credited, full amount"
+        decimal discount_rate "5,4, null"
+        bigint discount_cents "see Open Items 13"
+        bigint charge_amount_cents "charged to the card"
+        char currency "usd"
+        char sales_quote_number "null"
+        char agreement_version "null"
+        datetime agreement_accepted_at "null"
+        char stripe_customer_id "indexed"
+        char stripe_payment_intent_id UK "null"
+        char payment_method_type "null"
+        char stripe_payment_method_id "null"
+        uuid deposit_uuid "null"
+        uuid ledger_transaction_uuid "null"
+        int spend_limit_before "null"
+        int spend_limit_after "null"
+        datetime expires_at
+        datetime paid_at "null"
+        datetime deposited_at "null"
+        datetime fulfilled_at "null"
+        text last_error "null"
+        char salesforce_opportunity_id "null"
+        datetime salesforce_synced_at "null"
+    }
+    EnterpriseStripeCustomer {
+        uuid enterprise_customer_uuid UK
+        char stripe_customer_id UK "255"
+        char source
+    }
+    SalesContractReferenceProvider {
+        slug slug UK "stripe_payment_intent"
+    }
 ```
 
 **Migrations**
 
+*From the spec's Migrations Required. Deploy order: chunk 3's migration with the deposit fixes
+first, then the enterprise-access migrations, then the enterprise-access code behind the flag,
+then the portal.*
+
 | Migration | Description | Risk | Rollback | Chunk |
 | --- | --- | --- | --- | --- |
-| | | | | |
+| ES `subsidy` `0024_…`: add the `stripe_payment_intent` provider | `get_or_create` with a hard-coded slug | None; adds one row | The reverse is a no-op and must stay one: deleting the row deletes every top-up `Deposit` | 3 |
+| EA `customer_billing`: add `EnterpriseStripeCustomer` and its history table | New tables | None | Reverse only before the first real top-up; after that, keep the tables | 4 |
+| EA `customer_billing`: backfill `EnterpriseStripeCustomer` from `CheckoutIntent` | For each enterprise, the latest intent that has a Stripe customer | Low; `CheckoutIntent` is small (`[Assumed]` in the spec), and `get_or_create` makes it safe to re-run | The reverse is a no-op; the lookup falls back to `CheckoutIntent`, so the code can roll back alone | 4 |
+| EA `customer_billing`: add `LearnerCreditTopUp` and its history table | New tables | None | Reverse only before the first real top-up; after launch, turn the flag off and keep the tables, which hold payment records | 5 |
 
 ## Test Plan
 
@@ -537,32 +599,76 @@ erDiagram
 
 ## Ops Readiness
 
+*Projected from the spec's Monitoring & Alerting and Feature Flags, which keep the full conditions
+and responses. Severities are the spec's proposals: P1 pages on-call, P2 alerts the team in
+business hours, P3 is dashboard only. Signals are `LearnerCreditTopUp` state changes sent as custom
+attributes, the way `CheckoutIntent` sends its lifecycle state. No dashboard or on-call rotation is
+named yet.*
+
 **Monitoring**
 
-| Metric | Dashboard | Alert Threshold | Severity |
-| --- | --- | --- | --- |
-| | | | |
+| Metric | Dashboard | Alert Threshold | Severity | Chunk |
+| --- | --- | --- | --- | --- |
+| Charged but not credited: a top-up stays in `paid` or `deposited` | TBD | Not set (Open Items 2) | P1 | 16 |
+| Fulfillment failed: a top-up reaches `errored_fulfillment` | TBD | Any | P1 | 16 |
+| Payment taken, top-up not moved: a reconciliation finds a succeeded PaymentIntent whose top-up isn't `paid`, `deposited` or `fulfilled` | TBD | Any | P1 | None yet (Open Items 11) |
+| enterprise-subsidy deposit access: a deposit call returns 403 | TBD | Any | P1 | None yet |
+| Failed-payment rate (S-04 guardrail) | TBD | More than 5% of payment attempts | P2 | None yet |
+| SDN screening failures (S-04 guardrail) | TBD | Above the normal level; baseline set after launch | P2 | None yet |
+| Stripe API errors: 503 `payment_provider_unavailable` | TBD | Sustained; not set | P2 | None yet |
+| Stripe webhook delivery: `payment_intent.*` failures | TBD | Not stated | P2 | None yet |
+| enterprise-subsidy deposit errors: 5xx, or 429 beyond the retries | TBD | Sustained; not stated | P2 | None yet |
+| Pricing source: 503 or 422 on quote creation | TBD | Not stated | P2 | None yet |
+| 3DS completion: `requires_action` that ends in `expired` | TBD | Dashboard only | P3 | None yet |
+| Time to spendable funds: p95 from `paid` to `fulfilled` (NFR-01) | TBD | Dashboard only; target 30 s | P3 | None yet |
+| Salesforce opportunity sync: `fulfilled` with no `salesforce_synced_at` | TBD | Not set; depends on OQ-5 | P3 | None yet |
 
 **Alerts**
 
 | Alert Name | Condition | Who Gets Paged | Response |
 | --- | --- | --- | --- |
-| | | | |
+| Charged but not credited | `paid` or `deposited` past the threshold | On-call (P1) | See the runbook below. |
+| Fulfillment failed | `errored_fulfillment` | On-call (P1) | Re-run fulfillment, or refund. |
+| Payment taken, top-up not moved | Succeeded PaymentIntent, top-up not moved | On-call (P1) | Fulfill the top-up by hand, then find out why the webhook missed it. |
+| enterprise-subsidy deposit access | Deposit call returns 403 | On-call (P1) | The service user lost operator access (OQ-9). Restore the grant, then re-run the affected top-ups. |
+| Failed-payment rate | Above 5% | Team, business hours (P2) | Break failures down by `decline_code`, check Stripe's status, and tell the PM (launch guardrail). |
+| SDN screening failures | Above normal | Team, business hours (P2) | Tell Compliance, and check the screening source (OQ-4) for false positives. |
+| Stripe API errors | Sustained 503s | Team, business hours (P2) | Check Stripe's status page. Admins can retry safely. |
+| Stripe webhook delivery | Delivery or signature failures | Team, business hours (P2) | Check the endpoint's `payment_intent.*` subscription and signing secret. |
+| enterprise-subsidy deposit errors | Sustained 5xx or 429 | Team, business hours (P2) | Retries back off on their own; persistent failures reach `errored_fulfillment`, which pages. |
+| Pricing source | 503 or 422 on quote | Team, business hours (P2) | Check the pricing source (OQ-3) and the enterprise's Salesforce record. |
 
 **Runbook**
 
-*If this breaks at 2am, what does on-call do?*
+*If this breaks at 2am, what does on-call do? Drafted from the spec's alert responses for the P1
+payment alerts.*
 
-1. Symptom:
-2. Diagnosis steps:
-3. Remediation:
-4. Escalation path:
+1. **Symptom:** a P1 page. A top-up is stuck in `paid` or `deposited`, has reached
+   `errored_fulfillment`, or the reconciliation found a charge whose top-up never moved.
+2. **Diagnosis steps:** read the top-up's `state` and `last_error`. Check whether enterprise-subsidy
+   already holds a deposit for the key `lc-top-up-<uuid>`. A 403 from the deposit call means the
+   operator grant is gone (OQ-9). For a charge whose top-up never moved, check Stripe's webhook
+   deliveries for `payment_intent.*`.
+3. **Remediation:** run the ops re-run (chunk 10). It is safe to repeat: the deposit key returns the
+   same deposit on replay, and the spend-limit step runs only from `deposited`. Refund only if
+   fulfillment can't complete (`errored_fulfillment → refunded`). Never delete the
+   `stripe_payment_intent` provider row, which would delete every top-up deposit.
+4. **Escalation path:** not set yet. Owners named in the spec: rthota-sonata (enterprise-subsidy and
+   the OQ-9 grant), Justin Grabowski (Salesforce sync). The Stripe account owner is TBD.
 
 **Rollback Plan**
 
-1.
-2.
-3.
+*Derived from the spec's Feature Flags and Migrations Required; the spec's own Rollback Plan is
+still empty.*
+
+1. **Turn `FEATURE_TOP_UP_LEARNER_CREDIT` off.** The portal hides every entry point and the top-up
+   endpoints return 404. Nothing is migrated or deleted. As proposed in the spec, the webhook
+   handlers and fulfillment ignore the flag, so a top-up that was already paid still gets credited.
+2. **Roll back enterprise-access code if needed.** It can roll back on its own: the Stripe-customer
+   lookup falls back to `CheckoutIntent`. Keep the new tables once a real top-up exists, because
+   they hold payment records.
+3. **Never reverse the enterprise-subsidy provider migration (chunk 3).** Its reverse is a no-op on
+   purpose.
 
 **Feature Flags**
 
@@ -728,3 +834,4 @@ interrogate the boundaries together before you accept them.*
 | 2026-10-13 | Ops Readiness, Feature Flags: added `FEATURE_TOP_UP_LEARNER_CREDIT` (default OFF), built by chunks 0, 6 and 21. Tech Spec Link updated for the spec's new Feature Flags row. | Eng Lead request. |
 | 2026-10-13 | Open Items item 6 resolved: the replay check runs before the expired-subsidy check. Chunk 1's scenario and note stand; the note is marked confirmed, and the spec now states the order. | Eng Lead decision. |
 | 2026-10-13 | Open Items item 8 resolved: the provider slug stays outside `SubsidyReferenceChoices`. Chunk 3 is unchanged; its note is marked confirmed, and the spec's Data Model now states it. | Eng Lead decision ("leave as it is"). |
+| 2026-10-14 | Generated the descendant sections from the spec (commit `133021b5`), for the Eng Lead to validate. Data Model: the three model rows with constraints and indexes, an ERD, and the four migrations, each mapped to its chunk (3, 4, 5). Ops Readiness: Monitoring maps the spec's 13 signals to chunks (only two have one, chunk 16), Alerts lists the P1 and P2 alerts, and a runbook and rollback plan are drafted from the spec's responses, flag behavior and migration rollbacks. Open Items 2 and 11 updated; item 13 added (`discount_cents` nullability). Chunk 16 now waits on a threshold that is "not set" rather than an empty section. | The spec's Data Model says its ERD and column detail are finalized in the plan, and the plan's own Data Model and Ops Readiness were still template placeholders. |
