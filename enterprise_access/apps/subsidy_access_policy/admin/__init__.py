@@ -1,13 +1,17 @@
 """ Admin configuration for subsidy_access_policy models. """
 import json
 import logging
-from typing import Any, Dict
+from uuid import uuid4
 
+from celery import chain
 from django.conf import settings
 from django.contrib import admin, messages
+from django.core.exceptions import PermissionDenied
+from django.db import transaction
 from django.http import HttpResponseRedirect
+from django.template.response import TemplateResponse
 from django.urls import re_path, reverse
-from django.utils import timezone
+from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 from django.utils.text import Truncator  # for shortening a text
 from django.utils.translation import gettext_lazy
@@ -19,16 +23,17 @@ from pygments.lexers import JsonLexer  # pylint: disable=no-name-in-module
 from simple_history.admin import SimpleHistoryAdmin
 
 from enterprise_access.apps.api.serializers.subsidy_access_policy import SubsidyAccessPolicyResponseSerializer
-from enterprise_access.apps.core.models import User
-from enterprise_access.apps.subsidy_access_policy import constants, models
+from enterprise_access.apps.subsidy_access_policy import models
 from enterprise_access.apps.subsidy_access_policy.admin.utils import UrlNames
 from enterprise_access.apps.subsidy_access_policy.admin.views import (
     SubsidyAccessPolicyDepositFundsView,
     SubsidyAccessPolicySetLateRedemptionView
 )
+from enterprise_access.apps.subsidy_access_policy.api import force_redeem_with_geag_metadata
+from enterprise_access.apps.subsidy_access_policy.tasks import force_redeem_task
 from enterprise_access.apps.subsidy_access_policy.utils import cents_to_usd_string
 
-from .forms import ForcedPolicyRedemptionForm, SubsidyAccessPolicyForm
+from .forms import BulkForcedPolicyRedemptionForm, ForcedPolicyRedemptionForm, SubsidyAccessPolicyForm
 
 logger = logging.getLogger(__name__)
 
@@ -39,17 +44,6 @@ EVERY_SPEND_LIMIT_FIELD = [
     'per_learner_spend_limit',
     'per_learner_enrollment_limit',
 ]
-
-FORCED_REDEMPTION_GEAG_KEYS = (
-    'geag_first_name',
-    'geag_last_name',
-    'geag_date_of_birth',
-    constants.FALLBACK_EXTERNAL_REFERENCE_ID_KEY,
-)
-FORCED_REDEMPTION_CURRENT_TIME_KEY = 'geag_terms_accepted_at'
-FORCED_REDEMPTION_DATA_SHARE_CONSENT_KEY = 'geag_data_share_consent'
-FORCED_REDEMPTION_EMAIL_KEY = 'geag_email'
-GEAG_DATETIME_FMT = '%Y-%m-%dT%H:%M:%SZ'
 
 
 def super_admin_enabled():
@@ -421,11 +415,15 @@ class SubsidAccessPolicyAdmin(admin.ModelAdmin):
 
 
 @admin.register(models.ForcedPolicyRedemption)
-class ForcedPolicyRedemptionAdmin(DjangoQLSearchMixin, SimpleHistoryAdmin):
+class ForcedPolicyRedemptionAdmin(DjangoObjectActions, DjangoQLSearchMixin, SimpleHistoryAdmin):
     """
     Admin class for the forced redemption model/logic.
     """
     form = ForcedPolicyRedemptionForm
+
+    changelist_actions = (
+        'bulk_create_forced_redemptions',
+    )
 
     djangoql_completion_enabled_by_default = False
     search_fields = [
@@ -433,6 +431,7 @@ class ForcedPolicyRedemptionAdmin(DjangoQLSearchMixin, SimpleHistoryAdmin):
         'subsidy_access_policy__uuid',
         'lms_user_id',
         'course_run_key',
+        'batch_uuid',
     ]
 
     list_display = [
@@ -442,6 +441,7 @@ class ForcedPolicyRedemptionAdmin(DjangoQLSearchMixin, SimpleHistoryAdmin):
         'course_run_key',
         'redeemed_at',
         'errored_at',
+        'batch_uuid',
     ]
     list_filter = [
         'redeemed_at',
@@ -455,7 +455,112 @@ class ForcedPolicyRedemptionAdmin(DjangoQLSearchMixin, SimpleHistoryAdmin):
         'errored_at',
         'transaction_uuid',
         'traceback',
+        'batch_uuid',
     ]
+
+    def get_ordering(self, request):
+        """
+        Lists a bulk-created batch (``?batch_uuid=``) in creation order, which is the order its rows were queued.
+        """
+        if 'batch_uuid' in request.GET:
+            return ('created',)
+        return super().get_ordering(request)
+
+    @action(
+        label='Bulk create from JSON',
+        description='Create (and redeem) many forced redemptions from a JSON list'
+    )
+    def bulk_create_forced_redemptions(self, request, queryset):  # pylint: disable=unused-argument
+        """
+        Object tool handler method - redirects to the bulk create view.
+        """
+        return HttpResponseRedirect(reverse('admin:' + UrlNames.BULK_CREATE_FORCED_REDEMPTIONS))
+
+    def get_urls(self):
+        """
+        Returns the additional urls used by the custom object tools.
+        """
+        additional_urls = [
+            re_path(
+                r"^bulk_create/$",
+                # Opt out of ATOMIC_REQUESTS, so the view's own atomic block commits the records before it
+                # queues the tasks that read them.
+                transaction.non_atomic_requests(self.admin_site.admin_view(self.bulk_create_view)),
+                name=UrlNames.BULK_CREATE_FORCED_REDEMPTIONS,
+            ),
+        ]
+        return additional_urls + super().get_urls()
+
+    def bulk_create_view(self, request):
+        """
+        Creates one ForcedPolicyRedemption per row of a JSON list, all sharing a new ``batch_uuid``, and queues a
+        chain of tasks that redeem them one at a time, as the add form would.
+
+        Rows are validated up front, and nothing is saved unless every row is valid. There's deliberately no
+        skip for earlier records (their redemption may since have been reversed); the subsidy service's redeem()
+        returns any existing unreversed transaction instead of charging again.
+        """
+        if not self.has_add_permission(request):
+            raise PermissionDenied
+
+        form = BulkForcedPolicyRedemptionForm(request.POST or None)
+        if request.method == 'POST' and form.is_valid():
+            batch_uuid = uuid4()
+            task_signatures = []
+            with transaction.atomic():
+                for row_form in form.cleaned_data['redemptions_json']:
+                    obj = row_form.save(commit=False)
+                    obj.batch_uuid = batch_uuid
+                    obj.save()
+                    self.log_addition(request, obj, [{'added': {}}])
+                    task_signature = force_redeem_task.si(
+                        forced_redemption_uuid=str(obj.uuid),
+                        geag_metadata=row_form.get_geag_metadata(),
+                        actor_lms_user_id=request.user.lms_user_id,
+                        suppress_assignment_email=row_form.cleaned_data['suppress_assignment_email'],
+                    )
+                    task_signatures.append(task_signature)
+
+            batch_url = reverse('admin:subsidy_access_policy_forcedpolicyredemption_changelist')
+            try:
+                # Rows run one at a time (they'd contend for the policy lock); each task never raises, so one
+                # failure doesn't stop the chain.
+                chain(*task_signatures).apply_async()
+            except Exception:  # pylint: disable=broad-except
+                logger.exception('[BULK FORCED REDEMPTION] batch=%s saved but could not be queued', batch_uuid)
+                message = format_html(
+                    'Saved batch {batch_uuid}, but could not queue it for redemption. '
+                    '<a href="{batch_url}?batch_uuid={batch_uuid}">View this batch</a> and resubmit its rows.',
+                    batch_uuid=batch_uuid,
+                    batch_url=batch_url,
+                )
+                self.message_user(request, message, messages.ERROR)
+                return HttpResponseRedirect(f'{batch_url}?batch_uuid={batch_uuid}')
+
+            logger.info(
+                '[BULK FORCED REDEMPTION] batch=%s queued %s rows by lms_user_id=%s',
+                batch_uuid,
+                len(task_signatures),
+                request.user.lms_user_id,
+            )
+            message = format_html(
+                'Queued {count} forced redemption(s) as batch {batch_uuid}; they redeem one at a time in the '
+                'background. <a href="{batch_url}?batch_uuid={batch_uuid}">View this batch</a> and refresh to see '
+                'progress.',
+                count=len(task_signatures),
+                batch_uuid=batch_uuid,
+                batch_url=batch_url,
+            )
+            self.message_user(request, message, messages.SUCCESS)
+            return HttpResponseRedirect(f'{batch_url}?batch_uuid={batch_uuid}')
+
+        context = {
+            **self.admin_site.each_context(request),
+            'title': 'Bulk create forced redemptions',
+            'opts': self.model._meta,
+            'form': form,
+        }
+        return TemplateResponse(request, 'subsidy_access_policy/admin/bulk_create_forced_redemptions.html', context)
 
     def save_model(self, request, obj, form, change) -> None:
         """
@@ -481,19 +586,12 @@ class ForcedPolicyRedemptionAdmin(DjangoQLSearchMixin, SimpleHistoryAdmin):
 
         form.full_clean()  # populates cleaned_data below
         try:
-            extra_metadata: Dict[str, Any] = {
-                key: str(form.cleaned_data.get(key))
-                for key in FORCED_REDEMPTION_GEAG_KEYS
-                if form.cleaned_data.get(key)
-            }
-            if extra_metadata:
-                user_record = User.objects.get(lms_user_id=form.cleaned_data.get('lms_user_id'))
-                extra_metadata[FORCED_REDEMPTION_CURRENT_TIME_KEY] = timezone.now().strftime(GEAG_DATETIME_FMT)
-                extra_metadata[FORCED_REDEMPTION_DATA_SHARE_CONSENT_KEY] = True
-                extra_metadata[FORCED_REDEMPTION_EMAIL_KEY] = user_record.email
-                obj.force_redeem(extra_metadata=extra_metadata, actor_lms_user_id=request.user.lms_user_id)
-            else:
-                obj.force_redeem(actor_lms_user_id=request.user.lms_user_id)
+            force_redeem_with_geag_metadata(
+                forced_redemption=obj,
+                geag_metadata=form.get_geag_metadata(),
+                actor_lms_user_id=request.user.lms_user_id,
+                suppress_assignment_email=form.cleaned_data.get('suppress_assignment_email', False),
+            )
         except Exception as exc:  # pylint: disable=broad-except
             message = gettext_lazy("{} Failure reason: {}".format(obj, exc))
             self.message_user(request, message, messages.ERROR)
