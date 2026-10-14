@@ -1,6 +1,7 @@
 """
 Tests for the ``content_metadata_api.py`` module of the content_assignments app.
 """
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest import mock
 
@@ -13,7 +14,8 @@ from ..content_metadata_api import (
     get_card_image_url,
     get_catalog_agnostic_content_metadata_for_assignment,
     get_course_partners,
-    get_human_readable_date
+    get_human_readable_date,
+    parse_datetime_string
 )
 
 
@@ -164,3 +166,44 @@ class TestGetCatalogAgnosticContentMetadata(TestCase):
         with mock.patch(self.GET_METADATA, return_value={'key': self.COURSE_KEY}) as mock_get:
             assert get_catalog_agnostic_content_metadata_for_assignment(assignment) == {'key': self.COURSE_KEY}
         mock_get.assert_called_once_with(self.RUN_KEY, coerce_to_parent_course=True)
+
+
+@ddt.ddt
+class TestParseDatetimeString(TestCase):
+    """
+    Tests for ``parse_datetime_string``.
+    """
+
+    @ddt.data(
+        # (datetime_string, set_to_utc, expected naive wall-clock value, expected utcoffset)
+        # The explicit ``DATE_INPUT_PATTERNS`` (always UTC, ``Z`` suffix).
+        ('2026-08-31T07:25:38Z', False, datetime(2026, 8, 31, 7, 25, 38), None),
+        ('2026-08-31T07:25:38Z', True, datetime(2026, 8, 31, 7, 25, 38), timedelta(0)),
+        ('2026-08-31 07:25:38.845255Z', True, datetime(2026, 8, 31, 7, 25, 38, 845255), timedelta(0)),
+        # ISO 8601 fallback: fractional seconds and a UTC offset.
+        ('2026-08-31T07:25:38.845255+00:00', True, datetime(2026, 8, 31, 7, 25, 38, 845255), timedelta(0)),
+        # ISO 8601 fallback: a non-UTC offset is converted to UTC, not relabelled.
+        ('2026-08-31T09:25:38+02:00', True, datetime(2026, 8, 31, 7, 25, 38), timedelta(0)),
+        # ISO 8601 fallback: a value with no offset is taken to be UTC.
+        ('2026-08-31T07:25:38.845255', True, datetime(2026, 8, 31, 7, 25, 38, 845255), timedelta(0)),
+        # ISO 8601 fallback without set_to_utc keeps the value's own offset.
+        ('2026-08-31T09:25:38+02:00', False, datetime(2026, 8, 31, 9, 25, 38), timedelta(hours=2)),
+    )
+    @ddt.unpack
+    def test_parses_supported_formats(self, datetime_string, set_to_utc, expected_wall_clock, expected_utcoffset):
+        result = parse_datetime_string(datetime_string, set_to_utc=set_to_utc)
+
+        assert result.replace(tzinfo=None) == expected_wall_clock
+        assert result.utcoffset() == expected_utcoffset
+
+    @ddt.data(None, '')
+    def test_empty_values_return_none(self, datetime_string):
+        assert parse_datetime_string(datetime_string, set_to_utc=True) is None
+
+    @ddt.data(
+        '2023-01-01',  # a bare date is not tried as ISO 8601, so it isn't read as midnight
+        'not a date',  # tried as ISO 8601 (it has a space) and fails there too
+    )
+    def test_unparseable_value_raises_the_date_input_pattern_error(self, datetime_string):
+        with self.assertRaisesRegex(ValueError, 'does not match format'):
+            parse_datetime_string(datetime_string, set_to_utc=True)

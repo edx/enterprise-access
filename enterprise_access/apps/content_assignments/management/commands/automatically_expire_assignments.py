@@ -8,7 +8,7 @@ import logging
 from django.core.management.base import BaseCommand, CommandError
 from django.core.paginator import Paginator
 
-from enterprise_access.apps.content_assignments.api import expire_assignment, requeue_missing_expiration_emails
+from enterprise_access.apps.content_assignments.api import expire_assignment
 from enterprise_access.apps.content_assignments.constants import LearnerContentAssignmentStateChoices
 from enterprise_access.apps.content_assignments.content_metadata_api import get_content_metadata_for_assignments
 from enterprise_access.apps.content_assignments.models import AssignmentConfiguration
@@ -60,7 +60,6 @@ class Command(BaseCommand):
         """
         dry_run = options['dry_run']
         failed_assignment_uuids = []
-        failed_reconciliations = 0
 
         for assignment_configuration in AssignmentConfiguration.objects.filter(active=True):
             subsidy_access_policy = assignment_configuration.subsidy_access_policy
@@ -115,24 +114,10 @@ class Command(BaseCommand):
                         )
                         failed_assignment_uuids.append(assignment.uuid)
 
-            try:
-                requeue_missing_expiration_emails(assignment_configuration, dry_run=dry_run)
-            except Exception:  # pylint: disable=broad-except
-                logger.exception(
-                    '[AUTOMATICALLY_EXPIRE_ASSIGNMENTS] Failed to reconcile expiration emails for configuration %s',
-                    assignment_configuration.uuid,
-                )
-                failed_reconciliations += 1
-
-        errors = []
         if failed_assignment_uuids:
             logger.error(
                 '[AUTOMATICALLY_EXPIRE_ASSIGNMENTS] Failed to expire %d assignments: %s',
                 len(failed_assignment_uuids),
                 failed_assignment_uuids,
             )
-            errors.append(f'Failed to expire {len(failed_assignment_uuids)} assignments.')
-        if failed_reconciliations:
-            errors.append(f'Failed to reconcile expiration emails for {failed_reconciliations} configurations.')
-        if errors:
-            raise CommandError(' '.join(errors))
+            raise CommandError(f'Failed to expire {len(failed_assignment_uuids)} assignments.')

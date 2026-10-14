@@ -23,7 +23,7 @@ DATE_INPUT_PATTERNS = [
 ]
 DEFAULT_STRFTIME_PATTERN = '%b %d, %Y'
 # How long a catalog-agnostic lookup miss is remembered, so that many assignments for the same content
-# don't each repeat the call in one nightly run.
+# (in one nightly run, or one batch of Braze emails) don't each repeat the call.
 CATALOG_AGNOSTIC_MISS_CACHE_TIMEOUT = 60 * 60
 
 
@@ -73,14 +73,19 @@ def get_catalog_agnostic_content_metadata_for_assignment(assignment):
 
     Tries the assignment's content key, then its parent content key, each with
     ``coerce_to_parent_course=True`` so that run keys resolve to the parent course (which carries the
-    per-run data). Misses are not cached by ``get_and_cache_content_metadata``, so this should only be
-    called from the automatic-expiration path.
+    per-run data). ``get_and_cache_content_metadata`` only caches hits, so a 404 miss is remembered here
+    for ``CATALOG_AGNOSTIC_MISS_CACHE_TIMEOUT``; other failures are never cached.
+
+    Called by the nightly expiration job (only while the ``assignment_course_run_ended_expiration`` switch
+    is on) and by ``BrazeCampaignSender.course_metadata`` (regardless of the switch) for every Braze email
+    whose content has left the policy catalog. Not called by the API serializer.
 
     Returns:
         dict: content metadata, or an empty dict if the catalog has none for the assignment's content.
 
     Raises:
-        HTTPError: If the catalog call fails, so callers can skip the assignment and retry it later.
+        HTTPError: If the catalog call fails with anything but a 404, so callers can skip the assignment
+            (or let the Celery task retry) rather than act on missing metadata.
     """
     content_identifiers = []
     if assignment.content_key:
@@ -158,6 +163,10 @@ def parse_datetime_string(datetime_string, set_to_utc=False):
     """
     Given a datetime string value from some content metadata record,
     parse it into a datetime object.
+
+    Tries ``DATE_INPUT_PATTERNS`` first, then ISO 8601 timestamps (e.g. fractional seconds and a ``+00:00``
+    offset). A bare date with no time part is rejected. An ISO 8601 value with an offset is returned
+    timezone-aware even when ``set_to_utc`` is False.
     """
     if not datetime_string:
         return None
@@ -171,6 +180,19 @@ def parse_datetime_string(datetime_string, set_to_utc=False):
             return formatted_date
         except ValueError as exc:
             last_exception = exc
+
+    # Only values with a time part are tried as ISO 8601, so a bare date (e.g. '2023-01-01') stays rejected rather
+    # than being read as midnight. If this fails too, the error from DATE_INPUT_PATTERNS is the one raised.
+    if 'T' in datetime_string or ' ' in datetime_string:
+        try:
+            formatted_date = datetime.datetime.fromisoformat(datetime_string)
+            if set_to_utc:
+                if formatted_date.tzinfo is None:
+                    return formatted_date.replace(tzinfo=datetime.timezone.utc)
+                return formatted_date.astimezone(datetime.timezone.utc)
+            return formatted_date
+        except ValueError:
+            pass
 
     if last_exception is not None:
         raise last_exception

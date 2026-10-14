@@ -4,14 +4,13 @@ records and business logic.
 """
 from __future__ import annotations  # needed for using QuerySet in type hinting.
 
-import datetime
 import logging
 from functools import partial
 from typing import Iterable
 from uuid import uuid4
 
 from django.db import transaction
-from django.db.models import Exists, OuterRef, Q, Sum
+from django.db.models import Q, Sum
 from django.db.models.functions import Lower
 from django.utils import timezone
 
@@ -1344,7 +1343,9 @@ def _expire_assignment_and_notify(assignment, credit_request, automatic_expirati
     """
     # Lock the row and re-read its state: the caller's copy may be stale if the learner acted since it was loaded,
     # and a full-row save() of a stale copy would overwrite that.
-    current_state = type(assignment).objects.select_for_update().values_list('state', flat=True).get(pk=assignment.pk)
+    current_state = LearnerContentAssignment.objects.select_for_update().values_list(
+        'state', flat=True,
+    ).get(pk=assignment.pk)
     if current_state not in LearnerContentAssignmentStateChoices.EXPIRABLE_STATES:
         logger.info('Assignment %s is now %s, not expiring it', assignment.uuid, current_state)
         return False
@@ -1388,69 +1389,6 @@ def _expire_assignment_and_notify(assignment, credit_request, automatic_expirati
     return True
 
 
-# Expiration emails are queued after the expiration commits, so a broker outage at that moment can leave an
-# EXPIRED assignment with no email (and so never eligible for PII clearing). The reconciliation only looks at
-# assignments that expired long enough ago for a queued email to have been processed, and not so long ago that
-# the learner would be confused by it.
-EXPIRATION_EMAIL_RECONCILE_MIN_AGE = datetime.timedelta(days=1)
-EXPIRATION_EMAIL_RECONCILE_MAX_AGE = datetime.timedelta(days=7)
-
-
-def requeue_missing_expiration_emails(assignment_configuration, dry_run=False):
-    """
-    Re-queue the expiration email for recently expired assignments that have neither a successful nor a failed
-    expiration email action (i.e. the email was never queued, or the task was lost). Browse & Request
-    assignments are skipped: their email task records no action, so they can't be told apart from sent ones.
-
-    A failure to queue one email (e.g. the broker is down) does not stop the others.
-
-    Returns:
-        list: uuids of the assignments whose email was (or, for a dry run, would be) re-queued.
-
-    Raises:
-        RuntimeError: after trying every assignment, if queuing failed for any of them.
-    """
-    now = localized_utcnow()
-    email_actions = LearnerContentAssignmentAction.objects.filter(
-        assignment=OuterRef('pk'),
-        action_type=AssignmentActions.EXPIRED,
-    ).exclude(source=AssignmentSources.SCHEDULED_JOB)
-    scheduled_expirations = LearnerContentAssignmentAction.objects.filter(
-        assignment=OuterRef('pk'),
-        action_type=AssignmentActions.EXPIRED,
-        source=AssignmentSources.SCHEDULED_JOB,
-    )
-    assignments = assignment_configuration.assignments.filter(
-        state=LearnerContentAssignmentStateChoices.EXPIRED,
-        expired_at__gte=now - EXPIRATION_EMAIL_RECONCILE_MAX_AGE,
-        expired_at__lte=now - EXPIRATION_EMAIL_RECONCILE_MIN_AGE,
-        credit_request__isnull=True,
-    ).filter(
-        Exists(scheduled_expirations),
-    ).exclude(
-        Exists(email_actions),
-    )
-
-    requeued_uuids = []
-    failed_uuids = []
-    for assignment in assignments:
-        if not dry_run:
-            try:
-                send_assignment_automatically_expired_email.delay(assignment.uuid)
-            except Exception:  # pylint: disable=broad-except
-                logger.exception('Could not re-queue the expiration email for assignment %s', assignment.uuid)
-                failed_uuids.append(assignment.uuid)
-                continue
-        requeued_uuids.append(assignment.uuid)
-    if requeued_uuids:
-        logger.info(
-            'Re-queued %d missing expiration emails (dry_run=%s): %s', len(requeued_uuids), dry_run, requeued_uuids,
-        )
-    if failed_uuids:
-        raise RuntimeError(f'Could not re-queue {len(failed_uuids)} expiration emails: {failed_uuids}')
-    return requeued_uuids
-
-
 def expire_assignment(
     assignment: LearnerContentAssignment,
     content_metadata: dict,
@@ -1465,10 +1403,10 @@ def expire_assignment(
         return None
 
     # Content that has left the policy's catalog (the usual case once its last run ends) has no metadata
-    # there, so look up the course run dates catalog-agnostically. This synchronous catalog call is made only
-    # on this nightly path (not by the API serializer), and only while the feature is on: with the switch off
-    # a catalog outage must not affect expiration at all. If the lookup fails it raises, so the assignment is
-    # retried on the next run rather than expired without its course run end date.
+    # there, so look up the course run dates catalog-agnostically. The API serializer never makes this call.
+    # Here it is made only while the feature is on: with the switch off a catalog outage must not affect
+    # expiration at all. If the lookup fails it raises, so the assignment is retried on the next run rather
+    # than expired without its course run end date.
     course_run_metadata = content_metadata
     if not content_metadata and assignment_course_run_ended_expiration_enabled():
         course_run_metadata = get_catalog_agnostic_content_metadata_for_assignment(assignment)
@@ -1496,21 +1434,11 @@ def expire_assignment(
         credit_request = getattr(assignment, 'credit_request', None)
 
         # The state change and audit action succeed or fail together. If any write fails, the transaction rolls
-        # back and the assignment stays in an expirable state, so the next nightly run retries it. The email is
-        # queued after commit (see ``_expire_assignment_and_notify``).
-        try:
-            with transaction.atomic():
-                expired = _expire_assignment_and_notify(assignment, credit_request, automatic_expiration_reason)
-        except Exception:
-            # The rollback only restores the database; reload so the in-memory objects match it. A failed reload
-            # must not hide the original error.
-            try:
-                assignment.refresh_from_db()
-                if credit_request:
-                    credit_request.refresh_from_db()
-            except Exception:  # pylint: disable=broad-except
-                logger.exception('Could not reload assignment %s after a failed expiration', assignment.uuid)
-            raise
+        # back and the assignment stays in an expirable state, so the next nightly run retries it with a freshly
+        # loaded row (the in-memory objects here are not reloaded and must not be reused). The email is queued
+        # after commit (see ``_expire_assignment_and_notify``).
+        with transaction.atomic():
+            expired = _expire_assignment_and_notify(assignment, credit_request, automatic_expiration_reason)
         if not expired:
             return None
 

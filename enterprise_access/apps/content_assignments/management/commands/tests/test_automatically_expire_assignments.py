@@ -302,24 +302,6 @@ class TestAutomaticallyExpireAssignmentCommand(TestCase):
         self.alice_assignment.refresh_from_db()
         assert self.alice_assignment.state == LearnerContentAssignmentStateChoices.ALLOCATED
 
-    @mock.patch(f'{COMMAND_PATH}.requeue_missing_expiration_emails', side_effect=ConnectionError('broker down'))
-    @mock.patch(f'{COMMAND_PATH}.expire_assignment')
-    @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient')
-    @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_client')
-    def test_reconcile_failure_is_reported_without_stopping_the_run(
-        self, mock_subsidy_client, mock_catalog_client, mock_expire, mock_requeue,
-    ):
-        """A failing email reconciliation neither aborts the run nor goes unreported."""
-        mock_subsidy_client.retrieve_subsidy.return_value = {'is_active': True}
-        mock_catalog_client.return_value.catalog_content_metadata.return_value = {'count': 0, 'results': []}
-
-        with pytest.raises(CommandError, match='Failed to reconcile expiration emails'):
-            self._call_command(self.command)
-
-        # setUp() creates assignments under the one configuration, so expiration still ran for all of them
-        assert mock_expire.call_count == LearnerContentAssignment.objects.count()
-        mock_requeue.assert_called()
-
     def _call_command(self, *args):
         """Run the command and execute the on-commit callbacks (the expiration emails) it registers."""
         with self.captureOnCommitCallbacks(execute=True):

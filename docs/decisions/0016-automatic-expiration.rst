@@ -71,25 +71,26 @@ Details that affect which assignments have PII cleared:
   ``ALLOCATED``, so the next nightly run retries it. The expiration email is queued after the commit, so no email
   is sent for a rolled-back expiration. If queuing it then fails (for example the Celery broker is down), the
   assignment stays ``EXPIRED`` without an email, and so is never eligible for PII clearing; the error is reported
-  by the command. The command keeps processing other assignments, then exits non-zero (``CommandError``) listing
-  the ones that failed.
+  by the command, but nothing re-queues the email automatically. The command keeps processing other assignments,
+  then exits non-zero (``CommandError``) listing the ones that failed.
 * The catalog-agnostic lookup only happens while the switch is on, so a catalog outage cannot affect expiration
   with the feature off. With it on, a failure other than a 404 skips that assignment (reported as failed) rather
   than expiring it without its course run end date, so the next nightly run retries it.
 * ``expire_assignment()`` locks the assignment row and re-checks that it is still ``ALLOCATED`` before writing, so
   a learner who accepts while the nightly job is running is not overwritten as ``EXPIRED``.
-* Expired assignments (not Browse & Request) that have no expiration email action 1 to 7 days after expiring get
-  their email re-queued by the nightly job, which reconciles a broker outage at the moment of expiry.
-* Reminder emails (assignment and Browse & Request) no longer fail for content that has left the policy's
-  catalog: ``BrazeCampaignSender.course_metadata`` falls back to the catalog-agnostic lookup for display fields
-  and for the course run end date used in the action-required-by date (as the nightly job does); the enrollment
-  deadline always comes from the policy catalog. If no metadata
-  exists at all the reminder is skipped (``ContentMetadataUnavailableError``) with a log line and an errored
+* Braze emails built by ``BrazeCampaignSender`` (reminders, and every other assignment and Browse & Request email)
+  no longer fail for content that has left the policy's catalog: ``BrazeCampaignSender.course_metadata`` falls back
+  to the catalog-agnostic lookup for display fields and for the course run end date used in the action-required-by
+  date (as the nightly job does); the enrollment deadline always comes from the policy catalog. If no metadata
+  exists at all a reminder is skipped (``ContentMetadataUnavailableError``) with a log line and an errored
   ``REMINDED`` audit action, instead of raising and marking the assignment errored. This closes the window between
   a course ending and the nightly job running.
-* The behavior is gated by the ``enterprise_access.assignment_course_run_ended_expiration`` waffle switch, off by
-  default. While it is off, course run end dates are ignored and PII is not cleared for rows already recorded as
-  ``COURSE_RUN_ENDED``. Turning it off again is the rollback.
+* The ``COURSE_RUN_ENDED`` reason is gated by the ``enterprise_access.assignment_course_run_ended_expiration``
+  waffle switch, off by default. While it is off, course run end dates are ignored and PII is not cleared for rows
+  already recorded as ``COURSE_RUN_ENDED``. Turning it off again is the rollback for that reason only.
+* The rest of this amendment is **not** gated by the switch and takes effect on deploy: the PII-clearing decision
+  reading the recorded ``expiration_reason``, the ``BrazeCampaignSender`` fallback and reminder skipping, and the
+  nightly job's frozen-id paging, per-assignment error isolation (with a non-zero exit) and atomic expiration.
 
 Pending product sign-off
 ------------------------

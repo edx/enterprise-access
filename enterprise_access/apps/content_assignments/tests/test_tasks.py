@@ -1582,6 +1582,38 @@ class TestClearPiiForExpiredAssignmentsTask(APITestWithMocks):
         assignment.refresh_from_db()
         assert (assignment.learner_email != original_email) is expect_cleared
 
+    @ddt.data(
+        # (reason recorded at the first expiry, reason recorded at the latest expiry, expect_cleared)
+        (AssignmentAutomaticExpiredReason.NINETY_DAYS_PASSED, AssignmentAutomaticExpiredReason.SUBSIDY_EXPIRED, False),
+        (AssignmentAutomaticExpiredReason.SUBSIDY_EXPIRED, AssignmentAutomaticExpiredReason.COURSE_RUN_ENDED, True),
+    )
+    @ddt.unpack
+    @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_client')
+    def test_clear_pii_follows_the_latest_expiry_of_a_reallocated_assignment(
+        self, first_reason, latest_reason, expect_cleared, mock_subsidy_client,
+    ):
+        """
+        An EXPIRED assignment can be reallocated and expire again, leaving one scheduled_job EXPIRED action per
+        expiry. Only the reason recorded at the latest expiry decides whether PII is cleared.
+        """
+        mock_subsidy_client.retrieve_subsidy.return_value = {'is_active': True}
+        assignment = self._make_expired_assignment('reallocated@test.com', first_reason)
+        # Move the first expiry well into the past, so the order doesn't rest on timestamps microseconds apart.
+        assignment.actions.filter(source=AssignmentSources.SCHEDULED_JOB).update(
+            completed_at=now() - timedelta(days=200),
+        )
+        assignment.add_audit_action(
+            action_type=AssignmentActions.EXPIRED,
+            actor_type=AssignmentActorTypes.SYSTEM,
+            source=AssignmentSources.SCHEDULED_JOB,
+            metadata={'expiration_reason': latest_reason},
+        )
+
+        clear_pii_for_expired_assignments(dry_run=False)
+
+        assignment.refresh_from_db()
+        assert (assignment.learner_email != 'reallocated@test.com') is expect_cleared
+
     # Patched rather than ``override_waffle_switch(..., False)``: nesting that inside the class-level override
     # would leave the switch unset for the tests that run after it.
     @mock.patch(

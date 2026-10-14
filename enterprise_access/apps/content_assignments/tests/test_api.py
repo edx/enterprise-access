@@ -30,12 +30,10 @@ from ..api import (
     get_allocated_quantity_for_configuration,
     get_assignment_for_learner,
     get_assignments_for_configuration,
-    remind_assignments,
-    requeue_missing_expiration_emails
+    remind_assignments
 )
 from ..constants import (
     NUM_DAYS_BEFORE_AUTO_EXPIRATION,
-    AssignmentActionErrors,
     AssignmentActions,
     AssignmentActorTypes,
     AssignmentAutomaticExpiredReason,
@@ -1814,7 +1812,7 @@ class TestAssignmentExpiration(TestCase):
 
     @mock.patch('enterprise_access.apps.content_assignments.api.send_assignment_automatically_expired_email')
     def test_expiration_is_retried_cleanly_after_a_failed_attempt(self, mock_expired_email):
-        """After a rolled-back attempt, the retry expires once: one audit action and one email."""
+        """After a rolled-back attempt, the next run's retry expires once: one audit action and one email."""
         assignment = self._expirable_assignment()
         with mock.patch.object(
             LearnerContentAssignmentAction.objects.__class__, 'create', side_effect=DatabaseError('insert failed'),
@@ -1822,7 +1820,8 @@ class TestAssignmentExpiration(TestCase):
             with self.assertRaises(DatabaseError):
                 self._expire(assignment)
 
-        # The in-memory object must match the database, or the retry would be skipped as already expired.
+        # The next nightly run loads the assignment afresh, as here; the failed attempt's in-memory copy is discarded.
+        assignment = LearnerContentAssignment.objects.get(pk=assignment.pk)
         self.assertEqual(assignment.state, LearnerContentAssignmentStateChoices.ALLOCATED)
         self.assertIsNone(assignment.expired_at)
         self._expire(assignment)
@@ -1891,87 +1890,6 @@ class TestAssignmentExpiration(TestCase):
         assert assignment.expired_at is None
         assert not assignment.actions.filter(action_type=AssignmentActions.EXPIRED).exists()
         mock_expired_email.delay.assert_not_called()
-
-    @mock.patch('enterprise_access.apps.content_assignments.api.send_assignment_automatically_expired_email')
-    def test_failed_reload_does_not_mask_the_original_error(
-        self, mock_expired_email,  # pylint: disable=unused-argument
-    ):
-        assignment = self._expirable_assignment()
-        with mock.patch.object(
-            LearnerContentAssignmentAction.objects.__class__, 'create', side_effect=DatabaseError('insert failed'),
-        ), mock.patch.object(
-            LearnerContentAssignment, 'refresh_from_db', side_effect=[None, RuntimeError('reload failed')],
-        ):
-            with self.assertRaisesRegex(DatabaseError, 'insert failed'):
-                self._expire(assignment)
-
-    @mock.patch('enterprise_access.apps.content_assignments.api.send_assignment_automatically_expired_email')
-    def test_requeue_missing_expiration_emails(self, mock_expired_email):
-        """Only recently expired, never-emailed, non-B&R assignments get their email re-queued."""
-        def expired(age_days, with_scheduled_action=True, **kwargs):
-            assignment = LearnerContentAssignmentFactory.create(
-                assignment_configuration=self.assignment_configuration,
-                state=LearnerContentAssignmentStateChoices.EXPIRED,
-                expired_at=delta_t(days=-age_days),
-                lms_user_id=None,
-                **kwargs,
-            )
-            if with_scheduled_action:
-                assignment.add_audit_action(
-                    action_type=AssignmentActions.EXPIRED,
-                    actor_type=AssignmentActorTypes.SYSTEM,
-                    source=AssignmentSources.SCHEDULED_JOB,
-                )
-            return assignment
-
-        missing = expired(2)
-        expired(2).add_successful_expiration_action()  # emailed
-        errored = expired(2)
-        errored.add_audit_action(
-            action_type=AssignmentActions.EXPIRED,
-            actor_type=AssignmentActorTypes.SYSTEM,
-            source=AssignmentSources.CELERY_TASK,
-            error_reason=AssignmentActionErrors.EMAIL_ERROR,
-        )  # email task already failed and recorded it
-        expired(0.1)  # too recent: the queued email may still be in flight
-        expired(30)  # too old
-        expired(2, with_scheduled_action=False)  # not expired by the job
-        bnr = expired(2)
-        LearnerCreditRequestFactory.create(assignment=bnr)
-
-        assert requeue_missing_expiration_emails(self.assignment_configuration, dry_run=True) == [missing.uuid]
-        mock_expired_email.delay.assert_not_called()
-
-        assert requeue_missing_expiration_emails(self.assignment_configuration) == [missing.uuid]
-        mock_expired_email.delay.assert_called_once_with(missing.uuid)
-
-    @mock.patch('enterprise_access.apps.content_assignments.api.send_assignment_automatically_expired_email')
-    def test_requeue_failure_for_one_assignment_does_not_stop_the_others(self, mock_expired_email):
-        """A broker error on one email is isolated, then reported once every assignment has been tried."""
-        assignments = []
-        for lms_user_id in (111, 222):
-            assignment = LearnerContentAssignmentFactory.create(
-                assignment_configuration=self.assignment_configuration,
-                state=LearnerContentAssignmentStateChoices.EXPIRED,
-                expired_at=delta_t(days=-2),
-                lms_user_id=lms_user_id,
-            )
-            assignment.add_audit_action(
-                action_type=AssignmentActions.EXPIRED,
-                actor_type=AssignmentActorTypes.SYSTEM,
-                source=AssignmentSources.SCHEDULED_JOB,
-            )
-            assignments.append(assignment)
-
-        def delay_side_effect(assignment_uuid):
-            if assignment_uuid == assignments[0].uuid:
-                raise ConnectionError('broker down')
-        mock_expired_email.delay.side_effect = delay_side_effect
-
-        with self.assertRaisesRegex(RuntimeError, 'Could not re-queue 1 expiration emails'):
-            requeue_missing_expiration_emails(self.assignment_configuration)
-
-        assert mock_expired_email.delay.call_count == 2
 
     @mock.patch('enterprise_access.apps.content_assignments.api.get_automatic_expiration_date_and_reason')
     def test_resolved_empty_metadata_is_not_refetched(self, mock_get_expiration):
