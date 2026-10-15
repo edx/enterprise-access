@@ -593,14 +593,24 @@ rules.add_perm(
 )
 
 
+# Enterprise admins get policy-admin access via CONTENT_ASSIGNMENTS_ADMIN_ROLE; there is no policy-admin role.
+has_policy_admin_or_operator_access = (
+    has_content_assignments_operator_access |
+    has_content_assignments_admin_access |
+    has_subsidy_access_policy_operator_access
+)
+
 # Grants permission to allocate assignments from a policy if the user is a content assignment configuration admin.
 rules.add_perm(
     constants.SUBSIDY_ACCESS_POLICY_ALLOCATION_PERMISSION,
-    (
-        has_content_assignments_operator_access |
-        has_content_assignments_admin_access |
-        has_subsidy_access_policy_operator_access
-    ),
+    has_policy_admin_or_operator_access,
+)
+
+# Export of the Learner Credit spend report (contains learner emails). Same roles as allocation for now; its own
+# permission so it can be narrowed later.
+rules.add_perm(
+    constants.SUBSIDY_ACCESS_POLICY_TRANSACTIONS_EXPORT_PERMISSION,
+    has_policy_admin_or_operator_access,
 )
 
 # Grants permission to acknowledge assignments if the user is linked to the enterprise customer

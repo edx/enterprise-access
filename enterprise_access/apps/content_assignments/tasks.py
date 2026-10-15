@@ -12,12 +12,14 @@ from enterprise_access.apps.api_client.braze_client import ENTERPRISE_BRAZE_ALIA
 from enterprise_access.apps.api_client.lms_client import LmsApiClient
 from enterprise_access.apps.content_assignments.content_metadata_api import (
     get_card_image_url,
+    get_catalog_agnostic_content_metadata_for_assignment,
     get_content_metadata_for_assignments,
     get_course_partners,
     get_human_readable_date,
     get_normalized_metadata_for_assignment
 )
 from enterprise_access.tasks import LoggedTaskWithRetry
+from enterprise_access.toggles import assignment_course_run_ended_expiration_enabled
 from enterprise_access.utils import (
     format_datetime_obj,
     format_traceback,
@@ -36,7 +38,7 @@ from .constants import (
     AssignmentSources,
     LearnerContentAssignmentStateChoices
 )
-from .models import AssignmentConfiguration
+from .models import AssignmentConfiguration, LearnerContentAssignmentAction
 from .utils import get_self_paced_normalized_start_date
 
 logger = logging.getLogger(__name__)
@@ -90,6 +92,27 @@ def _get_learner_credit_request_or_raise(learner_credit_request_uuid):
         raise
 
 
+class ContentMetadataUnavailableError(Exception):
+    """
+    No content metadata could be found for an assignment, in the policy catalog or catalog-agnostically.
+    """
+
+
+def record_skipped_reminder(assignment, exc):
+    """
+    Log, and leave an errored REMINDED audit action for, a reminder that was skipped because the assignment's
+    content metadata is unavailable. The assignment's state is not changed and the task is not retried.
+    """
+    logger.warning('Skipping reminder for assignment %s: %s', assignment.uuid, exc)
+    assignment.add_audit_action(
+        action_type=AssignmentActions.REMINDED,
+        actor_type=AssignmentActorTypes.SYSTEM,
+        source=AssignmentSources.CELERY_TASK,
+        error_reason=AssignmentActionErrors.INTERNAL_API_ERROR,
+        traceback_str=str(exc),
+    )
+
+
 class BrazeCampaignSender:
     """
     Class to help standardize the allowed keys and methods of conversion to values
@@ -129,6 +152,7 @@ class BrazeCampaignSender:
         self.lms_client = LmsApiClient()
         self._customer_data = None
         self._course_metadata = None
+        self._policy_catalog_metadata = None
 
     def send_campaign_message(self, braze_trigger_properties, campaign_identifier):
         """
@@ -161,7 +185,7 @@ class BrazeCampaignSender:
             )
             log_message = (
                 'Successfully sent Braze campaign message for assignment %s, recipient %s, '
-                'campaign %s, with trigger properties %s',
+                'campaign %s, with trigger properties %s'
             )
             logger.info(
                 log_message,
@@ -191,22 +215,37 @@ class BrazeCampaignSender:
         return self._customer_data
 
     @property
-    def course_metadata(self):
+    def policy_catalog_metadata(self):
         """
-        Returns memoized course metadata dictionary.
+        Returns memoized metadata from the assignment policy's catalog, or an empty dict if the content is no
+        longer in it. The enrollment deadline comes from this, never from the catalog-agnostic fallback, so it
+        agrees with the nightly expiration job and the API.
         """
-        if not self._course_metadata:
+        if self._policy_catalog_metadata is None:
             metadata_by_key = get_content_metadata_for_assignments(
                 self.policy.catalog_uuid, [self.assignment]
             )
-            self._course_metadata = metadata_by_key.get(self.assignment.content_key)
+            self._policy_catalog_metadata = metadata_by_key.get(self.assignment.content_key) or {}
+        return self._policy_catalog_metadata
+
+    @property
+    def course_metadata(self):
+        """
+        Returns memoized course metadata dictionary, used for display fields such as the start date, partners and
+        card image. Content whose last run ended usually drops out of the policy's catalog; the catalog-agnostic
+        lookup still has it, so reminders for such assignments don't fail.
+        """
+        if not self._course_metadata:
+            self._course_metadata = (
+                self.policy_catalog_metadata or get_catalog_agnostic_content_metadata_for_assignment(self.assignment)
+            )
             if not self._course_metadata:
                 msg = (
                     f'Could not fetch metadata for assignment {self.assignment.uuid}, '
                     f'content_key {self.assignment.content_key}, '
                     f'parent_content_key {self.assignment.parent_content_key}'
                 )
-                raise Exception(msg)
+                raise ContentMetadataUnavailableError(msg)
         return self._course_metadata
 
     @property
@@ -254,7 +293,9 @@ class BrazeCampaignSender:
         return self.assignment.content_title
 
     def _enrollment_deadline_raw(self):
-        return self.normalized_metadata.get('enroll_by_date')
+        return get_normalized_metadata_for_assignment(self.assignment, self.policy_catalog_metadata).get(
+            'enroll_by_date'
+        )
 
     def get_enrollment_deadline(self):
         return get_human_readable_date(self._enrollment_deadline_raw())
@@ -286,7 +327,13 @@ class BrazeCampaignSender:
         Returns the minimum of this assignment's auto-expiration date,
         the content's enrollment deadline, and the related policy's expiration timestamp.
         """
-        action_required_by_timestamp = get_automatic_expiration_date_and_reason(self.assignment, self.course_metadata)
+        # Same inputs as the nightly job: the enrollment deadline from the policy catalog, the course run end date
+        # from whichever metadata has it (the fallback, once the content has left the policy catalog).
+        action_required_by_timestamp = get_automatic_expiration_date_and_reason(
+            self.assignment,
+            self.policy_catalog_metadata,
+            course_run_metadata=self.course_metadata,
+        )
         if not action_required_by_timestamp:
             return None
         return format_datetime_obj(
@@ -563,17 +610,22 @@ def send_reminder_email_for_pending_assignment(assignment_uuid, actor_lms_user_i
     assignment = _get_assignment_or_raise(assignment_uuid)
 
     campaign_sender = BrazeCampaignSender(assignment)
-    braze_trigger_properties = campaign_sender.get_properties(
-        'contact_admin_link',
-        'organization',
-        'course_title',
-        'enrollment_deadline',
-        'start_date',
-        'course_partner',
-        'course_card_image',
-        'learner_portal_link',
-        'action_required_by_timestamp'
-    )
+    try:
+        braze_trigger_properties = campaign_sender.get_properties(
+            'contact_admin_link',
+            'organization',
+            'course_title',
+            'enrollment_deadline',
+            'start_date',
+            'course_partner',
+            'course_card_image',
+            'learner_portal_link',
+            'action_required_by_timestamp'
+        )
+    except ContentMetadataUnavailableError as exc:
+        # Nothing to remind about, and retrying or marking the assignment errored would not help.
+        record_skipped_reminder(assignment, exc)
+        return
     campaign_uuid = settings.BRAZE_ASSIGNMENT_REMINDER_NOTIFICATION_CAMPAIGN
     if assignment.lms_user_id is not None:
         campaign_uuid = settings.BRAZE_ASSIGNMENT_REMINDER_POST_LOGISTRATION_NOTIFICATION_CAMPAIGN
@@ -721,13 +773,48 @@ def send_bnr_automatically_expired_email(learner_credit_request_uuid):
     )
 
 
-def _should_clear_pii_for_assignment(assignment, content_metadata):
+PII_CLEARABLE_EXPIRATION_REASONS = (
+    AssignmentAutomaticExpiredReason.NINETY_DAYS_PASSED,
+    AssignmentAutomaticExpiredReason.COURSE_RUN_ENDED,
+)
+
+
+def _get_expiration_action_info(assignments):
+    """
+    Bulk-load, in one query, what ``_should_clear_pii_for_assignment`` needs from the EXPIRED audit actions.
+
+    Returns:
+        tuple: (set of assignment ids that have a successful "expiration email sent" action,
+                dict of assignment id -> ``expiration_reason`` recorded by ``expire_assignment()``).
+                The email lookup shares ``LearnerContentAssignmentAction.filter_successful_expiration_email_actions``
+                with ``get_last_successful_expiration_action``.
+    """
+    actions = LearnerContentAssignmentAction.objects.filter(assignment__in=assignments)
+    emailed_assignment_ids = set(
+        LearnerContentAssignmentAction.filter_successful_expiration_email_actions(actions).values_list(
+            'assignment_id', flat=True,
+        )
+    )
+    recorded_reasons = {}
+    scheduled_expirations = actions.filter(
+        action_type=AssignmentActions.EXPIRED,
+        source=AssignmentSources.SCHEDULED_JOB,
+    ).order_by('completed_at', 'created').values('assignment_id', 'metadata')
+    for action in scheduled_expirations:
+        recorded_reasons[action['assignment_id']] = (action['metadata'] or {}).get('expiration_reason')
+    return emailed_assignment_ids, recorded_reasons
+
+
+def _should_clear_pii_for_assignment(
+    assignment, content_metadata, expiration_email_sent, recorded_reason,
+):
     """
     Determine if PII should be cleared for the given expired assignment.
 
     PII should only be cleared if:
     1. A successful expiration email has been sent
-    2. The assignment expired due to NINETY_DAYS_PASSED reason
+    2. The assignment expired due to a PII-clearable reason (NINETY_DAYS_PASSED or COURSE_RUN_ENDED),
+       as recorded on the expiration audit action
 
     Note: The ORM query in clear_pii_for_expired_assignments already filters for
     expired assignments with non-cleared PII, so those checks are not duplicated here.
@@ -735,26 +822,37 @@ def _should_clear_pii_for_assignment(assignment, content_metadata):
     Args:
         assignment: LearnerContentAssignment instance
         content_metadata: dict of content metadata for the assignment
+        expiration_email_sent: bool, whether a successful expiration email action exists for the assignment
+        recorded_reason: the expiration reason recorded on the scheduled expiration action, or None
 
     Returns:
         bool: True if PII should be cleared, False otherwise
     """
-    # No source filter here beyond what get_last_successful_expiration_action() already applies:
-    # legacy rows recorded before ``source`` existed on this action must still count.
-    if not assignment.get_last_successful_expiration_action():
+    if not expiration_email_sent:
         logger.info(
             'No successful expiration email sent for assignment %s, skipping PII clearing.',
             assignment.uuid
         )
         return False
 
-    # Check the expiration reason - only clear PII for NINETY_DAYS_PASSED
-    expiration_date_and_reason = get_automatic_expiration_date_and_reason(assignment, content_metadata)
-    expiration_reason = expiration_date_and_reason.get('reason')
+    # Use the reason recorded when the assignment was expired, so that this decision doesn't depend on
+    # today's catalog data. Legacy rows without a recorded reason fall back to recomputing it, without the
+    # course run end date: those rows expired before COURSE_RUN_ENDED existed, so it can't have been their reason.
+    expiration_reason = recorded_reason
+    if not expiration_reason:
+        expiration_reason = get_automatic_expiration_date_and_reason(
+            assignment, content_metadata, include_course_run_end=False,
+        ).get('reason')
 
-    if expiration_reason != AssignmentAutomaticExpiredReason.NINETY_DAYS_PASSED:
+    # PII clearing is irreversible: with the switch off, COURSE_RUN_ENDED rows are left alone too.
+    clearable_reasons = (
+        PII_CLEARABLE_EXPIRATION_REASONS
+        if assignment_course_run_ended_expiration_enabled()
+        else (AssignmentAutomaticExpiredReason.NINETY_DAYS_PASSED,)
+    )
+    if expiration_reason not in clearable_reasons:
         logger.info(
-            'Assignment %s expired due to %s, not NINETY_DAYS_PASSED. Skipping PII clearing.',
+            'Assignment %s expired due to %s, which is not eligible for PII clearing. Skipping.',
             assignment.uuid,
             expiration_reason
         )
@@ -766,7 +864,8 @@ def _should_clear_pii_for_assignment(assignment, content_metadata):
 @shared_task(base=LoggedTaskWithRetry)
 def clear_pii_for_expired_assignments(dry_run=False):
     """
-    Clears PII from assignments that have expired due to the 90-day timeout.
+    Clears PII from assignments that have expired due to the 90-day timeout (NINETY_DAYS_PASSED)
+    or because all known course runs ended (COURSE_RUN_ENDED).
 
     This task should be run daily, after the automatic expiration job has completed
     and expiration emails have been sent. It ensures that:
@@ -777,7 +876,7 @@ def clear_pii_for_expired_assignments(dry_run=False):
     - Are in EXPIRED state
     - Have not already had PII cleared
     - Have had a successful expiration email sent
-    - Expired due to NINETY_DAYS_PASSED reason (not enrollment deadline or subsidy expiration)
+    - Expired due to NINETY_DAYS_PASSED or COURSE_RUN_ENDED (not enrollment deadline or subsidy expiration)
 
     Args:
         dry_run: If True, log what would be done without making changes
@@ -821,16 +920,31 @@ def clear_pii_for_expired_assignments(dry_run=False):
             )
             continue
 
-        # Fetch content metadata for all assignments in batch
-        content_metadata_for_assignments = get_content_metadata_for_assignments(
-            enterprise_catalog_uuid,
-            expired_assignments
-        )
+        expired_assignments = list(expired_assignments)
+        emailed_assignment_ids, recorded_reasons = _get_expiration_action_info(expired_assignments)
+
+        # Content metadata (a policy-catalog lookup) is only needed to recompute the expiration reason of
+        # legacy rows that were emailed but have no recorded reason; everything else is decided from audit rows.
+        assignments_needing_metadata = [
+            assignment for assignment in expired_assignments
+            if assignment.uuid in emailed_assignment_ids and not recorded_reasons.get(assignment.uuid)
+        ]
+        content_metadata_for_assignments = {}
+        if assignments_needing_metadata:
+            content_metadata_for_assignments = get_content_metadata_for_assignments(
+                enterprise_catalog_uuid,
+                assignments_needing_metadata,
+            )
 
         for assignment in expired_assignments:
             content_metadata = content_metadata_for_assignments.get(assignment.content_key, {})
 
-            if _should_clear_pii_for_assignment(assignment, content_metadata):
+            if _should_clear_pii_for_assignment(
+                assignment,
+                content_metadata,
+                expiration_email_sent=assignment.uuid in emailed_assignment_ids,
+                recorded_reason=recorded_reasons.get(assignment.uuid),
+            ):
                 if dry_run:
                     logger.info(
                         '[CLEAR_PII_FOR_EXPIRED_ASSIGNMENTS] [DRY RUN] Would clear PII for assignment %s',

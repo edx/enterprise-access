@@ -5,6 +5,7 @@ import uuid
 from datetime import datetime, timedelta
 from unittest.mock import patch
 
+import ddt
 from django.test import TestCase
 
 from enterprise_access.apps.subsidy_access_policy.models import SubsidyAccessPolicy
@@ -19,6 +20,7 @@ from enterprise_access.apps.subsidy_access_policy.utils import (
 )
 
 
+@ddt.ddt
 class SubsidyAccessPolicyUtilsTests(TestCase):
     """
     SubsidyAccessPolicy utils tests.
@@ -193,6 +195,32 @@ class SubsidyAccessPolicyUtilsTests(TestCase):
         ])
         sorted_policies = sort_subsidy_access_policies_for_redemption(queryset=queryset)
         assert sorted_policies[0] == self.policy_two
+
+    @ddt.data(
+        # A dated expiration sorts before "never expires"...
+        ({'policy_three': None}, ['policy_three', 'policy_one'], ['policy_one', 'policy_three']),
+        # ...including the ISO string the Subsidy API actually returns.
+        (
+            {'policy_one': '2030-01-01T00:00:00Z', 'policy_three': None},
+            ['policy_three', 'policy_one'],
+            ['policy_one', 'policy_three'],
+        ),
+        # All null: falls through to the balance (policy_two has 50, policy_one 100).
+        ({'policy_one': None, 'policy_two': None}, ['policy_one', 'policy_two'], ['policy_two', 'policy_one']),
+    )
+    @ddt.unpack
+    def test_sort_subsidy_access_policies_for_redemption_null_expiration(self, expirations, policies, expected):
+        """
+        A null expiration (never expires, or an unreachable subsidy's {} record) sorts last instead of raising.
+        """
+        for name, expiration in expirations.items():
+            pk = getattr(self, name).pk
+            self.policy_subsidy_map[pk] = {**self.policy_subsidy_map[pk], 'expiration_datetime': expiration}
+        queryset = SubsidyAccessPolicy.objects.filter(pk__in=[getattr(self, name).pk for name in policies])
+
+        sorted_policies = sort_subsidy_access_policies_for_redemption(queryset=queryset)
+
+        assert list(sorted_policies) == [getattr(self, name) for name in expected]
 
     def test_sort_subsidy_access_policies_for_redemption_expiration(self):
         """

@@ -11,6 +11,7 @@ from pytz import UTC
 
 from enterprise_access.apps.content_assignments.content_metadata_api import (
     get_normalized_metadata_for_assignment,
+    get_run_dates,
     parse_datetime_string
 )
 
@@ -133,17 +134,7 @@ class CreditRequestEnrollmentDeadlineStrategy(EnrollmentDeadlineStrategy):
         Returns:
             The last course run's enrollment deadline, or None if not determinable.
         """
-        normalized_metadata_by_run = content_metadata.get('normalized_metadata_by_run', {})
-
-        if not normalized_metadata_by_run:
-            return None
-
-        deadlines = [
-            parse_datetime_string(run_metadata.get('enroll_by_date')).replace(tzinfo=UTC)
-            for run_metadata in normalized_metadata_by_run.values()
-            if run_metadata.get('enroll_by_date')
-        ]
-
+        deadlines = [deadline for deadline in get_run_dates(content_metadata, 'enroll_by_date') if deadline]
         return max(deadlines) if deadlines else None
 
 

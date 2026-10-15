@@ -1963,6 +1963,57 @@ class TestSubsidyAccessPolicyCanRedeemView(BaseCanRedeemTestMixin, APITestWithMo
         self.mock_enterprise_user_record.return_value = TEST_USER_RECORD
         self.addCleanup(enterprise_user_record_patcher.stop)
 
+    @mock.patch('enterprise_access.apps.api.v1.views.subsidy_access_policy.LmsApiClient', return_value=mock.MagicMock())
+    @mock.patch('enterprise_access.apps.subsidy_access_policy.subsidy_api.get_versioned_subsidy_client')
+    def test_can_redeem_isolates_unreachable_subsidy(
+        self, mock_get_client, mock_lms_client,
+    ):  # pylint: disable=unused-argument
+        """
+        A soft-deleted subsidy (403) drops only its own policies; the healthy one is still evaluated and returned.
+        Its can_redeem endpoint fails too, as in production, so this also pins that it is excluded from evaluation.
+        """
+        test_content_key = "course-v1:edX+Privacy101+3T2020"
+        unreachable_policy = PerLearnerEnrollmentCapLearnerCreditAccessPolicyFactory(
+            enterprise_customer_uuid=self.enterprise_uuid,
+            spend_limit=500000,
+        )
+
+        def list_transactions(subsidy_uuid, **kwargs):
+            if subsidy_uuid == unreachable_policy.subsidy_uuid:
+                raise HTTPError('Fake HTTP Error Message', response=MockResponse({}, status.HTTP_403_FORBIDDEN))
+            return {'results': [], 'aggregates': {}}
+
+        def can_redeem(subsidy_uuid, *args):
+            if str(subsidy_uuid) == str(unreachable_policy.subsidy_uuid):
+                raise HTTPError('403 soft-deleted')
+            return {'can_redeem': True, 'active': True, 'content_price': 29900, 'unit': 'usd_cents',
+                    'all_transactions': []}
+
+        mock_get_client.return_value.list_subsidy_transactions.side_effect = list_transactions
+        # The mixin patches SubsidyAccessPolicy.subsidy_client, so every policy shares this mock.
+        self.redeemable_policy.subsidy_client.can_redeem.side_effect = can_redeem
+
+        def mock_get_subsidy_content_data(*args):
+            if test_content_key in args:
+                return {"content_uuid": str(uuid4()), "content_key": test_content_key, "source": "edX",
+                        "content_price": 29900}
+            return {}
+
+        self.mock_get_content_metadata.side_effect = mock_get_subsidy_content_data
+        with mock.patch(
+            'enterprise_access.apps.subsidy_access_policy.content_metadata_api.get_and_cache_content_metadata',
+            side_effect=mock_get_subsidy_content_data,
+        ):
+            response = self.client.get(
+                self.subsidy_access_policy_can_redeem_endpoint, {'content_key': [test_content_key]},
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        response_list = response.json()
+        assert response_list[0]["can_redeem"] is True
+        assert response_list[0]["redeemable_subsidy_access_policy"]["uuid"] == str(self.redeemable_policy.uuid)
+        assert str(unreachable_policy.uuid) not in response.content.decode()
+
     def test_can_redeem_policy_missing_params(self):
         """
         Test that the can_redeem endpoint returns an access policy when one is redeemable.
@@ -2613,8 +2664,15 @@ class TestSubsidyAccessPolicyCanRedeemView(BaseCanRedeemTestMixin, APITestWithMo
         assert response_list[0]["reasons"] == [reason]
         assert response_list[0]["display_reason"] == reason
 
+    @ddt.data(
+        {'status_code': status.HTTP_503_SERVICE_UNAVAILABLE, 'detail': 'foobar'},
+        # The customer's only subsidy answering 403/404 means *every* subsidy is unreachable, so it still fails.
+        {'status_code': status.HTTP_403_FORBIDDEN, 'detail': 'forbidden'},
+        {'status_code': status.HTTP_404_NOT_FOUND, 'detail': 'not found'},
+    )
+    @ddt.unpack
     @mock.patch('enterprise_access.apps.subsidy_access_policy.subsidy_api.get_versioned_subsidy_client')
-    def test_can_redeem_subsidy_client_http_error(self, mock_get_client):
+    def test_can_redeem_subsidy_client_http_error(self, mock_get_client, status_code, detail):
         """
         Test that the can_redeem endpoint raises
         an expected, specific exception when the subsidy REST API raises
@@ -2626,15 +2684,15 @@ class TestSubsidyAccessPolicyCanRedeemView(BaseCanRedeemTestMixin, APITestWithMo
         mock_client = mock_get_client.return_value
         mock_client.list_subsidy_transactions.side_effect = HTTPError(
             'Fake HTTP Error Message',
-            response=MockResponse({'detail': 'foobar'}, status.HTTP_503_SERVICE_UNAVAILABLE),
+            response=MockResponse({'detail': detail}, status_code),
         )
 
         response = self.client.get(self.subsidy_access_policy_can_redeem_endpoint, query_params)
 
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
         assert response.json() == {
-            'detail': 'Subsidy Transaction API error: foobar',
-            'subsidy_status_code': str(status.HTTP_503_SERVICE_UNAVAILABLE),
+            'detail': f'Subsidy Transaction API error: {detail}',
+            'subsidy_status_code': str(status_code),
         }
 
     @ddt.data(
