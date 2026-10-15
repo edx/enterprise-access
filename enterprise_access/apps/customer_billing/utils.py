@@ -4,6 +4,7 @@ Utility functions for customer billing app
 import logging
 from datetime import datetime, timezone
 from typing import Union
+from urllib.parse import urlsplit, urlunsplit
 
 from django.apps import apps
 from django.conf import settings
@@ -20,6 +21,18 @@ def datetime_from_timestamp(timestamp: Union[int, float]) -> datetime:
         datetime.datetime: A timezone-aware datetime object with tzinfo set to UTC.
     """
     return datetime.fromtimestamp(timestamp, tz=timezone.utc)
+
+
+def strip_query_and_fragment(url: str) -> str | None:
+    """
+    Drop the query string and fragment from a URL, which may carry PII (e.g. ``?email=...``).
+    Returns None if the URL can't be parsed (``urlsplit`` raises ValueError for e.g. ``http://[``).
+    """
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return None
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, '', ''))
 
 
 logger = logging.getLogger(__name__)

@@ -27,6 +27,24 @@ def enable_multi_license_entitlements_bff():
     return ENABLE_MULTI_LICENSE_ENTITLEMENTS_BFF.is_enabled()
 
 
+# .. toggle_name: enterprise_access.checkout_segment_events_v2
+# .. toggle_implementation: WaffleSwitch
+# .. toggle_default: False
+# .. toggle_description: Enables server-side checkout order_completed and
+#     order_cancelled Segment events for SSP purchases.
+# .. toggle_use_cases: open_edx
+# .. toggle_creation_date: 2026-10-12
+CHECKOUT_SEGMENT_EVENTS_V2 = WaffleSwitch(
+    f'{ENTERPRISE_ACCESS_NAMESPACE}.checkout_segment_events_v2',
+    __name__,
+)
+
+
+def checkout_segment_events_v2_enabled():
+    """Return whether server-side checkout Segment events are enabled."""
+    return CHECKOUT_SEGMENT_EVENTS_V2.is_enabled()
+
+
 # A ``WaffleSwitch`` rather than a ``WaffleFlag``, deliberately. A switch is a single
 # global boolean an administrator sets in Django admin; it takes no request, so it cannot
 # be turned on per-user, by percentage, or by a ``?flag=1`` query string. Two consequences

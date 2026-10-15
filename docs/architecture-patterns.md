@@ -114,6 +114,15 @@ Uses `edx-rbac` for fine-grained permissions with:
 - A degraded mode (unscoped search) requires both a settings flag and an explicit call-site
   argument, and is never reached by fallback — missing or expired scoping raises
 
+### 18. Record a Segment event as sent only after a synchronous send
+- `track_event` (and analytics-python's default client) queues events for a background thread that retries for
+  minutes, then drops a failed upload without telling the caller; `analytics.flush()` returns either way
+- When code records that an event was sent (an idempotency row, a retry decision), use
+  `track.segment.send_event_synchronously`: one bounded request that raises unless Segment returns 200
+- Retry network errors, 429 and 5xx; don't retry other 4xx or invalid arguments, which fail the same way every time
+- Pass a deterministic `message_id` so Segment drops a resend after a success that wasn't recorded
+- Example: `customer_billing.tasks.send_checkout_segment_event_task`
+
 ### Key Takeaways for Implementation:
 - Check permissions early using `@permission_required` decorator
 - Use separate serializers for request/response
