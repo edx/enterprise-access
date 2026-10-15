@@ -5,20 +5,30 @@ Tasks for customer billing app.
 import logging
 from datetime import datetime
 
+import requests
 import stripe
+from analytics.request import APIError as SegmentAPIError
 from braze.exceptions import BrazeClientError
 from celery import shared_task
 from django.conf import settings
+from django.db import OperationalError, transaction
+from django.utils import timezone
 
 from enterprise_access.apps.api_client.braze_client import BrazeApiClient
 from enterprise_access.apps.api_client.lms_client import LmsApiClient
 from enterprise_access.apps.customer_billing.constants import (
     BRAZE_DATE_FORMAT_1,
     BRAZE_DATE_FORMAT_2,
-    BRAZE_TIMESTAMP_FORMAT
+    BRAZE_TIMESTAMP_FORMAT,
+    CheckoutSegmentEvents
 )
-from enterprise_access.apps.customer_billing.models import CheckoutIntent, StripeEventSummary
+from enterprise_access.apps.customer_billing.models import CheckoutIntent, SegmentEventEmission, StripeEventSummary
+from enterprise_access.apps.customer_billing.segment_payloads import (
+    build_order_completed_properties,
+    build_order_properties
+)
 from enterprise_access.apps.customer_billing.stripe_api import (
+    get_stripe_invoice,
     get_stripe_payment_intent,
     get_stripe_payment_method,
     get_stripe_subscription,
@@ -26,7 +36,9 @@ from enterprise_access.apps.customer_billing.stripe_api import (
 )
 from enterprise_access.apps.customer_billing.utils import datetime_from_timestamp, get_campaign_id, get_product_type
 from enterprise_access.apps.provisioning.utils import validate_trial_subscription
+from enterprise_access.apps.track.segment import send_event_synchronously
 from enterprise_access.tasks import LoggedTaskWithRetry
+from enterprise_access.toggles import checkout_segment_events_v2_enabled
 from enterprise_access.utils import cents_to_dollars, format_cents_for_user_display, format_datetime_obj
 
 logger = logging.getLogger(__name__)
@@ -1102,3 +1114,91 @@ def send_payment_receipt_email(
         organization_name=enterprise_customer_name,
         email_description='payment receipt email',
     )
+
+
+class SegmentSendError(Exception):
+    """Segment did not accept a checkout event because of a network error, timeout, 429 or 5xx; retryable."""
+
+
+def _send_checkout_segment_event(lms_user_id, event_name, properties, invoice_id) -> bool:
+    """
+    Send the event synchronously and return whether Segment accepted it (False if SEGMENT_KEY is unset).
+
+    Failures that a later attempt can fix raise ``SegmentSendError`` so the task retries. Like analytics-python's
+    own uploader, a 4xx other than 429 is not retried: the request itself is invalid and would fail the same way
+    every time. Invalid arguments (``AssertionError``) are not retried for the same reason.
+    """
+    try:
+        return send_event_synchronously(
+            lms_user_id=str(lms_user_id),
+            event_name=event_name,
+            properties=properties,
+            message_id=f'{event_name}:{invoice_id}',
+        )
+    except SegmentAPIError as exc:
+        if 400 <= exc.status < 500 and exc.status != 429:
+            raise
+        raise SegmentSendError(f'Segment rejected {event_name} for order {invoice_id}: {exc}') from exc
+    except requests.RequestException as exc:
+        raise SegmentSendError(f'Segment send failed for {event_name} order {invoice_id}: {exc}') from exc
+
+
+@shared_task(
+    base=LoggedTaskWithRetry,
+    autoretry_for=(
+        stripe.error.APIConnectionError,
+        stripe.error.RateLimitError,
+        stripe.error.APIError,
+        SegmentSendError,
+        OperationalError,
+    ),
+)
+def send_checkout_segment_event_task(event_name, checkout_intent_id, invoice_id):
+    """
+    Send a final checkout event (order_completed / order_cancelled) to Segment, at most once per
+    ``order_id`` (the Stripe invoice ID) and event name.
+
+    Runs outside the webhook request. Stripe API and retryable Segment failures retry with exponential backoff. A
+    ``SegmentEventEmission`` row (unique per event and order) is locked while sending and marked emitted only
+    after Segment accepted the event, so a failed send stays retryable and concurrent deliveries emit once. The
+    send is synchronous with a short timeout, so the lock is held for one bounded request, never for retries.
+    """
+    if not checkout_segment_events_v2_enabled():
+        return
+
+    if SegmentEventEmission.objects.filter(
+        event_name=event_name, order_id=invoice_id, emitted_at__isnull=False,
+    ).exists():
+        # Cheap duplicate check before any Stripe call; the locked re-check below is the authoritative one.
+        logger.info('Segment event %s already sent for order %s, skipping', event_name, invoice_id)
+        return
+
+    try:
+        checkout_intent = CheckoutIntent.objects.select_related('ssp_product', 'user').get(id=checkout_intent_id)
+    except CheckoutIntent.DoesNotExist:
+        # Retrying cannot make a missing row appear.
+        logger.error('Skipping Segment event %s: CheckoutIntent %s does not exist', event_name, checkout_intent_id)
+        return
+    lms_user_id = checkout_intent.user.lms_user_id
+    if not lms_user_id:
+        logger.warning(
+            'Skipping Segment event %s: CheckoutIntent %s has no lms_user_id', event_name, checkout_intent_id,
+        )
+        return
+    invoice = get_stripe_invoice(invoice_id)
+    if event_name == CheckoutSegmentEvents.ORDER_COMPLETED:
+        properties = build_order_completed_properties(checkout_intent, invoice)
+    else:
+        properties = build_order_properties(checkout_intent, invoice)
+
+    emission, _ = SegmentEventEmission.objects.get_or_create(event_name=event_name, order_id=invoice_id)
+    with transaction.atomic():
+        # The row lock makes a concurrent delivery wait, then see emitted_at and skip.
+        emission = SegmentEventEmission.objects.select_for_update().get(pk=emission.pk)
+        if emission.emitted_at:
+            logger.info('Segment event %s already sent for order %s, skipping', event_name, invoice_id)
+            return
+        if _send_checkout_segment_event(lms_user_id, event_name, properties, invoice_id):
+            emission.emitted_at = timezone.now()
+            emission.save(update_fields=['emitted_at', 'modified'])
+            logger.info('Sent Segment event %s for order %s', event_name, invoice_id)

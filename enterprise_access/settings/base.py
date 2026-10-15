@@ -747,6 +747,9 @@ STRIPE_PRICE_DATA_CACHE_TIMEOUT = 300
 
 ENABLE_STRIPE_EVENT_SUMMARIES = False
 
+# Segment server-side write key; set per environment (None disables server-side tracking)
+SEGMENT_KEY = None
+
 # Allows us to do per-environment exception raising vs. returning in our event handlers
 STRIPE_GRACEFUL_EXCEPTION_MODE = False
 
