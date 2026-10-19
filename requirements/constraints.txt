@@ -41,6 +41,6 @@ pip-tools<7.6.0
 pip<25.3
 
 # algoliasearch 4.0 is not backwards compatible with 3.0; algolia_client.py uses the v3 API.
-# Same pin as edx/enterprise-catalog (commit 04c4efa, 2024-08-19):
-# https://github.com/edx/enterprise-catalog/blob/326a58f62748af57908672ca0687315a8a5a7c40/requirements/constraints.txt#L33-L34
+# Same pin as edx/enterprise-catalog, added in "build: pin algolia < 4 and make upgrade" (2024-08-19):
+# https://github.com/edx/enterprise-catalog/commit/04c4efa552bcdbf5dad27265b435fae3df23ad72
 algoliasearch<4
