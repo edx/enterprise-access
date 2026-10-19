@@ -868,6 +868,7 @@ class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
         Validate request creation:
         - Ensure policy_uuid is provided and valid.
         - Ensure Browse & Request is active for the policy.
+        - Ensure the policy is not retired or inactive, and its subsidy has not expired.
         - No duplicate PENDING/REQUESTED requests for the same course and policy.
         """
         policy_uuid = self.request.data.get("policy_uuid")
@@ -888,6 +889,14 @@ class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
             raise SubsidyRequestCreationError(
                 f"Browse & Request is not active for policy UUID: {policy_uuid}.",
                 status.HTTP_400_BAD_REQUEST,
+            )
+
+        # ``bnr_enabled`` stays True after a budget ends so admins can still manage its
+        # existing requests, but approval would fail, so don't accept new ones.
+        if not policy.is_redemption_enabled or not policy.is_subsidy_active:
+            raise SubsidyRequestCreationError(
+                f"The budget for policy UUID: {policy_uuid} is inactive or expired.",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
             )
 
         enterprise_customer_uuid = policy.enterprise_customer_uuid

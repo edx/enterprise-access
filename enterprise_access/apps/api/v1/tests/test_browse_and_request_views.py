@@ -1839,6 +1839,38 @@ class TestLearnerCreditRequestViewSet(BaseEnterpriseAccessTestCase):
             'detail': f'Browse & Request is not active for policy UUID: {disabled_policy.uuid}.'
         }
 
+    @ddt.data(
+        {'active': False, 'retired': False, 'subsidy_is_active': True},
+        {'active': True, 'retired': True, 'subsidy_is_active': True},
+        {'active': True, 'retired': False, 'subsidy_is_active': False},
+    )
+    @ddt.unpack
+    def test_create_budget_inactive_or_expired(self, active, retired, subsidy_is_active):
+        """
+        Test that request creation fails when the policy is inactive or retired, or its subsidy has expired,
+        even though BNR is still enabled on it.
+        """
+        # Bypass save(), which validates spend before allowing a policy to be deactivated.
+        SubsidyAccessPolicy.objects.filter(uuid=self.policy.uuid).update(active=active, retired=retired)
+        self.mock_subsidy_client.retrieve_subsidy.return_value = {'is_active': subsidy_is_active}
+
+        payload = {
+            'enterprise_customer_uuid': self.enterprise_customer_uuid_1,
+            'course_id': 'course-v1:edX+DemoX+Demo_Course',
+            'policy_uuid': self.policy.uuid,
+            'course_price': 1000
+        }
+        response = self.client.post(LEARNER_CREDIT_REQUESTS_LIST_ENDPOINT, payload)
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.data == {
+            'detail': f'The budget for policy UUID: {self.policy.uuid} is inactive or expired.'
+        }
+        assert not LearnerCreditRequest.objects.filter(
+            user=self.user,
+            course_id='course-v1:edX+DemoX+Demo_Course',
+        ).exists()
+
     def test_create_duplicate_request(self):
         """
         Test that duplicate pending requests are prevented.

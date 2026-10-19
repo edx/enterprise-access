@@ -37,6 +37,7 @@ from enterprise_access.apps.subsidy_access_policy.constants import (
     REASON_LEARNER_NOT_ASSIGNED_CONTENT,
     REASON_LEARNER_NOT_IN_ENTERPRISE_GROUP,
     REASON_NOT_ENOUGH_VALUE_IN_SUBSIDY,
+    REASON_SUBSIDY_EXPIRED,
     AccessMethods,
     MissingSubsidyAccessReasonUserMessages,
     PolicyTypes,
@@ -1857,6 +1858,35 @@ class TestSubsidyAccessPolicyRedeemViewset(APITestWithMocks):
         self.assertFalse(response_data.get('can_request'))
         self.assertIn("already have an active request", response_data.get('reason'))
         self.assertEqual(response_data.get('existing_request'), str(existing_request.uuid))
+
+    def test_can_request_subsidy_expired(self):
+        """
+        Test that the can-request endpoint does not offer a BnR policy whose subsidy has expired.
+        """
+        learner_credit_config = LearnerCreditRequestConfiguration.objects.create(active=True)
+        PerLearnerSpendCreditAccessPolicy.objects.create(
+            catalog_uuid='7c9daa69-519c-4313-ad81-90862bc08ca2',
+            subsidy_uuid='7c9daa69-519c-4313-ad81-90862bc08ca3',
+            per_learner_spend_limit=None,
+            description='anything',
+            active=True,
+            enterprise_customer_uuid=self.enterprise_uuid,
+            learner_credit_request_config=learner_credit_config,
+        )
+        self.subsidy_client.retrieve_subsidy.return_value = {'is_active': False}
+
+        with mock.patch(
+            'enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.catalog_contains_content_key',
+            return_value=True
+        ):
+            response = self.client.get(
+                self.subsidy_access_policy_can_request_endpoint,
+                {'content_key': 'edX+CS101', 'lms_user_id': 1234},
+            )
+        self.assertEqual(response.status_code, 200)
+        response_data = response.json()
+        self.assertFalse(response_data.get('can_request'))
+        self.assertEqual(response_data.get('reason'), REASON_SUBSIDY_EXPIRED)
 
 
 class BaseCanRedeemTestMixin:

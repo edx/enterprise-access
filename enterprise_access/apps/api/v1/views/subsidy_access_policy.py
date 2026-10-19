@@ -1002,8 +1002,9 @@ class SubsidyAccessPolicyRedeemViewset(UserDetailsFromJwtMixin, PermissionRequir
         """
         Check if a learner can request access to content. The flow is:
         1. Find BnR enabled policies first
-        2. Check if content key exists in those policies
-        3. Check for existing pending request by this learner
+        2. Drop policies whose subsidy has expired
+        3. Check if content key exists in those policies
+        4. Check for existing pending request by this learner
         """
         serializer = serializers.SubsidyAccessPolicyCanRequestRequestSerializer(data=request.query_params)
         serializer.is_valid(raise_exception=True)
@@ -1033,11 +1034,21 @@ class SubsidyAccessPolicyRedeemViewset(UserDetailsFromJwtMixin, PermissionRequir
                 'reason': 'No policies with BnR enabled found'
             }, status=status.HTTP_200_OK)
 
-        # 2. Check if content exists in catalogs for BnR enabled policies
+        # 2. Drop policies whose subsidy has expired; approving a request against one would fail
+        unexpired_policies = bnr_enabled_policies.filter(
+            pk__in=[policy.pk for policy in bnr_enabled_policies if policy.is_subsidy_active]
+        )
+        if not unexpired_policies.exists():
+            return Response({
+                'can_request': False,
+                'reason': REASON_SUBSIDY_EXPIRED
+            }, status=status.HTTP_200_OK)
+
+        # 3. Check if content exists in catalogs for BnR enabled policies
         # Filter policies to those that contain the content key in their catalog
-        valid_policies = bnr_enabled_policies.filter(
+        valid_policies = unexpired_policies.filter(
             pk__in=[
-                policy.pk for policy in bnr_enabled_policies
+                policy.pk for policy in unexpired_policies
                 if policy.catalog_contains_content_key(content_key)
             ]
         )
@@ -1048,7 +1059,7 @@ class SubsidyAccessPolicyRedeemViewset(UserDetailsFromJwtMixin, PermissionRequir
                 'reason': REASON_CONTENT_NOT_IN_CATALOG
             }, status=status.HTTP_200_OK)
 
-        # 3. Check for existing pending request by this learner
+        # 4. Check for existing pending request by this learner
         existing_request = LearnerCreditRequest.objects.filter(
             user__lms_user_id=lms_user_id,
             enterprise_customer_uuid=enterprise_customer_uuid,
