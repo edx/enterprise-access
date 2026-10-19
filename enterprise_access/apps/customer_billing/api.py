@@ -3,6 +3,7 @@ Python API for customer_billing app.
 """
 import logging
 from collections.abc import Mapping
+from datetime import timedelta
 from typing import TypedDict, Unpack, cast
 
 import stripe
@@ -11,10 +12,17 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.models import AbstractUser
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email, validate_slug
-from requests.exceptions import HTTPError
+from django.utils import timezone
+from django.utils.dateparse import parse_datetime
+from requests.exceptions import ConnectionError as RequestsConnectionError
+from requests.exceptions import HTTPError, Timeout
 
 from enterprise_access.apps.api_client.lms_client import LmsApiClient
-from enterprise_access.apps.customer_billing.constants import CHECKOUT_SESSION_ERROR_CODES
+from enterprise_access.apps.customer_billing.constants import (
+    CHECKOUT_SESSION_ERROR_CODES,
+    TOP_UP_INELIGIBILITY_REASONS,
+    TOP_UP_MIN_DAYS_BEFORE_EXPIRY
+)
 from enterprise_access.apps.customer_billing.models import (
     CheckoutIntent,
     FailedCheckoutIntentConflict,
@@ -551,3 +559,103 @@ def create_stripe_billing_portal_session(
             f"StripeError creating billing portal session for CheckoutIntent {checkout_intent.id}: {exc}"
         )
         raise
+
+
+# Learner Credit top-up eligibility (ENT-12356). The single implementation of the eligibility rules: the eligibility
+# endpoint calls it today, and the quote (chunk 7) and pay (chunk 11) endpoints must call the same function so the
+# portal and the backend always agree.
+
+class SubsidyUnavailableError(Exception):
+    """
+    The subsidy record could not be read from enterprise-subsidy, so the budget's state is unknown.
+
+    ``SubsidyAccessPolicy.subsidy_record()`` swallows HTTP errors and returns ``{}`` (connection errors and timeouts
+    propagate instead). Neither
+    case may be reported as ``budget_not_active``: an enterprise-subsidy outage would then look like every budget
+    being inactive.
+    """
+
+
+def is_top_up_enabled(enterprise_customer_uuid=None):  # pylint: disable=unused-argument
+    """
+    Whether the Learner Credit top-up feature (``FEATURE_TOP_UP_LEARNER_CREDIT``) is on.
+
+    The one place the flag is read, on every request, so chunks 7 and 11 reuse it. It is a Django setting, set per
+    environment in edx-internal. Open decision KD-6: today it is a single global setting.
+    ``enterprise_customer_uuid`` is accepted so a per-enterprise implementation can replace this body without
+    touching any caller.
+    """
+    return bool(getattr(settings, 'FEATURE_TOP_UP_LEARNER_CREDIT', False))
+
+
+class AccountStandingChecker:
+    """
+    Interface for the account standing / agreement type check.
+    """
+
+    def is_eligible(self, policy):
+        """
+        Return True if the policy's enterprise account may be topped up.
+        """
+        raise NotImplementedError
+
+
+class PlaceholderAccountStandingChecker(AccountStandingChecker):
+    """
+    Stand-in until OQ-8 is answered (chunk 19 replaces it with the real source).
+
+    There is no account-standing data source yet, so it reports every account as eligible. Until the real check
+    exists, ``FEATURE_TOP_UP_LEARNER_CREDIT`` is what keeps top-ups off where they must not be offered.
+    """
+
+    def is_eligible(self, policy):
+        return True
+
+
+def _reason(key):
+    error_code, message = TOP_UP_INELIGIBILITY_REASONS[key]
+    return {'error_code': error_code, 'message': message}
+
+
+def evaluate_top_up_eligibility(policy, account_standing_checker=None, now=None):
+    """
+    Evaluate whether a budget (``SubsidyAccessPolicy``) is eligible for a Learner Credit top-up.
+
+    Returns a dict: ``policy_uuid``, ``is_eligible``, ``reasons`` (list of ``error_code`` /
+    ``message``) and ``subsidy_expiration_datetime`` (a datetime, or None).
+
+    Rules:
+      * Active: the policy is active and not retired, and the subsidy is active.
+      * A subsidy that cannot be read raises ``SubsidyUnavailableError`` instead of reporting a reason.
+      * Expiry: ineligible only when fewer than ``TOP_UP_MIN_DAYS_BEFORE_EXPIRY`` (14) days remain.
+        Exactly 14 days still passes.
+      * Account standing: delegated to ``account_standing_checker``.
+    """
+    now = now or timezone.now()
+    account_standing_checker = account_standing_checker or PlaceholderAccountStandingChecker()
+
+    # subsidy_record() is request-cached and returns {} on an HTTP error, but a connection failure or timeout
+    # (enterprise-subsidy unreachable) propagates, so treat both as "unavailable".
+    try:
+        subsidy = policy.subsidy_record()
+    except (RequestsConnectionError, Timeout, OSError) as exc:
+        raise SubsidyUnavailableError(f'Subsidy unreachable for policy {policy.uuid}') from exc
+    if not subsidy:
+        raise SubsidyUnavailableError(f'Subsidy record unavailable for policy {policy.uuid}')
+    expiration = subsidy.get('expiration_datetime')
+    expiration_datetime = parse_datetime(expiration) if isinstance(expiration, str) else expiration
+
+    reasons = []
+    if not policy.is_redemption_enabled or not subsidy.get('is_active'):
+        reasons.append(_reason('BUDGET_NOT_ACTIVE'))
+    if expiration_datetime and expiration_datetime - now < timedelta(days=TOP_UP_MIN_DAYS_BEFORE_EXPIRY):
+        reasons.append(_reason('BUDGET_EXPIRING_SOON'))
+    if not account_standing_checker.is_eligible(policy):
+        reasons.append(_reason('ACCOUNT_NOT_ELIGIBLE'))
+
+    return {
+        'policy_uuid': policy.uuid,
+        'is_eligible': not reasons,
+        'reasons': reasons,
+        'subsidy_expiration_datetime': expiration_datetime,
+    }

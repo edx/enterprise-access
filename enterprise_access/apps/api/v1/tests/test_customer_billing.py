@@ -7,6 +7,7 @@ from datetime import timedelta
 from unittest import mock
 
 import ddt
+import requests
 import stripe
 from django.core.cache import cache
 from django.test import RequestFactory, override_settings
@@ -29,7 +30,13 @@ from enterprise_access.apps.customer_billing.models import (
     StripeEventSummary
 )
 from enterprise_access.apps.customer_billing.tests.utils import AttrDict
+from enterprise_access.apps.subsidy_access_policy.tests.factories import (
+    PerLearnerSpendCapLearnerCreditAccessPolicyFactory
+)
 from test_utils import APITest
+
+SUBSIDY_RECORD_PATH = 'enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_record'
+ACCOUNT_STANDING_PATH = 'enterprise_access.apps.customer_billing.api.PlaceholderAccountStandingChecker.is_eligible'
 
 
 @ddt.ddt
@@ -4065,3 +4072,174 @@ class CreateCheckoutSessionViewTests(APITest):
             'cs_test_abc_secret_xyz',
         )
         mock_enterprise_catalog_metadata.assert_called()
+
+
+@ddt.ddt
+@override_settings(FEATURE_TOP_UP_LEARNER_CREDIT=True)
+class LearnerCreditTopUpEligibilityTests(APITest):
+    """
+    Tests for GET /api/v1/learner-credit-top-ups/eligibility/.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.enterprise_uuid = uuid.uuid4()
+        self.url = reverse('api:v1:learner-credit-top-ups-eligibility')
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': str(self.enterprise_uuid),
+        }])
+        subsidy = {
+            'is_active': True,
+            'expiration_datetime': (timezone.now() + timedelta(days=100)).isoformat(),
+        }
+        patcher = mock.patch(SUBSIDY_RECORD_PATH, return_value=subsidy)
+        self.mock_subsidy_record = patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _policy(self, **kwargs):
+        return PerLearnerSpendCapLearnerCreditAccessPolicyFactory(
+            enterprise_customer_uuid=self.enterprise_uuid, **kwargs,
+        )
+
+    def _get(self, **params):
+        params.setdefault('enterprise_customer_uuid', str(self.enterprise_uuid))
+        return self.client.get(self.url, params)
+
+    def test_single_policy_eligible(self):
+        policy = self._policy()
+        response = self._get(policy_uuid=str(policy.uuid))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        [result] = response.json()['results']
+        self.assertEqual(result['policy_uuid'], str(policy.uuid))
+        self.assertTrue(result['is_eligible'])
+        self.assertEqual(result['reasons'], [])
+        self.assertIsNotNone(result['subsidy_expiration_datetime'])
+
+    def test_ineligible_returns_200_with_reasons(self):
+        policy = self._policy()
+        self.mock_subsidy_record.return_value = {
+            'is_active': True,
+            'expiration_datetime': (timezone.now() + timedelta(days=13)).isoformat(),
+        }
+        response = self._get(policy_uuid=str(policy.uuid))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        [result] = response.json()['results']
+        self.assertFalse(result['is_eligible'])
+        self.assertEqual([r['error_code'] for r in result['reasons']], ['budget_expiring_soon'])
+        self.assertTrue(result['reasons'][0]['message'])
+
+    def test_account_standing_not_eligible(self):
+        policy = self._policy()
+        with mock.patch(ACCOUNT_STANDING_PATH, return_value=False):
+            [result] = self._get(policy_uuid=str(policy.uuid)).json()['results']
+        self.assertEqual([r['error_code'] for r in result['reasons']], ['account_not_eligible'])
+
+    def test_inactive_policy_by_uuid_reports_budget_not_active(self):
+        policy = self._policy(active=False)
+        [result] = self._get(policy_uuid=str(policy.uuid)).json()['results']
+        self.assertEqual([r['error_code'] for r in result['reasons']], ['budget_not_active'])
+
+    def test_inactive_subsidy_reports_budget_not_active(self):
+        policy = self._policy()
+        self.mock_subsidy_record.return_value = {
+            'is_active': False,
+            'expiration_datetime': (timezone.now() + timedelta(days=100)).isoformat(),
+        }
+        [result] = self._get(policy_uuid=str(policy.uuid)).json()['results']
+        self.assertEqual([r['error_code'] for r in result['reasons']], ['budget_not_active'])
+
+    def test_no_policy_uuid_returns_active_true_policies_of_enterprise_only(self):
+        active_1 = self._policy()
+        active_2 = self._policy()
+        self._policy(active=False)
+        retired = self._policy(retired=True)  # still active=True: listed, but reports budget_not_active
+        PerLearnerSpendCapLearnerCreditAccessPolicyFactory()  # other enterprise
+        response = self._get()
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        returned = {r['policy_uuid'] for r in response.json()['results']}
+        self.assertEqual(returned, {str(active_1.uuid), str(active_2.uuid), str(retired.uuid)})
+        by_uuid = {r['policy_uuid']: r for r in response.json()['results']}
+        self.assertEqual([r['error_code'] for r in by_uuid[str(retired.uuid)]['reasons']], ['budget_not_active'])
+
+    def test_policy_uuid_filters_to_one_policy(self):
+        policy = self._policy()
+        self._policy()
+        results = self._get(policy_uuid=str(policy.uuid)).json()['results']
+        self.assertEqual([r['policy_uuid'] for r in results], [str(policy.uuid)])
+
+    def test_every_failing_reason_is_reported(self):
+        policy = self._policy()
+        self.mock_subsidy_record.return_value = {
+            'is_active': False,
+            'expiration_datetime': (timezone.now() + timedelta(days=3)).isoformat(),
+        }
+        with mock.patch(ACCOUNT_STANDING_PATH, return_value=False):
+            [result] = self._get(policy_uuid=str(policy.uuid)).json()['results']
+        self.assertEqual(
+            [r['error_code'] for r in result['reasons']],
+            ['budget_not_active', 'budget_expiring_soon', 'account_not_eligible'],
+        )
+
+    def test_exactly_14_days_left_is_eligible(self):
+        policy = self._policy()
+        self.mock_subsidy_record.return_value = {
+            'is_active': True,
+            'expiration_datetime': (timezone.now() + timedelta(days=14, minutes=1)).isoformat(),
+        }
+        [result] = self._get(policy_uuid=str(policy.uuid)).json()['results']
+        self.assertTrue(result['is_eligible'])
+
+    def test_subsidy_unreachable_is_503_not_500(self):
+        self._policy()
+        self.mock_subsidy_record.side_effect = requests.exceptions.ConnectionError('Name or service not known')
+        self.assertEqual(self._get().status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+
+    def test_subsidy_unavailable_is_503_not_budget_not_active(self):
+        self._policy()
+        self.mock_subsidy_record.return_value = {}
+        response = self._get()
+        self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+        self.assertNotIn('results', response.json())
+
+    def test_no_policies_returns_empty_results(self):
+        self.assertEqual(self._get().json(), {'results': []})
+
+    def test_policy_of_other_enterprise_is_404(self):
+        other = PerLearnerSpendCapLearnerCreditAccessPolicyFactory()
+        self.assertEqual(self._get(policy_uuid=str(other.uuid)).status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_missing_policy_is_404(self):
+        self.assertEqual(self._get(policy_uuid=str(uuid.uuid4())).status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_invalid_policy_uuid_is_400(self):
+        self.assertEqual(self._get(policy_uuid='not-a-uuid').status_code, status.HTTP_400_BAD_REQUEST)
+
+    @ddt.data(
+        SYSTEM_ENTERPRISE_LEARNER_ROLE,  # wrong role for this enterprise
+    )
+    def test_non_admin_is_403(self, role):
+        self.set_jwt_cookie([{'system_wide_role': role, 'context': str(self.enterprise_uuid)}])
+        self.assertEqual(self._get().status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_operator_is_200(self):
+        self.set_jwt_cookie([{'system_wide_role': SYSTEM_ENTERPRISE_OPERATOR_ROLE, 'context': '*'}])
+        self.assertEqual(self._get().status_code, status.HTTP_200_OK)
+
+    def test_admin_of_other_enterprise_is_403(self):
+        self.set_jwt_cookie([{'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE, 'context': str(uuid.uuid4())}])
+        self.assertEqual(self._get().status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_missing_enterprise_customer_uuid_is_403(self):
+        self.assertEqual(self.client.get(self.url).status_code, status.HTTP_403_FORBIDDEN)
+
+    @ddt.data(SYSTEM_ENTERPRISE_ADMIN_ROLE, SYSTEM_ENTERPRISE_LEARNER_ROLE)
+    @override_settings(FEATURE_TOP_UP_LEARNER_CREDIT=False)
+    def test_flag_off_is_404_for_every_role(self, role):
+        self.set_jwt_cookie([{'system_wide_role': role, 'context': str(self.enterprise_uuid)}])
+        self.assertEqual(self._get().status_code, status.HTTP_404_NOT_FOUND)
+        self.mock_subsidy_record.assert_not_called()
+
+    def test_unauthenticated_is_401(self):
+        self.client.cookies.clear()
+        self.assertEqual(self._get().status_code, status.HTTP_401_UNAUTHORIZED)

@@ -15,12 +15,22 @@ from django.utils import timezone
 from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.customer_billing import api as customer_billing_api
 from enterprise_access.apps.customer_billing import stripe_api
+from enterprise_access.apps.customer_billing.api import (
+    AccountStandingChecker,
+    PlaceholderAccountStandingChecker,
+    SubsidyUnavailableError,
+    evaluate_top_up_eligibility,
+    is_top_up_enabled
+)
 from enterprise_access.apps.customer_billing.constants import CheckoutIntentState
 from enterprise_access.apps.customer_billing.models import (
     CheckoutIntent,
     FailedCheckoutIntentConflict,
     SlugReservationConflict,
     SspProduct
+)
+from enterprise_access.apps.subsidy_access_policy.tests.factories import (
+    PerLearnerSpendCapLearnerCreditAccessPolicyFactory
 )
 
 User = get_user_model()
@@ -764,3 +774,115 @@ class TestValidatorHandlerEdgeCases(TestCase):
         mock_pricing.side_effect = RuntimeError('boom')
         result = self.validator.handle_stripe_price_id({'stripe_price_id': QUARTERLY_PRICE_ID})
         self.assertEqual(result['error_code'], 'does_not_exist')
+
+
+SUBSIDY_RECORD_PATH = 'enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_record'
+
+
+class _Standing(AccountStandingChecker):
+    """ Account standing checker with a fixed answer. """
+    def __init__(self, eligible):
+        self.eligible = eligible
+
+    def is_eligible(self, policy):
+        return self.eligible
+
+
+@ddt.ddt
+class EvaluateTopUpEligibilityTests(TestCase):
+    """
+    Tests for evaluate_top_up_eligibility.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.now = timezone.now()
+        self.policy = PerLearnerSpendCapLearnerCreditAccessPolicyFactory()
+
+    def _evaluate(self, days_left=100, subsidy_active=True, standing=True, subsidy=None):
+        """ Evaluate the policy against a mocked subsidy record. """
+        if subsidy is None:
+            subsidy = {
+                'is_active': subsidy_active,
+                'expiration_datetime': (self.now + timedelta(days=days_left)).isoformat(),
+            }
+        with mock.patch(SUBSIDY_RECORD_PATH, return_value=subsidy):
+            return evaluate_top_up_eligibility(self.policy, _Standing(standing), now=self.now)
+
+    def _codes(self, result):
+        return [reason['error_code'] for reason in result['reasons']]
+
+    def test_eligible(self):
+        result = self._evaluate()
+        self.assertTrue(result['is_eligible'])
+        self.assertEqual(result['reasons'], [])
+        self.assertEqual(result['policy_uuid'], self.policy.uuid)
+        self.assertIsNotNone(result['subsidy_expiration_datetime'])
+
+    @ddt.data(
+        (13, False),
+        (14, True),
+        (15, True),
+    )
+    @ddt.unpack
+    def test_expiry_boundary(self, days_left, expected_eligible):
+        result = self._evaluate(days_left=days_left)
+        self.assertEqual(result['is_eligible'], expected_eligible)
+        if not expected_eligible:
+            self.assertEqual(self._codes(result), ['budget_expiring_soon'])
+
+    def test_inactive_policy(self):
+        self.policy.active = False
+        self.assertEqual(self._codes(self._evaluate()), ['budget_not_active'])
+
+    def test_retired_policy(self):
+        self.policy.retired = True
+        self.assertEqual(self._codes(self._evaluate()), ['budget_not_active'])
+
+    def test_inactive_subsidy(self):
+        self.assertEqual(self._codes(self._evaluate(subsidy_active=False)), ['budget_not_active'])
+
+    def test_subsidy_unavailable_raises_instead_of_reporting_inactive(self):
+        """ subsidy_record() returns {} when enterprise-subsidy errors: not the same as an inactive budget. """
+        with self.assertRaises(SubsidyUnavailableError):
+            self._evaluate(subsidy={})
+
+    @ddt.data(requests.exceptions.ConnectionError, requests.exceptions.Timeout, OSError)
+    def test_subsidy_unreachable_raises_subsidy_unavailable(self, exc_class):
+        """ A connection failure or timeout propagates out of subsidy_record(): also "unavailable", not a 500. """
+        with mock.patch(SUBSIDY_RECORD_PATH, side_effect=exc_class('boom')):
+            with self.assertRaises(SubsidyUnavailableError):
+                evaluate_top_up_eligibility(self.policy, now=self.now)
+
+    def test_account_not_eligible(self):
+        self.assertEqual(self._codes(self._evaluate(standing=False)), ['account_not_eligible'])
+
+    def test_multiple_reasons(self):
+        result = self._evaluate(days_left=5, subsidy_active=False, standing=False)
+        self.assertEqual(
+            self._codes(result),
+            ['budget_not_active', 'budget_expiring_soon', 'account_not_eligible'],
+        )
+
+    def test_reasons_have_message(self):
+        result = self._evaluate(standing=False)
+        self.assertTrue(result['reasons'][0]['message'])
+
+    def test_placeholder_checker_reports_every_account_eligible(self):
+        self.assertTrue(PlaceholderAccountStandingChecker().is_eligible(self.policy))
+
+    def test_default_checker_is_placeholder_and_does_not_block(self):
+        subsidy = {'is_active': True, 'expiration_datetime': (self.now + timedelta(days=90)).isoformat()}
+        with mock.patch(SUBSIDY_RECORD_PATH, return_value=subsidy):
+            result = evaluate_top_up_eligibility(self.policy, now=self.now)
+        self.assertTrue(result['is_eligible'])
+
+    @ddt.data((True, True), (False, False))
+    @ddt.unpack
+    def test_is_top_up_enabled(self, setting_value, expected):
+        with override_settings(FEATURE_TOP_UP_LEARNER_CREDIT=setting_value):
+            self.assertEqual(is_top_up_enabled(), expected)
+
+    def test_is_top_up_enabled_defaults_off(self):
+        # Base settings leave the flag off; edx-internal (or devstack) turns it on.
+        self.assertFalse(is_top_up_enabled())
