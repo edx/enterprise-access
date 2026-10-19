@@ -39,3 +39,7 @@ social-auth-core>=4.9.1,<5.0.0
 # fixed. Remove this pin once a pip-tools release fixes the incompatibility.
 pip-tools<7.6.0
 pip<25.3
+
+# algoliasearch 4.0 is not backwards compatible with 3.0; algolia_client.py uses the v3 API.
+# Same pin as enterprise-catalog: https://github.com/openedx/enterprise-catalog/pull/914
+algoliasearch<4

@@ -8,22 +8,12 @@
     # via -r requirements/test.txt
 accessible-pygments==0.0.5
     # via pydata-sphinx-theme
-aiohappyeyeballs==2.7.1
-    # via
-    #   -r requirements/test.txt
-    #   aiohttp
-aiohttp==3.14.5
-    # via
-    #   -r requirements/test.txt
-    #   algoliasearch
-aiosignal==1.4.0
-    # via
-    #   -r requirements/test.txt
-    #   aiohttp
 alabaster==1.0.0
     # via sphinx
-algoliasearch==4.48.0
-    # via -r requirements/test.txt
+algoliasearch==3.0.0
+    # via
+    #   -c requirements/constraints.txt
+    #   -r requirements/test.txt
 amqp==5.4.1
     # via
     #   -r requirements/test.txt
@@ -54,14 +44,9 @@ astroid==4.3.4
     #   -r requirements/test.txt
     #   pylint
     #   pylint-celery
-async-timeout==5.0.1
-    # via
-    #   -r requirements/test.txt
-    #   algoliasearch
 attrs==26.1.0
     # via
     #   -r requirements/test.txt
-    #   aiohttp
     #   cattrs
     #   jsonschema
     #   openedx-events
@@ -84,7 +69,7 @@ billiard==4.3.1
     # via
     #   -r requirements/test.txt
     #   celery
-cachetools==7.2.2
+cachetools==7.2.3
     # via
     #   -r requirements/test.txt
     #   tox
@@ -95,7 +80,7 @@ celery==5.6.3
     #   -r requirements/test.txt
     #   django-celery-results
     #   edx-celeryutils
-certifi==2026.7.22
+certifi==2026.10.18
     # via
     #   -r requirements/test.txt
     #   requests
@@ -175,7 +160,7 @@ dill==0.4.1
     # via
     #   -r requirements/test.txt
     #   pylint
-distlib==0.4.3
+distlib==0.4.4
     # via
     #   -r requirements/test.txt
     #   virtualenv
@@ -353,7 +338,7 @@ fastavro==1.13.1
     #   -r requirements/test.txt
     #   confluent-kafka
     #   openedx-events
-filelock==4.2.0
+filelock==4.2.4
     # via
     #   -r requirements/test.txt
     #   python-discovery
@@ -361,20 +346,15 @@ filelock==4.2.0
     #   virtualenv
 freezegun==1.5.5
     # via -r requirements/test.txt
-frozenlist==1.8.0
-    # via
-    #   -r requirements/test.txt
-    #   aiohttp
-    #   aiosignal
 h11==0.16.0
     # via
     #   -r requirements/test.txt
     #   httpcore2
-httpcore2==2.13.1
+httpcore2==2.14.0
     # via
     #   -r requirements/test.txt
     #   httpx2
-httpx2==2.13.1
+httpx2==2.14.0
     # via
     #   -r requirements/test.txt
     #   anthropic
@@ -385,7 +365,6 @@ idna==3.20
     #   anyio
     #   httpx2
     #   requests
-    #   yarl
 imagesize==2.0.1
     # via sphinx
 importlib-resources==7.1.0
@@ -448,11 +427,6 @@ monotonic==1.6
     # via
     #   -r requirements/test.txt
     #   analytics-python
-multidict==7.1.0
-    # via
-    #   -r requirements/test.txt
-    #   aiohttp
-    #   yarl
 mypy-extensions==1.1.0
     # via
     #   -r requirements/test.txt
@@ -466,7 +440,7 @@ oauthlib==4.0.0
     #   -r requirements/test.txt
     #   requests-oauthlib
     #   social-auth-core
-openai==3.31.0
+openai==3.35.1
     # via -r requirements/test.txt
 openedx-atlas==0.7.2
     # via -r requirements/test.txt
@@ -488,7 +462,7 @@ packaging==26.3
     #   sphinx
     #   tox
     #   virtualenv
-platformdirs==4.13.3
+platformdirs==4.13.5
     # via
     #   -r requirements/test.txt
     #   pylint
@@ -508,11 +482,6 @@ prompt-toolkit==3.0.53
     # via
     #   -r requirements/test.txt
     #   click-repl
-propcache==0.5.4
-    # via
-    #   -r requirements/test.txt
-    #   aiohttp
-    #   yarl
 protobuf==6.33.6
     # via
     #   -r requirements/test.txt
@@ -528,7 +497,6 @@ pycparser==3.11
 pydantic==2.14.1
     # via
     #   -r requirements/test.txt
-    #   algoliasearch
     #   anthropic
     #   openai
 pydantic-core==2.50.1
@@ -584,7 +552,7 @@ pynacl==1.6.2
     # via
     #   -r requirements/test.txt
     #   edx-django-utils
-pyproject-api==1.11.7
+pyproject-api==1.12.0
     # via
     #   -r requirements/test.txt
     #   tox
@@ -602,11 +570,10 @@ pytest-django==4.14.0
 python-dateutil==2.9.0.post0
     # via
     #   -r requirements/test.txt
-    #   algoliasearch
     #   analytics-python
     #   celery
     #   freezegun
-python-discovery==1.6.2
+python-discovery==1.6.4
     # via
     #   -r requirements/test.txt
     #   tox
@@ -755,13 +722,13 @@ tomli-w==1.2.0
     # via
     #   -r requirements/test.txt
     #   tox
-tomlkit==0.15.1
+tomlkit==0.15.2
     # via
     #   -r requirements/test.txt
     #   edx-lint
     #   pylint
     #   snowflake-connector-python
-tox==4.65.6
+tox==4.67.1
     # via -r requirements/test.txt
 truststore==0.10.5
     # via
@@ -771,8 +738,6 @@ truststore==0.10.5
 typing-extensions==4.16.0
     # via
     #   -r requirements/test.txt
-    #   aiohttp
-    #   aiosignal
     #   anthropic
     #   anyio
     #   beautifulsoup4
@@ -810,7 +775,6 @@ uritemplate==4.2.0
 urllib3==2.8.0
     # via
     #   -r requirements/test.txt
-    #   algoliasearch
     #   requests
 vine==5.1.0
     # via
@@ -818,7 +782,7 @@ vine==5.1.0
     #   amqp
     #   celery
     #   kombu
-virtualenv==21.14.8
+virtualenv==21.14.11
     # via
     #   -r requirements/test.txt
     #   tox
@@ -826,10 +790,6 @@ wcwidth==0.9.2
     # via
     #   -r requirements/test.txt
     #   prompt-toolkit
-yarl==1.25.1
-    # via
-    #   -r requirements/test.txt
-    #   aiohttp
 
 # The following packages are considered to be unsafe in a requirements file:
 # setuptools
