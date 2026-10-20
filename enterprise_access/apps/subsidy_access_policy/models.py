@@ -89,6 +89,7 @@ from .exceptions import (
 )
 from .subsidy_api import (
     CACHE_MISS,
+    SUBSIDY_API_HTTP_ERROR_MESSAGE,
     get_and_cache_transactions_for_learner,
     get_tiered_cache_subsidy_record,
     set_tiered_cache_subsidy_record
@@ -508,9 +509,12 @@ class SubsidyAccessPolicy(TimeStampedModel):
 
         return super().__new__(proxy_class)
 
-    def subsidy_record(self):
+    def subsidy_record(self, raise_on_error=False):
         """
-        Retrieve this policy's corresponding subsidy record
+        Retrieve this policy's corresponding subsidy record.
+
+        By default an ``HTTPError`` is swallowed and ``{}`` returned. Pass ``raise_on_error=True`` to get a
+        ``SubsidyAPIHTTPError`` instead, for callers that must tell a failed lookup from an inactive subsidy.
         """
         cache_key = versioned_cache_key(
             'get_subsidy_record',
@@ -518,12 +522,15 @@ class SubsidyAccessPolicy(TimeStampedModel):
             self.subsidy_uuid,
         )
         cached_response = request_cache(namespace=REQUEST_CACHE_NAMESPACE).get_cached_response(cache_key)
-        if cached_response.is_found:
+        # A cached ``{}`` is an earlier failed lookup, so retry it when the caller wants failures raised.
+        if cached_response.is_found and (cached_response.value or not raise_on_error):
             return cached_response.value
 
         try:
             result = self.subsidy_client.retrieve_subsidy(subsidy_uuid=self.subsidy_uuid)
         except requests.exceptions.HTTPError as exc:
+            if raise_on_error:
+                raise SubsidyAPIHTTPError(SUBSIDY_API_HTTP_ERROR_MESSAGE) from exc
             logger.warning('SubsidyAccessPolicy.subsidy_record() raised HTTPError: %s', exc)
             result = {}
 

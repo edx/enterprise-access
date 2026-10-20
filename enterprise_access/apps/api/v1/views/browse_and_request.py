@@ -49,7 +49,9 @@ from enterprise_access.apps.api_client.license_manager_client import LicenseMana
 from enterprise_access.apps.content_assignments import api as assignments_api
 from enterprise_access.apps.content_assignments.constants import AssignmentActorTypes, AssignmentSources
 from enterprise_access.apps.core import constants
+from enterprise_access.apps.subsidy_access_policy.exceptions import SubsidyAPIHTTPError
 from enterprise_access.apps.subsidy_access_policy.models import SubsidyAccessPolicy
+from enterprise_access.apps.subsidy_access_policy.subsidy_api import get_policies_accepting_requests
 from enterprise_access.apps.subsidy_request import api as subsidy_request_api
 from enterprise_access.apps.subsidy_request.constants import (
     APPROVABLE_STATES,
@@ -868,6 +870,7 @@ class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
         Validate request creation:
         - Ensure policy_uuid is provided and valid.
         - Ensure Browse & Request is active for the policy.
+        - Ensure the policy is not retired or inactive, and its subsidy has not expired.
         - No duplicate PENDING/REQUESTED requests for the same course and policy.
         """
         policy_uuid = self.request.data.get("policy_uuid")
@@ -888,6 +891,20 @@ class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
             raise SubsidyRequestCreationError(
                 f"Browse & Request is not active for policy UUID: {policy_uuid}.",
                 status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            accepts_requests = bool(get_policies_accepting_requests([policy]))
+        except SubsidyAPIHTTPError as exc:
+            logger.exception('Could not verify the subsidy for policy %s when creating a request', policy_uuid)
+            raise SubsidyRequestCreationError(
+                f"Could not verify the budget for policy UUID: {policy_uuid}. Please try again later.",
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+            ) from exc
+        if not accepts_requests:
+            raise SubsidyRequestCreationError(
+                f"The budget for policy UUID: {policy_uuid} is inactive or expired.",
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
             )
 
         enterprise_customer_uuid = policy.enterprise_customer_uuid

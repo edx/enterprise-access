@@ -248,6 +248,51 @@ def get_redemptions_by_content_and_policy_for_learner(policies, lms_user_id):
     return result, unreachable_subsidy_uuids
 
 
+def get_policies_accepting_requests(policies):
+    """
+    Returns the given policies that can take new Browse & Request learner credit requests: redemption is enabled
+    and the subsidy is confirmed active. ``bnr_enabled`` alone doesn't answer this, because it stays True after a
+    budget ends so admins can still manage its existing requests.
+
+    A policy whose subsidy answers 403/404 is skipped, as in can-redeem (docs/architecture-patterns.md §18).
+
+    Raises:
+        SubsidyAPIHTTPError: for any other failure (e.g. a 5xx), or if every subsidy is unreachable.
+    """
+    accepting_policies = []
+    checked_subsidy_uuids = set()
+    unreachable_subsidy_uuids = set()
+    last_unreachable_error = None
+
+    for policy in policies:
+        if not policy.is_redemption_enabled:
+            continue
+        checked_subsidy_uuids.add(policy.subsidy_uuid)
+        try:
+            subsidy_record = policy.subsidy_record(raise_on_error=True)
+        except SubsidyAPIHTTPError as exc:
+            status_code = getattr(exc.error_response, 'status_code', None)
+            if status_code not in UNREACHABLE_SUBSIDY_STATUS_CODES:
+                raise
+            unreachable_subsidy_uuids.add(policy.subsidy_uuid)
+            last_unreachable_error = exc
+            logger.warning(
+                'Could not fetch subsidy %s (subsidy_status_code=%s). Policy %s will not accept new requests.',
+                policy.subsidy_uuid,
+                status_code,
+                policy.uuid,
+            )
+            continue
+        if subsidy_record.get('is_active'):
+            accepting_policies.append(policy)
+
+    if last_unreachable_error and unreachable_subsidy_uuids == checked_subsidy_uuids:
+        # More likely our own access is broken than every subsidy deleted, so fail rather than show nothing.
+        raise last_unreachable_error
+
+    return accepting_policies
+
+
 def get_tiered_cache_subsidy_record(subsidy_uuid, *cache_key_args):
     """
     Gets the subsidy record (a dictionary) with the given ``subsidy_uuid``
