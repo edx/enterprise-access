@@ -76,6 +76,7 @@ from enterprise_access.apps.subsidy_access_policy.models import (
 )
 from enterprise_access.apps.subsidy_access_policy.subsidy_api import (
     get_and_cache_subsidy_learners_aggregate_data,
+    get_policies_accepting_requests,
     get_redemptions_by_content_and_policy_for_learner,
     get_subsidy_transactions_export
 )
@@ -482,6 +483,16 @@ class UpstreamCsvStream:
 
     def close(self):
         self.subsidy_response.close()
+
+
+class SubsidyAPIUnavailableException(APIException):
+    """
+    The Subsidy API could not be reached to verify a subsidy. Returns a generic message so upstream error bodies
+    never reach the client.
+    """
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    default_detail = 'Could not verify subsidies with the Subsidy API. Please try again later.'
+    default_code = 'subsidy_api_unavailable'
 
 
 class TransactionsExportRequestException(APIException):
@@ -1035,9 +1046,12 @@ class SubsidyAccessPolicyRedeemViewset(UserDetailsFromJwtMixin, PermissionRequir
             }, status=status.HTTP_200_OK)
 
         # 2. Drop policies whose subsidy has expired; approving a request against one would fail
-        unexpired_policies = bnr_enabled_policies.filter(
-            pk__in=[policy.pk for policy in bnr_enabled_policies if policy.is_subsidy_active]
-        )
+        try:
+            accepting_policies = get_policies_accepting_requests(bnr_enabled_policies)
+        except SubsidyAPIHTTPError as exc:
+            logger.exception('Could not verify subsidies for can-request for customer %s', enterprise_customer_uuid)
+            raise SubsidyAPIUnavailableException() from exc
+        unexpired_policies = bnr_enabled_policies.filter(pk__in=[policy.pk for policy in accepting_policies])
         if not unexpired_policies.exists():
             return Response({
                 'can_request': False,

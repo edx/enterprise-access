@@ -49,7 +49,9 @@ from enterprise_access.apps.api_client.license_manager_client import LicenseMana
 from enterprise_access.apps.content_assignments import api as assignments_api
 from enterprise_access.apps.content_assignments.constants import AssignmentActorTypes, AssignmentSources
 from enterprise_access.apps.core import constants
+from enterprise_access.apps.subsidy_access_policy.exceptions import SubsidyAPIHTTPError
 from enterprise_access.apps.subsidy_access_policy.models import SubsidyAccessPolicy
+from enterprise_access.apps.subsidy_access_policy.subsidy_api import get_policies_accepting_requests
 from enterprise_access.apps.subsidy_request import api as subsidy_request_api
 from enterprise_access.apps.subsidy_request.constants import (
     APPROVABLE_STATES,
@@ -891,9 +893,15 @@ class LearnerCreditRequestViewSet(SubsidyRequestViewSet):
                 status.HTTP_400_BAD_REQUEST,
             )
 
-        # ``bnr_enabled`` stays True after a budget ends so admins can still manage its
-        # existing requests, but approval would fail, so don't accept new ones.
-        if not policy.is_redemption_enabled or not policy.is_subsidy_active:
+        try:
+            accepts_requests = bool(get_policies_accepting_requests([policy]))
+        except SubsidyAPIHTTPError as exc:
+            logger.exception('Could not verify the subsidy for policy %s when creating a request', policy_uuid)
+            raise SubsidyRequestCreationError(
+                f"Could not verify the budget for policy UUID: {policy_uuid}. Please try again later.",
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+            ) from exc
+        if not accepts_requests:
             raise SubsidyRequestCreationError(
                 f"The budget for policy UUID: {policy_uuid} is inactive or expired.",
                 status.HTTP_422_UNPROCESSABLE_ENTITY,

@@ -10,10 +10,12 @@ from uuid import uuid4
 import ddt
 from django.conf import settings
 from django.test import override_settings
+from requests.exceptions import HTTPError
 from rest_framework import status
 from rest_framework.reverse import reverse
 
 from enterprise_access.apps.api.serializers import LearnerCreditRequestDeclineSerializer
+from enterprise_access.apps.api_client.tests.test_utils import MockResponse
 from enterprise_access.apps.content_assignments.constants import (
     AssignmentActions,
     AssignmentActorTypes,
@@ -1593,6 +1595,7 @@ class TestLearnerCreditRequestViewSet(BaseEnterpriseAccessTestCase):
             SubsidyAccessPolicy, 'subsidy_client'
         )
         self.mock_subsidy_client = subsidy_client_patcher.start()
+        self.mock_subsidy_client.retrieve_subsidy.return_value = {'is_active': True}
 
         self.policy = PerLearnerSpendCapLearnerCreditAccessPolicyFactory(
             learner_credit_request_config=self.learner_credit_config,
@@ -1865,6 +1868,36 @@ class TestLearnerCreditRequestViewSet(BaseEnterpriseAccessTestCase):
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
         assert response.data == {
             'detail': f'The budget for policy UUID: {self.policy.uuid} is inactive or expired.'
+        }
+        assert not LearnerCreditRequest.objects.filter(
+            user=self.user,
+            course_id='course-v1:edX+DemoX+Demo_Course',
+        ).exists()
+
+    @ddt.data(
+        status.HTTP_503_SERVICE_UNAVAILABLE,
+        # With only one subsidy to check, a 403 can't be told apart from our own credentials failing.
+        status.HTTP_403_FORBIDDEN,
+    )
+    def test_create_subsidy_api_unavailable(self, subsidy_status_code):
+        """
+        Test that request creation reports a subsidy-service failure as a 503, not as an expired budget.
+        """
+        self.mock_subsidy_client.retrieve_subsidy.side_effect = HTTPError(
+            'Fake HTTP Error Message', response=MockResponse({}, subsidy_status_code),
+        )
+
+        payload = {
+            'enterprise_customer_uuid': self.enterprise_customer_uuid_1,
+            'course_id': 'course-v1:edX+DemoX+Demo_Course',
+            'policy_uuid': self.policy.uuid,
+            'course_price': 1000
+        }
+        response = self.client.post(LEARNER_CREDIT_REQUESTS_LIST_ENDPOINT, payload)
+
+        assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+        assert response.data == {
+            'detail': f'Could not verify the budget for policy UUID: {self.policy.uuid}. Please try again later.'
         }
         assert not LearnerCreditRequest.objects.filter(
             user=self.user,

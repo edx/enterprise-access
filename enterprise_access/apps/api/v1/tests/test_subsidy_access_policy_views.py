@@ -1214,6 +1214,7 @@ class TestSubsidyAccessPolicyRedeemViewset(APITestWithMocks):
             'unit': 'usd_cents',
             'all_transactions': [],
         }
+        self.subsidy_client.retrieve_subsidy.return_value = {'is_active': True}
         self.subsidy_client.list_subsidy_transactions.return_value = {"results": [], "aggregates": {}}
         self.subsidy_client.create_subsidy_transaction.side_effect = (
             NotImplementedError("unit test must override create_subsidy_transaction to use.")
@@ -1859,34 +1860,102 @@ class TestSubsidyAccessPolicyRedeemViewset(APITestWithMocks):
         self.assertIn("already have an active request", response_data.get('reason'))
         self.assertEqual(response_data.get('existing_request'), str(existing_request.uuid))
 
-    def test_can_request_subsidy_expired(self):
+    def _create_bnr_policy(self, subsidy_uuid):
         """
-        Test that the can-request endpoint does not offer a BnR policy whose subsidy has expired.
+        Create a BnR-enabled policy for this customer, funded by the given subsidy.
         """
-        learner_credit_config = LearnerCreditRequestConfiguration.objects.create(active=True)
-        PerLearnerSpendCreditAccessPolicy.objects.create(
+        return PerLearnerSpendCreditAccessPolicy.objects.create(
             catalog_uuid='7c9daa69-519c-4313-ad81-90862bc08ca2',
-            subsidy_uuid='7c9daa69-519c-4313-ad81-90862bc08ca3',
+            subsidy_uuid=subsidy_uuid,
             per_learner_spend_limit=None,
             description='anything',
             active=True,
             enterprise_customer_uuid=self.enterprise_uuid,
-            learner_credit_request_config=learner_credit_config,
+            learner_credit_request_config=LearnerCreditRequestConfiguration.objects.create(active=True),
         )
-        self.subsidy_client.retrieve_subsidy.return_value = {'is_active': False}
+
+    def _get_can_request(self, subsidy_responses):
+        """
+        Call can-request with ``retrieve_subsidy`` answering per subsidy uuid: a dict is returned as the subsidy
+        record, an int is raised as an HTTPError with that status code.
+        """
+        def retrieve_subsidy(subsidy_uuid):
+            subsidy_response = subsidy_responses[str(subsidy_uuid)]
+            if isinstance(subsidy_response, int):
+                raise HTTPError('Fake HTTP Error Message', response=MockResponse({}, subsidy_response))
+            return subsidy_response
+        self.subsidy_client.retrieve_subsidy.side_effect = retrieve_subsidy
 
         with mock.patch(
             'enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.catalog_contains_content_key',
             return_value=True
         ):
-            response = self.client.get(
+            return self.client.get(
                 self.subsidy_access_policy_can_request_endpoint,
                 {'content_key': 'edX+CS101', 'lms_user_id': 1234},
             )
+
+    def test_can_request_subsidy_expired(self):
+        """
+        Test that the can-request endpoint does not offer a BnR policy whose subsidy has expired.
+        """
+        policy = self._create_bnr_policy(subsidy_uuid=uuid4())
+
+        response = self._get_can_request({str(policy.subsidy_uuid): {'is_active': False}})
+
         self.assertEqual(response.status_code, 200)
         response_data = response.json()
         self.assertFalse(response_data.get('can_request'))
         self.assertEqual(response_data.get('reason'), REASON_SUBSIDY_EXPIRED)
+
+    @ddt.data(
+        # Expired policy created first, then second, so creation order doesn't decide the result.
+        {'expired_index': 0},
+        {'expired_index': 1},
+        # A subsidy that answers 403/404 (e.g. soft-deleted) is skipped like an expired one.
+        {'expired_index': 0, 'expired_response': status.HTTP_403_FORBIDDEN},
+        {'expired_index': 1, 'expired_response': status.HTTP_404_NOT_FOUND},
+    )
+    @ddt.unpack
+    def test_can_request_skips_only_expired_policies(self, expired_index, expired_response=None):
+        """
+        Test that with one ended and one active BnR policy, can-request returns the active one.
+        """
+        policies = [self._create_bnr_policy(subsidy_uuid=uuid4()) for _ in range(2)]
+        expired_policy = policies[expired_index]
+        active_policy = policies[1 - expired_index]
+
+        response = self._get_can_request({
+            str(expired_policy.subsidy_uuid): expired_response or {'is_active': False},
+            str(active_policy.subsidy_uuid): {'is_active': True},
+        })
+
+        self.assertEqual(response.status_code, 200)
+        response_data = response.json()
+        self.assertTrue(response_data.get('can_request'))
+        self.assertEqual(response_data['requestable_subsidy_access_policy']['uuid'], str(active_policy.uuid))
+
+    @ddt.data(
+        # A 5xx is an outage, even if another subsidy is healthy.
+        (status.HTTP_503_SERVICE_UNAVAILABLE, {'is_active': True}),
+        (status.HTTP_503_SERVICE_UNAVAILABLE, {'is_active': False}),
+        # A 403 from every subsidy looks like our own credentials failing, not every subsidy being deleted.
+        (status.HTTP_403_FORBIDDEN, status.HTTP_403_FORBIDDEN),
+    )
+    @ddt.unpack
+    def test_can_request_subsidy_api_unavailable(self, first_response, second_response):
+        """
+        Test that can-request reports a subsidy-service failure as a 503, not as an expired subsidy.
+        """
+        policies = [self._create_bnr_policy(subsidy_uuid=uuid4()) for _ in range(2)]
+
+        response = self._get_can_request({
+            str(policies[0].subsidy_uuid): first_response,
+            str(policies[1].subsidy_uuid): second_response,
+        })
+
+        self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+        self.assertNotIn(REASON_SUBSIDY_EXPIRED, str(response.json()))
 
 
 class BaseCanRedeemTestMixin:
