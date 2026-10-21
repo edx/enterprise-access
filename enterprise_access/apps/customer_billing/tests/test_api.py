@@ -16,10 +16,9 @@ from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.customer_billing import api as customer_billing_api
 from enterprise_access.apps.customer_billing import stripe_api
 from enterprise_access.apps.customer_billing.api import (
-    AccountStandingChecker,
-    PlaceholderAccountStandingChecker,
-    SubsidyUnavailableError,
     evaluate_top_up_eligibility,
+    evaluate_top_up_eligibility_for_policies,
+    is_account_in_good_standing,
     is_top_up_enabled
 )
 from enterprise_access.apps.customer_billing.constants import CheckoutIntentState
@@ -29,6 +28,7 @@ from enterprise_access.apps.customer_billing.models import (
     SlugReservationConflict,
     SspProduct
 )
+from enterprise_access.apps.subsidy_access_policy.exceptions import SubsidyAPIHTTPError
 from enterprise_access.apps.subsidy_access_policy.tests.factories import (
     PerLearnerSpendCapLearnerCreditAccessPolicyFactory
 )
@@ -776,16 +776,19 @@ class TestValidatorHandlerEdgeCases(TestCase):
         self.assertEqual(result['error_code'], 'does_not_exist')
 
 
-SUBSIDY_RECORD_PATH = 'enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_record'
+SUBSIDY_CLIENT_PATH = 'enterprise_access.apps.subsidy_access_policy.models.get_versioned_subsidy_client'
+ACCOUNT_STANDING_PATH = 'enterprise_access.apps.customer_billing.api.is_account_in_good_standing'
 
 
-class _Standing(AccountStandingChecker):
-    """ Account standing checker with a fixed answer. """
-    def __init__(self, eligible):
-        self.eligible = eligible
+def _mock_retrieve_subsidy(**kwargs):
+    """ Patch the subsidy client's retrieve_subsidy, e.g. ``return_value=...`` or ``side_effect=...``. """
+    return mock.patch(SUBSIDY_CLIENT_PATH, **{f'return_value.retrieve_subsidy.{k}': v for k, v in kwargs.items()})
 
-    def is_eligible(self, policy):
-        return self.eligible
+
+def _http_error(status_code):
+    response = requests.Response()
+    response.status_code = status_code
+    return requests.exceptions.HTTPError(f'{status_code} error', response=response)
 
 
 @ddt.ddt
@@ -799,15 +802,17 @@ class EvaluateTopUpEligibilityTests(TestCase):
         self.now = timezone.now()
         self.policy = PerLearnerSpendCapLearnerCreditAccessPolicyFactory()
 
-    def _evaluate(self, days_left=100, subsidy_active=True, standing=True, subsidy=None):
-        """ Evaluate the policy against a mocked subsidy record. """
-        if subsidy is None:
-            subsidy = {
-                'is_active': subsidy_active,
-                'expiration_datetime': (self.now + timedelta(days=days_left)).isoformat(),
-            }
-        with mock.patch(SUBSIDY_RECORD_PATH, return_value=subsidy):
-            return evaluate_top_up_eligibility(self.policy, _Standing(standing), now=self.now)
+    def _subsidy(self, days_left=100, subsidy_active=True):
+        return {
+            'is_active': subsidy_active,
+            'expiration_datetime': (self.now + timedelta(days=days_left)).isoformat(),
+        }
+
+    def _evaluate(self, days_left=100, subsidy_active=True, standing=True):
+        """ Evaluate the policy against a subsidy record with the given state. """
+        subsidy = self._subsidy(days_left, subsidy_active)
+        with mock.patch(ACCOUNT_STANDING_PATH, return_value=standing):
+            return evaluate_top_up_eligibility(self.policy, subsidy, now=self.now)
 
     def _codes(self, result):
         return [reason['error_code'] for reason in result['reasons']]
@@ -842,18 +847,6 @@ class EvaluateTopUpEligibilityTests(TestCase):
     def test_inactive_subsidy(self):
         self.assertEqual(self._codes(self._evaluate(subsidy_active=False)), ['budget_not_active'])
 
-    def test_subsidy_unavailable_raises_instead_of_reporting_inactive(self):
-        """ subsidy_record() returns {} when enterprise-subsidy errors: not the same as an inactive budget. """
-        with self.assertRaises(SubsidyUnavailableError):
-            self._evaluate(subsidy={})
-
-    @ddt.data(requests.exceptions.ConnectionError, requests.exceptions.Timeout, OSError)
-    def test_subsidy_unreachable_raises_subsidy_unavailable(self, exc_class):
-        """ A connection failure or timeout propagates out of subsidy_record(): also "unavailable", not a 500. """
-        with mock.patch(SUBSIDY_RECORD_PATH, side_effect=exc_class('boom')):
-            with self.assertRaises(SubsidyUnavailableError):
-                evaluate_top_up_eligibility(self.policy, now=self.now)
-
     def test_account_not_eligible(self):
         self.assertEqual(self._codes(self._evaluate(standing=False)), ['account_not_eligible'])
 
@@ -868,21 +861,99 @@ class EvaluateTopUpEligibilityTests(TestCase):
         result = self._evaluate(standing=False)
         self.assertTrue(result['reasons'][0]['message'])
 
-    def test_placeholder_checker_reports_every_account_eligible(self):
-        self.assertTrue(PlaceholderAccountStandingChecker().is_eligible(self.policy))
+    def test_account_standing_placeholder_passes_every_account(self):
+        self.assertTrue(is_account_in_good_standing(self.policy))
 
-    def test_default_checker_is_placeholder_and_does_not_block(self):
-        subsidy = {'is_active': True, 'expiration_datetime': (self.now + timedelta(days=90)).isoformat()}
-        with mock.patch(SUBSIDY_RECORD_PATH, return_value=subsidy):
-            result = evaluate_top_up_eligibility(self.policy, now=self.now)
+    @ddt.data(True, False)
+    def test_is_top_up_enabled_reads_setting(self, setting_value):
+        with override_settings(FEATURE_TOP_UP_LEARNER_CREDIT=setting_value):
+            self.assertIs(is_top_up_enabled(), setting_value)
+
+    def test_is_top_up_enabled_is_declared_off_in_base_settings(self):
+        """ Off unless an environment turns it on: it is the only production safeguard until OQ-8 (chunk 19). """
+        from enterprise_access.settings import base  # pylint: disable=import-outside-toplevel
+        self.assertIs(base.FEATURE_TOP_UP_LEARNER_CREDIT, False)
+
+    def test_account_standing_placeholder_does_not_block(self):
+        result = evaluate_top_up_eligibility(self.policy, self._subsidy(), now=self.now)
         self.assertTrue(result['is_eligible'])
 
-    @ddt.data((True, True), (False, False))
-    @ddt.unpack
-    def test_is_top_up_enabled(self, setting_value, expected):
-        with override_settings(FEATURE_TOP_UP_LEARNER_CREDIT=setting_value):
-            self.assertEqual(is_top_up_enabled(), expected)
 
-    def test_is_top_up_enabled_defaults_off(self):
-        # Base settings leave the flag off; edx-internal (or devstack) turns it on.
-        self.assertFalse(is_top_up_enabled())
+@ddt.ddt
+class EvaluateTopUpEligibilityForPoliciesTests(TestCase):
+    """
+    Tests for evaluate_top_up_eligibility_for_policies. These mock the subsidy client, so the real
+    ``SubsidyAccessPolicy.subsidy_record(raise_on_error=True)`` path runs.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.healthy_subsidy = {
+            'is_active': True,
+            'expiration_datetime': (timezone.now() + timedelta(days=100)).isoformat(),
+        }
+
+    def _retrieve_failing(self, failing_subsidy_uuids, status_code):
+        """ A retrieve_subsidy side effect failing with ``status_code`` for the given subsidies only. """
+        def retrieve_subsidy(subsidy_uuid):
+            if subsidy_uuid in failing_subsidy_uuids:
+                raise _http_error(status_code)
+            return self.healthy_subsidy
+        return retrieve_subsidy
+
+    def _codes_by_policy(self, results):
+        return {r['policy_uuid']: [reason['error_code'] for reason in r['reasons']] for r in results}
+
+    @ddt.data(403, 404)
+    def test_unreachable_subsidy_reports_budget_not_active(self, status_code):
+        """ One soft-deleted (403) or missing (404) subsidy only affects its own budget. """
+        healthy = PerLearnerSpendCapLearnerCreditAccessPolicyFactory()
+        dead = PerLearnerSpendCapLearnerCreditAccessPolicyFactory()
+        with _mock_retrieve_subsidy(side_effect=self._retrieve_failing({dead.subsidy_uuid}, status_code)):
+            results = evaluate_top_up_eligibility_for_policies([healthy, dead])
+        self.assertEqual(self._codes_by_policy(results), {healthy.uuid: [], dead.uuid: ['budget_not_active']})
+
+    @ddt.data(403, 404)
+    def test_every_subsidy_unreachable_raises(self, status_code):
+        """ A 403 from every subsidy looks the same as our own credentials failing: treat it as an outage. """
+        policies = [PerLearnerSpendCapLearnerCreditAccessPolicyFactory() for _ in range(2)]
+        failing = {policy.subsidy_uuid for policy in policies}
+        with _mock_retrieve_subsidy(side_effect=self._retrieve_failing(failing, status_code)):
+            with self.assertRaises(SubsidyAPIHTTPError) as ctx:
+                evaluate_top_up_eligibility_for_policies(policies)
+        self.assertEqual(ctx.exception.error_response.status_code, status_code)
+
+    def test_every_subsidy_unreachable_reported_when_not_raising(self):
+        policy = PerLearnerSpendCapLearnerCreditAccessPolicyFactory()
+        with _mock_retrieve_subsidy(side_effect=_http_error(403)):
+            results = evaluate_top_up_eligibility_for_policies([policy], raise_if_all_unreachable=False)
+        self.assertEqual(self._codes_by_policy(results), {policy.uuid: ['budget_not_active']})
+
+    @ddt.data(500, 503)
+    def test_server_error_is_raised_even_with_healthy_budgets(self, status_code):
+        healthy = PerLearnerSpendCapLearnerCreditAccessPolicyFactory()
+        dead = PerLearnerSpendCapLearnerCreditAccessPolicyFactory()
+        with _mock_retrieve_subsidy(side_effect=self._retrieve_failing({dead.subsidy_uuid}, status_code)):
+            with self.assertRaises(SubsidyAPIHTTPError):
+                evaluate_top_up_eligibility_for_policies([healthy, dead], raise_if_all_unreachable=False)
+
+    @ddt.data(requests.exceptions.ConnectionError, requests.exceptions.Timeout)
+    def test_connection_failure_propagates(self, exc_class):
+        policy = PerLearnerSpendCapLearnerCreditAccessPolicyFactory()
+        with _mock_retrieve_subsidy(side_effect=exc_class('boom')):
+            with self.assertRaises(exc_class):
+                evaluate_top_up_eligibility_for_policies([policy])
+
+    def test_shared_subsidy_is_fetched_once(self):
+        """ subsidy_record() is request-cached, so budgets sharing a subsidy cost one call. """
+        first = PerLearnerSpendCapLearnerCreditAccessPolicyFactory()
+        second = PerLearnerSpendCapLearnerCreditAccessPolicyFactory(
+            subsidy_uuid=first.subsidy_uuid, enterprise_customer_uuid=first.enterprise_customer_uuid,
+        )
+        with _mock_retrieve_subsidy(return_value=self.healthy_subsidy) as mock_get_client:
+            results = evaluate_top_up_eligibility_for_policies([first, second])
+        self.assertEqual(len(results), 2)
+        mock_get_client.return_value.retrieve_subsidy.assert_called_once_with(subsidy_uuid=first.subsidy_uuid)
+
+    def test_no_policies_returns_empty_list(self):
+        self.assertEqual(evaluate_top_up_eligibility_for_policies([]), [])

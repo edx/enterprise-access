@@ -77,6 +77,18 @@ TOP_UP_INELIGIBILITY_REASONS = {
     ),
 }
 
+# Error responses of the top-up endpoints: (error_code, detail message template).
+TOP_UP_ERRORS = {
+    'BUDGET_NOT_FOUND': (
+        'budget_not_found',
+        'Budget {policy_uuid} was not found for enterprise {enterprise_customer_uuid}.',
+    ),
+    'NO_BUDGETS_FOUND': (
+        'no_budgets_found',
+        'No active budgets were found for enterprise with UUID {enterprise_customer_uuid}.',
+    ),
+}
+
 # According to stripe's AI assistant: "When a Checkout Session is created,
 # Stripe automatically sets the expires_at timestamp to 24 hours in the future."
 # We want the slug duration to last at least as long as the checkout session expiry.
