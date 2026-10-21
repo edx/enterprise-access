@@ -182,6 +182,7 @@ class CheckoutContextHandler(CheckoutIntentAwareHandlerMixin, BaseHandler):
                     'product': price_data.get('product', {}).get('id'),
                     'lookup_key': price_data.get('lookup_key'),
                     'ssp_product_slug': price_data.get('ssp_product_slug'),
+                    'catalog_query_id': price_data.get('catalog_query_id'),
                     'recurring': price_data.get('recurring', {}),
                     'currency': price_data.get('currency'),
                     'unit_amount': price_data.get('unit_amount'),

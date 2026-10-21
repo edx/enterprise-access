@@ -1,0 +1,45 @@
+# Persona 2 — Student → Biomedical Engineer
+#
+# Imported from "Learner Rec Persona Testing.xlsx", authored by the product team. Expected-
+# course titles were resolved to catalog course keys against the live index on 2026-09-09; only
+# exact title matches were kept.
+id: p002-student-to-biomedical-engineer
+domain: engineering
+tier: core
+
+inputs:
+  selected_goals: >-
+    Become a biomedical engineer for a major pharma company.
+  free_text: >-
+    I need a job when I graduate.
+  known_context: >-
+    2 years of undergrad study in biochemistry
+  interested_industries: >-
+    Biomedical engineering, pharmaceuticals
+
+expected:
+  ground_truth_status: expert_authored
+  expect_no_coverage: false
+  careers:
+    - external_id: "ETF5E6EF44E3582007"
+      name: "Biomedical Engineer"
+  courses:
+    - key: "BayreuthX+ubt202bio"
+      title: "Biomaterials and Biofabrication: Design, Engineering and Innovation"
+    - key: "DelftX+SGS1x"
+      title: "Biomedical Equipment: Repairing and Maintaining Biomedical Devices"
+    - key: "IsraelX+gabi"
+      title: "Essentials of Genomics and Biomedical Informatics"
+    - key: "HarvardX+MCB63X"
+      title: "Principles of Biochemistry"
+    - key: "TUGrazX+TUGXPHARM01"
+      title: "Technology for Continuous Production of Medicines"
+
+catalog:
+  snapshot_date: 2026-09-09
+
+notes: >-
+  Authored ground truth; all five expected courses resolved exactly. Observed-run note: "3
+  careers in spanish, which are identical to the ones above them in english. When you select
+  one, both are selected/highlighted" -- a duplicate-record defect on the careers surface, not
+  a retrieval miss.

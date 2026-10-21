@@ -12,6 +12,8 @@ router = DefaultRouter()
 
 router.register("testimonials", views.TestimonialViewSet, "testimonials")
 router.register('learner-pathways', views.LearnerPathwaysViewSet, 'learner-pathways')
+router.register('learner-pathways', views.CareerDiscoveryViewSet, 'career-discovery')
+router.register('learner-pathways', views.PathwayViewSet, 'pathway')
 router.register("policy-redemption", views.SubsidyAccessPolicyRedeemViewset, 'policy-redemption')
 router.register("policy-allocation", views.SubsidyAccessPolicyAllocateViewset, 'policy-allocation')
 router.register("subsidy-access-policies", views.SubsidyAccessPolicyViewSet, 'subsidy-access-policies')
@@ -62,6 +64,11 @@ urlpatterns = [
         '<enterprise_uuid>/delete-group-association/<group_uuid>',
         views.SubsidyAccessPolicyGroupViewset.as_view({'delete': 'delete_policy_group_association'}),
         name='delete-group-association'
+    ),
+    path(
+        'subsidy-access-policies/transactions/export/',
+        views.SubsidyAccessPolicyTransactionsViewset.as_view({'get': 'export_transactions'}),
+        name='transactions-export'
     ),
     path(
         'provisioning',

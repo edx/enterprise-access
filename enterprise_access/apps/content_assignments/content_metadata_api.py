@@ -3,10 +3,17 @@ API file interacting with assignment metadata (created to avoid a circular
 import error)
 """
 import datetime
+from http import HTTPStatus
 
 from django.utils import timezone
+from edx_django_utils.cache import TieredCache
+from requests.exceptions import HTTPError
 
-from enterprise_access.apps.content_metadata.api import get_and_cache_catalog_content_metadata
+from enterprise_access.apps.content_metadata.api import (
+    get_and_cache_catalog_content_metadata,
+    get_and_cache_content_metadata
+)
+from enterprise_access.cache_utils import versioned_cache_key
 
 DATE_INPUT_PATTERNS = [
     '%Y-%m-%dT%H:%M:%SZ',
@@ -15,6 +22,9 @@ DATE_INPUT_PATTERNS = [
     '%Y-%m-%d %H:%M:%S.%fZ',
 ]
 DEFAULT_STRFTIME_PATTERN = '%b %d, %Y'
+# How long a catalog-agnostic lookup miss is remembered, so that many assignments for the same content
+# (in one nightly run, or one batch of Braze emails) don't each repeat the call.
+CATALOG_AGNOSTIC_MISS_CACHE_TIMEOUT = 60 * 60
 
 
 def _content_metadata_for_assignment(assignment, course_metadata_list):
@@ -57,6 +67,75 @@ def get_content_metadata_for_assignments(enterprise_catalog_uuid, assignments):
     return metadata_by_key
 
 
+def get_catalog_agnostic_content_metadata_for_assignment(assignment):
+    """
+    Fetch content metadata without relying on the assignment's policy catalog.
+
+    Tries the assignment's content key, then its parent content key, each with
+    ``coerce_to_parent_course=True`` so that run keys resolve to the parent course (which carries the
+    per-run data). ``get_and_cache_content_metadata`` only caches hits, so a 404 miss is remembered here
+    for ``CATALOG_AGNOSTIC_MISS_CACHE_TIMEOUT``; other failures are never cached.
+
+    Called by the nightly expiration job (only while the ``assignment_course_run_ended_expiration`` switch
+    is on) and by ``BrazeCampaignSender.course_metadata`` (regardless of the switch) for every Braze email
+    whose content has left the policy catalog. Not called by the API serializer.
+
+    Returns:
+        dict: content metadata, or an empty dict if the catalog has none for the assignment's content.
+
+    Raises:
+        HTTPError: If the catalog call fails with anything but a 404, so callers can skip the assignment
+            (or let the Celery task retry) rather than act on missing metadata.
+    """
+    content_identifiers = []
+    if assignment.content_key:
+        content_identifiers.append(assignment.content_key)
+    if assignment.parent_content_key and assignment.parent_content_key not in content_identifiers:
+        content_identifiers.append(assignment.parent_content_key)
+
+    for content_identifier in content_identifiers:
+        miss_cache_key = versioned_cache_key('catalog_agnostic_content_metadata_miss', content_identifier)
+        if TieredCache.get_cached_response(miss_cache_key).is_found:
+            continue
+
+        try:
+            content_metadata = get_and_cache_content_metadata(
+                content_identifier,
+                coerce_to_parent_course=True,
+            )
+        except HTTPError as exc:
+            # Only a 404 means the catalog has no such content. Any other failure propagates on purpose: a
+            # transient outage must not look like "no metadata", or the assignment would be expired with the
+            # course run end date missing (and the wrong reason recorded).
+            if getattr(exc.response, 'status_code', None) != HTTPStatus.NOT_FOUND:
+                raise
+            content_metadata = None
+        if content_metadata:
+            return content_metadata
+
+        TieredCache.set_all_tiers(
+            miss_cache_key, True, django_cache_timeout=CATALOG_AGNOSTIC_MISS_CACHE_TIMEOUT,
+        )
+
+    return {}
+
+
+def get_run_dates(content_metadata, date_field):
+    """
+    Parse ``date_field`` (e.g. ``enroll_by_date`` or ``end_date``) from every run in a content metadata
+    record's ``normalized_metadata_by_run``.
+
+    Returns:
+        list: one UTC datetime per run, in run order, with None for runs that lack the field.
+            Empty if there are no runs. Raises ValueError if a present value can't be parsed.
+    """
+    runs_metadata = (content_metadata or {}).get('normalized_metadata_by_run') or {}
+    return [
+        parse_datetime_string(run_metadata.get(date_field), set_to_utc=True)
+        for run_metadata in runs_metadata.values()
+    ]
+
+
 def get_card_image_url(content_metadata):
     """
     Helper to get the appropriate course card image
@@ -84,6 +163,10 @@ def parse_datetime_string(datetime_string, set_to_utc=False):
     """
     Given a datetime string value from some content metadata record,
     parse it into a datetime object.
+
+    Tries ``DATE_INPUT_PATTERNS`` first, then ISO 8601 timestamps (e.g. fractional seconds and a ``+00:00``
+    offset). A bare date with no time part is rejected. An ISO 8601 value with an offset is returned
+    timezone-aware even when ``set_to_utc`` is False.
     """
     if not datetime_string:
         return None
@@ -97,6 +180,19 @@ def parse_datetime_string(datetime_string, set_to_utc=False):
             return formatted_date
         except ValueError as exc:
             last_exception = exc
+
+    # Only values with a time part are tried as ISO 8601, so a bare date (e.g. '2023-01-01') stays rejected rather
+    # than being read as midnight. If this fails too, the error from DATE_INPUT_PATTERNS is the one raised.
+    if 'T' in datetime_string or ' ' in datetime_string:
+        try:
+            formatted_date = datetime.datetime.fromisoformat(datetime_string)
+            if set_to_utc:
+                if formatted_date.tzinfo is None:
+                    return formatted_date.replace(tzinfo=datetime.timezone.utc)
+                return formatted_date.astimezone(datetime.timezone.utc)
+            return formatted_date
+        except ValueError:
+            pass
 
     if last_exception is not None:
         raise last_exception

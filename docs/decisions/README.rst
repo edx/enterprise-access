@@ -266,3 +266,15 @@ and related business logic.
 Accepted Sept 2025, this ADR describes the rational
 for identifying SSP Stripe products based on ``lookup_key``
 instead of the Stripe price id.
+
+`<0037-server-side-learner-pathway-pipeline.rst>`_
+***************************************************
+*Feature: Learner Pathways*
+
+In progress September 2026, this ADR describes moving learner pathway
+generation out of the learner-portal MFE into this service, built on the
+abstract workflow pattern as two workflows behind two endpoints. It records
+the measured index behaviour the design rests on -- both Algolia indexes AND
+every query word, the Lightcast-canonical skill vocabulary, and 31% of
+courses carrying no skill tags -- and is explicit that the measured quality
+bar is not yet met.

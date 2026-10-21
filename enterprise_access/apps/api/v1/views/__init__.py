@@ -23,12 +23,14 @@ from .customer_billing import (
     SspProductViewSet,
     StripeEventSummaryViewSet
 )
+from .pathways import CareerDiscoveryViewSet, PathwayViewSet
 from .prompt import LearnerPathwaysViewSet
 from .provisioning import ProvisioningCreateView, SubscriptionPlanOLIUpdateView
 from .subsidy_access_policy import (
     SubsidyAccessPolicyAllocateViewset,
     SubsidyAccessPolicyGroupViewset,
     SubsidyAccessPolicyRedeemViewset,
+    SubsidyAccessPolicyTransactionsViewset,
     SubsidyAccessPolicyViewSet
 )
 from .testimonials import TestimonialViewSet

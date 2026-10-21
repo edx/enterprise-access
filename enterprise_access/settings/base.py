@@ -92,6 +92,8 @@ PROJECT_APPS = (
     'enterprise_access.apps.customer_billing',
     'enterprise_access.apps.testimonials',
     'enterprise_access.apps.prompts',
+    'enterprise_access.apps.pathway_eval',
+    'enterprise_access.apps.pathways',
 )
 
 INSTALLED_APPS += THIRD_PARTY_APPS
@@ -186,6 +188,13 @@ REST_FRAMEWORK = {
         'ssp_product': '120/hour',
         'learner_pathways_learning_intent': '100/hour',
         'learner_pathways_recommendation_feedback': '100/hour',
+        'learner_pathways_careers': '100/hour',
+        # Tighter than the others on purpose: a pathway request runs a five-step workflow
+        # with several Algolia searches and, when the re-rank backend is enabled, a paid
+        # model call. The cost per request is an order of magnitude above the others here.
+        'learner_pathways_pathway': '30/hour',
+        # Low on purpose: each export holds one of the 2 sync gunicorn workers for the whole download.
+        'learner_credit_transactions_export': '12/hour',
     },
 }
 
@@ -508,6 +517,9 @@ LMS_CLIENT_TIMEOUT = os.environ.get('LMS_CLIENT_TIMEOUT', 45)
 ECOMMERCE_CLIENT_TIMEOUT = os.environ.get('ECOMMERCE_CLIENT_TIMEOUT', 45)
 DISCOVERY_CLIENT_TIMEOUT = os.environ.get('DISCOVERY_CLIENT_TIMEOUT', 45)
 SUBSIDY_CLIENT_TIMEOUT = os.environ.get('SUBSIDY_CLIENT_TIMEOUT', 45)
+# (connect, read) timeouts for the spend export. Connecting should be quick; the read timeout (between chunks, not
+# total) is longer because the export can be slow to generate upstream.
+SUBSIDY_TRANSACTIONS_EXPORT_TIMEOUT = (10, int(os.environ.get('SUBSIDY_TRANSACTIONS_EXPORT_TIMEOUT', 120)))
 XPERT_REQUEST_TIMEOUT = os.environ.get('XPERT_REQUEST_TIMEOUT', 45)
 
 # Xpert API service settings
@@ -516,6 +528,48 @@ XPERT_LEARNER_PATHWAYS_RAG_TAGS = [
     'discovery',
     'edx-available-course',
 ]
+
+# Algolia search settings (apps/api_client/algolia_client.py).
+# Search-only. The write-scoped ALGOLIA.API_KEY used by enterprise-catalog for indexing
+# must never be configured here.
+ALGOLIA_APP_ID = ''
+# Plain, search-ACL-only key. Used for the jobs/taxonomy index, which secured keys cannot
+# read. NOT for scoped catalog searches -- those use a secured key vended per enterprise
+# by enterprise-catalog.
+ALGOLIA_SEARCH_API_KEY = ''
+ALGOLIA_CATALOG_INDEX_NAME = ''
+ALGOLIA_JOBS_INDEX_NAME = ''
+# Escape hatch for the offline retrieval diagnostic, which has no request and therefore
+# no per-user secured key to vend. Enables searching the catalog index *unscoped* with the
+# plain search key. Must stay False anywhere a learner response could be built from it.
+ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH = False
+
+# The server-side learner pathways pipeline (apps/pathways) is gated by a waffle switch,
+# `enterprise_access.learner_pathways_server_pipeline`, not by a setting -- so it can be
+# turned on and off in Django admin without a deploy. See `enterprise_access/toggles.py`
+# for the switch definitions and why a switch rather than a flag.
+
+# Which model backend the pathway pipeline issues completions through (apps/pathways/
+# model_backends). 'xpert' routes through the stored, admin-editable prompts and is the
+# default because it is the path already in production. 'claude' is a direct metered call
+# and needs ANTHROPIC_API_KEY plus the `anthropic` package -- selecting it without either
+# raises rather than falling back, so a paid backend is never reached by accident.
+PATHWAYS_MODEL_BACKEND = 'xpert'
+
+# Credentials for the two direct metered backends. Both stay empty here and are supplied
+# per-environment (devstack local config, or edx-internal for deployed envs) -- never
+# committed. Selecting a backend without its key raises rather than falling back, so a
+# paid backend is never reached by accident.
+ANTHROPIC_API_KEY = ''
+PATHWAYS_CLAUDE_MODEL = 'claude-sonnet-5'
+OPENAI_API_KEY = ''
+PATHWAYS_OPENAI_MODEL = 'gpt-4o'
+
+# The enterprise customer the evaluation harness scopes to (Open Decision 1). Production
+# requests take the customer from the request; this is only for offline runs, which have
+# no request and therefore no secured Algolia key. Scoping by filter needs no secured key
+# because `enterprise_customer_uuids` is facetable.
+PATHWAYS_EVAL_CUSTOMER_UUID = ''
 
 # Braze campaigns for learner credit browse and request(apps.subsidy_request)
 BRAZE_LEARNER_CREDIT_BNR_APPROVED_NOTIFICATION_CAMPAIGN = ''
@@ -558,6 +612,10 @@ BRAZE_ENTERPRISE_SSP_TRIAL_SUBSCRIPTION_REINSTATED_CAMPAIGN = ''
 BRAZE_ENTERPRISE_SSP_PAID_SUBSCRIPTION_REINSTATED_CAMPAIGN = ''
 # Shared Braze campaign for trial-ended cancellation emails, used by both Teams and Essentials.
 BRAZE_ENTERPRISE_PROVISION_TRIAL_END_SUBSCRIPTION_ENDED_CAMPAIGN = ''
+# Shared Braze campaigns for paid subscription ended (after cancellation) and renewal notice emails,
+# used by both Teams and Essentials.
+BRAZE_ENTERPRISE_PROVISION_SUBSCRIPTION_ENDED_AND_CANCELLED_CAMPAIGN = ''
+BRAZE_ENTERPRISE_PROVISION_SUBSCRIPTION_RENEWAL_NOTICE_CAMPAIGN = ''
 
 # ============================================================
 # SSP Essentials Braze Campaign Settings

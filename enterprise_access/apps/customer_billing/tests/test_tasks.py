@@ -7,6 +7,7 @@ from datetime import timezone as dt_timezone
 from unittest import mock
 from uuid import uuid4
 
+import ddt
 import stripe
 from braze.exceptions import BrazeClientError
 from django.conf import settings
@@ -32,6 +33,8 @@ from enterprise_access.apps.customer_billing.tasks import (
     send_finalized_cancelation_email_task,
     send_paid_cancellation_email_task,
     send_paid_reinstatement_email_task,
+    send_paid_subscription_ended_email_task,
+    send_paid_subscription_renewal_notice_email_task,
     send_payment_receipt_email,
     send_trial_cancellation_email_task,
     send_trial_end_and_subscription_started_email_task,
@@ -428,6 +431,116 @@ class TestSendTrialEndedCancellationEmailTask(TestCase):
             send_trial_ended_cancellation_email_task(checkout_intent_id=self.checkout_intent.id)
 
         self.assertIn('Braze API error', str(context.exception))
+
+
+@ddt.ddt
+class TestSendPaidSubscriptionLifecycleEmailTasks(TestCase):
+    """Tests for send_paid_subscription_ended_email_task and send_paid_subscription_renewal_notice_email_task."""
+
+    INVOICE_DATA = {
+        'created': 1767225600,  # 2026-01-01
+        'amount_paid': 500000,
+        'hosted_invoice_url': 'https://invoice.stripe.com/i/test',
+        'lines': {'data': [{'quantity': 10, 'period': {'start': 1767225600, 'end': 1798761600}}]},
+    }
+
+    def setUp(self):
+        """Set up test data."""
+        self.user = UserFactory()
+        self.checkout_intent = CheckoutIntent.create_intent(
+            user=self.user, slug="test-enterprise", name="Test Enterprise", quantity=10,
+        )
+
+    def _set_product(self, academy_uuid):
+        """Give the checkout intent a Teams (no academy) or Essentials (academy) product."""
+        self.checkout_intent.ssp_product = SspProduct.objects.create(
+            slug=f'lifecycle-test-{uuid4()}',
+            stripe_price_lookup_key=f'lifecycle_test_{uuid4()}',
+            catalog_query_uuid=uuid4(),
+            academy_uuid=academy_uuid,
+            is_active=True,
+        )
+        self.checkout_intent.save()
+
+    @ddt.data(
+        # Teams: no academy on the product
+        {'academy_uuid': None, 'product_type': 'teams', 'product_type_display': 'Teams'},
+        # Essentials: product tied to an academy
+        {'academy_uuid': uuid4(), 'product_type': 'essentials', 'product_type_display': 'Essentials'},
+    )
+    @ddt.unpack
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
+    def test_tasks_send_shared_campaign_with_product_type(
+        self, mock_lms_client, mock_braze_client, academy_uuid, product_type, product_type_display,
+    ):
+        """Both tasks use their shared campaign for either plan, told apart by product_type."""
+        self._set_product(academy_uuid)
+        mock_lms_client.return_value.get_enterprise_customer_data.return_value = {
+            'admin_users': [{'email': 'admin@example.com', 'lms_user_id': 1}]
+        }
+        mock_braze_client.return_value.create_braze_recipient.return_value = {'external_user_id': '1'}
+        send_message = mock_braze_client.return_value.send_campaign_message
+
+        send_paid_subscription_ended_email_task(self.checkout_intent.id, 1798761600)
+        send_paid_subscription_renewal_notice_email_task(self.checkout_intent.id, self.INVOICE_DATA)
+
+        self.assertEqual(send_message.call_count, 2)
+        ended_call, renewal_call = send_message.call_args_list
+        self.assertEqual(
+            ended_call[0][0], settings.BRAZE_ENTERPRISE_PROVISION_SUBSCRIPTION_ENDED_AND_CANCELLED_CAMPAIGN,
+        )
+        self.assertEqual(renewal_call[0][0], settings.BRAZE_ENTERPRISE_PROVISION_SUBSCRIPTION_RENEWAL_NOTICE_CAMPAIGN)
+
+        ended_props = ended_call[1]['trigger_properties']
+        self.assertEqual(ended_props['product_type'], product_type)
+        self.assertEqual(ended_props['product_type_display'], product_type_display)
+        self.assertEqual(ended_props['organization'], 'Test Enterprise')
+        self.assertEqual(ended_props['subscription_end_date'], 'Jan 01, 2027')
+
+        renewal_props = renewal_call[1]['trigger_properties']
+        self.assertEqual(renewal_props['product_type'], product_type)
+        self.assertEqual(renewal_props['renewal_date'], 'Jan 01, 2026')
+        self.assertEqual(renewal_props['subscription_start_period'], '2026-01-01T00:00:00Z')
+        self.assertEqual(renewal_props['subscription_end_period'], '2027-01-01T00:00:00Z')
+        self.assertEqual(renewal_props['next_payment_date'], '2027-01-01T00:00:00Z')
+        self.assertEqual(renewal_props['number_of_licenses'], 10)
+        self.assertEqual(renewal_props['total_billing_amount_formatted'], '$5,000')
+        self.assertEqual(renewal_props['invoice_url'], 'https://invoice.stripe.com/i/test')
+
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
+    def test_renewal_notice_omits_properties_missing_from_invoice(self, mock_lms_client, mock_braze_client):
+        """An invoice without line items or period still sends, leaving those properties out."""
+        mock_lms_client.return_value.get_enterprise_customer_data.return_value = {
+            'admin_users': [{'email': 'admin@example.com', 'lms_user_id': 1}]
+        }
+        mock_braze_client.return_value.create_braze_recipient.return_value = {'external_user_id': '1'}
+
+        send_paid_subscription_renewal_notice_email_task(self.checkout_intent.id, {'created': 1767225600})
+
+        props = mock_braze_client.return_value.send_campaign_message.call_args[1]['trigger_properties']
+        self.assertEqual(props['renewal_date'], 'Jan 01, 2026')
+        for key in ('subscription_start_period', 'subscription_end_period', 'next_payment_date', 'number_of_licenses'):
+            self.assertNotIn(key, props)
+
+    @ddt.data(
+        {'task': send_paid_subscription_ended_email_task, 'args': (1798761600,)},
+        {'task': send_paid_subscription_renewal_notice_email_task, 'args': ({'created': 1767225600},)},
+    )
+    @ddt.unpack
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
+    @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
+    def test_braze_exception_is_propagated(self, mock_lms_client, mock_braze_client, task, args):
+        """Braze API exceptions are propagated so the task retries."""
+        mock_lms_client.return_value.get_enterprise_customer_data.return_value = {
+            'admin_users': [{'email': 'admin@example.com', 'lms_user_id': 1}]
+        }
+        mock_braze_client.return_value.create_braze_recipient.return_value = {'external_user_id': '1'}
+        mock_braze_client.return_value.send_campaign_message.side_effect = Exception('Braze API error')
+
+        with self.assertRaisesRegex(Exception, 'Braze API error'):
+            task(self.checkout_intent.id, *args)
 
 
 class TestSendBillingErrorEmailTask(TestCase):

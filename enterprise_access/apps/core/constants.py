@@ -18,6 +18,7 @@ SUBSIDY_ACCESS_POLICY_READ_PERMISSION = 'subsidy_access_policy.has_read_access'
 SUBSIDY_ACCESS_POLICY_WRITE_PERMISSION = 'subsidy_access_policy.has_write_access'
 SUBSIDY_ACCESS_POLICY_REDEMPTION_PERMISSION = 'subsidy_access_policy.has_redemption_access'
 SUBSIDY_ACCESS_POLICY_ALLOCATION_PERMISSION = 'subsidy_access_policy.has_allocation_access'
+SUBSIDY_ACCESS_POLICY_TRANSACTIONS_EXPORT_PERMISSION = 'subsidy_access_policy.has_transactions_export_access'
 
 CONTENT_ASSIGNMENTS_OPERATOR_ROLE = 'enterprise_access_content_assignments_operator'
 CONTENT_ASSIGNMENTS_ADMIN_ROLE = 'enterprise_access_content_assignments_admin'
@@ -52,6 +53,8 @@ STRIPE_EVENT_SUMMARY_READ_PERMISSION = 'stripe_event_summary.has_read_access'
 LEARNER_PATHWAYS_LEARNER_ROLE = 'enterprise_access_learner_pathways_learner'
 LEARNER_PATHWAYS_LEARNING_INTENT_PERMISSION = 'learner_pathways.has_learning_intent_access'
 LEARNER_PATHWAYS_RECOMMENDATION_FEEDBACK_PERMISSION = 'learner_pathways.has_recommendation_feedback_access'
+LEARNER_PATHWAYS_CAREER_DISCOVERY_PERMISSION = 'learner_pathways.has_career_discovery_access'
+LEARNER_PATHWAYS_PATHWAY_PERMISSION = 'learner_pathways.has_pathway_access'
 
 ALL_ACCESS_CONTEXT = '*'
 

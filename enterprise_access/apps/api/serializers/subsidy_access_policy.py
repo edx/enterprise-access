@@ -958,3 +958,41 @@ class GroupMemberWithAggregatesRequestSerializer(serializers.Serializer):
                 "Can only support one param of the following at a time: `page` or `traverse_pagination`"
             )
         return attrs
+
+
+class TransactionsExportRequestSerializer(serializers.Serializer):
+    """
+    Query params for SubsidyAccessPolicyTransactionsViewset.export_transactions.
+    """
+    enterprise_customer_uuid = serializers.UUIDField(
+        required=True,
+        help_text='The enterprise customer that owns the subsidy.',
+    )
+    subsidy_uuid = serializers.UUIDField(
+        required=True,
+        help_text='The subsidy whose spend to export.',
+    )
+    subsidy_access_policy_uuid = serializers.UUIDField(
+        required=False,
+        help_text='Only export spend from this policy (budget). Omit to export every budget on the subsidy.',
+    )
+    search = serializers.CharField(
+        required=False,
+        max_length=320,
+        help_text='Matches learner email or course title.',
+    )
+    # Validated here so a bad date is a 400, not an upstream 502.
+    start_date = serializers.DateField(
+        required=False,
+        help_text='Only include spend on/after this date (YYYY-MM-DD, UTC).',
+    )
+    end_date = serializers.DateField(
+        required=False,
+        help_text='Only include spend on/before this date, inclusive (YYYY-MM-DD, UTC).',
+    )
+
+    def validate(self, attrs):
+        start_date, end_date = attrs.get('start_date'), attrs.get('end_date')
+        if start_date and end_date and start_date > end_date:
+            raise serializers.ValidationError({'end_date': 'end_date must be on or after start_date.'})
+        return attrs

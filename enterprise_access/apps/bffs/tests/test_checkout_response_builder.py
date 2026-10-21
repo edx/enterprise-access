@@ -101,6 +101,7 @@ class TestCheckoutContextResponseBuilder(APITest):
                     'currency': 'usd',
                     'unit_amount': 10000,
                     'unit_amount_decimal': Decimal('100.00'),
+                    'catalog_query_id': 10,
                 }
             ]
         }
@@ -138,6 +139,7 @@ class TestCheckoutContextResponseBuilder(APITest):
         self.assertEqual(price['currency'], 'usd')
         self.assertEqual(price['unit_amount'], 10000)
         self.assertEqual(price['unit_amount_decimal'], '100.00')  # Note: decimal gets serialized to string
+        self.assertEqual(price['catalog_query_id'], 10)
 
         # Check exact constraint data
         constraints = data['field_constraints']
@@ -211,6 +213,7 @@ class TestCheckoutContextResponseBuilder(APITest):
                     'currency': 'usd',
                     'unit_amount': 15000,
                     'unit_amount_decimal': Decimal('150.00'),
+                    'catalog_query_id': 10,
                 }
             ]
         }
@@ -249,6 +252,7 @@ class TestCheckoutContextResponseBuilder(APITest):
         self.assertEqual(price['currency'], 'usd')
         self.assertEqual(price['unit_amount'], 15000)
         self.assertEqual(price['unit_amount_decimal'], '150.00')  # Note: decimal gets serialized to string
+        self.assertEqual(price['catalog_query_id'], 10)
 
         # Check exact constraint data
         constraints = data['field_constraints']
@@ -325,6 +329,7 @@ class TestCheckoutContextResponseBuilder(APITest):
                     'currency': 'usd',
                     'unit_amount': 10000,
                     'unit_amount_decimal': Decimal('100.00'),
+                    'catalog_query_id': 10,
                 }
             ]
         }

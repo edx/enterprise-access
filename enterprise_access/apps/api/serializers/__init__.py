@@ -38,8 +38,14 @@ from .customer_billing import (
     TransactionsListResponseSerializer
 )
 from .learner_pathways import (
+    CareerCandidateSerializer,
+    CareerDiscoveryRequestSerializer,
+    CareerDiscoveryResponseSerializer,
     LearningIntentRequestSerializer,
     LearningIntentResponseSerializer,
+    PathwayCourseSerializer,
+    PathwayRequestSerializer,
+    PathwayResponseSerializer,
     RecommendationFeedbackRequestSerializer,
     RecommendationFeedbackResponseSerializer
 )
@@ -68,7 +74,8 @@ from .subsidy_access_policy import (
     SubsidyAccessPolicyRedeemRequestSerializer,
     SubsidyAccessPolicyRedemptionRequestSerializer,
     SubsidyAccessPolicyResponseSerializer,
-    SubsidyAccessPolicyUpdateRequestSerializer
+    SubsidyAccessPolicyUpdateRequestSerializer,
+    TransactionsExportRequestSerializer
 )
 from .subsidy_requests import (
     CouponCodeRequestSerializer,

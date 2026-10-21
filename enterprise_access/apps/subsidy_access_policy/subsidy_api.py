@@ -21,6 +21,11 @@ REQUEST_CACHE_NAMESPACE = 'subsidy_access_policy'
 
 CACHE_MISS = object()
 
+# Statuses that can mean one subsidy is unreachable (a soft-deleted subsidy answers 403). Isolated only while
+# at least one subsidy is still reachable; anything else, e.g. a 5xx, is re-raised.
+UNREACHABLE_SUBSIDY_STATUS_CODES = frozenset({403, 404})
+SUBSIDY_API_HTTP_ERROR_MESSAGE = 'HTTPError occurred in Subsidy API request.'
+
 
 class TransactionPolicyMismatchError(Exception):
     """
@@ -53,7 +58,7 @@ def get_and_cache_subsidy_learners_aggregate_data(subsidy_uuid, policy_uuid=None
             policy_uuid,
         )
     except requests.exceptions.HTTPError as exc:
-        raise SubsidyAPIHTTPError('HTTPError occurred in Subsidy API request.') from exc
+        raise SubsidyAPIHTTPError(SUBSIDY_API_HTTP_ERROR_MESSAGE) from exc
 
     results = {}
     for aggregated_data in response_payload:
@@ -84,7 +89,7 @@ def get_and_cache_transactions_for_learner(subsidy_uuid, lms_user_id):
             include_aggregates=False,
         )
     except requests.exceptions.HTTPError as exc:
-        raise SubsidyAPIHTTPError('HTTPError occurred in Subsidy API request.') from exc
+        raise SubsidyAPIHTTPError(SUBSIDY_API_HTTP_ERROR_MESSAGE) from exc
 
     result = {
         'transactions': response_payload['results'],
@@ -109,6 +114,56 @@ def get_and_cache_transactions_for_learner(subsidy_uuid, lms_user_id):
     return result
 
 
+def get_subsidy_transactions_export(
+    *,
+    subsidy_uuid,
+    enterprise_customer_uuid,
+    subsidy_access_policy_uuid=None,
+    search=None,
+    start_date=None,
+    end_date=None,
+):
+    """
+    Opens a streamed CSV export of a subsidy's spend from enterprise-subsidy. ``enterprise_customer_uuid`` is always
+    forwarded so enterprise-subsidy also checks ownership.
+
+    Returns the open ``requests.Response``; the caller must close it.
+    Raises ``SubsidyAPIHTTPError`` on failure, with any upstream response already closed.
+    """
+    # The export is a v2 admin endpoint.
+    client = get_versioned_subsidy_client(version=2)
+    export_url = client.TRANSACTIONS_LIST_ENDPOINT.format(subsidy_uuid=subsidy_uuid) + 'export/'
+    query_params = {
+        'enterprise_customer_uuid': str(enterprise_customer_uuid),
+    }
+    if subsidy_access_policy_uuid:
+        query_params['subsidy_access_policy_uuid'] = str(subsidy_access_policy_uuid)
+    if search:
+        query_params['search'] = search
+    if start_date:
+        query_params['start_date'] = start_date.isoformat()
+    if end_date:
+        query_params['end_date'] = end_date.isoformat()
+
+    # YAML config can only give a list, which requests rejects with a ValueError (not a RequestException).
+    timeout = settings.SUBSIDY_TRANSACTIONS_EXPORT_TIMEOUT
+    if isinstance(timeout, (list, tuple)):
+        timeout = tuple(timeout)
+
+    response = None
+    try:
+        # OAuthAPIClient only times out its token fetch, so set one here.
+        response = client.client.get(export_url, params=query_params, stream=True, timeout=timeout)
+        response.raise_for_status()
+    except requests.exceptions.RequestException as exc:
+        # With stream=True the connection is only released once the response is closed.
+        if response is not None:
+            response.close()
+        # Not logged: the view logs failures, and the params include ``search`` (possibly an email).
+        raise SubsidyAPIHTTPError(SUBSIDY_API_HTTP_ERROR_MESSAGE) from exc
+    return response
+
+
 def get_redemptions_by_content_and_policy_for_learner(policies, lms_user_id):
     """
     Returns a mapping of content keys to a mapping of policy uuids to lists of transactions
@@ -130,16 +185,42 @@ def get_redemptions_by_content_and_policy_for_learner(policies, lms_user_id):
     with a policy uuid that’s *not* currently associated with the subsidy we requested transactions for,
     we don’t want it the mapping, because we’ll later compute aggregates for the policies’
     spend caps and learner limits based on that mapping.
+
+    Returns:
+        (mapping, unreachable_subsidy_uuids): unreachable subsidies' policies are left out of the mapping, and
+        callers should skip them.
+
+    Raises:
+        SubsidyAPIHTTPError: for any other failure (e.g. a 5xx), or if every subsidy is unreachable.
     """
     policies_by_subsidy_uuid = defaultdict(set)
     for policy in policies:
         policies_by_subsidy_uuid[policy.subsidy_uuid].add(policy)
 
     result = defaultdict(lambda: defaultdict(list))
+    unreachable_subsidy_uuids = set()
+    last_unreachable_error = None
 
     for subsidy_uuid, policies_with_subsidy in policies_by_subsidy_uuid.items():
         logger.info(f'Fetching learner transactions for subsidy {subsidy_uuid} via policies {policies_with_subsidy}')
-        transactions_in_subsidy = get_and_cache_transactions_for_learner(subsidy_uuid, lms_user_id)['transactions']
+        try:
+            transactions_in_subsidy = get_and_cache_transactions_for_learner(subsidy_uuid, lms_user_id)['transactions']
+        except SubsidyAPIHTTPError as exc:
+            status_code = getattr(exc.error_response, 'status_code', None)
+            if status_code not in UNREACHABLE_SUBSIDY_STATUS_CODES:
+                raise
+            # e.g. soft-deleted: skip it so the customer's healthy subsidies are still evaluated.
+            unreachable_subsidy_uuids.add(subsidy_uuid)
+            last_unreachable_error = exc
+            logger.warning(
+                'Could not fetch learner transactions for subsidy %s (subsidy_status_code=%s). Excluding its '
+                'policies %s from redeemability evaluation for lms_user_id %s.',
+                subsidy_uuid,
+                status_code,
+                sorted(str(policy.uuid) for policy in policies_with_subsidy),
+                lms_user_id,
+            )
+            continue
         for redemption in transactions_in_subsidy:
             transaction_uuid = redemption['uuid']
             content_key = redemption['content_key']
@@ -160,7 +241,56 @@ def get_redemptions_by_content_and_policy_for_learner(policies, lms_user_id):
                     f"Found policy uuid {subsidy_access_policy_uuid} that is no longer tied to this subsidy."
                 )
 
-    return result
+    if last_unreachable_error and unreachable_subsidy_uuids == set(policies_by_subsidy_uuid):
+        # More likely our own access is broken than every subsidy deleted, so fail rather than show nothing.
+        raise last_unreachable_error
+
+    return result, unreachable_subsidy_uuids
+
+
+def get_policies_accepting_requests(policies):
+    """
+    Returns the given policies that can take new Browse & Request learner credit requests: redemption is enabled
+    and the subsidy is confirmed active. ``bnr_enabled`` alone doesn't answer this, because it stays True after a
+    budget ends so admins can still manage its existing requests.
+
+    A policy whose subsidy answers 403/404 is skipped, as in can-redeem (docs/architecture-patterns.md §18).
+
+    Raises:
+        SubsidyAPIHTTPError: for any other failure (e.g. a 5xx), or if every subsidy is unreachable.
+    """
+    accepting_policies = []
+    checked_subsidy_uuids = set()
+    unreachable_subsidy_uuids = set()
+    last_unreachable_error = None
+
+    for policy in policies:
+        if not policy.is_redemption_enabled:
+            continue
+        checked_subsidy_uuids.add(policy.subsidy_uuid)
+        try:
+            subsidy_record = policy.subsidy_record(raise_on_error=True)
+        except SubsidyAPIHTTPError as exc:
+            status_code = getattr(exc.error_response, 'status_code', None)
+            if status_code not in UNREACHABLE_SUBSIDY_STATUS_CODES:
+                raise
+            unreachable_subsidy_uuids.add(policy.subsidy_uuid)
+            last_unreachable_error = exc
+            logger.warning(
+                'Could not fetch subsidy %s (subsidy_status_code=%s). Policy %s will not accept new requests.',
+                policy.subsidy_uuid,
+                status_code,
+                policy.uuid,
+            )
+            continue
+        if subsidy_record.get('is_active'):
+            accepting_policies.append(policy)
+
+    if last_unreachable_error and unreachable_subsidy_uuids == checked_subsidy_uuids:
+        # More likely our own access is broken than every subsidy deleted, so fail rather than show nothing.
+        raise last_unreachable_error
+
+    return accepting_policies
 
 
 def get_tiered_cache_subsidy_record(subsidy_uuid, *cache_key_args):

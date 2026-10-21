@@ -37,6 +37,7 @@ from enterprise_access.apps.subsidy_access_policy.constants import (
     REASON_LEARNER_NOT_ASSIGNED_CONTENT,
     REASON_LEARNER_NOT_IN_ENTERPRISE_GROUP,
     REASON_NOT_ENOUGH_VALUE_IN_SUBSIDY,
+    REASON_SUBSIDY_EXPIRED,
     AccessMethods,
     MissingSubsidyAccessReasonUserMessages,
     PolicyTypes,
@@ -1213,6 +1214,7 @@ class TestSubsidyAccessPolicyRedeemViewset(APITestWithMocks):
             'unit': 'usd_cents',
             'all_transactions': [],
         }
+        self.subsidy_client.retrieve_subsidy.return_value = {'is_active': True}
         self.subsidy_client.list_subsidy_transactions.return_value = {"results": [], "aggregates": {}}
         self.subsidy_client.create_subsidy_transaction.side_effect = (
             NotImplementedError("unit test must override create_subsidy_transaction to use.")
@@ -1858,6 +1860,103 @@ class TestSubsidyAccessPolicyRedeemViewset(APITestWithMocks):
         self.assertIn("already have an active request", response_data.get('reason'))
         self.assertEqual(response_data.get('existing_request'), str(existing_request.uuid))
 
+    def _create_bnr_policy(self, subsidy_uuid):
+        """
+        Create a BnR-enabled policy for this customer, funded by the given subsidy.
+        """
+        return PerLearnerSpendCreditAccessPolicy.objects.create(
+            catalog_uuid='7c9daa69-519c-4313-ad81-90862bc08ca2',
+            subsidy_uuid=subsidy_uuid,
+            per_learner_spend_limit=None,
+            description='anything',
+            active=True,
+            enterprise_customer_uuid=self.enterprise_uuid,
+            learner_credit_request_config=LearnerCreditRequestConfiguration.objects.create(active=True),
+        )
+
+    def _get_can_request(self, subsidy_responses):
+        """
+        Call can-request with ``retrieve_subsidy`` answering per subsidy uuid: a dict is returned as the subsidy
+        record, an int is raised as an HTTPError with that status code.
+        """
+        def retrieve_subsidy(subsidy_uuid):
+            subsidy_response = subsidy_responses[str(subsidy_uuid)]
+            if isinstance(subsidy_response, int):
+                raise HTTPError('Fake HTTP Error Message', response=MockResponse({}, subsidy_response))
+            return subsidy_response
+        self.subsidy_client.retrieve_subsidy.side_effect = retrieve_subsidy
+
+        with mock.patch(
+            'enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.catalog_contains_content_key',
+            return_value=True
+        ):
+            return self.client.get(
+                self.subsidy_access_policy_can_request_endpoint,
+                {'content_key': 'edX+CS101', 'lms_user_id': 1234},
+            )
+
+    def test_can_request_subsidy_expired(self):
+        """
+        Test that the can-request endpoint does not offer a BnR policy whose subsidy has expired.
+        """
+        policy = self._create_bnr_policy(subsidy_uuid=uuid4())
+
+        response = self._get_can_request({str(policy.subsidy_uuid): {'is_active': False}})
+
+        self.assertEqual(response.status_code, 200)
+        response_data = response.json()
+        self.assertFalse(response_data.get('can_request'))
+        self.assertEqual(response_data.get('reason'), REASON_SUBSIDY_EXPIRED)
+
+    @ddt.data(
+        # Expired policy created first, then second, so creation order doesn't decide the result.
+        {'expired_index': 0},
+        {'expired_index': 1},
+        # A subsidy that answers 403/404 (e.g. soft-deleted) is skipped like an expired one.
+        {'expired_index': 0, 'expired_response': status.HTTP_403_FORBIDDEN},
+        {'expired_index': 1, 'expired_response': status.HTTP_404_NOT_FOUND},
+    )
+    @ddt.unpack
+    def test_can_request_skips_only_expired_policies(self, expired_index, expired_response=None):
+        """
+        Test that with one ended and one active BnR policy, can-request returns the active one.
+        """
+        policies = [self._create_bnr_policy(subsidy_uuid=uuid4()) for _ in range(2)]
+        expired_policy = policies[expired_index]
+        active_policy = policies[1 - expired_index]
+
+        response = self._get_can_request({
+            str(expired_policy.subsidy_uuid): expired_response or {'is_active': False},
+            str(active_policy.subsidy_uuid): {'is_active': True},
+        })
+
+        self.assertEqual(response.status_code, 200)
+        response_data = response.json()
+        self.assertTrue(response_data.get('can_request'))
+        self.assertEqual(response_data['requestable_subsidy_access_policy']['uuid'], str(active_policy.uuid))
+
+    @ddt.data(
+        # A 5xx is an outage, even if another subsidy is healthy.
+        (status.HTTP_503_SERVICE_UNAVAILABLE, {'is_active': True}),
+        (status.HTTP_503_SERVICE_UNAVAILABLE, {'is_active': False}),
+        # A 403 from every subsidy looks like our own credentials failing, not every subsidy being deleted.
+        (status.HTTP_403_FORBIDDEN, status.HTTP_403_FORBIDDEN),
+    )
+    @ddt.unpack
+    def test_can_request_subsidy_api_unavailable(self, first_response, second_response):
+        """
+        Test that can-request reports a subsidy-service failure as a 503, not as an expired subsidy.
+        """
+        policies = [self._create_bnr_policy(subsidy_uuid=uuid4()) for _ in range(2)]
+
+        response = self._get_can_request({
+            str(policies[0].subsidy_uuid): first_response,
+            str(policies[1].subsidy_uuid): second_response,
+        })
+
+        self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+        self.assertNotIn(REASON_SUBSIDY_EXPIRED, str(response.json()))
+
 
 class BaseCanRedeemTestMixin:
     """
@@ -1962,6 +2061,57 @@ class TestSubsidyAccessPolicyCanRedeemView(BaseCanRedeemTestMixin, APITestWithMo
         self.mock_enterprise_user_record = enterprise_user_record_patcher.start()
         self.mock_enterprise_user_record.return_value = TEST_USER_RECORD
         self.addCleanup(enterprise_user_record_patcher.stop)
+
+    @mock.patch('enterprise_access.apps.api.v1.views.subsidy_access_policy.LmsApiClient', return_value=mock.MagicMock())
+    @mock.patch('enterprise_access.apps.subsidy_access_policy.subsidy_api.get_versioned_subsidy_client')
+    def test_can_redeem_isolates_unreachable_subsidy(
+        self, mock_get_client, mock_lms_client,
+    ):  # pylint: disable=unused-argument
+        """
+        A soft-deleted subsidy (403) drops only its own policies; the healthy one is still evaluated and returned.
+        Its can_redeem endpoint fails too, as in production, so this also pins that it is excluded from evaluation.
+        """
+        test_content_key = "course-v1:edX+Privacy101+3T2020"
+        unreachable_policy = PerLearnerEnrollmentCapLearnerCreditAccessPolicyFactory(
+            enterprise_customer_uuid=self.enterprise_uuid,
+            spend_limit=500000,
+        )
+
+        def list_transactions(subsidy_uuid, **kwargs):
+            if subsidy_uuid == unreachable_policy.subsidy_uuid:
+                raise HTTPError('Fake HTTP Error Message', response=MockResponse({}, status.HTTP_403_FORBIDDEN))
+            return {'results': [], 'aggregates': {}}
+
+        def can_redeem(subsidy_uuid, *args):
+            if str(subsidy_uuid) == str(unreachable_policy.subsidy_uuid):
+                raise HTTPError('403 soft-deleted')
+            return {'can_redeem': True, 'active': True, 'content_price': 29900, 'unit': 'usd_cents',
+                    'all_transactions': []}
+
+        mock_get_client.return_value.list_subsidy_transactions.side_effect = list_transactions
+        # The mixin patches SubsidyAccessPolicy.subsidy_client, so every policy shares this mock.
+        self.redeemable_policy.subsidy_client.can_redeem.side_effect = can_redeem
+
+        def mock_get_subsidy_content_data(*args):
+            if test_content_key in args:
+                return {"content_uuid": str(uuid4()), "content_key": test_content_key, "source": "edX",
+                        "content_price": 29900}
+            return {}
+
+        self.mock_get_content_metadata.side_effect = mock_get_subsidy_content_data
+        with mock.patch(
+            'enterprise_access.apps.subsidy_access_policy.content_metadata_api.get_and_cache_content_metadata',
+            side_effect=mock_get_subsidy_content_data,
+        ):
+            response = self.client.get(
+                self.subsidy_access_policy_can_redeem_endpoint, {'content_key': [test_content_key]},
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        response_list = response.json()
+        assert response_list[0]["can_redeem"] is True
+        assert response_list[0]["redeemable_subsidy_access_policy"]["uuid"] == str(self.redeemable_policy.uuid)
+        assert str(unreachable_policy.uuid) not in response.content.decode()
 
     def test_can_redeem_policy_missing_params(self):
         """
@@ -2613,8 +2763,15 @@ class TestSubsidyAccessPolicyCanRedeemView(BaseCanRedeemTestMixin, APITestWithMo
         assert response_list[0]["reasons"] == [reason]
         assert response_list[0]["display_reason"] == reason
 
+    @ddt.data(
+        {'status_code': status.HTTP_503_SERVICE_UNAVAILABLE, 'detail': 'foobar'},
+        # The customer's only subsidy answering 403/404 means *every* subsidy is unreachable, so it still fails.
+        {'status_code': status.HTTP_403_FORBIDDEN, 'detail': 'forbidden'},
+        {'status_code': status.HTTP_404_NOT_FOUND, 'detail': 'not found'},
+    )
+    @ddt.unpack
     @mock.patch('enterprise_access.apps.subsidy_access_policy.subsidy_api.get_versioned_subsidy_client')
-    def test_can_redeem_subsidy_client_http_error(self, mock_get_client):
+    def test_can_redeem_subsidy_client_http_error(self, mock_get_client, status_code, detail):
         """
         Test that the can_redeem endpoint raises
         an expected, specific exception when the subsidy REST API raises
@@ -2626,15 +2783,15 @@ class TestSubsidyAccessPolicyCanRedeemView(BaseCanRedeemTestMixin, APITestWithMo
         mock_client = mock_get_client.return_value
         mock_client.list_subsidy_transactions.side_effect = HTTPError(
             'Fake HTTP Error Message',
-            response=MockResponse({'detail': 'foobar'}, status.HTTP_503_SERVICE_UNAVAILABLE),
+            response=MockResponse({'detail': detail}, status_code),
         )
 
         response = self.client.get(self.subsidy_access_policy_can_redeem_endpoint, query_params)
 
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
         assert response.json() == {
-            'detail': 'Subsidy Transaction API error: foobar',
-            'subsidy_status_code': str(status.HTTP_503_SERVICE_UNAVAILABLE),
+            'detail': f'Subsidy Transaction API error: {detail}',
+            'subsidy_status_code': str(status_code),
         }
 
     @ddt.data(
