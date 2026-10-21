@@ -738,7 +738,7 @@ ENABLE_BILLING_MANAGEMENT_API = False
 # Enable the Learner Credit top-up endpoints under /api/v1/learner-credit-top-ups/* (404 for every role when off).
 # Until account standing is really checked (OQ-8, chunk 19) this is the only production safeguard: keep it off in
 # stage and prod until then.
-FEATURE_TOP_UP_LEARNER_CREDIT = True
+FEATURE_TOP_UP_LEARNER_CREDIT = False
 
 DEFAULT_SSP_QUANTITY_RANGE = [5, 50]
 # Default SSP product slug assigned to new CheckoutIntent records when no product is specified.
