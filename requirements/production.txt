@@ -18,7 +18,7 @@ annotated-types==0.8.0
     # via
     #   -r requirements/base.txt
     #   pydantic
-anthropic==1.15.0
+anthropic==1.17.0
     # via -r requirements/base.txt
 anyio==4.15.1
     # via
@@ -59,7 +59,7 @@ celery==5.6.3
     #   -r requirements/base.txt
     #   django-celery-results
     #   edx-celeryutils
-certifi==2026.10.18
+certifi==2026.10.19
     # via
     #   -r requirements/base.txt
     #   requests
@@ -272,11 +272,11 @@ h11==0.16.0
     # via
     #   -r requirements/base.txt
     #   httpcore2
-httpcore2==2.14.0
+httpcore2==2.16.0
     # via
     #   -r requirements/base.txt
     #   httpx2
-httpx2==2.14.0
+httpx2==2.16.0
     # via
     #   -r requirements/base.txt
     #   anthropic
@@ -568,7 +568,7 @@ vine==5.1.0
     #   amqp
     #   celery
     #   kombu
-wcwidth==0.9.2
+wcwidth==0.9.3
     # via
     #   -r requirements/base.txt
     #   prompt-toolkit
