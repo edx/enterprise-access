@@ -957,3 +957,25 @@ class EvaluateTopUpEligibilityForPoliciesTests(TestCase):
 
     def test_no_policies_returns_empty_list(self):
         self.assertEqual(evaluate_top_up_eligibility_for_policies([]), [])
+
+    @ddt.data(
+        {'active': True, 'retired': True},
+        {'active': False, 'retired': False},
+    )
+    @ddt.unpack
+    def test_disabled_budget_skips_subsidy_fetch(self, active, retired):
+        """ A disabled budget is budget_not_active without a fetch, so its soft-deleted subsidy can't cause a 503. """
+        policy = PerLearnerSpendCapLearnerCreditAccessPolicyFactory(active=active, retired=retired)
+        with _mock_retrieve_subsidy(side_effect=_http_error(403)) as mock_get_client:
+            results = evaluate_top_up_eligibility_for_policies([policy])
+        self.assertEqual(self._codes_by_policy(results), {policy.uuid: ['budget_not_active']})
+        self.assertIsNone(results[0]['subsidy_expiration_datetime'])
+        mock_get_client.return_value.retrieve_subsidy.assert_not_called()
+
+    def test_disabled_budget_does_not_count_toward_all_unreachable(self):
+        """ Only the fetched budgets decide "every subsidy unreachable". """
+        retired = PerLearnerSpendCapLearnerCreditAccessPolicyFactory(retired=True)
+        dead = PerLearnerSpendCapLearnerCreditAccessPolicyFactory()
+        with _mock_retrieve_subsidy(side_effect=_http_error(403)):
+            with self.assertRaises(SubsidyAPIHTTPError):
+                evaluate_top_up_eligibility_for_policies([retired, dead])

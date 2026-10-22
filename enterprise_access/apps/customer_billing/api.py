@@ -636,7 +636,8 @@ def evaluate_top_up_eligibility_for_policies(policies, raise_if_all_unreachable=
     Same shape as ``get_policies_accepting_requests()`` (docs/architecture-patterns.md §18): a budget whose subsidy
     answers 403/404 (e.g. soft-deleted) is reported as ``budget_not_active`` and the other budgets are still
     evaluated. With ``raise_if_all_unreachable``, every subsidy being unreachable is re-raised instead, since that
-    looks the same as our own credentials losing their role.
+    looks the same as our own credentials losing their role. Inactive or retired budgets are already
+    ``budget_not_active``, so their subsidy isn't fetched (they report ``subsidy_expiration_datetime: None``).
 
     Raises:
         SubsidyAPIHTTPError: for any other HTTP failure (e.g. a 5xx), or if every subsidy is unreachable.
@@ -646,8 +647,15 @@ def evaluate_top_up_eligibility_for_policies(policies, raise_if_all_unreachable=
     results = []
     last_unreachable_error = None
     unreachable_count = 0
+    fetched_count = 0
 
     for policy in policies:
+        if not policy.is_redemption_enabled:
+            # Already budget_not_active: skip the fetch, as get_policies_accepting_requests() does, so a retired
+            # budget whose subsidy was soft-deleted can't count toward "every subsidy unreachable".
+            results.append(evaluate_top_up_eligibility(policy, {}, now=now))
+            continue
+        fetched_count += 1
         try:
             subsidy = policy.subsidy_record(raise_on_error=True)
         except SubsidyAPIHTTPError as exc:
@@ -664,6 +672,6 @@ def evaluate_top_up_eligibility_for_policies(policies, raise_if_all_unreachable=
             subsidy = {}
         results.append(evaluate_top_up_eligibility(policy, subsidy, now=now))
 
-    if raise_if_all_unreachable and last_unreachable_error and unreachable_count == len(results):
+    if raise_if_all_unreachable and last_unreachable_error and unreachable_count == fetched_count:
         raise last_unreachable_error
     return results

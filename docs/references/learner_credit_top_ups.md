@@ -26,7 +26,8 @@ Reason codes and error codes are in `customer_billing/constants.py` (`TOP_UP_INE
 | `policy_uuid` | no | UUID; must belong to the enterprise | Evaluate only this budget. |
 
 - **Without `policy_uuid`:** returns every policy of the enterprise with `active=True`, oldest first. A retired
-  policy that is still `active=True` is listed and reports `budget_not_active`.
+  policy that is still `active=True` is listed and reports `budget_not_active`, with
+  `subsidy_expiration_datetime: null` (its subsidy isn't fetched).
 - **With `policy_uuid`:** that budget is always evaluated, even if inactive, so the portal can show why it can't be
   topped up.
 
@@ -84,7 +85,7 @@ Each budget's subsidy is read with `policy.subsidy_record(raise_on_error=True)`,
 | enterprise-subsidy answers | Result |
 |---|---|
 | 403 or 404 for **some** subsidies | Only those budgets report `budget_not_active`; the rest are evaluated normally (200). A soft-deleted subsidy answers 403, not 404. |
-| 403 or 404 for **every** listed subsidy | 503. That looks the same as our own credentials losing their role, so it is treated as an outage rather than reported as "nothing active". |
+| 403 or 404 for **every** fetched subsidy | 503. That looks the same as our own credentials losing their role, so it is treated as an outage rather than reported as "nothing active". Inactive or retired budgets are already `budget_not_active`, so their subsidy isn't fetched and doesn't count: an enterprise whose budgets are all retired gets 200, not 503. |
 | 403 or 404 for an explicitly requested `policy_uuid` | 200 with `budget_not_active`, since a deleted subsidy would otherwise return a 503 forever. |
 | 5xx, connection error or timeout | 503, even if other budgets are healthy. |
 

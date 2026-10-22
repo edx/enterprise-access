@@ -11,3 +11,4 @@ Reference notes on specific features. These are Markdown files, read on GitHub r
 - `Learner Credit spend (transactions) CSV export <learner_credit_transactions_export.md>`_
 - `Learner Credit top-ups <learner_credit_top_ups.md>`_
 - `Multi-license tie breaking <multi_license_tie_breaking.md>`_
+- `Stripe SDK upgrades <stripe_sdk_upgrades.md>`_
