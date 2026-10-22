@@ -602,8 +602,10 @@ stevedore==5.9.1
     #   code-annotations
     #   edx-django-utils
     #   edx-opaque-keys
-stripe==16.0.0
-    # via -r requirements/base.txt
+stripe==15.6.1
+    # via
+    #   -c requirements/constraints.txt
+    #   -r requirements/base.txt
 swagger-spec-validator==3.0.4
     # via
     #   -r requirements/base.txt

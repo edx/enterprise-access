@@ -7,6 +7,7 @@ Stripe API accepts or returns. A given Stripe API version never changes, and we 
 the API version it pins) or through the webhook endpoint's API version in the Stripe Dashboard, which
 tests can't see. See ``docs/references/stripe_sdk_upgrades.md``.
 """
+import inspect
 from pathlib import Path
 
 import ddt
@@ -19,9 +20,15 @@ from enterprise_access.apps.customer_billing.tests.utils import stripe_call_prob
 # The Stripe API version our Stripe usage has been reviewed against. Removals can ship in any API
 # version, not only in a new named release (e.g. stripe 15.6.0 stayed on ``dahlia`` and still removed
 # ``PaymentAttemptRecord...cryptogram``), so this trips on every pinned-version change.
-REVIEWED_STRIPE_API_VERSION = '2026-09-30.endive'
+REVIEWED_STRIPE_API_VERSION = '2026-08-26.dahlia'
 
 SOURCE_ROOT = Path(enterprise_access.__file__).parent
+
+
+def _path_params_are_positional_only():
+    """stripe 16 made path params positional-only; stripe 15 still accepts them by keyword."""
+    parameter = inspect.signature(stripe.Subscription.modify).parameters['id']
+    return parameter.kind is parameter.POSITIONAL_ONLY
 
 
 @ddt.ddt
@@ -65,8 +72,6 @@ class StripeSdkContractTests(SimpleTestCase):
         ("stripe.Coupon.delete('co_1', not_a_param=True)", ['does not accept param not_a_param']),
         ("stripe.NotAResource.retrieve('x')", ['does not exist in stripe==']),
         ("isinstance(obj, stripe.NotAResource)", ['stripe.NotAResource: does not exist in stripe==']),
-        ("stripe.Subscription.modify(id='sub_1')", ['passes positional-only id by keyword']),
-        ("stripe.Coupon.delete(sid='co_1')", ['passes positional-only sid by keyword']),
         ("stripe.Webhook.construct_event('payload', 'sig', 'secret', not_an_arg=1)", ['not_an_arg']),
     )
     @ddt.unpack
@@ -77,3 +82,22 @@ class StripeSdkContractTests(SimpleTestCase):
         self.assertEqual(len(problems), len(expected_problems), problems)
         for problem, expected in zip(problems, expected_problems):
             self.assertIn(expected, problem)
+
+    @ddt.data(
+        ("stripe.Subscription.modify(id='sub_1')", 'passes positional-only id by keyword'),
+        # Callable on the class or an instance, so the check has to resolve ``Coupon._cls_delete``.
+        ("stripe.Coupon.delete(sid='co_1')", 'passes positional-only sid by keyword'),
+    )
+    @ddt.unpack
+    def test_call_site_check_flags_path_params_passed_by_keyword(self, source, expected_problem):
+        """
+        Once the installed SDK makes path params positional-only (stripe 16), the call-site check must flag
+        one passed by keyword. Before that, the same call is valid and must not be flagged.
+        """
+        problems = stripe_call_problems(source)
+
+        if _path_params_are_positional_only():
+            self.assertEqual(len(problems), 1, problems)
+            self.assertIn(expected_problem, problems[0])
+        else:
+            self.assertEqual(problems, [])

@@ -41,6 +41,19 @@ Add a test like the last one for any new Stripe call whose params are built dyna
 
 ## stripe 16 / `2026-09-30.endive` (October 2026)
 
+**Pinned out.** #317 took stripe 16.0.0 and renamed the checkout param. #320 reverted that and pinned
+`stripe<16` in `requirements/constraints.txt`, so we stay on stripe 15.6.1 and API `2026-08-26.dahlia`, and
+self-service checkout keeps its existing `payment_method_types` behavior. To take stripe 16, re-apply the
+changes from #317:
+
+- send `allowed_payment_method_types` instead of `payment_method_types` in
+  `create_subscription_checkout_session`;
+- set `REVIEWED_STRIPE_API_VERSION` to `2026-09-30.endive`.
+
+Then confirm in stage that checkout still offers only card.
+`test_create_params_are_supported_by_installed_stripe_sdk` and the version tripwire fail until both code
+changes are done.
+
 - Checkout Session `payment_method_types` was replaced by `allowed_payment_method_types`. The new param
   filters the dynamically eligible payment methods instead of listing them, so card-only checkout needs
   `card` to stay enabled in the Dashboard payment method settings.

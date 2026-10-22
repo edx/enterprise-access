@@ -895,7 +895,7 @@ stevedore==5.9.1
     #   code-annotations
     #   edx-django-utils
     #   edx-opaque-keys
-stripe==16.0.0
+stripe==15.6.1
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
