@@ -18,7 +18,7 @@ annotated-types==0.8.0
     # via
     #   -r requirements/base.txt
     #   pydantic
-anthropic==1.17.0
+anthropic==2.1.0
     # via -r requirements/base.txt
 anyio==4.15.1
     # via
@@ -341,7 +341,7 @@ oauthlib==4.0.0
     #   -r requirements/base.txt
     #   requests-oauthlib
     #   social-auth-core
-openai==3.35.1
+openai==3.37.0
     # via -r requirements/base.txt
 openedx-atlas==0.7.2
     # via -r requirements/base.txt
@@ -374,7 +374,7 @@ psutil==7.2.2
     # via
     #   -r requirements/base.txt
     #   edx-django-utils
-pycparser==3.11
+pycparser==3.12
     # via
     #   -r requirements/base.txt
     #   cffi
@@ -407,7 +407,7 @@ pynacl==1.6.2
     # via
     #   -r requirements/base.txt
     #   edx-django-utils
-python-dateutil==2.9.0.post0
+python-dateutil==3.0.0
     # via
     #   -r requirements/base.txt
     #   analytics-python
@@ -483,7 +483,7 @@ sniffio==1.3.1
     #   -r requirements/base.txt
     #   anthropic
     #   openai
-snowflake-connector-python==5.0.0
+snowflake-connector-python==5.1.0
     # via -r requirements/base.txt
 social-auth-app-django==5.9.0
     # via
@@ -549,7 +549,8 @@ tzdata==2026.5
     # via
     #   -r requirements/base.txt
     #   kombu
-tzlocal==5.4.4
+    #   python-dateutil
+tzlocal==5.4.5
     # via
     #   -r requirements/base.txt
     #   celery
