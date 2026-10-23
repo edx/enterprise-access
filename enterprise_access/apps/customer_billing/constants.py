@@ -59,6 +59,39 @@ CHECKOUT_SESSION_ERROR_CODES = {
     },
 }
 
+# Learner Credit top-up eligibility. Reason codes are shared by the eligibility, quote and pay endpoints.
+TOP_UP_MIN_DAYS_BEFORE_EXPIRY = 14
+
+# How many times a budget's subsidy is fetched while it answers 403/404, before it is reported as budget_not_active.
+TOP_UP_MAX_SUBSIDY_FETCH_ATTEMPTS = 3
+
+TOP_UP_INELIGIBILITY_REASONS = {
+    'BUDGET_NOT_ACTIVE': (
+        'budget_not_active',
+        'The budget (policy or its subsidy) is not active.',
+    ),
+    'BUDGET_EXPIRING_SOON': (
+        'budget_expiring_soon',
+        f'The budget expires in fewer than {TOP_UP_MIN_DAYS_BEFORE_EXPIRY} days.',
+    ),
+    'ACCOUNT_NOT_ELIGIBLE': (
+        'account_not_eligible',
+        'The account standing or agreement type is not eligible for a top-up.',
+    ),
+}
+
+# Error responses of the top-up endpoints: (error_code, detail message template).
+TOP_UP_ERRORS = {
+    'BUDGET_NOT_FOUND': (
+        'budget_not_found',
+        'Budget {policy_uuid} was not found for enterprise {enterprise_customer_uuid}.',
+    ),
+    'NO_BUDGETS_FOUND': (
+        'no_budgets_found',
+        'No active budgets were found for enterprise with UUID {enterprise_customer_uuid}.',
+    ),
+}
+
 # According to stripe's AI assistant: "When a Checkout Session is created,
 # Stripe automatically sets the expires_at timestamp to 24 hours in the future."
 # We want the slug duration to last at least as long as the checkout session expiry.
