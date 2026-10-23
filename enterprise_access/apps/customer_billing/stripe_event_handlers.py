@@ -12,7 +12,9 @@ from simple_history.utils import bulk_update_with_history
 
 from enterprise_access.apps.api_client.license_manager_client import LicenseManagerApiClient
 from enterprise_access.apps.customer_billing.constants import (
+    ORDER_COMPLETED_BILLING_REASONS,
     SUBSCRIPTION_ITEM_TYPE,
+    CheckoutSegmentEvents,
     StripeSegmentEvents,
     StripeSubscriptionStatus
 )
@@ -25,6 +27,7 @@ from enterprise_access.apps.customer_billing.models import (
 from enterprise_access.apps.customer_billing.stripe_event_types import StripeEventType
 from enterprise_access.apps.customer_billing.tasks import (
     send_billing_error_email_task,
+    send_checkout_segment_event_task,
     send_finalized_cancelation_email_task,
     send_paid_cancellation_email_task,
     send_paid_reinstatement_email_task,
@@ -39,6 +42,7 @@ from enterprise_access.apps.customer_billing.tasks import (
 )
 from enterprise_access.apps.customer_billing.utils import datetime_from_timestamp
 from enterprise_access.apps.track.segment import track_event
+from enterprise_access.toggles import checkout_segment_events_v2_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -311,6 +315,60 @@ def _try_enable_pending_updates(stripe_subscription_id):
         logger.error('Failed to enable pending updates for subscription %s: %s', stripe_subscription_id, e)
 
 
+def _paid_invoice_summaries(subscription_id):
+    """``invoice.paid`` event summaries for the subscription's invoices that collected a non-zero amount."""
+    return StripeEventSummary.objects.filter(
+        stripe_subscription_id=subscription_id,
+        event_type='invoice.paid',
+        invoice_amount_paid__gt=0,
+    )
+
+
+def enqueue_order_cancelled_segment_event(checkout_intent, subscription: dict):
+    """
+    Queue ``order_cancelled`` for a deleted subscription that ever collected money, keyed by its last paid invoice.
+    Never raises: a failure here (including the paid-invoice DB query) must not stop the cancellation logic in the
+    webhook.
+    """
+    if not checkout_segment_events_v2_enabled():
+        return
+    try:
+        # Not the subscription's latest_invoice: after a failed renewal charge that is an unpaid invoice, and its
+        # total was never collected.
+        last_paid_invoice_id = _paid_invoice_summaries(subscription['id']).order_by(
+            '-stripe_event_created_at',
+        ).values_list('stripe_invoice_id', flat=True).first()
+        if not last_paid_invoice_id:
+            # Never collected money (a trial, a first charge that failed, or a $0 subscription): no order to cancel.
+            return
+        # TODO(ENT-12377): product must confirm which invoice order_id should reference. After a renewal or a
+        # license change, the last paid invoice differs from the invoice used for order_completed.
+        # See docs/references/checkout-segment-events.md.
+        enqueue_checkout_segment_event(
+            CheckoutSegmentEvents.ORDER_CANCELLED,
+            checkout_intent,
+            last_paid_invoice_id,
+        )
+    except Exception:  # pylint: disable=broad-except
+        logger.exception('Failed to queue order_cancelled for checkout_intent %s', checkout_intent.id)
+
+
+def enqueue_checkout_segment_event(event_name: str, checkout_intent: CheckoutIntent, invoice_id: str):
+    """
+    Queue a server-side checkout Segment event. Never raises: analytics must not break webhook processing.
+    """
+    if not checkout_segment_events_v2_enabled():
+        return
+    try:
+        send_checkout_segment_event_task.delay(
+            event_name=event_name,
+            checkout_intent_id=checkout_intent.id,
+            invoice_id=invoice_id,
+        )
+    except Exception:  # pylint: disable=broad-except
+        logger.exception('Failed to enqueue %s for checkout_intent %s', event_name, checkout_intent.id)
+
+
 def track_subscription_cancellation(checkout_intent: CheckoutIntent, cancellation_details: dict):
     """
     Track subscription cancellation event to Segment with cancellation details.
@@ -395,10 +453,8 @@ def _is_annual_renewal_invoice(invoice, subscription_details) -> bool:
     """
     if invoice.to_dict().get('billing_reason') != 'subscription_cycle':
         return False
-    return StripeEventSummary.objects.filter(
-        stripe_subscription_id=subscription_details.to_dict().get('subscription'),
-        event_type='invoice.paid',
-        invoice_amount_paid__gt=0,
+    return _paid_invoice_summaries(
+        subscription_details.to_dict().get('subscription'),
     ).exclude(stripe_invoice_id=invoice['id']).exists()
 
 
@@ -610,7 +666,17 @@ class StripeEventHandler:
                 enterprise_customer_name=checkout_intent.enterprise_name,
                 enterprise_slug=checkout_intent.enterprise_slug,
             )
-            if _is_annual_renewal_invoice(invoice, subscription_details):
+            # This is inside the ``invoice.total > 0`` branch, so $0 invoices never send order_completed.
+            # order_completed fires once, on the first paid invoice of a subscription: the
+            # creation invoice, or the subscription_cycle invoice issued when a trial ends.
+            # Annual renewals, license changes (subscription_update) and one-off/manual
+            # invoices are not new orders.
+            is_annual_renewal = _is_annual_renewal_invoice(invoice, subscription_details)
+            if invoice.to_dict().get('billing_reason') in ORDER_COMPLETED_BILLING_REASONS and not is_annual_renewal:
+                enqueue_checkout_segment_event(
+                    CheckoutSegmentEvents.ORDER_COMPLETED, checkout_intent, invoice.id,
+                )
+            if is_annual_renewal:
                 # Renewal records only track the trial→paid transition, so later paid terms have nothing
                 # to process. Just let the admins know the subscription renewed.
                 logger.info(
@@ -926,6 +992,8 @@ class StripeEventHandler:
                 checkout_intent.id,
             )
         _update_renewal_cancellation_state(checkout_intent, is_canceled=True, subscription_cancel_at=None)
+
+        enqueue_order_cancelled_segment_event(checkout_intent, subscription)
 
         previous_summary = checkout_intent.previous_summary(event, stripe_object_type='subscription')
         if previous_summary:
