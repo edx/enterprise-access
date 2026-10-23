@@ -18,7 +18,7 @@ annotated-types==0.8.0
     # via
     #   -r requirements/validation.txt
     #   pydantic
-anthropic==1.17.0
+anthropic==2.1.0
     # via -r requirements/validation.txt
 anyio==4.15.1
     # via
@@ -127,7 +127,7 @@ colorama==0.4.6
     #   tox
 confluent-kafka[avro,schema-registry]==2.6.1
     # via -r requirements/validation.txt
-coverage[toml]==7.16.2
+coverage[toml]==7.17.0
     # via
     #   -r requirements/validation.txt
     #   pytest-cov
@@ -479,7 +479,7 @@ oauthlib==4.0.0
     #   -r requirements/validation.txt
     #   requests-oauthlib
     #   social-auth-core
-openai==3.35.1
+openai==3.37.0
     # via -r requirements/validation.txt
 openedx-atlas==0.7.2
     # via -r requirements/validation.txt
@@ -541,7 +541,7 @@ psutil==7.2.2
     #   edx-django-utils
 pycodestyle==2.15.0
     # via -r requirements/validation.txt
-pycparser==3.11
+pycparser==3.12
     # via
     #   -r requirements/validation.txt
     #   cffi
@@ -623,7 +623,7 @@ pytest-dictsdiff==0.5.8
     # via -r requirements/validation.txt
 pytest-django==4.14.0
     # via -r requirements/validation.txt
-python-dateutil==2.9.0.post0
+python-dateutil==3.0.0
     # via
     #   -r requirements/validation.txt
     #   analytics-python
@@ -730,7 +730,7 @@ snowballstemmer==3.1.1
     # via
     #   -r requirements/validation.txt
     #   pydocstyle
-snowflake-connector-python==5.0.0
+snowflake-connector-python==5.1.0
     # via -r requirements/validation.txt
 social-auth-app-django==5.9.0
     # via
@@ -809,7 +809,8 @@ tzdata==2026.5
     # via
     #   -r requirements/validation.txt
     #   kombu
-tzlocal==5.4.4
+    #   python-dateutil
+tzlocal==5.4.5
     # via
     #   -r requirements/validation.txt
     #   celery
@@ -830,7 +831,7 @@ vine==5.1.0
     #   amqp
     #   celery
     #   kombu
-virtualenv==21.14.12
+virtualenv==21.14.13
     # via
     #   -r requirements/validation.txt
     #   tox
