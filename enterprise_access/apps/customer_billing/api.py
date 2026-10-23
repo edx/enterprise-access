@@ -630,26 +630,41 @@ def evaluate_top_up_eligibility(policy, subsidy, now=None):
     }
 
 
+class SubsidyUnreachableError(SubsidyAPIHTTPError):
+    """
+    A budget's subsidy answered 403/404 on every one of ``TOP_UP_MAX_SUBSIDY_FETCH_ATTEMPTS`` attempts.
+
+    Subclasses ``SubsidyAPIHTTPError``, so ``error_response`` still gives the subsidy's last response.
+    """
+
+
 def _fetch_top_up_subsidy_record(policy):
     """
     Fetch the policy's subsidy record, trying up to ``TOP_UP_MAX_SUBSIDY_FETCH_ATTEMPTS`` (3) times while the
     subsidy answers 403/404. Any other failure is raised immediately.
 
     Raises:
-        SubsidyAPIHTTPError: on a non-403/404 failure, or the last 403/404 once every attempt has failed.
+        SubsidyUnreachableError: if every attempt answered 403/404.
+        SubsidyAPIHTTPError: for any other HTTP failure (e.g. a 5xx).
     """
     for attempt in range(1, TOP_UP_MAX_SUBSIDY_FETCH_ATTEMPTS + 1):
         try:
             return policy.subsidy_record(raise_on_error=True)
         except SubsidyAPIHTTPError as exc:
             status_code = getattr(exc.error_response, 'status_code', None)
-            if status_code not in UNREACHABLE_SUBSIDY_STATUS_CODES or attempt == TOP_UP_MAX_SUBSIDY_FETCH_ATTEMPTS:
-                logger.info(
+            if status_code not in UNREACHABLE_SUBSIDY_STATUS_CODES:
+                logger.error(
+                    'Top-up eligibility: failed to fetch subsidy %s for policy %s (subsidy_status_code=%s).',
+                    policy.subsidy_uuid, policy.uuid, status_code,
+                )
+                raise
+            if attempt == TOP_UP_MAX_SUBSIDY_FETCH_ATTEMPTS:
+                raise SubsidyUnreachableError(str(exc)) from exc.__cause__
+            logger.info(
                 'Top-up eligibility: subsidy %s for policy %s answered %s on attempt %s of %s; retrying.',
                 policy.subsidy_uuid, policy.uuid, status_code, attempt, TOP_UP_MAX_SUBSIDY_FETCH_ATTEMPTS,
             )
-                raise
-    return {}  # unreachable: the last attempt either returns or raises
+    return {}  # never reached: the last attempt either returns or raises
 
 
 def evaluate_top_up_eligibility_for_policies(policies, raise_if_all_unreachable=True, now=None):
@@ -657,14 +672,15 @@ def evaluate_top_up_eligibility_for_policies(policies, raise_if_all_unreachable=
     Evaluate top-up eligibility for each of the given budgets, fetching their subsidy records.
 
     Same shape as ``get_policies_accepting_requests()`` (docs/architecture-patterns.md §18): a budget whose subsidy
-    answers 403/404 (e.g. soft-deleted) on every one of ``TOP_UP_MAX_SUBSIDY_FETCH_ATTEMPTS`` (3) tries is reported
-    as ``budget_not_active`` and the other budgets are still evaluated. With ``raise_if_all_unreachable``, every
-    subsidy being unreachable is re-raised instead, since that looks the same as our own credentials losing their
-    role. Inactive or retired budgets are already
-    ``budget_not_active``, so their subsidy isn't fetched (they report ``subsidy_expiration_datetime: None``).
+    answers 403/404 (e.g. soft-deleted) on every one of ``TOP_UP_MAX_SUBSIDY_FETCH_ATTEMPTS`` (3) attempts is
+    reported as ``budget_not_active`` and the other budgets are still evaluated. With ``raise_if_all_unreachable``,
+    every subsidy being unreachable is re-raised instead, since that looks the same as our own credentials losing
+    their role. Inactive or retired budgets are already ``budget_not_active``, so their subsidy isn't fetched (they
+    report ``subsidy_expiration_datetime: None``).
 
     Raises:
-        SubsidyAPIHTTPError: for any other HTTP failure (e.g. a 5xx), or if every subsidy is unreachable.
+        SubsidyUnreachableError: if every fetched subsidy is unreachable (with ``raise_if_all_unreachable``).
+        SubsidyAPIHTTPError: for any other HTTP failure (e.g. a 5xx).
         requests.exceptions.RequestException: if enterprise-subsidy can't be reached at all.
     """
     now = now or timezone.now()
@@ -682,20 +698,14 @@ def evaluate_top_up_eligibility_for_policies(policies, raise_if_all_unreachable=
         fetched_count += 1
         try:
             subsidy = _fetch_top_up_subsidy_record(policy)
-        except SubsidyAPIHTTPError as exc:
-            status_code = getattr(exc.error_response, 'status_code', None)
-            if status_code not in UNREACHABLE_SUBSIDY_STATUS_CODES:
-                logger.error(
-                    'Top-up eligibility: failed to fetch subsidy %s for policy %s (subsidy_status_code=%s).',
-                    policy.subsidy_uuid, policy.uuid, status_code,
-                )
-                raise
+        except SubsidyUnreachableError as exc:
             last_unreachable_error = exc
             unreachable_count += 1
             logger.warning(
                 'Top-up eligibility: could not fetch subsidy %s after %s attempts (subsidy_status_code=%s). '
                 'Policy %s is reported as budget_not_active.',
-                policy.subsidy_uuid, TOP_UP_MAX_SUBSIDY_FETCH_ATTEMPTS, status_code, policy.uuid,
+                policy.subsidy_uuid, TOP_UP_MAX_SUBSIDY_FETCH_ATTEMPTS,
+                getattr(exc.error_response, 'status_code', None), policy.uuid,
             )
             subsidy = {}
         results.append(evaluate_top_up_eligibility(policy, subsidy, now=now))
