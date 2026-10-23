@@ -44,3 +44,9 @@ pip<25.3
 # Same pin as edx/enterprise-catalog, added in "build: pin algolia < 4 and make upgrade" (2024-08-19):
 # https://github.com/edx/enterprise-catalog/commit/04c4efa552bcdbf5dad27265b435fae3df23ad72
 algoliasearch<4
+
+# Stay on stripe 15.x (Stripe API 2026-08-26.dahlia) to keep self-service checkout's behavior identical.
+# stripe 16.0.0 moves to API 2026-09-30.endive, which replaces Checkout Session payment_method_types with
+# allowed_payment_method_types, a filter over the dynamically eligible payment methods rather than an
+# explicit list. To take stripe 16, follow docs/references/stripe_sdk_upgrades.md.
+stripe<16
