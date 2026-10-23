@@ -736,7 +736,7 @@ social-auth-app-django==5.9.0
     # via
     #   -r requirements/validation.txt
     #   edx-auth-backends
-social-auth-core==4.9.1
+social-auth-core==5.0.2
     # via
     #   -r requirements/validation.txt
     #   edx-auth-backends
