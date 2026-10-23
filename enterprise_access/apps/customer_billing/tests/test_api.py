@@ -16,12 +16,13 @@ from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.customer_billing import api as customer_billing_api
 from enterprise_access.apps.customer_billing import stripe_api
 from enterprise_access.apps.customer_billing.api import (
+    SubsidyUnreachableError,
     evaluate_top_up_eligibility,
     evaluate_top_up_eligibility_for_policies,
     is_account_in_good_standing,
     is_top_up_enabled
 )
-from enterprise_access.apps.customer_billing.constants import CheckoutIntentState
+from enterprise_access.apps.customer_billing.constants import TOP_UP_MAX_SUBSIDY_FETCH_ATTEMPTS, CheckoutIntentState
 from enterprise_access.apps.customer_billing.models import (
     CheckoutIntent,
     FailedCheckoutIntentConflict,
@@ -921,6 +922,7 @@ class EvaluateTopUpEligibilityForPoliciesTests(TestCase):
         with _mock_retrieve_subsidy(side_effect=self._retrieve_failing(failing, status_code)):
             with self.assertRaises(SubsidyAPIHTTPError) as ctx:
                 evaluate_top_up_eligibility_for_policies(policies)
+        self.assertIsInstance(ctx.exception, SubsidyUnreachableError)
         self.assertEqual(ctx.exception.error_response.status_code, status_code)
 
     def test_every_subsidy_unreachable_reported_when_not_raising(self):
@@ -943,6 +945,29 @@ class EvaluateTopUpEligibilityForPoliciesTests(TestCase):
         with _mock_retrieve_subsidy(side_effect=exc_class('boom')):
             with self.assertRaises(exc_class):
                 evaluate_top_up_eligibility_for_policies([policy])
+
+    @ddt.data(403, 404)
+    def test_unreachable_subsidy_is_tried_three_times(self, status_code):
+        """ A 403/404 is retried up to TOP_UP_MAX_SUBSIDY_FETCH_ATTEMPTS times before budget_not_active. """
+        policy = PerLearnerSpendCapLearnerCreditAccessPolicyFactory()
+        with _mock_retrieve_subsidy(side_effect=_http_error(status_code)) as mock_get_client:
+            results = evaluate_top_up_eligibility_for_policies([policy], raise_if_all_unreachable=False)
+        self.assertEqual(self._codes_by_policy(results), {policy.uuid: ['budget_not_active']})
+        self.assertEqual(mock_get_client.return_value.retrieve_subsidy.call_count, TOP_UP_MAX_SUBSIDY_FETCH_ATTEMPTS)
+
+    def test_unreachable_subsidy_that_recovers_on_retry_is_evaluated(self):
+        policy = PerLearnerSpendCapLearnerCreditAccessPolicyFactory()
+        with _mock_retrieve_subsidy(side_effect=[_http_error(403), _http_error(403), self.healthy_subsidy]):
+            results = evaluate_top_up_eligibility_for_policies([policy])
+        self.assertEqual(self._codes_by_policy(results), {policy.uuid: []})
+
+    def test_server_error_is_not_retried(self):
+        policy = PerLearnerSpendCapLearnerCreditAccessPolicyFactory()
+        with _mock_retrieve_subsidy(side_effect=_http_error(500)) as mock_get_client:
+            with self.assertRaises(SubsidyAPIHTTPError) as ctx:
+                evaluate_top_up_eligibility_for_policies([policy])
+        self.assertNotIsInstance(ctx.exception, SubsidyUnreachableError)
+        mock_get_client.return_value.retrieve_subsidy.assert_called_once()
 
     def test_shared_subsidy_is_fetched_once(self):
         """ subsidy_record() is request-cached, so budgets sharing a subsidy cost one call. """

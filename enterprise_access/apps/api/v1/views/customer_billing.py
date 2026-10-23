@@ -2481,9 +2481,8 @@ class LearnerCreditTopUpViewSet(viewsets.ViewSet):
 
         policies = SubsidyAccessPolicy.objects.filter(enterprise_customer_uuid=enterprise_customer_uuid)
         if policy_uuid:
-            # An explicit budget is always evaluated (so an inactive one reports ``budget_not_active``);
-            # a policy of another enterprise is simply not found.
-            policies = policies.filter(uuid=policy_uuid)
+            # An inactive budget, or a policy of another enterprise, is simply not found.
+            policies = policies.filter(uuid=policy_uuid, active=True)
             if not policies.exists():
                 return _top_up_error_response(
                     'BUDGET_NOT_FOUND', status.HTTP_404_NOT_FOUND,

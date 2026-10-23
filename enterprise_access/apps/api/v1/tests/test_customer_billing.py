@@ -4137,10 +4137,12 @@ class LearnerCreditTopUpEligibilityTests(APITest):
             [result] = self._get(policy_uuid=str(policy.uuid)).json()['results']
         self.assertEqual([r['error_code'] for r in result['reasons']], ['account_not_eligible'])
 
-    def test_inactive_policy_by_uuid_reports_budget_not_active(self):
+    def test_inactive_policy_by_uuid_is_404_with_error_code(self):
         policy = self._policy(active=False)
-        [result] = self._get(policy_uuid=str(policy.uuid)).json()['results']
-        self.assertEqual([r['error_code'] for r in result['reasons']], ['budget_not_active'])
+        response = self._get(policy_uuid=str(policy.uuid))
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(response.json()['error_code'], 'budget_not_found')
+        self.mock_retrieve_subsidy.assert_not_called()
 
     def test_inactive_subsidy_reports_budget_not_active(self):
         policy = self._policy()

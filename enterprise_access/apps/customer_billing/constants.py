@@ -62,6 +62,9 @@ CHECKOUT_SESSION_ERROR_CODES = {
 # Learner Credit top-up eligibility. Reason codes are shared by the eligibility, quote and pay endpoints.
 TOP_UP_MIN_DAYS_BEFORE_EXPIRY = 14
 
+# How many times a budget's subsidy is fetched while it answers 403/404, before it is reported as budget_not_active.
+TOP_UP_MAX_SUBSIDY_FETCH_ATTEMPTS = 3
+
 TOP_UP_INELIGIBILITY_REASONS = {
     'BUDGET_NOT_ACTIVE': (
         'budget_not_active',

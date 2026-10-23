@@ -28,8 +28,8 @@ Reason codes and error codes are in `customer_billing/constants.py` (`TOP_UP_INE
 - **Without `policy_uuid`:** returns every policy of the enterprise with `active=True`, oldest first. A retired
   policy that is still `active=True` is listed and reports `budget_not_active`, with
   `subsidy_expiration_datetime: null` (its subsidy isn't fetched).
-- **With `policy_uuid`:** that budget is always evaluated, even if inactive, so the portal can show why it can't be
-  topped up.
+- **With `policy_uuid`:** that budget is evaluated only if it is `active=True`; an inactive one returns 404
+  `budget_not_found`, the same as a policy of another enterprise.
 
 Ineligibility is a normal answer, not an error: it returns **200** with reasons.
 
@@ -60,7 +60,7 @@ A budget is eligible only when `reasons` is empty. Every failing rule is reporte
 
 | `error_code` | When |
 |---|---|
-| `budget_not_active` | The policy is inactive or retired, the subsidy is not active (not started yet, or expired), or the subsidy answered 403/404 (see below). |
+| `budget_not_active` | The policy is retired, the subsidy is not active (not started yet, or expired), or the subsidy answered 403/404 (see below). |
 | `budget_expiring_soon` | Fewer than `TOP_UP_MIN_DAYS_BEFORE_EXPIRY` (14) days remain before the subsidy expires. Exactly 14 days still passes. An expired subsidy reports this as well as `budget_not_active`. |
 | `account_not_eligible` | The account standing / agreement type check fails. Always passes today (see OQ-8). |
 
@@ -84,6 +84,7 @@ Each budget's subsidy is read with `policy.subsidy_record(raise_on_error=True)`,
 
 | enterprise-subsidy answers | Result |
 |---|---|
+| 403 or 404 on one attempt | That subsidy is fetched again, up to `TOP_UP_MAX_SUBSIDY_FETCH_ATTEMPTS` (3) attempts in all. The rows below apply once every attempt has failed; a success on a retry is used normally. Other failures are not retried. |
 | 403 or 404 for **some** subsidies | Only those budgets report `budget_not_active`; the rest are evaluated normally (200). A soft-deleted subsidy answers 403, not 404. |
 | 403 or 404 for **every** fetched subsidy | 503. That looks the same as our own credentials losing their role, so it is treated as an outage rather than reported as "nothing active". Inactive or retired budgets are already `budget_not_active`, so their subsidy isn't fetched and doesn't count: an enterprise whose budgets are all retired gets 200, not 503. |
 | 403 or 404 for an explicitly requested `policy_uuid` | 200 with `budget_not_active`, since a deleted subsidy would otherwise return a 503 forever. |
