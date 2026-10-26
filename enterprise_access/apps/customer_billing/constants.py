@@ -98,6 +98,13 @@ TOP_UP_ERRORS = {
 SLUG_RESERVATION_DURATION_MINUTES = 24 * 60
 INTENT_RESERVATION_DURATION_MINUTES = 24 * 60
 
+# How long an unpaid Learner Credit top-up quote can still be paid.
+LEARNER_CREDIT_TOP_UP_QUOTE_MINUTES = 30
+
+# Inclusive limits on the credit a single top-up adds to a budget, in USD cents.
+LEARNER_CREDIT_TOP_UP_MIN_AMOUNT_CENTS = 50_000
+LEARNER_CREDIT_TOP_UP_MAX_AMOUNT_CENTS = 2_000_000
+
 
 class CheckoutIntentState(StrEnum):
     """
@@ -151,6 +158,55 @@ ALLOWED_CHECKOUT_INTENT_STATE_TRANSITIONS = {
         CheckoutIntentState.CREATED,
     ],
     CheckoutIntentState.FULFILLED: [],
+}
+
+
+class LearnerCreditTopUpState(StrEnum):
+    """
+    Namespace for LearnerCreditTopUp state values (Phase 1, card payments).
+    """
+    CREATED = 'created'
+    REQUIRES_ACTION = 'requires_action'
+    PAID = 'paid'
+    DEPOSITED = 'deposited'
+    FULFILLED = 'fulfilled'
+    EXPIRED = 'expired'
+    ERRORED_FULFILLMENT = 'errored_fulfillment'
+    REFUNDED = 'refunded'
+
+
+ALLOWED_LEARNER_CREDIT_TOP_UP_STATE_TRANSITIONS = {
+    LearnerCreditTopUpState.CREATED: [
+        LearnerCreditTopUpState.REQUIRES_ACTION,
+        LearnerCreditTopUpState.PAID,
+        LearnerCreditTopUpState.EXPIRED,
+    ],
+    LearnerCreditTopUpState.REQUIRES_ACTION: [
+        LearnerCreditTopUpState.CREATED,
+        LearnerCreditTopUpState.PAID,
+        LearnerCreditTopUpState.EXPIRED,
+    ],
+    # A 3DS challenge finished after the quote expired still charges the card, and that money must be credited.
+    LearnerCreditTopUpState.EXPIRED: [
+        LearnerCreditTopUpState.PAID,
+    ],
+    LearnerCreditTopUpState.PAID: [
+        LearnerCreditTopUpState.DEPOSITED,
+        LearnerCreditTopUpState.ERRORED_FULFILLMENT,
+    ],
+    # FULFILLED is reachable only from DEPOSITED, so the spend limit is raised at most once.
+    LearnerCreditTopUpState.DEPOSITED: [
+        LearnerCreditTopUpState.FULFILLED,
+        LearnerCreditTopUpState.ERRORED_FULFILLMENT,
+    ],
+    # The ops re-run resumes at the step that failed: PAID if no deposit was recorded, DEPOSITED if one was.
+    LearnerCreditTopUpState.ERRORED_FULFILLMENT: [
+        LearnerCreditTopUpState.PAID,
+        LearnerCreditTopUpState.DEPOSITED,
+        LearnerCreditTopUpState.REFUNDED,
+    ],
+    LearnerCreditTopUpState.FULFILLED: [],
+    LearnerCreditTopUpState.REFUNDED: [],
 }
 
 # Patterns used to serialize date/time to be machine-readable by Braze.

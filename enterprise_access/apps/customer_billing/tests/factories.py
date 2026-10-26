@@ -10,12 +10,20 @@ from factory.django import DjangoModelFactory
 from faker import Faker
 
 from enterprise_access.apps.core.tests.factories import UserFactory
-from enterprise_access.apps.customer_billing.constants import SUBSCRIPTION_ITEM_TYPE, CheckoutIntentState
+from enterprise_access.apps.customer_billing.constants import (
+    SUBSCRIPTION_ITEM_TYPE,
+    CheckoutIntentState,
+    LearnerCreditTopUpState
+)
 from enterprise_access.apps.customer_billing.models import (
     CheckoutIntent,
+    LearnerCreditTopUp,
     SelfServiceSubscriptionRenewal,
     StripeEventData,
     StripeEventSummary
+)
+from enterprise_access.apps.subsidy_access_policy.tests.factories import (
+    PerLearnerSpendCapLearnerCreditAccessPolicyFactory
 )
 
 FAKER = Faker()
@@ -178,3 +186,23 @@ class SelfServiceSubscriptionRenewalFactory(DjangoModelFactory):
     stripe_subscription_id = factory.LazyFunction(lambda: f'sub_{FAKER.bothify("?" * 24)}')
     stripe_invoice_id = None
     effective_date = None
+
+
+class LearnerCreditTopUpFactory(DjangoModelFactory):
+    """
+    Factory for creating LearnerCreditTopUp instances for testing.
+
+    enterprise_customer_uuid, subsidy_uuid and initiated_by_lms_user_id are left unset,
+    so the model copies them from the policy and the initiating user.
+    """
+    class Meta:
+        model = LearnerCreditTopUp
+
+    subsidy_access_policy = factory.SubFactory(PerLearnerSpendCapLearnerCreditAccessPolicyFactory)
+    initiated_by = factory.SubFactory(UserFactory)
+    state = LearnerCreditTopUpState.CREATED
+    amount_cents = 100_000
+    discount_rate = None
+    discount_cents = None
+    charge_amount_cents = factory.LazyAttribute(lambda obj: obj.amount_cents - (obj.discount_cents or 0))
+    stripe_customer_id = factory.LazyAttribute(lambda x: f'cus_{FAKER.bothify("?" * 17)}_00')
