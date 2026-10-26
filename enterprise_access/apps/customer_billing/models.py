@@ -1770,7 +1770,9 @@ class LearnerCreditTopUp(TimeStampedModel):
             return
 
         errors = {}
-        if self.subsidy_access_policy_id:
+        if not self.subsidy_access_policy_id:
+            errors['subsidy_access_policy'] = 'This field is required.'
+        else:
             policy = self.subsidy_access_policy
             for field_name in ('enterprise_customer_uuid', 'subsidy_uuid'):
                 value = getattr(self, field_name)

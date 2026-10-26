@@ -1845,17 +1845,19 @@ class TestLearnerCreditTopUp(TestCase):
         self.assertEqual(top_up.history.count(), history_count)
 
     def test_transition_table_allows_exactly_the_listed_changes(self):
-        """ The table is the contract the money-movement code builds on: nothing beyond the listed changes. """
+        """
+        The table is the contract the money-movement code builds on: nothing beyond the listed changes.
+        Staying in the same state is always allowed.
+        """
         allowed = {(from_state, to_state) for from_state, to_state, _, _ in ALLOWED_TOP_UP_TRANSITIONS}
         self.assertEqual(set(ALLOWED_LEARNER_CREDIT_TOP_UP_STATE_TRANSITIONS), set(LearnerCreditTopUpState))
         for from_state in LearnerCreditTopUpState:
             for to_state in LearnerCreditTopUpState:
-                if from_state != to_state:
-                    self.assertEqual(
-                        LearnerCreditTopUp.is_valid_state_transition(from_state, to_state),
-                        (from_state, to_state) in allowed,
-                        f'{from_state} -> {to_state}',
-                    )
+                self.assertEqual(
+                    LearnerCreditTopUp.is_valid_state_transition(from_state, to_state),
+                    from_state == to_state or (from_state, to_state) in allowed,
+                    f'{from_state} -> {to_state}',
+                )
 
     def test_unknown_state_is_rejected(self):
         top_up = self._create_top_up()
@@ -2108,6 +2110,57 @@ class TestLearnerCreditTopUp(TestCase):
 
         self.assertTrue(SubsidyAccessPolicy.objects.filter(uuid=self.policy.uuid).exists())
         self.assertTrue(LearnerCreditTopUp.objects.filter(uuid=top_up.uuid).exists())
+
+    def test_str(self):
+        top_up = self._create_top_up(state='paid')
+
+        self.assertEqual(
+            str(top_up),
+            f'<LearnerCreditTopUp uuid={top_up.uuid}, subsidy_access_policy={self.policy.pk}, '
+            'state=paid, amount_cents=100000>',
+        )
+
+    def test_policy_is_required(self):
+        with self.assertRaises(ValidationError) as ctx:
+            LearnerCreditTopUp.objects.create(
+                amount_cents=100000, charge_amount_cents=100000, stripe_customer_id='cus_test',
+            )
+
+        self.assertIn('subsidy_access_policy', ctx.exception.message_dict)
+        self.assertFalse(LearnerCreditTopUp.objects.exists())
+
+    def test_top_up_without_initiating_user(self):
+        top_up = LearnerCreditTopUp.objects.create(
+            subsidy_access_policy=self.policy, amount_cents=100000, charge_amount_cents=100000,
+            stripe_customer_id='cus_test',
+        )
+
+        top_up.refresh_from_db()
+        self.assertIsNone(top_up.initiated_by)
+        self.assertIsNone(top_up.initiated_by_lms_user_id)
+
+    def test_existing_top_up_is_not_rechecked(self):
+        """ A paid top-up must stay valid even if the allowed range is narrowed after it was quoted. """
+        top_up = self._create_top_up(state='paid')
+
+        with mock.patch('enterprise_access.apps.customer_billing.models.LEARNER_CREDIT_TOP_UP_MAX_AMOUNT_CENTS', 60000):
+            # The narrower range is in force for new top-ups...
+            with self.assertRaises(ValidationError):
+                self._save_top_up(amount_cents=100000, charge_amount_cents=100000)
+            # ...but the existing one passes clean() (as when a form or admin validates it) and can still move.
+            top_up.clean()
+            self.assertTrue(top_up.transition_to('deposited'))
+
+    def test_empty_update_fields_saves_nothing(self):
+        """ As in Django, an empty update_fields skips the save: modified isn't written on its own. """
+        top_up = self._create_top_up()
+        modified = top_up.modified
+
+        with freeze_time(timezone.now() + timedelta(minutes=1)):
+            top_up.save(update_fields=[])
+
+        top_up.refresh_from_db()
+        self.assertEqual(top_up.modified, modified)
 
     def test_retiring_the_initiating_user_keeps_the_record(self):
         top_up = self._create_top_up()
