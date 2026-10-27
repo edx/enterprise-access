@@ -1741,6 +1741,50 @@ ALLOWED_TOP_UP_TRANSITIONS = [
 ]
 
 
+# (fields that differ from a valid 100,000-cent top-up with no discount, the field the error is reported on).
+INVALID_NEW_TOP_UPS = [
+    ({'discount_rate': Decimal('0.1000'), 'discount_cents': 10000}, 'charge_amount_cents'),
+    ({'discount_cents': 0}, 'discount_cents'),
+    ({'discount_rate': Decimal('0.1000')}, 'discount_cents'),
+    ({'amount_cents': 49999, 'charge_amount_cents': 49999}, 'amount_cents'),
+    ({'amount_cents': 2000001, 'charge_amount_cents': 2000001}, 'amount_cents'),
+    ({'discount_rate': Decimal('0.1000'), 'discount_cents': -10000, 'charge_amount_cents': 110000}, 'discount_cents'),
+    ({'discount_rate': Decimal('1.0000'), 'discount_cents': 100000, 'charge_amount_cents': 0}, 'discount_cents'),
+    ({'discount_rate': Decimal('-0.1000'), 'discount_cents': 0}, 'discount_rate'),
+    ({'discount_rate': Decimal('1.0000'), 'discount_cents': 0}, 'discount_rate'),
+    # Fractional cents pass the arithmetic but would be truncated on save to 50001 - 6170 != 43830.
+    (
+        {'amount_cents': 50001, 'discount_rate': Decimal('0.1234'), 'discount_cents': Decimal('6170.1234'),
+         'charge_amount_cents': Decimal('43830.8766')},
+        'discount_cents',
+    ),
+    (
+        {'amount_cents': 50001, 'discount_rate': Decimal('0.1234'), 'discount_cents': Decimal('6170.1234'),
+         'charge_amount_cents': Decimal('43830.8766')},
+        'charge_amount_cents',
+    ),
+    ({'amount_cents': Decimal('100000.5'), 'charge_amount_cents': Decimal('100000.5')}, 'amount_cents'),
+    # Amounts must be ints: no decimals at all, even with a zero fractional part.
+    ({'amount_cents': Decimal('100000')}, 'amount_cents'),
+    ({'discount_rate': Decimal('0.1000'), 'discount_cents': Decimal('10000'), 'charge_amount_cents': 90000},
+     'discount_cents'),
+    ({'charge_amount_cents': 100000.0}, 'charge_amount_cents'),
+    # The enterprise and subsidy must match the policy's, and the policy is required.
+    ({'enterprise_customer_uuid': uuid4()}, 'enterprise_customer_uuid'),
+    ({'subsidy_uuid': uuid4()}, 'subsidy_uuid'),
+    ({'subsidy_access_policy': None}, 'subsidy_access_policy'),
+]
+
+# Amounts that are saved as given: the charge is the full amount minus the discount, and the limits are inclusive.
+VALID_NEW_TOP_UP_AMOUNTS = [
+    {'discount_rate': Decimal('0.1000'), 'discount_cents': 10000, 'charge_amount_cents': 90000},
+    {'discount_rate': Decimal('0.0000'), 'discount_cents': 0, 'charge_amount_cents': 100000},
+    {'discount_rate': None, 'discount_cents': None, 'charge_amount_cents': 100000},
+    {'amount_cents': 50000, 'charge_amount_cents': 50000},
+    {'amount_cents': 2000000, 'charge_amount_cents': 2000000},
+]
+
+
 @ddt.ddt
 class TestLearnerCreditTopUp(TestCase):
     """
@@ -1755,18 +1799,43 @@ class TestLearnerCreditTopUp(TestCase):
     def _create_top_up(self, **kwargs):
         return LearnerCreditTopUpFactory(subsidy_access_policy=self.policy, initiated_by=self.user, **kwargs)
 
-    def _save_top_up(self, **kwargs):
-        """ Save a top-up through the model, with no factory defaults beyond the required fields. """
-        return LearnerCreditTopUp.objects.create(
-            subsidy_access_policy=self.policy,
-            initiated_by=self.user,
-            stripe_customer_id='cus_test',
-            **kwargs,
-        )
+    def _save_top_up(self, **overrides):
+        """ Save a 100,000-cent top-up with no discount through the model, with no other factory defaults. """
+        fields = {
+            'subsidy_access_policy': self.policy,
+            'initiated_by': self.user,
+            'stripe_customer_id': 'cus_test',
+            'amount_cents': 100000,
+            'charge_amount_cents': 100000,
+            **overrides,
+        }
+        return LearnerCreditTopUp.objects.create(**fields)
+
+    def _two_copies(self, **kwargs):
+        """ Create a top-up and load it twice, as two requests or tasks would. """
+        self._create_top_up(**kwargs)
+        return LearnerCreditTopUp.objects.get(), LearnerCreditTopUp.objects.get()
+
+    def _latest_history(self, top_up):
+        return top_up.history.latest('history_id')
+
+    def _assert_nothing_written(self, top_up, state, history_count):
+        """ Assert the instance and the stored row are both still in ``state``, with no new history record. """
+        self.assertEqual(top_up.state, state)
+        top_up.refresh_from_db()
+        self.assertEqual(top_up.state, state)
+        self.assertEqual(top_up.history.count(), history_count)
+
+    def _fail_post_save(self):
+        """ Make every LearnerCreditTopUp save fail after its UPDATE, as a failing post_save receiver would. """
+        def fail(**kwargs):
+            raise RuntimeError('receiver failed')
+        post_save.connect(fail, sender=LearnerCreditTopUp, weak=False, dispatch_uid='test-top-up-fail')
+        self.addCleanup(post_save.disconnect, sender=LearnerCreditTopUp, dispatch_uid='test-top-up-fail')
 
     @freeze_time('2026-10-26 12:00:00')
     def test_new_top_up_is_an_unpaid_quote(self):
-        top_up = self._save_top_up(amount_cents=100000, charge_amount_cents=100000)
+        top_up = self._save_top_up()
 
         top_up.refresh_from_db()
         self.assertEqual(top_up.state, LearnerCreditTopUpState.CREATED)
@@ -1778,22 +1847,38 @@ class TestLearnerCreditTopUp(TestCase):
         self.assertIsNone(top_up.discount_cents)
         self.assertEqual(top_up.expires_at - top_up.created, timedelta(minutes=30))
 
-    @ddt.data('enterprise_customer_uuid', 'subsidy_uuid')
-    def test_policy_fields_must_match_the_policy(self, field_name):
-        with self.assertRaises(ValidationError) as ctx:
-            self._save_top_up(amount_cents=100000, charge_amount_cents=100000, **{field_name: uuid4()})
+    def test_top_up_without_initiating_user(self):
+        top_up = self._save_top_up(initiated_by=None)
 
-        self.assertIn(field_name, ctx.exception.message_dict)
-        self.assertFalse(LearnerCreditTopUp.objects.exists())
+        top_up.refresh_from_db()
+        self.assertIsNone(top_up.initiated_by)
+        self.assertIsNone(top_up.initiated_by_lms_user_id)
 
     @ddt.data('enterprise_customer_uuid', 'subsidy_uuid')
     def test_policy_fields_matching_the_policy_are_accepted(self, field_name):
         policy_value = getattr(self.policy, field_name)
 
-        top_up = self._save_top_up(amount_cents=100000, charge_amount_cents=100000, **{field_name: str(policy_value)})
+        top_up = self._save_top_up(**{field_name: str(policy_value)})
 
         top_up.refresh_from_db()
         self.assertEqual(getattr(top_up, field_name), policy_value)
+
+    @ddt.data(*VALID_NEW_TOP_UP_AMOUNTS)
+    def test_valid_amounts_are_saved(self, amounts):
+        top_up = self._save_top_up(**amounts)
+
+        top_up.refresh_from_db()
+        for field_name, value in amounts.items():
+            self.assertEqual(getattr(top_up, field_name), value, field_name)
+
+    @ddt.data(*INVALID_NEW_TOP_UPS)
+    @ddt.unpack
+    def test_invalid_new_top_up_is_rejected(self, overrides, error_field):
+        with self.assertRaises(ValidationError) as ctx:
+            self._save_top_up(**overrides)
+
+        self.assertIn(error_field, ctx.exception.message_dict)
+        self.assertFalse(LearnerCreditTopUp.objects.exists())
 
     def test_later_policy_change_does_not_block_the_top_up(self):
         """ subsidy_uuid is a copy taken at creation: a policy re-pointed later must not strand a paid top-up. """
@@ -1807,6 +1892,18 @@ class TestLearnerCreditTopUp(TestCase):
         top_up.refresh_from_db()
         self.assertEqual(top_up.state, LearnerCreditTopUpState.DEPOSITED)
         self.assertEqual(top_up.subsidy_uuid, original_subsidy_uuid)
+
+    def test_existing_top_up_is_not_rechecked(self):
+        """ A paid top-up must stay valid even if the allowed range is narrowed after it was quoted. """
+        top_up = self._create_top_up(state='paid')
+
+        with mock.patch('enterprise_access.apps.customer_billing.models.LEARNER_CREDIT_TOP_UP_MAX_AMOUNT_CENTS', 60000):
+            # The narrower range is in force for new top-ups...
+            with self.assertRaises(ValidationError):
+                self._save_top_up()
+            # ...but the existing one passes clean() (as when a form or admin validates it) and can still move.
+            top_up.clean()
+            self.assertTrue(top_up.transition_to('deposited'))
 
     @ddt.data(*ALLOWED_TOP_UP_TRANSITIONS)
     @ddt.unpack
@@ -1839,10 +1936,7 @@ class TestLearnerCreditTopUp(TestCase):
         with self.assertRaises(InvalidLearnerCreditTopUpTransition):
             top_up.transition_to(to_state)
 
-        self.assertEqual(top_up.state, from_state)
-        top_up.refresh_from_db()
-        self.assertEqual(top_up.state, from_state)
-        self.assertEqual(top_up.history.count(), history_count)
+        self._assert_nothing_written(top_up, from_state, history_count)
 
     def test_transition_table_allows_exactly_the_listed_changes(self):
         """
@@ -1859,96 +1953,42 @@ class TestLearnerCreditTopUp(TestCase):
                     f'{from_state} -> {to_state}',
                 )
 
-    def test_unknown_state_is_rejected(self):
+    @ddt.data(
+        ('processing', {}),  # not a state
+        *(
+            ('paid', {field_name: None})
+            for field_name in ('state', 'paid_at', 'deposited_at', 'fulfilled_at', 'amount_cents',
+                               'subsidy_access_policy_id')
+        ),
+    )
+    @ddt.unpack
+    def test_transition_with_bad_arguments_writes_nothing(self, new_state, fields):
+        """ An unknown state, or fields naming the state, a state timestamp or a quote field, raise ValueError. """
         top_up = self._create_top_up()
+        history_count = top_up.history.count()
 
-        with self.assertRaisesRegex(ValueError, 'is not a valid LearnerCreditTopUpState'):
-            top_up.transition_to('processing')
+        with self.assertRaises(ValueError):
+            top_up.transition_to(new_state, **fields)
 
-        top_up.refresh_from_db()
-        self.assertEqual(top_up.state, LearnerCreditTopUpState.CREATED)
+        self._assert_nothing_written(top_up, LearnerCreditTopUpState.CREATED, history_count)
+        self.assertIsNone(top_up.paid_at)
 
-    def test_moving_to_current_state_does_nothing(self):
+    @ddt.data({}, {'last_error': 'deposit failed'})
+    def test_moving_to_current_state_does_nothing(self, fields):
+        """ No write, no history record, and fields are not saved: a warning names any that differ. """
         paid_at = timezone.now() - timedelta(hours=1)
         top_up = self._create_top_up(state='paid', paid_at=paid_at)
         history_count = top_up.history.count()
 
-        self.assertFalse(top_up.transition_to('paid'))
+        logs_context = self.assertLogs if fields else self.assertNoLogs
+        with logs_context('enterprise_access.apps.customer_billing.models', level='WARNING') as logs:
+            self.assertFalse(top_up.transition_to('paid', **fields))
 
-        top_up.refresh_from_db()
-        self.assertEqual(top_up.state, LearnerCreditTopUpState.PAID)
+        if fields:
+            self.assertIn('last_error', logs.output[0])
+        self._assert_nothing_written(top_up, LearnerCreditTopUpState.PAID, history_count)
         self.assertEqual(top_up.paid_at, paid_at)
-        self.assertEqual(top_up.history.count(), history_count)
-
-    def test_moving_to_current_state_does_not_save_fields(self):
-        top_up = self._create_top_up(state='paid')
-
-        with self.assertLogs('enterprise_access.apps.customer_billing.models', level='WARNING') as logs:
-            self.assertFalse(top_up.transition_to('paid', last_error='deposit failed'))
-
-        self.assertIn('last_error', logs.output[0])
-        top_up.refresh_from_db()
         self.assertIsNone(top_up.last_error)
-
-    def test_stale_copy_cannot_fulfill_twice_or_undo_fulfillment(self):
-        """ transition_to() checks the stored state, so a copy loaded before another write can't act on it. """
-        self._create_top_up(state='deposited')
-        current = LearnerCreditTopUp.objects.get()
-        stale = LearnerCreditTopUp.objects.get()
-        self.assertTrue(current.transition_to('fulfilled'))
-        history_count = current.history.count()
-
-        self.assertFalse(stale.transition_to('fulfilled'))
-        self.assertEqual(stale.fulfilled_at, current.fulfilled_at)
-        with self.assertRaises(InvalidLearnerCreditTopUpTransition):
-            stale.transition_to('errored_fulfillment')
-
-        current.refresh_from_db()
-        self.assertEqual(current.state, LearnerCreditTopUpState.FULFILLED)
-        self.assertEqual(current.history.count(), history_count)
-
-    def test_stale_copy_records_the_stored_values_in_history(self):
-        self._create_top_up(state='paid')
-        current = LearnerCreditTopUp.objects.get()
-        stale = LearnerCreditTopUp.objects.get()
-        deposit_uuid = uuid4()
-        current.transition_to('deposited', deposit_uuid=deposit_uuid)
-        current.transition_to('errored_fulfillment')
-
-        self.assertTrue(stale.transition_to('deposited'))
-
-        latest = stale.history.latest('history_id')
-        self.assertEqual(latest.state, LearnerCreditTopUpState.DEPOSITED)
-        self.assertEqual(latest.deposit_uuid, deposit_uuid)
-
-    def test_full_path_is_kept_in_history(self):
-        top_up = self._create_top_up()
-
-        top_up.transition_to('paid')
-        top_up.transition_to('deposited')
-        top_up.transition_to('fulfilled')
-
-        self.assertEqual(
-            list(top_up.history.order_by('history_id').values_list('state', flat=True)),
-            ['created', 'paid', 'deposited', 'fulfilled'],
-        )
-        top_up.refresh_from_db()
-        self.assertLessEqual(top_up.paid_at, top_up.deposited_at)
-        self.assertLessEqual(top_up.deposited_at, top_up.fulfilled_at)
-
-    def test_transition_saves_fields_with_the_state_in_one_write(self):
-        top_up = self._create_top_up()
-        history_count = top_up.history.count()
-
-        top_up.transition_to('paid', stripe_payment_intent_id='pi_1', payment_method_type='card')
-
-        top_up.refresh_from_db()
-        self.assertEqual(top_up.history.count(), history_count + 1)
-        latest = top_up.history.latest('history_id')
-        self.assertEqual(latest.state, LearnerCreditTopUpState.PAID)
-        self.assertEqual(latest.stripe_payment_intent_id, 'pi_1')
-        self.assertEqual(latest.payment_method_type, 'card')
-        self.assertIsNotNone(latest.paid_at)
 
     def test_rerun_keeps_the_first_timestamp(self):
         paid_at = timezone.now() - timedelta(hours=1)
@@ -1960,175 +2000,67 @@ class TestLearnerCreditTopUp(TestCase):
         self.assertEqual(top_up.state, LearnerCreditTopUpState.PAID)
         self.assertEqual(top_up.paid_at, paid_at)
 
-    @ddt.data('state', 'paid_at', 'deposited_at', 'fulfilled_at', 'amount_cents', 'subsidy_access_policy_id')
-    def test_transition_rejects_state_timestamp_and_quote_fields(self, field_name):
+    def test_full_path_is_kept_in_history_one_record_per_change(self):
+        """ Each transition saves the state, its fields and its timestamp in one write. """
         top_up = self._create_top_up()
 
-        with self.assertRaises(ValueError):
-            top_up.transition_to('paid', **{field_name: None})
+        top_up.transition_to('paid', stripe_payment_intent_id='pi_1', payment_method_type='card')
+        paid_record = self._latest_history(top_up)
+        top_up.transition_to('deposited')
+        top_up.transition_to('fulfilled')
 
-        top_up.refresh_from_db()
-        self.assertEqual(top_up.state, LearnerCreditTopUpState.CREATED)
-        self.assertIsNone(top_up.paid_at)
-
-    def test_failed_save_writes_nothing_and_restores_the_instance(self):
-        """ A failure after the UPDATE (here, a post_save receiver) must not leave the row moved. """
-        top_up = self._create_top_up()
-        modified = top_up.modified
-        history_count = top_up.history.count()
-
-        def fail(**kwargs):
-            raise RuntimeError('receiver failed')
-        post_save.connect(fail, sender=LearnerCreditTopUp, weak=False, dispatch_uid='test-top-up-fail')
-        self.addCleanup(post_save.disconnect, sender=LearnerCreditTopUp, dispatch_uid='test-top-up-fail')
-
-        with self.assertRaises(RuntimeError):
-            top_up.transition_to('paid', stripe_payment_intent_id='pi_1')
-
-        self.assertEqual(top_up.state, LearnerCreditTopUpState.CREATED)
-        self.assertIsNone(top_up.paid_at)
-        self.assertIsNone(top_up.stripe_payment_intent_id)
-        self.assertEqual(top_up.modified, modified)
-        top_up.refresh_from_db()
-        self.assertEqual(top_up.state, LearnerCreditTopUpState.CREATED)
-        self.assertIsNone(top_up.stripe_payment_intent_id)
-        self.assertEqual(top_up.history.count(), history_count)
-
-    def test_reused_payment_intent_rejects_the_transition(self):
-        self._create_top_up(stripe_payment_intent_id='pi_1')
-        top_up = self._create_top_up()
-
-        with self.assertRaises(IntegrityError):
-            top_up.transition_to('paid', stripe_payment_intent_id='pi_1')
-
-        self.assertEqual(top_up.state, LearnerCreditTopUpState.CREATED)
-        top_up.refresh_from_db()
-        self.assertEqual(top_up.state, LearnerCreditTopUpState.CREATED)
-        self.assertIsNone(top_up.stripe_payment_intent_id)
-
-    @ddt.data(
-        (Decimal('0.1000'), 10000, 90000),
-        (Decimal('0.0000'), 0, 100000),
-        (None, None, 100000),
-    )
-    @ddt.unpack
-    def test_charge_is_full_amount_minus_discount(self, discount_rate, discount_cents, charge_amount_cents):
-        top_up = self._save_top_up(
-            amount_cents=100000,
-            discount_rate=discount_rate,
-            discount_cents=discount_cents,
-            charge_amount_cents=charge_amount_cents,
+        self.assertEqual(
+            list(top_up.history.order_by('history_id').values_list('state', flat=True)),
+            ['created', 'paid', 'deposited', 'fulfilled'],
         )
-
+        self.assertEqual(paid_record.state, LearnerCreditTopUpState.PAID)
+        self.assertEqual(paid_record.stripe_payment_intent_id, 'pi_1')
+        self.assertEqual(paid_record.payment_method_type, 'card')
+        self.assertIsNotNone(paid_record.paid_at)
         top_up.refresh_from_db()
-        self.assertEqual(top_up.discount_rate, discount_rate)
-        self.assertEqual(top_up.discount_cents, discount_cents)
-        self.assertEqual(top_up.charge_amount_cents, charge_amount_cents)
+        self.assertLessEqual(top_up.paid_at, top_up.deposited_at)
+        self.assertLessEqual(top_up.deposited_at, top_up.fulfilled_at)
 
-    @ddt.data(
-        (100000, Decimal('0.1000'), 10000, 100000, 'charge_amount_cents'),
-        (100000, None, 0, 100000, 'discount_cents'),
-        (100000, Decimal('0.1000'), None, 100000, 'discount_cents'),
-        (49999, None, None, 49999, 'amount_cents'),
-        (2000001, None, None, 2000001, 'amount_cents'),
-        (100000, Decimal('0.1000'), -10000, 110000, 'discount_cents'),
-        (100000, Decimal('1.0000'), 100000, 0, 'discount_cents'),
-        (100000, Decimal('-0.1000'), 0, 100000, 'discount_rate'),
-        (100000, Decimal('1.0000'), 0, 100000, 'discount_rate'),
-        # Fractional cents pass the arithmetic but would be truncated on save to 50001 - 6170 != 43830.
-        (50001, Decimal('0.1234'), Decimal('6170.1234'), Decimal('43830.8766'), 'discount_cents'),
-        (50001, Decimal('0.1234'), Decimal('6170.1234'), Decimal('43830.8766'), 'charge_amount_cents'),
-        (Decimal('100000.5'), None, None, Decimal('100000.5'), 'amount_cents'),
-        # Amounts must be ints: no decimals at all, even with a zero fractional part.
-        (Decimal('100000'), None, None, 100000, 'amount_cents'),
-        (100000, Decimal('0.1000'), Decimal('10000'), 90000, 'discount_cents'),
-        (100000, None, None, 100000.0, 'charge_amount_cents'),
-    )
-    @ddt.unpack
-    def test_inconsistent_amounts_are_rejected(
-        self, amount_cents, discount_rate, discount_cents, charge_amount_cents, error_field,
-    ):
-        with self.assertRaises(ValidationError) as ctx:
-            self._save_top_up(
-                amount_cents=amount_cents,
-                discount_rate=discount_rate,
-                discount_cents=discount_cents,
-                charge_amount_cents=charge_amount_cents,
-            )
+    def test_stale_copy_cannot_fulfill_twice_or_undo_fulfillment(self):
+        """ transition_to() checks the stored state, so a copy loaded before another write can't act on it. """
+        current, stale = self._two_copies(state='deposited')
+        self.assertTrue(current.transition_to('fulfilled'))
+        history_count = current.history.count()
 
-        self.assertIn(error_field, ctx.exception.message_dict)
-        self.assertFalse(LearnerCreditTopUp.objects.exists())
+        self.assertFalse(stale.transition_to('fulfilled'))
+        self.assertEqual(stale.fulfilled_at, current.fulfilled_at)
+        with self.assertRaises(InvalidLearnerCreditTopUpTransition):
+            stale.transition_to('errored_fulfillment')
 
-    @ddt.data(50000, 2000000)
-    def test_amount_limits_are_allowed(self, amount_cents):
-        self._save_top_up(amount_cents=amount_cents, charge_amount_cents=amount_cents)
+        self._assert_nothing_written(current, LearnerCreditTopUpState.FULFILLED, history_count)
 
-        self.assertEqual(LearnerCreditTopUp.objects.get().amount_cents, amount_cents)
+    def test_stale_copy_records_the_stored_values_in_history(self):
+        current, stale = self._two_copies(state='paid')
+        deposit_uuid = uuid4()
+        current.transition_to('deposited', deposit_uuid=deposit_uuid)
+        current.transition_to('errored_fulfillment')
 
-    @ddt.data(
-        'state', 'paid_at', 'amount_cents', 'discount_cents', 'charge_amount_cents', 'subsidy_uuid',
-        'subsidy_access_policy_id', 'enterprise_customer_uuid', 'stripe_customer_id',
-    )
-    def test_state_timestamp_and_quote_fields_cannot_be_saved(self, field_name):
-        top_up = self._create_top_up()
+        self.assertTrue(stale.transition_to('deposited'))
 
-        with self.assertRaises(ValueError):
-            top_up.save(update_fields=[field_name])
-
-    def test_existing_top_up_must_be_saved_with_update_fields(self):
-        """ A full save of a stale copy would write its old state back. """
-        top_up = self._create_top_up()
-        top_up.last_error = 'error'
-
-        with self.assertRaises(ValueError):
-            top_up.save()
-
-        top_up.refresh_from_db()
-        self.assertIsNone(top_up.last_error)
-
-    def test_other_fields_are_saved_with_update_fields(self):
-        top_up = self._create_top_up()
-        synced_at = timezone.now()
-        top_up.salesforce_synced_at = synced_at
-
-        with freeze_time(synced_at + timedelta(minutes=1)):
-            top_up.save(update_fields=['salesforce_synced_at'])
-
-        top_up.refresh_from_db()
-        self.assertEqual(top_up.salesforce_synced_at, synced_at)
-        self.assertEqual(top_up.modified, synced_at + timedelta(minutes=1))
+        latest = self._latest_history(stale)
+        self.assertEqual(latest.state, LearnerCreditTopUpState.DEPOSITED)
+        self.assertEqual(latest.deposit_uuid, deposit_uuid)
 
     def test_partial_save_of_stale_copy_records_stored_values_in_history(self):
         """ The history record is the stored row plus this change, not the stale copy the save was called on. """
-        self._create_top_up()
-        current = LearnerCreditTopUp.objects.get()
-        stale = LearnerCreditTopUp.objects.get()
+        current, stale = self._two_copies()
         current.transition_to('paid', stripe_payment_intent_id='pi_1')
         synced_at = timezone.now()
         stale.salesforce_synced_at = synced_at
 
         stale.save(update_fields=['salesforce_synced_at'])
 
-        latest = stale.history.latest('history_id')
+        latest = self._latest_history(stale)
         self.assertEqual(latest.state, LearnerCreditTopUpState.PAID)
         self.assertEqual(latest.stripe_payment_intent_id, 'pi_1')
         self.assertEqual(latest.paid_at, current.paid_at)
         self.assertEqual(latest.salesforce_synced_at, synced_at)
         self.assertEqual(stale.state, LearnerCreditTopUpState.PAID)
-
-    def test_failed_partial_save_writes_nothing_and_restores_the_instance(self):
-        self._create_top_up(stripe_payment_intent_id='pi_1')
-        top_up = self._create_top_up()
-        history_count = top_up.history.count()
-        top_up.stripe_payment_intent_id = 'pi_1'
-
-        with self.assertRaises(IntegrityError):
-            top_up.save(update_fields=['stripe_payment_intent_id'])
-
-        self.assertIsNone(top_up.stripe_payment_intent_id)
-        top_up.refresh_from_db()
-        self.assertIsNone(top_up.stripe_payment_intent_id)
-        self.assertEqual(top_up.history.count(), history_count)
 
     def test_partial_save_does_not_record_unsaved_edits(self):
         top_up = self._create_top_up()
@@ -2137,10 +2069,79 @@ class TestLearnerCreditTopUp(TestCase):
 
         top_up.save(update_fields=['last_error'])
 
-        latest = top_up.history.latest('history_id')
+        latest = self._latest_history(top_up)
         self.assertEqual(latest.amount_cents, 100000)
         self.assertEqual(latest.last_error, 'deposit failed')
         self.assertEqual(top_up.amount_cents, 100000)
+
+    @ddt.data(
+        ('transition_to', 'reused_payment_intent'),
+        ('transition_to', 'failing_receiver'),
+        ('save', 'reused_payment_intent'),
+        ('save', 'failing_receiver'),
+    )
+    @ddt.unpack
+    def test_failed_write_writes_nothing_and_restores_the_instance(self, method, failure):
+        """
+        Whether a unique-index violation or a failure after the UPDATE (a post_save receiver) stops the write,
+        nothing is written and the instance holds the stored values.
+        """
+        self._create_top_up(stripe_payment_intent_id='pi_1')
+        top_up = self._create_top_up()
+        modified = top_up.modified
+        history_count = top_up.history.count()
+        if failure == 'failing_receiver':
+            self._fail_post_save()
+            payment_intent_id, error = 'pi_2', RuntimeError
+        else:
+            payment_intent_id, error = 'pi_1', IntegrityError
+
+        with self.assertRaises(error):
+            if method == 'transition_to':
+                top_up.transition_to('paid', stripe_payment_intent_id=payment_intent_id)
+            else:
+                top_up.stripe_payment_intent_id = payment_intent_id
+                top_up.save(update_fields=['stripe_payment_intent_id'])
+
+        self.assertIsNone(top_up.stripe_payment_intent_id)
+        self.assertIsNone(top_up.paid_at)
+        self.assertEqual(top_up.modified, modified)
+        self._assert_nothing_written(top_up, LearnerCreditTopUpState.CREATED, history_count)
+        self.assertIsNone(top_up.stripe_payment_intent_id)
+
+    @ddt.data(
+        None, 'state', 'paid_at', 'amount_cents', 'discount_cents', 'charge_amount_cents', 'subsidy_uuid',
+        'subsidy_access_policy_id', 'enterprise_customer_uuid', 'stripe_customer_id',
+    )
+    def test_save_of_existing_top_up_is_refused(self, field_name):
+        """
+        An existing top-up is saved only with update_fields, which can't name the state, a state timestamp or a
+        quote field. A full save (field_name None) of a stale copy would write its old state back.
+        """
+        top_up = self._create_top_up()
+        top_up.last_error = 'error'
+
+        with self.assertRaises(ValueError):
+            top_up.save(update_fields=None if field_name is None else [field_name])
+
+        top_up.refresh_from_db()
+        self.assertIsNone(top_up.last_error)
+
+    @ddt.data((['salesforce_synced_at'], True), ([], False))
+    @ddt.unpack
+    def test_partial_save_writes_only_update_fields(self, update_fields, is_saved):
+        """ As in Django, an empty update_fields saves nothing: modified isn't written on its own. """
+        top_up = self._create_top_up()
+        modified = top_up.modified
+        synced_at = timezone.now()
+        top_up.salesforce_synced_at = synced_at
+
+        with freeze_time(synced_at + timedelta(minutes=1)):
+            top_up.save(update_fields=update_fields)
+
+        top_up.refresh_from_db()
+        self.assertEqual(top_up.salesforce_synced_at, synced_at if is_saved else None)
+        self.assertEqual(top_up.modified, synced_at + timedelta(minutes=1) if is_saved else modified)
 
     def test_payment_intent_belongs_to_one_top_up(self):
         self._create_top_up(stripe_payment_intent_id='pi_1')
@@ -2163,57 +2164,6 @@ class TestLearnerCreditTopUp(TestCase):
         self.assertTrue(SubsidyAccessPolicy.objects.filter(uuid=self.policy.uuid).exists())
         self.assertTrue(LearnerCreditTopUp.objects.filter(uuid=top_up.uuid).exists())
 
-    def test_str(self):
-        top_up = self._create_top_up(state='paid')
-
-        self.assertEqual(
-            str(top_up),
-            f'<LearnerCreditTopUp uuid={top_up.uuid}, subsidy_access_policy={self.policy.pk}, '
-            'state=paid, amount_cents=100000>',
-        )
-
-    def test_policy_is_required(self):
-        with self.assertRaises(ValidationError) as ctx:
-            LearnerCreditTopUp.objects.create(
-                amount_cents=100000, charge_amount_cents=100000, stripe_customer_id='cus_test',
-            )
-
-        self.assertIn('subsidy_access_policy', ctx.exception.message_dict)
-        self.assertFalse(LearnerCreditTopUp.objects.exists())
-
-    def test_top_up_without_initiating_user(self):
-        top_up = LearnerCreditTopUp.objects.create(
-            subsidy_access_policy=self.policy, amount_cents=100000, charge_amount_cents=100000,
-            stripe_customer_id='cus_test',
-        )
-
-        top_up.refresh_from_db()
-        self.assertIsNone(top_up.initiated_by)
-        self.assertIsNone(top_up.initiated_by_lms_user_id)
-
-    def test_existing_top_up_is_not_rechecked(self):
-        """ A paid top-up must stay valid even if the allowed range is narrowed after it was quoted. """
-        top_up = self._create_top_up(state='paid')
-
-        with mock.patch('enterprise_access.apps.customer_billing.models.LEARNER_CREDIT_TOP_UP_MAX_AMOUNT_CENTS', 60000):
-            # The narrower range is in force for new top-ups...
-            with self.assertRaises(ValidationError):
-                self._save_top_up(amount_cents=100000, charge_amount_cents=100000)
-            # ...but the existing one passes clean() (as when a form or admin validates it) and can still move.
-            top_up.clean()
-            self.assertTrue(top_up.transition_to('deposited'))
-
-    def test_empty_update_fields_saves_nothing(self):
-        """ As in Django, an empty update_fields skips the save: modified isn't written on its own. """
-        top_up = self._create_top_up()
-        modified = top_up.modified
-
-        with freeze_time(timezone.now() + timedelta(minutes=1)):
-            top_up.save(update_fields=[])
-
-        top_up.refresh_from_db()
-        self.assertEqual(top_up.modified, modified)
-
     def test_retiring_the_initiating_user_keeps_the_record(self):
         top_up = self._create_top_up()
 
@@ -2222,6 +2172,15 @@ class TestLearnerCreditTopUp(TestCase):
         top_up.refresh_from_db()
         self.assertIsNone(top_up.initiated_by)
         self.assertEqual(top_up.initiated_by_lms_user_id, 123)
+
+    def test_str(self):
+        top_up = self._create_top_up(state='paid')
+
+        self.assertEqual(
+            str(top_up),
+            f'<LearnerCreditTopUp uuid={top_up.uuid}, subsidy_access_policy={self.policy.pk}, '
+            'state=paid, amount_cents=100000>',
+        )
 
     def test_indexes(self):
         with connection.cursor() as cursor:
