@@ -366,36 +366,53 @@ share stages 1 and 2 later; their stage 3 amounts differ.
 
 ## Performance
 
+**Overall improvement.** The staged evaluation makes far fewer calls to enterprise-subsidy, which
+is where `can-redeem` spends its time. Replaying the last 30 days of production redemptions:
+
+* **When the learner can enroll,** uncached remote `can_redeem` calls drop from about 4 per course
+  run to about 1.5 (63% fewer, 69% with the per-subsidy cache). The 95th percentile drops from 10
+  calls to 2.
+* **When every budget blocks the learner,** calls drop by 22% (67% with the cache).
+* **Customers whose budgets have all expired** make no remote calls at all.
+
+The cost stops growing with every budget whose catalog contains the course, expired or not, and
+grows only with the live budgets that apply, up to the first one that passes. Local work doesn't
+change. The one added cost is a single cached lookup per request for customers with only one
+budget. The rest of this section gives the Big-O comparison and how the numbers were measured.
+
+### Big-O comparison
+
 Remote calls dominate the cost of `can-redeem`, and local work is the same in both designs.
 Evaluation is sequential, so time spent waiting on enterprise-subsidy grows with the number of
 calls.
 
 | Symbol | Meaning |
 |---|---|
-| K | Content keys in the request. The course page sends every available run (`canRedeem(courseRunKeys)` in the learner portal). |
-| P | Active, unretired budgets the customer has, which is the set `can-redeem` evaluates. |
-| P_c | Budgets whose catalog contains the content and whose enroll-by date hasn't passed. These reach the remote call today, expired or not. |
-| P_live | Budgets whose subsidy is active now. |
-| P_app | Live budgets that pass stage 2. |
-| r | Position, among the P_app budgets in sort order, of the first one that passes stage 3 (r = P_app when none does). |
-| S, S_app | Distinct subsidies among all P budgets, and among the P_app budgets. |
-| ℓ | One round trip to enterprise-subsidy's `can_redeem`. |
+| $`K`$ | Content keys in the request. The course page sends every available run (`canRedeem(courseRunKeys)` in the learner portal). |
+| $`P`$ | Active, unretired budgets the customer has, which is the set `can-redeem` evaluates. |
+| $`P_{\text{cat}}`$ | Budgets whose catalog contains the content and whose enroll-by date hasn't passed. These reach the remote call today, expired or not. |
+| $`P_{\text{live}}`$ | Budgets whose subsidy is active now. |
+| $`P_{\text{app}}`$ | Live budgets that pass stage 2. |
+| $`r`$ | Position, among the $`P_{\text{app}}`$ budgets in sort order, of the first one that passes stage 3 ($`r = P_{\text{app}}`$ when none does). |
+| $`S`$, $`S_{\text{app}}`$ | Distinct subsidies among all $`P`$ budgets, and among the $`P_{\text{app}}`$ budgets. |
+| $`\ell`$ | One round trip to enterprise-subsidy's `can_redeem`. |
 
 | Cost per `can-redeem` request | Today | Three stages | Stages + per-subsidy cache |
 |---|---|---|---|
-| Uncached remote `can_redeem` calls | Θ(K·P_c), at most O(K·P) | O(K·min(r, P_app)) | O(K·min(r, S_app)) |
-| ...when the first applicable budget is redeemable | Θ(K·P_c) | Θ(K) | Θ(K) |
-| ...when every budget has expired | Θ(K·P_c) | 0 | 0 |
-| ...when the learner is blocked by every budget | Θ(K·P_c) | Θ(K·P_app) | Θ(K·S_app) |
-| Catalog lookups (TieredCache, remote on a miss) | Θ(K·P) | Θ(K·P_live) | Θ(K·P_live) |
-| Policy spend aggregates (request-cached per budget) | O(P_live) | O(P_app) | O(P_app) |
-| Subsidy-record lookups (request-cached per subsidy) | Θ(S) when P ≥ 2, none when P = 1 | Θ(S) | Θ(S) |
-| Local work (sort and checks) | O(P log P + K·P) | O(P log P + K·P) | O(P log P + K·P) |
-| Choosing `display_reason` | O(P) | O(P) | O(P) |
+| Uncached remote `can_redeem` calls | $`\Theta(K \cdot P_{\text{cat}})`$, at most $`O(K \cdot P)`$ | $`O(K \cdot \min(r, P_{\text{app}}))`$ | $`O(K \cdot \min(r, S_{\text{app}}))`$ |
+| ...when the first applicable budget is redeemable | $`\Theta(K \cdot P_{\text{cat}})`$ | $`\Theta(K)`$ | $`\Theta(K)`$ |
+| ...when every budget has expired | $`\Theta(K \cdot P_{\text{cat}})`$ | 0 | 0 |
+| ...when the learner is blocked by every budget | $`\Theta(K \cdot P_{\text{cat}})`$ | $`\Theta(K \cdot P_{\text{app}})`$ | $`\Theta(K \cdot S_{\text{app}})`$ |
+| Catalog lookups (TieredCache, remote on a miss) | $`\Theta(K \cdot P)`$ | $`\Theta(K \cdot P_{\text{live}})`$ | $`\Theta(K \cdot P_{\text{live}})`$ |
+| Policy spend aggregates (request-cached per budget) | $`O(P_{\text{live}})`$ | $`O(P_{\text{app}})`$ | $`O(P_{\text{app}})`$ |
+| Subsidy-record lookups (request-cached per subsidy) | $`\Theta(S)`$ when $`P \ge 2`$, none when $`P = 1`$ | $`\Theta(S)`$ | $`\Theta(S)`$ |
+| Local work (sort and checks) | $`O(P \log P + K \cdot P)`$ | $`O(P \log P + K \cdot P)`$ | $`O(P \log P + K \cdot P)`$ |
+| Choosing `display_reason` | $`O(P)`$ | $`O(P)`$ | $`O(P)`$ |
 
-The dominant term improves by a factor of P_c / min(r, P_app): budgets that contain the content,
-divided by the live, applicable budgets checked before one passes. Time waiting on
-enterprise-subsidy falls in the same proportion, from Θ(K·P_c·ℓ) to O(K·min(r, P_app)·ℓ).
+The dominant term improves by a factor of $`P_{\text{cat}} / \min(r, P_{\text{app}})`$: budgets
+that contain the content, divided by the live, applicable budgets checked before one passes. Time
+waiting on enterprise-subsidy falls in the same proportion, from
+$`\Theta(K \cdot P_{\text{cat}} \cdot \ell)`$ to $`O(K \cdot \min(r, P_{\text{app}}) \cdot \ell)`$.
 
 ### Measured on production data
 
@@ -426,12 +443,12 @@ redemptions through both designs using the read replicas:
   under the stages. The largest customer has 22 budgets, 7 of them live.
 * Spot check against ENT-12416: for every course that customer's learners redeemed, today makes
   4 calls, 3 of them to expired budgets. The stages make 1.
-* On the enroll path, waiting on enterprise-subsidy drops from about 4.02ℓ to 1.49ℓ per content
-  key, times K per request. ℓ wasn't measured here; Datadog APM spans for the `can_redeem` client
-  call can confirm it after rollout.
+* On the enroll path, waiting on enterprise-subsidy drops from about $`4.02\,\ell`$ to
+  $`1.49\,\ell`$ per content key, times $`K`$ per request. $`\ell`$ wasn't measured here; Datadog APM
+  spans for the `can_redeem` client call can confirm it after rollout.
 * Customers with a single budget (286 of 527) are the exception. The sort skips the subsidy
-  record for them today, so stage 1 adds one request-cached lookup per request: Θ(1), not Θ(K).
-  For a live budget that's one extra call per request. For an expired one, it replaces K remote
+  record for them today, so stage 1 adds one request-cached lookup per request: $`\Theta(1)`$, not $`\Theta(K)`$.
+  For a live budget that's one extra call per request. For an expired one, it replaces $`K`$ remote
   calls with that one lookup. Caching the subsidy's active window across requests would remove
   it.
 
@@ -446,7 +463,7 @@ Limitations of the measurement:
   replica tables rather than through the enterprise-catalog API.
 * Current budget and subsidy state is applied to the last 30 days. 89 of the 3,246 redemptions
   (2.7%) were left out because the budget that redeemed is no longer active.
-* Counts are per content key. Multiply by K for a whole request.
+* Counts are per content key. Multiply by $`K`$ for a whole request.
 
 ## Consequences
 
@@ -458,7 +475,7 @@ Limitations of the measurement:
 * **Performance.** On the last 30 days of production redemptions, section 5 cuts uncached remote
   calls to enterprise-subsidy by 63% (69% with the per-subsidy cache) for learners who can enroll,
   and by 22% (67%) for learners blocked by every budget. Customers whose budgets have all expired
-  make none. The best case improves from Θ(K·P_c) to Θ(K).
+  make none. The best case improves from $`\Theta(K \cdot P_{\text{cat}})`$ to $`\Theta(K)`$.
 * **Maintainability.** One ordered check table is the logic, the priority and the documentation,
   and the catalogue in section 2 can be generated from it. Budget types declare which checks
   apply to them instead of overriding `can_redeem`.
