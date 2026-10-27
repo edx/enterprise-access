@@ -2035,6 +2035,14 @@ class TestLearnerCreditTopUp(TestCase):
         (100000, Decimal('1.0000'), 100000, 0, 'discount_cents'),
         (100000, Decimal('-0.1000'), 0, 100000, 'discount_rate'),
         (100000, Decimal('1.0000'), 0, 100000, 'discount_rate'),
+        # Fractional cents pass the arithmetic but would be truncated on save to 50001 - 6170 != 43830.
+        (50001, Decimal('0.1234'), Decimal('6170.1234'), Decimal('43830.8766'), 'discount_cents'),
+        (50001, Decimal('0.1234'), Decimal('6170.1234'), Decimal('43830.8766'), 'charge_amount_cents'),
+        (Decimal('100000.5'), None, None, Decimal('100000.5'), 'amount_cents'),
+        # Amounts must be ints: no decimals at all, even with a zero fractional part.
+        (Decimal('100000'), None, None, 100000, 'amount_cents'),
+        (100000, Decimal('0.1000'), Decimal('10000'), 90000, 'discount_cents'),
+        (100000, None, None, 100000.0, 'charge_amount_cents'),
     )
     @ddt.unpack
     def test_inconsistent_amounts_are_rejected(
@@ -2089,6 +2097,36 @@ class TestLearnerCreditTopUp(TestCase):
         top_up.refresh_from_db()
         self.assertEqual(top_up.salesforce_synced_at, synced_at)
         self.assertEqual(top_up.modified, synced_at + timedelta(minutes=1))
+
+    def test_partial_save_of_stale_copy_records_stored_values_in_history(self):
+        """ The history record is the stored row plus this change, not the stale copy the save was called on. """
+        self._create_top_up()
+        current = LearnerCreditTopUp.objects.get()
+        stale = LearnerCreditTopUp.objects.get()
+        current.transition_to('paid', stripe_payment_intent_id='pi_1')
+        synced_at = timezone.now()
+        stale.salesforce_synced_at = synced_at
+
+        stale.save(update_fields=['salesforce_synced_at'])
+
+        latest = stale.history.latest('history_id')
+        self.assertEqual(latest.state, LearnerCreditTopUpState.PAID)
+        self.assertEqual(latest.stripe_payment_intent_id, 'pi_1')
+        self.assertEqual(latest.paid_at, current.paid_at)
+        self.assertEqual(latest.salesforce_synced_at, synced_at)
+        self.assertEqual(stale.state, LearnerCreditTopUpState.PAID)
+
+    def test_partial_save_does_not_record_unsaved_edits(self):
+        top_up = self._create_top_up()
+        top_up.amount_cents = 999
+        top_up.last_error = 'deposit failed'
+
+        top_up.save(update_fields=['last_error'])
+
+        latest = top_up.history.latest('history_id')
+        self.assertEqual(latest.amount_cents, 100000)
+        self.assertEqual(latest.last_error, 'deposit failed')
+        self.assertEqual(top_up.amount_cents, 100000)
 
     def test_payment_intent_belongs_to_one_top_up(self):
         self._create_top_up(stripe_payment_intent_id='pi_1')

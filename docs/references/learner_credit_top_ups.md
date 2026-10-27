@@ -157,6 +157,7 @@ without writing anything when one fails:
 
 | Rule | Why |
 |---|---|
+| `amount_cents`, `discount_cents` and `charge_amount_cents` are `int`s. A `Decimal` or `float` is rejected, not rounded, even with no fractional part (`Decimal('100')`, `100.0`). | Django truncates a fractional value only when it saves it, after the checks below had passed on the untruncated one. A quote of 50,001 with a discount of 6,170.1234 and a charge of 43,830.8766 would be stored as 50,001 − 6,170 ≠ 43,830. |
 | `LEARNER_CREDIT_TOP_UP_MIN_AMOUNT_CENTS` (50,000) ≤ `amount_cents` ≤ `LEARNER_CREDIT_TOP_UP_MAX_AMOUNT_CENTS` (2,000,000) | The allowed top-up range (R-02). |
 | `charge_amount_cents == amount_cents − discount_cents`, counting `NULL` as 0 | The card is charged the discounted price; the budget is credited the full `amount_cents` (OQ-7). |
 | `discount_cents` is `NULL` exactly when `discount_rate` is `NULL` | `NULL` means no discount is on record; `0` is a real 0% rate and never stands in for `NULL` (RK-05). |
@@ -172,6 +173,10 @@ to move if, for example, the allowed range were narrowed after it was paid. Not 
 - **An existing top-up** must be saved with `update_fields`, which may not name `state`, a state timestamp or a quote
   field; `save()` raises `ValueError` otherwise and adds `modified` itself. A full `save()` of a copy loaded before
   another request moved the top-up would write its old state back.
+- **Saving an existing top-up reloads it** with `select_for_update()` inside `transaction.atomic()`, then applies only
+  the `update_fields` values. simple-history records the whole instance, so without the reload a stale copy, or one
+  with unsaved edits to other fields, would add a history record that doesn't match the row. Unsaved changes to
+  fields not in `update_fields` are discarded.
 - `save()` calls `clean()`, not `full_clean()`. `full_clean()` would report a reused `stripe_payment_intent_id` as a
   `ValidationError` instead of letting the unique index raise `IntegrityError`, and it would reject the nullable
   columns that aren't `blank=True`. As a result, field choices (`currency`, `payment_method_type`) aren't validated.

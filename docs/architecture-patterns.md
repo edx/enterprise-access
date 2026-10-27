@@ -184,7 +184,10 @@ copy's other fields. For records where that can cost money (`LearnerCreditTopUp.
 - return whether it changed the state, so callers act once per change (a replay or the losing side of a race gets
   `False`);
 - refuse every other way of writing the state: make `save()` on an existing row require `update_fields` that don't
-  name it, which also stops a full save of a stale copy writing its old state back.
+  name it, which also stops a full save of a stale copy writing its old state back;
+- reload the row the same way before a partial save too, and re-apply only the `update_fields` values. simple-history
+  snapshots the whole instance, so a stale or locally edited copy would otherwise add a history record that doesn't
+  match the row.
 
 The test database is SQLite, where `select_for_update()` does nothing: test with two copies of one row loaded
 before either writes, which proves the stored-state check but not the lock.

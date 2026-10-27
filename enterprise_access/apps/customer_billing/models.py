@@ -1452,6 +1452,13 @@ def get_default_learner_credit_top_up_expires_at():
     return timezone.now() + timedelta(minutes=LEARNER_CREDIT_TOP_UP_QUOTE_MINUTES)
 
 
+def _is_whole_cents(value):
+    """
+    Return True if ``value`` is None or an int. A Decimal or float is never accepted, even with no fractional part.
+    """
+    return value is None or (isinstance(value, int) and not isinstance(value, bool))
+
+
 class LearnerCreditTopUp(TimeStampedModel):
     """
     One self-service top-up of a Learner Credit budget, from quote to fulfillment.
@@ -1785,19 +1792,26 @@ class LearnerCreditTopUp(TimeStampedModel):
         if self.initiated_by_lms_user_id is None and self.initiated_by_id:
             self.initiated_by_lms_user_id = self.initiated_by.lms_user_id
 
-        amount = self.amount_cents
-        min_amount, max_amount = LEARNER_CREDIT_TOP_UP_MIN_AMOUNT_CENTS, LEARNER_CREDIT_TOP_UP_MAX_AMOUNT_CENTS
-        if amount is None or not min_amount <= amount <= max_amount:
-            errors['amount_cents'] = f'Must be between {min_amount} and {max_amount} cents.'
         if self.discount_rate is not None and not 0 <= self.discount_rate < 1:
             errors['discount_rate'] = 'Must be at least 0 and less than 1.'
-        if (self.discount_rate is None) != (self.discount_cents is None):
-            errors['discount_cents'] = 'Must be null exactly when discount_rate is null.'
-        elif self.discount_cents is not None and not 0 <= self.discount_cents < (amount or 0):
-            # The card is charged something, and never more than the credit.
-            errors['discount_cents'] = 'Must be at least 0 and less than amount_cents.'
-        if amount is not None and self.charge_amount_cents != amount - (self.discount_cents or 0):
-            errors['charge_amount_cents'] = 'Must equal amount_cents minus discount_cents.'
+
+        # Amounts are whole cents, given as int. Django would truncate a fractional value only when saving it,
+        # after the checks below had passed on the untruncated one, so reject it rather than check its arithmetic.
+        amount_fields = ('amount_cents', 'discount_cents', 'charge_amount_cents')
+        if fractional := [name for name in amount_fields if not _is_whole_cents(getattr(self, name))]:
+            errors.update({name: 'Must be a whole number of cents.' for name in fractional})
+        else:
+            amount = self.amount_cents
+            min_amount, max_amount = LEARNER_CREDIT_TOP_UP_MIN_AMOUNT_CENTS, LEARNER_CREDIT_TOP_UP_MAX_AMOUNT_CENTS
+            if amount is None or not min_amount <= amount <= max_amount:
+                errors['amount_cents'] = f'Must be between {min_amount} and {max_amount} cents.'
+            if (self.discount_rate is None) != (self.discount_cents is None):
+                errors['discount_cents'] = 'Must be null exactly when discount_rate is null.'
+            elif self.discount_cents is not None and not 0 <= self.discount_cents < (amount or 0):
+                # The card is charged something, and never more than the credit.
+                errors['discount_cents'] = 'Must be at least 0 and less than amount_cents.'
+            if amount is not None and self.charge_amount_cents != amount - (self.discount_cents or 0):
+                errors['charge_amount_cents'] = 'Must equal amount_cents minus discount_cents.'
 
         if errors:
             raise ValidationError(errors)
@@ -1810,18 +1824,34 @@ class LearnerCreditTopUp(TimeStampedModel):
         a state timestamp or a quote field. A full save of an instance loaded before another request
         moved the top-up would write its old state back. Use transition_to() to change the state.
 
+        An existing top-up is first reloaded under a row lock, and only the ``update_fields`` values
+        are applied to it, so the history record this save adds is the stored row plus this change,
+        not a stale or locally edited copy. Unsaved changes to other fields are discarded.
+
         This calls clean() rather than full_clean(), which would report a reused
         stripe_payment_intent_id as a ValidationError rather than leaving it to the unique index,
         and would reject the nullable columns that aren't blank=True.
         """
         if self._state.adding:
             self.clean()
-        else:
-            update_fields = kwargs.get('update_fields')
-            if update_fields is None:
-                raise ValueError('Save an existing LearnerCreditTopUp with update_fields, or use transition_to().')
-            if protected := self._protected_fields_in(update_fields):
-                raise ValueError(f'{protected} can only be changed by transition_to(), or not at all.')
-            if update_fields:
-                kwargs['update_fields'] = {*update_fields, 'modified'}
-        super().save(**kwargs)
+            super().save(**kwargs)
+            return
+
+        update_fields = kwargs.get('update_fields')
+        if update_fields is None:
+            raise ValueError('Save an existing LearnerCreditTopUp with update_fields, or use transition_to().')
+        if protected := self._protected_fields_in(update_fields):
+            raise ValueError(f'{protected} can only be changed by transition_to(), or not at all.')
+        if not update_fields:
+            # As in Django, an empty update_fields saves nothing.
+            return
+
+        updates = {
+            attname: getattr(self, attname)
+            for attname in (self._meta.get_field(name).attname for name in update_fields)
+        }
+        with transaction.atomic():
+            self.refresh_from_db(from_queryset=LearnerCreditTopUp.objects.select_for_update())
+            for attname, value in updates.items():
+                setattr(self, attname, value)
+            super().save(**{**kwargs, 'update_fields': {*update_fields, 'modified'}})
