@@ -1694,6 +1694,29 @@ class LearnerCreditTopUp(TimeStampedModel):
         protected = {'state', *self.STATE_TIMESTAMP_FIELDS.values(), *self.QUOTE_FIELDS}
         return sorted(protected.intersection(self._meta.get_field(name).name for name in names))
 
+    def _reload_for_update(self):
+        """
+        Reload this top-up from the database under a row lock. Call inside transaction.atomic().
+        """
+        self.refresh_from_db(from_queryset=LearnerCreditTopUp.objects.select_for_update())
+
+    def _write(self, changes, **save_kwargs):
+        """
+        Apply ``changes`` and write them, with ``modified``, in one UPDATE that skips this class's save() checks.
+
+        Call inside transaction.atomic(), after _reload_for_update(). If the write fails, the atomic block
+        undoes it, so the instance is put back to the values it had before ``changes`` were applied.
+        """
+        previous_values = {name: getattr(self, name) for name in [*changes, 'modified']}
+        for name, value in changes.items():
+            setattr(self, name, value)
+        try:
+            super().save(**{**save_kwargs, 'update_fields': [*changes, 'modified']})
+        except Exception:
+            for name, value in previous_values.items():
+                setattr(self, name, value)
+            raise
+
     def transition_to(self, new_state, **fields) -> bool:
         """
         Move this top-up to ``new_state``, saving ``fields`` in the same write.
@@ -1724,7 +1747,7 @@ class LearnerCreditTopUp(TimeStampedModel):
             raise ValueError(f'transition_to() cannot set {protected}.')
 
         with transaction.atomic():
-            self.refresh_from_db(from_queryset=LearnerCreditTopUp.objects.select_for_update())
+            self._reload_for_update()
             current_state = LearnerCreditTopUpState(self.state)
 
             if current_state == new_state:
@@ -1748,18 +1771,7 @@ class LearnerCreditTopUp(TimeStampedModel):
             timestamp_field = self.STATE_TIMESTAMP_FIELDS.get(new_state)
             if timestamp_field and getattr(self, timestamp_field) is None:
                 changes[timestamp_field] = timezone.now()
-
-            previous_values = {name: getattr(self, name) for name in [*changes, 'modified']}
-            for name, value in changes.items():
-                setattr(self, name, value)
-            try:
-                # Skips this class's save(), which refuses to write state.
-                super().save(update_fields=[*changes, 'modified'])
-            except Exception:
-                # The atomic block undoes the write, so the instance mustn't keep the new values either.
-                for name, value in previous_values.items():
-                    setattr(self, name, value)
-                raise
+            self._write(changes)
 
         logger.info('LearnerCreditTopUp %s moved from %s to %s.', self.uuid, current_state, new_state)
         return True
@@ -1826,7 +1838,8 @@ class LearnerCreditTopUp(TimeStampedModel):
 
         An existing top-up is first reloaded under a row lock, and only the ``update_fields`` values
         are applied to it, so the history record this save adds is the stored row plus this change,
-        not a stale or locally edited copy. Unsaved changes to other fields are discarded.
+        not a stale or locally edited copy. Unsaved changes to other fields are discarded, and if the
+        save fails, the instance holds the stored values.
 
         This calls clean() rather than full_clean(), which would report a reused
         stripe_payment_intent_id as a ValidationError rather than leaving it to the unique index,
@@ -1850,8 +1863,7 @@ class LearnerCreditTopUp(TimeStampedModel):
             attname: getattr(self, attname)
             for attname in (self._meta.get_field(name).attname for name in update_fields)
         }
+        updates.pop('modified', None)
         with transaction.atomic():
-            self.refresh_from_db(from_queryset=LearnerCreditTopUp.objects.select_for_update())
-            for attname, value in updates.items():
-                setattr(self, attname, value)
-            super().save(**{**kwargs, 'update_fields': {*update_fields, 'modified'}})
+            self._reload_for_update()
+            self._write(updates, **{name: value for name, value in kwargs.items() if name != 'update_fields'})

@@ -1886,7 +1886,7 @@ class TestLearnerCreditTopUp(TestCase):
         with self.assertLogs('enterprise_access.apps.customer_billing.models', level='WARNING') as logs:
             self.assertFalse(top_up.transition_to('paid', last_error='deposit failed'))
 
-        self.assertIn("not saving ['last_error']", logs.output[0])
+        self.assertIn('last_error', logs.output[0])
         top_up.refresh_from_db()
         self.assertIsNone(top_up.last_error)
 
@@ -2115,6 +2115,20 @@ class TestLearnerCreditTopUp(TestCase):
         self.assertEqual(latest.paid_at, current.paid_at)
         self.assertEqual(latest.salesforce_synced_at, synced_at)
         self.assertEqual(stale.state, LearnerCreditTopUpState.PAID)
+
+    def test_failed_partial_save_writes_nothing_and_restores_the_instance(self):
+        self._create_top_up(stripe_payment_intent_id='pi_1')
+        top_up = self._create_top_up()
+        history_count = top_up.history.count()
+        top_up.stripe_payment_intent_id = 'pi_1'
+
+        with self.assertRaises(IntegrityError):
+            top_up.save(update_fields=['stripe_payment_intent_id'])
+
+        self.assertIsNone(top_up.stripe_payment_intent_id)
+        top_up.refresh_from_db()
+        self.assertIsNone(top_up.stripe_payment_intent_id)
+        self.assertEqual(top_up.history.count(), history_count)
 
     def test_partial_save_does_not_record_unsaved_edits(self):
         top_up = self._create_top_up()
