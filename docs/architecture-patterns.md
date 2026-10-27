@@ -171,6 +171,15 @@ and the next run retries it, and never cache a failure as a miss.
 Expiring a record removes it from the filter that selected it, so `Paginator` over the live queryset skips records.
 Freeze the primary keys first (`list(qs.values_list('pk', flat=True))`) and page over that.
 
+### 23. `bnr_enabled` means "has requests to manage", not "can take new requests"
+
+A policy's `bnr_enabled` (its `LearnerCreditRequestConfiguration` is active) stays True after the budget is
+retired or its subsidy expires, so admins can still open the budget's Requests tab and decline what is pending.
+Anything that decides whether a learner may *submit* a request must also require an enabled policy with a live
+subsidy: use `get_policies_accepting_requests()` in `subsidy_access_policy/subsidy_api.py`, which `can-request`
+and request creation share. Approval enforces the same rule separately in `can_allocate_all`. The BFF's
+`has_bnr_enabled_policy` still gates on `bnr_enabled` alone.
+
 ### Key Takeaways for Implementation:
 - Check permissions early using `@permission_required` decorator
 - Use separate serializers for request/response

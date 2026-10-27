@@ -20,6 +20,7 @@ from .customer_billing import (
     BillingManagementViewSet,
     CheckoutIntentViewSet,
     CustomerBillingViewSet,
+    LearnerCreditTopUpViewSet,
     SspProductViewSet,
     StripeEventSummaryViewSet
 )

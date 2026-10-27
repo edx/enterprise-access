@@ -812,3 +812,36 @@ class SspEssentialsProductResponseSerializer(serializers.Serializer):
     def get_course_count(self, obj):
         """Return the cached or fetched course count for the product's catalog query."""
         return obj.course_count
+
+
+class TopUpEligibilityReasonSerializer(serializers.Serializer):
+    """
+    One reason a budget is not eligible for a Learner Credit top-up.
+    """
+    error_code = serializers.CharField()
+    message = serializers.CharField()
+
+
+class TopUpEligibilityQueryParamsSerializer(serializers.Serializer):
+    """
+    Query parameters for the Learner Credit top-up eligibility endpoint.
+    """
+    enterprise_customer_uuid = serializers.UUIDField()
+    policy_uuid = serializers.UUIDField(required=False)
+
+
+class TopUpEligibilityItemSerializer(serializers.Serializer):
+    """
+    Eligibility of one budget (policy) for a Learner Credit top-up.
+    """
+    policy_uuid = serializers.UUIDField()
+    is_eligible = serializers.BooleanField()
+    reasons = TopUpEligibilityReasonSerializer(many=True)
+    subsidy_expiration_datetime = serializers.DateTimeField(allow_null=True)
+
+
+class TopUpEligibilityResponseSerializer(serializers.Serializer):
+    """
+    Response for the Learner Credit top-up eligibility endpoint.
+    """
+    results = TopUpEligibilityItemSerializer(many=True)
