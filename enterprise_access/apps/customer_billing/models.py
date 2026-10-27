@@ -1466,9 +1466,9 @@ class LearnerCreditTopUp(TimeStampedModel):
     This is the audit record of every self-service deposit: who started it, how much, when,
     which payment and what discount. Rows must never be deleted.
 
-    ``state`` changes only through ``transition_to()``, which allows only the changes listed in
-    ``ALLOWED_LEARNER_CREDIT_TOP_UP_STATE_TRANSITIONS``. The quote fields are checked when the
-    top-up is created and can't change afterwards.
+    A top-up is created in ``created``, and ``state`` changes only through ``transition_to()``, which
+    allows only the changes listed in ``ALLOWED_LEARNER_CREDIT_TOP_UP_STATE_TRANSITIONS``. The quote
+    fields are checked when the top-up is created and can't change afterwards.
 
     .. pii: initiated_by_lms_user_id stores the LMS user id of the admin who started the top-up.
        It is kept after the user is retired, because the row is a payment record kept for audit.
@@ -1778,8 +1778,8 @@ class LearnerCreditTopUp(TimeStampedModel):
 
     def clean(self):
         """
-        Check a new top-up: fill in the copies of the policy's and the initiating admin's fields,
-        and check the amounts.
+        Check a new top-up: require it to start as an unpaid quote, fill in the copies of the
+        policy's and the initiating admin's fields, and check the amounts.
 
         Only new top-ups are checked. The quote fields can't change afterwards (see save()), and
         re-checking them later could leave a paid top-up unable to move, for example after the
@@ -1789,6 +1789,13 @@ class LearnerCreditTopUp(TimeStampedModel):
             return
 
         errors = {}
+        # A top-up starts as an unpaid quote. Every later state, and its timestamp, is reached through
+        # transition_to(), so a row can't be inserted already deposited or fulfilled, skipping the money steps.
+        if self.state != LearnerCreditTopUpState.CREATED:
+            errors['state'] = f'A new top-up must start in {LearnerCreditTopUpState.CREATED}.'
+        for field_name in self.STATE_TIMESTAMP_FIELDS.values():
+            if getattr(self, field_name) is not None:
+                errors[field_name] = 'Set by transition_to(), not when the top-up is created.'
         if not self.subsidy_access_policy_id:
             errors['subsidy_access_policy'] = 'This field is required.'
         else:

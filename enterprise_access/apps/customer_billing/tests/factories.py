@@ -10,11 +10,7 @@ from factory.django import DjangoModelFactory
 from faker import Faker
 
 from enterprise_access.apps.core.tests.factories import UserFactory
-from enterprise_access.apps.customer_billing.constants import (
-    SUBSCRIPTION_ITEM_TYPE,
-    CheckoutIntentState,
-    LearnerCreditTopUpState
-)
+from enterprise_access.apps.customer_billing.constants import SUBSCRIPTION_ITEM_TYPE, CheckoutIntentState
 from enterprise_access.apps.customer_billing.models import (
     CheckoutIntent,
     LearnerCreditTopUp,
@@ -194,15 +190,31 @@ class LearnerCreditTopUpFactory(DjangoModelFactory):
 
     enterprise_customer_uuid, subsidy_uuid and initiated_by_lms_user_id are left unset,
     so the model copies them from the policy and the initiating user.
+
+    A top-up can only be created in ``created``. Pass ``state`` (and ``paid_at``, ``deposited_at``
+    or ``fulfilled_at``) to get one already in a later state: it is created as a quote, then moved
+    there directly in the database, skipping transition_to() and writing no history record.
     """
     class Meta:
         model = LearnerCreditTopUp
 
     subsidy_access_policy = factory.SubFactory(PerLearnerSpendCapLearnerCreditAccessPolicyFactory)
     initiated_by = factory.SubFactory(UserFactory)
-    state = LearnerCreditTopUpState.CREATED
     amount_cents = 100_000
     discount_rate = None
     discount_cents = None
     charge_amount_cents = factory.LazyAttribute(lambda obj: obj.amount_cents - (obj.discount_cents or 0))
     stripe_customer_id = factory.LazyAttribute(lambda x: f'cus_{FAKER.bothify("?" * 17)}_00')
+
+    @classmethod
+    def _create(cls, model_class, *args, **kwargs):
+        later = {
+            name: kwargs.pop(name)
+            for name in ('state', *model_class.STATE_TIMESTAMP_FIELDS.values())
+            if name in kwargs
+        }
+        top_up = super()._create(model_class, *args, **kwargs)
+        if later:
+            model_class.objects.filter(pk=top_up.pk).update(**later)
+            top_up.refresh_from_db()
+        return top_up

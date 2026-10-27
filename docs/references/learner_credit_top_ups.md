@@ -169,7 +169,10 @@ to move if, for example, the allowed range were narrowed after it was paid. Not 
 
 ### Saving
 
-- **A new top-up** is checked by `clean()`.
+- **A new top-up** is checked by `clean()`. It must start in `created`, with `paid_at`, `deposited_at` and
+  `fulfilled_at` empty: every later state is reached through `transition_to()`, so a row can't be inserted already
+  `deposited` or `fulfilled`, skipping the payment and deposit. In tests, `LearnerCreditTopUpFactory(state=...)`
+  creates the quote and then moves it to that state directly in the database, writing no history record.
 - **An existing top-up** must be saved with `update_fields`, which may not name `state`, a state timestamp or a quote
   field; `save()` raises `ValueError` otherwise and adds `modified` itself. A full `save()` of a copy loaded before
   another request moved the top-up would write its old state back.

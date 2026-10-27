@@ -2,7 +2,7 @@
 Tests for the ``enterprise_access.customer_billing.models`` module.
 """
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 from random import randint
 from typing import cast
@@ -1773,6 +1773,12 @@ INVALID_NEW_TOP_UPS = [
     ({'enterprise_customer_uuid': uuid4()}, 'enterprise_customer_uuid'),
     ({'subsidy_uuid': uuid4()}, 'subsidy_uuid'),
     ({'subsidy_access_policy': None}, 'subsidy_access_policy'),
+    # A new top-up starts as a quote: later states and their timestamps come only from transition_to().
+    *(({'state': state}, 'state') for state in ('paid', 'deposited', 'fulfilled')),
+    *(
+        ({field_name: datetime.fromisoformat('2026-10-01T00:00:00+00:00')}, field_name)
+        for field_name in ('paid_at', 'deposited_at', 'fulfilled_at')
+    ),
 ]
 
 # Amounts that are saved as given: the charge is the full amount minus the discount, and the limits are inclusive.
