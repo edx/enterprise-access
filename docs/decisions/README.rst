@@ -267,7 +267,7 @@ Accepted Sept 2025, this ADR describes the rational
 for identifying SSP Stripe products based on ``lookup_key``
 instead of the Stripe price id.
 
-`<0037-server-side-learner-pathway-pipeline.rst>`_
+`<0037-server-side-learner-pathway-pipeline.md>`_
 ***************************************************
 *Feature: Learner Pathways*
 
@@ -279,7 +279,7 @@ every query word, the Lightcast-canonical skill vocabulary, and 31% of
 courses carrying no skill tags -- and is explicit that the measured quality
 bar is not yet met.
 
-`<0038-non-redeemable-reasons-and-display-reason.rst>`_
+`<0038-non-redeemable-reasons-and-display-reason.md>`_
 ********************************************************
 *Feature: Learner Credit*
 
