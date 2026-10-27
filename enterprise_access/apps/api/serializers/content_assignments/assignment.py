@@ -54,6 +54,46 @@ class LearnerContentAssignmentActionLearnerAcknowledgedSerializer(LearnerContent
         fields = LearnerContentAssignmentActionSerializer.Meta.fields + ['learner_acknowledged']
 
 
+class LearnerContentAssignmentActionAdminSerializer(LearnerContentAssignmentActionSerializer):
+    """
+    A read-only Serializer for ``LearnerContentAssignmentAction`` records FOR ADMINS,
+    including the audit trail fields (who performed the action, and from where).
+    """
+    # Only these metadata keys are exposed; free-form values (e.g. raw exception text) could over-communicate secrets.
+    ALLOWED_METADATA_KEYS = (
+        'correlation_id',
+        'allocation_batch_id',
+        'state_before',
+        'state_after',
+        'policy_uuid',
+        'request_uuid',
+        'expiration_reason',
+    )
+
+    metadata = serializers.SerializerMethodField(
+        help_text='Allowlisted audit metadata for this action.',
+    )
+
+    class Meta(LearnerContentAssignmentActionSerializer.Meta):
+        fields = LearnerContentAssignmentActionSerializer.Meta.fields + [
+            'actor_lms_user_id',
+            'actor_type',
+            'learner_lms_user_id',
+            'learner_email',
+            'learner_external_key',
+            'source',
+            'metadata',
+        ]
+        read_only_fields = fields
+
+    @extend_schema_field(serializers.DictField)
+    def get_metadata(self, action):
+        """
+        Returns only the allowlisted keys of the action's metadata.
+        """
+        return {key: value for key, value in (action.metadata or {}).items() if key in self.ALLOWED_METADATA_KEYS}
+
+
 class LearnerContentAssignmentRecentActionSerializer(serializers.Serializer):
     """
     Structured data about the most recent action, meant to power a frontend table column.
@@ -158,6 +198,10 @@ class LearnerContentAssignmentAdminResponseSerializer(LearnerContentAssignmentRe
     ``LearnerContentAssignment.annotate_dynamic_fields_onto_queryset()`` on the assignment queryset.
     """
 
+    actions = LearnerContentAssignmentActionAdminSerializer(
+        help_text='All actions associated with this assignment, including audit trail fields.',
+        many=True,
+    )
     recent_action = LearnerContentAssignmentRecentActionSerializer(
         help_text='Structured data about the most recent action. Meant to power a frontend table column.',
         source='*',

@@ -436,9 +436,16 @@ class TestAdminAssignmentAuthorizedCRUD(CRUDViewTestMixin, APITest):
         # Add a successful reminder for our assignment record in the past,
         # so that we can later assert that the recent_action in the response payload
         # is the assignment's allocation time, not the (more distant) reminder time.
+        # The reminder also carries audit trail fields, which should be exposed to admins,
+        # except for non-allowlisted metadata (like raw error text), which should be dropped.
         self.assignment_allocated_pre_link.actions.create(
             action_type=AssignmentActions.REMINDED,
             completed_at=timezone.now() - timedelta(hours=3),
+            actor_lms_user_id=TEST_USER_ID,
+            actor_type=AssignmentActorTypes.ADMIN,
+            learner_email=self.assignment_allocated_pre_link.learner_email,
+            source=AssignmentSources.API,
+            metadata={'correlation_id': 'test-correlation-id', 'error': 'raw upstream error text'},
         )
 
         # Setup and call the retrieve endpoint.
@@ -470,6 +477,13 @@ class TestAdminAssignmentAuthorizedCRUD(CRUDViewTestMixin, APITest):
                     'action_type': action.action_type,
                     'completed_at': action.completed_at.strftime('%Y-%m-%dT%H:%M:%S.%fZ'),
                     'error_reason': action.error_reason,
+                    'actor_lms_user_id': action.actor_lms_user_id,
+                    'actor_type': action.actor_type,
+                    'learner_lms_user_id': action.learner_lms_user_id,
+                    'learner_email': action.learner_email,
+                    'learner_external_key': action.learner_external_key,
+                    'source': action.source,
+                    'metadata': {key: value for key, value in action.metadata.items() if key != 'error'},
                 }
                 for action in self.assignment_allocated_pre_link.actions.order_by('created')
             ],
@@ -486,6 +500,14 @@ class TestAdminAssignmentAuthorizedCRUD(CRUDViewTestMixin, APITest):
                 'reason': AssignmentAutomaticExpiredReason.NINETY_DAYS_PASSED,
             },
         }
+        reminded_action = next(
+            action for action in response.json()['actions']
+            if action['action_type'] == AssignmentActions.REMINDED
+        )
+        assert reminded_action['actor_lms_user_id'] == TEST_USER_ID
+        assert reminded_action['actor_type'] == AssignmentActorTypes.ADMIN
+        assert reminded_action['source'] == AssignmentSources.API
+        assert reminded_action['metadata'] == {'correlation_id': 'test-correlation-id'}
 
     @ddt.data(
         # A good admin role, and with a context matching the main testing customer.
