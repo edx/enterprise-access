@@ -6,6 +6,7 @@ import datetime
 from unittest import mock
 from uuid import uuid4
 
+import ddt
 from django.conf import settings
 from django.test import TestCase, override_settings
 from django.utils import timezone
@@ -15,7 +16,8 @@ from enterprise_access.apps.customer_billing.utils import (
     datetime_from_timestamp,
     get_campaign_id,
     get_default_ssp_price_lookup_key,
-    get_product_type
+    get_product_type,
+    strip_query_and_fragment
 )
 
 
@@ -222,3 +224,23 @@ class TestGetCampaignId(TestCase):
         """ValueError should be raised when the resolved campaign setting is empty."""
         with self.assertRaises(ValueError):
             get_campaign_id('billing_error', None)
+
+
+@ddt.ddt
+class TestStripQueryAndFragment(TestCase):
+    """
+    Tests for ``strip_query_and_fragment``.
+    """
+    @ddt.data(
+        ('https://www.google.com/search?email=foo@bar.com&q=x#frag', 'https://www.google.com/search'),
+        ('https://example.com/page', 'https://example.com/page'),
+        ('not a url', 'not a url'),
+    )
+    @ddt.unpack
+    def test_strips_query_and_fragment(self, url, expected):
+        self.assertEqual(strip_query_and_fragment(url), expected)
+
+    @ddt.data('http://[', 'https://[::1/path?email=foo@bar.com')
+    def test_unparseable_url_returns_none(self, url):
+        """``urlsplit`` raises ValueError for a malformed IPv6 host; callers drop the value instead of failing."""
+        self.assertIsNone(strip_query_and_fragment(url))

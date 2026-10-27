@@ -344,6 +344,14 @@ class CheckoutIntent(TimeStampedModel):
         blank=True,
         help_text="Metadata relating to the terms and conditions accepted by the user.",
     )
+    attribution = models.JSONField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Marketing attribution for the checkout session: utm_source, utm_medium, "
+            "utm_campaign, utm_content, utm_term, referrer."
+        ),
+    )
 
     history = HistoricalRecords()
 
@@ -754,6 +762,7 @@ class CheckoutIntent(TimeStampedModel):
         country: str | None = None,
         terms_metadata: dict | None = None,
         ssp_product: 'SspProduct | None' = None,
+        attribution: dict | None = None,
     ) -> Self:
         """
         Create or update a checkout intent for a user with the given enterprise details.
@@ -866,6 +875,8 @@ class CheckoutIntent(TimeStampedModel):
                 existing_intent.terms_metadata = (existing_intent.terms_metadata or {}) | (terms_metadata or {})
                 if ssp_product is not None:
                     existing_intent.ssp_product = ssp_product
+                if attribution and not existing_intent.attribution:
+                    existing_intent.attribution = attribution
                 existing_intent.save()
                 logger.info(
                     'create_intent for user %s: updated existing intent %s with slug=%s, name=%s, quantity=%s',
@@ -882,6 +893,7 @@ class CheckoutIntent(TimeStampedModel):
                 'expires_at': expires_at,
                 'country': country,
                 'terms_metadata': terms_metadata,
+                'attribution': attribution,
             }
             if ssp_product is not None:
                 create_kwargs['ssp_product'] = ssp_product
@@ -1428,3 +1440,24 @@ class StripeEventSummary(TimeStampedModel):
             stripe_subscription_id=subscription_id,
             event_type='customer.subscription.created',
         ).order_by('-stripe_event_created_at').first()
+
+
+class SegmentEventEmission(TimeStampedModel):
+    """
+    Idempotency record for server-side checkout Segment events: at most one emission per
+    (event_name, order_id), where order_id is the Stripe invoice ID. ``emitted_at`` is set only after the
+    event was handed to Segment; a row without it means the send has not succeeded yet and may be retried.
+
+    .. no_pii: This model has no PII
+    """
+    event_name = models.CharField(max_length=255)
+    order_id = models.CharField(max_length=255, help_text='Stripe invoice ID used as the Segment order_id')
+    emitted_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['event_name', 'order_id'], name='unique_segment_event_per_order'),
+        ]
+
+    def __str__(self):
+        return f'{self.event_name} {self.order_id}'
