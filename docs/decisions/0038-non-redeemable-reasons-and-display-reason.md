@@ -64,50 +64,49 @@ ordered from the learner's state, to the content, to the budget's money, as the 
 describes.
 
 ```mermaid
-flowchart TD
-    START(["policy.can_redeem(learner, content)"]) --> A{"Policy active<br/>and not retired?"}
-    A -- no --> R_PE["policy_expired"]
-    A -- yes --> B{"Learner linked to<br/>the customer?<br/><i>skipped by can-redeem unless<br/>staff override lms_user_id</i>"}
-    B -- no --> R_NE["learner_not_in_enterprise"]
-    B -- yes --> C{"Policy has groups and<br/>learner is in none?"}
-    C -- yes --> R_NG["learner_not_in_enterprise_group"]
-    C -- no --> D{"Content in the policy's catalog<br/>and its metadata found?"}
-    D -- no --> R_NC["content_not_in_catalog"]
-    D -- yes --> E{"Past the enroll-by date and<br/>late redemption not allowed?"}
-    E -- yes --> R_DL["beyond_enrollment_deadline"]
-    E -- no --> F{"Subsidy active now?<br/><i>enterprise-subsidy can_redeem</i>"}
-    F -- no --> R_SE["subsidy_expired"]
-    F -- yes --> G{"Subsidy balance<br/>covers the price?"}
-    G -- no --> R_NV["not_enough_value_in_subsidy"]
-    G -- yes --> H{"Policy spend_limit<br/>covers the price?"}
-    H -- no --> R_SL["policy_spend_limit_reached"]
-    H -- yes ---> T{"Policy type"}
+%%{init: {"flowchart": {"padding": 24, "nodeSpacing": 28, "rankSpacing": 36, "wrappingWidth": 340}, "themeVariables": {"fontFamily": "Arial, Helvetica, sans-serif", "fontSize": "14px"}}}%%
+flowchart TB
+    START(["policy.can_redeem(learner, content)"]) --> G1
 
-    T -- "PerLearnerEnrollment" --> I{"Learner transactions >=<br/>per_learner_enrollment_limit?"}
-    I -- yes --> R_ME["learner_max_enrollments_reached"]
-    T -- "PerLearnerSpend<br/>(BnR off)" --> J{"Net learner spend + price ><br/>per_learner_spend_limit?"}
-    J -- yes --> R_MS["learner_max_spend_reached"]
-    T -- "Assigned, or<br/>PerLearnerSpend with BnR on" --> K{"Learner's assignment<br/>for this content"}
-    K -- "none or accepted" --> R_NA["reason_learner_not_assigned_content"]
-    K -- cancelled --> R_AC["reason_learner_assignment_cancelled"]
-    K -- errored --> R_AF["reason_learner_assignment_failed"]
-    K -- expired --> R_AE["reason_learner_assignment_expired"]
-    K -- reversed --> R_AR["reason_learner_assignment_reversed"]
+    subgraph G1["Shared checks: learner and content"]
+        direction LR
+        a["Policy active and<br/>not retired?<br/>✗ policy_expired"] --> b["Learner linked to<br/>the customer? ¹<br/>✗ learner_not_in_enterprise"]
+        b --> c["Learner in one of the<br/>policy's groups? ¹<br/>✗ learner_not_in_enterprise_group"]
+        c --> d["Content in catalog,<br/>metadata found?<br/>✗ content_not_in_catalog"]
+        d --> e["Before the enroll-by<br/>date? ²<br/>✗ beyond_enrollment_deadline"]
+    end
 
-    I -- no --> OK(["Redeemable"])
-    J -- no --> OK
-    K -- allocated --> OK
+    subgraph G2["Shared checks: money"]
+        direction LR
+        f["Subsidy active now? ³<br/>✗ subsidy_expired"] --> g["Subsidy balance covers<br/>the price? ³<br/>✗ not_enough_value_in_subsidy"]
+        g --> h["Policy spend_limit<br/>covers the price?<br/>✗ policy_spend_limit_reached"]
+    end
 
-    classDef expiry fill:#fde2e1,stroke:#c0392b
-    classDef notApplicable fill:#fff3cd,stroke:#b7950b
-    classDef blocking fill:#d6eaf8,stroke:#2471a3
-    class R_PE,R_SE expiry
-    class R_NG,R_NC,R_NA notApplicable
-    class R_NE,R_DL,R_NV,R_SL,R_ME,R_MS,R_AC,R_AF,R_AE,R_AR blocking
+    subgraph G3["Type-specific check, last"]
+        direction LR
+        i["PerLearnerEnrollment:<br/>under per_learner_enrollment_limit?<br/>✗ learner_max_enrollments_reached"]
+        j["PerLearnerSpend, BnR off:<br/>net spend + price within the limit?<br/>✗ learner_max_spend_reached"]
+        k["Assigned, or BnR on:<br/>allocated assignment?<br/>✗ reason_learner_not_assigned_content<br/>✗ reason_learner_assignment_cancelled /<br/>failed / expired / reversed"]
+        i ~~~ j ~~~ k
+    end
+
+    G1 --> G2 --> G3 --> OK(["Redeemable"])
+
+    classDef expiry fill:#fde2e1,stroke:#c0392b,color:#1b1b1b
+    classDef notApplicable fill:#fff3cd,stroke:#b7950b,color:#1b1b1b
+    classDef blocking fill:#d6eaf8,stroke:#2471a3,color:#1b1b1b
+    classDef ok fill:#d5f5e3,stroke:#1e8449,color:#1b1b1b
+    class a,f expiry
+    class c,d notApplicable
+    class b,e,g,h,i,j,k blocking
+    class OK ok
 ```
 
-Colours match the `display_reason` ranks in section 3: red is expiry, yellow is a budget that
-doesn't apply, blue is a budget that applies but blocks the learner.
+Each box is one check and the reason it fails with, in the order they run. ¹ Skipped by
+`can-redeem` unless staff pass an `lms_user_id` override. ² Unless late redemption is allowed.
+³ Answered by enterprise-subsidy's remote `can_redeem` call. Colours match the `display_reason`
+ranks in section 3: red is expiry, yellow is a budget that doesn't apply, blue is a budget that
+applies but blocks the learner.
 
 ### 2. Reason catalogue
 
@@ -139,22 +138,19 @@ request).
 Admin and BnR flows raise a subset of these, in their own order:
 
 ```mermaid
+%%{init: {"flowchart": {"padding": 24, "nodeSpacing": 28, "rankSpacing": 36, "wrappingWidth": 340}, "themeVariables": {"fontFamily": "Arial, Helvetica, sans-serif", "fontSize": "14px"}}}%%
 flowchart TB
-    subgraph AL["allocate — AssignedLearnerCreditAccessPolicy.can_allocate"]
+    subgraph AL["allocate: AssignedLearnerCreditAccessPolicy.can_allocate"]
         direction LR
-        A1["policy_expired"] --> A2["content_not_in_catalog"] --> A3["subsidy_expired"]
-        A3 --> A4["not_enough_value_in_subsidy"] --> A5["policy_spend_limit_reached"]
+        A1["policy_expired"] --> A2["content_not_in_catalog"] --> A3["subsidy_expired"] --> A4["not_enough_value_in_subsidy"] --> A5["policy_spend_limit_reached"]
     end
-    subgraph AP["approve — can_approve, then can_allocate_all"]
+    subgraph AP["approve: can_approve, then can_allocate_all"]
         direction LR
-        P0["REASON_BNR_NOT_ENABLED"] --> P1["policy_expired"] --> P2["subsidy_expired"]
-        P2 --> P3["content_not_in_catalog<br/>or PriceValidationError<br/><i>per request, partial success</i>"]
-        P3 --> P4["not_enough_value_in_subsidy"] --> P5["policy_spend_limit_reached"]
+        P0["BnR not enabled"] --> P1["policy_expired"] --> P2["subsidy_expired"] --> P3["content_not_in_catalog or<br/>PriceValidationError<br/>(per request)"] --> P4["not_enough_value_in_subsidy"] --> P5["policy_spend_limit_reached"]
     end
-    subgraph CR["can-request — SubsidyAccessPolicyRedeemViewset.can_request"]
+    subgraph CR["can-request: SubsidyAccessPolicyRedeemViewset.can_request"]
         direction LR
-        C1["no active policies"] --> C2["no BnR-enabled policies"] --> C3["subsidy_expired"]
-        C3 --> C4["content_not_in_catalog"] --> C5["existing open request"]
+        C1["no active policies"] --> C2["no BnR-enabled policies"] --> C3["subsidy_expired"] --> C4["content_not_in_catalog"] --> C5["existing open request"]
     end
     AL ~~~ AP ~~~ CR
 ```
@@ -169,26 +165,24 @@ redeemable it returns all the reasons, plus a single `display_reason` that the l
 shows as-is.
 
 ```mermaid
-flowchart TD
-    Q(["GET can-redeem for a content key"]) --> RD{"Learner already redeemed<br/>this content?"}
-    RD -- yes --> DONE(["has_successful_redemption, no reasons"])
-    RD -- no --> P["Active, unretired policies for the customer"]
-    P --> S["Sort: type priority (Assigned 0, credit 1),<br/>then soonest subsidy expiration, then lowest balance"]
-    S --> EV["can_redeem on each policy"]
-    EV --> X{"Any redeemable?"}
-    X -- yes --> OK(["redeemable_subsidy_access_policy = first redeemable"])
-    X -- no --> BK["Group policies by reason,<br/>in first-seen order: reasons[]"]
-    BK --> RK["display_reason = first reason with the lowest rank"]
-    RK --> R0["Rank 0: applies but blocks<br/>limits, out of budget, deadline,<br/>assignment state, not in enterprise"]
-    RK --> R1["Rank 1: doesn't apply<br/>not in catalog, not assigned, not in group"]
-    RK --> R2["Rank 2: expired<br/>subsidy_expired, policy_expired"]
+%%{init: {"flowchart": {"padding": 24, "nodeSpacing": 28, "rankSpacing": 36, "wrappingWidth": 340}, "themeVariables": {"fontFamily": "Arial, Helvetica, sans-serif", "fontSize": "14px"}}}%%
+flowchart TB
+    Q(["GET can-redeem, per content key"]) --> EV["Skip content the learner already redeemed.<br/>Sort the active, unretired budgets: type priority,<br/>then soonest expiration, then lowest balance.<br/>Run can_redeem on each."]
+    EV --> X{"Any budget<br/>redeemable?"}
+    X -- yes --> OK(["Use the first redeemable budget"])
+    X -- no --> RK["Group budgets by reason into reasons[].<br/>display_reason = the first reason<br/>with the lowest rank."]
+    RK --> R0["<b>Rank 0: applies but blocks</b><br/>limits, out of budget, deadline,<br/>assignment state, not in enterprise"]
+    RK --> R1["<b>Rank 1: doesn't apply</b><br/>not in catalog, not assigned,<br/>not in group"]
+    RK --> R2["<b>Rank 2: expired</b><br/>subsidy_expired, policy_expired"]
 
-    classDef expiry fill:#fde2e1,stroke:#c0392b
-    classDef notApplicable fill:#fff3cd,stroke:#b7950b
-    classDef blocking fill:#d6eaf8,stroke:#2471a3
+    classDef expiry fill:#fde2e1,stroke:#c0392b,color:#1b1b1b
+    classDef notApplicable fill:#fff3cd,stroke:#b7950b,color:#1b1b1b
+    classDef blocking fill:#d6eaf8,stroke:#2471a3,color:#1b1b1b
+    classDef ok fill:#d5f5e3,stroke:#1e8449,color:#1b1b1b
     class R2 expiry
     class R1 notApplicable
     class R0 blocking
+    class OK ok
 ```
 
 The ranking lives in `_display_reason_rank` (`api/v1/views/subsidy_access_policy.py`):
@@ -242,41 +236,24 @@ order, and stage 3 stops at the first budget that passes. When none passes, the 
 **the first reason from the furthest stage any budget reached.**
 
 ```mermaid
+%%{init: {"flowchart": {"padding": 24, "nodeSpacing": 28, "rankSpacing": 36, "wrappingWidth": 340}, "themeVariables": {"fontFamily": "Arial, Helvetica, sans-serif", "fontSize": "14px"}}}%%
 flowchart TB
-    ALL(["Active, unretired budgets<br/>in sort order"]) --> L
+    ALL(["Active, unretired budgets, in sort order"]) --> L
+    L["<b>1 · Live?</b><br/>policy_expired<br/>subsidy_expired"] -- "live budgets" --> A
+    A["<b>2 · Applies to this learner and content?</b><br/>learner_not_in_enterprise<br/>learner_not_in_enterprise_group<br/>content_not_in_catalog<br/>reason_learner_not_assigned_content"] -- "applicable budgets" --> C
+    C["<b>3 · Allowed now?</b><br/><i>first budget to pass wins</i><br/>beyond_enrollment_deadline<br/>not_enough_value_in_subsidy<br/>policy_spend_limit_reached<br/>learner_max_spend_reached<br/>learner_max_enrollments_reached<br/>reason_learner_assignment_cancelled,<br/>_failed, _expired or _reversed"] -- "first budget that passes" --> OK(["Redeemable"])
 
-    subgraph L["1 · Live?"]
-        l1["policy_expired"]
-        l2["subsidy_expired"]
-    end
-
-    subgraph A["2 · Applies to this learner and content?"]
-        a1["learner_not_in_enterprise<br/>learner_not_in_enterprise_group"]
-        a2["content_not_in_catalog"]
-        a3["reason_learner_not_assigned_content"]
-    end
-
-    subgraph C["3 · Allowed now? (first budget to pass wins)"]
-        c1["beyond_enrollment_deadline"]
-        c2["not_enough_value_in_subsidy"]
-        c3["policy_spend_limit_reached"]
-        c4["learner_max_spend_reached<br/>learner_max_enrollments_reached"]
-        c5["reason_learner_assignment_cancelled / failed<br/>/ expired / reversed"]
-    end
-
-    L -- "live budgets" --> A
-    A -- "applicable budgets" --> C
-    C -- "first budget that passes" --> OK(["Redeemable"])
-
-    classDef expiry fill:#fde2e1,stroke:#c0392b
-    classDef notApplicable fill:#fff3cd,stroke:#b7950b
-    classDef blocking fill:#d6eaf8,stroke:#2471a3
-    class l1,l2 expiry
-    class a1,a2,a3 notApplicable
-    class c1,c2,c3,c4,c5 blocking
+    classDef expiry fill:#fde2e1,stroke:#c0392b,color:#1b1b1b
+    classDef notApplicable fill:#fff3cd,stroke:#b7950b,color:#1b1b1b
+    classDef blocking fill:#d6eaf8,stroke:#2471a3,color:#1b1b1b
+    classDef ok fill:#d5f5e3,stroke:#1e8449,color:#1b1b1b
+    class L expiry
+    class A notApplicable
+    class C blocking
+    class OK ok
 ```
 
-Within each stage, checks run top to bottom. This one diagram and one rule replace the section 1
+Within each stage box, checks run top to bottom. This one diagram and one rule replace the section 1
 flowchart and the section 3 ranking. Each stage holds exactly one rank from section 3: stage 1 is
 rank 2, stage 2 is rank 1, stage 3 is rank 0. The one difference is `learner_not_in_enterprise`,
 which is in stage 2 here and rank 0 in section 3. It fails for every budget of the customer alike,
