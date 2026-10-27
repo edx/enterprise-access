@@ -328,14 +328,110 @@ def display_failure(failures):
     return next(f for f in failures if f[0] == furthest)
 ```
 
+**Testing and verification**
+
+Existing workflows must keep working, and the performance claims must be checked by tests, not
+just measured once.
+
+*Keeping existing workflows working*
+
+* **The contract doesn't change.** `can_redeem` keeps returning
+  `(redeemable, reason, existing_transactions)`, with the transactions from the remote call that
+  `redeem` uses for idempotency. Every caller keeps working unmodified: the `can-redeem` and
+  `redeem` endpoints, Browse & Request (`assignment_request_can_redeem`), the content-assignment
+  admin redemption action, and `ForcedPolicyRedemption`.
+* **The existing suite proves step 1.** The refactor keeps today's order, so the 24 existing
+  `can_redeem` tests (5 model, 19 view) and their reason assertions must pass with no edits. Any
+  edit there is a behaviour change and belongs in step 2.
+* **Differential tests.** A ddt matrix of budget scenarios (type; live or expired; in the catalog
+  or not; assignment state; limits reached or not) runs both the old and the new evaluation. It
+  asserts the same redeemable budget and the same `display_reason`. The only exceptions are the
+  cases listed under [Consequences](#consequences), and each of those gets its own assertion.
+* **Workflow tests, end to end through the views:** `can-redeem` then `redeem` for each budget
+  type, Browse & Request approval then redemption, accepting an assignment, forced redemption,
+  and `credits_available`, which doesn't use `can_redeem` and must not change.
+* **A per-user waffle flag.** Step 2 ships behind a `WaffleFlag`,
+  `enterprise_access.staged_policy_evaluation`, off for everyone by default. This is a critical
+  path, so the flag lets us validate the new evaluation for specific users before anyone else
+  sees it (see *Validating behind the flag* below). Turning it off for
+  everyone restores today's evaluation without a deploy. The old evaluation stays in the code
+  until the flag has been on for everyone for a full release cycle.
+* **Stage QA.** Seed one customer with an expired budget, a live assigned budget with nothing
+  assigned, and a spend-capped budget at its limit, which reproduces ENT-12416. Confirm the
+  learner sees the limit message, and that redeeming still works once they're under the limit.
+
+*Proving the performance*
+
+* **Call-count tests, in CI.** With the subsidy client mocked, each Big-O row becomes an assertion
+  on the number of remote `can_redeem` calls per request: $`\Theta(K)`$ when the first
+  applicable budget redeems, none when every budget has expired, $`P_{\text{app}}`$ per content
+  key when the learner is blocked everywhere, and $`S_{\text{app}}`$ with the per-subsidy cache.
+  A scaling test parameterised over $`P \in \{1, 5, 20\}`$ and $`K \in \{1, 3\}`$ asserts
+  that adding expired budgets adds no remote calls. Any change that brings back a call per budget
+  fails a test.
+* **Query-count tests.** `django_assert_num_queries` around a `can-redeem` request shows that
+  moving the assignment lookup to stage 2 doesn't add database queries beyond the request-cached
+  ones.
+* **Repeatable replay.** The replica replay in [Performance](#performance) is written up with its
+  read-only queries under `docs/references/`, and re-run for the same window after step 2, so the
+  before and after numbers come from the same method.
+* **Production metrics, by cohort.** Each `can-redeem` request records whether the flag was on
+  for it, and how many remote `can_redeem` calls it made, as custom attributes
+  (`set_custom_attribute`, already used in this repo). Datadog APM can then compare the flagged
+  and unflagged cohorts side by side, at the same time and on the same traffic mix, instead of one
+  week against another. Success means a mean of no more than about 1.6 remote calls per content
+  key on the enroll path for the flagged cohort (the replay measured 1.49), with no rise in its
+  5xx responses or `redeem` failures.
+* **No synthetic load test.** The improvement is fewer calls per request, which the call-count
+  tests prove deterministically and APM confirms under real traffic.
+
+**Validating behind the flag**
+
+The flag is evaluated against the user making the request, which gives two ways to validate a
+specific learner's outcome in production:
+
+* **Through a staff account.** Enable the flag for one staff user in Django admin. That user calls
+  `can-redeem` with `lms_user_id` set to the learner, which staff are already allowed to do. The
+  learner's eligibility is computed with the new evaluation, while the learner, who isn't
+  flagged, keeps today's behaviour. This checks a real learner's result without exposing them to
+  it, and can be compared directly with the same call made with the flag off.
+* **For the learner themselves.** Enable the flag for the learner's user, so their course pages
+  use the new evaluation. The learner from ENT-12416 is the natural first case: they should see
+  the limit message, and redeem normally once they're under the limit.
+
+Why a flag here, when `enterprise_access/toggles.py` deliberately uses switches for the learner
+pathway pipeline:
+
+* **Those switches guard a paid, unreleased pipeline.** A flag would have let anyone enable it
+  with a `?flag=1` query string, and the pipeline's offline harness has no request to evaluate a
+  flag against.
+* **Neither risk applies here.** `WAFFLE_OVERRIDE` isn't enabled in this repo's settings, or in
+  any edx repo that code search covers, so query strings can't turn the flag on. Both
+  evaluations pick the same redeemable budget, so the flag changes the reason shown and the number
+  of remote calls, not which budget pays.
+* **Callers with no request stay on today's evaluation.** `WaffleFlag.is_enabled()` is off when
+  there's no request, so anything that runs outside a request keeps the old path until the flag
+  is removed. That includes forced redemptions run by the Celery task in
+  `subsidy_access_policy/tasks.py`. The content-assignment admin action, and forced redemptions
+  started from the Django admin, run inside the admin's request, so they follow that admin's
+  flag.
+
 **Rollout**
 
-1. Refactor only: the check table and engine, keeping today's order. Existing tests pass
-   unchanged, which shows the refactor changes nothing.
-2. Reorder into stages, skip expired budgets in stage 1, stop at the first redeemable budget,
-   and replace the section 1 and section 3 diagrams with the one above.
-3. Add the per-subsidy cache, the audit log line and the three missing messages (needs copy from
-   product).
+1. Refactor only: the check table and engine, keeping today's order. Gate: the existing tests
+   pass unchanged, plus new tests for the table rules.
+2. Reorder into stages, skip expired budgets in stage 1 and stop at the first redeemable budget,
+   behind the flag, off for everyone. Replace the section 1 and section 3 diagrams with the one
+   above. Gate: differential, call-count, query-count and workflow tests, then stage QA.
+3. Turn the flag on for one staff user in production and validate chosen learners through
+   `lms_user_id`, comparing each result with the flag off. Then turn it on for the learner from
+   ENT-12416.
+4. Widen to the enterprise staff group, then to a percentage of users, comparing the flagged and
+   unflagged cohorts in APM at each step, then to everyone.
+5. Add the per-subsidy cache, the audit log line (including each request's remote call count) and
+   the three missing messages (needs copy from product).
+6. After a full release cycle with the flag on for everyone, remove the old evaluation and the
+   flag.
 
 `allocate` already runs live, applies, allowed, except that it checks the catalog before the
 subsidy's expiry. `approve` and `can-request` already check expiry before the catalog. They can
@@ -484,8 +580,13 @@ Limitations of the measurement:
   their `[can_redeem]` log lines disappear. The audit log line replaces them.
 * **Caching scope.** The per-subsidy cache must stay request-scoped and must never feed `redeem`'s
   authoritative check.
-* **Two orderings during the refactor.** Rollout step 1 keeps today's order inside the new table.
-  Steps 1 and 2 should land close together so the table and this ADR don't drift.
+* **Two evaluations in the code for a while.** Rollout step 1 keeps today's order inside the new
+  table, and the old evaluation stays behind the flag until step 6. Keep that window short, one
+  release cycle after the flag reaches everyone, so the two don't drift from each other or from
+  this ADR.
+* **A flagged learner can see a different reason from an unflagged one** for the same budgets
+  while the rollout is partial. That's the point of the flag, but support should know which
+  cohort a learner is in when explaining a message; the custom attribute records it.
 * **Choosing a stage is a product decision.** A new reason needs a stage, and that choice
   decides when learners see it.
 
