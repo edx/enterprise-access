@@ -167,7 +167,6 @@ distlib==0.4.4
 django==5.2.18
     # via
     #   -c requirements/common_constraints.txt
-    #   -r requirements/test.txt
     #   crispy-bootstrap5
     #   django-celery-results
     #   django-cors-headers
@@ -263,6 +262,7 @@ docstring-parser==0.18.0
 docutils==0.21.2
     # via
     #   doc8
+    #   myst-parser
     #   pydata-sphinx-theme
     #   readme-renderer
     #   restructuredtext-lint
@@ -388,6 +388,7 @@ jinja2==3.1.6
     # via
     #   -r requirements/test.txt
     #   code-annotations
+    #   myst-parser
     #   pydata-sphinx-theme
     #   sphinx
     #   sphinxcontrib-mermaid
@@ -415,6 +416,10 @@ kombu==5.6.2
     # via
     #   -r requirements/test.txt
     #   celery
+markdown-it-py==4.2.0
+    # via
+    #   mdit-py-plugins
+    #   myst-parser
 markupsafe==3.0.4
     # via
     #   -r requirements/test.txt
@@ -423,6 +428,10 @@ mccabe==0.7.0
     # via
     #   -r requirements/test.txt
     #   pylint
+mdit-py-plugins==0.6.1
+    # via myst-parser
+mdurl==0.1.2
+    # via markdown-it-py
 monotonic==1.6
     # via
     #   -r requirements/test.txt
@@ -433,6 +442,8 @@ mypy-extensions==1.1.0
     #   isort
 mysqlclient==2.3.0
     # via -r requirements/test.txt
+myst-parser==5.1.0
+    # via -r requirements/doc.in
 nh3==0.3.7
     # via readme-renderer
 oauthlib==4.0.0
@@ -598,6 +609,7 @@ pyyaml==6.0.3
     #   drf-spectacular
     #   drf-yasg
     #   edx-django-release-util
+    #   myst-parser
     #   sphinxcontrib-mermaid
     #   swagger-spec-validator
 readme-renderer==46.0
@@ -678,6 +690,7 @@ soupsieve==3.0.4
 sphinx==9.1.1
     # via
     #   -r requirements/doc.in
+    #   myst-parser
     #   pydata-sphinx-theme
     #   sphinx-book-theme
     #   sphinxcontrib-mermaid
