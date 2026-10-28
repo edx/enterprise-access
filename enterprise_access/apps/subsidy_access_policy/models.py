@@ -92,6 +92,7 @@ from .subsidy_api import (
     SUBSIDY_API_HTTP_ERROR_MESSAGE,
     get_and_cache_transactions_for_learner,
     get_tiered_cache_subsidy_record,
+    record_subsidy_can_redeem_call,
     set_tiered_cache_subsidy_record
 )
 from .utils import (
@@ -924,6 +925,7 @@ class SubsidyAccessPolicy(TimeStampedModel):
 
         # We want to wait to do these checks that might require a call
         # to the enterprise-subsidy service until we *know* we'll need the data.
+        record_subsidy_can_redeem_call()
         subsidy_can_redeem_payload = self.subsidy_client.can_redeem(
             self.subsidy_uuid,
             lms_user_id,

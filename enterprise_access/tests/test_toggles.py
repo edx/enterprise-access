@@ -1,7 +1,11 @@
 """Tests for the enterprise-access feature toggles."""
+import inspect
+
+import crum
 import pytest
-from edx_toggles.toggles import WaffleSwitch
-from edx_toggles.toggles.testutils import override_waffle_switch
+from django.test import RequestFactory
+from edx_toggles.toggles import WaffleFlag, WaffleSwitch
+from edx_toggles.toggles.testutils import override_waffle_flag, override_waffle_switch
 
 from enterprise_access import toggles
 
@@ -71,3 +75,47 @@ def test_reranking_is_on_by_default_because_its_switch_is_a_kill_switch():
 def test_reranking_stops_when_the_kill_switch_is_on():
     with override_waffle_switch(toggles.LEARNER_PATHWAYS_DISABLE_CANDIDATE_RERANK, True):
         assert toggles.learner_pathways_candidate_rerank_enabled() is False
+
+
+def test_staged_policy_evaluation_is_a_per_user_waffle_flag():
+    """
+    The staged evaluation must stay a ``WaffleFlag``, so it can be turned on for specific users first.
+    """
+    assert isinstance(toggles.STAGED_POLICY_EVALUATION, WaffleFlag)
+    assert toggles.STAGED_POLICY_EVALUATION.name == 'enterprise_access.staged_policy_evaluation'
+
+
+def test_staged_policy_evaluation_annotations_mark_it_temporary():
+    """
+    The flag is a rollout flag, so its annotations must say it's temporary and when it should go.
+    """
+    source = inspect.getsource(toggles)
+    annotations = source[
+        source.index('# .. toggle_name: enterprise_access.staged_policy_evaluation'):
+        source.index('STAGED_POLICY_EVALUATION = WaffleFlag(')
+    ]
+    assert '# .. toggle_implementation: WaffleFlag' in annotations
+    assert '# .. toggle_use_cases: temporary' in annotations
+    assert '# .. toggle_target_removal_date:' in annotations
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize('flag_active', [True, False])
+def test_staged_policy_evaluation_enabled_follows_the_flag_in_a_request(flag_active):
+    crum.set_current_request(RequestFactory().get('/'))
+    try:
+        with override_waffle_flag(toggles.STAGED_POLICY_EVALUATION, active=flag_active):
+            assert toggles.staged_policy_evaluation_enabled() is flag_active
+    finally:
+        crum.set_current_request(None)
+
+
+@pytest.mark.django_db
+def test_staged_policy_evaluation_is_off_without_a_request():
+    """
+    Celery tasks and management commands have no request, so they keep today's evaluation even when the
+    flag is on for everyone.
+    """
+    crum.set_current_request(None)
+    with override_waffle_flag(toggles.STAGED_POLICY_EVALUATION, active=True):
+        assert toggles.staged_policy_evaluation_enabled() is False

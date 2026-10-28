@@ -1,5 +1,6 @@
 """Feature toggles for enterprise-access."""
 
+import crum
 from edx_toggles.toggles import WaffleFlag, WaffleSwitch
 
 ENTERPRISE_ACCESS_NAMESPACE = 'enterprise_access'
@@ -124,3 +125,39 @@ ASSIGNMENT_COURSE_RUN_ENDED_EXPIRATION = WaffleSwitch(
 def assignment_course_run_ended_expiration_enabled():
     """Return whether assignments expire (and have PII cleared) when their course runs have ended."""
     return ASSIGNMENT_COURSE_RUN_ENDED_EXPIRATION.is_enabled()
+
+
+# A ``WaffleFlag`` rather than a ``WaffleSwitch``, deliberately, unlike the pathway toggles above. This
+# path is critical, so the flag lets us validate the staged evaluation for specific users (including a
+# staff user checking a learner through ``lms_user_id``) before anyone else sees it. The pathway
+# concerns don't apply: ``WAFFLE_OVERRIDE`` isn't enabled, so no query string can turn this on, and both
+# evaluations pick the same redeemable budget. See ADR 0038, "Validating behind the flag".
+#
+# .. toggle_name: enterprise_access.staged_policy_evaluation
+# .. toggle_implementation: WaffleFlag
+# .. toggle_default: False
+# .. toggle_description: Evaluates a customer's budgets for can-redeem in three stages (live, applies,
+#     allowed), as ADR 0038 section 5 describes, so the reason shown comes from the budget that got
+#     furthest and expired budgets make no remote calls. Off: today's evaluation. Turning it off for
+#     everyone is the rollback.
+# .. toggle_use_cases: temporary
+# .. toggle_creation_date: 2026-10-28
+# .. toggle_target_removal_date: 2027-04-30
+# .. toggle_tickets: ENT-12416
+STAGED_POLICY_EVALUATION = WaffleFlag(
+    f'{ENTERPRISE_ACCESS_NAMESPACE}.staged_policy_evaluation',
+    __name__,
+    ENTERPRISE_ACCESS_LOG_PREFIX,
+)
+
+
+def staged_policy_evaluation_enabled():
+    """
+    Return whether the staged policy evaluation is on for the current request's user.
+
+    Always off when there's no request (Celery tasks, management commands), so code that runs without
+    a request keeps today's evaluation until the flag is removed.
+    """
+    if crum.get_current_request() is None:
+        return False
+    return STAGED_POLICY_EVALUATION.is_enabled()

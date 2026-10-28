@@ -67,6 +67,28 @@ def get_and_cache_subsidy_learners_aggregate_data(subsidy_uuid, policy_uuid=None
     return results
 
 
+SUBSIDY_CAN_REDEEM_CALL_COUNT_CACHE_KEY = 'subsidy_can_redeem_call_count'
+
+
+def record_subsidy_can_redeem_call():
+    """
+    Count one remote call to the subsidy service's can_redeem endpoint in the current request.
+    """
+    cache = request_cache(namespace=REQUEST_CACHE_NAMESPACE)
+    cached_response = cache.get_cached_response(SUBSIDY_CAN_REDEEM_CALL_COUNT_CACHE_KEY)
+    cache.set(SUBSIDY_CAN_REDEEM_CALL_COUNT_CACHE_KEY, (cached_response.value if cached_response.is_found else 0) + 1)
+
+
+def subsidy_can_redeem_call_count():
+    """
+    Return how many remote calls to the subsidy service's can_redeem endpoint the current request has made.
+    """
+    cached_response = request_cache(namespace=REQUEST_CACHE_NAMESPACE).get_cached_response(
+        SUBSIDY_CAN_REDEEM_CALL_COUNT_CACHE_KEY,
+    )
+    return cached_response.value if cached_response.is_found else 0
+
+
 def learner_transaction_cache_key(subsidy_uuid, lms_user_id):
     return versioned_cache_key('get_transactions_for_learner', subsidy_uuid, lms_user_id)
 

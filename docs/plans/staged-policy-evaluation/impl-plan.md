@@ -24,7 +24,7 @@
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | K | Record the staged-evaluation decision and plan | 🔲 | Hamzah Ullah | TBD | #326 | C1 | S |
 | C1 | Pin today's `can_redeem` behaviour with characterization tests | 🔨 | Hamzah Ullah | TBD | K | C2 | M |
-| C2 | Instrument `can-redeem` for a flagged rollout | 🔲 | Hamzah Ullah | TBD | C1 | C3 | S |
+| C2 | Instrument `can-redeem` for a flagged rollout | 🔨 | Hamzah Ullah | TBD | C1 | C3 | S |
 | C3 | Move `can_redeem` onto an ordered check table | 🔲 | Hamzah Ullah | TBD | C2 | C4 | L |
 | C4 | Evaluate budgets in stages behind the flag | 🔲 | Hamzah Ullah | TBD | C3 | C5 | L |
 | C5 | Log one audit line per evaluation | 🔲 | Hamzah Ullah | TBD | C4 | C6 | S |
@@ -163,7 +163,7 @@ Result: 16 new test cases; `make test` 3092 passed, 37 skipped; quality 10/10.
 | Depends On | C1 |
 | Unblocks | C3, and the production baseline |
 | Estimated Size | S |
-| Status | 🔲 Not Started |
+| Status | 🔨 In Progress |
 
 ```gherkin
 Scenario: The rollout flag exists and is a per-user WaffleFlag
@@ -194,6 +194,28 @@ Scenario: redeem records the cohort
 | `enterprise_access/tests/test_toggles.py` | Add flag on/off and off-request tests | Toggle tests already live here |
 | `enterprise_access/apps/api/v1/views/subsidy_access_policy.py` | Set the custom attributes in `can_redeem` and the cohort attribute in `redeem` | Cohort metrics for both endpoints |
 | `enterprise_access/apps/subsidy_access_policy/models.py` | Count remote `can_redeem` calls per request (request cache) | Call-count metric |
+
+#### Notes / Decisions During Build
+
+- **Flag:** `STAGED_POLICY_EVALUATION` and `staged_policy_evaluation_enabled()` in
+  `enterprise_access/toggles.py`. The helper returns False when `crum.get_current_request()` is
+  None, because `WaffleFlag.is_enabled()` reads a request-wide flag cache first and could
+  otherwise report an override with no request.
+- **Counter:** `record_subsidy_can_redeem_call()` and `subsidy_can_redeem_call_count()` in
+  `subsidy_api.py`, kept in the request cache. `SubsidyAccessPolicy.can_redeem` records each
+  remote call.
+- **Attributes:** keys are constants in `subsidy_access_policy/constants.py`
+  (`*_MONITORING_KEY`, following `customer_billing/constants.py`).
+  - `can-redeem` sets `staged_policy_evaluation` first, so error responses carry their cohort
+    (a pre-PR review finding). It sets `subsidy_can_redeem_calls` and
+    `can_redeem_evaluated_key_count` on success.
+  - `redeem` sets `staged_policy_evaluation`.
+- **Tests:** 9 new cases, including one that checks an error response's cohort.
+  - 4 toggle tests (5 cases), including "off without a request".
+  - 1 counter test.
+  - can-redeem attributes, with flag on vs off and an identical response.
+  - The redeem cohort attribute.
+- **Result:** `make test` 3101 passed, 37 skipped; quality 10/10.
 
 ### Chunk C3: Move `can_redeem` onto an ordered check table
 

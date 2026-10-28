@@ -149,3 +149,9 @@ ERROR_MSG_ACTIVE_WITH_SPEND = (
 ERROR_MSG_ACTIVE_UNKNOWN_SPEND = (
     "Cannot deactivate this policy because spend could not be determined."
 )
+
+# Custom monitoring attributes recorded on can-redeem and redeem requests during the staged-evaluation
+# rollout (ADR 0038), so flagged and unflagged requests can be compared side by side.
+STAGED_POLICY_EVALUATION_MONITORING_KEY = 'staged_policy_evaluation'
+SUBSIDY_CAN_REDEEM_CALLS_MONITORING_KEY = 'subsidy_can_redeem_calls'
+CAN_REDEEM_EVALUATED_KEY_COUNT_MONITORING_KEY = 'can_redeem_evaluated_key_count'
