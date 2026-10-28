@@ -200,12 +200,12 @@ class AssignmentConfiguration(TimeStampedModel):
 
             # Acknowledge the expiration, if necessary.
             if should_ack_expiration:
-                assignment.add_successful_acknowledged_expired_action()
+                assignment.add_successful_acknowledged_expired_action(actor_lms_user_id=lms_user_id)
                 acknowledged_assignments.append(assignment)
 
             # Acknowledge the cancellation, if necessary.
             if should_ack_cancellation:
-                assignment.add_successful_acknowledged_cancelled_action()
+                assignment.add_successful_acknowledged_cancelled_action(actor_lms_user_id=lms_user_id)
                 acknowledged_assignments.append(assignment)
 
             # Learner has already acknowledged this expiration or cancellation, so add it to
@@ -592,11 +592,7 @@ class LearnerContentAssignment(TimeStampedModel):
         Adds a successful "linked" LearnerContentAssignmentAction for this assignment record,
         regardless of if one such action record already exists.
         """
-        return self.actions.create(
-            action_type=AssignmentActions.LEARNER_LINKED,
-            error_reason=None,
-            completed_at=timezone.now(),
-        )
+        return self.add_audit_action(AssignmentActions.LEARNER_LINKED, source=AssignmentSources.CELERY_TASK)
 
     def get_last_successful_notified_action(self):
         """
@@ -615,11 +611,7 @@ class LearnerContentAssignment(TimeStampedModel):
         If a successful notified action already exists for this assignment, returns
         that linked action record instead.
         """
-        return self.actions.create(
-            action_type=AssignmentActions.NOTIFIED,
-            error_reason=None,
-            completed_at=timezone.now(),
-        )
+        return self.add_audit_action(AssignmentActions.NOTIFIED, source=AssignmentSources.CELERY_TASK)
 
     def get_last_successful_reminded_action(self):
         """
@@ -690,12 +682,7 @@ class LearnerContentAssignment(TimeStampedModel):
         Adds a successful expiration LearnerContentAssignmentAction for this assignment record,
         recorded once the expiration email has actually been sent (source=celery_task).
         """
-        return self.actions.create(
-            action_type=AssignmentActions.EXPIRED,
-            actor_type=AssignmentActorTypes.SYSTEM,
-            source=AssignmentSources.CELERY_TASK,
-            completed_at=timezone.now(),
-        )
+        return self.add_audit_action(AssignmentActions.EXPIRED, source=AssignmentSources.CELERY_TASK)
 
     def get_last_successful_redeemed_action(self):
         """
@@ -749,13 +736,15 @@ class LearnerContentAssignment(TimeStampedModel):
             error_reason=None,
         ).order_by('-completed_at').first()
 
-    def add_successful_acknowledged_cancelled_action(self):
+    def add_successful_acknowledged_cancelled_action(self, actor_lms_user_id=None):
         """
         Adds a successful acknowledged LearnerContentAssignmentAction for this assignment record.
         """
-        return self.actions.create(
-            action_type=AssignmentActions.CANCELLED_ACKNOWLEDGED,
-            completed_at=timezone.now(),
+        return self.add_audit_action(
+            AssignmentActions.CANCELLED_ACKNOWLEDGED,
+            actor_type=AssignmentActorTypes.LEARNER,
+            source=AssignmentSources.API,
+            actor_lms_user_id=actor_lms_user_id,
         )
 
     def get_last_successful_acknowledged_expired_action(self):
@@ -768,13 +757,15 @@ class LearnerContentAssignment(TimeStampedModel):
             error_reason=None,
         ).order_by('-completed_at').first()
 
-    def add_successful_acknowledged_expired_action(self):
+    def add_successful_acknowledged_expired_action(self, actor_lms_user_id=None):
         """
         Adds a successful acknowledged LearnerContentAssignmentAction for this assignment record.
         """
-        return self.actions.create(
-            action_type=AssignmentActions.EXPIRED_ACKNOWLEDGED,
-            completed_at=timezone.now(),
+        return self.add_audit_action(
+            AssignmentActions.EXPIRED_ACKNOWLEDGED,
+            actor_type=AssignmentActorTypes.LEARNER,
+            source=AssignmentSources.API,
+            actor_lms_user_id=actor_lms_user_id,
         )
 
     @staticmethod
