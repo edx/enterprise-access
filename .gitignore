@@ -175,3 +175,6 @@ AGENTS.local.md
 
 # Temporary docs, useful for pluggable AI context
 docs/tmp
+
+# Implementation plans are working documents for building a change; they're kept locally, not committed
+docs/plans/
