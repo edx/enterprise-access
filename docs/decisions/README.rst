@@ -278,3 +278,17 @@ the measured index behaviour the design rests on -- both Algolia indexes AND
 every query word, the Lightcast-canonical skill vocabulary, and 31% of
 courses carrying no skill tags -- and is explicit that the measured quality
 bar is not yet met.
+
+`<0038-non-redeemable-reasons-and-display-reason.md>`_
+********************************************************
+*Feature: Learner Credit*
+
+Proposed October 2026, this ADR catalogues every non-redeemable reason, which
+budget type raises it and in what order, and the learner-facing message each
+one maps to. It records the decision to choose ``can-redeem``'s
+``display_reason`` by rank -- a budget that applies but blocks the learner,
+then one that doesn't apply, then an expired one -- so an expired or
+inapplicable budget no longer masks a per-learner limit. It also proposes
+evaluating budgets in three stages (live, applies, allowed), which produces the
+same message from the evaluation order and, measured on 30 days of production
+redemptions, cuts uncached remote calls to enterprise-subsidy by 63%.
