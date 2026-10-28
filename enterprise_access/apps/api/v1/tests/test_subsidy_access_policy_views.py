@@ -1592,6 +1592,72 @@ class TestSubsidyAccessPolicyRedeemViewset(APITestWithMocks):
 
     @mock.patch('enterprise_access.apps.subsidy_access_policy.models.get_and_cache_transactions_for_learner')
     @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_record')
+    @ddt.data(
+        # Refunded (committed reversal): the spend no longer counts, so the policy comes back.
+        {'reversal_state': TransactionStateChoices.COMMITTED, 'expected_remaining_balance_per_user': 500},
+        # Refund still in flight (pending reversal): the spend still counts and the learner stays over the cap.
+        {'reversal_state': TransactionStateChoices.PENDING, 'expected_remaining_balance_per_user': None},
+    )
+    @ddt.unpack
+    def test_credits_available_endpoint_refunded_spend(
+        self,
+        mock_subsidy_record,
+        mock_transactions_cache_for_learner,
+        reversal_state,
+        expected_remaining_balance_per_user,
+    ):
+        """
+        Verify that a refunded redemption no longer counts against the learner's per-learner spend limit,
+        so a learner who was over the limit gets the policy back from credits_available.
+        """
+        spend_cap_policy = PerLearnerSpendCapLearnerCreditAccessPolicyFactory(
+            enterprise_customer_uuid=self.enterprise_uuid,
+            per_learner_spend_limit=500,
+            spend_limit=10000,
+        )
+        # A $6 redemption against a $5 per-learner limit, reversed in full.
+        mock_transactions_cache_for_learner.return_value = {
+            'transactions': [{
+                'uuid': str(uuid4()),
+                'state': TransactionStateChoices.COMMITTED,
+                'content_key': 'something',
+                'subsidy_access_policy_uuid': str(spend_cap_policy.uuid),
+                'quantity': -600,
+                'reversal': {'state': reversal_state, 'quantity': 600},
+            }],
+            'aggregates': {},
+        }
+        self.subsidy_client.list_subsidy_transactions.return_value = {
+            'results': [],
+            'aggregates': {'total_quantity': 0},
+        }
+        mock_subsidy_record.return_value = {
+            'uuid': str(uuid4()),
+            'title': 'Test Subsidy',
+            'enterprise_customer_uuid': str(self.enterprise_uuid),
+            'expiration_datetime': '2030-01-01 12:00:00Z',
+            'active_datetime': '2020-01-01 12:00:00Z',
+            'current_balance': '5000',
+            'is_active': True,
+        }
+        self.lms_client_instance.get_enterprise_user.return_value = TEST_USER_RECORD
+        self.mock_enterprise_user_record.return_value = TEST_USER_RECORD
+
+        response = self.client.get(
+            self.subsidy_access_policy_credits_available_endpoint,
+            {'enterprise_customer_uuid': str(self.enterprise_uuid), 'lms_user_id': 1234},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        policies_by_uuid = {policy['uuid']: policy for policy in response.json()}
+        if expected_remaining_balance_per_user is None:
+            assert str(spend_cap_policy.uuid) not in policies_by_uuid
+        else:
+            assert policies_by_uuid[str(spend_cap_policy.uuid)]['remaining_balance_per_user'] == \
+                expected_remaining_balance_per_user
+
+    @mock.patch('enterprise_access.apps.subsidy_access_policy.models.get_and_cache_transactions_for_learner')
+    @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_record')
     @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient')
     def test_credits_available_endpoint_with_content_assignments(
         self,
