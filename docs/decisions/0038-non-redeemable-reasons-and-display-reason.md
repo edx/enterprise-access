@@ -418,10 +418,10 @@ pathway pipeline:
 
 **Rollout**
 
-The implementation plan,
-[`docs/plans/staged-policy-evaluation/impl-plan.md`](../plans/staged-policy-evaluation/impl-plan.md),
-owns the execution details: each chunk's exit criteria, the test plan, ops readiness and the
-rollout gates. It delivers this design as stacked PRs, each cut on one logical seam:
+The implementation plan owns the execution details: each chunk's exit criteria, the test plan,
+ops readiness and the rollout gates. Plans are working documents and aren't committed; each PR's
+description carries what a reviewer needs from it. The design is delivered as stacked PRs, each
+cut on one logical seam:
 
 1. Characterization tests that pin today's `can_redeem` workflows and remote-call counts.
 2. The flag, plus cohort and call-count attributes, so production collects a baseline first.
