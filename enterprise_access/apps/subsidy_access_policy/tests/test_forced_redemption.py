@@ -15,12 +15,17 @@ from enterprise_access.apps.content_assignments.constants import (
 )
 from enterprise_access.apps.content_assignments.models import LearnerContentAssignment
 from enterprise_access.apps.content_assignments.tests.factories import AssignmentConfigurationFactory
+from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.subsidy_access_policy.constants import FORCE_ENROLLMENT_KEYWORD
 from enterprise_access.apps.subsidy_access_policy.exceptions import (
     SubsidyAccessPolicyLockAttemptFailed,
     SubsidyAPIHTTPError
 )
-from enterprise_access.apps.subsidy_access_policy.models import REQUEST_CACHE_NAMESPACE
+from enterprise_access.apps.subsidy_access_policy.models import (
+    REQUEST_CACHE_NAMESPACE,
+    PerLearnerSpendCreditAccessPolicy
+)
+from enterprise_access.apps.subsidy_access_policy.tasks import force_redeem_task
 from enterprise_access.apps.subsidy_access_policy.tests.factories import (
     AssignedLearnerCreditAccessPolicyFactory,
     ForcedPolicyRedemptionFactory,
@@ -133,6 +138,58 @@ class ForcedPolicyRedemptionPerLearnerSpendTests(BaseForcedRedemptionTestCase):
             metadata={FORCE_ENROLLMENT_KEYWORD: True, **extra_metadata},
             idempotency_key=mock.ANY,
         )
+
+    def _force_redeem_and_capture_can_redeem(self, run_forced_redemption):
+        """
+        Run a forced redemption with the real can_redeem, and return every result can_redeem gave.
+        """
+        policy = self._new_per_learner_spend_budget(spend_limit=10000, per_learner_spend_limit=1000)
+        self._setup_redemption_state()
+        forced_redemption_record = ForcedPolicyRedemptionFactory(
+            subsidy_access_policy=policy,
+            lms_user_id=self.lms_user_id,
+            course_run_key=self.course_run_key,
+            content_price_cents=self.default_content_price,
+        )
+        results = []
+        real_can_redeem = PerLearnerSpendCreditAccessPolicy.can_redeem
+
+        def capture(policy_instance, *args, **kwargs):
+            result = real_can_redeem(policy_instance, *args, **kwargs)
+            results.append(result)
+            return result
+
+        with mock.patch.object(PerLearnerSpendCreditAccessPolicy, 'can_redeem', autospec=True, side_effect=capture):
+            run_forced_redemption(forced_redemption_record)
+
+        forced_redemption_record.refresh_from_db()
+        self.assertEqual(MOCK_TRANSACTION_UUID_1, forced_redemption_record.transaction_uuid)
+        return results
+
+    def test_force_redeem_can_redeem_contract(self):
+        """
+        Forced redemption started from the admin calls the real can_redeem and gets its 3-tuple contract.
+        """
+        results = self._force_redeem_and_capture_can_redeem(
+            lambda record: record.force_redeem(actor_lms_user_id=ADMIN_LMS_USER_ID),
+        )
+        self.assertEqual(results, [(True, None, [])])
+
+    def test_force_redeem_task_can_redeem_contract(self):
+        """
+        The Celery task path, which runs with no request, reaches the real can_redeem and redeems.
+        ADR 0038's flag reads as off without a request, so this path keeps today's evaluation until cleanup.
+        """
+        UserFactory(lms_user_id=ADMIN_LMS_USER_ID)
+        results = self._force_redeem_and_capture_can_redeem(
+            lambda record: force_redeem_task(
+                forced_redemption_uuid=str(record.uuid),
+                geag_metadata={},
+                actor_lms_user_id=ADMIN_LMS_USER_ID,
+                suppress_assignment_email=False,
+            ),
+        )
+        self.assertEqual(results, [(True, None, [])])
 
     @mock.patch('enterprise_access.apps.subsidy_access_policy.models.localized_utcnow', return_value=MOCK_DATETIME_1)
     def test_acquire_lock_fails(self, _):
