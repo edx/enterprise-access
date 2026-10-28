@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 import ddt
 from django.conf import settings
 from django.core.exceptions import ValidationError
+from edx_toggles.toggles.testutils import override_waffle_flag
 from requests.exceptions import HTTPError
 from rest_framework import status
 from rest_framework.reverse import reverse
@@ -30,6 +31,7 @@ from enterprise_access.apps.core.constants import (
     SYSTEM_ENTERPRISE_OPERATOR_ROLE
 )
 from enterprise_access.apps.subsidy_access_policy.constants import (
+    CAN_REDEEM_EVALUATED_KEY_COUNT_MONITORING_KEY,
     REASON_BEYOND_ENROLLMENT_DEADLINE,
     REASON_CONTENT_NOT_IN_CATALOG,
     REASON_LEARNER_ASSIGNMENT_CANCELLED,
@@ -41,6 +43,8 @@ from enterprise_access.apps.subsidy_access_policy.constants import (
     REASON_POLICY_EXPIRED,
     REASON_POLICY_SPEND_LIMIT_REACHED,
     REASON_SUBSIDY_EXPIRED,
+    STAGED_POLICY_EVALUATION_MONITORING_KEY,
+    SUBSIDY_CAN_REDEEM_CALLS_MONITORING_KEY,
     AccessMethods,
     MissingSubsidyAccessReasonUserMessages,
     PolicyTypes,
@@ -61,6 +65,7 @@ from enterprise_access.apps.subsidy_access_policy.tests.factories import (
 from enterprise_access.apps.subsidy_access_policy.utils import create_idempotency_key_for_transaction
 from enterprise_access.apps.subsidy_request.constants import SubsidyRequestStates
 from enterprise_access.apps.subsidy_request.models import LearnerCreditRequest, LearnerCreditRequestConfiguration
+from enterprise_access.toggles import STAGED_POLICY_EVALUATION
 from test_utils import TEST_ENTERPRISE_GROUP_UUID, TEST_USER_RECORD, APITestWithMocks
 
 SUBSIDY_ACCESS_POLICY_LIST_ENDPOINT = reverse('api:v1:subsidy-access-policies-list')
@@ -1334,6 +1339,24 @@ class TestSubsidyAccessPolicyRedeemViewset(APITestWithMocks):
             ),
         )
 
+    @mock.patch('enterprise_access.apps.api.v1.views.subsidy_access_policy.set_custom_attribute')
+    @mock.patch('enterprise_access.apps.subsidy_access_policy.models.get_and_cache_transactions_for_learner')
+    def test_redeem_records_flag_cohort(self, mock_policy_transactions, mock_set_attribute):
+        """redeem records whether the staged-evaluation flag is on for the requesting user."""
+        mock_policy_transactions.return_value = {'transactions': [], 'aggregates': {}}
+        self.mock_get_content_metadata.return_value = {'content_price': 123}
+        self.redeemable_policy.subsidy_client.create_subsidy_transaction.side_effect = None
+        self.redeemable_policy.subsidy_client.create_subsidy_transaction.return_value = {'uuid': str(uuid4())}
+
+        with override_waffle_flag(STAGED_POLICY_EVALUATION, active=True):
+            response = self.client.post(
+                self.subsidy_access_policy_redeem_endpoint,
+                {'lms_user_id': 1234, 'content_key': 'course-v1:edX+Privacy101+3T2020'},
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        mock_set_attribute.assert_any_call(STAGED_POLICY_EVALUATION_MONITORING_KEY, True)
+
     @ddt.data('enrollment_cap', 'spend_cap')
     @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient')
     @mock.patch('enterprise_access.apps.subsidy_access_policy.subsidy_api.get_and_cache_transactions_for_learner')
@@ -2286,6 +2309,55 @@ class TestSubsidyAccessPolicyCanRedeemView(BaseCanRedeemTestMixin, APITestWithMo
         assert subsidy_client.can_redeem.call_count == content_key_count * total_budgets
         for element in response.json():
             assert element['can_redeem'] is (expired_budgets < total_budgets)
+
+    @mock.patch('enterprise_access.apps.api.v1.views.subsidy_access_policy.set_custom_attribute')
+    def test_can_redeem_records_cohort_on_error_responses(self, mock_set_attribute):
+        """An error response is still attributed to its flag cohort, so 5xx and 4xx rates can be split by cohort."""
+        with override_waffle_flag(STAGED_POLICY_EVALUATION, active=True):
+            response = self.client.get(self.subsidy_access_policy_can_redeem_endpoint, {})
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        mock_set_attribute.assert_any_call(STAGED_POLICY_EVALUATION_MONITORING_KEY, True)
+
+    @mock.patch('enterprise_access.apps.api.v1.views.subsidy_access_policy.set_custom_attribute')
+    @mock.patch('enterprise_access.apps.subsidy_access_policy.subsidy_api.get_and_cache_transactions_for_learner')
+    def test_can_redeem_records_rollout_attributes(self, mock_transactions_cache_for_learner, mock_set_attribute):
+        """
+        can-redeem records its flag cohort, its remote can_redeem calls and how many content keys it evaluated,
+        and its response is the same with the flag on or off (C2 changes no behaviour).
+        """
+        mock_transactions_cache_for_learner.return_value = {'transactions': [], 'aggregates': {}}
+        self.mock_get_content_metadata.return_value = {'content_price': 100}
+        PerLearnerEnrollmentCapLearnerCreditAccessPolicyFactory(
+            enterprise_customer_uuid=self.enterprise_uuid, spend_limit=500000,
+        )
+        subsidy_client = self.redeemable_policy.subsidy_client  # shared by every budget
+        subsidy_client.retrieve_subsidy.return_value = {
+            'is_active': True, 'expiration_datetime': '2040-01-01T00:00:00Z', 'current_balance': 100000,
+        }
+        subsidy_client.can_redeem.return_value = {
+            'active': True, 'can_redeem': True, 'content_price': 100, 'all_transactions': [],
+        }
+        subsidy_client.list_subsidy_transactions.return_value = {'results': [], 'aggregates': {'total_quantity': 0}}
+        content_keys = ['course-v1:edX+Demo0+1T2042', 'course-v1:edX+Demo1+1T2042']
+
+        responses = {}
+        for flag_active in (False, True):
+            mock_set_attribute.reset_mock()
+            subsidy_client.can_redeem.reset_mock()
+            with override_waffle_flag(STAGED_POLICY_EVALUATION, active=flag_active):
+                response = self.client.get(
+                    self.subsidy_access_policy_can_redeem_endpoint, {'content_key': content_keys},
+                )
+            assert response.status_code == status.HTTP_200_OK
+            responses[flag_active] = response.json()
+            recorded = dict(call.args for call in mock_set_attribute.call_args_list)
+            assert recorded[STAGED_POLICY_EVALUATION_MONITORING_KEY] is flag_active
+            assert recorded[SUBSIDY_CAN_REDEEM_CALLS_MONITORING_KEY] == subsidy_client.can_redeem.call_count
+            assert recorded[SUBSIDY_CAN_REDEEM_CALLS_MONITORING_KEY] == len(content_keys) * 2
+            assert recorded[CAN_REDEEM_EVALUATED_KEY_COUNT_MONITORING_KEY] == len(content_keys)
+
+        assert responses[True] == responses[False]
 
     def test_can_redeem_policy_missing_params(self):
         """

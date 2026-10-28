@@ -9,13 +9,17 @@ import ddt
 import requests
 from django.test import TestCase, override_settings
 
+from enterprise_access.cache_utils import request_cache
 from enterprise_access.settings import base as base_settings
 
 from ..exceptions import SubsidyAPIHTTPError
 from ..subsidy_api import (
+    REQUEST_CACHE_NAMESPACE,
     get_and_cache_transactions_for_learner,
     get_redemptions_by_content_and_policy_for_learner,
-    get_subsidy_transactions_export
+    get_subsidy_transactions_export,
+    record_subsidy_can_redeem_call,
+    subsidy_can_redeem_call_count
 )
 from .factories import PerLearnerSpendCapLearnerCreditAccessPolicyFactory
 
@@ -34,6 +38,24 @@ def _unreachable_subsidy_error(status_code):
     wrapped_error = SubsidyAPIHTTPError('HTTPError occurred in Subsidy API request.')
     wrapped_error.__cause__ = downstream_error
     return wrapped_error
+
+
+class SubsidyCanRedeemCallCountTests(TestCase):
+    """
+    Tests for counting remote can_redeem calls within a request.
+    """
+    def setUp(self):
+        super().setUp()
+        request_cache(namespace=REQUEST_CACHE_NAMESPACE).clear()
+        self.addCleanup(request_cache(namespace=REQUEST_CACHE_NAMESPACE).clear)
+
+    def test_counts_calls_until_the_request_cache_is_cleared(self):
+        assert subsidy_can_redeem_call_count() == 0
+        record_subsidy_can_redeem_call()
+        record_subsidy_can_redeem_call()
+        assert subsidy_can_redeem_call_count() == 2
+        request_cache(namespace=REQUEST_CACHE_NAMESPACE).clear()
+        assert subsidy_can_redeem_call_count() == 0
 
 
 class TransactionsForLearnerTests(TestCase):

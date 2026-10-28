@@ -15,6 +15,7 @@ from django.http import StreamingHttpResponse
 from django.utils.functional import cached_property
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiResponse, extend_schema
+from edx_django_utils.monitoring import set_custom_attribute
 from edx_enterprise_subsidy_client import EnterpriseSubsidyAPIClient
 from edx_rbac.decorators import permission_required
 from edx_rbac.mixins import PermissionRequiredMixin
@@ -46,6 +47,7 @@ from enterprise_access.apps.core.constants import (
 from enterprise_access.apps.events.signals import SUBSIDY_REDEEMED
 from enterprise_access.apps.events.utils import send_subsidy_redemption_event_to_event_bus
 from enterprise_access.apps.subsidy_access_policy.constants import (
+    CAN_REDEEM_EVALUATED_KEY_COUNT_MONITORING_KEY,
     GROUP_MEMBERS_WITH_AGGREGATES_DEFAULT_PAGE_SIZE,
     REASON_BEYOND_ENROLLMENT_DEADLINE,
     REASON_CONTENT_NOT_IN_CATALOG,
@@ -61,6 +63,8 @@ from enterprise_access.apps.subsidy_access_policy.constants import (
     REASON_POLICY_SPEND_LIMIT_REACHED,
     REASON_SUBSIDY_EXPIRED,
     SORT_BY_ENROLLMENT_COUNT,
+    STAGED_POLICY_EVALUATION_MONITORING_KEY,
+    SUBSIDY_CAN_REDEEM_CALLS_MONITORING_KEY,
     MissingSubsidyAccessReasonUserMessages,
     TransactionStateChoices
 )
@@ -79,11 +83,13 @@ from enterprise_access.apps.subsidy_access_policy.subsidy_api import (
     get_and_cache_subsidy_learners_aggregate_data,
     get_policies_accepting_requests,
     get_redemptions_by_content_and_policy_for_learner,
-    get_subsidy_transactions_export
+    get_subsidy_transactions_export,
+    subsidy_can_redeem_call_count
 )
 from enterprise_access.apps.subsidy_access_policy.utils import sort_subsidy_access_policies_for_redemption
 from enterprise_access.apps.subsidy_request.constants import LC_NON_RE_REQUESTABLE_STATES
 from enterprise_access.apps.subsidy_request.models import LearnerCreditRequest
+from enterprise_access.toggles import staged_policy_evaluation_enabled
 
 from .utils import PaginationWithPageCount
 
@@ -725,6 +731,7 @@ class SubsidyAccessPolicyRedeemViewset(UserDetailsFromJwtMixin, PermissionRequir
                      "reversals": []
                  }
         """
+        set_custom_attribute(STAGED_POLICY_EVALUATION_MONITORING_KEY, staged_policy_evaluation_enabled())
         policy = get_object_or_404(SubsidyAccessPolicy, pk=kwargs.get('policy_uuid'))
 
         serializer = serializers.SubsidyAccessPolicyRedeemRequestSerializer(data=request.data)
@@ -857,6 +864,8 @@ class SubsidyAccessPolicyRedeemViewset(UserDetailsFromJwtMixin, PermissionRequir
                      body is a JSON list of dict containing redemption evaluations for each given content_key.  See
                      redoc for a sample response.
         """
+        # Set first, so error responses are attributed to their rollout cohort too (ADR 0038).
+        set_custom_attribute(STAGED_POLICY_EVALUATION_MONITORING_KEY, staged_policy_evaluation_enabled())
         serializer = serializers.SubsidyAccessPolicyCanRedeemRequestSerializer(data=request.query_params)
         serializer.is_valid(raise_exception=True)
 
@@ -880,6 +889,7 @@ class SubsidyAccessPolicyRedeemViewset(UserDetailsFromJwtMixin, PermissionRequir
         )
 
         element_responses = []
+        evaluated_key_count = 0
         for content_key in content_keys:
             reasons = []
             display_reason = None
@@ -916,6 +926,7 @@ class SubsidyAccessPolicyRedeemViewset(UserDetailsFromJwtMixin, PermissionRequir
             # But, only do this if there are no existing successful redemptions,
             # so we don't unnecessarily call `can_redeem()` on every policy.
             if not successful_redemptions:
+                evaluated_key_count += 1
                 redeemable_policies, non_redeemable_policies = self.evaluate_policies(
                     enterprise_customer_uuid,
                     lms_user_id, content_key,
@@ -1015,6 +1026,9 @@ class SubsidyAccessPolicyRedeemViewset(UserDetailsFromJwtMixin, PermissionRequir
             # production, so the easiest thing to do is to NOT change it to match the industry norm more closely.
             many=True,
         )
+        # Rollout metrics for ADR 0038: compare flagged and unflagged requests by remote calls per evaluated key.
+        set_custom_attribute(SUBSIDY_CAN_REDEEM_CALLS_MONITORING_KEY, subsidy_can_redeem_call_count())
+        set_custom_attribute(CAN_REDEEM_EVALUATED_KEY_COUNT_MONITORING_KEY, evaluated_key_count)
         return Response(response_serializer.data, status=status.HTTP_200_OK)
 
     @extend_schema(
