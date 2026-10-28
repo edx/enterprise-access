@@ -1334,6 +1334,51 @@ class TestSubsidyAccessPolicyRedeemViewset(APITestWithMocks):
             ),
         )
 
+    @ddt.data('enrollment_cap', 'spend_cap')
+    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient')
+    @mock.patch('enterprise_access.apps.subsidy_access_policy.subsidy_api.get_and_cache_transactions_for_learner')
+    @mock.patch('enterprise_access.apps.subsidy_access_policy.models.get_and_cache_transactions_for_learner')
+    def test_can_redeem_then_redeem_workflow(
+        self, budget_type, mock_policy_transactions, mock_view_transactions, mock_oauth,
+    ):  # pylint: disable=unused-argument
+        """
+        Pin the learner's workflow end to end: can-redeem picks the customer's only live budget, and redeem
+        against that budget creates a transaction on it.
+        """
+        mock_policy_transactions.return_value = {'transactions': [], 'aggregates': {}}
+        mock_view_transactions.return_value = {'transactions': [], 'aggregates': {}}
+        self.mock_get_content_metadata.return_value = {'content_price': 123}
+        if budget_type == 'spend_cap':
+            self.redeemable_policy.active = False
+            self.redeemable_policy.save()
+            budget = PerLearnerSpendCapLearnerCreditAccessPolicyFactory(
+                enterprise_customer_uuid=self.enterprise_uuid,
+                spend_limit=500000,
+                per_learner_spend_limit=100000,
+            )
+        else:
+            budget = self.redeemable_policy
+        transaction_record = {'uuid': str(uuid4()), 'state': TransactionStateChoices.COMMITTED}
+        budget.subsidy_client.create_subsidy_transaction.side_effect = None
+        budget.subsidy_client.create_subsidy_transaction.return_value = transaction_record
+        content_key = 'course-v1:edX+Privacy101+3T2020'
+
+        can_redeem_response = self.client.get(
+            self.subsidy_access_policy_can_redeem_endpoint, {'content_key': [content_key]},
+        )
+        redeem_response = self.client.post(
+            reverse('api:v1:policy-redemption-redeem', kwargs={'policy_uuid': budget.uuid}),
+            {'lms_user_id': 1234, 'content_key': content_key},
+        )
+
+        assert can_redeem_response.status_code == status.HTTP_200_OK
+        assert can_redeem_response.json()[0]['redeemable_subsidy_access_policy']['uuid'] == str(budget.uuid)
+        assert redeem_response.status_code == status.HTTP_200_OK
+        assert self.load_json(redeem_response.content) == transaction_record
+        budget.subsidy_client.create_subsidy_transaction.assert_called_once()
+        create_kwargs = budget.subsidy_client.create_subsidy_transaction.call_args.kwargs
+        assert create_kwargs['subsidy_access_policy_uuid'] == str(budget.uuid)
+
     @mock.patch('enterprise_access.apps.subsidy_access_policy.models.get_and_cache_transactions_for_learner')
     @ddt.data(
         {
@@ -2181,6 +2226,66 @@ class TestSubsidyAccessPolicyCanRedeemView(BaseCanRedeemTestMixin, APITestWithMo
         assert response_list[0]["can_redeem"] is True
         assert response_list[0]["redeemable_subsidy_access_policy"]["uuid"] == str(self.redeemable_policy.uuid)
         assert str(unreachable_policy.uuid) not in response.content.decode()
+
+    @ddt.data(
+        # (budgets for the customer, how many are on expired subsidies, content keys requested)
+        (1, 0, 1),
+        (3, 0, 1),
+        (3, 2, 1),
+        (3, 2, 3),
+        (5, 5, 2),
+    )
+    @ddt.unpack
+    @mock.patch('enterprise_access.apps.api.v1.views.subsidy_access_policy.LmsApiClient')
+    @mock.patch('enterprise_access.apps.subsidy_access_policy.subsidy_api.get_and_cache_transactions_for_learner')
+    def test_can_redeem_remote_call_baseline(
+        self, total_budgets, expired_budgets, content_key_count,
+        mock_transactions_cache_for_learner, mock_lms_client,
+    ):
+        """
+        Pin today's cost: every budget whose catalog contains the content reaches the remote can_redeem call,
+        expired budgets included, once per content key, and evaluation continues after a redeemable budget.
+        ADR 0038's staged evaluation changes this behind a flag; this test is the flag-off baseline.
+        """
+        mock_transactions_cache_for_learner.return_value = {'transactions': [], 'aggregates': {}}
+        mock_lms_client.return_value.get_enterprise_customer_data.return_value = {
+            'slug': 'sluggy', 'admin_users': [{'email': 'edx@example.org'}],
+        }
+        self.mock_catalog_get_and_cache_content_metadata.return_value = {
+            'normalized_metadata': {'content_price': 1.0}, 'normalized_metadata_by_run': {},
+        }
+        self.mock_get_content_metadata.return_value = {'content_price': 100}
+
+        budgets = [self.redeemable_policy] + [
+            PerLearnerEnrollmentCapLearnerCreditAccessPolicyFactory(
+                enterprise_customer_uuid=self.enterprise_uuid, spend_limit=500000,
+            )
+            for _ in range(total_budgets - 1)
+        ]
+        expired_subsidy_uuids = {str(budget.subsidy_uuid) for budget in budgets[:expired_budgets]}
+
+        def retrieve_subsidy(subsidy_uuid):
+            if str(subsidy_uuid) in expired_subsidy_uuids:
+                return {'is_active': False, 'expiration_datetime': '2020-01-01T00:00:00Z', 'current_balance': 100}
+            return {'is_active': True, 'expiration_datetime': '2040-01-01T00:00:00Z', 'current_balance': 100000}
+
+        def can_redeem(subsidy_uuid, *args):
+            if str(subsidy_uuid) in expired_subsidy_uuids:
+                return {'active': False, 'can_redeem': False, 'all_transactions': []}
+            return {'active': True, 'can_redeem': True, 'content_price': 100, 'all_transactions': []}
+
+        subsidy_client = self.redeemable_policy.subsidy_client  # shared by every budget
+        subsidy_client.retrieve_subsidy.side_effect = retrieve_subsidy
+        subsidy_client.can_redeem.side_effect = can_redeem
+        subsidy_client.list_subsidy_transactions.return_value = {'results': [], 'aggregates': {'total_quantity': 0}}
+
+        content_keys = [f'course-v1:edX+Demo{index}+1T2042' for index in range(content_key_count)]
+        response = self.client.get(self.subsidy_access_policy_can_redeem_endpoint, {'content_key': content_keys})
+
+        assert response.status_code == status.HTTP_200_OK
+        assert subsidy_client.can_redeem.call_count == content_key_count * total_budgets
+        for element in response.json():
+            assert element['can_redeem'] is (expired_budgets < total_budgets)
 
     def test_can_redeem_policy_missing_params(self):
         """

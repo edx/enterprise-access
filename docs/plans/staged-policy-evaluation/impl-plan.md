@@ -23,7 +23,7 @@
 | # | Chunk | Status | Owner | Reviewer | Depends On | Unblocks | Est. Size |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | K | Record the staged-evaluation decision and plan | 🔲 | Hamzah Ullah | TBD | #326 | C1 | S |
-| C1 | Pin today's `can_redeem` behaviour with characterization tests | 🔲 | Hamzah Ullah | TBD | K | C2 | M |
+| C1 | Pin today's `can_redeem` behaviour with characterization tests | 🔨 | Hamzah Ullah | TBD | K | C2 | M |
 | C2 | Instrument `can-redeem` for a flagged rollout | 🔲 | Hamzah Ullah | TBD | C1 | C3 | S |
 | C3 | Move `can_redeem` onto an ordered check table | 🔲 | Hamzah Ullah | TBD | C2 | C4 | L |
 | C4 | Evaluate budgets in stages behind the flag | 🔲 | Hamzah Ullah | TBD | C3 | C5 | L |
@@ -94,7 +94,7 @@ Scenario: The kickoff PR holds only docs
 | Depends On | K |
 | Unblocks | C2 (and every later chunk relies on these tests) |
 | Estimated Size | M (tests only, but they encode behaviour precisely) |
-| Status | 🔲 Not Started |
+| Status | 🔨 In Progress |
 
 ```gherkin
 Scenario Outline: can-redeem then redeem works for each budget type
@@ -133,6 +133,24 @@ Scenario: Baseline remote-call count (flag-off expectation; removed in C8)
 | `enterprise_access/apps/subsidy_access_policy/tests/test_models.py` | Add BnR contract test | Pins `models.py:1360` |
 | `enterprise_access/apps/subsidy_access_policy/tests/test_forced_redemption.py`, `tests/test_tasks.py` | Add forced-redemption contract tests (admin path and task path) | Pins `models.py:2331` and `tasks.py:37` (through `force_redeem_with_geag_metadata`) |
 | `enterprise_access/apps/content_assignments/tests/test_admin.py` | Add admin redemption test if absent | Pins `content_assignments/admin.py:170` |
+
+#### Notes / Decisions During Build
+
+Following "reuse before reinvent", scenarios that existing tests already pin are mapped to those
+tests, and only the gaps get new tests.
+
+| Scenario | Pinned by |
+| --- | --- |
+| can-redeem then redeem, spend and enrollment caps | **New:** `TestSubsidyAccessPolicyRedeemViewset.test_can_redeem_then_redeem_workflow` (2 cases) |
+| can-redeem then redeem, Assigned | Existing: `TestAssignedSubsidyAccessPolicyCanRedeemView`, `AssignedLearnerCreditAccessPolicyTests.test_can_redeem` and `.test_redeem` |
+| Browse & Request approval then redemption | Existing: `SubsidyAccessPolicyTests.test_per_learner_spend_policy_can_redeem_with_bnr_enabled` and `..._redeem_with_bnr_enabled` (`test_models.py`) |
+| Admin action contract | **New:** `TestForceRedeemAssignmentsWithRealCanRedeem.test_real_can_redeem_feeds_redeem`. The existing admin tests mock `can_redeem` |
+| Forced redemption, admin and Celery task | **New:** `test_force_redeem_can_redeem_contract` and `test_force_redeem_task_can_redeem_contract`. The existing task tests patch `force_redeem` |
+| `credits_available` unaffected | Existing: `test_credits_available_endpoint`, `..._refunded_spend`, `..._with_content_assignments` |
+| Baseline remote-call count | **New:** `TestSubsidyAccessPolicyCanRedeemView.test_can_redeem_remote_call_baseline` (5 cases: P, E, K) |
+| `existing_transactions` contract | **New:** `SubsidyAccessPolicyTests.test_can_redeem_returns_existing_transactions_contract` (6 cases). The existing tests only ever assert `[]` |
+
+Result: 16 new test cases; `make test` 3092 passed, 37 skipped; quality 10/10.
 
 ### Chunk C2: Instrument `can-redeem` for a flagged rollout
 

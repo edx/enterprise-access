@@ -21,6 +21,7 @@ from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.subsidy_access_policy.exceptions import SubsidyAPIHTTPError
 from enterprise_access.apps.subsidy_access_policy.models import AssignedLearnerCreditAccessPolicy
 from enterprise_access.apps.subsidy_access_policy.tests.factories import AssignedLearnerCreditAccessPolicyFactory
+from enterprise_access.apps.subsidy_access_policy.tests.mixins import MockPolicyDependenciesMixin
 
 from .factories import AssignmentConfigurationFactory, LearnerContentAssignmentFactory
 
@@ -227,6 +228,64 @@ class TestLearnerContentAssignmentAdminActions(TestCase):
         mock_redeem.assert_called_once_with(
             assignment.lms_user_id, assignment.content_key, [],
             actor_lms_user_id=None,
+            actor_type=AssignmentActorTypes.ADMIN,
+            source=AssignmentSources.DJANGO_ADMIN,
+        )
+
+
+class TestForceRedeemAssignmentsWithRealCanRedeem(MockPolicyDependenciesMixin, TestCase):
+    """
+    The force-redeem admin action with the policy's real can_redeem, and only external services mocked.
+
+    Pins the (redeemable, reason, existing_transactions) contract this action relies on before ADR 0038's
+    staged evaluation refactors can_redeem.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.admin = LearnerContentAssignmentAdmin(LearnerContentAssignment, AdminSite())
+        self.factory = RequestFactory()
+        self.user = UserFactory(lms_user_id=999)
+        self.assignment_configuration = AssignmentConfigurationFactory()
+        self.policy = AssignedLearnerCreditAccessPolicyFactory(
+            assignment_configuration=self.assignment_configuration,
+            spend_limit=100000,
+        )
+        self.assignment = LearnerContentAssignmentFactory(
+            assignment_configuration=self.assignment_configuration,
+            state=LearnerContentAssignmentStateChoices.ALLOCATED,
+        )
+        self.payload_transactions = [{'uuid': str(uuid4()), 'state': 'committed'}]
+        self.mock_catalog_contains_content_key.return_value = True
+        self.mock_get_content_metadata.return_value = {'content_price': 100}
+        self.mock_subsidy_client.can_redeem.return_value = {
+            'active': True, 'can_redeem': True, 'all_transactions': self.payload_transactions,
+        }
+        self.mock_subsidy_client.list_subsidy_transactions.return_value = {
+            'results': [], 'aggregates': {'total_quantity': 0},
+        }
+
+    def _build_request(self):
+        """Build a request with a user and message storage attached, as admin actions require."""
+        request = self.factory.post('/')
+        request.user = self.user
+        request.session = {}
+        request._messages = FallbackStorage(request)  # pylint: disable=protected-access
+        return request
+
+    def test_real_can_redeem_feeds_redeem(self):
+        """The real can_redeem's existing_transactions are what the action passes to redeem()."""
+        with mock.patch.object(AssignedLearnerCreditAccessPolicy, 'redeem') as mock_redeem:
+            self.admin.force_redeem_assignments(
+                self._build_request(), LearnerContentAssignment.objects.filter(pk=self.assignment.pk),
+            )
+
+        self.mock_subsidy_client.can_redeem.assert_called_once_with(
+            self.policy.subsidy_uuid, self.assignment.lms_user_id, self.assignment.content_key,
+        )
+        mock_redeem.assert_called_once_with(
+            self.assignment.lms_user_id, self.assignment.content_key, self.payload_transactions,
+            actor_lms_user_id=self.user.lms_user_id,
             actor_type=AssignmentActorTypes.ADMIN,
             source=AssignmentSources.DJANGO_ADMIN,
         )

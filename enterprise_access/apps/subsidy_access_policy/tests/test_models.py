@@ -697,6 +697,63 @@ class SubsidyAccessPolicyTests(MockPolicyDependenciesMixin, TestCase):
         else:
             self.assertFalse(self.mock_subsidy_client.can_redeem.called)
 
+    @ddt.data(
+        # A check before the remote call fails, so there are no transactions to return.
+        {'catalog_contains_content': False, 'subsidy_payload': {}, 'learner_spent': 0, 'policy_spent': 0,
+         'expected_reason': REASON_CONTENT_NOT_IN_CATALOG, 'expect_payload_transactions': False},
+        # The remote call says the subsidy is inactive; its transactions aren't returned.
+        {'catalog_contains_content': True, 'subsidy_payload': {'active': False, 'can_redeem': False},
+         'learner_spent': 0, 'policy_spent': 0,
+         'expected_reason': REASON_SUBSIDY_EXPIRED, 'expect_payload_transactions': False},
+        # Every failure after the remote call returns the remote call's transactions.
+        {'catalog_contains_content': True, 'subsidy_payload': {'active': True, 'can_redeem': False},
+         'learner_spent': 0, 'policy_spent': 0,
+         'expected_reason': REASON_NOT_ENOUGH_VALUE_IN_SUBSIDY, 'expect_payload_transactions': True},
+        {'catalog_contains_content': True, 'subsidy_payload': {'active': True, 'can_redeem': True},
+         'learner_spent': 0, 'policy_spent': -9900,
+         'expected_reason': REASON_POLICY_SPEND_LIMIT_REACHED, 'expect_payload_transactions': True},
+        {'catalog_contains_content': True, 'subsidy_payload': {'active': True, 'can_redeem': True},
+         'learner_spent': -400, 'policy_spent': 0,
+         'expected_reason': REASON_LEARNER_MAX_SPEND_REACHED, 'expect_payload_transactions': True},
+        # Redeemable: the remote call's transactions are returned for redeem() to use.
+        {'catalog_contains_content': True, 'subsidy_payload': {'active': True, 'can_redeem': True},
+         'learner_spent': 0, 'policy_spent': 0,
+         'expected_reason': None, 'expect_payload_transactions': True},
+    )
+    @ddt.unpack
+    def test_can_redeem_returns_existing_transactions_contract(
+        self, catalog_contains_content, subsidy_payload, learner_spent, policy_spent,
+        expected_reason, expect_payload_transactions,
+    ):
+        """
+        Pin can_redeem's (redeemable, reason, existing_transactions) contract, which redeem() relies on.
+        ``existing_transactions`` is ``[]`` before the remote call and for ``subsidy_expired``, and is the
+        remote call's ``all_transactions`` otherwise.
+        """
+        payload_transactions = [{'uuid': str(uuid4()), 'state': 'committed', 'content_key': self.course_id}]
+        self.mock_catalog_contains_content_key.return_value = catalog_contains_content
+        self.mock_get_content_metadata.return_value = {'content_price': 200}
+        self.mock_subsidy_client.can_redeem.return_value = {
+            **subsidy_payload, 'all_transactions': payload_transactions,
+        }
+        self.mock_transactions_cache_for_learner.return_value = {
+            'transactions': [{
+                'subsidy_access_policy_uuid': str(ACTIVE_LEARNER_SPEND_CAP_POLICY_UUID),
+                'uuid': str(uuid4()),
+                'content_key': 'anything',
+                'quantity': learner_spent,
+            }] if learner_spent else [],
+            'aggregates': {},
+        }
+        self.mock_subsidy_client.list_subsidy_transactions.return_value = {
+            'results': [], 'aggregates': {'total_quantity': policy_spent},
+        }
+
+        result = self.per_learner_spend_policy.can_redeem(self.lms_user_id, self.course_id)
+
+        expected_transactions = payload_transactions if expect_payload_transactions else []
+        self.assertEqual(result, (expected_reason is None, expected_reason, expected_transactions))
+
     def test_acquire_lock_release_lock_no_kwargs(self):
         """
         Create one hypothetical sequence consisting of three actors and two policies.  Each policy should only allow one
