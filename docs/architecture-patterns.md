@@ -172,6 +172,26 @@ subsidy: use `get_policies_accepting_requests()` in `subsidy_access_policy/subsi
 and request creation share. Approval enforces the same rule separately in `can_allocate_all`. The BFF's
 `has_bnr_enabled_policy` still gates on `bnr_enabled` alone.
 
+### 24. Money-path state machines check the stored state under a row lock
+
+A state-change method that checks `self.state` lets a copy loaded before another request or task moved the record
+undo or repeat that move: `save(update_fields=...)` overwrites the row blindly, and simple-history records the stale
+copy's other fields. For records where that can cost money (`LearnerCreditTopUp.transition_to()`), the method should:
+
+- inside `transaction.atomic()`, reload with `self.refresh_from_db(from_queryset=Model.objects.select_for_update())`
+  (Django 5.1+), check the change against the stored state, and save in the same block, so a failure in a `post_save`
+  receiver rolls the change back too;
+- return whether it changed the state, so callers act once per change (a replay or the losing side of a race gets
+  `False`);
+- refuse every other way of writing the state: make `save()` on an existing row require `update_fields` that don't
+  name it, which also stops a full save of a stale copy writing its old state back;
+- reload the row the same way before a partial save too, and re-apply only the `update_fields` values. simple-history
+  snapshots the whole instance, so a stale or locally edited copy would otherwise add a history record that doesn't
+  match the row.
+
+The test database is SQLite, where `select_for_update()` does nothing: test with two copies of one row loaded
+before either writes, which proves the stored-state check but not the lock.
+
 ### Key Takeaways for Implementation:
 - Check permissions early using `@permission_required` decorator
 - Use separate serializers for request/response

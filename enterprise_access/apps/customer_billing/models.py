@@ -26,7 +26,15 @@ from enterprise_access.apps.customer_billing import stripe_api
 from enterprise_access.apps.customer_billing.academy_api import get_cached_academy_data, get_cached_course_count
 from enterprise_access.apps.customer_billing.constants import ALLOWED_CHECKOUT_INTENT_STATE_TRANSITIONS
 
-from .constants import INTENT_RESERVATION_DURATION_MINUTES, CheckoutIntentState
+from .constants import (
+    ALLOWED_LEARNER_CREDIT_TOP_UP_STATE_TRANSITIONS,
+    INTENT_RESERVATION_DURATION_MINUTES,
+    LEARNER_CREDIT_TOP_UP_MAX_AMOUNT_CENTS,
+    LEARNER_CREDIT_TOP_UP_MIN_AMOUNT_CENTS,
+    LEARNER_CREDIT_TOP_UP_QUOTE_MINUTES,
+    CheckoutIntentState,
+    LearnerCreditTopUpState
+)
 from .utils import datetime_from_timestamp
 
 logger = logging.getLogger(__name__)
@@ -1428,3 +1436,441 @@ class StripeEventSummary(TimeStampedModel):
             stripe_subscription_id=subscription_id,
             event_type='customer.subscription.created',
         ).order_by('-stripe_event_created_at').first()
+
+
+class InvalidLearnerCreditTopUpTransition(Exception):
+    """
+    Raised when a LearnerCreditTopUp is asked to move to a state that
+    ALLOWED_LEARNER_CREDIT_TOP_UP_STATE_TRANSITIONS doesn't allow from its current one.
+    """
+
+
+def get_default_learner_credit_top_up_expires_at():
+    """
+    Return when a top-up quote created now expires. Module-level so that migrations can serialize it.
+    """
+    return timezone.now() + timedelta(minutes=LEARNER_CREDIT_TOP_UP_QUOTE_MINUTES)
+
+
+def _is_whole_cents(value):
+    """
+    Return True if ``value`` is None or an int. A Decimal or float is never accepted, even with no fractional part.
+    """
+    return value is None or (isinstance(value, int) and not isinstance(value, bool))
+
+
+class LearnerCreditTopUp(TimeStampedModel):
+    """
+    One self-service top-up of a Learner Credit budget, from quote to fulfillment.
+
+    This is the audit record of every self-service deposit: who started it, how much, when,
+    which payment and what discount. Rows must never be deleted.
+
+    A top-up is created in ``created``, and ``state`` changes only through ``transition_to()``, which
+    allows only the changes listed in ``ALLOWED_LEARNER_CREDIT_TOP_UP_STATE_TRANSITIONS``. The quote
+    fields are checked when the top-up is created and can't change afterwards.
+
+    .. pii: initiated_by_lms_user_id stores the LMS user id of the admin who started the top-up.
+       It is kept after the user is retired, because the row is a payment record kept for audit.
+    .. pii_types: id
+    .. pii_retirement: retained
+    """
+    class Meta:
+        verbose_name = "Learner Credit Top-Up"
+        verbose_name_plural = "Learner Credit Top-Ups"
+        indexes = [
+            models.Index(fields=['subsidy_access_policy', 'state']),
+        ]
+
+    class StateChoices(models.TextChoices):
+        """
+        Allowed choices for the state field
+        """
+        CREATED = (LearnerCreditTopUpState.CREATED, 'Created')
+        REQUIRES_ACTION = (LearnerCreditTopUpState.REQUIRES_ACTION, 'Requires action')
+        PAID = (LearnerCreditTopUpState.PAID, 'Paid')
+        DEPOSITED = (LearnerCreditTopUpState.DEPOSITED, 'Deposited')
+        FULFILLED = (LearnerCreditTopUpState.FULFILLED, 'Fulfilled')
+        EXPIRED = (LearnerCreditTopUpState.EXPIRED, 'Expired')
+        ERRORED_FULFILLMENT = (LearnerCreditTopUpState.ERRORED_FULFILLMENT, 'Errored (Fulfillment)')
+        REFUNDED = (LearnerCreditTopUpState.REFUNDED, 'Refunded')
+
+    # The timestamp that transition_to() sets on the change into each state.
+    STATE_TIMESTAMP_FIELDS = {
+        LearnerCreditTopUpState.PAID: 'paid_at',
+        LearnerCreditTopUpState.DEPOSITED: 'deposited_at',
+        LearnerCreditTopUpState.FULFILLED: 'fulfilled_at',
+    }
+
+    # Fixed when the quote is created: what the admin accepted, and what the charge and the deposit are made from.
+    QUOTE_FIELDS = frozenset({
+        'enterprise_customer_uuid',
+        'subsidy_access_policy',
+        'subsidy_uuid',
+        'initiated_by',
+        'initiated_by_lms_user_id',
+        'amount_cents',
+        'discount_rate',
+        'discount_cents',
+        'charge_amount_cents',
+        'currency',
+        'sales_quote_number',
+        'stripe_customer_id',
+    })
+
+    uuid = models.UUIDField(
+        primary_key=True,
+        default=uuid4,
+        editable=False,
+        help_text='Source of the Stripe and deposit idempotency keys, and the transaction ID shown to the admin.',
+    )
+    enterprise_customer_uuid = models.UUIDField(
+        db_index=True,
+        help_text="The policy's enterprise. Copied from the policy when not given.",
+    )
+    subsidy_access_policy = models.ForeignKey(
+        'subsidy_access_policy.SubsidyAccessPolicy',
+        on_delete=models.PROTECT,
+        related_name='learner_credit_top_ups',
+        help_text='The budget being topped up.',
+    )
+    subsidy_uuid = models.UUIDField(
+        db_index=True,
+        help_text="The subsidy the deposit goes to. Copied from the policy's subsidy_uuid when not given.",
+    )
+    initiated_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='learner_credit_top_ups',
+        help_text='The admin who started the top-up. Null once that user is deleted.',
+    )
+    initiated_by_lms_user_id = models.IntegerField(
+        null=True,
+        help_text="Copied from initiated_by.lms_user_id, and kept after the user is retired.",
+    )
+    state = models.CharField(
+        max_length=255,
+        choices=StateChoices.choices,
+        default=StateChoices.CREATED,
+        db_index=True,
+        help_text='Changed only through transition_to().',
+    )
+    amount_cents = models.BigIntegerField(
+        help_text=(
+            'Credit added to the budget, in USD cents: the full selected amount, not the discounted one. '
+            'Also the deposit quantity and the spend limit increase.'
+        ),
+    )
+    discount_rate = models.DecimalField(
+        max_digits=5,
+        decimal_places=4,
+        null=True,
+        help_text='The discount rate copied at quote time. Null means no discount is on record; 0 is a real 0% rate.',
+    )
+    discount_cents = models.BigIntegerField(
+        null=True,
+        help_text='The discount, in USD cents. Null exactly when discount_rate is null.',
+    )
+    charge_amount_cents = models.BigIntegerField(
+        help_text='What the card is charged, in USD cents: amount_cents minus discount_cents.',
+    )
+    currency = models.CharField(
+        max_length=3,
+        choices=[('usd', 'USD')],
+        default='usd',
+    )
+    sales_quote_number = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        help_text='Copied at quote time for the legal agreement.',
+    )
+    agreement_version = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        help_text='The agreement version the admin accepted when paying.',
+    )
+    agreement_accepted_at = models.DateTimeField(
+        null=True,
+    )
+    stripe_customer_id = models.CharField(
+        max_length=255,
+        db_index=True,
+        help_text='The Stripe Customer the top-up is charged to.',
+    )
+    stripe_payment_intent_id = models.CharField(
+        max_length=255,
+        unique=True,
+        null=True,
+        help_text='The one Stripe PaymentIntent of this top-up. Null until the admin pays.',
+    )
+    payment_method_type = models.CharField(
+        max_length=32,
+        choices=[('card', 'Card')],
+        null=True,
+    )
+    stripe_payment_method_id = models.CharField(
+        max_length=255,
+        null=True,
+        help_text='The Stripe PaymentMethod used to pay.',
+    )
+    deposit_uuid = models.UUIDField(
+        null=True,
+        help_text='The deposit returned by enterprise-subsidy.',
+    )
+    ledger_transaction_uuid = models.UUIDField(
+        null=True,
+        help_text="The deposit's ledger transaction, returned by enterprise-subsidy.",
+    )
+    spend_limit_before = models.IntegerField(
+        null=True,
+        help_text="The policy's spend_limit before the increase. Null when the policy has no spend limit.",
+    )
+    spend_limit_after = models.IntegerField(
+        null=True,
+        help_text="The policy's spend_limit after the increase. Null when the policy has no spend limit.",
+    )
+    expires_at = models.DateTimeField(
+        default=get_default_learner_credit_top_up_expires_at,
+        help_text='An unpaid quote past this time cannot be paid.',
+    )
+    paid_at = models.DateTimeField(
+        null=True,
+        help_text='Set by transition_to() on the change into paid.',
+    )
+    deposited_at = models.DateTimeField(
+        null=True,
+        help_text='Set by transition_to() on the change into deposited.',
+    )
+    fulfilled_at = models.DateTimeField(
+        null=True,
+        help_text='Set by transition_to() on the change into fulfilled.',
+    )
+    last_error = models.TextField(
+        null=True,
+        blank=True,
+        help_text='The latest payment or fulfillment error.',
+    )
+    salesforce_opportunity_id = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+    )
+    salesforce_synced_at = models.DateTimeField(
+        null=True,
+    )
+
+    history = HistoricalRecords()
+
+    def __str__(self):
+        return (
+            "<LearnerCreditTopUp "
+            f"uuid={self.uuid}, "
+            f"subsidy_access_policy={self.subsidy_access_policy_id}, "
+            f"state={self.state}, "
+            f"amount_cents={self.amount_cents}>"
+        )
+
+    @classmethod
+    def is_valid_state_transition(
+        cls,
+        current_state: LearnerCreditTopUpState,
+        new_state: LearnerCreditTopUpState,
+    ) -> bool:
+        """
+        Return True if the transition table allows moving from current_state to new_state.
+        Staying in the same state is always allowed.
+        """
+        if current_state == new_state:
+            return True
+        return new_state in ALLOWED_LEARNER_CREDIT_TOP_UP_STATE_TRANSITIONS.get(current_state, [])
+
+    def _protected_fields_in(self, names) -> list[str]:
+        """
+        Return which of ``names`` (field names or attnames) only transition_to() may write, or nothing may.
+        """
+        protected = {'state', *self.STATE_TIMESTAMP_FIELDS.values(), *self.QUOTE_FIELDS}
+        return sorted(protected.intersection(self._meta.get_field(name).name for name in names))
+
+    def _reload_for_update(self):
+        """
+        Reload this top-up from the database under a row lock. Call inside transaction.atomic().
+        """
+        self.refresh_from_db(from_queryset=LearnerCreditTopUp.objects.select_for_update())
+
+    def _write(self, changes, **save_kwargs):
+        """
+        Apply ``changes`` and write them, with ``modified``, in one UPDATE that skips this class's save() checks.
+
+        Call inside transaction.atomic(), after _reload_for_update(). If the write fails, the atomic block
+        undoes it, so the instance is put back to the values it had before ``changes`` were applied.
+        """
+        previous_values = {name: getattr(self, name) for name in [*changes, 'modified']}
+        for name, value in changes.items():
+            setattr(self, name, value)
+        try:
+            super().save(**{**save_kwargs, 'update_fields': [*changes, 'modified']})
+        except Exception:
+            for name, value in previous_values.items():
+                setattr(self, name, value)
+            raise
+
+    def transition_to(self, new_state, **fields) -> bool:
+        """
+        Move this top-up to ``new_state``, saving ``fields`` in the same write.
+
+        This is the only way ``state`` changes. The top-up is first reloaded under a row lock, so the
+        change is checked against the stored state rather than a copy that another request or task
+        has since moved on from, and concurrent calls for one top-up run one at a time. Unsaved
+        changes to the instance are discarded: pass them as ``fields``.
+
+        The change into ``paid``, ``deposited`` or ``fulfilled`` also sets ``paid_at``,
+        ``deposited_at`` or ``fulfilled_at``, unless it is already set: an ops re-run keeps the
+        first timestamp.
+
+        Returns:
+            True if this call changed the state. False if the top-up was already in ``new_state``:
+            then nothing is written, ``fields`` are not saved, and no history record is added.
+
+        Raises:
+            InvalidLearnerCreditTopUpTransition: the transition table doesn't allow the change.
+            ValueError: ``new_state`` is not a state, or ``fields`` names ``state``, a state
+                timestamp or a quote field.
+
+        Whenever it raises, including when the save itself fails, nothing is written and the
+        instance holds the stored values.
+        """
+        new_state = LearnerCreditTopUpState(new_state)
+        if protected := self._protected_fields_in(fields):
+            raise ValueError(f'transition_to() cannot set {protected}.')
+
+        with transaction.atomic():
+            self._reload_for_update()
+            current_state = LearnerCreditTopUpState(self.state)
+
+            if current_state == new_state:
+                if ignored := sorted(name for name, value in fields.items() if getattr(self, name) != value):
+                    logger.warning(
+                        'LearnerCreditTopUp %s is already %s; not saving %s', self.uuid, new_state, ignored,
+                    )
+                return False
+
+            if not self.is_valid_state_transition(current_state, new_state):
+                logger.warning(
+                    'Rejected LearnerCreditTopUp %s state transition from %s to %s (allowed: %s)',
+                    self.uuid, current_state, new_state,
+                    ALLOWED_LEARNER_CREDIT_TOP_UP_STATE_TRANSITIONS.get(current_state, []),
+                )
+                raise InvalidLearnerCreditTopUpTransition(
+                    f'Cannot move LearnerCreditTopUp {self.uuid} from {current_state} to {new_state}.'
+                )
+
+            changes = {'state': new_state, **fields}
+            timestamp_field = self.STATE_TIMESTAMP_FIELDS.get(new_state)
+            if timestamp_field and getattr(self, timestamp_field) is None:
+                changes[timestamp_field] = timezone.now()
+            self._write(changes)
+
+        logger.info('LearnerCreditTopUp %s moved from %s to %s.', self.uuid, current_state, new_state)
+        return True
+
+    def clean(self):
+        """
+        Check a new top-up: require it to start as an unpaid quote, fill in the copies of the
+        policy's and the initiating admin's fields, and check the amounts.
+
+        Only new top-ups are checked. The quote fields can't change afterwards (see save()), and
+        re-checking them later could leave a paid top-up unable to move, for example after the
+        allowed range changes.
+        """
+        if not self._state.adding:
+            return
+
+        errors = {}
+        # A top-up starts as an unpaid quote. Every later state, and its timestamp, is reached through
+        # transition_to(), so a row can't be inserted already deposited or fulfilled, skipping the money steps.
+        if self.state != LearnerCreditTopUpState.CREATED:
+            errors['state'] = f'A new top-up must start in {LearnerCreditTopUpState.CREATED}.'
+        for field_name in self.STATE_TIMESTAMP_FIELDS.values():
+            if getattr(self, field_name) is not None:
+                errors[field_name] = 'Set by transition_to(), not when the top-up is created.'
+        if not self.subsidy_access_policy_id:
+            errors['subsidy_access_policy'] = 'This field is required.'
+        else:
+            policy = self.subsidy_access_policy
+            for field_name in ('enterprise_customer_uuid', 'subsidy_uuid'):
+                value = getattr(self, field_name)
+                policy_value = getattr(policy, field_name)
+                if value is None:
+                    setattr(self, field_name, policy_value)
+                elif self._meta.get_field(field_name).to_python(value) != policy_value:
+                    errors[field_name] = f'Must match the policy ({policy_value}).'
+
+        if self.initiated_by_lms_user_id is None and self.initiated_by_id:
+            self.initiated_by_lms_user_id = self.initiated_by.lms_user_id
+
+        if self.discount_rate is not None and not 0 <= self.discount_rate < 1:
+            errors['discount_rate'] = 'Must be at least 0 and less than 1.'
+
+        # Amounts are whole cents, given as int. Django would truncate a fractional value only when saving it,
+        # after the checks below had passed on the untruncated one, so reject it rather than check its arithmetic.
+        amount_fields = ('amount_cents', 'discount_cents', 'charge_amount_cents')
+        if fractional := [name for name in amount_fields if not _is_whole_cents(getattr(self, name))]:
+            errors.update({name: 'Must be a whole number of cents.' for name in fractional})
+        else:
+            amount = self.amount_cents
+            min_amount, max_amount = LEARNER_CREDIT_TOP_UP_MIN_AMOUNT_CENTS, LEARNER_CREDIT_TOP_UP_MAX_AMOUNT_CENTS
+            if amount is None or not min_amount <= amount <= max_amount:
+                errors['amount_cents'] = f'Must be between {min_amount} and {max_amount} cents.'
+            if (self.discount_rate is None) != (self.discount_cents is None):
+                errors['discount_cents'] = 'Must be null exactly when discount_rate is null.'
+            elif self.discount_cents is not None and not 0 <= self.discount_cents < (amount or 0):
+                # The card is charged something, and never more than the credit.
+                errors['discount_cents'] = 'Must be at least 0 and less than amount_cents.'
+            if amount is not None and self.charge_amount_cents != amount - (self.discount_cents or 0):
+                errors['charge_amount_cents'] = 'Must equal amount_cents minus discount_cents.'
+
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, **kwargs):
+        """
+        Check a new top-up with clean(); on an existing one, write only the fields in ``update_fields``.
+
+        An existing top-up must be saved with ``update_fields``, and they may not include ``state``,
+        a state timestamp or a quote field. A full save of an instance loaded before another request
+        moved the top-up would write its old state back. Use transition_to() to change the state.
+
+        An existing top-up is first reloaded under a row lock, and only the ``update_fields`` values
+        are applied to it, so the history record this save adds is the stored row plus this change,
+        not a stale or locally edited copy. Unsaved changes to other fields are discarded, and if the
+        save fails, the instance holds the stored values.
+
+        This calls clean() rather than full_clean(), which would report a reused
+        stripe_payment_intent_id as a ValidationError rather than leaving it to the unique index,
+        and would reject the nullable columns that aren't blank=True.
+        """
+        if self._state.adding:
+            self.clean()
+            super().save(**kwargs)
+            return
+
+        update_fields = kwargs.get('update_fields')
+        if update_fields is None:
+            raise ValueError('Save an existing LearnerCreditTopUp with update_fields, or use transition_to().')
+        if protected := self._protected_fields_in(update_fields):
+            raise ValueError(f'{protected} can only be changed by transition_to(), or not at all.')
+        if not update_fields:
+            # As in Django, an empty update_fields saves nothing.
+            return
+
+        updates = {
+            attname: getattr(self, attname)
+            for attname in (self._meta.get_field(name).attname for name in update_fields)
+        }
+        updates.pop('modified', None)
+        with transaction.atomic():
+            self._reload_for_update()
+            self._write(updates, **{name: value for name, value in kwargs.items() if name != 'update_fields'})
