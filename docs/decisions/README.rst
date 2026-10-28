@@ -267,7 +267,7 @@ Accepted Sept 2025, this ADR describes the rational
 for identifying SSP Stripe products based on ``lookup_key``
 instead of the Stripe price id.
 
-`<0037-server-side-learner-pathway-pipeline.rst>`_
+`<0037-server-side-learner-pathway-pipeline.md>`_
 ***************************************************
 *Feature: Learner Pathways*
 
