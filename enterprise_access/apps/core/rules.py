@@ -653,6 +653,11 @@ rules.add_perm(
     constants.BILLING_MANAGEMENT_ACCESS_PERMISSION,
     has_customer_billing_operator_access | has_customer_billing_admin_access,
 )
+# Grants Learner Credit top-up access (eligibility now; quote/pay later) to the same roles as billing management.
+rules.add_perm(
+    constants.LEARNER_CREDIT_TOP_UP_PERMISSION,
+    has_customer_billing_operator_access | has_customer_billing_admin_access,
+)
 
 # Grants admin learner profile read permission to admin learner profile admins.
 rules.add_perm(

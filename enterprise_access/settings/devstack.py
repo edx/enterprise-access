@@ -149,3 +149,6 @@ KAFKA_TOPICS = [
 
 # Enable the billing management API endpoints under /api/v1/billing-management/*
 ENABLE_BILLING_MANAGEMENT_API = True
+
+# Enable the Learner Credit top-up endpoints under /api/v1/learner-credit-top-ups/*
+FEATURE_TOP_UP_LEARNER_CREDIT = True

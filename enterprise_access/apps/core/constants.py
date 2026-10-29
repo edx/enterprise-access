@@ -40,6 +40,7 @@ CUSTOMER_BILLING_ADMIN_ROLE = 'enterprise_access_customer_billing_admin'
 CUSTOMER_BILLING_CREATE_PORTAL_SESSION_PERMISSION = 'customer_billing.create_portal_session'
 CHECKOUT_INTENT_READ_WRITE_ALL_PERMISSION = 'customer_billing.checkout_intent_read_write_all'
 BILLING_MANAGEMENT_ACCESS_PERMISSION = 'customer_billing.billing_management_access'
+LEARNER_CREDIT_TOP_UP_PERMISSION = 'customer_billing.learner_credit_top_up'
 
 ADMIN_LEARNER_PROFILE_ADMIN_ROLE = 'enterprise_access_admin_learner_profile_admin'
 ADMIN_LEARNER_PROFILE_READ_PERMISSION = 'admin_learner_profile.has_read_access'

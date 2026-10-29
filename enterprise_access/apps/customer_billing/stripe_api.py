@@ -33,7 +33,7 @@ def create_subscription_checkout_session(
     elif enterprise_catalog_metadata is not None:
         enterprise_catalog = str(enterprise_catalog_metadata)
 
-    create_kwargs: stripe.checkout.Session.CreateParams = {
+    create_kwargs: stripe.params.checkout.SessionCreateParams = {
         'mode': 'subscription',
         # Intended UI will be a custom react component, referred to as 'elements' on stripe's end.
         'ui_mode': 'elements',
@@ -67,8 +67,10 @@ def create_subscription_checkout_session(
         # Always collect payment method, not just when the amount is greater than zero.  This is influential for
         # creating a free trial plan because the amount is always zero.
         'payment_method_collection': 'always',
-        # This restricts the output for the payment element to only show the card option
-        'payment_method_types': [
+        # This restricts the output for the payment element to only show the card option.
+        # Stripe API 2026-09-30.endive (stripe>=16) replaced `payment_method_types` with this filter
+        # over the dynamically eligible payment methods, so `card` must stay enabled in the Dashboard.
+        'allowed_payment_method_types': [
             'card'
         ]
 

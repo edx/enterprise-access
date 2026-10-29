@@ -11,6 +11,8 @@ from django.http import Http404, HttpResponseServerError
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, OpenApiTypes, extend_schema, extend_schema_view
+from edx_api_doc_tools import query_parameter
+from edx_api_doc_tools import schema as api_doc_schema
 from edx_django_utils.cache import TieredCache
 from edx_rbac.decorators import permission_required
 from edx_rest_framework_extensions.auth.jwt.authentication import JwtAuthentication
@@ -24,14 +26,18 @@ from enterprise_access.apps.api.authentication import StripeWebhookAuthenticatio
 from enterprise_access.apps.core.constants import (
     BILLING_MANAGEMENT_ACCESS_PERMISSION,
     CUSTOMER_BILLING_CREATE_PORTAL_SESSION_PERMISSION,
+    LEARNER_CREDIT_TOP_UP_PERMISSION,
     STRIPE_EVENT_SUMMARY_READ_PERMISSION
 )
 from enterprise_access.apps.customer_billing.api import (
     CreateCheckoutSessionFailedConflict,
     CreateCheckoutSessionSlugReservationConflict,
     CreateCheckoutSessionValidationError,
-    create_free_trial_checkout_session
+    create_free_trial_checkout_session,
+    evaluate_top_up_eligibility_for_policies,
+    is_top_up_enabled
 )
+from enterprise_access.apps.customer_billing.constants import TOP_UP_ERRORS
 from enterprise_access.apps.customer_billing.models import (
     CheckoutIntent,
     SelfServiceSubscriptionRenewal,
@@ -45,8 +51,10 @@ from enterprise_access.apps.customer_billing.pricing_api import (
 )
 from enterprise_access.apps.customer_billing.stripe_api import get_stripe_customer
 from enterprise_access.apps.customer_billing.stripe_event_handlers import StripeEventHandler
+from enterprise_access.apps.subsidy_access_policy.models import SubsidyAccessPolicy
 
 from .constants import CHECKOUT_INTENT_EXAMPLES, ERROR_RESPONSES, PATCH_REQUEST_EXAMPLES
+from .subsidy_access_policy import SubsidyAPIUnavailableException
 
 stripe.api_key = settings.STRIPE_API_KEY
 logger = logging.getLogger(__name__)
@@ -2389,3 +2397,113 @@ class BillingManagementViewSet(viewsets.ViewSet):
                 {'error': 'An unexpected error occurred'},
                 status=status.HTTP_422_UNPROCESSABLE_ENTITY
             )
+
+
+LEARNER_CREDIT_TOP_UP_API_TAG = 'Learner Credit Top-Ups'
+
+
+def _top_up_error_response(key, status_code, **message_kwargs):
+    """
+    Build a top-up error response: ``{"error_code": ..., "detail": ...}``.
+    """
+    error_code, message = TOP_UP_ERRORS[key]
+    return Response({'error_code': error_code, 'detail': message.format(**message_kwargs)}, status=status_code)
+
+
+class LearnerCreditTopUpViewSet(viewsets.ViewSet):
+    """
+    Viewset for Learner Credit top-ups. Today it only exposes the eligibility check; the quote and
+    pay endpoints (chunks 7 and 11) will be added here and must reuse ``evaluate_top_up_eligibility_for_policies``.
+
+    Like the billing-management endpoints, authorization is edx-rbac keyed on the
+    ``enterprise_customer_uuid`` query parameter.
+    """
+    authentication_classes = (JwtAuthentication,)
+    permission_classes = (permissions.IsAuthenticated,)
+
+    def initial(self, request, *args, **kwargs):
+        """
+        With ``FEATURE_TOP_UP_LEARNER_CREDIT`` off the endpoints do not exist (404), regardless of the caller's role.
+        """
+        super().initial(request, *args, **kwargs)
+        if not is_top_up_enabled():
+            raise Http404
+
+    @extend_schema(
+        tags=[LEARNER_CREDIT_TOP_UP_API_TAG],
+        summary='Check whether budgets are eligible for a Learner Credit top-up.',
+        description=(
+            'Returns one result per active budget of the enterprise, or only the requested budget when '
+            '``policy_uuid`` is given. Ineligibility is reported in the body (200), not as an error status.'
+        ),
+        parameters=[
+            OpenApiParameter(
+                name='enterprise_customer_uuid', type=OpenApiTypes.UUID, location=OpenApiParameter.QUERY,
+                required=True, description='UUID of the enterprise customer',
+            ),
+            OpenApiParameter(
+                name='policy_uuid', type=OpenApiTypes.UUID, location=OpenApiParameter.QUERY,
+                required=False, description='Restrict the result to this budget (policy).',
+            ),
+        ],
+        responses={
+            status.HTTP_200_OK: serializers.TopUpEligibilityResponseSerializer,
+            status.HTTP_400_BAD_REQUEST: OpenApiResponse(description='Invalid policy_uuid'),
+            status.HTTP_403_FORBIDDEN: OpenApiResponse(description='Permission denied'),
+            status.HTTP_404_NOT_FOUND: OpenApiResponse(
+                description='Feature off; ``budget_not_found`` (policy_uuid not in this enterprise); or '
+                            '``no_budgets_found`` (the enterprise has no active budgets).'
+            ),
+            status.HTTP_503_SERVICE_UNAVAILABLE: OpenApiResponse(
+                description='enterprise-subsidy failed (e.g. a 5xx), or every listed budget\'s subsidy answered '
+                            '403/404. A budget whose subsidy alone answers 403/404 reports ``budget_not_active``.'
+            ),
+        },
+    )
+    # ``/api-docs/`` is rendered by drf-yasg, which ignores ``extend_schema``; declare the query parameters there too.
+    @api_doc_schema(parameters=[
+        query_parameter('enterprise_customer_uuid', str, 'UUID of the enterprise customer (required)'),
+        query_parameter('policy_uuid', str, 'Restrict the result to this budget (policy) UUID (optional)'),
+    ])
+    @action(detail=False, methods=['get'], url_path='eligibility')
+    @permission_required(
+        LEARNER_CREDIT_TOP_UP_PERMISSION,
+        fn=lambda request, **kwargs: request.GET.get('enterprise_customer_uuid')
+    )
+    def eligibility(self, request, **kwargs):
+        """
+        Evaluate top-up eligibility for the enterprise's budgets.
+        """
+        params = serializers.TopUpEligibilityQueryParamsSerializer(data=request.query_params)
+        params.is_valid(raise_exception=True)
+        enterprise_customer_uuid = params.validated_data['enterprise_customer_uuid']
+        policy_uuid = params.validated_data.get('policy_uuid')
+
+        policies = SubsidyAccessPolicy.objects.filter(enterprise_customer_uuid=enterprise_customer_uuid)
+        if policy_uuid:
+            # An inactive budget, or a policy of another enterprise, is simply not found.
+            policies = policies.filter(uuid=policy_uuid, active=True)
+            if not policies.exists():
+                return _top_up_error_response(
+                    'BUDGET_NOT_FOUND', status.HTTP_404_NOT_FOUND,
+                    policy_uuid=policy_uuid, enterprise_customer_uuid=enterprise_customer_uuid,
+                )
+        else:
+            # Every ``active=True`` policy; a retired one that is still active reports ``budget_not_active``.
+            policies = policies.filter(active=True)
+            if not policies.exists():
+                # Also what an operator (who may query any enterprise) sees for a mistyped enterprise_customer_uuid.
+                return _top_up_error_response(
+                    'NO_BUDGETS_FOUND', status.HTTP_404_NOT_FOUND, enterprise_customer_uuid=enterprise_customer_uuid,
+                )
+
+        try:
+            # A budget whose subsidy alone answers 403/404 reports ``budget_not_active``. When listing, every
+            # subsidy failing that way is treated as an outage; an explicitly requested budget just reports it.
+            results = evaluate_top_up_eligibility_for_policies(
+                policies.order_by('created'), raise_if_all_unreachable=not policy_uuid,
+            )
+        except OSError as exc:  # SubsidyAPIHTTPError and requests' connection errors and timeouts are OSErrors
+            logger.exception('Top-up eligibility: subsidy unavailable for enterprise %s', enterprise_customer_uuid)
+            raise SubsidyAPIUnavailableException() from exc
+        return Response(serializers.TopUpEligibilityResponseSerializer({'results': results}).data)

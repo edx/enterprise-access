@@ -59,11 +59,51 @@ CHECKOUT_SESSION_ERROR_CODES = {
     },
 }
 
+# Learner Credit top-up eligibility. Reason codes are shared by the eligibility, quote and pay endpoints.
+TOP_UP_MIN_DAYS_BEFORE_EXPIRY = 14
+
+# How many times a budget's subsidy is fetched while it answers 403/404, before it is reported as budget_not_active.
+TOP_UP_MAX_SUBSIDY_FETCH_ATTEMPTS = 3
+
+TOP_UP_INELIGIBILITY_REASONS = {
+    'BUDGET_NOT_ACTIVE': (
+        'budget_not_active',
+        'The budget (policy or its subsidy) is not active.',
+    ),
+    'BUDGET_EXPIRING_SOON': (
+        'budget_expiring_soon',
+        f'The budget expires in fewer than {TOP_UP_MIN_DAYS_BEFORE_EXPIRY} days.',
+    ),
+    'ACCOUNT_NOT_ELIGIBLE': (
+        'account_not_eligible',
+        'The account standing or agreement type is not eligible for a top-up.',
+    ),
+}
+
+# Error responses of the top-up endpoints: (error_code, detail message template).
+TOP_UP_ERRORS = {
+    'BUDGET_NOT_FOUND': (
+        'budget_not_found',
+        'Budget {policy_uuid} was not found for enterprise {enterprise_customer_uuid}.',
+    ),
+    'NO_BUDGETS_FOUND': (
+        'no_budgets_found',
+        'No active budgets were found for enterprise with UUID {enterprise_customer_uuid}.',
+    ),
+}
+
 # According to stripe's AI assistant: "When a Checkout Session is created,
 # Stripe automatically sets the expires_at timestamp to 24 hours in the future."
 # We want the slug duration to last at least as long as the checkout session expiry.
 SLUG_RESERVATION_DURATION_MINUTES = 24 * 60
 INTENT_RESERVATION_DURATION_MINUTES = 24 * 60
+
+# How long an unpaid Learner Credit top-up quote can still be paid.
+LEARNER_CREDIT_TOP_UP_QUOTE_MINUTES = 30
+
+# Inclusive limits on the credit a single top-up adds to a budget, in USD cents.
+LEARNER_CREDIT_TOP_UP_MIN_AMOUNT_CENTS = 50_000
+LEARNER_CREDIT_TOP_UP_MAX_AMOUNT_CENTS = 2_000_000
 
 
 class CheckoutIntentState(StrEnum):
@@ -118,6 +158,55 @@ ALLOWED_CHECKOUT_INTENT_STATE_TRANSITIONS = {
         CheckoutIntentState.CREATED,
     ],
     CheckoutIntentState.FULFILLED: [],
+}
+
+
+class LearnerCreditTopUpState(StrEnum):
+    """
+    Namespace for LearnerCreditTopUp state values (Phase 1, card payments).
+    """
+    CREATED = 'created'
+    REQUIRES_ACTION = 'requires_action'
+    PAID = 'paid'
+    DEPOSITED = 'deposited'
+    FULFILLED = 'fulfilled'
+    EXPIRED = 'expired'
+    ERRORED_FULFILLMENT = 'errored_fulfillment'
+    REFUNDED = 'refunded'
+
+
+ALLOWED_LEARNER_CREDIT_TOP_UP_STATE_TRANSITIONS = {
+    LearnerCreditTopUpState.CREATED: [
+        LearnerCreditTopUpState.REQUIRES_ACTION,
+        LearnerCreditTopUpState.PAID,
+        LearnerCreditTopUpState.EXPIRED,
+    ],
+    LearnerCreditTopUpState.REQUIRES_ACTION: [
+        LearnerCreditTopUpState.CREATED,
+        LearnerCreditTopUpState.PAID,
+        LearnerCreditTopUpState.EXPIRED,
+    ],
+    # A 3DS challenge finished after the quote expired still charges the card, and that money must be credited.
+    LearnerCreditTopUpState.EXPIRED: [
+        LearnerCreditTopUpState.PAID,
+    ],
+    LearnerCreditTopUpState.PAID: [
+        LearnerCreditTopUpState.DEPOSITED,
+        LearnerCreditTopUpState.ERRORED_FULFILLMENT,
+    ],
+    # FULFILLED is reachable only from DEPOSITED, so the spend limit is raised at most once.
+    LearnerCreditTopUpState.DEPOSITED: [
+        LearnerCreditTopUpState.FULFILLED,
+        LearnerCreditTopUpState.ERRORED_FULFILLMENT,
+    ],
+    # The ops re-run resumes at the step that failed: PAID if no deposit was recorded, DEPOSITED if one was.
+    LearnerCreditTopUpState.ERRORED_FULFILLMENT: [
+        LearnerCreditTopUpState.PAID,
+        LearnerCreditTopUpState.DEPOSITED,
+        LearnerCreditTopUpState.REFUNDED,
+    ],
+    LearnerCreditTopUpState.FULFILLED: [],
+    LearnerCreditTopUpState.REFUNDED: [],
 }
 
 # Patterns used to serialize date/time to be machine-readable by Braze.

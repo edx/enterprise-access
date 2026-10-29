@@ -4,9 +4,11 @@ Unit tests for interacting with stripe via ``stripe_api.api``.
 import json
 from unittest import mock
 
+import ddt
 import stripe
 from django.test import TestCase
 from edx_django_utils.cache import TieredCache
+from stripe.params.checkout import SessionCreateParams
 
 from enterprise_access.apps.customer_billing.stripe_api import (
     create_subscription_checkout_session,
@@ -16,6 +18,7 @@ from enterprise_access.apps.customer_billing.stripe_api import (
     get_stripe_payment_method,
     stripe_cache
 )
+from enterprise_access.apps.customer_billing.tests.utils import unsupported_stripe_params
 
 
 class StripeApiFunctionsTests(TestCase):
@@ -106,6 +109,7 @@ class TestStripeCheckoutSession(StripeApiFunctionsTests):
             get_stripe_checkout_session(self.session_id)
 
 
+@ddt.ddt
 class TestCreateSubscriptionCheckoutSession(StripeApiFunctionsTests):
     """Tests for create_subscription_checkout_session customer vs customer_email selection."""
 
@@ -231,6 +235,34 @@ class TestCreateSubscriptionCheckoutSession(StripeApiFunctionsTests):
 
         _, kwargs = mock_session_create.call_args
         self.assertEqual(kwargs['subscription_data']['metadata']['ssp_product_slug'], 'test-product-slug')
+
+    @ddt.data([], [{'id': 'cus_12345'}])
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.checkout.Session.create')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Customer.search')
+    def test_create_params_are_supported_by_installed_stripe_sdk(
+        self, existing_customers, mock_customer_search, mock_session_create,
+    ):
+        """
+        Every param sent to ``stripe.checkout.Session.create`` must be declared by the installed SDK's
+        ``SessionCreateParams``.
+
+        The SDK pins the Stripe API version it sends, and its generated params track what that version
+        accepts. Stripe calls are mocked everywhere else, and these kwargs are built in a dict so the
+        static call-site check in ``test_stripe_sdk_contract`` can't see them. This is what caught stripe 16
+        (API ``2026-09-30.endive``) replacing ``payment_method_types`` with ``allowed_payment_method_types``.
+        """
+        mock_customer_search.return_value = mock.MagicMock(data=existing_customers)
+        mock_stripe_session = mock.Mock()
+        mock_stripe_session.to_dict.return_value = {'id': 'cs_test_params'}
+        mock_session_create.return_value = mock_stripe_session
+
+        self._call('params-check@example.com', {'catalog_query_id': 505, 'title': 'Open Courses'})
+
+        _, kwargs = mock_session_create.call_args
+        self.assertEqual(
+            unsupported_stripe_params(kwargs, SessionCreateParams), [],
+            f'stripe=={stripe.VERSION} (API {stripe.api_version}) does not accept these params',
+        )
 
 
 class TestStripePaymentIntent(StripeApiFunctionsTests):

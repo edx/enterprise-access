@@ -44,7 +44,8 @@ from enterprise_access.apps.subsidy_access_policy.constants import (
     REASON_NOT_ENOUGH_VALUE_IN_SUBSIDY,
     REASON_POLICY_EXPIRED,
     REASON_POLICY_SPEND_LIMIT_REACHED,
-    REASON_SUBSIDY_EXPIRED
+    REASON_SUBSIDY_EXPIRED,
+    TransactionStateChoices
 )
 from enterprise_access.apps.subsidy_access_policy.exceptions import MissingAssignment, SubsidyAPIHTTPError
 from enterprise_access.apps.subsidy_access_policy.models import (
@@ -566,6 +567,28 @@ class SubsidyAccessPolicyTests(MockPolicyDependenciesMixin, TestCase):
             },
             'transactions_for_policy': {'results': [], 'aggregates': {'total_quantity': -200}},
             'expected_policy_can_redeem': (False, REASON_LEARNER_MAX_SPEND_REACHED, []),
+        },
+        {
+            # The learner's prior redemption would exceed the limit, but it was refunded (committed reversal),
+            # so it no longer counts against the learner's spend. Every other check would succeed.
+            # Expected can_redeem result: True
+            'policy_is_active': True,
+            'catalog_contains_content': True,
+            'enroll_by_date': '2099-01-01T00:00:00Z',
+            'get_enterprise_user': TEST_USER_RECORD,
+            'subsidy_is_redeemable': {'can_redeem': True, 'active': True},
+            'transactions_for_learner': {
+                'transactions': [{
+                    'subsidy_access_policy_uuid': str(ACTIVE_LEARNER_SPEND_CAP_POLICY_UUID),
+                    'uuid': str(uuid4()),
+                    'content_key': 'anything',
+                    'quantity': -50000,
+                    'reversal': {'state': TransactionStateChoices.COMMITTED, 'quantity': 50000},
+                }],
+                'aggregates': {},
+            },
+            'transactions_for_policy': {'results': [], 'aggregates': {'total_quantity': -200}},
+            'expected_policy_can_redeem': (True, None, []),
         },
         {
             # The subsidy is redeemable, but another redemption would exceed the policy-wide ``spend_limit``.
@@ -2417,6 +2440,7 @@ class AssignedLearnerCreditAccessPolicyAllocationTests(MockPolicyDependenciesMix
         self.mock_subsidy_balance.assert_not_called()
 
 
+@ddt.ddt
 class PerLearnerSpendCreditAccessPolicyTests(MockPolicyDependenciesMixin, TestCase):
     """ Tests specific to the per-learner spend credit type of access policy. """
 
@@ -2534,6 +2558,66 @@ class PerLearnerSpendCreditAccessPolicyTests(MockPolicyDependenciesMixin, TestCa
             # Should return parent class value directly
             self.assertEqual(result, self.MOCK_PARENT_SPEND_AVAILABLE)
             mock_parent_spend_available.assert_called_once()
+
+    def _learner_transaction(self, quantity, reversal=None, policy_uuid=None):
+        """
+        Returns a learner transaction as serialized by the subsidy API.
+        """
+        return {
+            'uuid': str(uuid4()),
+            'subsidy_access_policy_uuid': str(policy_uuid or self.per_learner_spend_policy.uuid),
+            'content_key': 'anything',
+            'quantity': quantity,
+            'reversal': reversal,
+        }
+
+    @ddt.data(
+        # No reversal: the full quantity counts.
+        {'reversal': None, 'expected_total': -14900},
+        # Committed full reversal (a refund): nothing counts.
+        {'reversal': {'state': TransactionStateChoices.COMMITTED, 'quantity': 14900}, 'expected_total': 0},
+        # Committed partial reversal: only the unreversed part counts.
+        {'reversal': {'state': TransactionStateChoices.COMMITTED, 'quantity': 4900}, 'expected_total': -10000},
+        # Reversal that is not committed yet: the full quantity still counts.
+        {'reversal': {'state': TransactionStateChoices.PENDING, 'quantity': 14900}, 'expected_total': -14900},
+    )
+    @ddt.unpack
+    def test_transactions_for_learner_total_nets_committed_reversals(self, reversal, expected_total):
+        """
+        Test that the learner's total_quantity for this policy is net of committed reversals only.
+        """
+        self.mock_transactions_cache_for_learner.return_value = {
+            'transactions': [
+                self._learner_transaction(-14900, reversal=reversal),
+                # Another policy's transaction never counts toward this policy's total.
+                self._learner_transaction(-50000, policy_uuid=uuid4()),
+            ],
+            'aggregates': {},
+        }
+
+        result = self.per_learner_spend_policy.transactions_for_learner(self.lms_user_id)
+
+        self.assertEqual(result['aggregates']['total_quantity'], expected_total)
+        self.assertEqual(len(result['transactions']), 1)
+
+    def test_remaining_balance_per_user_excludes_refunded_redemptions(self):
+        """
+        Test that refunded redemptions don't count against the per-learner spend limit:
+        $846 redeemed, of which $548 was refunded, leaves $302 of a $600 limit.
+        """
+        self.per_learner_spend_policy.per_learner_spend_limit = 60000
+        committed = TransactionStateChoices.COMMITTED
+        self.mock_transactions_cache_for_learner.return_value = {
+            'transactions': [
+                self._learner_transaction(-14900),
+                self._learner_transaction(-29900, reversal={'state': committed, 'quantity': 29900}),
+                self._learner_transaction(-14900),
+                self._learner_transaction(-24900, reversal={'state': committed, 'quantity': 24900}),
+            ],
+            'aggregates': {},
+        }
+
+        self.assertEqual(self.per_learner_spend_policy.remaining_balance_per_user(self.lms_user_id), 30200)
 
 
 @ddt.ddt

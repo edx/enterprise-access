@@ -34,6 +34,8 @@ from .customer_billing import (
     StripeEventSummaryReadOnlySerializer,
     StripeSubscriptionPlanInfoResponseSerializer,
     StripeSubscriptionResponseSerializer,
+    TopUpEligibilityQueryParamsSerializer,
+    TopUpEligibilityResponseSerializer,
     TransactionResponseSerializer,
     TransactionsListResponseSerializer
 )

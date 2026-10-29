@@ -111,6 +111,19 @@ POLICY_LOCK_RESOURCE_NAME = 'subsidy_access_policy'
 logger = logging.getLogger(__name__)
 
 
+def _quantity_net_of_reversal(transaction):
+    """
+    Returns the transaction's quantity plus the quantity of its reversal, if that reversal is committed.
+    Transaction quantities are negative and reversal quantities are positive, so a fully reversed
+    transaction nets to zero.
+    """
+    quantity = transaction['quantity']
+    reversal = transaction.get('reversal')
+    if isinstance(reversal, dict) and reversal.get('state') == TransactionStateChoices.COMMITTED:
+        quantity += reversal['quantity']
+    return quantity
+
+
 class PolicyManager(models.Manager):
     def get_queryset(self):
         return super().get_queryset().filter(policy_type=self.model.__name__)
@@ -733,6 +746,9 @@ class SubsidyAccessPolicy(TimeStampedModel):
         """
         Returns a request-cached version of all transactions and aggregate quantities
         for this learner and this policy.
+
+        ``total_quantity`` is net of committed reversals, so refunded redemptions
+        don't count against the learner's spend.
         """
         subsidy_transactions = get_and_cache_transactions_for_learner(
             self.subsidy_uuid, lms_user_id
@@ -742,7 +758,7 @@ class SubsidyAccessPolicy(TimeStampedModel):
             if str(transaction['subsidy_access_policy_uuid']) == str(self.uuid)
         ]
         policy_aggregates = {
-            'total_quantity': sum(tx['quantity'] for tx in policy_transactions),
+            'total_quantity': sum(_quantity_net_of_reversal(tx) for tx in policy_transactions),
         }
         return {
             'transactions': policy_transactions,

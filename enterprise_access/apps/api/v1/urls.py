@@ -43,6 +43,9 @@ if settings.ENABLE_CUSTOMER_BILLING_API:
     router.register('checkout-intent', views.CheckoutIntentViewSet, basename='checkout-intent')
     router.register('stripe-event-summary', views.StripeEventSummaryViewSet, basename='stripe-event-summary')
 
+# Always registered: the FEATURE_TOP_UP_LEARNER_CREDIT setting is checked per request (404 when off), not here.
+router.register('learner-credit-top-ups', views.LearnerCreditTopUpViewSet, basename='learner-credit-top-ups')
+
 if settings.ENABLE_BILLING_MANAGEMENT_API:
     router.register('billing-management', views.BillingManagementViewSet, basename='billing-management')
 
