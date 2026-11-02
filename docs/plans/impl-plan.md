@@ -9,7 +9,7 @@
 | Field | Value |
 | --- | --- |
 | PRD Link | PRD (V2): Learner Credit Top Up — `https://2u-internal.atlassian.net/wiki/spaces/SOL/pages/4004348117/PRD+V2+Learner+Credit+Top+Up` |
-| Tech Spec Link | `docs/plans/tech-spec.md` — reconciled 2026-10-21 against the spec's working copy (Last Updated 2026-10-21; commit `43cb3778` holds everything except the chunk 4 and chunk 5 decisions listed last, which are not yet committed). That covers everything since the previous baseline: the sequence diagrams and the sections filled on 2026-10-16, OQ-1, OQ-4 and OQ-6 closed, OQ-5 partly answered, OQ-11 to OQ-13 opened, the PM's 14-day expiry threshold (R-09), KD-6 (OQ-12 closed), and on 2026-10-21 KD-7 (OQ-11, option (a)), OQ-9 closed from code and config, OQ-10 closed (Segment events), OQ-13 closed as out of scope, and the Eng Lead's decisions on the Stripe timeout (chunk 4) and `discount_cents` (chunk 5). On 2026-10-22 it was reconciled again for TR-8 (400 `subsidy_not_available` vs 503, chunks 6 and 7), for TR-8's grounding in enterprise-subsidy (a missing subsidy answers 403), for the quote's 400 `quote_not_available` (replacing 422 `pricing_unavailable`), and for the deposit timeout (`SUBSIDY_CLIENT_TIMEOUT`, lowered to 30 seconds, chunk 8). None of these is committed yet. On 2026-10-27 it was reconciled for `discount_cents` becoming nullable (chunk 5). On 2026-10-30 both were updated together for how the deposit endpoint answers a locked ledger (chunk 1). On 2026-11-02 both were updated together for deposit `metadata` that isn't a JSON object (chunk 2). If the spec changes after that, this plan is stale: reconcile it before adding to it. |
+| Tech Spec Link | `docs/plans/tech-spec.md` — reconciled 2026-10-21 against the spec's working copy (Last Updated 2026-10-21; commit `43cb3778` holds everything except the chunk 4 and chunk 5 decisions listed last, which are not yet committed). That covers everything since the previous baseline: the sequence diagrams and the sections filled on 2026-10-16, OQ-1, OQ-4 and OQ-6 closed, OQ-5 partly answered, OQ-11 to OQ-13 opened, the PM's 14-day expiry threshold (R-09), KD-6 (OQ-12 closed), and on 2026-10-21 KD-7 (OQ-11, option (a)), OQ-9 closed from code and config, OQ-10 closed (Segment events), OQ-13 closed as out of scope, and the Eng Lead's decisions on the Stripe timeout (chunk 4) and `discount_cents` (chunk 5). On 2026-10-22 it was reconciled again for TR-8 (400 `subsidy_not_available` vs 503, chunks 6 and 7), for TR-8's grounding in enterprise-subsidy (a missing subsidy answers 403), for the quote's 400 `quote_not_available` (replacing 422 `pricing_unavailable`), and for the deposit timeout (`SUBSIDY_CLIENT_TIMEOUT`, lowered to 30 seconds, chunk 8). None of these is committed yet. On 2026-10-27 it was reconciled for `discount_cents` becoming nullable (chunk 5). On 2026-10-30 both were updated together for how the deposit endpoint answers a locked ledger (chunk 1). On 2026-11-02 both were updated together for deposit `metadata` that isn't a JSON object (chunk 2), and for the recovery jobs and the manual re-run (chunks 10, 11, 12 and 16), and for 3DS staying in the page with a `finalize` step (spec KD-3; chunks 11, 13 and 25). If the spec changes after that, this plan is stale: reconcile it before adding to it. |
 | Engineering Lead | rthota-sonata@2u.com |
 | Sprint | TBD |
 | Status | Planning |
@@ -40,13 +40,13 @@ release.
 | 7 | B · Create and read a top-up quote | 🔲 | Ganesh | rthota-sonata (Eng Lead) | 4, 5, 6 | 11, 17, 22 | L |
 | 8 | C · Deposit step (`paid → deposited`) | 🔲 | Vineeth | rthota-sonata (Eng Lead) | 1, 3, 5 | 10 | M |
 | 9 | C · Spend-limit step (`deposited → fulfilled`) | 🔲 | Ramesh | rthota-sonata (Eng Lead) | 5 | 10 | M |
-| 10 | C · Fulfillment retry task and ops re-run | 🔲 | Ganesh | rthota-sonata (Eng Lead) | 8, 9 | 11, 12, 14, 16, 20 | M |
-| 11 | C · Pay for a quote with a saved card | 🔲 | Vineeth | rthota-sonata (Eng Lead) | 6, 7, 10 | 13, 15, 25 | L |
+| 10 | C · Fulfillment retry task, re-run job and manual re-run | 🔲 | Ganesh | rthota-sonata (Eng Lead) | 8, 9 | 11, 12, 14, 16, 20 | M |
+| 11 | C · Pay for a quote with a saved card | 🔲 | Vineeth | rthota-sonata (Eng Lead) | 6, 7, 10 | 13, 15, 16, 25 | L |
 | 12 | C · `payment_intent.succeeded` webhook for top-ups | 🔲 | Ramesh | rthota-sonata (Eng Lead) | 10 | 13, 14 | M |
 | 13 | C · 3DS (`requires_action`) completion | 🔲 | Ganesh | rthota-sonata (Eng Lead) | 11, 12 | 25 | M |
 | 14 | C · Receipt and payment-failure emails | 🔲 | Vineeth | rthota-sonata (Eng Lead) | 10, 12 | Release | S |
 | 15 | D · Server-side tracking events (S-03, S-04) | 🔲 | Ramesh | rthota-sonata (Eng Lead) | 11 | Release | S |
-| 16 | D · Stuck-top-up alert | 🔲 | Ganesh | rthota-sonata (Eng Lead) | 10 · threshold proposed in the spec (15 minutes), awaiting Eng Lead | Release | S |
+| 16 | D · Stuck-top-up alert and Stripe check job | 🔲 | Ganesh | rthota-sonata (Eng Lead) | 10, 11 · threshold decided: 60 minutes (Eng Lead, 2026-11-02) | Release | S |
 | 17 | D · Pricing source | 🔲 | Vineeth | rthota-sonata (Eng Lead) | 7 · 🔒 OQ-3 | Release | M |
 | 18 | D · ~~SDN screening~~ Dropped: Stripe's own screening satisfies R-10 (spec OQ-4, resolved 2026-10-19) | ⛔ | — | — | — | — | — |
 | 19 | D · Account standing and agreement type | 🔲 | Ganesh | rthota-sonata (Eng Lead) | 6 · 🔒 OQ-8 | Release | M |
@@ -81,13 +81,13 @@ reasons are the ones given then. A dash means no boundary question came up for t
 | 7 | Quote create, detail and list. The pricing interface (OQ-3) returns 400 `quote_not_available` until a real source exists; a settings-based source serves devstack and stage. | Kept at L with the list endpoint inside (see below). |
 | 8 | `paid → deposited`: a keyed call to enterprise-subsidy | Isolates failure mode 1, charged but not credited. |
 | 9 | `deposited → fulfilled`, with a row lock and a fresh `total_deposits` | Failure mode 2, credited but not spendable, plus a locking pattern new to the repo. Can run alongside 8. |
-| 10 | Retries with backoff, `errored_fulfillment` on permanent failure, an ops "re-run" action | — |
+| 10 | Retries (the shared base task's settings), `errored_fulfillment` on permanent failure, the re-run job every 30 minutes, and the manual re-run command, with the two fields they need. | — |
 | 11 | Create and confirm the PaymentIntent with both idempotency keys, agreement check, 402 on decline, ~~SDN interface (OQ-4)~~, fulfillment in the same request. The SDN interface was dropped 2026-10-19: Stripe screens the charge. | Kept at L with the pre-charge checks inside (see below). |
 | 12 | Filter on metadata, store the event, queue fulfillment | It shares the live subscription webhook, so it's kept apart from pay. |
-| 13 | `requires_action` with a `client_secret`, completed through the webhook | — |
+| 13 | `requires_action` with a `client_secret`; `POST …/finalize/`, which retrieves the PaymentIntent after the in-page challenge and fulfills in the same request; the webhook is the backstop (spec KD-3, 2026-11-02) | — |
 | 14 | Card receipt on `fulfilled`; failure email from `payment_intent.payment_failed` | — |
 | 15 | Server-side tracking events (S-03, S-04) | The spec's Event / Message Contracts now proposes the event names and properties (2026-10-16). |
-| 16 | Stuck-top-up alert | The spec now proposes a 15-minute threshold (2026-10-16), awaiting the Eng Lead. |
+| 16 | Stuck-top-up alert and the Stripe check job | The alert fires after 60 minutes with no change, and the Stripe check job runs every 10 minutes (Eng Lead, 2026-11-02). |
 | 17 | Pricing source | 🔒 OQ-3. |
 | 18 | ~~SDN screening~~ | Dropped 2026-10-19: Stripe's own screening is enough (spec OQ-4). |
 | 19 | Account standing and agreement type | 🔒 OQ-8. Could merge with 17 if both come from Salesforce. |
@@ -96,7 +96,7 @@ reasons are the ones given then. A dash means no boundary question came up for t
 | 22 | Checkout route, stepper, and Select Amount with the order summary; Continue creates the quote | Kept at L with the route and stepper inside (see below). |
 | 23 | Pre-charge review, legal agreement, choice of saved card | The billing-management API it needs is on in production (spec OQ-6, resolved 2026-10-19). |
 | 24 | Pay with a new card | Small, because the Billing page already has Stripe Elements: it reuses `AddPaymentMethodModal` and `StripeProvider`. |
-| 25 | Decline alert, 3DS, polling while fulfillment finishes | — |
+| 25 | Decline alert, 3DS in the page (`handleNextAction`, then `finalize`), polling while fulfillment finishes | Also amends portal ADR 0014: no `returnUrl` reload for 3DS (spec KD-3, 2026-11-02). |
 | 26 | Confirmation step, green banner, refresh of the cached budgets | — |
 | 27 | Portal funnel events (K-01) | — |
 
@@ -132,17 +132,23 @@ chunk's contract when that contract is drafted.
 | 6 | Read the subsidy with `subsidy_record(raise_on_error=True)`, so a failed read never counts as eligible (by default it returns `{}`). enterprise-subsidy answering 403 or 404 → 400 `subsidy_not_available`. A soft-deleted or unknown subsidy answers **403** today, with `error_code: "Forbidden"` and `developer_message: "MISSING: subsidy.can_read_subsidies"`. A 404 happens only in a delete-during-read race, so tests should mock the 403. A lost operator role returns the same 403 and body (spec TR-8). In the eligibility response, `subsidy_not_available` is a reason on that budget, with `is_eligible: false`. A connection error, 5xx or other HTTP error → 503 `subsidy_service_unavailable`. `subsidy_record()` doesn't catch connection errors, so this chunk catches them. | Integration Points; API Error Codes; TR-8 | Decided 2026-10-22 (Eng Lead) |
 | 7 | The same 400 / 503 split when the quote reads the subsidy; `pay`'s eligibility re-check (chunk 11) gets it from chunk 6's check. The pricing source follows the same rule: a missing or incomplete quote record → 400 `quote_not_available` (was 422 `pricing_unavailable`); only an unreachable source → 503 `pricing_source_unavailable`. | Integration Points; API Error Codes; TR-8; TR-12 | Decided 2026-10-22 (Eng Lead) |
 | 8 | Every deposit call, from `pay` and from the task, passes `settings.SUBSIDY_CLIENT_TIMEOUT` as its timeout, and this chunk lowers the setting's default from 45 to **30 s** (`EA:enterprise_access/settings/base.py:510`). Nothing reads that setting today, so the change affects nothing else. If it is set from the environment it arrives as a string, so cast it. The subsidy client's `create_subsidy_deposit()` takes no timeout (`SCL:.../client.py:375-413`), so this chunk adds a way to pass one. From `pay`: on timeout, 429 or 5xx, hand over to the task. Replaces the proposed 3 seconds, and 45 s (both 2026-10-22). | Integration Points; Performance Budget; TR-7 | Decided 2026-10-22 (Eng Lead) |
-| 10 | First attempt as soon as queued, backoff from 5 seconds (not the shared base task's 60), and its own Celery queue | Performance Budget; Scalability | Proposed |
+| 10 | First attempt as soon as queued. Retries keep the shared base task's settings (about 25 minutes), replacing the proposed 5-second backoff, and the task catches 400, 403, 409 and 422 itself without retrying them. Its own Celery queue. | Performance Budget; Scalability; Recovery jobs | Retries decided 2026-11-02; queue Proposed |
+| 10 | The re-run job (`rerun_learner_credit_top_ups`, every 30 minutes). It resumes a retryable `errored_fulfillment` top-up at `deposited` or `paid` using chunk 5's transitions, up to 3 times, and queues the task again for a top-up in `paid` or `deposited` with no change for 45 minutes. The same command with `--top-up-uuid` and `--dry-run` is the manual re-run, which ignores the cap. Two new fields: whether the last error is retryable, and the automatic re-run count. A code comment on `REFUNDED`: unused in Phase 1. The edx-internal CronJob. Tests: no run deposits twice or raises the spend limit twice, and two runs queue once. | Fulfillment rule 6; Recovery jobs | Decided 2026-11-02 (Open Items 16, 18) |
 | 11 | No SDN interface, and no 403 `payment_screening_failed`. Check that the PaymentMethod belongs to the enterprise's Stripe customer before confirming, as billing-management already does. A scoped DRF throttle on `pay`. Target: p50 ≤ 500 ms, not counting Stripe. | Security Design; Performance Budget; OQ-4 | OQ-4 resolved; the rest proposed |
+| 11 | Save the PaymentIntent ID on the top-up before confirming, so the Stripe check job can find every charge | How `pay` works; Recovery jobs | Decided 2026-11-02 |
+| 11 | Create the PaymentIntent with `allowed_payment_method_types: ["card"]` (Phase 1; Phase 2 adds `us_bank_account` for ACH); confirm with `use_stripe_sdk: true` and no `return_url`; on `requires_action`, return the `client_secret` | KD-3; How `pay` works | Decided 2026-11-02 |
 | 12 | The handler moves an `expired` top-up whose PaymentIntent succeeded to `paid` and queues fulfillment, like `created` and `requires_action` (KD-7) | Webhook changes; KD-7 | Decided 2026-10-21 |
+| 12 | The handler does nothing for a top-up in `errored_fulfillment` or `fulfilled`: only the re-run job and ops resume an errored top-up. It queues fulfillment for `paid` and `deposited`. | Webhook changes; Recovery jobs | Decided 2026-11-02 |
 | 13 | A test that the `client_secret` is never stored or logged | Security Design | Settled |
+| 13 | `POST /learner-credit-top-ups/<uuid>/finalize/`: retrieve the PaymentIntent; `succeeded` → `paid` and fulfill in the same request; still `requires_action` → return the `client_secret`; failed challenge → `created` and 402 `payment_authentication_failed` (409 `top_up_expired` if expired). No eligibility re-check. Stage test with Stripe's 3DS test cards before merge (spec OQ-14). | KD-3; How `finalize` works; OQ-14 | Decided 2026-11-02 |
 | 14 | The failure email is keyed to the Stripe event ID, so a redelivered event sends no second email. Trigger properties are listed in the spec. Campaigns come from Braze, whose owner isn't named (spec Dependencies). | Integration Points; Event / Message Contracts | Proposed |
 | 15 | `…learner-credit-top-up.lifecycle.event` on every state change and `…payment.failed` on a decline; nothing about SDN goes to Segment | Event / Message Contracts | Names proposed. OQ-10 resolved 2026-10-21: K-04 and K-05 are counted from these events. |
-| 16 | Threshold: 15 minutes in `paid` or `deposited` | Monitoring & Alerting | Proposed (Open Items 2) |
+| 16 | The charged-but-not-credited alert: 60 minutes with no change in `paid` or `deposited`. The Stripe check job (`check_learner_credit_top_up_payments`, every 10 minutes): unpaid top-ups with a PaymentIntent, unchanged for 5 minutes and created in the last 7 days. Its edx-internal CronJob. "Fulfillment failed" pages at once for 400, 403, 409 and 422, and after 3 automatic re-runs for a retryable error. | Monitoring & Alerting; Recovery jobs | Decided 2026-11-02 (Open Items 2) |
 | 19 | Fail closed when the standing source can't be read; one lookup per enterprise per request | Integration Points; Scalability | Proposed |
 | 20 | `is_commission_eligible: false` is confirmed. edx-internal has no Salesforce settings for enterprise-access, so an outbound route also adds credentials. | Current State; OQ-5 | Route still open |
 | 21–26 | Per-step accessibility: focus moves to each step's heading, live regions for totals and status, visible reasons instead of tooltips, icon and words on banners | Accessibility Impact | Settled |
 | 25 | On `top_up_expired`, re-quote for the same amount and show the new totals before Pay (WCAG 2.2.1). A payment Stripe's screening blocks is shown as a generic decline (assumed to arrive as 402; counting blocks is out of scope, OQ-13). | Accessibility Impact; API Error Codes | Proposed |
+| 25 | Run the challenge with Stripe.js `handleNextAction`, then call `finalize`; amend portal ADR 0014 (no `returnUrl` reload, the Confirmation step reads the top-up by UUID) | KD-3; Dependencies | Decided 2026-11-02 |
 | 27 | Portal event names under `edx.ui.enterprise.admin_portal.learner_credit_management.top_up.*` | Event / Message Contracts | Proposed |
 
 ## Sequencing
@@ -189,6 +195,7 @@ flowchart TD
         PRICE["Pricing source · 17 · OQ-3"]
         PAY{"POST pay with a saved card · 11<br/>client_secret for 3DS · 13<br/>SDN: Stripe screens the charge"}
         EVT["Server tracking events · 15"]
+        FIN["POST finalize after 3DS · 13"]
         HOOK["payment_intent.succeeded<br/>webhook · 12"]
         TASK["Fulfillment retry task,<br/>ops re-run · 10"]
         STUCK["Stuck-top-up alert · 16"]
@@ -218,7 +225,10 @@ flowchart TD
     PI -->|"declined"| ALERT
     ALERT -->|"retry"| BILL
     PI -->|"requires_action"| TDS
-    TDS -->|"challenge passed"| HOOK
+    TDS -->|"challenge done"| FIN
+    FIN -->|"succeeded, same request"| DEP
+    FIN -->|"challenge failed: 402"| ALERT
+    TDS -.->|"tab closed: backstop"| HOOK
     PI -.->|"payment_failed webhook"| MAIL
     PI -->|"succeeded, same request"| DEP
     HOOK --> TASK
@@ -244,7 +254,8 @@ null and the card is charged the full `amount_cents`.
 
 **3DS (3-D Secure).** The card networks brand 3DS as Visa Secure, Mastercard Identity Check and
 American Express SafeKey, so an admin may see any of these names on their bank's challenge screen.
-They all reach this plan the same way, as Stripe's `requires_action` (chunks 13 and 25).
+They all reach this plan the same way, as Stripe's `requires_action`. The challenge runs in the
+page, and the portal then calls `finalize` (chunks 13 and 25).
 
 ## Open Items
 
@@ -255,7 +266,7 @@ this plan follows.*
 | # | Item | Resolves at | Status |
 | --- | --- | --- | --- |
 | 1 | **Backend feature flag.** NFR-05 wants a per-enterprise flag, but enterprise-access has no per-enterprise flag mechanism; its one flag is a global waffle flag (`EA:enterprise_access/toggles.py:18`). The portal already has a build-time flag from #183, `FEATURE_TOP_UP_LEARNER_CREDIT` (or `hasFeatureFlagEnabled('TOP_UP_LEARNER_CREDIT')`). The name is settled: `FEATURE_TOP_UP_LEARNER_CREDIT` everywhere (Eng Lead, 2026-10-13; spec NFR-05). **Note:** `FEATURE_LEARNER_CREDIT_TOP_UP` (the PRD's name) = `FEATURE_TOP_UP_LEARNER_CREDIT`; both refer to the same flag. **Resolved 2026-10-19 (spec KD-6, OQ-12 closed):** enterprise-access reads it the way it gates SSP, as a Django setting that decides whether `api/v1/urls.py` registers the top-up routes, set per environment in edx-internal. The PRD's NFR-05 doesn't ask for per-enterprise control, and the LMS's `enterprise_features` turned out to be global waffle flags. Cost: no per-enterprise pilot, and turning it off takes a redeploy. | Chunk 6 builds it as decided | Resolved |
-| 2 | **Stuck-top-up alert threshold.** The "charged but not credited" alarm (spec Fulfillment rule 4) has no threshold. The spec's Monitoring & Alerting now lists it as P1 but marked the threshold "not set"; on 2026-10-16 it proposed 15 minutes. | Chunk 16, recorded in the spec | Proposed in the spec (15 minutes); awaiting Eng Lead |
+| 2 | **Stuck-top-up alert threshold.** The "charged but not credited" alarm (spec Fulfillment rule 4) has no threshold. The spec's Monitoring & Alerting now lists it as P1 but marked the threshold "not set"; on 2026-10-16 it proposed 15 minutes. | Chunk 16, recorded in the spec | Resolved 2026-11-02 (Eng Lead): 60 minutes with no change, after the task's retries and the re-run job have had their turn (spec Recovery jobs) |
 | 3 | **Response time for `pay`.** The spec says the conflict between same-request fulfillment and NFR-01's 500 ms target is "settled in the Performance Budget", which now proposes (2026-10-16): p50 ≤ 500 ms not counting Stripe, and p99 ≤ 3.5 s. Since 2026-10-22 no timeout enforces the p99: the deposit call uses `SUBSIDY_CLIENT_TIMEOUT`, lowered to 30 seconds (row 8 of "Spec additions by chunk"), so the worst case is about 30 s. | Chunk 11, recorded in the spec | Targets proposed in the spec; awaiting Eng Lead |
 | 4 | **Event contracts.** The spec's Event / Message Contracts section was empty; on 2026-10-16 it was filled with proposed event names and properties. OQ-10 is resolved (2026-10-21): K-04 and K-05 are counted from these Segment events, and a ticket to build and fire them is being written (drafted as `tickets.md` Ticket 15). | Chunk 15 | Filled in the spec; names proposed, awaiting Eng Lead |
 | 5 | **Spec fix: lock-error detection.** The spec's deposit-endpoint changes say the view detects the wrapped lock error "as the v2 transaction view does". It doesn't: the deposit path wraps the error twice, while the transaction view catches it directly (see chunk 1's notes). | Proposed: fix alongside the KD-6 edit in group B | Resolved 2026-10-30 (Eng Lead): the deposit path follows the transaction view. The serializer re-raises the unwrapped lock error, and the view catches it and raises `Throttled`. Recorded in the spec's Current State and Deposit endpoint changes, and in chunk 1's notes. |
@@ -264,14 +275,14 @@ this plan follows.*
 | 8 | **Provider slug outside `SubsidyReferenceChoices`** (chunk 3). That list also sets which reference types a subsidy can have, so adding the slug to it would change them. | Eng Lead confirmation | Resolved 2026-10-13: kept as written, and added to the spec's Data Model |
 | 9 | **Reviewers.** The Ready-to-Build gate needs a named reviewer for every chunk. Resolved 2026-10-13: the Eng Lead (rthota-sonata) reviews every chunk, including chunks 1–3 as the enterprise-subsidy owner. | Before the Ready-to-Build gate | Resolved |
 | 10 | **Tickets.** The earlier `tickets.md` was built straight from the spec, before this plan, and no longer exists. Tickets follow the plan: generate them with the `ticket-generator` skill once the chunk contracts are done. Chunks won't match the old tickets one-to-one. | After groups B–E are drafted | Open |
-| 11 | **Monitoring with no chunk yet.** Ops Readiness, Monitoring maps the spec's 13 signals to chunks. Chunk 16 covers the two Fulfillment rule 4 alerts (stuck in `paid` or `deposited`, and `errored_fulfillment`). The other 11 have no chunk, including two P1s (the Stripe-to-top-up reconciliation and the enterprise-subsidy 403), and neither does sending the state-change signals they all read. Decide whether to widen chunk 16 or add a chunk. Since 2026-10-16 the spec proposes thresholds for Stripe errors (5 in 10 minutes) and the Salesforce sync (24 hours), and the SDN guardrail is out of scope for Phase 1 (spec OQ-13, item 15). | Before the group D contracts | Open |
+| 11 | **Monitoring with no chunk yet.** Ops Readiness, Monitoring maps the spec's 13 signals to chunks. Chunk 16 covers the two Fulfillment rule 4 alerts (stuck in `paid` or `deposited`, and `errored_fulfillment`). The other 11 have no chunk, including two P1s (the Stripe-to-top-up reconciliation and the enterprise-subsidy 403), and neither does sending the state-change signals they all read. Decide whether to widen chunk 16 or add a chunk. **2026-11-02:** chunk 16 now builds the reconciliation as the Stripe check job (spec Recovery jobs). Since 2026-10-16 the spec proposes thresholds for Stripe errors (5 in 10 minutes) and the Salesforce sync (24 hours), and the SDN guardrail is out of scope for Phase 1 (spec OQ-13, item 15). | Before the group D contracts | Open |
 | 12 | **A charge can succeed after its quote expired.** A 3DS challenge finished after `expires_at` charges the card, but the state machine had no `expired → paid` path (spec state diagram). Either cancel the PaymentIntent when a quote expires, or allow `expired → paid`. | Chunk 5 (state machine); spec OQ-11 | Resolved 2026-10-21: allow `expired → paid` (option (a), spec KD-7). Chunk 5's transition table and chunk 12's handler include it. |
 | 13 | **Is `discount_cents` nullable?** The spec's field table types it as a plain BigInteger and says the two amounts are equal when there is no discount, but its API contract says `discount_cents` is `null` when there is no discount. Found while drawing the ERD. | Chunk 5 (model), recorded in the spec | Resolved 2026-10-21: not nullable, default `0`. **Reversed 2026-10-27 (Eng Lead): nullable.** It is `NULL` exactly when `discount_rate` is `NULL`, `0` for a 0% rate, and when set at least 0 and less than `amount_cents`. `charge_amount_cents = amount_cents − (discount_cents or 0)`. The API returns `null`. Chunk 5's `clean()` already enforces this (#323, `98f44c72`). Recorded in the spec's Data Model and API Contracts. |
 | 14 | **Spec proposals awaiting confirmation.** The spec's 2026-10-16 fill made proposals that land in chunks 6–8, 10, 11, 14–16, 19, 25 and 27: timeouts, the task's backoff and queue, a throttle, event names, alert thresholds, re-quoting on expiry. They are listed under Why These Boundaries, "Spec additions by chunk". Chunk 4's proposal, a 10-second Stripe client, was decided against on 2026-10-21: top-up calls keep enterprise-access's Stripe defaults. Chunks 6 and 7's failing closed was decided on 2026-10-22: 400 `subsidy_not_available` for a missing subsidy, 503 only when enterprise-subsidy can't be reached. Chunk 8's deposit timeout was decided the same day: `SUBSIDY_CLIENT_TIMEOUT`, lowered to 30 seconds (not 3, and not the setting's current 45). | Eng Lead, before each chunk's contract is drafted | Awaiting Eng Lead |
 | 15 | **SDN guardrail count.** Stripe now screens (spec OQ-4), so enterprise-access can't count screening blocks itself. | Before GA metrics reporting | Resolved 2026-10-21: out of scope for Phase 1 (spec OQ-13). The spec's Data Model notes what a future change would need; no chunk builds it. |
-| 16 | **How the ops re-run moves state.** The spec's state diagram has `errored_fulfillment → fulfilled`, but Fulfillment rule 3 says the spend-limit step runs only from `deposited`, which is what makes it run once. A re-run that jumps straight to `fulfilled` would skip that guard. Proposed: replace it with `errored_fulfillment → paid` (no deposit yet) and `errored_fulfillment → deposited` (deposit recorded), so a re-run takes the normal path. Found while drafting chunk 5's ticket (`tickets.md`, Ticket 5). | Chunk 5 (state machine) and chunk 10 (ops re-run), recorded in the spec | Awaiting Eng Lead |
+| 16 | **How the ops re-run moves state.** The spec's state diagram has `errored_fulfillment → fulfilled`, but Fulfillment rule 3 says the spend-limit step runs only from `deposited`, which is what makes it run once. A re-run that jumps straight to `fulfilled` would skip that guard. Proposed: replace it with `errored_fulfillment → paid` (no deposit yet) and `errored_fulfillment → deposited` (deposit recorded), so a re-run takes the normal path. Found while drafting chunk 5's ticket (`tickets.md`, Ticket 5). | Chunk 5 (state machine) and chunk 10 (ops re-run), recorded in the spec | Resolved 2026-11-02 (Eng Lead): as proposed. Chunk 5's transitions already do it (#323, `EA:.../customer_billing/constants.py:202-207` at `ed1a16b1`), and the spec's state diagram now follows. A job re-runs retryable failures every 30 minutes, and ops re-run the rest by hand (spec Recovery jobs; "Spec additions by chunk", row 10). |
 | 17 | **Discount rounding.** `amount_cents × discount_rate` isn't always a whole number of cents (for example, 100,001 × 0.1), and the spec doesn't say how `discount_cents` is rounded. Chunk 7's ticket assumes half-up to the cent. | Chunk 7, recorded in the spec (with Finance if needed) | Awaiting Eng Lead |
-| 18 | **Refunds have no chunk.** The spec's state machine has an ops refund (`errored_fulfillment → refunded`), and its runbook and rollback plan rely on it, but no chunk builds it. | Before group C contracts: add it to chunk 10 or a new chunk | Awaiting Eng Lead |
+| 18 | **Refunds have no chunk.** The spec's state machine has an ops refund (`errored_fulfillment → refunded`), and its runbook and rollback plan rely on it, but no chunk builds it. | Before group C contracts: add it to chunk 10 or a new chunk | Resolved 2026-11-02 (Eng Lead): no refund in Phase 1. A top-up that can't be credited stays in `errored_fulfillment` until ops fix it and re-run it. Refunds are a future change; chunk 10 adds a code comment on the unused `refunded` state. |
 | 19 | **Quote expiry has no chunk.** Nothing moves unpaid quotes to `expired`; `pay` only rejects them. The 3DS-completion metric reads `expired`, and KD-7 credits an `expired` top-up whose charge succeeds. Chunk 16's ticket proposes a cleanup command like `cleanup_checkout_intents`, scheduled in edx-internal. | Chunk 16 (proposed) | Awaiting Eng Lead |
 | 20 | **Order summary before the quote.** R-02 wants the step 1 order summary to update live, but the discount only arrives with the quote, which is created on Continue. Options: show the amount and balances only until step 2; expose the discount rate before the quote; or re-quote as the amount changes. Chunk 22's ticket assumes the first. | Chunk 22, with the PM; recorded in the spec | Awaiting Eng Lead and PM |
 | 21 | **Adding a card changes the default.** `AddPaymentMethodModal` always saves a new card as the customer's default (`AP:src/components/billing/AddPaymentMethodModal.tsx:180-185` at `ac9849ae`). Reused for top-ups, it would change the card a subscription customer is billed with. Chunk 24's ticket proposes a `setAsDefault` prop set to `false` from checkout. | Chunk 24 | Awaiting Eng Lead |
@@ -691,9 +702,9 @@ named yet.*
 
 | Metric | Dashboard | Alert Threshold | Severity | Chunk |
 | --- | --- | --- | --- | --- |
-| Charged but not credited: a top-up stays in `paid` or `deposited` | TBD | Proposed in the spec: 15 minutes (Open Items 2) | P1 | 16 |
-| Fulfillment failed: a top-up reaches `errored_fulfillment` | TBD | Any | P1 | 16 |
-| Payment taken, top-up not moved: a reconciliation finds a succeeded PaymentIntent whose top-up isn't `paid`, `deposited` or `fulfilled` | TBD | Any | P1 | None yet (Open Items 11) |
+| Charged but not credited: a top-up stays in `paid` or `deposited` with no change | TBD | 60 minutes (Eng Lead, 2026-11-02; Open Items 2) | P1 | 16 |
+| Fulfillment failed: a top-up reaches `errored_fulfillment` | TBD | At once for 400, 403, 409, 422; after 3 automatic re-runs for a retryable error | P1 | 16 |
+| Payment taken, top-up not moved: the Stripe check job finds a succeeded PaymentIntent whose top-up isn't `paid`, `deposited` or `fulfilled` | TBD | Any | P1 | 16 |
 | enterprise-subsidy deposit access: a deposit call returns 403 | TBD | Any | P1 | None yet |
 | Failed-payment rate (S-04 guardrail) | TBD | More than 5% of payment attempts | P2 | None yet |
 | SDN screening failures (S-04 guardrail) | — | Out of scope for Phase 1 (spec OQ-13; Open Items 15) | — | None |
@@ -709,15 +720,15 @@ named yet.*
 
 | Alert Name | Condition | Who Gets Paged | Response |
 | --- | --- | --- | --- |
-| Charged but not credited | `paid` or `deposited` past the threshold | On-call (P1) | See the runbook below. |
-| Fulfillment failed | `errored_fulfillment` | On-call (P1) | Re-run fulfillment, or refund. |
-| Payment taken, top-up not moved | Succeeded PaymentIntent, top-up not moved | On-call (P1) | Fulfill the top-up by hand, then find out why the webhook missed it. |
+| Charged but not credited | `paid` or `deposited` with no change for 60 minutes | On-call (P1) | See the runbook below. |
+| Fulfillment failed | `errored_fulfillment`: at once for 400, 403, 409, 422; after 3 automatic re-runs otherwise | On-call (P1) | Fix the record or its cause, then re-run it by hand (`--top-up-uuid`). No refund in Phase 1. |
+| Payment taken, top-up not moved | Succeeded PaymentIntent, top-up not moved | On-call (P1) | The Stripe check job has already moved it to `paid`; find out why the webhook missed it. |
 | enterprise-subsidy deposit access | Deposit call returns 403 | On-call (P1) | The service user lost operator access (OQ-9). Restore the grant, then re-run the affected top-ups. |
 | Failed-payment rate | Above 5% | Team, business hours (P2) | Break failures down by `decline_code`, check Stripe's status, and tell the PM (launch guardrail). |
 | SDN screening failures | Out of scope for Phase 1 (spec OQ-13) | — | None in Phase 1. Compliance can review Stripe's blocked payments in Stripe. |
 | Stripe API errors | Sustained 503s | Team, business hours (P2) | Check Stripe's status page. Admins can retry safely. |
 | Stripe webhook delivery | Delivery or signature failures | Team, business hours (P2) | Check the endpoint's `payment_intent.*` subscription and signing secret. |
-| enterprise-subsidy deposit errors | Sustained 5xx or 429 | Team, business hours (P2) | Retries back off on their own; persistent failures reach `errored_fulfillment`, which pages. |
+| enterprise-subsidy deposit errors | Sustained 5xx or 429 | Team, business hours (P2) | Retries back off on their own, and the re-run job resumes a top-up up to 3 times before it pages. |
 | Pricing source | 503 or 400 `quote_not_available` on quote | Team, business hours (P2) | Check the pricing source (OQ-3) and the enterprise's Salesforce record. |
 
 **Runbook**
@@ -726,14 +737,17 @@ named yet.*
 payment alerts.*
 
 1. **Symptom:** a P1 page. A top-up is stuck in `paid` or `deposited`, has reached
-   `errored_fulfillment`, or the reconciliation found a charge whose top-up never moved.
+   `errored_fulfillment`, or the Stripe check job found a charge whose top-up never moved.
 2. **Diagnosis steps:** read the top-up's `state` and `last_error`. Check whether enterprise-subsidy
    already holds a deposit for the key `lc-top-up-<uuid>`. A 403 from the deposit call means the
    operator grant is gone (OQ-9). For a charge whose top-up never moved, check Stripe's webhook
    deliveries for `payment_intent.*`.
-3. **Remediation:** run the ops re-run (chunk 10). It is safe to repeat: the deposit key returns the
-   same deposit on replay, and the spend-limit step runs only from `deposited`. Refund only if
-   fulfillment can't complete (`errored_fulfillment → refunded`). Never delete the
+3. **Remediation:** fix the record or its cause: for a 403, restore the grant or the subsidy; for a
+   422, extend the subsidy. Then run `./manage.py rerun_learner_credit_top_ups --top-up-uuid=<uuid>
+   --dry-run`, and again without `--dry-run` (chunk 10; spec Recovery jobs). A manual run ignores
+   the 3-run cap. It is safe to repeat: the deposit key returns the
+   same deposit on replay, and the spend-limit step runs only from `deposited`. There is no refund
+   in Phase 1. Never delete the
    `stripe_payment_intent` provider row, which would delete every top-up deposit.
 4. **Escalation path:** not set yet. Owners named in the spec: rthota-sonata (enterprise-subsidy and
    the OQ-9 grant), Justin Grabowski (Salesforce sync). The Stripe account owner is TBD.
@@ -745,10 +759,11 @@ payment alerts.*
 1. **Turn `FEATURE_TOP_UP_LEARNER_CREDIT` off** (chunks 0, 6, 21). It is a deployed setting on both
    sides (spec KD-6), so this is an edx-internal change and a redeploy, backend first. The portal
    hides every entry point and the top-up endpoints return 404. Nothing is migrated or deleted. As proposed in the
-   spec, the webhook handlers and fulfillment ignore the flag, so a top-up that was already paid
+   spec, the webhook handlers, fulfillment and the recovery jobs ignore the flag, so a top-up that was already paid
    still gets credited.
-2. **Settle the top-ups in flight** (chunk 10's ops re-run). Run every top-up in `paid`,
-   `deposited` or `errored_fulfillment` to `fulfilled`, or refund it. Quotes in `created` expire on
+2. **Settle the top-ups in flight** (chunks 10 and 16). The recovery jobs keep running and finish
+   most of them; re-run any left in `errored_fulfillment` by hand once the cause is fixed. There is
+   no refund in Phase 1. Quotes in `created` expire on
    their own; one in `requires_action` can still be charged, and the webhook (chunk 12) credits it.
 3. **Roll back enterprise-access code only if the flag isn't enough.** It can roll back on its own:
    the Stripe-customer lookup falls back to `CheckoutIntent` (chunk 4). Before removing the webhook
@@ -792,7 +807,7 @@ graph LR
     end
     subgraph D[D · rest of Phase 1]
         C15[15 Server events]
-        C16[16 Stuck alert]
+        C16[16 Stuck alert, Stripe check]
         C17[17 Pricing source]
         C19[19 Account standing]
         C20[20 Salesforce]
@@ -827,6 +842,7 @@ graph LR
     C12 --> C14
     C11 --> C15
     C10 --> C16
+    C11 --> C16
     C7 --> C17
     C6 --> C19
     C10 --> C20
