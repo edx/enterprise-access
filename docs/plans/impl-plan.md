@@ -9,12 +9,12 @@
 | Field | Value |
 | --- | --- |
 | PRD Link | PRD (V2): Learner Credit Top Up — `https://2u-internal.atlassian.net/wiki/spaces/SOL/pages/4004348117/PRD+V2+Learner+Credit+Top+Up` |
-| Tech Spec Link | `docs/plans/tech-spec.md` — reconciled 2026-10-21 against the spec's working copy (Last Updated 2026-10-21; commit `43cb3778` holds everything except the chunk 4 and chunk 5 decisions listed last, which are not yet committed). That covers everything since the previous baseline: the sequence diagrams and the sections filled on 2026-10-16, OQ-1, OQ-4 and OQ-6 closed, OQ-5 partly answered, OQ-11 to OQ-13 opened, the PM's 14-day expiry threshold (R-09), KD-6 (OQ-12 closed), and on 2026-10-21 KD-7 (OQ-11, option (a)), OQ-9 closed from code and config, OQ-10 closed (Segment events), OQ-13 closed as out of scope, and the Eng Lead's decisions on the Stripe timeout (chunk 4) and `discount_cents` (chunk 5). On 2026-10-22 it was reconciled again for TR-8 (400 `subsidy_not_available` vs 503, chunks 6 and 7), for TR-8's grounding in enterprise-subsidy (a missing subsidy answers 403), for the quote's 400 `quote_not_available` (replacing 422 `pricing_unavailable`), and for the deposit timeout (`SUBSIDY_CLIENT_TIMEOUT`, lowered to 30 seconds, chunk 8). None of these is committed yet. On 2026-10-27 it was reconciled for `discount_cents` becoming nullable (chunk 5). If the spec changes after that, this plan is stale: reconcile it before adding to it. |
+| Tech Spec Link | `docs/plans/tech-spec.md` — reconciled 2026-10-21 against the spec's working copy (Last Updated 2026-10-21; commit `43cb3778` holds everything except the chunk 4 and chunk 5 decisions listed last, which are not yet committed). That covers everything since the previous baseline: the sequence diagrams and the sections filled on 2026-10-16, OQ-1, OQ-4 and OQ-6 closed, OQ-5 partly answered, OQ-11 to OQ-13 opened, the PM's 14-day expiry threshold (R-09), KD-6 (OQ-12 closed), and on 2026-10-21 KD-7 (OQ-11, option (a)), OQ-9 closed from code and config, OQ-10 closed (Segment events), OQ-13 closed as out of scope, and the Eng Lead's decisions on the Stripe timeout (chunk 4) and `discount_cents` (chunk 5). On 2026-10-22 it was reconciled again for TR-8 (400 `subsidy_not_available` vs 503, chunks 6 and 7), for TR-8's grounding in enterprise-subsidy (a missing subsidy answers 403), for the quote's 400 `quote_not_available` (replacing 422 `pricing_unavailable`), and for the deposit timeout (`SUBSIDY_CLIENT_TIMEOUT`, lowered to 30 seconds, chunk 8). None of these is committed yet. On 2026-10-27 it was reconciled for `discount_cents` becoming nullable (chunk 5). On 2026-10-30 both were updated together for how the deposit endpoint answers a locked ledger (chunk 1). On 2026-11-02 both were updated together for deposit `metadata` that isn't a JSON object (chunk 2). If the spec changes after that, this plan is stale: reconcile it before adding to it. |
 | Engineering Lead | rthota-sonata@2u.com |
 | Sprint | TBD |
 | Status | Planning |
 | Created | 2026-09-30 |
-| Last Updated | 2026-10-22 |
+| Last Updated | 2026-11-02 |
 
 **Scope** (Eng Lead, 2026-09-30): Phase 1 (card top-ups + Salesforce) is chunked in full. Phases 2
 and 3 are placeholder chunks, to be chunked once their gates clear (see the spec's Phased Delivery).
@@ -72,8 +72,8 @@ reasons are the ones given then. A dash means no boundary question came up for t
 
 | # | Scope as agreed | Why the boundary is here |
 | --- | --- | --- |
-| 1 | Retry rules for keyed deposit calls: 200 on replay, 409 on conflict, 429 on a ledger lock, 200 for the loser of a race. Unkeyed calls unchanged. | The whole retry contract enterprise-access relies on, and it all lives in one 97-line file (`deposit.py`). |
-| 2 | 400 for deposit metadata keys that clash with ledger columns | A different purpose from chunk 1: bad data, not retries. |
+| 1 | Retry rules for deposit calls. With a key: 200 on replay, 409 on conflict, 200 for the loser of a race. For every caller, with or without a key: 429 on a ledger lock. An unkeyed duplicate still gets 422. | The whole retry contract enterprise-access relies on, and it all lives in one 97-line file (`deposit.py`). |
+| 2 | 400 for deposit metadata that isn't a JSON object, or whose keys clash with ledger columns | A different purpose from chunk 1: bad data, not retries. |
 | 3 | The `stripe_payment_intent` provider, in a data migration whose reverse does nothing | Reviewed for safety, not behavior: reversing it would delete every top-up deposit. |
 | 4 | New table, backfill, lookup reads the table first, Stripe customer created if missing | It changes a live lookup (saved payment methods), so it ships and settles before any top-up code uses it. |
 | 5 | `LearnerCreditTopUp` model, history, allowed state changes | Every later backend chunk writes to it. It has no behavior yet, so it's light to review. |
@@ -258,9 +258,9 @@ this plan follows.*
 | 2 | **Stuck-top-up alert threshold.** The "charged but not credited" alarm (spec Fulfillment rule 4) has no threshold. The spec's Monitoring & Alerting now lists it as P1 but marked the threshold "not set"; on 2026-10-16 it proposed 15 minutes. | Chunk 16, recorded in the spec | Proposed in the spec (15 minutes); awaiting Eng Lead |
 | 3 | **Response time for `pay`.** The spec says the conflict between same-request fulfillment and NFR-01's 500 ms target is "settled in the Performance Budget", which now proposes (2026-10-16): p50 ≤ 500 ms not counting Stripe, and p99 ≤ 3.5 s. Since 2026-10-22 no timeout enforces the p99: the deposit call uses `SUBSIDY_CLIENT_TIMEOUT`, lowered to 30 seconds (row 8 of "Spec additions by chunk"), so the worst case is about 30 s. | Chunk 11, recorded in the spec | Targets proposed in the spec; awaiting Eng Lead |
 | 4 | **Event contracts.** The spec's Event / Message Contracts section was empty; on 2026-10-16 it was filled with proposed event names and properties. OQ-10 is resolved (2026-10-21): K-04 and K-05 are counted from these Segment events, and a ticket to build and fire them is being written (drafted as `tickets.md` Ticket 15). | Chunk 15 | Filled in the spec; names proposed, awaiting Eng Lead |
-| 5 | **Spec fix: lock-error detection.** The spec's deposit-endpoint changes say the view detects the wrapped lock error "as the v2 transaction view does". It doesn't: the deposit path wraps the error twice, while the transaction view catches it directly (see chunk 1's notes). | Proposed: fix alongside the KD-6 edit in group B | Open. A 2026-10-12 spec re-baseline fixed it, but that edit was lost. |
+| 5 | **Spec fix: lock-error detection.** The spec's deposit-endpoint changes say the view detects the wrapped lock error "as the v2 transaction view does". It doesn't: the deposit path wraps the error twice, while the transaction view catches it directly (see chunk 1's notes). | Proposed: fix alongside the KD-6 edit in group B | Resolved 2026-10-30 (Eng Lead): the deposit path follows the transaction view. The serializer re-raises the unwrapped lock error, and the view catches it and raises `Throttled`. Recorded in the spec's Current State and Deposit endpoint changes, and in chunk 1's notes. |
 | 6 | **Replay before the expiry check** (chunk 1). The "already exists?" lookup runs before the expired-subsidy check, so a paid, already-deposited top-up whose retry arrives after expiry gets 200, not 422, and isn't marked as failed. This goes beyond the spec. | Eng Lead confirmation | Resolved 2026-10-13: confirmed, and added to the spec's deposit endpoint changes |
-| 7 | **429 for unkeyed calls too?** (chunk 1) The spec leaves unkeyed calls unchanged, but a lock conflict is always worth retrying. The only unkeyed caller, the Deposit Funds admin tool, treats every error the same (`EA:enterprise_access/apps/subsidy_access_policy/models.py:1188-1192`), so changing it breaks nothing. Recommendation: 429 for all callers. Until decided, chunk 1's scenarios cover keyed calls only. | Eng Lead decision | Awaiting Eng Lead |
+| 7 | **429 for unkeyed calls too?** (chunk 1) The spec leaves unkeyed calls unchanged, but a lock conflict is always worth retrying. The only unkeyed caller, the Deposit Funds admin tool, treats every error the same (`EA:enterprise_access/apps/subsidy_access_policy/models.py:1188-1192`), so changing it breaks nothing. Recommendation: 429 for all callers. Until decided, chunk 1's scenarios cover keyed calls only. | Eng Lead decision | Resolved 2026-10-30 (Eng Lead): 429 for every caller, with or without a key, the same as the v2 transaction view. Chunk 1's lock scenario covers both. Recorded in the spec's KD-5 and Deposit endpoint changes. |
 | 8 | **Provider slug outside `SubsidyReferenceChoices`** (chunk 3). That list also sets which reference types a subsidy can have, so adding the slug to it would change them. | Eng Lead confirmation | Resolved 2026-10-13: kept as written, and added to the spec's Data Model |
 | 9 | **Reviewers.** The Ready-to-Build gate needs a named reviewer for every chunk. Resolved 2026-10-13: the Eng Lead (rthota-sonata) reviews every chunk, including chunks 1–3 as the enterprise-subsidy owner. | Before the Ready-to-Build gate | Resolved |
 | 10 | **Tickets.** The earlier `tickets.md` was built straight from the spec, before this plan, and no longer exists. Tickets follow the plan: generate them with the `ticket-generator` skill once the chunk contracts are done. Chunks won't match the old tickets one-to-one. | After groups B–E are drafted | Open |
@@ -291,9 +291,9 @@ as in the spec.*
 
 | Field | Value |
 | --- | --- |
-| Purpose | Make a deposit request that carries an `idempotency_key` safe to retry (KD-5). |
-| Exit Criteria | A replay of a keyed deposit returns 200 with the original deposit; the same key with different values returns 409; ledger-lock contention returns 429; the loser of a same-key race returns 200; an unkeyed duplicate still returns 422. Scenarios below. |
-| Blast Radius | enterprise-subsidy only: `ES:enterprise_subsidy/apps/api/v2/views/deposit.py`, `ES:.../api/v2/serializers/deposits.py`, `ES:.../api/exceptions.py` (a new error code), and `ES:.../api/v2/tests/test_deposit_views.py`. No model, migration, or openedx-ledger change. **What could break:** a replay that returns 200 for a request that doesn't match exactly would hide a real mismatch, so the comparison must cover quantity, reference ID and provider. The only known caller, EA's Django-admin Deposit Funds tool, sends no key and handles every HTTP error the same way (`EA:enterprise_access/apps/subsidy_access_policy/models.py:1188-1192`). |
+| Purpose | Make a deposit request that carries an `idempotency_key` safe to retry, and answer a locked ledger with 429 for every caller (KD-5). |
+| Exit Criteria | A replay of a keyed deposit returns 200 with the original deposit; the same key with different values returns 409; ledger-lock contention returns 429, with or without a key; the loser of a same-key race returns 200; an unkeyed duplicate still returns 422. Scenarios below. |
+| Blast Radius | enterprise-subsidy only: `ES:enterprise_subsidy/apps/api/v2/views/deposit.py`, `ES:.../api/v2/serializers/deposits.py`, `ES:.../api/exceptions.py` (a new error code), and `ES:.../api/v2/tests/test_deposit_views.py`. No model, migration, or openedx-ledger change. **What could break:** a replay that returns 200 for a request that doesn't match exactly would hide a real mismatch, so the comparison must cover quantity, reference ID and provider. The only known caller, EA's Django-admin Deposit Funds tool, sends no key and handles every HTTP error the same way (`EA:enterprise_access/apps/subsidy_access_policy/models.py:1188-1192`). On a lock collision it now gets 429 instead of 422 (Open Items 7), which it handles like any other error. An unknown script that calls the API without a key would also get 429 instead of 422 on a collision, which is the more accurate answer. |
 | Reviewer | rthota-sonata (Eng Lead) — the enterprise-subsidy owner; the chunk needs enterprise-subsidy and openedx-ledger knowledge |
 | Depends On | — |
 | Unblocks | 8 |
@@ -340,12 +340,17 @@ Feature: Keyed deposit requests are safe to retry
       | sales_contract_reference_id       |
       | sales_contract_reference_provider |
 
-  Scenario: Ledger-lock contention is retryable
+  Scenario Outline: Ledger-lock contention is retryable
     Given the ledger lock is held by another request
-    When the client POSTs a keyed deposit
+    When the client POSTs a deposit <key>
     Then the response status is 429 with code "ledger_lock_error"
     And no Deposit is created
     And the same request returns 201 once the lock is released
+
+    Examples:
+      | key                        |
+      | with idempotency_key "K"   |
+      | without an idempotency_key |
 
   Scenario: The loser of a same-key race gets the winner's deposit
     Given two identical requests with idempotency_key "K" both pass the replay check before either commits
@@ -371,13 +376,31 @@ Feature: Keyed deposit requests are safe to retry
 
 *Append as you go:*
 
-- *Planning, 2026-09-30:* The lock error reaches the view wrapped twice.
-  `LedgerLockAttemptFailed` (`LED:openedx_ledger/models.py:247`) is wrapped by the ledger's
-  `DepositCreationError` (`LED:openedx_ledger/api.py:317-320`), then by the serializer's
-  (`ES:.../api/v2/serializers/deposits.py:133-139`). The view must walk the `__cause__` chain. The
-  v2 transaction view is the precedent only for the 429 response itself (`Throttled` with
-  `ledger_lock_error`, `ES:.../api/v2/views/transaction.py:192-196`); it catches the lock error
-  directly because nothing wraps it on that path.
+- *Planning, 2026-09-30; revised 2026-10-30 (Eng Lead):* Ledger-lock contention is handled the
+  way the v2 transaction view already handles it for redemptions: catch `LedgerLockAttemptFailed`
+  and raise `Throttled` with `ErrorCodes.LEDGER_LOCK_ERROR`
+  (`ES:.../api/v2/views/transaction.py:192-196`). On the deposit path, the lock error
+  (`LED:openedx_ledger/models.py:247`) is wrapped twice: by the ledger's `DepositCreationError`
+  (`LED:openedx_ledger/api.py:317-320`), then by the serializer's
+  (`ES:.../api/v2/serializers/deposits.py:133-139`). So the serializer re-raises the lock error,
+  instead of wrapping it again, whenever it is the ledger error's `__cause__`. The view then catches
+  it with an `except LedgerLockAttemptFailed` placed before its existing `except`
+  (`deposit.py:96-97`), the same as the transaction view. This replaces the earlier plan to walk
+  the `__cause__` chain in the view. The view already imports `Throttled` and `ErrorCodes`, and
+  `LEDGER_LOCK_ERROR` already exists (`ES:.../api/exceptions.py:17`), so the 429 needs no new error
+  code.
+- *Decided 2026-10-30 (Eng Lead, Open Items 7):* the 429 goes to every caller, with or without a
+  key. Like the transaction view's, the `except` has no key check. A caller without a key can retry
+  safely: the lock failed before anything was written. If an earlier attempt did succeed, an
+  identical retry still fails with 422, because without a key the ledger builds one from the amount
+  and the contract reference (`LED:openedx_ledger/api.py:289-290`), and a deposit has exactly one
+  transaction (`LED:openedx_ledger/models.py:725`).
+- *Testing the lock, 2026-10-30:* the "Ledger-lock contention is retryable" scenario holds the real
+  lock, by adding the ledger's lock key to the cache the way `ledger.lock()` does
+  (`LED:openedx_ledger/models.py:214-247`). It then POSTs through the view, serializer and ledger
+  without mocking any of them, which proves the lock error reaches the view unwrapped. A serializer
+  test also checks that a ledger `DepositCreationError` with any other cause is still wrapped and
+  returns 422.
 - *Planning, 2026-09-30:* A same-key race resolves through the ledger's `unique_together =
   [('ledger', 'idempotency_key')]` on `Transaction` (`LED:openedx_ledger/models.py:345`). The lock
   is released before `create_deposit`'s outer `atomic()` commits (`LED:openedx_ledger/api.py:298-320`
@@ -391,9 +414,9 @@ Feature: Keyed deposit requests are safe to retry
 
 | Field | Value |
 | --- | --- |
-| Purpose | Reject deposit `metadata` keys that would be written to ledger columns instead of stored as metadata. |
-| Exit Criteria | A deposit whose `metadata` contains any ledger parameter name returns 400 naming the key, and nothing is created. Ordinary keys are still stored as metadata. The reserved set tracks the ledger library's signatures. Scenarios below. |
-| Blast Radius | enterprise-subsidy only: `ES:.../api/v2/serializers/deposits.py` (`metadata` validation) and its tests. **What could break:** a caller that sends one of these keys today would start getting 400. The only known caller sends `metadata=None` (`EA:enterprise_access/apps/subsidy_access_policy/admin/views.py:143-147`). Direct operator API use is unknown. |
+| Purpose | Reject deposit `metadata` keys that would be written to ledger columns instead of stored as metadata, and `metadata` that isn't a JSON object. |
+| Exit Criteria | A deposit whose `metadata` contains any ledger parameter name returns 400 naming the key, and nothing is created. A deposit whose `metadata` isn't a JSON object also returns 400, instead of 500. Empty metadata is still accepted. Ordinary keys are still stored as metadata. The reserved set tracks the ledger library's signatures. Scenarios below. |
+| Blast Radius | enterprise-subsidy only: `ES:.../api/v2/serializers/deposits.py` (`metadata` validation) and its tests. **What could break:** a caller that sends one of these keys today would start getting 400, and one that sends a list or a string would get 400 instead of 500. The only known caller sends `metadata=None` (`EA:enterprise_access/apps/subsidy_access_policy/admin/views.py:143-147`). Direct operator API use is unknown. |
 | Reviewer | rthota-sonata (Eng Lead) — same as chunk 1 |
 | Depends On | — |
 | Unblocks | Release (defense in depth; chunk 8 sends only safe keys regardless) |
@@ -424,6 +447,27 @@ Feature: Deposit metadata can't overwrite ledger columns
       | state                      |
       | quantity                   |
 
+  Scenario Outline: Metadata that isn't a JSON object is rejected
+    When the client POSTs a deposit whose metadata is <metadata>
+    Then the response status is 400
+    And no Deposit or Transaction is created
+
+    Examples:
+      | metadata                |
+      | ["not", "an", "object"] |
+      | "not-an-object"         |
+
+  Scenario Outline: Empty metadata is accepted as no metadata
+    When the client POSTs a deposit whose metadata is <metadata>
+    Then the response status is 201
+    And the new Transaction's metadata is {}
+
+    Examples:
+      | metadata |
+      | {}       |
+      | []       |
+      | ""       |
+
   Scenario: Ordinary metadata is stored as metadata
     When the client POSTs a deposit with metadata {"source": "learner_credit_top_up", "top_up_policy_uuid": "<uuid>"}
     Then the response status is 201
@@ -453,6 +497,10 @@ Feature: Deposit metadata can't overwrite ledger columns
   as 422 (`quantity`, `state`), and the rest are silently written to columns
   (`subsidy_access_policy_uuid`, `lms_user_id`, `deposit_uuid`, …). Deriving the set with
   `inspect.signature` keeps it correct across ledger upgrades.
+- *2026-11-02:* `metadata` that isn't a JSON object (a list or a string) returns 400. Before, the
+  serializer's `**` unpacking raised a `TypeError` that escaped as 500
+  (`ES:.../api/v2/serializers/deposits.py:125-132`). enterprise-subsidy #88 (in review) builds this
+  chunk, including this rule. (Eng Lead, 2026-11-02; spec Deposit endpoint changes)
 
 ### Chunk 3: Add the `stripe_payment_intent` reference provider
 
@@ -706,8 +754,9 @@ payment alerts.*
    the Stripe-customer lookup falls back to `CheckoutIntent` (chunk 4). Before removing the webhook
    handlers, wait until no top-up is in `requires_action` or `paid`. Keep the new tables once a
    real top-up exists, because they hold payment records.
-4. **Leave the enterprise-subsidy changes in place** (chunks 1–3). Calls without a key are
-   unaffected. Never reverse the provider migration (chunk 3): its reverse is a no-op on purpose.
+4. **Leave the enterprise-subsidy changes in place** (chunks 1–3). For calls without a key, only
+   these answers change: a locked ledger gets 429 instead of 422, and `metadata` with a reserved
+   key, or that isn't a JSON object, gets 400. Never reverse the provider migration (chunk 3): its reverse is a no-op on purpose.
 
 **Feature Flags**
 
