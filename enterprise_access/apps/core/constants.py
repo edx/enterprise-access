@@ -57,6 +57,9 @@ LEARNER_PATHWAYS_RECOMMENDATION_FEEDBACK_PERMISSION = 'learner_pathways.has_reco
 LEARNER_PATHWAYS_CAREER_DISCOVERY_PERMISSION = 'learner_pathways.has_career_discovery_access'
 LEARNER_PATHWAYS_PATHWAY_PERMISSION = 'learner_pathways.has_pathway_access'
 
+# Personalized Search (Chat): enterprise-scoped, unlike the any-context learner pathways rules.
+PERSONALIZED_SEARCH_LEARNER_PERMISSION = 'personalized_search.has_learner_access'
+
 ALL_ACCESS_CONTEXT = '*'
 
 

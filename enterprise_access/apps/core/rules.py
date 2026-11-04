@@ -517,6 +517,36 @@ has_learner_pathways_pathway_access = (
     has_learner_pathways_learning_intent_access
 )
 
+
+@rules.predicate
+def has_implicit_access_to_personalized_search(_, enterprise_customer_uuid):
+    """
+    Check that the request user has implicit access (via their JWT) to the
+    `LEARNER_PATHWAYS_LEARNER_ROLE` feature role for exactly this enterprise customer.
+
+    Returns:
+        boolean: whether the request user has access.
+    """
+    return _has_implicit_access_to_role(_, enterprise_customer_uuid, constants.LEARNER_PATHWAYS_LEARNER_ROLE)
+
+
+@rules.predicate
+def has_explicit_access_to_personalized_search(user, enterprise_customer_uuid):
+    """
+    Check that the request user has explicit (database-persisted) access to the
+    `LEARNER_PATHWAYS_LEARNER_ROLE` feature role for this enterprise customer.
+
+    Returns:
+        boolean: whether the request user has access.
+    """
+    return _has_explicit_access_to_role(user, enterprise_customer_uuid, constants.LEARNER_PATHWAYS_LEARNER_ROLE)
+
+
+has_personalized_search_learner_access = (
+    has_implicit_access_to_personalized_search | has_explicit_access_to_personalized_search
+)
+
+
 ###############################################
 # Map permissions to consolidated predicates. #
 ###############################################
@@ -687,6 +717,12 @@ rules.add_perm(
 rules.add_perm(
     constants.LEARNER_PATHWAYS_CAREER_DISCOVERY_PERMISSION,
     has_learner_pathways_career_discovery_access,
+)
+
+# Grants Personalized Search (Chat) access to learners of the requested enterprise.
+rules.add_perm(
+    constants.PERSONALIZED_SEARCH_LEARNER_PERMISSION,
+    has_personalized_search_learner_access,
 )
 
 # Grants permission to assemble a pathway via the Learner Pathways API.
