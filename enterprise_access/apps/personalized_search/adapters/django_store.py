@@ -142,3 +142,41 @@ class DjangoHistoryStore:
             'turns': [{'sequence': t.sequence, 'user_message': t.user_message, 'parts': t.parts,
                        'created': t.created} for t in session.turns.order_by('sequence')],
         }
+
+
+class DjangoFeedbackStore:
+    """A learner's saved and not-interested items (REQ-009)."""
+
+    kinds = (ItemFeedback.KIND_SAVED, ItemFeedback.KIND_NOT_INTERESTED)
+
+    @staticmethod
+    def _row(row: ItemFeedback) -> dict:
+        return {'item_id': row.item_id, 'item_type': row.item_type, 'kind': row.kind,
+                'card_snapshot': row.card_snapshot, 'created': row.created}
+
+    def list(self, *, lms_user_id, enterprise_customer_uuid, kind: str) -> list[dict]:
+        """The learner's feedback of one kind in this enterprise, newest first."""
+        rows = ItemFeedback.objects.filter(
+            lms_user_id=lms_user_id, enterprise_customer_uuid=enterprise_customer_uuid, kind=kind,
+        ).order_by('-created')
+        return [self._row(r) for r in rows]
+
+    def add(self, *, lms_user_id, enterprise_customer_uuid, item_id: str, item_type: str, kind: str,
+            session_uuid=None, card_snapshot=None) -> tuple[dict, bool]:
+        """Record feedback; an existing row for the same item and kind is returned as is. Returns (row, created)."""
+        session = None
+        if session_uuid:
+            session = ChatSession.objects.filter(
+                uuid=session_uuid, lms_user_id=lms_user_id, enterprise_customer_uuid=enterprise_customer_uuid,
+            ).first()
+        row, created = ItemFeedback.objects.get_or_create(
+            lms_user_id=lms_user_id, enterprise_customer_uuid=enterprise_customer_uuid, item_id=item_id, kind=kind,
+            defaults={'item_type': item_type, 'session': session, 'card_snapshot': card_snapshot},
+        )
+        return self._row(row), created
+
+    def remove(self, *, lms_user_id, enterprise_customer_uuid, item_id: str, kind: str) -> None:
+        """Undo: delete the row for this item and kind, if any."""
+        ItemFeedback.objects.filter(
+            lms_user_id=lms_user_id, enterprise_customer_uuid=enterprise_customer_uuid, item_id=item_id, kind=kind,
+        ).delete()
