@@ -115,6 +115,41 @@ class PrefilterTests(TestCase):
         kept = retrieval.prefilter(raw, dict(INTENT, constraints={'max_weeks': 4, 'pacing': None}))
         self.assertEqual(kept[0]['card']['item_id'], 'edX+SHORT')
 
+    def test_level_match_scores_higher(self):
+        raw = [candidate(course_hit('edX+ADV', level='Advanced'), tier=1, rank=0),
+               candidate(course_hit('edX+INTRO', level='Introductory'), tier=1, rank=5)]
+        kept = retrieval.prefilter(raw, dict(INTENT, level='introductory'))
+        self.assertEqual(kept[0]['card']['item_id'], 'edX+INTRO')
+
+    def test_pacing_match_scores_higher(self):
+        raw = [candidate(course_hit('edX+LED', pacing='instructor_paced'), tier=1, rank=0),
+               candidate(course_hit('edX+SELF', pacing='self_paced'), tier=1, rank=5)]
+        kept = retrieval.prefilter(raw, dict(INTENT, constraints={'max_weeks': None, 'pacing': 'self_paced'}))
+        self.assertEqual(kept[0]['card']['item_id'], 'edX+SELF')
+
+    def test_exec_ed_is_scored_as_strict(self):
+        raw = [candidate(course_hit('edX+C1'), tier=1, rank=0),
+               candidate(course_hit('Yale+E1', exec_ed=True), tier=1, rank=50)]
+        kept = retrieval.prefilter(raw, dict(INTENT, level=None))
+        self.assertEqual(kept[0]['card']['item_id'], 'Yale+E1')
+
+
+class FilterHelperTests(TestCase):
+    """Quoting, the no-skills sub-requests and the weeks buckets."""
+
+    def test_quote_escapes_backslashes_before_quotes(self):
+        self.assertEqual(retrieval._quote('a"b'), '"a\\"b"')  # pylint: disable=protected-access
+        self.assertEqual(retrieval._quote('a\\'), '"a\\\\"')  # pylint: disable=protected-access
+
+    def test_no_skills_sends_only_broadened_requests(self):
+        requests = retrieval.build_sub_requests(dict(INTENT, skills=[], roles=['Team lead']), SCOPE, [])
+        self.assertEqual([r['tier'] for r in requests], [1, 1])
+        self.assertTrue(all(r['query'] == 'Team lead' for r in requests))
+
+    def test_weeks_buckets(self):
+        buckets = [retrieval._weeks_bucket(w) for w in (None, 0, 4, 5, 12, 13)]  # pylint: disable=protected-access
+        self.assertEqual(buckets, [None, None, '<=4', '5-12', '5-12', '>12'])
+
 
 class FollowupAttributeTests(TestCase):
     """``choose_followup_attribute`` picks the most even split."""
