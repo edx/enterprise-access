@@ -240,17 +240,19 @@ class AlgoliaSearchClient:
 
         One request instead of a thread pool of single searches: besides saving round trips, it avoids
         the many short-lived connections whose cleanup logging, under devstack's DEBUG logging,
-        deadlocked Django's signal lock via edx-django-utils' ``UserIdFilter`` (see the Personalized
-        Search harness notes).
+        deadlocked Django's signal lock via edx-django-utils' ``UserIdFilter``.
 
         Raises:
             AlgoliaConfigurationError: If no usable key or index is configured.
-            AlgoliaSearchError: On any transport or API failure. Query text is not logged.
+            AlgoliaSearchError: On any transport or API failure, or a response with the wrong number of
+                results. Query text is not logged.
         """
         resolved_index_name = index_name or self.catalog_index_name
         if not resolved_index_name:
             raise AlgoliaConfigurationError('Cannot search Algolia without an index name.')
         api_key = self._resolve_catalog_api_key(secured_key, allow_unscoped, resolved_index_name)
+        if not api_key:
+            raise AlgoliaConfigurationError(f'Cannot search Algolia index {resolved_index_name!r} without an API key.')
         queries = [
             {'indexName': resolved_index_name, 'params': QueryParametersSerializer.serialize(dict(request))}
             for request in requests
@@ -265,7 +267,12 @@ class AlgoliaSearchClient:
             raise AlgoliaSearchError(f'Algolia search failed for index {resolved_index_name!r}: {exc}') from exc
         finally:
             client.close()
-        return list(response.get('results') or [])
+        results = response.get('results') if isinstance(response, dict) else None
+        if not isinstance(results, list) or len(results) != len(requests):
+            logger.error('Algolia multiple_queries returned an unexpected response for index=%r (%d requests).',
+                         resolved_index_name, len(requests))
+            raise AlgoliaSearchError(f'Algolia returned an unexpected response for index {resolved_index_name!r}.')
+        return results
 
     def _resolve_catalog_api_key(
         self,
