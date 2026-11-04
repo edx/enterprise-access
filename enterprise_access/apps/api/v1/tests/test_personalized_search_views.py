@@ -134,6 +134,14 @@ class PersonalizedSearchTurnViewTests(APITest):
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json()['code'], 'backend_unsupported')
 
+    @override_settings(PERSONALIZED_SEARCH_INTENT_MODEL='xpert', PERSONALIZED_SEARCH_COMPOSE_MODEL='xpert',
+                       OPENAI_API_KEY='', XPERT_API_BASE_URL='https://xpert.test', XPERT_API_CLIENT_ID='client-123')
+    @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
+    def test_xpert_turn_needs_no_openai_key(self):
+        parts = parse_sse(self.post())
+        timing = [p for p in parts if p['type'] == 'data-timing'][0]['data']
+        self.assertEqual((timing['backend'], timing['model_compose']), ('xpert', 'xpert'))
+
     @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
     def test_secured_key_failure_is_503(self):
         target = 'enterprise_access.apps.personalized_search.wiring.get_and_cache_secured_algolia_search_keys'
