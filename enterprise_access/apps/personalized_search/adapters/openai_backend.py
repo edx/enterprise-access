@@ -107,6 +107,9 @@ class OpenAIBackend:
         usage.elapsed_ms = round((time.monotonic() - started) * 1000)
         _fill_usage(usage, response.usage)
         usage.extra['resolved_model'] = getattr(response, 'model', None)
+        if not response.choices:
+            raise ModelError(f'OpenAI returned no choices for model {model!r}.')
+        usage.extra['finish_reason'] = getattr(response.choices[0], 'finish_reason', None)
         return response.choices[0].message.content or '', usage
 
     def stream_text(self, *, model: str, effort: str | None, system: str, user: str,
