@@ -74,9 +74,23 @@ class TestMultiSearchCatalogIndex(TestCase):
             AlgoliaSearchClient().multi_search_catalog_index([{'query': 'x'}])
         with self.assertRaises(AlgoliaConfigurationError):
             AlgoliaSearchClient().multi_search_catalog_index([{'query': 'x'}], allow_unscoped=True)
+        self.mock_client.multiple_queries.return_value = {'results': [{'hits': []}]}
         with override_settings(ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH=True):
             AlgoliaSearchClient().multi_search_catalog_index([{'query': 'x'}], allow_unscoped=True)
         self.mock_search_client.create.assert_called_once_with(APP_ID, PLAIN_SEARCH_KEY)
+
+    @override_settings(ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH=True, ALGOLIA_SEARCH_API_KEY='')
+    def test_unscoped_without_a_search_key_is_a_configuration_error(self):
+        with self.assertRaises(AlgoliaConfigurationError):
+            AlgoliaSearchClient().multi_search_catalog_index([{'query': 'x'}], allow_unscoped=True)
+        self.mock_search_client.create.assert_not_called()
+
+    @ddt.data({}, {'results': None}, {'results': [{'hits': []}]})
+    def test_a_result_count_that_does_not_match_the_requests_is_an_error(self, response):
+        self.mock_client.multiple_queries.return_value = response
+        with self.assertRaises(AlgoliaSearchError):
+            AlgoliaSearchClient().multi_search_catalog_index([{'query': 'a'}, {'query': 'b'}],
+                                                             secured_key=_live_secured_key())
 
     @ddt.data(AlgoliaException('boom'), AlgoliaUnreachableHostException('down'), RequestException('bad', 500))
     def test_transport_errors_map_without_logging_query_text(self, error):
