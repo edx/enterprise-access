@@ -570,6 +570,33 @@ PATHWAYS_OPENAI_MODEL = 'gpt-4o'
 # capped by the time left before the 20 s turn deadline.
 PERSONALIZED_SEARCH_INTENT_TIMEOUT_S = 3
 PERSONALIZED_SEARCH_COMPOSE_READ_TIMEOUT_S = 5
+# Per-step models (KD-2 amended; OQ-8 decided 2026-11-03: the best fit below): any
+# PERSONALIZED_SEARCH_OPENAI_MODELS entry. Effort is the reasoning_effort sent to GPT-5 models; None means
+# the family's lowest setting.
+PERSONALIZED_SEARCH_INTENT_MODEL = 'gpt-4.1-mini'
+PERSONALIZED_SEARCH_INTENT_EFFORT = None
+PERSONALIZED_SEARCH_COMPOSE_MODEL = 'gpt-5.4-mini'
+PERSONALIZED_SEARCH_COMPOSE_EFFORT = 'low'
+# The OpenAI models a turn may use (the allowlist), with standard-tier USD prices per 1M tokens
+# (input, cached input, output) used only for the debug cost read-out.
+PERSONALIZED_SEARCH_OPENAI_MODELS = {
+    'gpt-4o': (2.50, 1.25, 10.00),
+    'gpt-4o-mini': (0.15, 0.075, 0.60),
+    'gpt-4.1': (2.00, 0.50, 8.00),
+    'gpt-4.1-mini': (0.40, 0.10, 1.60),
+    'gpt-5': (1.25, 0.125, 10.00),
+    'gpt-5-mini': (0.25, 0.025, 2.00),
+    'gpt-5-nano': (0.05, 0.005, 0.40),
+    'gpt-5.1': (1.25, 0.125, 10.00),
+    'gpt-5.2': (1.75, 0.175, 14.00),
+    'gpt-5.4': (2.50, 0.25, 15.00),
+    'gpt-5.4-mini': (0.75, 0.075, 4.50),
+    'gpt-5.4-nano': (0.20, 0.02, 1.25),
+    'gpt-5.5': (5.00, 0.50, 30.00),
+    'gpt-5.6-luna': (0.20, 0.02, 1.20),
+    'gpt-5.6-terra': (2.00, 0.20, 12.00),
+    'gpt-5.6-sol': (4.00, 0.40, 20.00),
+}
 
 # The enterprise customer the evaluation harness scopes to (Open Decision 1). Production
 # requests take the customer from the request; this is only for offline runs, which have
