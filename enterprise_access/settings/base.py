@@ -94,6 +94,7 @@ PROJECT_APPS = (
     'enterprise_access.apps.prompts',
     'enterprise_access.apps.pathway_eval',
     'enterprise_access.apps.pathways',
+    'enterprise_access.apps.personalized_search',
 )
 
 INSTALLED_APPS += THIRD_PARTY_APPS
@@ -564,6 +565,11 @@ ANTHROPIC_API_KEY = ''
 PATHWAYS_CLAUDE_MODEL = 'claude-sonnet-5'
 OPENAI_API_KEY = ''
 PATHWAYS_OPENAI_MODEL = 'gpt-4o'
+
+# Personalized Search (Chat). Spec step timeouts in seconds: intent 3, compose 5 per read; each is also
+# capped by the time left before the 20 s turn deadline.
+PERSONALIZED_SEARCH_INTENT_TIMEOUT_S = 3
+PERSONALIZED_SEARCH_COMPOSE_READ_TIMEOUT_S = 5
 
 # The enterprise customer the evaluation harness scopes to (Open Decision 1). Production
 # requests take the customer from the request; this is only for offline runs, which have
