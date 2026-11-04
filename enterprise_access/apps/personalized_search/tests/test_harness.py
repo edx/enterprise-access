@@ -75,13 +75,14 @@ class HarnessRunTests(TestCase):
         steps = fake_steps()
         base_retrieve = steps.retrieve
 
-        def counting(*args):
-            calls.append(args)
-            return base_retrieve(*args)
+        def counting(*args, **kwargs):
+            calls.append((args, kwargs))
+            return base_retrieve(*args, **kwargs)
 
         steps.retrieve = counting
         list(run(cases=[CASE], arms=ARMS, scope=None, steps=steps))
         self.assertEqual(len(calls), 1)
+        self.assertIn('timeout_s', calls[0][1])  # the turn's capped timeout reaches the real retrieve
 
     def test_budget_stops_before_the_call_that_would_exceed_it(self):
         records = list(run(cases=[CASE, CASE], arms=ARMS, scope=None, steps=fake_steps(), max_calls=3))

@@ -141,10 +141,10 @@ def _wrap_steps(base: Steps, budget: Budget, recorder: _Recorder, retrieval_cach
         budget.spend()
         return base.intent(**kwargs)
 
-    def retrieve(merged, scope, excluded):
-        key = json.dumps([merged, sorted(excluded)], sort_keys=True)
+    def retrieve(merged, scope, excluded, **kwargs):
+        key = json.dumps([merged, sorted(excluded)], sort_keys=True)  # the timeout isn't part of the memo key
         if key not in retrieval_cache:
-            retrieval_cache[key] = base.retrieve(merged, scope, excluded)
+            retrieval_cache[key] = base.retrieve(merged, scope, excluded, **kwargs)
         raw = retrieval_cache[key]
         recorder.candidate_ids = list(dict.fromkeys(c['card']['item_id'] for c in raw))
         recorder.candidates = raw
