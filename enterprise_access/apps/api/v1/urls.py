@@ -66,6 +66,11 @@ urlpatterns = [
     path('personalized-search/item-feedback/', views.PersonalizedSearchItemFeedbackView.as_view(),
          name='personalized-search-item-feedback'),
     path(
+        'personalized-search/debug/',
+        views.PersonalizedSearchDebugConfigView.as_view(),
+        name='personalized-search-debug',
+    ),
+    path(
         'subsidy-access-policies/<uuid>/group-members',
         views.SubsidyAccessPolicyGroupViewset.as_view({'get': 'get_group_member_data_with_aggregates'}),
         name='aggregated-subsidy-enrollments'
