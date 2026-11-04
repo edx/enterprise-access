@@ -59,6 +59,7 @@ VERSION = '0.1'
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
 # ones.
 extensions = [
+    'myst_parser',
     'sphinxcontrib.mermaid',
     'sphinx.ext.autodoc',
     'sphinx.ext.doctest',
@@ -76,10 +77,24 @@ suppress_warnings = [
 templates_path = ['_templates']
 
 # The suffix(es) of source filenames.
-# You can specify multiple suffix as a list of string:
-#
-# source_suffix = ['.rst', '.md']
-source_suffix = '.rst'
+# Markdown is built too (via myst_parser): ADRs that contain mermaid diagrams are written in Markdown,
+# because GitHub renders mermaid only in Markdown fences, and they should still appear in these docs.
+source_suffix = {
+    '.rst': 'restructuredtext',
+    '.md': 'markdown',
+}
+
+# Render the ```mermaid fences GitHub displays with sphinxcontrib-mermaid, so a Markdown diagram looks the
+# same on GitHub and here.
+myst_fence_as_directive = ['mermaid']
+
+# Give Markdown headings the same slug anchors GitHub does, so links like (#performance) work in both.
+myst_heading_anchors = 3
+
+# GitHub's inline math syntax is $`...`$, which MyST doesn't know. setup() rewrites it to MyST's {math}
+# role in Markdown sources. MyST's dollarmath extension isn't used, because it would also treat prose like
+# "$300 and $400" as math.
+GITHUB_INLINE_MATH = re.compile(r'\$`([^`]+)`\$')
 
 # The encoding of source files.
 #
@@ -536,7 +551,16 @@ def on_init(app):  # pylint: disable=unused-argument
     ])
 
 
+def convert_github_inline_math(app, docname, source):
+    """
+    Rewrite GitHub's $`...`$ inline math to MyST's {math} role, in Markdown sources only.
+    """
+    if str(app.env.doc2path(docname)).endswith('.md'):
+        source[0] = GITHUB_INLINE_MATH.sub(r'{math}`\1`', source[0])
+
+
 def setup(app):
-    """Sphinx extension: run sphinx-apidoc."""
+    """Sphinx extension: run sphinx-apidoc, and render GitHub's inline math in Markdown docs."""
     event = 'builder-inited'
     app.connect(event, on_init)
+    app.connect('source-read', convert_github_inline_math)
