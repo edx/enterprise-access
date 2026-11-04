@@ -60,7 +60,7 @@ def fake_steps(intent_text=ON_TOPIC, compose_text=COMPOSE, retrieve=None, compos
         if compose_error:
             raise compose_error
 
-    return Steps(intent=intent, retrieve=retrieve or (lambda *a: default_candidates()), compose=compose,
+    return Steps(intent=intent, retrieve=retrieve or (lambda *a, **kw: default_candidates()), compose=compose,
                  persist=persist)
 
 
@@ -111,7 +111,7 @@ class RunTurnTests(TestCase):
 
     def test_redirect_persists_a_turn_without_items(self):
         steps = fake_steps(intent_text='{"on_topic": false, "redirect_reason": "off_topic"}',
-                           retrieve=lambda *a: self.fail('no retrieval on redirect'))
+                           retrieve=lambda *a, **kw: self.fail('no retrieval on redirect'))
         parts = list(run_turn(self.ctx, steps))
         followups = [p for p in parts if p['type'] == 'data-followups'][0]['data']
         self.assertEqual(followups['attribute'], 'open')
@@ -124,7 +124,7 @@ class RunTurnTests(TestCase):
         cases = [
             (fake_steps(intent_text='not json'), 'intent_invalid'),
             (fake_steps(intent_error=ModelError('x')), 'model_failed'),
-            (fake_steps(retrieve=lambda *a: (_ for _ in ()).throw(RetrievalFailed('x'))), 'retrieval_failed'),
+            (fake_steps(retrieve=lambda *a, **kw: (_ for _ in ()).throw(RetrievalFailed('x'))), 'retrieval_failed'),
             (fake_steps(compose_error=ModelError('x')), 'model_failed'),
         ]
         for steps, code in cases:
@@ -161,7 +161,7 @@ class RunTurnTests(TestCase):
         store.lock(session)
         ctx = TurnContext(session=session, message='more', intent_model=self.ctx.intent_model,
                           compose_model=self.ctx.compose_model, scope=None, clock=self.clock)
-        list(run_turn(ctx, fake_steps(retrieve=lambda intent, scope, excluded: seen.append(excluded) or [
+        list(run_turn(ctx, fake_steps(retrieve=lambda intent, scope, excluded, **kw: seen.append(excluded) or [
             {'hit': course_hit('edX+C9'), 'card': default_candidates()[0]['card'], 'tier': 1, 'rank': 0}])))
         self.assertEqual(seen, [['edX+C1', 'edX+C4']])
         self.assertEqual(ChatTurn.objects.filter(session_id=self.session['uuid']).count(), 2)
@@ -225,7 +225,7 @@ class TurnObservabilityTests(TestCase):
     def test_redirect_makes_exactly_one_model_call(self):
         calls = []
         steps = fake_steps(intent_text='{"on_topic": false, "redirect_reason": "off_topic"}',
-                           retrieve=lambda *a: calls.append('retrieve') or [])
+                           retrieve=lambda *a, **kw: calls.append('retrieve') or [])
         base_intent, base_compose = steps.intent, steps.compose
         steps.intent = lambda **kw: calls.append('intent') or base_intent(**kw)
         steps.compose = lambda **kw: calls.append('compose') or base_compose(**kw)
@@ -254,7 +254,7 @@ class PortableTurnTests(PlainTestCase):
                                         message='Lead a team')
         memory.lock(session)
         steps = Steps(intent=lambda **_: (self.INTENT, Usage(model='m1', effort=None)),
-                      retrieve=lambda *a: default_candidates(),
+                      retrieve=lambda *a, **kw: default_candidates(),
                       compose=lambda **_: (d for d in [self.COMPOSE]), persist=memory.persist_turn)
         ticks = itertools.count()
         ctx = TurnContext(session=session, message='Lead a team', intent_model=ModelChoice('m1', None),
@@ -265,6 +265,20 @@ class PortableTurnTests(PlainTestCase):
         self.assertEqual(parts[-2]['data']['backend'], 'fake')
         self.assertEqual(memory.sessions[session['uuid']]['shown_item_ids'], ['edX+C1'])
         self.assertIsNone(memory.sessions[session['uuid']]['locked_at'])
+
+    def test_retrieval_timeout_is_capped_by_the_deadline(self):
+        seen = []
+        session = InMemorySessionStore().load_or_create(session_uuid=None, lms_user_id=1,
+                                                        enterprise_customer_uuid='e', message='m')
+        times = iter([0.0, 0.0, 19.25] + [19.5] * 50)  # t0, intent cap, intent done, then near the deadline
+        ctx = TurnContext(session=session, message='m', intent_model=ModelChoice('m1', None),
+                          compose_model=ModelChoice('m1', None), scope=None, clock=lambda: next(times))
+        steps = Steps(intent=lambda **_: (self.INTENT, Usage(model='m1', effort=None)),
+                      retrieve=lambda *a, timeout_s: seen.append(timeout_s) or [],
+                      compose=lambda **_: (d for d in ['Nothing fits.']))
+        list(run_turn(ctx, steps))
+        self.assertEqual(len(seen), 1)
+        self.assertLess(seen[0], 2)  # 20 s deadline - 19.5 s elapsed = 0.5 s, not the full 2 s
 
     def test_timeouts_come_from_the_context(self):
         seen = {}
