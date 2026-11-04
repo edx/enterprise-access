@@ -31,6 +31,7 @@ COMPOSE = ('Here are picks for leading a team.\n@@BLOCKS@@\n'
            '{"item_id":"edX+C2","why":"Builds on it.","fit":["Next step"]}]}\n'
            '{"block":"item_section","item_type":"program","dek":"Go deeper","items":['
            '{"item_id":"p-1","why":"A full certificate.","fit":["Certificate"]}]}\n'
+           '{"block":"insight","title":"Start with people skills","body":"New leads grow fastest by practising feedback."}\n'
            '{"block":"plan","steps":[{"item_id":"edX+C1","note":"Start"},{"item_id":"p-1","note":"Then"}]}\n'
            '{"block":"followup","question":"How much time can you give it?","suggestions":["Under 4 weeks",'
            '"1 to 3 months"],"session_title":"Leading a team"}\n')
