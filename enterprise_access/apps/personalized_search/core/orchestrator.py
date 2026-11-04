@@ -73,7 +73,7 @@ class Steps:
 
     # (system, user, model, effort, timeout_s) -> (text, Usage)
     intent: Callable[..., tuple[str, Usage]]
-    # (intent, scope, excluded_ids) -> raw candidates
+    # (intent, scope, excluded_ids, timeout_s=) -> raw candidates
     retrieve: Callable[..., list[dict]]
     # (system, user, model, effort, timeout_s, usage) -> Iterator[str]
     compose: Callable[..., Iterator[str]]
@@ -228,7 +228,9 @@ def _turn_parts(ctx: TurnContext, steps: Steps, record: dict) -> Iterator[dict]:
     yield {'type': 'data-status', 'data': {'step': 'searching'}, 'transient': True}
     retrieval_started = ctx.clock()
     try:
-        candidates = prefilter(steps.retrieve(merged, ctx.scope, _excluded_ids(session)), merged)
+        raw = steps.retrieve(merged, ctx.scope, _excluded_ids(session),
+                             timeout_s=min(constants.RETRIEVAL_TIMEOUT_S, remaining()))
+        candidates = prefilter(raw, merged)
     except RetrievalFailed:
         yield {'type': 'error', 'errorText': 'retrieval_failed'}
         return

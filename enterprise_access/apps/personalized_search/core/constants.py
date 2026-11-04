@@ -4,6 +4,8 @@ ITEM_TYPES = ('course', 'executive_education', 'program')
 MAX_MESSAGE_CHARS = 500
 HISTORY_TURNS = 4
 TURN_DEADLINE_S = 20
+# Catalog search read timeout (spec "Retrieval": 2 s), also capped by the time left before the deadline.
+RETRIEVAL_TIMEOUT_S = 2
 # The spec's step timeouts: intent 3 s, compose 5 s per read. Deployments set them through
 # PERSONALIZED_SEARCH_INTENT_TIMEOUT_S / _COMPOSE_READ_TIMEOUT_S; a slower backend can bring its own.
 DEFAULT_INTENT_TIMEOUT_S = 3
