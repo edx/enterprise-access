@@ -104,3 +104,40 @@ class OpenAICallTests(TestCase):
             self.backend.complete_json(model='gpt-4.1-mini', effort=None, system='S', user='U', max_tokens=10,
                                        timeout_s=1)
         self.assertNotIn('learner text', str(ctx.exception))
+
+    def test_stopping_early_closes_the_stream(self):
+        stream = mock.MagicMock()
+        stream.__iter__.return_value = iter([chunk('a'), chunk('b'), chunk('c')])
+        self.client.chat.completions.create.return_value = stream
+        deltas = self.backend.stream_text(model='gpt-5.4-mini', effort=None, system='S', user='U', max_tokens=10,
+                                          timeout_s=5, usage=Usage(model='gpt-5.4-mini', effort=None))
+        self.assertEqual(next(deltas), 'a')
+        deltas.close()  # the learner pressed Stop
+        stream.close.assert_called_once()
+
+    def test_failure_mid_stream_is_a_model_error_and_closes_the_stream(self):
+        def broken():
+            yield chunk('a')
+            raise RuntimeError('connection reset with learner text')
+        stream = mock.MagicMock()
+        stream.__iter__.return_value = broken()
+        self.client.chat.completions.create.return_value = stream
+        usage = Usage(model='gpt-5.4-mini', effort=None)
+        with self.assertRaises(ModelError) as ctx:
+            list(self.backend.stream_text(model='gpt-5.4-mini', effort=None, system='S', user='U', max_tokens=10,
+                                          timeout_s=5, usage=usage))
+        self.assertNotIn('learner text', str(ctx.exception))
+        stream.close.assert_called_once()
+        self.assertIsNotNone(usage.elapsed_ms)
+
+    def test_failure_creating_the_stream_is_a_model_error(self):
+        self.client.chat.completions.create.side_effect = RuntimeError('rejected')
+        with self.assertRaises(ModelError):
+            list(self.backend.stream_text(model='gpt-5.4-mini', effort=None, system='S', user='U', max_tokens=10,
+                                          timeout_s=5, usage=Usage(model='gpt-5.4-mini', effort=None)))
+
+    def test_no_choices_is_a_model_error(self):
+        self.client.chat.completions.create.return_value = SimpleNamespace(choices=[], usage=None, model='m')
+        with self.assertRaises(ModelError):
+            self.backend.complete_json(model='gpt-4.1-mini', effort=None, system='S', user='U', max_tokens=10,
+                                       timeout_s=1)
