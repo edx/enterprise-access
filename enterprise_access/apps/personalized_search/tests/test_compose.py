@@ -112,6 +112,77 @@ class ComposeParserTests(TestCase):
         self.assertEqual(reply, 'Just some text with no blocks')
         self.assertEqual(len(self.blocks(parts, 'item_section')), 1)  # fallback
 
+    FULL_TURN = ('Here is your page, with picks.\n@@BLOCKS@@\n' +
+                 line({'block': 'page_header', 'title': 'Lead', 'dek': 'A short path.'}) +
+                 line(section('course', ['edX+C1', 'edX+C2'])) +
+                 line(section('program', ['p-1'])) +
+                 line({'block': 'insight', 'title': 'Tip', 'body': 'Practice weekly.'}) +
+                 line({'block': 'plan', 'steps': [{'item_id': 'edX+C1', 'note': 'n'},
+                                                  {'item_id': 'p-1', 'note': 'm'}]}) +
+                 line({'block': 'followup', 'question': 'Level?', 'suggestions': ['A', 'B', 'C']}))
+
+    @staticmethod
+    def shape(parts):
+        """The reply text and every non-text part: what a split must not change."""
+        reply = ''.join(p['delta'] for p in parts if p['type'] == 'text-delta')
+        return reply, [p for p in parts if p['type'] != 'text-delta']
+
+    def test_split_at_every_character_offset(self):
+        """Two reads split anywhere (inside the reply, the marker, a JSON line) give the same turn."""
+        text = self.FULL_TURN
+        expected = self.shape(self.parse(text, chunk=len(text))[1])
+        self.assertEqual(expected[0], 'Here is your page, with picks.')
+        for offset in range(1, len(text)):
+            parser = compose.ComposeParser(candidates=default_candidates(), shown_ids=[], followup_attribute='level')
+            parts = parser.feed(text[:offset]) + parser.feed(text[offset:]) + parser.finish()
+            self.assertEqual(self.shape(parts), expected, offset)
+            self.assertNotIn('@@', expected[0])
+
+    def test_field_caps(self):
+        text = ('r\n@@BLOCKS@@\n' +
+                line({'block': 'page_header', 'title': 't' * 120, 'dek': 'd' * 500}) +
+                line(section('course', ['edX+C1', 'edX+C2', 'edX+C3'])) +
+                line({'block': 'insight', 'title': 'i' * 90, 'body': 'b' * 700}) +
+                line({'block': 'plan', 'steps': [{'item_id': 'edX+C1', 'note': 'n' * 100},
+                                                 {'item_id': 'edX+C2', 'note': 'n'}]}) +
+                line({'block': 'followup', 'question': 'q' * 300, 'suggestions': ['s' * 60, 'x'],
+                      'session_title': 'z' * 90}))
+        parser, parts = self.parse(text)
+        header = self.blocks(parts, 'page_header')[0]['props']
+        self.assertEqual((len(header['title']), len(header['dek'])), (80, 400))
+        insight = self.blocks(parts, 'insight')[0]['props']
+        self.assertEqual((len(insight['title']), len(insight['body'])), (60, 600))
+        self.assertEqual(len(self.blocks(parts, 'plan')[0]['props']['steps'][0]['note']), 80)
+        followups = [p for p in parts if p['type'] == 'data-followups'][0]['data']
+        self.assertEqual(len(followups['question']), 200)
+        self.assertEqual(len(followups['suggestions'][0]), 48)
+        self.assertEqual(len(parser.session_title), 60)
+
+    def test_per_turn_item_cap_across_sections(self):
+        text = ('r\n@@BLOCKS@@\n' + line(section('course', ['edX+C1', 'edX+C2', 'edX+C3'])) +
+                line(section('executive_education', ['Yale+E1', 'Yale+E2'])) + line(section('program', ['p-1'])))
+        parser, parts = self.parse(text)
+        sections = self.blocks(parts, 'item_section')
+        self.assertEqual([len(s['props']['items']) for s in sections], [3, 2])
+        self.assertEqual(len(parser.emitted_ids), 5)
+        self.assertEqual(parser.dropped, ['section_no_valid_items:program'])
+
+    def test_duplicates_and_shown_items_dropped(self):
+        text = ('r\n@@BLOCKS@@\n' + line(section('course', ['edX+C1', 'edX+C1', 'edX+C2', 'edX+C3'])) +
+                line(section('executive_education', ['Yale+E1'])))
+        _, parts = self.parse(text, shown=['edX+C2'])
+        course = self.blocks(parts, 'item_section')[0]['props']
+        self.assertEqual([i['item_id'] for i in course['items']], ['edX+C1', 'edX+C3'])
+
+    def test_dropped_lines_are_counted(self):
+        text = ('r\n@@BLOCKS@@\nnot json\n[1, 2]\n' + line({'block': 'carousel'}) + line({'no_block': True}) +
+                line(section('course', ['edX+C1'])))
+        parser, parts = self.parse(text)
+        self.assertEqual(parser.dropped_lines, 4)
+        self.assertEqual(parser.dropped, ['not_json', 'not_object', 'unknown_block:carousel', 'unknown_block:None'])
+        self.assertEqual(len(self.blocks(parts, 'item_section')), 1)
+        self.assertFalse(parser.used_fallback)
+
     def test_user_content_lists_candidates(self):
         content = compose.build_user_content(merged_intent={'query': 'q'}, followup_attribute='level', asked=['time'],
                                              history=[{'user': 'u', 'reply': 'r'}], message='m',
