@@ -58,8 +58,8 @@ def steps(*, registry: ModelRegistry | None = None, catalog=None, store=None, pe
         return registry.stream_text(model=model, effort=effort, system=system, user=user,
                                     max_tokens=constants.COMPOSE_MAX_TOKENS, timeout_s=timeout_s, usage=usage)
 
-    def retrieve(merged, scope, excluded):
-        return retrieval.search(merged, scope, excluded, catalog=catalog)
+    def retrieve(merged, scope, excluded, timeout_s=constants.RETRIEVAL_TIMEOUT_S):
+        return retrieval.search(merged, scope, excluded, catalog=catalog, timeout_s=timeout_s)
 
     return Steps(intent=intent, retrieve=retrieve, compose=compose, persist=store.persist_turn if persist else None)
 

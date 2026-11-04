@@ -1,0 +1,22 @@
+data: {"type":"start","messageId":"turn_00000000-0000-0000-0000-000000000b0b"}
+
+data: {"type":"data-session","id":"session","data":{"session_uuid":"00000000-0000-0000-0000-0000000a11ce","turn_sequence":1,"title":null}}
+
+data: {"type":"data-status","data":{"step":"understanding"},"transient":true}
+
+data: {"type":"text-start","id":"reply"}
+
+data: {"type":"text-delta","id":"reply","delta":"I can help you find learning in your organization's catalog. What would you like to learn?"}
+
+data: {"type":"text-end","id":"reply"}
+
+data: {"type":"data-followups","id":"followups","data":{"question":"What else would you like to learn?","attribute":"open","suggestions":["Prepare for a leadership role","Learn AI for my job","Build data skills","Something quick, under 4 weeks"]}}
+
+data: {"type":"data-session","id":"session","data":{"session_uuid":"00000000-0000-0000-0000-0000000a11ce","turn_sequence":1,"title":"What is the weather today?"}}
+
+data: {"type":"data-timing","id":"timing","transient":true,"data":{"backend":"openai","model_intent":"gpt-4.1-mini","model_compose":"gpt-5.4-mini","intent_ms":100,"retrieval_ms":null,"first_text_ms":150,"first_section_ms":null,"complete_ms":200,"dropped_lines":0}}
+
+data: {"type":"finish"}
+
+data: [DONE]
+
