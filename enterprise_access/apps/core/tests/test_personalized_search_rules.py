@@ -32,3 +32,13 @@ class PersonalizedSearchPermissionTests(TestCase):
 
     def test_user_without_assignment_is_denied(self):
         assert not UserFactory().has_perm(constants.PERSONALIZED_SEARCH_LEARNER_PERMISSION, self.enterprise)
+
+    def test_assignment_without_an_enterprise_grants_nothing(self):
+        role = EnterpriseAccessFeatureRole.objects.get(name=constants.LEARNER_PATHWAYS_LEARNER_ROLE)
+        user = UserFactory()
+        EnterpriseAccessRoleAssignment.objects.create(user=user, role=role, enterprise_customer_uuid=None)
+        assert not user.has_perm(constants.PERSONALIZED_SEARCH_LEARNER_PERMISSION, self.enterprise)
+
+    def test_missing_or_malformed_enterprise_is_denied(self):
+        for context in (None, '', 'not-a-uuid'):
+            assert not self.learner.has_perm(constants.PERSONALIZED_SEARCH_LEARNER_PERMISSION, context)
