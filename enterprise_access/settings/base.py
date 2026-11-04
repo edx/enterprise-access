@@ -194,6 +194,7 @@ REST_FRAMEWORK = {
         # with several Algolia searches and, when the re-rank backend is enabled, a paid
         # model call. The cost per request is an order of magnitude above the others here.
         'learner_pathways_pathway': '30/hour',
+        'personalized_search_turn': '20/min',
         # Low on purpose: each export holds one of the 2 sync gunicorn workers for the whole download.
         'learner_credit_transactions_export': '12/hour',
     },
