@@ -59,6 +59,10 @@ if settings.ENABLE_CUSTOMER_BILLING_API:
 # Other endpoints
 urlpatterns = [
     path('personalized-search/turns/', views.PersonalizedSearchTurnView.as_view(), name='personalized-search-turns'),
+    path('personalized-search/sessions/', views.PersonalizedSearchSessionListView.as_view(),
+         name='personalized-search-sessions'),
+    path('personalized-search/sessions/<uuid:session_uuid>/', views.PersonalizedSearchSessionDetailView.as_view(),
+         name='personalized-search-session'),
     path(
         'subsidy-access-policies/<uuid>/group-members',
         views.SubsidyAccessPolicyGroupViewset.as_view({'get': 'get_group_member_data_with_aggregates'}),
