@@ -36,7 +36,8 @@ class RetrievalFailed(Exception):
 
 
 def _quote(value: str) -> str:
-    return '"' + str(value).replace('"', '\\"') + '"'
+    """An Algolia filter string literal: backslashes, then double quotes, escaped."""
+    return '"' + str(value).replace('\\', '\\\\').replace('"', '\\"') + '"'
 
 
 def _strip_html(text: str | None) -> str:
