@@ -24,7 +24,7 @@ license change, the last paid invoice differs from the one on the original `orde
   minute; a finalized invoice's total and lines don't change), builds the payload in `segment_payloads.py`, and
   sends it with `send_event_synchronously` (see Gotchas).
 - Webhook signature validation happens in `StripeWebhookAuthentication`, before any handler runs.
-- Idempotency: `SegmentEventEmission` (unique on `event_name` + `order_id`, migration 0042). The task locks the
+- Idempotency: `SegmentEventEmission` (unique on `event_name` + `order_id`, migration 0043). The task locks the
   row, sends, and sets `emitted_at` only after Segment accepted the event, so a failed send stays retryable
   and concurrent deliveries emit once. `order_id` is the Stripe invoice ID (for `order_cancelled`, the
   subscription's last paid invoice; see the open question above).
