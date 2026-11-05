@@ -18,7 +18,7 @@
 | Engineering Lead | rthota-sonata@2u.com |
 | Reviewers | Proposed, from the PRD's RACI (Eng Lead to confirm): Brian Beggs (Engineering; accountable and responsible for engineering implementation), Alberto Del Toro (PM), Justin Grabowski (RevOps; Salesforce) |
 | Created | 2026-09-24 |
-| Last Updated | 2026-11-02 |
+| Last Updated | 2026-11-03 |
 
 ## Background & Context
 
@@ -78,17 +78,17 @@ architecture pass or artifact.*
 
 | Repo | Branch | Commit (short SHA) | At head of main/master? |
 | --- | --- | --- | --- |
-| edx/enterprise-subsidy | `main` (no `release/ulmo` branch exists) | `78f9af7`. TR-8's citations of the subsidy read (added 2026-10-22) were checked at `main@2b58fd4`. Those lines are the same at `78f9af7`: in the cited files, the only change is 10 lines added at `models.py:736`. | No (checked 2026-10-23): `main` is at `fa109b7`, 13 commits on. The deposit view and its serializer are unchanged there. The v2 transaction view gained 5 lines, so its cited lines are 5 higher on `main` (`:177-178` → `:182-183`, `:192-196` → `:197-201`). `main` now pins openedx-ledger `2.1.0` (row below). Only TR-8's citations have been checked on `main`. |
-| edx/enterprise-access | `main` | `67499592` (re-baselined 2026-09-28 from `994b8d99`; the only change to cited code was 5 lines inserted at line 170 of `customer_billing/models.py`, and the later citations are updated). `subsidy_record(raise_on_error=...)`, cited by TR-8 and Integration Points, landed on `main` after this baseline and is cited at `39904e03` (2026-10-20). The top-up eligibility endpoint (#319) is cited at `b6f3ef6f` (2026-10-23), under **Top-up code already on `main`**. | No (checked 2026-10-23): `main` is at `b6f3ef6f`, 30 commits on. Those commits include the top-up eligibility endpoint (#319), stripe-python `16.0.0` and edx-rest-api-client `7.1.0` (#317, `c4e8168f`; rows below), and 9 lines added to `settings/base.py` above the cited settings (for example `:510` is `:519` on `main`). `release/ulmo` (`620ff2fb`) was considered and rejected as a baseline: it is 282 commits behind `main` (branched 2025-10-30), and admin-portal `master` already calls `main`-only endpoints (`/api/v1/billing-management/*`). |
-| edx/frontend-app-admin-portal | `master` (no `release/ulmo` branch exists) | `efb24ed5` (re-baselined 2026-09-28 from `825a8ec1`; browserslist update only, no cited file changed) | No (checked 2026-10-23): `master` is at `417b3310`, 5 commits on. One of them is #183 (`ac9849ae`), which this spec cites by its own SHA. |
+| edx/enterprise-subsidy | `main` (no `release/ulmo` branch exists) | `78f9af7`. TR-8's citations of the subsidy read (added 2026-10-22) were checked at `main@2b58fd4`. Those lines are the same at `78f9af7`: in the cited files, the only change is 10 lines added at `models.py:736`. | No (checked 2026-11-03): `main` is at `89531f4`, 15 commits on. Since `fa109b7` it gained #83 (`ac79733`, migration 0024, the `stripe_payment_intent` provider) and #87 (`89531f4`, migration 0025, unrelated). The deposit view and its serializer are unchanged there. The v2 transaction view gained 5 lines, so its cited lines are 5 higher on `main` (`:177-178` → `:182-183`, `:192-196` → `:197-201`). `main` pins openedx-ledger `2.1.0` (row below). Every ES citation was rechecked on `main` on 2026-11-03. |
+| edx/enterprise-access | `main` | `67499592` (re-baselined 2026-09-28 from `994b8d99`; the only change to cited code was 5 lines inserted at line 170 of `customer_billing/models.py`, and the later citations are updated). `subsidy_record(raise_on_error=...)`, cited by TR-8 and Integration Points, landed on `main` after this baseline and is cited at `39904e03` (2026-10-20). The top-up eligibility endpoint (#319) is cited at `b6f3ef6f` (2026-10-23), under **Top-up code already on `main`**. | No (checked 2026-11-03): `main` is at `ff071483`, 33 commits on. Those commits include the top-up eligibility endpoint (#319), the top-up model (#323), stripe-python `16.0.0` and edx-rest-api-client `7.1.0` (#317, `c4e8168f`; rows below). Cited lines move on `main` by region: `subsidy_access_policy/models.py` +14 for `:111-531`, +20 for `:532-744` and +23 from `:745` (`9aa631c3`, `39904e03`, #325); `settings/base.py` +2 for `:173-355`, +9 for `:356-519`, +54 for `:530-555`, +58 for `:579-678` and +63 from `:685`; `api/v1/views/customer_billing.py` +8 from `:816`. `release/ulmo` (`620ff2fb`) was considered and rejected as a baseline: it is 282 commits behind `main` (branched 2025-10-30), and admin-portal `master` already calls `main`-only endpoints (`/api/v1/billing-management/*`). |
+| edx/frontend-app-admin-portal | `master` (no `release/ulmo` branch exists) | `efb24ed5` (re-baselined 2026-09-28 from `825a8ec1`; browserslist update only, no cited file changed) | No (checked 2026-11-03): `master` is at `43f979f6`, 14 commits on. #183 (`ac9849ae`), #190 (`cc1550aa`) and #192 (`91402183`) are cited by their own SHAs. Two cited files moved: `src/data/services/EnterpriseAccessApiService.ts` +34 from `:284` (`:703-826` → `:737-862`), and `learner-credit-management/data/constants.js` +4 from `:25` (`:120-121` → `:124-125`). |
 | edx/frontend-app-enterprise-checkout | `main` (no `release/ulmo` branch exists) | `f3f0217` | Unknown. `git fetch` failed on 2026-10-23 (no access to the SSH remote). The last fetched `main`, `9d33435` (2026-10-12), is already past the pin. |
 | openedx/course-discovery (precedent only) | `master` | `97c5ad7` | Yes |
 | openedx/openedx-ledger (pip dependency) | tag `2.0.0` — the version pinned at `enterprise-subsidy:requirements/base.txt:231` | `a458d66` | No. enterprise-subsidy `main` now pins `2.1.0` (`ES:requirements/base.txt:233` at `fa109b7`). `2.1.0` changes only docstrings and adds a PII annotation to `Transaction`, so every claim holds. Its lines are 1 higher from `api.py:139` and 2 higher from `api.py:186` and `models.py:338`. Citations stay at `2.0.0`. |
 | 2u-enterprise-subsidy-client (pip dependency of enterprise-access) | `2.2.1`, pinned at `EA:requirements/base.txt:7` | read from the installed package | n/a — pinned version (still `2.2.1` on `main`) |
-| stripe-python (pip dependency of enterprise-access) | `15.6.1`, pinned at `EA:requirements/base.txt:382` | read from the published wheel (added 2026-10-16) | No. `main` pins `16.0.0` since `c4e8168f` (2026-10-21), at `EA:requirements/base.txt:401`. The defaults cited in Integration Points are the same at the same lines in `16.0.0`: an 80-second timeout, 2 retries, and which errors retry (checked 2026-10-23). |
+| stripe-python (pip dependency of enterprise-access) | `15.6.1`, pinned at `EA:requirements/base.txt:382` | read from the published wheel (added 2026-10-16) | No. `main` pins `16.0.0` since `c4e8168f` (2026-10-21), at `EA:requirements/base.txt:401`. The defaults cited in Integration Points are the same at the same lines in `16.0.0`: an 80-second timeout, 2 retries, and which errors retry (checked 2026-10-23). On PaymentIntents, `allowed_payment_method_types` exists in both versions (`STR:stripe/params/_payment_intent_create_params.py:10`). `16.0.0` removes `payment_method_types` from PaymentIntent create (`:310` in `15.6.1`), so it is the only type filter left (checked 2026-11-03). |
 | edx-rest-api-client (pip dependency of enterprise-access) | `7.0.0`, pinned at `EA:requirements/base.txt:216` | read from the published wheel (added 2026-10-16) | No. `main` pins `7.1.0` (`EA:requirements/base.txt:217`). `7.1.0` still applies its timeout only to token requests (`ERC:edx_rest_api_client/client.py:227-266` in `7.1.0`; checked 2026-10-23). |
 | django-waffle (pip dependency of enterprise-access) | `5.0.0`, pinned at `EA:requirements/base.txt:153` | read from the published package (added 2026-10-23; cited since 2026-10-19 without a row) | n/a — pinned version (still `5.0.0` on `main`) |
-| edx-rbac (pip dependency of enterprise-subsidy and enterprise-access) | `3.0.0`, pinned at `ES:requirements/base.txt:168` and `EA:requirements/base.txt:214` | read from the installed package (added 2026-10-22, for TR-8) | n/a — pinned version |
+| edx-rbac (pip dependency of enterprise-subsidy and enterprise-access) | `3.0.0`, pinned at `ES:requirements/base.txt:170` (`:168` from `2b58fd4`) and `EA:requirements/base.txt:214` | read from the installed package (added 2026-10-22, for TR-8) | n/a — pinned version |
 | edx/edx-internal (deployment config) | `master` | `e342615e0` (fetched 2026-10-19; added for OQ-5). The enterprise-access top-up flag is cited at `5627e60cc` (fetched 2026-10-23). | No (checked 2026-10-23): `master` is at `5627e60cc`, 121 commits on. The cited lines are unchanged there except `edxapp-lms/prod-config.yaml:2153`, which is `:2148` on `master`. The local checkout is on `rthota/ENT-10608` (`73af765ae`), so searches ran against `origin/master` and every remote branch. |
 | edx/edx-platform (LMS; read only for its edx-enterprise pin) | `release-ulmo`, the fork's default branch (`edx/HEAD`) | `d249fc87d4` (added 2026-10-19, for OQ-12) | Unknown. `git fetch` failed on 2026-10-19 (no access to the SSH remote), so this is the last fetched ref, from 2026-09-04. `edx/master` is a stale 2025 branch. |
 | edx-enterprise (pip dependency of the LMS) | `8.9.4`, pinned at `EP:requirements/edx/base.txt:476` | read from the published wheel (added 2026-10-19, for OQ-12) | n/a — pinned version |
@@ -119,13 +119,23 @@ Paths below are prefixed by repo: `EA` = enterprise-access, `ES` = enterprise-su
 - *[Specified]* No discount rate or quote number is stored anywhere. The subsidy's only
   Salesforce link is `reference_id` (an OpportunityLineItem ID,
   `ES:enterprise_subsidy/apps/subsidy/models.py:162-182`); `grep -i "discount|quote"` over
-  enterprise-access models finds nothing relevant. The source of truth is Salesforce (Eng Lead,
-  2026-09-25). See OQ-3.
+  enterprise-access models finds nothing relevant at the baseline. On `main` it finds only #323's
+  per-top-up copies (`discount_rate`, `discount_cents`, `sales_quote_number`,
+  `EA:.../customer_billing/models.py:1565-1590` at `ff071483`), which have no source to copy from yet.
+  The source of truth is Salesforce (Eng Lead, 2026-09-25). See OQ-3.
 - *[Specified]* The balance an admin sees is fetched fresh from enterprise-subsidy on every
-  request. `subsidy_record()` caches only for the length of one request
-  (`EA:.../subsidy_access_policy/models.py:510-531`), and `spend_available` reads it through that
-  cache (`:558-594`). The one cross-request copy of the subsidy record (TieredCache, `:534-544`) is
-  read only by a Braze task (`EA:enterprise_access/apps/content_assignments/tasks.py:226`). The portal
+  request. `subsidy_record()` caches in the request cache
+  (`EA:.../subsidy_access_policy/models.py:511-532`), and `spend_available` reads it through that
+  cache (`:558-594`). The one cross-request copy of the subsidy record (TieredCache, `:534-545`) is
+  read only by a Braze task (`EA:enterprise_access/apps/content_assignments/tasks.py:226`; `:265` on `main`).
+- *[Specified]* That cache lasts one request only in the web process, where middleware clears it.
+  Nothing clears it between Celery tasks in a worker. The one task that clears it itself says so:
+  "Nothing clears request caches … between tasks in a worker, as RequestCacheMiddleware does between web
+  requests" (`EA:enterprise_access/apps/subsidy_access_policy/tasks.py:26-29` at `ff071483`). A task can
+  therefore read a subsidy record cached by an earlier task in the same worker. `clean_spend_limit` reads
+  `total_deposits` with the default `raise_on_error=False`, so a failed read gives `{}`, a total of 0, and a
+  `ValidationError` ("exceeds starting balance") rather than an HTTP error (`models.py:436-443, 526-528, 566-571`).
+  `save()` always calls `full_clean()` (`:480`). The portal
   caches the balance in two react-query queries. Budget List reads `budgets(enterpriseId)`
   (`AP:src/components/EnterpriseSubsidiesContext/data/hooks.js:118-126`;
   `AP:src/components/learner-credit-management/data/constants.js:120`). Budget Detail, where Add Funds
@@ -156,7 +166,9 @@ Paths below are prefixed by repo: `EA` = enterprise-access, `ES` = enterprise-su
 - *[Specified]* `SubsidyAccessPolicy.create_deposit()` — docstring: "referred to as a
   'Top-Up'" (`EA:.../subsidy_access_policy/models.py:1175`) — calls enterprise-subsidy, then
   `spend_limit += qty; save()` (`:1189-1194`). It passes no idempotency key and has no
-  compensation if the save fails. Its only caller is the Django admin "Deposit Funds" tool
+  compensation if the save fails. On a budget with no `spend_limit`, the `+=` raises `TypeError` after the
+  deposit was made. It raises a bare `SubsidyAPIHTTPError` for every HTTP error, so the status is only on
+  `__cause__` (`:1211-1215` at `ff071483`). Its only caller is the Django admin "Deposit Funds" tool
   (the action at `EA:.../subsidy_access_policy/admin/__init__.py:118`; the call at `admin/views.py:143-147`).
 - *[Specified]* enterprise-subsidy's only deposit API, `POST /api/v2/subsidies/<uuid>/admin/deposits/`
   (`ES:enterprise_subsidy/apps/api/v2/views/deposit.py:30-97`), requires operator access
@@ -187,9 +199,27 @@ Paths below are prefixed by repo: `EA` = enterprise-access, `ES` = enterprise-su
   `create_deposit` (`LED:openedx_ledger/api.py:317-320`), then by the serializer
   (`ES:.../api/v2/serializers/deposits.py:133-139`). The view returns that as 422
   `deposit_creation_error` (`deposit.py:96-97`), though its schema already lists 429
-  (`deposit.py:77`). Redemptions take the same lock and already get 429 `ledger_lock_error`:
-  nothing wraps the lock error on that path, so the v2 transaction view catches it directly
-  (`ES:.../api/v2/views/transaction.py:192-196`).
+  (`deposit.py:77`). Redemptions take the same lock and already get 429: nothing wraps the lock
+  error on that path, so the v2 transaction view catches it directly
+  (`ES:.../api/v2/views/transaction.py:192-196`). It raises DRF `Throttled` with the code
+  `ledger_lock_error`, but the code stays on DRF's `ErrorDetail`. The body is
+  `{"detail": "Attempt to lock the Ledger failed, please try again."}`
+  (`ES:.../api/v2/tests/test_transaction_views.py:724`). With no `wait`, it sends no `Retry-After`.
+  Each lock failure on the deposit path also logs at ERROR twice: once in the ledger
+  (`LED:openedx_ledger/api.py:317-320`) and once in the serializer (`deposits.py:133-138`).
+- *[Specified]* A repeated key fails at the `Deposit` insert, not at the `Transaction`.
+  `create_transaction` takes the ledger lock and then `get_or_create`s the Transaction on
+  `(ledger, idempotency_key)`, so a repeated key gets the existing Transaction back
+  (`LED:openedx_ledger/api.py:106-118`). `Deposit.objects.create` then fails on its one-to-one
+  `transaction` field (`LED:openedx_ledger/models.py:725`). Two racing requests with the same key end
+  the same way on production MySQL, whose isolation level Django leaves at READ COMMITTED. The loser's
+  `get_or_create` waits for the winner's commit, then reads its row.
+- *[Specified]* The deposit view checks expiry (`deposit.py:86-90`) before the serializer validates the
+  request (`super().create()` at `:92`). It loads the subsidy with `get_subsidy_by_uuid(should_raise=True)`
+  (`deposit.py:51-56`), so a subsidy soft-deleted after the permission check raises an uncaught
+  `Subsidy.DoesNotExist`, which is a 500. Chunk 1 changes that to 404 (Deposit endpoint changes). Tests in both services run on SQLite `:memory:`
+  (`ES:enterprise_subsidy/settings/test.py:7-9`; `EA:enterprise_access/settings/test.py:12-14`), so a
+  same-key race or a row lock can't be exercised for real in a unit test.
 - *[Specified]* The deposit view has a 200-on-replay path that is never used: "only here for when we
   eventually make deposit creation actually idempotent" (`ES:enterprise_subsidy/apps/api/v2/views/deposit.py:58-67, 92-94`).
   The serializer always reports a new deposit (`ES:.../api/v2/serializers/deposits.py:148`).
@@ -203,12 +233,17 @@ Paths below are prefixed by repo: `EA` = enterprise-access, `ES` = enterprise-su
   carried a policy UUID, it would be summed into that policy's aggregates
   (`ES:enterprise_subsidy/apps/api/paginators.py:30`; `EA:.../subsidy_access_policy/models.py:714-718`)
   and make the policy's spend look smaller than it is.
-- *[Specified]* The only reference-provider slug is `salesforce_opportunity_line_item`
-  (`ES:enterprise_subsidy/apps/subsidy/migrations/0022_backfill_initial_deposits.py:34-37`).
+- *[Specified]* At the baseline, the only reference-provider slug is `salesforce_opportunity_line_item`
+  (`ES:enterprise_subsidy/apps/subsidy/migrations/0022_backfill_initial_deposits.py:34-37`). On `main`, #83
+  adds `stripe_payment_intent` (`ES:.../migrations/0024_add_stripe_payment_intent_reference_provider.py` at `ac79733`).
   Deleting a provider row deletes its deposits (`on_delete=CASCADE`, `LED:openedx_ledger/models.py:746-751`).
 - *[Specified]* Only operators can write policies, including `spend_limit`
   (`EA:enterprise_access/apps/core/rules.py:537`). Enterprise admins get learner-level policy
-  access (`EA:enterprise_access/settings/base.py:356-366`).
+  access (`EA:enterprise_access/settings/base.py:356-366`). Three paths write `spend_limit` today. Each
+  loads the policy and saves the whole row with no lock, and each save runs every validator:
+  1. Deposit Funds' `create_deposit()` (`:1193-1194`).
+  2. The policy admin change form (`EA:.../subsidy_access_policy/admin/__init__.py:102, 246`).
+  3. The operator REST create and update serializers (`EA:enterprise_access/apps/api/serializers/subsidy_access_policy.py:234, 465`).
 
 **Stripe and billing (enterprise-access)**
 
@@ -218,7 +253,18 @@ Paths below are prefixed by repo: `EA` = enterprise-access, `ES` = enterprise-su
 - *[Specified]* The Stripe customer is found by admin email (`stripe_api.py:83`) and resolved
   per enterprise only through a `CheckoutIntent`
   (`EA:enterprise_access/apps/api/v1/views/customer_billing.py:816-842`). Sales-provisioned
-  Learner Credit customers have none, and no code creates one.
+  Learner Credit customers have none, and no code creates one. The resolver is a private method of the
+  billing-management viewset. It returns `(stripe_customer_id, checkout_intent)` from the newest intent
+  that has a customer ID, or `(None, None)`. Seven actions use only the ID: address, payment methods
+  and transactions (`:992, 1071, 1236, 1334, 1468, 1592, 1740`). Three use only the intent, and return
+  404 without it: `get_subscription` (`:1878`), `cancel_subscription` (`:2169`) and
+  `reinstate_subscription` (`:2302`).
+- *[Specified]* The billing-management attach endpoint attaches a card to the enterprise's Stripe customer.
+  It never changes the customer's default card. Its request serializer takes only `payment_method_id`, so
+  the `set_as_default` that the portal's add-card modal sends is ignored
+  (`EA:.../views/customer_billing.py:1314-1396`; `api/serializers/customer_billing.py:550-559`, at `ff071483`;
+  `AP:src/components/billing/AddPaymentMethodModal.tsx:180-185`; `AP:src/data/services/EnterpriseAccessApiService.ts:785-799`).
+  A card already attached to the same customer is accepted, and one attached to another customer gets 409.
 - *[Specified]* `CheckoutIntent` models a new-customer purchase — it reserves an enterprise's
   slug/name (`EA:.../customer_billing/models.py:194`) and a license quantity (`:319`) — and
   returns an already-paid intent unchanged (`:795-804`). It does not fit repeated top-ups.
@@ -226,17 +272,27 @@ Paths below are prefixed by repo: `EA` = enterprise-access, `ES` = enterprise-su
   (`EA:enterprise_access/apps/api/authentication.py:58-63`). It handles only `invoice.*` and
   `customer.subscription.*` events, plus `payment_method.attached`, which is registered as a no-op
   (`EA:.../customer_billing/stripe_event_handlers.py:720-723`), and it ignores non-subscription invoices
-  (`EA:.../customer_billing/stripe_event_handlers.py:379-382`). Processing is inline, and dedup
-  is partial (`views/customer_billing.py:203-222`).
+  (`EA:.../customer_billing/stripe_event_handlers.py:379-382`). Processing is inline
+  (`views/customer_billing.py:203-222`; `:203-210` is a TODO saying dedup isn't built). Dedup is partial:
+  `persist_stripe_event` `get_or_create`s the row by event ID (`stripe_event_handlers.py:146-153`), but the
+  handler still runs on a redelivery (`:542-543`). The `on_stripe_event` wrapper applies the invoice filter,
+  then persists the event, then calls the handler (`:537-543`).
 - *[Specified]* `payment_intent.succeeded` and `payment_intent.payment_failed` are declared event
   types (`EA:.../customer_billing/stripe_event_types.py:137, 140`) but nothing handles them.
   `persist_stripe_event` records only invoice and subscription events
   (`EA:.../customer_billing/stripe_event_handlers.py:112-123`). The `checkout_intent` foreign
   key is nullable on both event tables (`EA:.../customer_billing/models.py:1066-1068, 1126-1128`).
-  No Stripe write call passes an idempotency key (grep `idempotency` over the Python files in
-  `customer_billing` and `provisioning` → 0 hits; the only hits are prose in `provisioning/docs/overview.rst`).
+  No Stripe write call passes an idempotency key. At the baseline, grep `idempotency` over the Python files in
+  `customer_billing` and `provisioning` → 0 hits; the only hits are prose in `provisioning/docs/overview.rst`.
+  On `main`, the same grep, widened to `api/v1/views/customer_billing.py`, where most Stripe writes are,
+  finds only comments and #323's help text (`views/customer_billing.py:261, 1363`; `customer_billing/models.py:1525`).
+- *[Specified]* `get_stripe_payment_intent` is wrapped in `@stripe_cache()`. That decorator keeps the
+  whole PaymentIntent, `client_secret` included, in TieredCache for `DEFAULT_STRIPE_CACHE_TIMEOUT`, 60 s
+  (`EA:.../customer_billing/stripe_api.py:117-150, 182-195`; `settings/base.py:748`, at `ff071483`). A second
+  read within a minute returns the first read's status.
 - *[Specified]* No service stores account standing or agreement type (grep
-  `account_standing|good_standing|agreement_type` over EA and ES → 0 hits). See OQ-8.
+  `account_standing|good_standing|agreement_type` over EA and ES → 0 hits at the baseline; on `main` the
+  only hit is #319's stub, `is_account_in_good_standing`, `EA:.../customer_billing/api.py:581`). See OQ-8.
 - *[Specified]* The billing-management API (payment methods, address, invoice-based
   transactions) exists (`EA:enterprise_access/apps/api/v1/urls.py:44-45`), and admins have
   access (`EA:.../core/rules.py:635`), but it is off by default
@@ -248,7 +304,7 @@ Paths below are prefixed by repo: `EA` = enterprise-access, `ES` = enterprise-su
   (`views/customer_billing.py:1748`).
 - *[Specified]* Salesforce integration is inbound only (Salesforce calls
   `EA:.../api/v1/views/provisioning.py:181`); Stripe→Salesforce is designed to run through
-  Stripe's connector (`EA:docs/decisions/0026-stripe-event-consumption-delivery.rst:26-29`).
+  Stripe's connector (`EA:docs/decisions/0026-stripe-event-consumption-delivery.rst:26-29, 95-100`).
   `is_commission_eligible` appears nowhere (grep → 0). See OQ-5.
 - *[Specified]* `is_commission_eligible` isn't configured in deployment either. In edx-internal,
   `git grep -i commission` finds nothing on `master` or on any remote branch. enterprise-access's
@@ -256,10 +312,27 @@ Paths below are prefixed by repo: `EA` = enterprise-access, `ES` = enterprise-su
   `INT:argocd/applications/enterprise-access/` → 0 hits); the only Salesforce settings in
   edx-internal belong to course-discovery and edxapp (LMS/CMS). So `false` is not a deployed
   setting: whichever route OQ-5 picks has to send it.
-- *[Specified]* SDN screening has no code; an ADR assumes Stripe handles it
-  (`EA:docs/decisions/0030-self-service-purchasing-BFF.rst:488`). Only an embargoed-country
-  list exists (`EA:enterprise_access/settings/base.py:706-709`). See OQ-4, resolved 2026-10-19:
-  Stripe's screening is enough.
+- *[Specified]* enterprise-access has no SDN screening code. Sanctions screening is Stripe's, as Stripe's
+  published policy describes it:
+  - Stripe "conducts ongoing screening of its users against sanctions lists administered by the UN, US,
+    EU, UK, Canada and other applicable jurisdictions".
+  - It has controls "to prevent transactions involving sanctioned financial institutions or
+    comprehensively sanctioned jurisdictions", applied "both at the user level and at the transaction
+    level".
+  - Source: `https://support.stripe.com/questions/financial-crimes-risk-appetite-policy-statement`, read
+    2026-11-03.
+  - The policy doesn't say that each payer is checked against the SDN list. See OQ-4.
+- *[Specified]* enterprise-access keeps an embargoed-country list, `EMBARGOED_COUNTRY_CODES`:
+  - The default is `RU,IR,KP,SY,CU,BY` (`EA:enterprise_access/settings/base.py:706-709`), read through
+    `get_embargoed_countries()` (`EA:enterprise_access/apps/customer_billing/embargo.py:5-7`).
+  - One serializer already rejects a listed country with a 400, "Country {value} is not supported."
+    (`validate_country`, `EA:.../api/serializers/customer_billing.py:181-190` at `ff071483`). Like it, an
+    empty country isn't rejected.
+  - The admin portal's add-card and billing-address forms leave those countries out of their country lists
+    (`AP:src/components/billing/constants.ts:13-38`).
+  - The billing-management endpoints don't check the list on the server. The address serializer checks
+    only the country's format (`api/serializers/customer_billing.py:455-463`), and the attach serializer
+    takes only `payment_method_id` (`:550-559`).
 - *[Specified]* enterprise-access sends Segment events through `track_event`
   (`EA:enterprise_access/apps/track/segment.py:14`), which `customer_billing` already uses
   (`EA:.../customer_billing/stripe_event_handlers.py:346`). Portal events are named under
@@ -270,12 +343,35 @@ Paths below are prefixed by repo: `EA` = enterprise-access, `ES` = enterprise-su
 - *[Specified]* Emails are direct Braze sends from Celery tasks with retry
   (`EA:enterprise_access/tasks.py:14-39`). Campaigns are keyed to Teams/Essentials only
   (`EA:.../customer_billing/utils.py:52-80`); no top-up emails exist.
-- *[Specified]* Feature flags: one unrelated global waffle flag (`EA:enterprise_access/toggles.py:18`);
-  billing gates are Django settings. Self-service purchasing (SSP) is gated this way:
-  `ENABLE_CUSTOMER_BILLING_API` and `ENABLE_BILLING_MANAGEMENT_API` (`EA:enterprise_access/settings/base.py:675-678`)
+- *[Specified]* Retries, workers and timeouts:
+  - **Retries.** `LoggedTaskWithRetry` retries connection errors, timeouts, every `HTTPError`,
+    `OperationalError` and `BrazeClientError`, up to 5 times (`EA:enterprise_access/tasks.py:20-39`;
+    `settings/base.py:457`). The backoff starts at 60 s, doubles, and is capped at 600 s, with full
+    jitter. Each wait is a random time between 0 and its cap (`retry_jitter = True`, `tasks.py:39`;
+    Celery `5.6.3`, `celery/utils/time.py:448-462`). So the first retry comes within 60 s, and all five
+    take at most about 25 minutes.
+  - **What the base task doesn't cover.** It defines no hook for when retries run out. It doesn't
+    retry `SoftTimeLimitExceeded` (soft limit 240 s, `settings/base.py:449`).
+  - **Workers.** Celery has one default queue (`:423`). Production runs one worker command with no `-Q`
+    (`INT:argocd/applications/enterprise-access/prod-config.yaml:326-328`). The web tier runs 4 to 16
+    pods (`:22-25`), each with 4 sync gunicorn workers: the command line's `--workers=4` (`:5`) overrides
+    the config file's `workers = 2` (`EA:enterprise_access/docker_gunicorn_configuration.py:10`). The
+    timeout is 300 s (`:7`).
+  - **Timeouts.** One enterprise-subsidy call already sets its own timeout without a client release:
+    `client.client.get(..., timeout=settings.SUBSIDY_TRANSACTIONS_EXPORT_TIMEOUT)`, which casts a YAML list
+    to a tuple (`EA:enterprise_access/apps/subsidy_access_policy/subsidy_api.py:148-156` at `ff071483`).
+- *[Specified]* Feature flags: at the baseline, one unrelated global waffle flag (`EA:enterprise_access/toggles.py:18`).
+  On `main` there are also three global `WaffleSwitch`es (`toggles.py:51, 87, 118` at `ff071483`), and
+  `docs/architecture-patterns.md` §20 says "Irreversible behavior ships behind a WaffleSwitch". No top-up code reads any of
+  these four (grep of `enterprise_access.toggles` imports at `ff071483`). Billing gates are Django settings. Self-service purchasing (SSP) is gated this way:
+  `ENABLE_CUSTOMER_BILLING_API` (default `True`) and `ENABLE_BILLING_MANAGEMENT_API` (default `False`)
+  (`EA:enterprise_access/settings/base.py:675, 678`; `:733, 736` on `main`)
   decide whether `api/v1/urls.py` registers the billing routes at all (`EA:enterprise_access/apps/api/v1/urls.py:38-45, 51-52`),
-  so with a setting off its endpoints return 404. Each environment sets them in edx-internal
-  (`INT:argocd/applications/enterprise-access/prod-config.yaml:187-188`). On the checkout MFE, SSP is
+  so with a setting off its endpoints return 404. Each environment sets them in edx-internal, and both are `true` in
+  stage and production (`INT:argocd/applications/enterprise-access/prod-config.yaml:187-188`; `stage-config.yaml:248-249`,
+  at `5627e60cc`). Top-up needs both on but doesn't change them: the Stripe webhook is an action of the
+  `customer-billing` viewset (`EA:.../api/v1/views/customer_billing.py:186, 200-205`), and saved cards are listed
+  through `billing-management` (`:797, 1214`, at `ff071483`). Top-up's own gate is `FEATURE_TOP_UP_LEARNER_CREDIT` (KD-6). On the checkout MFE, SSP is
   a config flag, `FEATURE_SELF_SERVICE_PURCHASING`, plus an unlock key a tester passes as
   `?feature=<key>` (`CHK:src/components/app/routes/loaders/rootLoader.ts:46-115`). The admin
   portal's top-up flag is already configured in edx-internal: `'true'` on stage and `''` (off) in
@@ -368,12 +464,12 @@ now carries into them. Its reference doc is `EA:docs/references/learner_credit_t
   account-standing check is real (`EA:enterprise_access/settings/base.py:738-740`). It is on in stage
   (Feature flags, above).
 
-**Where the merged code and this spec differ.** Each one is decided in the section that owns it:
+**Where the merged code and this spec differed.** All four were settled the same way: the spec adopts the code's contract (Eng Lead, 2026-11-03; review gap G-3). The sections named in the last column now follow the code:
 
-| # | This spec | Code on `main` | Decided in |
+| # | This spec said | Code on `main`, now the spec's contract | Updated in |
 | --- | --- | --- | --- |
-| 1 | An enterprise-subsidy 403 or 404 → 400 `subsidy_not_available` (TR-8; Eng Lead, 2026-10-22) | Three attempts, then a `budget_not_active` reason; 503 when every subsidy fails (§18) | API Contracts |
-| 2 | The setting decides whether the routes are registered (KD-6) | The routes are always registered, and a per-request check returns 404 | Key Decisions |
+| 1 | An enterprise-subsidy 403 or 404 → 400 `subsidy_not_available` (TR-8; Eng Lead, 2026-10-22) | A 403 or 404 is read up to 3 times, then gives a `budget_not_active` reason. 503 if every subsidy answers 403 or 404 and no `policy_uuid` was named (§18). Any other HTTP error, connection error or timeout is 503 at once, even for one subsidy (`customer_billing/api.py:650-667, 713-714`; `views/customer_billing.py:2504-2508`) | API Contracts (API Error Codes), Integration Points, TR-8 |
+| 2 | The setting decides whether the routes are registered (KD-6) | The routes are always registered, and a per-request check returns 404 | KD-6, API Contracts, Feature Flags |
 | 3 | Errors are `{"error_code", "developer_message"}`; the 503 is `subsidy_service_unavailable` | Reasons use `message` and errors use `detail`; the 503 has no `error_code` | API Contracts |
 | 4 | An unknown policy, or one of another enterprise, is a DRF 404 `{"detail"}` | 404 `budget_not_found`; also 404 `no_budgets_found` | API Contracts |
 
@@ -389,9 +485,20 @@ enterprise-subsidy `main@ac79733`)
   (`EA:.../customer_billing/constants.py:178-210` at `ed1a16b1`). This spec's state diagram follows its
   re-run transitions since 2026-11-02 (Recovery jobs). Its `errored_fulfillment → refunded` transition is kept for
   a future refund; nothing uses it in Phase 1. `transition_to()` reloads the row with `select_for_update()` and checks the
-  stored state before writing (`models.py:1697-1777`). A new top-up must start in `created` with no state timestamps
-  (`clean()`, `models.py:1792-1798`), a rule added after `cfba79a7`. The PR adds the locking rule to
-  `docs/architecture-patterns.md` as §24.
+  stored state before writing (`models.py:1697-1777`). It returns `False` only when the top-up is already in the
+  target state. Any other move the table doesn't allow raises `InvalidLearnerCreditTopUpTransition`, including one
+  from a state that has already moved past the target, such as `transition_to(PAID)` on a `deposited` row
+  (`:1753-1768`). It sets `paid_at`, `deposited_at` and `fulfilled_at` only if they are empty (`:1771-1773`). A new
+  top-up must start in `created` with no state timestamps (`clean()`, `models.py:1792-1798`), a rule added after
+  `cfba79a7`. The PR adds the locking rule to `docs/architecture-patterns.md` as §24. Other facts of the merged model:
+  - `stripe_customer_id` is required, so the Stripe customer must exist before the quote row is written (`:1598-1602`).
+  - `initiated_by_lms_user_id` is nullable and annotated `.. pii_retirement: retained` (`:1476, 1548-1551`).
+  - `payment_method_type` allows only `card`, so Phase 2 needs a migration (`:1609-1613`).
+  - A quote expires 30 minutes after it is created by default (`LEARNER_CREDIT_TOP_UP_QUOTE_MINUTES`,
+    `constants.py:102`; `models.py:1448-1452`). Nothing on `main` moves a top-up to `expired` yet; the expiry job will (Recovery jobs).
+  - `select_for_update()` is now used twice in enterprise-access: here and in assignment expiry
+    (`EA:enterprise_access/apps/content_assignments/api.py:1346`, #291). Neither locks a policy row.
+    §24 notes that the SQLite test database ignores it.
 - *[Specified]* enterprise-access #325 (`1a6c462d`, unrelated to top-ups) adds 13 lines at
   `subsidy_access_policy/models.py:111`, so that file's citations below line 111 are 13 higher on `main`.
 - *[Specified]* The admin portal's Add Funds flow skeleton merged (#190, `AP@cc1550aa`, 2026-10-26, ENT-12396).
@@ -419,6 +526,32 @@ enterprise-subsidy `main@ac79733`)
      in the page through `handleNextAction` (sequence part 2), and the status endpoint is
      `GET /learner-credit-top-ups/<uuid>/`, which the URL doesn't carry. KD-3 settles this (Eng Lead,
      2026-11-02): the challenge stays in the page, and ADR 0014 is to be amended (Dependencies).
+
+**Merged or opened since 2026-10-29** (checked 2026-11-03; enterprise-access `main@ff071483`, admin-portal
+`master@43f979f6`, enterprise-subsidy `main@89531f4`)
+
+- *[Specified]* Merged: enterprise-subsidy #87 (`89531f4`, migration 0025 for `Subsidy` meta options, unrelated).
+  Nothing top-up related merged in enterprise-access or the admin portal.
+- *[Specified]* enterprise-subsidy #88 (impl-plan chunk 2, open, head `21feb7c` of 2026-11-02) builds the reserved
+  metadata keys. The reserved set comes from `inspect.signature` of `create_deposit` and `create_transaction`, and
+  the 400 names each clashing key. Its head declares `metadata` as `DictField(allow_null=True)`, so only `null` and
+  `{}` are accepted. `[]`, `""`, `0` and `false` return 400 (`test_deposit_creation_rejects_non_object_metadata`).
+  Deposit endpoint changes below still says `[]` and `""` are accepted (review gap G-39).
+- *[Specified]* No enterprise-subsidy change exists yet for impl-plan chunk 1, the keyed replay and the 429:
+  no branch touches `deposit.py` or `exceptions.py`.
+- *[Specified]* Admin-portal #201 (impl-plan chunk 21, open, ENT-12463) gates Add Funds on the eligibility
+  endpoint:
+  - It reads each reason as `{error_code, message}`, the merged backend's shape, which this spec adopted on
+    2026-11-03 (G-3).
+  - It maps `budget_not_active`, `budget_expiring_soon` and `account_not_eligible` to its own text. Those
+    are the only reason codes the backend returns.
+  - It retries a non-4xx error once. Any error, including a 404 with the flag off or a 503, hides Add Funds
+    and redirects away from the flow.
+- *[Specified]* Admin-portal #194 (open) stops logging the 404 that sales-provisioned customers get from
+  `billing-management/subscription` ("Checkout Intent not found for this enterprise"). This confirms KD-4's
+  premise: the top-up population has no `CheckoutIntent`, so billing-management can't find their Stripe customer.
+- *[Specified]* enterprise-access #329 (open, an unrelated ADR) adds `docs/plans/` to `.gitignore`, the folder
+  this spec and the impl-plan live in (PR #299).
 
 
 ### Relevant Architecture
@@ -491,15 +624,16 @@ item, and it is dropped (Eng Lead, 2026-10-19; OQ-1).
 - NFR-04, `PendingTopUp`: replaced by `LearnerCreditTopUp` in `state=processing`. Rows are kept,
   not soft-deleted after 30 days, because of S-01 (Data Model). To be confirmed with the PM in Phase 2
   design.
-- R-09 depends on data that doesn't exist yet (OQ-8). R-10 is met by Stripe's own screening, so
-  enterprise-access adds no SDN check (OQ-4, resolved 2026-10-19).
+- R-09 depends on data that doesn't exist yet (OQ-8). R-10 rests on Stripe's sanctions controls as
+  Stripe's published policy describes them. `pay` also rejects a card whose billing country is on the
+  embargoed-country list (OQ-4; basis corrected 2026-11-03).
 - S-04, the SDN failure rate: out of scope for Phase 1 (OQ-13, Eng Lead 2026-10-21). Stripe screens
   payments, and enterprise-access doesn't count screening blocks. The failed-payment rate is still
   measured. The Data Model notes what a future change would need.
 - NFR-05, flag name: the PRD calls the flag `FEATURE_LEARNER_CREDIT_TOP_UP`. This spec uses
   `FEATURE_TOP_UP_LEARNER_CREDIT`, the name the admin portal already ships
   (`AP:src/config/index.js:76` as of `ac9849ae`, #183), so the portal and the backend use one name
-  (Eng Lead, 2026-10-13). enterprise-access reads it as a Django setting, the way it gates SSP (KD-6).
+  (Eng Lead, 2026-10-13). enterprise-access reads it as a Django setting, checked on every request (KD-6).
   **Note:** `FEATURE_LEARNER_CREDIT_TOP_UP` = `FEATURE_TOP_UP_LEARNER_CREDIT`. Both names refer to
   the same flag; wherever the PRD says `FEATURE_LEARNER_CREDIT_TOP_UP`, read `FEATURE_TOP_UP_LEARNER_CREDIT`.
 
@@ -515,10 +649,10 @@ release, the decisions that survived the build are minted as ADRs at Knowledge B
 | --- | --- | --- | --- | --- |
 | KD-1 | Deliver in three phases (see Phased Delivery): (1) card top-ups plus the Salesforce opportunity, (2) ACH and Pending Credits, (3) billing history. | ACH is blocked by admin-portal ADR 0012 until a security review, pentest, NACHA audit, and Legal review are done, and one-time charges are net-new; shipping card first delivers the value without waiting on ACH compliance. Salesforce is in Phase 1 because deposits must be recorded and tracked auditably in the database from the first sale (Eng Lead, 2026-09-25); it also protects revenue attribution (PRD RK-03, K-03), and Phase 1 already needs Salesforce data for the discount (OQ-3). Billing history waits on how Phase 1 charges (OQ-6, which it also waited on, was resolved 2026-10-19). | One V1 release with every PRD requirement (all value blocked on ACH compliance); Salesforce opportunity in a later phase (revenue from early top-ups unattributed). | All — per-phase mapping in Phased Delivery |
 | KD-2 | Top-ups live in enterprise-access's `customer_billing` app. A new `LearnerCreditTopUp` model owns the state machine and the orchestration. enterprise-subsidy stays the ledger of record and only takes the deposit. | enterprise-access already has the Stripe client, the webhook registry (`EA:.../stripe_event_handlers.py:524-554`), billing-management access control, the Celery and Braze tasks, and write access to `spend_limit`. enterprise-subsidy has none of these (Current State). `customer_billing` rather than a new app because the top-up needs that app's webhook dispatch, Stripe helpers and permissions anyway; a new app would only be separate in name. | Record in enterprise-subsidy (it would need Stripe, Celery, a webhook, and a call back into enterprise-access to raise `spend_limit`); a separate `top_up` app in enterprise-access (it would import all of `customer_billing` anyway). | R-01, R-09, R-11, R-14, NFR-04; S-01 |
-| KD-3 | Charge each top-up through one Stripe PaymentIntent, created and confirmed on the server with a saved card. Phase 1 takes cards only; Phase 2 adds ACH to the same PaymentIntent (KD-1), and its bank verification and settlement are designed with Phase 2. Fulfill in the same request when the charge succeeds; the `payment_intent.succeeded` webhook and a Celery task are backstops. **3DS stays in the page** (Eng Lead, 2026-11-02): the confirm sets `use_stripe_sdk` and sends no `return_url`. The portal runs the challenge with Stripe.js `handleNextAction`, then calls `finalize`, which fulfills in the same request the way `pay` does. Only Stripe's own libraries are used: stripe-python on the server, and `@stripe/stripe-js` with `@stripe/react-stripe-js` in the portal (`AP:package.json:47-48`). | Confirming on the server puts the eligibility check at the moment of charge (R-09). Fulfilling in the same request meets the 30-second target (R-01, NFR-01) without waiting for webhook delivery, and `finalize` gives a 3DS payment the same path. Because the challenge never leaves the page, nothing reloads and the flow has no state to rebuild (UX-01). With one PaymentIntent per top-up, a double charge can't happen (NFR-02, RK-04). The live invoice handlers, which only handle subscriptions (`EA:.../stripe_event_handlers.py:353-383, 560`), are left alone. Cost: Phase 3 billing history must list top-up records alongside Stripe invoices, because today it reads only invoices (`EA:.../views/customer_billing.py:1748`). Cost: portal ADR 0014, which expects a 3DS reload to a `returnUrl`, needs an amendment, and that every card challenge stays in the page is `[Assumed]` until a stage test (OQ-14). | Confirm in the browser and fulfill only from the webhook (no server eligibility check at the moment of charge, and funds wait for webhook delivery); 3DS through a redirect to a `return_url`, as ADR 0014 assumes (every 3DS payment reloads the page, and the Confirmation step must rebuild its state from the server); one-off Stripe Invoice (Phase 3 nearly free, but it changes the live subscription invoice path and needs more Stripe calls per charge). SDN screening no longer separates these: since OQ-4, Stripe screens every charge, whoever confirms it. | R-01, R-06, R-08, R-10, R-13 (cost), R-16, R-19, UX-01, NFR-01, NFR-02 |
+| KD-3 | Charge each top-up through one Stripe PaymentIntent, created and confirmed on the server with a saved card. Phase 1 takes cards only; Phase 2 adds ACH to the same PaymentIntent (KD-1), and its bank verification and settlement are designed with Phase 2. Fulfill in the same request when the charge succeeds; the `payment_intent.succeeded` webhook and a Celery task are backstops. **3DS stays in the page** (Eng Lead, 2026-11-02): the confirm sets `use_stripe_sdk` and sends no `return_url`. The portal runs the challenge with Stripe.js `handleNextAction`, then calls `finalize`, which fulfills in the same request the way `pay` does. Only Stripe's own libraries are used: stripe-python on the server, and `@stripe/stripe-js` with `@stripe/react-stripe-js` in the portal (`AP:package.json:47-48`). | Confirming on the server puts the eligibility check at the moment of charge (R-09). Fulfilling in the same request meets the 30-second target (R-01, NFR-01) without waiting for webhook delivery, and `finalize` gives a 3DS payment the same path. Because the challenge never leaves the page, nothing reloads and the flow has no state to rebuild (UX-01). With one PaymentIntent per top-up, a double charge can't happen (NFR-02, RK-04). The live invoice handlers, which only handle subscriptions (`EA:.../stripe_event_handlers.py:353-383, 560`), are left alone. Cost: Phase 3 billing history must list top-up records alongside Stripe invoices, because today it reads only invoices (`EA:.../views/customer_billing.py:1748`). Cost: portal ADR 0014, which expects a 3DS reload to a `returnUrl`, needs an amendment, and that every card challenge stays in the page is `[Assumed]` until a stage test (OQ-14). | Confirm in the browser and fulfill only from the webhook (no server eligibility check at the moment of charge, and funds wait for webhook delivery); 3DS through a redirect to a `return_url`, as ADR 0014 assumes (every 3DS payment reloads the page, and the Confirmation step must rebuild its state from the server); one-off Stripe Invoice (Phase 3 nearly free, but it changes the live subscription invoice path and needs more Stripe calls per charge). Sanctions screening no longer separates these: Stripe's controls apply to every charge on the account, whoever confirms it (OQ-4). | R-01, R-06, R-08, R-10, R-13 (cost), R-16, R-19, UX-01, NFR-01, NFR-02 |
 | KD-4 | Add a new `EnterpriseStripeCustomer` table that maps each enterprise to its Stripe customer, backfilled from `CheckoutIntent`. For an enterprise with no Stripe customer, enterprise-access creates one when the first quote is made. | Sales-provisioned Learner Credit customers have no `CheckoutIntent`, so today neither top-ups nor saved payment methods can find their Stripe customer (`EA:.../views/customer_billing.py:816-842`). One table fixes both. | Stripe customer search by metadata (the search index lags and is rate-limited, so duplicate customers are possible); a synthetic `CheckoutIntent` (it reserves a slug and name, and needs a product and a license quantity). | R-08, R-14 |
-| KD-5 | Make enterprise-subsidy's existing deposit endpoint safe to retry. When the caller sends an explicit `idempotency_key`: 200 for a replay, 409 for a conflict. For every caller, with or without a key: 429 when the ledger is locked. Add a `stripe_payment_intent` reference provider for top-up deposits. | Today a retry and a lock timeout both return 422 (`ES:.../api/v2/views/deposit.py:96-97`), so enterprise-access can't tell "already done" from "try again" from "failed". The view already has the 200-on-replay path (`deposit.py:58-67, 92-94`) and the enterprise-access client already sends keys (`SCL:.../client.py:375-407`), so the change is small and needs no client release. A duplicate sent without a key still gets 422, so an operator's accidental duplicate is still blocked. A locked ledger gets 429 whether or not a key is sent, as it already does for redemptions (`ES:.../api/v2/views/transaction.py:192-196`; Eng Lead, 2026-10-30). A top-up has no OpportunityLineItem when the deposit is made, so its reference is the PaymentIntent. | A new endpoint just for self-service deposits (duplicates the validation and needs a new client method); no enterprise-subsidy change, with enterprise-access checking for an existing deposit first (no deposit lookup exists, `ES:enterprise_subsidy/apps/api/filters.py:41-48`, and the check races). | R-01, NFR-02, NFR-04; S-01 |
-| KD-6 | enterprise-access reads `FEATURE_TOP_UP_LEARNER_CREDIT` the way it gates self-service purchasing (SSP): as a Django setting, default `False`, that decides whether `api/v1/urls.py` registers the `learner-credit-top-ups` routes. With it off, every top-up endpoint returns 404 (NFR-05). Each environment sets it in edx-internal, next to `ENABLE_CUSTOMER_BILLING_API`. (Eng Lead, 2026-10-19; resolves OQ-12.) | This is how enterprise-access already gates its billing APIs (`EA:enterprise_access/settings/base.py:675-678`; `EA:enterprise_access/apps/api/v1/urls.py:38-45`; `INT:argocd/applications/enterprise-access/prod-config.yaml:187-188`), so it needs no new mechanism. The Stripe webhook stays under `customer-billing`, which `ENABLE_CUSTOMER_BILLING_API` gates, so a top-up that was already paid is still credited when this flag is off (Feature Flags). The PRD's NFR-05 asks only for the gate and the 404, not per-enterprise control. **Cost:** the flag applies to a whole environment, so production can't be piloted with a few enterprises. Turning it on or off takes an edx-internal change and a redeploy, not a runtime toggle, on both the backend and the portal. | A global waffle flag (a runtime toggle that can target users and groups, but a second flag style for this one feature); a waffle flag plus a per-enterprise allowlist (new code and a new pattern); the LMS's `enterprise_features` (also global waffle flags, so it adds an LMS call without per-enterprise control). | NFR-05, UX-02 |
+| KD-5 | Make enterprise-subsidy's existing deposit endpoint safe to retry. When the caller sends an explicit `idempotency_key`: 200 for a replay, 409 for a conflict. For every caller, with or without a key: 429 when the ledger is locked, 404 when the subsidy no longer exists, and 400 with a message for a request that fails validation, never a 500 (Eng Lead, 2026-11-03). Add a `stripe_payment_intent` reference provider for top-up deposits. | Today a retry and a lock timeout both return 422 (`ES:.../api/v2/views/deposit.py:96-97`), so enterprise-access can't tell "already done" from "try again" from "failed". The view already has the 200-on-replay path (`deposit.py:58-67, 92-94`) and the enterprise-access client already sends keys (`SCL:.../client.py:375-407`), so the change is small and needs no client release. A duplicate sent without a key still gets 422, so an operator's accidental duplicate is still blocked. A locked ledger gets 429 whether or not a key is sent, as it already does for redemptions (`ES:.../api/v2/views/transaction.py:192-196`; Eng Lead, 2026-10-30). A top-up has no OpportunityLineItem when the deposit is made, so its reference is the PaymentIntent. | A new endpoint just for self-service deposits (duplicates the validation and needs a new client method); no enterprise-subsidy change, with enterprise-access checking for an existing deposit first (no deposit lookup exists, `ES:enterprise_subsidy/apps/api/filters.py:41-48`, and the check races). | R-01, NFR-02, NFR-04; S-01 |
+| KD-6 | `FEATURE_TOP_UP_LEARNER_CREDIT` is the one feature flag for top-ups: it alone turns the feature on or off (Eng Lead, 2026-11-03, review gap G-16). enterprise-access reads it as a Django setting, default `False`. That is the same mechanism as the settings that gate self-service purchasing (SSP), though those are on by default (Current State). It does not decide whether `api/v1/urls.py` registers the `learner-credit-top-ups` routes. The routes are always registered, and the viewset checks the setting on every request through `is_top_up_enabled()` and raises 404 when it is off (NFR-05). The check runs after authentication, so a request without a JWT still gets 401 (`EA:enterprise_access/apps/api/v1/urls.py:46-47`; `views/customer_billing.py:2424-2430`; `customer_billing/api.py:570-578`, at `ff071483`). Each environment sets it in edx-internal, next to `ENABLE_CUSTOMER_BILLING_API`. SSP's two settings, `ENABLE_CUSTOMER_BILLING_API` (the Stripe webhook) and `ENABLE_BILLING_MANAGEMENT_API` (saved cards), are prerequisites, not top-up flags: both are already on in stage and production, and top-up doesn't change them. No WaffleSwitch is added for now (Alternatives 15). (Eng Lead, 2026-10-19, resolving OQ-12; the per-request check, 2026-11-03, adopting #319, review gap G-3; the one flag, 2026-11-03, G-16.) | It is a Django setting set per environment, as enterprise-access already sets its billing APIs (`EA:enterprise_access/settings/base.py:675-678`; `INT:argocd/applications/enterprise-access/prod-config.yaml:187-188`), so it needs no new mechanism. #319 already built it this way, and every top-up endpoint reuses the same check. The Stripe webhook stays under `customer-billing`, which `ENABLE_CUSTOMER_BILLING_API` gates, so a top-up that was already paid is still credited when this flag is off (Feature Flags). The PRD's NFR-05 asks only for the gate and the 404, not per-enterprise control. **Cost:** the flag applies to a whole environment, so production can't be piloted with a few enterprises. Turning it on or off takes an edx-internal change and a redeploy, not a runtime toggle, on both the backend and the portal. That includes stopping new charges during an incident (Rollback Plan step 1). | A global waffle flag instead of the setting (a runtime toggle that can target users and groups but not an enterprise, and #319 already built the setting; enterprise-access already uses waffle, so it isn't a new style, `EA:enterprise_access/toggles.py:18, 51, 87, 118`); a WaffleSwitch that pauses quote and `pay` at runtime, as `docs/architecture-patterns.md` §20 does for irreversible behavior (not added for now, Eng Lead, 2026-11-03); a waffle flag plus a per-enterprise allowlist (new code and a new pattern); the LMS's `enterprise_features` (also global waffle flags, so it adds an LMS call without per-enterprise control). | NFR-05, UX-02 |
 | KD-7 | A charge that succeeds after its quote expired is credited. The state machine allows `expired → paid`, and the `payment_intent.succeeded` handler treats an `expired` top-up like `created` or `requires_action`: it moves it to `paid` and queues fulfillment. `finalize` does the same for an `expired` top-up whose PaymentIntent succeeded (KD-3, 2026-11-02). (Eng Lead, 2026-10-21; resolves OQ-11, option (a).) | Money that has been taken must always be credited (failure mode 1). A 3DS challenge can be finished after `expires_at`, and Stripe then captures the payment. Cancelling the PaymentIntent when the quote expires (option b) still races with a challenge being finished at that moment, and the loser of that race is a charge with nothing to credit it. The amounts were fixed in the quote the admin accepted, so crediting them later charges no price the admin didn't agree to. **Cost:** a late charge isn't re-checked for eligibility. If the subsidy expired in between, the deposit fails with 422, the top-up goes to `errored_fulfillment`, on-call is paged, and it stays there until ops extend the subsidy and re-run it (no refund in Phase 1; Recovery jobs). | Cancel the PaymentIntent when a quote in `requires_action` expires (races with a finished challenge, and leaves charges to find and refund by hand). | R-01, NFR-02; S-01 |
 
 **Superseded Decisions:** none. This spec doesn't replace an earlier draft.
@@ -547,7 +681,7 @@ flowchart TD
     subgraph SG_EA["enterprise-access"]
         E1{"GET eligibility<br/>active · 14+ days left<br/>standing and agreement type (OQ-8)"}
         E2["POST quote: state created<br/>discount and quote number (OQ-3)<br/>balances · Stripe customer (KD-4)"]
-        E3{"POST pay<br/>re-check eligibility<br/>SDN: Stripe screens the charge"}
+        E3{"POST pay<br/>re-check eligibility<br/>embargoed billing country: 400<br/>sanctions: Stripe's controls"}
         E9{"POST finalize (KD-3)<br/>retrieve the PaymentIntent"}
         E4["Deposit step<br/>key lc-top-up-uuid<br/>quantity = amount_cents (full amount, OQ-7)"]
         E5["Spend-limit step: state fulfilled<br/>spend_limit += amount_cents<br/>one atomic block, select_for_update"]
@@ -596,7 +730,7 @@ flowchart TD
     E4 --> D1
     D1 -->|"201, or 200 on replay:<br/>state deposited"| E5
     D1 -->|"429 ledger locked,<br/>5xx or timeout"| E7
-    D1 -->|"400, 403, 409 or 422"| E6
+    D1 -->|"400, 403, 404, 409 or 422"| E6
     E7 -->|"retries exhausted"| E6
     E6 -.->|"re-run job every 30 min,<br/>or ops by hand"| E7
     S1 -.->|"pay and webhook missed it"| E8
@@ -633,7 +767,7 @@ impl-plan.*
 | --- | --- | --- | --- |
 | `LearnerCreditTopUp` (EA `customer_billing`) | See the field table below | FK → `SubsidyAccessPolicy` (PROTECT); FK → `User` (SET_NULL) | One row per top-up, from quote to fulfillment. This is the audit record for every self-service deposit (S-01), and rows are never deleted. `TimeStampedModel` + `HistoricalRecords` with a UUID primary key, like `ForcedPolicyRedemption` (`EA:.../subsidy_access_policy/models.py:2152-2229`). State changes go through an allowed-transitions table, as `CheckoutIntent` does (`EA:.../customer_billing/constants.py:96-121`; `models.py:371-396`). |
 | `EnterpriseStripeCustomer` (EA `customer_billing`) | `enterprise_customer_uuid` (UUID, unique) · `stripe_customer_id` (char 255, unique) · `source` (`checkout_intent_backfill` / `created_for_top_up`) | None; the enterprise is referenced by UUID, as elsewhere in EA | KD-4. `TimeStampedModel` + `HistoricalRecords`. `_get_stripe_customer_id_for_enterprise` reads this table first and falls back to `CheckoutIntent` (`EA:.../views/customer_billing.py:816-842`). |
-| enterprise-subsidy: no new table | — | — | One new data row: a `SalesContractReferenceProvider` with slug `stripe_payment_intent` (KD-5; slugs are limited to 32 characters, `LED:openedx_ledger/models.py:683-685`). The slug is its own constant, not added to `SubsidyReferenceChoices`, because that list is also the set of allowed `Subsidy.reference_type` values (`ES:enterprise_subsidy/apps/subsidy/models.py:63-70, 176`) and a subsidy is never created by a PaymentIntent (Eng Lead, 2026-10-13). Each top-up is an ordinary ledger `Deposit` + `Transaction` (`LED:openedx_ledger/models.py:701-756`), so top-up funds are interchangeable with the original funds (PRD A-3). |
+| enterprise-subsidy: no new table | — | — | One new data row: a `SalesContractReferenceProvider` with slug `stripe_payment_intent` (KD-5; slugs are limited to 32 characters, `LED:openedx_ledger/models.py:683-685`). The slug is its own constant, not added to `SubsidyReferenceChoices`, because that list is also the set of allowed `Subsidy.reference_type` values (`ES:enterprise_subsidy/apps/subsidy/models.py:63-70, 176`) and a subsidy is never created by a PaymentIntent (Eng Lead, 2026-10-13). Each top-up is an ordinary ledger `Deposit` + `Transaction` (`LED:openedx_ledger/models.py:701-756`), so top-up funds are interchangeable with the original funds (A-3 in the repo PRD, `enterprise-subsidy/docs/prd/learner-credit-top-up-prd.md:235`, a local copy; PRD V2 has no assumptions list). |
 
 **`LearnerCreditTopUp` fields**
 
@@ -643,7 +777,7 @@ impl-plan.*
 | `enterprise_customer_uuid` | UUID, indexed | Must match the policy's enterprise; checked on every request. |
 | `subsidy_access_policy` | FK, PROTECT | The budget (R-14). PROTECT because a paid top-up must never lose its budget. Policies are soft-deleted with `active=False`, so they are never hard-deleted in normal use (`EA:.../subsidy_access_policy/models.py:1196-1206`). |
 | `subsidy_uuid` | UUID, indexed | Copy of `policy.subsidy_uuid` taken when the top-up is created; this is where the deposit goes. |
-| `initiated_by` / `initiated_by_lms_user_id` | FK `User` (SET_NULL) / integer | The integer ID is kept after the user is retired (`EA:enterprise_access/apps/core/models.py:20`). Needs a `.. pii:` annotation, as on `StripeEventData` (`EA:.../customer_billing/models.py:1050`). |
+| `initiated_by` / `initiated_by_lms_user_id` | FK `User` (SET_NULL) / integer, null | The integer ID is kept after the user is retired (`EA:enterprise_access/apps/core/models.py:20`). #323 annotates it `.. pii_retirement: retained` (`EA:.../customer_billing/models.py:1476` at `ff071483`). `StripeEventData`'s data is scrubbed instead (`local_api`, `:1061`). |
 | `state` | char, indexed, choices | See the state machine below. Only the server writes it; clients can never set it (see the `CheckoutIntent` PATCH gap in Current State). |
 | `amount_cents` | BigInteger | Credit added to the budget: the full selected amount, not the discounted amount (OQ-7). It is used three times: as the ES `desired_deposit_quantity`, as the `spend_limit` increase, and as the amount validated against the 50,000–2,000,000 range (R-02). |
 | `discount_rate` | Decimal(5,4), null | Copied at quote time (R-05). `NULL` means no discount is on record, so the discount row is hidden. `0` is a real 0% rate and is never used as a default for `NULL` (RK-05). Source: OQ-3. |
@@ -656,7 +790,7 @@ impl-plan.*
 | `payment_method_type` / `stripe_payment_method_id` | char / char, null | `card` in Phase 1; `us_bank_account` in Phase 2. Card brand and last 4 digits are fetched from Stripe, not stored. |
 | `deposit_uuid` / `ledger_transaction_uuid` | UUID, null | Returned by ES (`ES:enterprise_subsidy/apps/api/v2/serializers/deposits.py:30-37`). |
 | `spend_limit_before` / `spend_limit_after` | Integer, null | Written in the same DB transaction as the `spend_limit` increase. They are the audit trail and show the increase happened once. They stay `NULL` when the policy has no `spend_limit`, because in that case the ledger deposit alone raises the available balance (`EA:.../subsidy_access_policy/models.py:587-594`). |
-| `expires_at` | datetime | Unpaid quotes expire (proposed: 30 minutes), so a stale discount or balance is never charged. |
+| `expires_at` | datetime | Unpaid quotes expire 30 minutes after they are created, so a stale discount or balance is never charged (`LEARNER_CREDIT_TOP_UP_QUOTE_MINUTES`, `EA:.../customer_billing/constants.py:102` at `ff071483`, #323). |
 | `paid_at` / `deposited_at` / `fulfilled_at` | datetime, null | Each is set once, on the change into that state, in the same save as the state. `fulfilled_at − paid_at` is the time-to-spendable-funds metric (Performance Budget), and `paid_at` / `deposited_at` start the stuck-top-up alert's clock (Fulfillment rule 4). |
 | `last_error` | text, null | Same role as `CheckoutIntent.last_checkout_error` (`EA:.../customer_billing/models.py:326`). |
 | `salesforce_opportunity_id` / `salesforce_synced_at` | char / datetime, null | For R-11. The shape may change once OQ-5 is answered. |
@@ -681,8 +815,8 @@ stateDiagram-v2
     requires_action --> created: finalize finds the challenge failed
     created --> paid: PaymentIntent succeeded
     requires_action --> paid: finalize, or payment_intent.succeeded
-    created --> expired: unpaid past expires_at
-    requires_action --> expired: unpaid past expires_at
+    created --> expired: expiry job, past expires_at
+    requires_action --> expired: expiry job, past expires_at
     expired --> paid: finalize or payment_intent.succeeded after expiry (KD-7)
     paid --> deposited: ES deposit 201 or 200 (replay)
     deposited --> fulfilled: spend_limit raised
@@ -715,14 +849,30 @@ this during Phase 2 design.
 
 **Fulfillment rules.** These rules either rule out the two failure modes in the Problem Summary or make them trigger an alert.
 
-1. The deposit is made only after the PaymentIntent has succeeded (PRD Principle 2).
+1. The deposit is made only after the PaymentIntent has succeeded (Principle 2 of the repo PRD, `enterprise-subsidy/docs/prd/learner-credit-top-up-prd.md:38`, a local copy; PRD V2 has no principles list).
 2. **Deposit step:** the ES call uses the key `lc-top-up-<uuid>`. A replay returns the same deposit (KD-5), so retries never deposit twice.
-3. **Spend-limit step:** one `transaction.atomic()` block locks the policy and the top-up with
-   `select_for_update()`, adds `amount_cents` to `spend_limit`, and moves the top-up to `fulfilled`.
-   It runs only from `deposited`, so it runs once. It must read a fresh `total_deposits`, because
-   `clean_spend_limit` reads the subsidy record from the request cache
-   (`EA:.../subsidy_access_policy/models.py:434-444, 511-545`). `select_for_update` is not used
-   anywhere in enterprise-access today (grep → 0 hits), so this is a new pattern for the repo.
+3. **Spend-limit step.** It runs only from `deposited`, so it runs once. Its read is fresh, made
+   before the lock, and treated as retryable if it fails (Eng Lead, 2026-11-03; review gap G-6):
+   - **Workers start clean.** The fulfillment task and the recovery commands clear the request cache
+     when they start (`RequestCache.clear_all_namespaces()`, as
+     `EA:enterprise_access/apps/subsidy_access_policy/tasks.py:26-29` does at `ff071483`). So no record
+     cached by an earlier task in the same worker is used (Current State).
+   - **Fresh read, outside the lock.** The step clears the policy's cached subsidy record, then reads it
+     with `subsidy_record(raise_on_error=True)`. Clearing comes first because a cached record is returned
+     even with `raise_on_error=True`; only a cached `{}` is fetched again
+     (`EA:.../subsidy_access_policy/models.py:525-552` at `ff071483`). In `pay` and `finalize`, this
+     replaces the copy the eligibility check cached before the deposit (TR-2).
+   - **A failed read is retryable.** An HTTP error, connection error or timeout leaves the top-up in
+     `deposited`, and the task retries it like a 5xx from the deposit. If the retries run out, it moves
+     to `errored_fulfillment`, marked retryable, and the re-run job resumes it (Recovery jobs).
+   - **Then one `transaction.atomic()` block** locks the policy and the top-up with `select_for_update()`,
+     adds `amount_cents` to `spend_limit`, and moves the top-up to `fulfilled`. `save()` runs
+     `clean_spend_limit`, which now reads the fresh record from the request cache
+     (`EA:.../subsidy_access_policy/models.py:434-444`), so the block makes no network call.
+   - **A validation failure isn't retried.** If the save fails validation even with a fresh record, a
+     retry would fail the same way. The top-up moves to `errored_fulfillment`, not retryable, which pages.
+   - Locking a policy row is new to the repo: `select_for_update` is used only by #323's `transition_to()`
+     and by assignment expiry, and the SQLite test database ignores it (Current State).
 4. A top-up that stays in `paid` or `deposited` with no change past the alert threshold pages
    on-call. This is the "charged but not credited" alarm; the threshold is set in Monitoring &
    Alerting. A top-up in `errored_fulfillment` pages when the re-run job won't retry it (Recovery jobs).
@@ -733,12 +883,12 @@ this during Phase 2 design.
    The deposit's provider is `stripe_payment_intent` and its reference ID is the `pi_…` ID. Together
    these let the ledger alone show who made the top-up, how much, when, which payment, and what
    discount applied (S-01).
-6. **Recovery** (Eng Lead, 2026-11-02): two scheduled jobs finish what `pay`, the webhook and the
-   task's own retries didn't, and ops re-run the rest by hand (Recovery jobs, below).
+6. **Recovery** (Eng Lead, 2026-11-02; quote expiry added 2026-11-03): three scheduled jobs finish what `pay`, the webhook and the
+   task's own retries didn't, and expire unpaid quotes, and ops re-run the rest by hand (Recovery jobs, below).
 
 **Recovery jobs** (Eng Lead, 2026-11-02)
 
-Both jobs are management commands that select top-ups from the database, like
+All three jobs are management commands that select top-ups from the database, like
 `mark_stalled_checkout_intents` (`EA:.../customer_billing/management/commands/mark_stalled_checkout_intents.py`).
 They run as edx-internal CronJobs next to it (`INT:argocd/applications/enterprise-access/prod-config.yaml:412-417`
 at `491da4da5`). They change state only through `transition_to()` and queue the fulfillment task only
@@ -752,6 +902,14 @@ the webhook handlers and the task, they ignore the feature flag (Feature Flags).
   is queued, as the webhook would do. This catches a charge that both `pay` and the webhook missed,
   including a 3DS charge finished after the quote expired (KD-7). It relies on `pay` saving the
   PaymentIntent ID before it confirms (How `pay` works, step 2).
+- **Quote expiry** (`expire_learner_credit_top_up_quotes`, name proposed; every 10 minutes, the same
+  schedule as `mark_stalled_checkout_intents`; Eng Lead, 2026-11-03; review gap G-1):
+  - It moves top-ups to `expired` when they are in `created` or `requires_action`, their `expires_at`
+    has passed, and they haven't changed for 5 minutes (`modified`).
+  - The 5 minutes are the Stripe check's margin, so a `pay` still waiting on Stripe isn't expired under it.
+    `pay` updates `modified` when it saves the PaymentIntent ID (How `pay` works, step 2).
+  - It queues nothing and cancels no PaymentIntent (KD-7). An expired top-up whose charge still succeeds
+    is credited through `finalize`, the webhook or the Stripe check.
 - **Re-run** (`rerun_learner_credit_top_ups`, every 30 minutes):
   - A top-up in `errored_fulfillment` whose failure is retryable (the task ran out of retries on a
     429, a 5xx, a connection error or a timeout) and that has had fewer than 3 automatic re-runs. It
@@ -762,16 +920,18 @@ the webhook handlers and the task, they ignore the feature flag (Feature Flags).
   - A top-up in `paid` or `deposited` that hasn't changed for 45 minutes, for example after a lost
     Celery message: the task is queued again. 45 minutes is longer than the task's own retries, so
     a task that is still retrying isn't doubled.
-  - It never re-runs a 400, 403, 409 or 422 on its own. Those fail again until someone fixes the cause.
+  - It never re-runs a 400, 403, 404, 409 or 422 on its own, nor a spend-limit step that failed validation with a
+    fresh record (Fulfillment rule 3). Those fail again until someone fixes the cause.
 - **Manual re-run:** the same command with `--top-up-uuid` (repeatable) and `--dry-run`. Ops fix the
   record or its cause, then re-run it by hand. A manual run ignores the cap and the retryable check.
-  For a 403, restore the operator grant or the subsidy first; for a 422, extend the subsidy in
+  For a 403, restore the operator grant or the subsidy first; for a 404, restore the subsidy; for a 422, extend the subsidy in
   enterprise-subsidy.
 - **The task's own retries** keep the shared base task's settings: 5 retries, with backoff from 60
-  seconds, doubling, capped at 10 minutes, so up to about 25 minutes (`EA:enterprise_access/tasks.py:20-39`;
+  seconds, doubling, capped at 10 minutes, with full jitter, so up to about 25 minutes in all (`EA:enterprise_access/tasks.py:20-39`;
   `settings/base.py:466` at `ff071483`). The base task retries every `HTTPError` (`tasks.py:20-26`), so
-  the fulfillment task catches 400, 403, 409 and 422 itself and moves the top-up to
-  `errored_fulfillment` without retrying.
+  the fulfillment task catches 400, 403, 404, 409 and 422 itself and moves the top-up to
+  `errored_fulfillment` without retrying. A failed subsidy read in the spend-limit step is retried like a
+  5xx (Fulfillment rule 3).
 - **New fields** (impl-plan chunk 10): whether the last fulfillment error is retryable, and how many
   automatic re-runs have run. `last_error` is free text, so the job can't tell the two kinds apart from it.
 
@@ -781,11 +941,12 @@ the webhook handlers and the task, they ignore the feature flag (Feature Flags).
 | How the Stripe check finds top-ups | Pull `payment_intent.succeeded` events from Stripe: at most 100 per run, from the last 30 days only | From the database: unpaid top-ups that have a PaymentIntent, then one PaymentIntent read each |
 | Minimum age it checks | None. `mark_stalled_checkout_intents` uses 3 minutes. | 5 minutes with no change: a `pay` request's Stripe call can take about 4 minutes (TR-7) |
 | How long it checks an unpaid top-up | None | 7 days from the quote |
+| Quote expiry | Nothing moves a top-up to `expired`; `pay` only rejects a quote past `expires_at` | Every 10 minutes, like `mark_stalled_checkout_intents`: `created` or `requires_action`, past `expires_at`, unchanged for 5 minutes → `expired` (Eng Lead, 2026-11-03) |
 | Re-run interval | None: re-runs were by hand | Every 30 minutes |
-| The task's own retries | Shared base task: about 25 minutes. Proposed: backoff from 5 seconds. | The shared base task's settings |
+| The task's own retries | Shared base task: up to about 25 minutes (full jitter). Proposed: backoff from 5 seconds. | The shared base task's settings |
 | Stuck `paid` / `deposited` | None | Queued again after 45 minutes with no change |
 | Automatic re-runs per top-up | None | 3, then ops |
-| When it pages | Every time a top-up reaches `errored_fulfillment` | When the cap is reached; right away for a 400, 403, 409 or 422 |
+| When it pages | Every time a top-up reaches `errored_fulfillment` | When the cap is reached; right away for a 400, 403, 404, 409 or 422 |
 | "Charged but not credited" alert | Proposed: 15 minutes | 60 minutes with no change |
 | After the cap | Ops re-run, or refund | Ops fix the record or its cause, then re-run by hand with the same command (`--top-up-uuid`, `--dry-run`). A manual run ignores the cap. |
 | Refund | Ops refund, `errored_fulfillment → refunded` | None in Phase 1: the top-up stays in `errored_fulfillment`. Kept as a future change. |
@@ -817,15 +978,15 @@ Conventions match billing-management:*
 *Permission: a new `customer_billing.learner_credit_top_up` permission, granted to the same roles as
 `BILLING_MANAGEMENT_ACCESS_PERMISSION`: customer-billing operators and admins. Enterprise admins
 get the admin role through `SYSTEM_ENTERPRISE_ADMIN_ROLE` (`EA:.../core/rules.py:634-637`;
-`settings/base.py:356-363`). A separate permission lets top-up access be narrowed later (PRD open
-question 3) without changing billing-management access. Every endpoint returns 404 when the feature
-flag is off (NFR-05), because the routes aren't registered (KD-6).*
+`settings/base.py:356-363`). A separate permission lets top-up access be narrowed later (open
+question 3 of the repo PRD, `enterprise-subsidy/docs/prd/learner-credit-top-up-prd.md:255`) without changing billing-management access. Every endpoint returns 404 when the feature
+flag is off (NFR-05): the viewset checks the setting on every request (KD-6).*
 
 **New Endpoints**
 
 | Method | Path | Request Body | Response | Auth | Notes |
 | --- | --- | --- | --- | --- | --- |
-| GET | `/api/v1/learner-credit-top-ups/eligibility/?enterprise_customer_uuid=&policy_uuid=` | — | 200 `{"results": [{"policy_uuid", "is_eligible", "reasons": [{"error_code", "developer_message"}], "subsidy_expiration_datetime"}]}`. Covers every active policy of the enterprise, or only the one named by `policy_uuid`. | top-up permission | Drives the Add Funds button on Budget List and Budget Detail (UX-02, R-09). It runs the same checks as the write endpoints, so the portal and backend can't disagree (RK-07). It is not added to the shared `subsidy-access-policies` list (`EA:enterprise_access/apps/api/v1/views/subsidy_access_policy.py:264-337`), although that list already returns `subsidy_expiration_datetime` and `is_subsidy_active`: its read permission includes learners, because enterprise admins get the same learner-level policy role (`EA:.../core/rules.py:529-532`; `settings/base.py:356-366`); it can't fail closed, because its serializer swallows subsidy errors (`EA:enterprise_access/apps/api/serializers/subsidy_access_policy.py:120-155`); it can't return 404 when the flag is off without breaking its other callers; and it pages at 10 policies (`subsidy_access_policy.py:257-261`). The eligibility endpoint reuses its filter (`EA:enterprise_access/apps/api/filters/subsidy_access_policy.py:10-25`) and the policy's subsidy-record properties. |
+| GET | `/api/v1/learner-credit-top-ups/eligibility/?enterprise_customer_uuid=&policy_uuid=` | — | 200 `{"results": [{"policy_uuid", "is_eligible", "reasons": [{"error_code", "message"}], "subsidy_expiration_datetime"}]}`. Covers every active policy of the enterprise, or only the one named by `policy_uuid`. 404 `budget_not_found` when `policy_uuid` isn't an active policy of the enterprise; 404 `no_budgets_found` when the enterprise has no active policy (`EA:.../views/customer_billing.py:2482-2498`, at `ff071483`). Built in #319. | top-up permission | Drives the Add Funds button on Budget List and Budget Detail (UX-02, R-09). It runs the same checks as the write endpoints, so the portal and backend can't disagree (RK-07). It is not added to the shared `subsidy-access-policies` list (`EA:enterprise_access/apps/api/v1/views/subsidy_access_policy.py:264-337`), although that list already returns `subsidy_expiration_datetime` and `is_subsidy_active`: its read permission includes learners, because enterprise admins get the same learner-level policy role (`EA:.../core/rules.py:529-532`; `settings/base.py:356-366`); it can't fail closed, because its serializer swallows subsidy errors (`EA:enterprise_access/apps/api/serializers/subsidy_access_policy.py:120-155`); it can't return 404 when the flag is off without breaking its other callers; and it pages at 10 policies (`subsidy_access_policy.py:257-261`). The eligibility endpoint reuses its filter (`EA:enterprise_access/apps/api/filters/subsidy_access_policy.py:10-25`) and the policy's subsidy-record properties. |
 | POST | `/api/v1/learner-credit-top-ups/?enterprise_customer_uuid=` | `{"subsidy_access_policy_uuid", "amount_cents"}` | 201 top-up (see below) with `state: created` | same | Creates the quote. It checks eligibility, records the discount, quote number and balances, and makes sure the enterprise has a Stripe customer (KD-4). The result feeds the Billing Details review (R-03) and the legal agreement (R-04). Nothing is charged. To change the amount, create a new quote; unpaid quotes expire. |
 | POST | `/api/v1/learner-credit-top-ups/<uuid>/pay/?enterprise_customer_uuid=` | `{"payment_method_id": "pm_…", "payment_attempt_id": "<uuid>", "agreement_accepted": true, "agreement_version"}` | 200 top-up. `state` is `fulfilled`, or `paid` (fulfillment deferred; poll), or `requires_action` with a `client_secret` (3DS). 402 if the card is declined. | same | See KD-3. Details below the table. |
 | POST | `/api/v1/learner-credit-top-ups/<uuid>/finalize/?enterprise_customer_uuid=` | — | 200 top-up. `state` is `fulfilled`, or `paid` (poll), or `requires_action` with a `client_secret` (the challenge isn't finished; run it again), or the top-up as it was when there is nothing to finalize. 402 if the challenge failed. | same | Called by the portal after the 3DS challenge (KD-3). Details below the table. |
@@ -834,20 +995,39 @@ flag is off (NFR-05), because the routes aren't registered (KD-6).*
 
 **How `pay` works** (all steps on the server):
 
-1. It re-checks eligibility. SDN screening is Stripe's own, during the charge (OQ-4), so
-   enterprise-access runs no check of its own.
-2. It creates the top-up's single PaymentIntent with idempotency key `lc-top-up-<uuid>`. Setting
-   `setup_future_usage` saves the card to the Stripe customer (R-08). In Phase 1,
-   `allowed_payment_method_types: ["card"]` limits it to cards, as the subscription Checkout Session
+1. It re-checks eligibility. It retrieves the PaymentMethod and checks that it belongs to the enterprise's
+   Stripe customer (Security Design).
+   - It rejects a card whose billing country (`billing_details.address.country`) is on the embargoed-country
+     list, with 400 `country_not_supported`, before anything reaches Stripe. It uses
+     `get_embargoed_countries()`, and, like the existing check, an empty country isn't rejected (Current State).
+   - Sanctions screening beyond that is Stripe's, under Stripe's published policy (OQ-4; Eng Lead, 2026-11-03).
+2. If the top-up has no PaymentIntent yet, it creates the top-up's single PaymentIntent, **without a card**
+   (Eng Lead, 2026-11-03; review gap G-9). It uses idempotency key `lc-top-up-<uuid>`, with the amount, currency,
+   customer, `metadata.learner_credit_top_up_uuid` and the type filter.
+   - Those parameters never change, so a later Pay with another card can't hit Stripe's error for a key reused
+     with different parameters.
+   - If the top-up already has a PaymentIntent, from an earlier declined attempt or a failed 3DS challenge,
+     `pay` skips this step.
+   - If the create gets a Stripe 5xx, Stripe answers the same key with that saved 5xx (Integration Points). So
+     `pay` returns 503, and the admin starts again with a new quote.
+   - The card is already saved to the Stripe customer before Pay (R-08): a new card is attached first, through
+     billing-management (Sequence Diagrams part 2).
+
+   In Phase 1, `allowed_payment_method_types: ["card"]` limits it to cards, as the subscription Checkout Session
    already does, so Stripe never needs a `return_url` (`EA:.../customer_billing/stripe_api.py:71-77`,
-   at `ff071483`; the parameter exists from stripe-python `16.0.0`, which `main` pins). Phase 2 adds
-   `us_bank_account` for ACH (KD-1). It saves the PaymentIntent ID on the top-up before step 3, so
-   the Stripe check job can find every charge (Recovery jobs).
-3. It confirms the PaymentIntent with key `lc-top-up-<uuid>-confirm-<payment_attempt_id>`,
+   at `ff071483`). On PaymentIntents the parameter exists in stripe-python `15.6.1` and `16.0.0`
+   (`STR:stripe/params/_payment_intent_create_params.py:10`). `16.0.0`, which `main` pins, removes
+   `payment_method_types`, so this is the only type filter left. `pay` sends it without
+   `automatic_payment_methods`, as the subscription session does. Phase 2 adds
+   `us_bank_account` for ACH (KD-1). It saves the PaymentIntent ID on the top-up before step 3, which also
+   updates `modified`, so the Stripe check job can find every charge and the expiry job leaves it alone
+   (Recovery jobs).
+3. It confirms the PaymentIntent with the chosen card (`payment_method: pm_…`), with key `lc-top-up-<uuid>-confirm-<payment_attempt_id>`,
    `use_stripe_sdk: true` and no `return_url` (`STR:stripe/params/_payment_intent_confirm_params.py:229`,
    at `16.0.0`). The portal generates one `payment_attempt_id` per click of Pay, so a double-click
-   replays the same request instead of charging again. A PaymentIntent can succeed only once, so no
-   sequence of retries can charge twice (NFR-02, RK-04).
+   replays the same request instead of charging again. Retrying or switching card after a decline or a
+   failed challenge is a new attempt: a new `payment_attempt_id`, the same PaymentIntent, the chosen card. A
+   PaymentIntent can succeed only once, so no sequence of retries can charge twice (NFR-02, RK-04).
 4. On success, it tries fulfillment in the same request. If that fails for any reason, a Celery task
    takes over.
 5. On `requires_action`, it moves the top-up to `requires_action` and returns the `client_secret`.
@@ -867,8 +1047,8 @@ flag is off (NFR-05), because the routes aren't registered (KD-6).*
      `requires_action` with the `client_secret`, so the portal can run the challenge again.
    - `requires_payment_method`: the challenge failed. A `requires_action` top-up goes back to
      `created` and the response is 402 `payment_authentication_failed`; an `expired` one stays
-     `expired` and the response is 409 `top_up_expired`. What the admin can do next, retry or switch
-     card, is G-9 (API Contracts, turn 4).
+     `expired` and the response is 409 `top_up_expired`. After the 402, the admin can retry or switch
+     card: the next Pay confirms the same PaymentIntent with the chosen card (`pay` step 3).
    - Any other status: 200 with the top-up unchanged. The webhook and the Stripe check job settle it.
 3. In any other state it returns 200 with the top-up as it is, so a second call, or a call after
    the webhook already moved the top-up, is harmless.
@@ -914,7 +1094,7 @@ flag is off (NFR-05), because the routes aren't registered (KD-6).*
 
 | Method | Path | Change | Breaking? | Migration Path |
 | --- | --- | --- | --- | --- |
-| POST | ES `/api/v2/subsidies/<uuid>/admin/deposits/` | KD-5; details below the table. | No, for known callers. The only caller is enterprise-access's Deposit Funds tool, and it sends no key and no metadata (`EA:.../subsidy_access_policy/admin/views.py:143-147`). On a lock collision it now gets 429 instead of 422. It turns every HTTP error into the same `SubsidyAPIHTTPError` (`EA:.../subsidy_access_policy/models.py:1211-1215`, at `ff071483`), so its behavior doesn't change. An unknown script that calls the API without a key would also get 429 instead of 422 on a collision, which is the more accurate answer. | Ship before the enterprise-access changes. The client already sends `idempotency_key` and documents 429 (`SCL:.../client.py:375-407`), so no client release is needed. |
+| POST | ES `/api/v2/subsidies/<uuid>/admin/deposits/` | KD-5; details below the table. | No, for known callers. The only caller is enterprise-access's Deposit Funds tool, and it sends no key and no metadata (`EA:.../subsidy_access_policy/admin/views.py:143-147`). On a lock collision it now gets 429 instead of 422, for a subsidy deleted during the request, 404 instead of 500, and for an invalid request to an expired subsidy, 400 instead of 422, because validation now runs first. It turns every HTTP error into the same `SubsidyAPIHTTPError` (`EA:.../subsidy_access_policy/models.py:1211-1215`, at `ff071483`), so its behavior doesn't change. An unknown script that calls the API without a key would also get 429 instead of 422 on a collision, which is the more accurate answer. | Ship before the enterprise-access changes. The client already sends `idempotency_key` and documents 429 (`SCL:.../client.py:375-407`), so no client release is needed. |
 | GET, POST, DELETE | EA `/api/v1/billing-management/payment-methods/…` and the other actions that use the same lookup | `_get_stripe_customer_id_for_enterprise` reads `EnterpriseStripeCustomer` first and falls back to `CheckoutIntent` (KD-4). Learner-Credit-only customers now get their saved cards instead of a 404 "Stripe customer not found". | No; additive. Subscription customers resolve to the same Stripe customer because of the backfill. | Run the backfill migration before deploying the code. Listing saved cards so they can be pre-selected (R-08) needs `ENABLE_BILLING_MANAGEMENT_API` on in production. It is (OQ-6, resolved 2026-10-19). |
 | POST | EA `/api/v1/customer-billing/stripe-webhook` | Handles two new event types; details below the table. | No; new event types only. | The Stripe webhook endpoint must be subscribed to `payment_intent.*` events (ops configuration). |
 
@@ -932,7 +1112,8 @@ Only when the caller sends an explicit `idempotency_key`:
 
 For every caller, with or without a key:
 
-- Lock contention returns 429 `ledger_lock_error`, the same way redemptions already do: the v2
+- Lock contention returns 429 (body `{"detail": …}`; `ledger_lock_error` is the DRF error code, not a
+  body field), the same way redemptions already do: the v2
   transaction view catches `LedgerLockAttemptFailed` and raises DRF `Throttled` with
   `ErrorCodes.LEDGER_LOCK_ERROR` (`ES:.../api/v2/views/transaction.py:192-196`). The deposit view
   does the same, in an `except` placed before its existing one (`deposit.py:96-97`). For the lock
@@ -951,6 +1132,18 @@ For every caller, with or without a key:
   with 500, because the serializer unpacks `metadata` with `**` (`ES:.../api/v2/serializers/deposits.py:125-132`).
   Empty metadata (`null`, `{}`, `[]`, `""`) is still accepted as no metadata. (Impl-plan chunk 2;
   enterprise-subsidy #88, in review; Eng Lead, 2026-11-02)
+- A subsidy that is gone when the view loads it returns 404 with a message naming the subsidy, and
+  nothing is created. Today that is an uncaught `Subsidy.DoesNotExist`, a 500 (`deposit.py:51-56`).
+  It can happen only if the subsidy is soft-deleted after the permission check. Before that, the
+  check itself answers 403, because it finds the subsidy through `Subsidy.objects`, which hides soft-deleted
+  rows (`ES:enterprise_subsidy/apps/api/utils.py:7-18`; as in TR-8). (Eng Lead, 2026-11-03)
+- A request that fails validation returns 400 with the error message for each field, and nothing is
+  created. That covers a missing field, a quantity below 1, an unknown provider slug, and the
+  `metadata` rules above. The serializer already returns these as 400 (`deposits.py:50-54, 83-92`), but it
+  validates only inside `super().create()` (`deposit.py:92`), after the expiry check. The view
+  validates first, then runs the replay check, then the expiry check. So an invalid request is a 400
+  even on an expired subsidy, and a replay is compared only once its values are valid. No input
+  returns a 500. (Eng Lead, 2026-11-03)
 - Otherwise, calls without a key are unchanged: a duplicate still gets 422.
 
 **Webhook changes** (EA):
@@ -971,9 +1164,11 @@ For every caller, with or without a key:
 
 **API Error Codes**
 
-The error body is `{"error_code": "…", "developer_message": "…"}`. This is the structured format customer
-billing already uses (`EA:.../api/serializers/customer_billing.py:87-98`; codes defined as in
-`customer_billing/constants.py:6-60`). Access-control 403s and 404s keep DRF's `{"detail": …}` body. The portal
+The error body is `{"error_code": "…", "detail": "…"}`, the shape #319's `_top_up_error_response` returns. Its codes live in
+`TOP_UP_ERRORS` (`EA:.../api/v1/views/customer_billing.py:2405-2410`; `customer_billing/constants.py:84-93`, at `ff071483`), and the
+quote, `pay` and `finalize` codes below are added there. An eligibility reason is `{"error_code", "message"}`
+(`EA:.../api/serializers/customer_billing.py:788-793`). An enterprise-subsidy outage is a 503 with DRF's `{"detail": …}`
+and no `error_code` (`SubsidyAPIUnavailableException`, `EA:.../api/v1/views/subsidy_access_policy.py:488-495`). Access-control 403s and 404s keep DRF's `{"detail": …}` body. The portal
 doesn't handle `error_code` anywhere yet. The closest existing pattern is the assignment flow, which
 branches on a `reason` field
 (`AP:src/components/learner-credit-management/assignment-modal/CreateAllocationErrorAlertModals.jsx:59-62`).
@@ -982,24 +1177,26 @@ branches on a `reason` field
 | --- | --- | --- |
 | 400 `invalid_amount` | `amount_cents` is outside 50,000–2,000,000 | Show inline validation; the portal also checks this itself (R-02). |
 | 400 `agreement_not_accepted` | `agreement_accepted` is not true, or `agreement_version` is not the current version | Keep Pay disabled (R-03) and reload the agreement. |
-| 400 `subsidy_not_available` | enterprise-subsidy answers 403 or 404 for the budget's subsidy: it was soft-deleted or doesn't exist. Today that is a **403** with `{"error_code": "Forbidden", "developer_message": "MISSING: subsidy.can_read_subsidies", "user_message": …}`. A 404 happens only if the subsidy is deleted between enterprise-subsidy's permission check and its read (TR-8). (Eng Lead, 2026-10-22) | Disable Add Funds and point to support; retrying won't help. The eligibility endpoint returns it as a reason on that budget (`is_eligible: false`), not as an error status. |
 | 400 `quote_not_available` | The enterprise's quote record in the pricing source (discount rate and quote number) is missing or incomplete (RK-05). Replaces 422 `pricing_unavailable`. A record with no discount is not this error: `discount_rate` is `NULL` and the quote goes ahead. (Eng Lead, 2026-10-22) | Block checkout and point to support; retrying won't help. |
-| 402 `payment_declined` (with `decline_code`) | Stripe declined the card. The top-up stays in `created`. `[Assumed]`, not load-bearing: a payment blocked by Stripe's SDN screening also arrives this way, so the admin sees the generic decline message and never learns why. | Show the inline decline alert and offer retry or switch card (UX-03). The webhook sends the failure email (R-19). |
-| 402 `payment_authentication_failed` | From `finalize`: the 3DS challenge failed, and the PaymentIntent is back in `requires_payment_method`. The top-up goes back to `created`. Nothing was charged. | Show the inline alert and offer retry or switch card (UX-03; switching card is G-9). |
+| 400 `country_not_supported` | From `pay`: the card's billing country is on the embargoed-country list (`pay` step 1). Nothing is sent to Stripe, and the top-up stays in `created` (Eng Lead, 2026-11-03) | Show the inline alert; the admin can choose another card. The portal's card form already leaves those countries out. |
+| 402 `payment_declined` (with `decline_code`) | Stripe declined the card. The top-up stays in `created`. `[Assumed]`, not load-bearing: a payment blocked by Stripe's sanctions controls also arrives this way, so the admin sees the generic decline message and never learns why. | Show the inline decline alert and offer retry or switch card (UX-03). The webhook sends the failure email (R-19). |
+| 402 `payment_authentication_failed` | From `finalize`: the 3DS challenge failed, and the PaymentIntent is back in `requires_payment_method`. The top-up goes back to `created`. Nothing was charged. | Show the inline alert and offer retry or switch card (UX-03). The next Pay confirms the same PaymentIntent (`pay` step 3). |
 | 403 (DRF `detail`) | The caller is not an admin of this enterprise | Show the generic no-access page. |
-| 403 `budget_not_active` | The policy is inactive or retired, or the subsidy is not active | Disable Add Funds and show the warning (UX-02). |
+| 403 `budget_not_active` | The policy is inactive or retired, or the subsidy is not active. Also when enterprise-subsidy still answers 403 or 404 for the budget's subsidy after 3 reads: it was soft-deleted or doesn't exist (TR-8). Today that is a **403** with `{"error_code": "Forbidden", "developer_message": "MISSING: subsidy.can_read_subsidies", …}`. The eligibility endpoint returns it as a reason on that budget (`is_eligible: false`), not as an error status. This replaces 400 `subsidy_not_available` (G-3; `EA:.../customer_billing/api.py:650-667`, `constants.py:66`). | Disable Add Funds and show the warning (UX-02). |
 | 403 `budget_expiring_soon` | Fewer than 14 days until `subsidy_expiration_datetime` | Disable Add Funds and show the "fewer than 14 days" warning. |
 | 403 `account_not_eligible` | Account standing or agreement type fails (R-09). No data source exists today; see OQ-8. | Disable Add Funds and point to support. |
-| 404 (DRF `detail`) | The flag is off (NFR-05), or the top-up or policy doesn't exist or belongs to another enterprise | Hide the entry points. |
+| 404 `budget_not_found` | `policy_uuid` or `subsidy_access_policy_uuid` isn't an active policy of this enterprise: unknown, inactive, or another enterprise's (#319) | Hide the entry points. |
+| 404 `no_budgets_found` | Eligibility only, without `policy_uuid`: the enterprise has no active policy (#319) | Hide the entry points. |
+| 404 (DRF `detail`) | The flag is off (NFR-05), or the top-up doesn't exist or belongs to another enterprise | Hide the entry points. |
 | 409 `top_up_not_payable` | Pay was called on a top-up that is not in `created` | Fetch the top-up and show its current state. |
 | 409 `top_up_expired` | The quote is past `expires_at`. From `finalize`: the challenge failed after the quote expired. | Restart at Select Amount, which creates a new quote. |
 | 429 (DRF `detail`) | Proposed (Security Design): the scoped throttle on `pay` is exceeded. Nothing is sent to Stripe, and the top-up stays in `created`. | Ask the admin to wait and try again. DRF sends a `Retry-After` header. |
 | 503 `pricing_source_unavailable` | The pricing source (OQ-3) can't be reached: a connection error, a timeout or a 5xx. Only a missing quote record is a 400 (`quote_not_available`). (Eng Lead, 2026-10-22) | Retry later. |
-| 503 `payment_provider_unavailable` | A Stripe error other than a decline | Retry later. Retrying the same top-up is safe. |
-| 503 `subsidy_service_unavailable` | enterprise-subsidy can't be reached: a connection error (or a timeout, if one is set), a 5xx, or any HTTP error other than 403 or 404. Eligibility and balances are unknown. Only a missing subsidy is a 400 (`subsidy_not_available`). (Eng Lead, 2026-10-22) | Retry later. Add Funds stays disabled until eligibility can be read. |
+| 503 `payment_provider_unavailable` | A Stripe error other than a decline | Retry later; retrying the same top-up is safe. If creating the PaymentIntent failed, Stripe repeats that answer for the same key, so start again with a new quote (`pay` step 2). |
+| 503 (DRF `detail`, no `error_code`) | enterprise-subsidy can't be reached: a connection error (or a timeout, if one is set), a 5xx, or any HTTP error other than 403 or 404. Also from the eligibility endpoint when every budget's subsidy still answers 403 or 404 and no `policy_uuid` was named (`docs/architecture-patterns.md` §18). Eligibility and balances are unknown. Raised as `SubsidyAPIUnavailableException` (`EA:.../customer_billing/api.py:713-714`; `views/customer_billing.py:2504-2508`, at `ff071483`). Replaces `subsidy_service_unavailable` (G-3). | Retry later. Add Funds stays disabled until eligibility can be read. |
 | ES: 201, or 200 on replay | This row and the two below are internal calls from enterprise-access to enterprise-subsidy only | Continue: the top-up moves to `deposited`. |
 | ES: 429 `ledger_lock_error`, a 5xx, a connection error, or the 30-second deposit timeout | A retry may succeed | In `pay`: return 200 with `state: paid` and queue the fulfillment task. The portal polls `GET /learner-credit-top-ups/<uuid>/` (sequence part 2). In the task: retry with backoff (`EA:enterprise_access/tasks.py:14-39`); when the retries run out, move to `errored_fulfillment`, marked retryable, and the re-run job resumes it (Recovery jobs). Every retry is safe, because it sends the same key (KD-5). |
-| ES: 400 (`metadata` rejected), 403, 409 `deposit_idempotency_conflict`, 422 `deposit_on_expired_subsidy` | A retry sends the same request and gets the same answer. A 400 means enterprise-access sent metadata outside Fulfillment rule 5's key set, which is a bug. A 403 means the operator grant is missing (TR-10), or the subsidy was soft-deleted after `pay`'s eligibility check (TR-8). | In `pay`: return 200 with `state: paid` and queue the task, as for any deposit failure (`pay` step 4). In the task: don't retry; move to `errored_fulfillment`, which pages on-call. The re-run job skips it: ops fix the cause, then re-run it by hand (Recovery jobs). A 403 also raises the P1 deposit-access alert: restore the grant, then re-run (Monitoring & Alerting). |
+| ES: 400 (validation failed, for example `metadata` rejected), 403, 404, 409 `deposit_idempotency_conflict`, 422 `deposit_on_expired_subsidy` | A retry sends the same request and gets the same answer. A 400 means enterprise-access sent a request that fails the deposit endpoint's validation, such as metadata outside Fulfillment rule 5's key set, which is a bug. A 403 means the operator grant is missing (TR-10), or the subsidy was soft-deleted after `pay`'s eligibility check (TR-8). A 404 means the subsidy was soft-deleted during the deposit request itself. | In `pay`: return 200 with `state: paid` and queue the task, as for any deposit failure (`pay` step 4). In the task: don't retry; move to `errored_fulfillment`, which pages on-call. The re-run job skips it: ops fix the cause, then re-run it by hand (Recovery jobs). A 403 also raises the P1 deposit-access alert: restore the grant, then re-run (Monitoring & Alerting). |
 
 ### Sequence Diagrams
 
@@ -1095,12 +1292,16 @@ sequenceDiagram
         SJ->>ST: create PaymentMethod
         ST-->>SJ: pm_…
         Note over SJ,ST: Card data goes straight to Stripe (R-08, NFR-02)
+        AP->>EA: POST /billing-management/payment-methods/<br/>pm_…, set_as_default false
+        EA->>ST: attach pm_… to the enterprise's customer
     end
     AP->>EA: POST /learner-credit-top-ups/{uuid}/pay/<br/>pm_…, payment_attempt_id, agreement version
     EA->>ES: GET subsidy record (eligibility again)
-    Note over EA: 409 if not created or past expires_at<br/>403 if not eligible<br/>400 if the subsidy is gone, 503 if enterprise-subsidy can't be reached<br/>SDN screening is Stripe's, during the charge (OQ-4)
-    EA->>ST: create PaymentIntent: charge_amount_cents, pm_…, cards only,<br/>metadata.learner_credit_top_up_uuid<br/>key lc-top-up-{uuid}
-    EA->>ST: confirm PaymentIntent, use_stripe_sdk, no return_url<br/>key lc-top-up-{uuid}-confirm-{payment_attempt_id}
+    Note over EA: 409 if not created or past expires_at<br/>403 if not eligible<br/>403 budget_not_active if the subsidy still answers 403/404 after 3 reads,<br/>503 if enterprise-subsidy can't be reached<br/>400 country_not_supported if the card's billing country is embargoed<br/>Stripe's sanctions controls apply during the charge (OQ-4)
+    opt top-up has no PaymentIntent yet
+        EA->>ST: create PaymentIntent: charge_amount_cents, no card, cards only,<br/>metadata.learner_credit_top_up_uuid<br/>key lc-top-up-{uuid}
+    end
+    EA->>ST: confirm PaymentIntent with pm_…, use_stripe_sdk, no return_url<br/>key lc-top-up-{uuid}-confirm-{payment_attempt_id}
     alt declined
         ST-->>EA: card_error with decline_code
         EA-->>AP: 402 payment_declined, top-up stays created
@@ -1187,8 +1388,8 @@ sequenceDiagram
             ES-->>W: 201, or 200 on replay: state deposited
             Note over W,ES: 429 ledger_lock_error, 5xx or timeout: retry later
         end
-        break ES returns 400, 403, 409 or 422, or retries run out
-            Note over W: state errored_fulfillment. Retryable: the re-run job resumes it,<br/>up to 3 times, then pages. 400, 403, 409, 422: pages now.<br/>Ops fix the cause and re-run it by hand (Recovery jobs).
+        break ES returns 400, 403, 404, 409 or 422, or retries run out
+            Note over W: state errored_fulfillment. Retryable: the re-run job resumes it,<br/>up to 3 times, then pages. 400, 403, 404, 409, 422: pages now.<br/>Ops fix the cause and re-run it by hand (Recovery jobs).
         end
         Note over W: from deposited: spend-limit step, state fulfilled
     end
@@ -1220,11 +1421,11 @@ setting the Eng Lead still has to confirm.*
 
 | External System | Protocol (REST / gRPC / Event) | Contract | Failure Mode (Timeout / 5xx / Queue full) | Fallback |
 | --- | --- | --- | --- | --- |
-| enterprise-subsidy | REST, through the subsidy client (SCL `2.2.1`) as the backend service user, with OAuth2 client credentials (`SCL:edx_enterprise_subsidy_client/client.py:66-74`) | **Reads:** the subsidy record and the policy's transaction aggregates, for eligibility and balances (`EA:.../subsidy_access_policy/models.py:510-531, 700-720`). **Write:** `POST /api/v2/subsidies/<uuid>/admin/deposits/` with `idempotency_key`, the `stripe_payment_intent` provider and the metadata in Fulfillment rule 5 (KD-5). Needs operator access, which the service user already has: redemptions pass the same check (OQ-9). | **429:** the ledger is locked. The lock is a single memcached `add`, so a busy lock fails at once instead of waiting (`LED:openedx_ledger/models.py:214-247`). **400:** the metadata was rejected: not a JSON object, or a reserved key. **409 or 422:** permanent. **403:** the operator grant is missing. **5xx.** **No timeout:** the client's `post` passes none (`SCL:.../client.py:408-411`), and `edx-rest-api-client` applies its default timeout only to token requests (`ERC:edx_rest_api_client/client.py:226-249`). enterprise-access defines `SUBSIDY_CLIENT_TIMEOUT`, 45 s by default (`EA:enterprise_access/settings/base.py:510`), but nothing reads it, and edx-internal doesn't set it (checked at `e342615e0` and `3d656a531`). A hung deposit therefore holds the request until gunicorn kills the worker at 300 s (`EA:enterprise_access/docker_gunicorn_configuration.py:7`), or a Celery task until its 240-second soft limit (`EA:enterprise_access/settings/base.py:449-450`). **Reads fail quietly:** a soft-deleted or unknown subsidy answers 403, the same status and body as a missing grant (TR-8). By default `subsidy_record()` returns `{}` on an HTTP error, so a missing subsidy and an outage look the same. `raise_on_error=True`, added on `main` after the baseline (`39904e03`), raises `SubsidyAPIHTTPError` instead (`EA:.../subsidy_access_policy/models.py:512-539`, at `39904e03`). Neither form catches a connection error or timeout, which aren't `HTTPError`s, so these escape as a 500. The read sets no timeout either (`SCL:.../client.py:184-192`). | **Deposit timeout** (Eng Lead, 2026-10-22): every deposit call, in `pay` and in the task, passes `SUBSIDY_CLIENT_TIMEOUT` as its timeout, set to **30 s**. Impl-plan chunk 8 lowers the setting's default from 45 to 30, which is safe because nothing else reads it. This replaces the proposed 3 seconds and, earlier the same day, 45 s. The client's deposit method takes no timeout today (`SCL:.../client.py:375-413`), so impl-plan chunk 8 adds a way to pass one. **Deposit in `pay`:** on timeout, 429 or 5xx, `pay` returns `paid` and the fulfillment task takes over (KD-3). **Deposit in the task:** retry 429, 5xx and timeouts with backoff; 400, 403, 409 or 422 → `errored_fulfillment`, with no retry (API Error Codes). A retry with the same key is safe (KD-5). **Reads** (Eng Lead, 2026-10-22): read with `raise_on_error=True`, so a failed read never counts as eligible. 403 or 404 → 400 `subsidy_not_available`: the subsidy is gone. A connection error, 5xx or other HTTP error → 503 `subsidy_service_unavailable`: the service can't be reached. Log the upstream status with either. With no read timeout, a hung enterprise-subsidy holds the request until the worker times out; it doesn't return 503. |
-| Stripe API | REST, through stripe-python `15.6.1` with the platform key (`EA:.../customer_billing/stripe_api.py:17`) | Create a Customer (KD-4). List the customer's PaymentMethods (billing-management). Create and confirm one PaymentIntent per top-up, with the idempotency keys and `metadata.learner_credit_top_up_uuid` from API Contracts, cards only in Phase 1 (`allowed_payment_method_types`; Phase 2 adds ACH), confirmed with `use_stripe_sdk` and no `return_url` (KD-3). Retrieve it in `finalize` after a 3DS challenge. | Card declines (`CardError`). Other API errors and timeouts. enterprise-access sets no Stripe timeout or retry count: the API key is its only Stripe setting (`EA:.../customer_billing/stripe_api.py:17`, `EA:.../customer_billing/pricing_api.py:38`), so the library defaults apply: an 80-second timeout per attempt (`STR:stripe/_http_client.py:512`) and 2 automatic retries (`STR:stripe/__init__.py:39`), which cover timeouts and connection errors (`STR:stripe/_http_client.py:652-666`). | Decline → 402, and the top-up stays `created`. Other errors → 503 `payment_provider_unavailable`; a retry is safe because the keys are the same. Top-up calls use the same Stripe setup and defaults as the rest of enterprise-access, with no client or timeout of their own (Eng Lead, 2026-10-21; this replaces the proposed 10-second client). The cost is TR-7. |
+| enterprise-subsidy | REST, through the subsidy client (SCL `2.2.1`) as the backend service user, with OAuth2 client credentials (`SCL:edx_enterprise_subsidy_client/client.py:66-74`) | **Reads:** the subsidy record and the policy's transaction aggregates, for eligibility and balances (`EA:.../subsidy_access_policy/models.py:511-532, 700-720`). **Write:** `POST /api/v2/subsidies/<uuid>/admin/deposits/` with `idempotency_key`, the `stripe_payment_intent` provider and the metadata in Fulfillment rule 5 (KD-5). Needs operator access, which the service user already has: redemptions pass the same check (OQ-9). | **429:** the ledger is locked. The lock is a single memcached `add`, so a busy lock fails at once instead of waiting (`LED:openedx_ledger/models.py:214-247`). **400:** the request failed validation, for example metadata that isn't a JSON object or has a reserved key. **409 or 422:** permanent. **403:** the operator grant is missing. **404:** the subsidy was deleted during the request. **5xx.** **No timeout:** the client's `post` passes none (`SCL:.../client.py:408-411`), and `edx-rest-api-client` applies its default timeout only to token requests (`ERC:edx_rest_api_client/client.py:227-266`). enterprise-access defines `SUBSIDY_CLIENT_TIMEOUT`, 45 s by default (`EA:enterprise_access/settings/base.py:510`), but nothing reads it, and edx-internal doesn't set it (checked at `e342615e0` and `3d656a531`). A hung deposit therefore holds the request until gunicorn kills the worker at 300 s (`EA:enterprise_access/docker_gunicorn_configuration.py:7`), or a Celery task until its 240-second soft limit (`EA:enterprise_access/settings/base.py:449-450`). **Reads fail quietly:** a soft-deleted or unknown subsidy answers 403, the same status and body as a missing grant (TR-8). By default `subsidy_record()` returns `{}` on an HTTP error, so a missing subsidy and an outage look the same. `raise_on_error=True`, added on `main` after the baseline (`39904e03`), raises `SubsidyAPIHTTPError` instead (`EA:.../subsidy_access_policy/models.py:512-539`, at `39904e03`). Neither form catches a connection error or timeout, which aren't `HTTPError`s, so these escape as a 500. The read sets no timeout either (`SCL:.../client.py:184-192`). | **Deposit timeout** (Eng Lead, 2026-10-22): every deposit call, in `pay` and in the task, passes `SUBSIDY_CLIENT_TIMEOUT` as its timeout, set to **30 s**. Impl-plan chunk 8 lowers the setting's default from 45 to 30, which is safe because nothing else reads it. This replaces the proposed 3 seconds and, earlier the same day, 45 s. The client's deposit method takes no timeout today (`SCL:.../client.py:375-413`), so impl-plan chunk 8 adds a way to pass one. **Deposit in `pay`:** on timeout, 429 or 5xx, `pay` returns `paid` and the fulfillment task takes over (KD-3). **Deposit in the task:** retry 429, 5xx and timeouts with backoff; 400, 403, 404, 409 or 422 → `errored_fulfillment`, with no retry (API Error Codes). A retry with the same key is safe (KD-5). **Reads** (Eng Lead, 2026-10-22; the answers follow #319 since 2026-11-03, G-3): read with `raise_on_error=True`, so a failed read never counts as eligible. A 403 or 404 is read up to 3 times, then the budget is `budget_not_active`: the subsidy is gone. A connection error, 5xx or other HTTP error → 503 (`SubsidyAPIUnavailableException`, `{"detail"}`): the service can't be reached. Log the upstream status with either. With no read timeout, a hung enterprise-subsidy holds the request until the worker times out; it doesn't return 503. |
+| Stripe API | REST, through stripe-python (`15.6.1` at the baseline, `16.0.0` on `main`) with the platform key (`EA:.../customer_billing/stripe_api.py:17`) | Create a Customer (KD-4). List the customer's PaymentMethods (billing-management). Create one PaymentIntent per top-up, once and without a card, then confirm it with the chosen card on each attempt (G-9), with the idempotency keys and `metadata.learner_credit_top_up_uuid` from API Contracts, cards only in Phase 1 (`allowed_payment_method_types`; Phase 2 adds ACH), confirmed with `use_stripe_sdk` and no `return_url` (KD-3). Retrieve it in `finalize` after a 3DS challenge. | Card declines (`CardError`). Other API errors and timeouts. enterprise-access sets no Stripe timeout or retry count: the API key is its only Stripe setting (`EA:.../customer_billing/stripe_api.py:17`, `EA:.../customer_billing/pricing_api.py:38`), so the library defaults apply: an 80-second timeout per attempt (`STR:stripe/_http_client.py:512`) and 2 automatic retries (`STR:stripe/__init__.py:39`). They cover timeouts and connection errors (`STR:stripe/_http_client.py:652-666`), and also any 409, any status of 500 or more, and `Stripe-Should-Retry: true` (`_should_retry`, `:117-162`). A retry under the same idempotency key gets Stripe's saved answer back, a 500 included ("our idempotency framework would typically replay it anyway", `:155-158`). | Decline → 402, and the top-up stays `created`. Other errors → 503 `payment_provider_unavailable`; a retry is safe because the keys are the same. Top-up calls use the same Stripe setup and defaults as the rest of enterprise-access, with no client or timeout of their own (Eng Lead, 2026-10-21; this replaces the proposed 10-second client). The cost is TR-7. |
 | Stripe webhooks | Event: signed HTTPS POST to `/api/v1/customer-billing/stripe-webhook`, verified with `STRIPE_WEBHOOK_ENDPOINT_SECRET` (`EA:enterprise_access/apps/api/authentication.py:58-63`) | `payment_intent.succeeded` and `payment_intent.payment_failed`, plus `payment_intent.processing` in Phase 2 (Event / Message Contracts) | Late, repeated or out-of-order delivery. The endpoint has no general dedup (`EA:.../views/customer_billing.py:203-208`). A handler that raises returns an error, so Stripe retries (`:219-222`). | The `pay` request, or `finalize` after a 3DS challenge, fulfills without the webhook in the common case. Handlers check the top-up's state before acting, so a repeat does nothing. The reconciliation alert (Monitoring) catches an event that never arrives. |
 | Salesforce | Open: Salesforce API, Snowflake, or a synced copy in enterprise-access (OQ-3). The opportunity's route is OQ-5. enterprise-access has no Salesforce settings or credentials in edx-internal today. | **Reads:** discount rate and quote number when a quote is made (R-04, R-05); account standing and agreement type for eligibility (OQ-8). **Write:** one opportunity per fulfilled top-up, `is_commission_eligible: false` (R-11). | Source unreachable; record missing or incomplete (RK-05) | **Quote** (Eng Lead, 2026-10-22): a missing or incomplete record → 400 `quote_not_available`; only an unreachable source → 503 `pricing_source_unavailable`. Either way checkout is blocked, and a guessed discount is never charged. **Eligibility:** proposed: fail closed and show "try again later". **Opportunity:** async in Celery with retries; never blocks the admin (R-11); the sync alert in Monitoring. |
-| Braze | REST, through `BrazeApiClient` (`EA:enterprise_access/apps/api_client/braze_client.py:14`), from Celery tasks | Two new API-triggered campaigns: receipt (R-16) and payment failure (R-19). Campaign IDs are Django settings, like the existing billing receipt and billing error campaigns (`EA:enterprise_access/settings/base.py:530, 555`). Trigger properties: amount credited, amount charged, budget name, transaction ID (the top-up `uuid`), card brand and last 4 digits, date. Phase 2 adds the two ACH emails. | Timeouts and API errors | `LoggedTaskWithRetry` retries 5 times with exponential backoff capped at 10 minutes, about 25 minutes in all (`EA:enterprise_access/tasks.py:14-39`; `settings/base.py:457`). After that the email is lost and logged; the top-up and the success screen are unaffected. |
+| Braze | REST, through `BrazeApiClient` (`EA:enterprise_access/apps/api_client/braze_client.py:14`), from Celery tasks | Two new API-triggered campaigns: receipt (R-16) and payment failure (R-19). Campaign IDs are Django settings, like the existing billing receipt and billing error campaigns (`EA:enterprise_access/settings/base.py:530, 555`). Trigger properties: amount credited, amount charged, budget name, transaction ID (the top-up `uuid`), card brand and last 4 digits, date. Phase 2 adds the two ACH emails. | Timeouts and API errors | `LoggedTaskWithRetry` retries 5 times with exponential backoff capped at 10 minutes and full jitter, up to about 25 minutes in all (`EA:enterprise_access/tasks.py:14-39`; `settings/base.py:457`). After that the email is lost and logged; the top-up and the success screen are unaffected. |
 | Segment | Event: `track_event` on the server (`EA:enterprise_access/apps/track/segment.py:14`); the portal's tracking helpers in the browser (`AP:src/eventTracking.js:14-19`) | The events in Event / Message Contracts | `track_event` logs and swallows every error (`segment.py:29-30`) | None needed: a lost event costs a KPI data point, not a top-up. Counts can be rebuilt from `LearnerCreditTopUp` rows (OQ-10). |
 | LMS / edx-enterprise | JWT issued by the LMS and checked locally by `JwtAuthentication` (`EA:enterprise_access/settings/base.py:172-175`) | No new calls. The admin role comes from the JWT (API Contracts), and the flag is a local Django setting (KD-6). | None: no call is made | None needed |
 
@@ -1269,8 +1470,9 @@ sends custom attributes (`EA:.../customer_billing/signals.py:8, 33-35`).*
 | Throughput | No forecast in the PRD. `[Assumed]` well under one top-up per second: it is an admin action, not a learner action. Not load-bearing (Scalability). | Top-ups created per hour | None |
 | DB query time | Spend-limit step ≤ 50 ms: one `transaction.atomic()` block that locks one policy and one top-up and makes no network calls | APM database time for the step | None (`select_for_update` is new to the repo, Fulfillment rule 3) |
 
-**Meeting the 30 seconds when `pay` can't finish.** `LoggedTaskWithRetry` waits 60 seconds before
-its first retry (`EA:enterprise_access/tasks.py:37`), so any retry misses the target. The fulfillment
+**Meeting the 30 seconds when `pay` can't finish.** `LoggedTaskWithRetry` waits a random 0 to 60 seconds
+before its first retry (backoff 60 s with full jitter, `EA:enterprise_access/tasks.py:37-39`), so a retry
+usually misses the target. The fulfillment
 task runs its first attempt as soon as it is queued and keeps the shared base task's retries (Eng
 Lead, 2026-11-02; Recovery jobs), which replaces the proposed 5-second backoff. A top-up whose first
 attempt fails therefore misses the 30 seconds (TR-6).
@@ -1311,8 +1513,8 @@ the lock is held for one short transaction. Stripe's account rate limits
 | Data in transit | HTTPS to Stripe, enterprise-subsidy, Braze and Segment, through the existing clients; the webhook arrives over HTTPS | No change from the existing integrations |
 | Input validation | Serializers check: `amount_cents` is an integer from 50,000 to 2,000,000 (R-02); `agreement_version` is the current version. The charge is computed on the server from the quote, never taken from the request, and a quote's amounts never change. Before confirming, `pay` checks that the PaymentMethod belongs to the enterprise's Stripe customer, as the billing-management API already does (`EA:.../views/customer_billing.py:1474-1483`). Deposit metadata uses a fixed key set, and enterprise-subsidy rejects keys that clash with ledger columns (impl-plan chunk 2). | Tests for each 400 in API Contracts, a PaymentMethod from another customer, and a request that tries to set the amount or state. |
 | Abuse and replay | One PaymentIntent per top-up and idempotency keys on every write (KD-3, KD-5). Quotes expire after 30 minutes. Proposed: a scoped DRF throttle on `pay`, like the existing scoped rates (`EA:enterprise_access/settings/base.py:184-189`), to slow card testing. | Tests: a double-clicked Pay charges once; the throttle returns 429. |
-| SDN screening (R-10) | Stripe's own screening covers every charge and every new payment method (OQ-4, resolved 2026-10-19). enterprise-access adds no check. A blocked payment is shown to the admin as a generic decline (`[Assumed]`, not load-bearing). Counting blocks is out of scope (OQ-13). | The pre-release security review confirms the design relies on Stripe's screening. |
-| PII handling | `initiated_by_lms_user_id` gets a `.. pii:` annotation with retirement handling, like `StripeEventData` (`EA:.../customer_billing/models.py:1050`). The user foreign key is `SET_NULL`. Segment events carry the user only as the Segment `user_id`, as `track_event` does today. Screening results are never sent to Segment (Event / Message Contracts). Billing name, email and address stay in Stripe. | `make pii_check`; review of the event properties |
+| SDN screening (R-10) | Stripe's controls, as its published policy describes them: it screens its users against sanctions lists, and blocks transactions involving sanctioned financial institutions or comprehensively sanctioned jurisdictions (Current State; OQ-4). The policy doesn't say each payer is checked against the SDN list. `pay` also rejects a card whose billing country is on `EMBARGOED_COUNTRY_CODES`, with 400 `country_not_supported`, and the portal's card form leaves those countries out (Eng Lead, 2026-11-03). A payment Stripe blocks is shown to the admin as a generic decline (`[Assumed]`, not load-bearing). Counting blocks is out of scope (OQ-13). | Tests: a card with an embargoed billing country gets 400 and nothing reaches Stripe; an empty country passes. The pre-release security review confirms the design relies on Stripe's published controls. |
+| PII handling | `initiated_by_lms_user_id` is annotated `.. pii_retirement: retained` (#323, `EA:.../customer_billing/models.py:1476` at `ff071483`): it is kept after retirement, unlike `StripeEventData`, which is scrubbed (`local_api`, `:1061`). Whether that is the right rule is review gap G-25. The user foreign key is `SET_NULL`. Segment events carry the user only as the Segment `user_id`, as `track_event` does today. Screening results are never sent to Segment (Event / Message Contracts). Billing name, email and address stay in Stripe. | `make pii_check`; review of the event properties |
 
 ### Accessibility Impact
 
@@ -1355,15 +1557,17 @@ carries its own accessibility criteria.
 | 2 | Create the Salesforce opportunity in a later phase (KD-1) | A smaller Phase 1, and OQ-5 no longer blocks it | Early top-ups go unattributed (RK-03, K-03), and deposits aren't tracked the way S-01 requires from the first sale | Eng Lead decision, 2026-09-25 |
 | 3 | Record and run top-ups in enterprise-subsidy (KD-2) | Sits next to the ledger; one service owns money coming in | enterprise-subsidy has no Stripe, Celery, webhook or Braze code (Current State). It would also have to call back into enterprise-access to raise `spend_limit`, a cross-service write inside the money path. | More new infrastructure and a second failure point between charge and credit |
 | 4 | A new `top_up` Django app in enterprise-access (KD-2) | A visible boundary | It would import `customer_billing`'s webhook registry, Stripe helpers and permissions anyway | Separate in name only |
-| 5 | Confirm the PaymentIntent in the browser and fulfill only from the webhook (KD-3) | Stripe's standard client flow; 3DS handled in place; less server code | No server-side eligibility check at the moment of charge (R-09). Funds wait for webhook delivery (NFR-01). The webhook becomes the only path to credit. | Weakens R-09 and puts NFR-01 at risk. R-10 is no longer a reason: since OQ-4, Stripe screens every charge, whoever confirms it (corrected 2026-11-02). |
+| 5 | Confirm the PaymentIntent in the browser and fulfill only from the webhook (KD-3) | Stripe's standard client flow; 3DS handled in place; less server code | No server-side eligibility check at the moment of charge (R-09). Funds wait for webhook delivery (NFR-01). The webhook becomes the only path to credit. | Weakens R-09 and puts NFR-01 at risk. R-10 is no longer a reason: Stripe's sanctions controls apply to every charge, whoever confirms it (OQ-4; corrected 2026-11-02). |
 | 6 | One Stripe Invoice per top-up (KD-3) | Phase 3 billing history comes almost free, because it reads invoices | Changes the live subscription invoice handlers in Phase 1, and needs more Stripe calls per charge | Puts subscription billing at risk in Phase 1 to save work in Phase 3 |
-| 7 | Stripe Checkout in `payment` mode, a hosted page. Not a KD; listed because enterprise-access already uses Checkout for subscriptions (`EA:.../customer_billing/stripe_api.py:37, 71-73`). | Stripe hosts the form and 3DS; reuses existing session code | No server check at the moment of charge, and credit comes only from the webhook (as in 5). | Weakens R-09 and puts NFR-01 at risk, as in 5. UX-01 and R-10 are no longer reasons: with `ui_mode: 'elements'`, which the subscription session already uses (`EA:.../customer_billing/stripe_api.py:39`, at `ff071483`), the form stays in the portal, and Stripe screens every charge (OQ-4) (corrected 2026-11-02). |
+| 7 | Stripe Checkout in `payment` mode, a hosted page. Not a KD; listed because enterprise-access already uses Checkout for subscriptions (`EA:.../customer_billing/stripe_api.py:37, 71-73`). | Stripe hosts the form and 3DS; reuses existing session code | No server check at the moment of charge, and credit comes only from the webhook (as in 5). | Weakens R-09 and puts NFR-01 at risk, as in 5. UX-01 and R-10 are no longer reasons: with `ui_mode: 'elements'`, which the subscription session already uses (`EA:.../customer_billing/stripe_api.py:39`, at `ff071483`), the form stays in the portal, and Stripe's sanctions controls apply to every charge (OQ-4) (corrected 2026-11-02). |
 | 8 | Find the Stripe customer by searching metadata (KD-4) | No new table | Stripe's search index lags and is rate-limited, so duplicate customers are possible | Not reliable enough to charge against |
 | 9 | Create a synthetic `CheckoutIntent` for Learner Credit customers (KD-4) | The existing lookup works unchanged | Reserves a slug and name, and needs a product and a license quantity; mixes fake rows into self-service purchase data | The model doesn't fit |
 | 10 | A new enterprise-subsidy endpoint just for self-service deposits (KD-5) | Leaves the existing endpoint's behavior alone | Duplicates validation, and needs a new client method and a client release | The existing endpoint already has a replay path to finish |
 | 11 | No enterprise-subsidy change: enterprise-access checks for an existing deposit first (KD-5) | Nothing to deploy in enterprise-subsidy | No lookup by key exists (`ES:enterprise_subsidy/apps/api/filters.py:41-48`), and check-then-write races | Can't be made safe |
 | 12 | A separate `PendingTopUp` model for ACH in flight (PRD NFR-04; Data Model) | Matches the PRD's wording | A second record for the same top-up. Its soft delete after 30 days conflicts with S-01. | `LearnerCreditTopUp` with `state=processing` covers it; to confirm in Phase 2 design |
 | 13 | Deposit ACH funds when the payment starts, as a "pending" deposit (Phase 2) | One deposit path for card and ACH | `create_deposit()` always commits, and the ledger counts every transaction that isn't failed, so a pending deposit is spendable at once (`LED:openedx_ledger/api.py:303`; `LED:openedx_ledger/models.py:183-187`) | It would credit money that can still be returned |
+| 14 | A global waffle flag instead of the `FEATURE_TOP_UP_LEARNER_CREDIT` setting (KD-6) | Turned on or off in Django admin with no redeploy; can target users, groups or a percentage. enterprise-access already uses waffle (`EA:enterprise_access/toggles.py:18, 51, 87, 118`, at `ff071483`). | It can't target an enterprise (Current State), so it allows no per-enterprise pilot either. The rollout state would move from edx-internal into each environment's database. #319 already built the setting. | The setting is the one flag (Eng Lead, 2026-11-03) |
+| 15 | A WaffleSwitch that pauses new charges: quote and `pay` return 503 while it is set, and `finalize`, the webhook and the recovery jobs ignore it, so money already taken is still credited (KD-6, review gap G-16) | Stops new charges in an incident without a redeploy. Follows `docs/architecture-patterns.md` §20 and the existing kill switch (`EA:enterprise_access/toggles.py:56-90`). | A second toggle to set in every environment, and a new 503 code for the portal to show | Not added for now: `FEATURE_TOP_UP_LEARNER_CREDIT` is the one flag (Eng Lead, 2026-11-03). Stopping charges takes an edx-internal change and a redeploy (Rollback Plan step 1). |
 
 *This is the fuller companion to Key Decisions above (each KD's rejected alternative expands
 here). After release, the chosen approach and its alternatives are minted as an ADR.*
@@ -1377,20 +1581,20 @@ here). After release, the chosen approach and its alternatives are minted as an 
 | # | Risk | Likelihood | Impact | Mitigation |
 | --- | --- | --- | --- | --- |
 | TR-1 | **Charged but not credited.** The deposit or the spend-limit step fails after the charge (failure mode 1). | Medium: two network steps follow the charge | High | Steps that are safe to repeat, the Celery retry task, the Stripe check and re-run jobs, the manual re-run, and P1 alerts (Recovery jobs; Monitoring & Alerting) |
-| TR-2 | **Credited but not spendable** (failure mode 2). In `pay`, eligibility reads the subsidy record before the deposit, and the request cache keeps that copy (`EA:.../subsidy_access_policy/models.py:510-531`). `clean_spend_limit` would then see the old `total_deposits` and reject the raise. | High if missed: it happens on every in-request fulfillment | High | Fulfillment rule 3: a fresh read in the spend-limit step, plus a test that runs eligibility, deposit and raise in one request |
+| TR-2 | **Credited but not spendable** (failure mode 2). In `pay`, eligibility reads the subsidy record before the deposit, and the request cache keeps that copy (`EA:.../subsidy_access_policy/models.py:511-532`). In a Celery worker, a copy can survive from an earlier task (Current State). `clean_spend_limit` would then see the old `total_deposits` and reject the raise. | High if missed: it happens on every in-request fulfillment | High | Fulfillment rule 3 (Eng Lead, 2026-11-03): clear and re-read the subsidy record before the lock, clear the request cache when a task starts, and retry a failed read. Tests run eligibility, deposit and raise in one request, and run two fulfillment tasks in one worker. |
 | TR-3 | **A charge succeeds after its quote expired.** A 3DS challenge finished after `expires_at` charges the card. | Low to medium | Medium: the top-up is credited late, and if the subsidy expired in between, the deposit fails with 422 and the top-up stays in `errored_fulfillment` until ops extend the subsidy and re-run it (no refund in Phase 1) | KD-7: `expired → paid` is allowed, so the webhook, or the Stripe check job if the webhook misses it, credits it like any other payment. A deposit that fails goes to `errored_fulfillment`, which pages on-call. |
 | TR-4 | **Top-up handlers break the shared subscription webhook.** | Low | High: subscription billing | Handlers filter on `metadata.learner_credit_top_up_uuid` and only queue a task. Tests replay existing invoice and subscription events. The impl-plan rates chunk 12 as one of the riskiest. |
-| TR-5 | **Row locks deadlock or are held too long.** `select_for_update` is new to the repo. | Low | Medium | One lock order (policy, then top-up), no network calls inside the block, and a test with two top-ups on one budget |
-| TR-6 | **Fulfillment by the task misses 30 seconds.** The shared base task waits 60 seconds before retrying, and all tasks share one queue. | Medium | Low: funds arrive later, and NFR-01 and K-02 are missed | Accepted: the task keeps the shared base task's 60-second backoff (Eng Lead, 2026-11-02; Recovery jobs). Proposed: its own queue (Scalability). |
-| TR-7 | **A hung call holds `pay`.** The deposit call has no timeout today, so a hung enterprise-subsidy holds the worker until gunicorn kills it at 300 s (Integration Points). Stripe's default is 80 seconds per attempt, with up to 2 retries on a timeout. | Low | Medium: web workers tied up while the admin waits | The deposit call uses the existing `SUBSIDY_CLIENT_TIMEOUT` setting, lowered to 30 s (Eng Lead, 2026-10-22; replaces the proposed 3 seconds and the setting's 45). **Cost:** a hung deposit holds `pay` for up to 30 s before the task takes over. By then NFR-01's 30 seconds are used up, so that top-up still misses it, and the `pay` p99 target (Performance Budget). Stripe calls keep the defaults the rest of enterprise-access uses (Eng Lead, 2026-10-21), so a stalled Stripe call can still hold a worker for about 4 minutes in the worst case (three 80-second attempts). Accepted, as it already is for the subscription calls. |
-| TR-8 | **A failed subsidy read is treated as eligible, or gets the wrong error.** *[Specified]* enterprise-subsidy answers a soft-deleted or unknown subsidy with 403, not 404. Its permission check takes the enterprise from a lookup through `Subsidy.objects`, which hides soft-deleted rows (`ES:enterprise_subsidy/apps/api/v1/views/subsidy.py:137-155, 187-195`; `ES:.../subsidy/models.py:92-100, 224`). With no enterprise to check, every rule denies (`ES:.../subsidy/rules.py:32-33, 49-50`). edx-rbac then returns 403 before the view reads the row (`RBAC:edx_rbac/mixins.py:41-63`). The view reshapes the body to `error_code: "Forbidden"`, `developer_message: "MISSING: subsidy.can_read_subsidies"` (`ES:.../views/subsidy.py:88-98`). A 404 needs the subsidy to be deleted between that check and the read. An expired or not-yet-started subsidy is a 200 with `is_active: false` (`ES:.../subsidy/models.py:252-257`): that is `budget_not_active`, not this risk. In enterprise-access, `subsidy_record()` turns any HTTP error into `{}` by default, so a missing subsidy and an outage look the same, and a connection error isn't caught at all and escapes as a 500 (`EA:.../subsidy_access_policy/models.py:529-535`, at `39904e03`). | Medium: any enterprise-subsidy outage, or a deleted subsidy | Medium: a wrong eligibility answer, a crash on missing keys, or an admin told to retry what will never work | Read with `raise_on_error=True` and split the failures (Eng Lead, 2026-10-22). 403 or 404 → 400 `subsidy_not_available`. A connection error, 5xx or other HTTP error → 503 `subsidy_service_unavailable`. **Cost:** a service user that has lost its operator role fails the same permission check, so it gets the same 403 and the same body (`RBAC:edx_rbac/mixins.py:56-63`; `ES:.../subsidy/rules.py:101-107`). Nothing in the response tells the two apart, so a lost role shows as 400 on every budget instead of 503 (see also `docs/architecture-patterns.md` §18). A burst of `subsidy_not_available` across enterprises points to the role, not to deleted subsidies. |
+| TR-5 | **Row locks deadlock or are held too long.** Locking a policy row is new to the repo; `select_for_update` is used only by #323 and assignment expiry. | Low | Medium | One lock order (policy, then top-up), no network calls inside the block, and a test with two top-ups on one budget. That test runs on SQLite, which ignores `select_for_update`, so it checks the stored-state guard, not the lock (Current State). |
+| TR-6 | **Fulfillment by the task misses 30 seconds.** The shared base task waits a random 0 to 60 seconds before its first retry, and all tasks share one queue. | Medium | Low: funds arrive later, and NFR-01 and K-02 are missed | Accepted: the task keeps the shared base task's backoff (Eng Lead, 2026-11-02; Recovery jobs). Proposed: its own queue (Scalability). |
+| TR-7 | **A hung call holds `pay`.** The deposit call has no timeout today, so a hung enterprise-subsidy holds the worker until gunicorn kills it at 300 s (Integration Points). Stripe's default is 80 seconds per attempt, with up to 2 retries on a timeout. | Low | Medium: web workers tied up while the admin waits | The deposit call uses the existing `SUBSIDY_CLIENT_TIMEOUT` setting, lowered to 30 s (Eng Lead, 2026-10-22; replaces the proposed 3 seconds and the setting's 45). **Cost:** a hung deposit holds `pay` for up to 30 s before the task takes over. By then NFR-01's 30 seconds are used up, so that top-up still misses it, and the `pay` p99 target (Performance Budget). Stripe calls keep the defaults the rest of enterprise-access uses (Eng Lead, 2026-10-21), so a stalled Stripe call can still hold a worker for about 4 minutes in the worst case (three 80-second attempts). In production that is one of at least 16 sync web workers (4 to 16 pods with 4 each, Current State). Accepted, as it already is for the subscription calls. |
+| TR-8 | **A failed subsidy read is treated as eligible, or gets the wrong error.** *[Specified]* enterprise-subsidy answers a soft-deleted or unknown subsidy with 403, not 404. Its permission check takes the enterprise from a lookup through `Subsidy.objects`, which hides soft-deleted rows (`ES:enterprise_subsidy/apps/api/v1/views/subsidy.py:137-155, 187-195`; `ES:.../subsidy/models.py:92-100, 224`). With no enterprise to check, every rule denies (`ES:.../subsidy/rules.py:32-33, 49-50`). edx-rbac then returns 403 before the view reads the row (`RBAC:edx_rbac/mixins.py:41-63`). The view reshapes the body to `error_code: "Forbidden"`, `developer_message: "MISSING: subsidy.can_read_subsidies"` (`ES:.../views/subsidy.py:88-98`). A 404 needs the subsidy to be deleted between that check and the read. An expired or not-yet-started subsidy is a 200 with `is_active: false` (`ES:.../subsidy/models.py:252-257`): that is `budget_not_active`, not this risk. In enterprise-access, `subsidy_record()` turns any HTTP error into `{}` by default, so a missing subsidy and an outage look the same, and a connection error isn't caught at all and escapes as a 500 (`EA:.../subsidy_access_policy/models.py:529-535`, at `39904e03`). | Medium: any enterprise-subsidy outage, or a deleted subsidy | Medium: a wrong eligibility answer, a crash on missing keys, or an admin told to retry what will never work | Read with `raise_on_error=True` and split the failures (Eng Lead, 2026-10-22). The answers follow #319, which this spec adopted on 2026-11-03 (G-3). A 403 or 404 is read up to 3 times, then that budget is `budget_not_active`. When every budget's subsidy answers that way and no `policy_uuid` was named, the eligibility endpoint returns 503 instead (`docs/architecture-patterns.md` §18). A connection error, 5xx or other HTTP error → 503 at once. **Cost:** a service user that has lost its operator role fails the same permission check, so it gets the same 403 and the same body (`RBAC:edx_rbac/mixins.py:56-63`; `ES:.../subsidy/rules.py:101-107`). Nothing in the response tells the two apart. For a single named budget (the quote, `pay`, or eligibility with `policy_uuid`), a lost role shows as `budget_not_active`. Only the Budget List call sees 503. A burst of `budget_not_active` across enterprises, or 503s on the Budget List, points to the role, not to deleted subsidies. |
 | TR-9 | **The wrong Stripe customer after the backfill.** An enterprise with several `CheckoutIntent`s maps to one customer. | Low | Medium: saved cards missing, or a card from another customer offered | The backfill uses the same ordering as the existing lookup; unique constraints; `pay` checks that the PaymentMethod belongs to the customer (Security Design) |
 | TR-10 | **The operator grant is lost**, so every deposit gets 403 | Low: the grant exists today, because every Learner Credit redemption passes the same check (OQ-9) | High: no top-up can be credited | A P1 alert on any deposit 403; the first deposit on stage confirms the grant there |
 | TR-11 | **Double charge on retry** (RK-04) | Low | High | One PaymentIntent per top-up, with idempotency keys (KD-3) |
 | TR-12 | **Wrong or missing discount** (RK-05) | Medium | Medium | `NULL` and `0` handled separately; 400 `quote_not_available` when the record is missing; the discount is copied when the quote is made. Source: OQ-3. |
 | TR-13 | **The portal and the backend disagree on eligibility** (RK-07) | Medium | Low | The eligibility endpoint drives the button and runs the same checks as the write endpoints |
 | TR-14 | **The Salesforce opportunity goes missing without anyone noticing** (RK-03) | Medium | Medium | Async with retries, `salesforce_synced_at`, and the sync alert (Monitoring) |
-| TR-15 | **SDN false positives** (RK-02) | Low | High | Stripe's screening decides (OQ-4). The admin sees the generic decline message and can contact support; CS raises false positives with Stripe. Counting screening blocks is out of scope (OQ-13). |
+| TR-15 | **SDN false positives** (RK-02) | Low | High | Stripe's controls decide, as its published policy describes them (OQ-4). The admin sees the generic decline message and can contact support; CS raises false positives with Stripe. Counting screening blocks is out of scope (OQ-13). |
 | TR-16 | **Deposit metadata miscounts policy spend.** A key that matches a ledger column is written to that column (Current State). | Low with the fix | High: wrong balances | A fixed metadata key set (Fulfillment rule 5); enterprise-subsidy rejects clashing keys (impl-plan chunk 2) |
 
 ### Open Questions
@@ -1405,7 +1609,7 @@ chunk that cannot proceed until this resolves — this is what the Ready-to-Buil
 | OQ-1 | **Resolved 2026-10-19.** PRD's Out of Scope cites "R-15" (separate tracking of top-up vs. original funds), but R-15 is never defined. Confirm it is only that exclusion. Yes: R-15 is dropped, and separate tracking stays out of scope (Eng Lead). | Low — Requirements table completeness | Requirements | Alberto Del Toro | Closed |
 | OQ-2 | **Resolved 2026-09-25.** Can V1 ship in phases rather than all PRD requirements at once? Yes — approved by the Eng Lead and by Alberto Del Toro in a meeting. See Phased Delivery and KD-1. | High — sets V1 scope and REQ priorities | Requirements priorities; Build Phases | Alberto Del Toro | Closed |
 | OQ-3 | **Partly answered 2026-09-25:** the discount rate (R-05) and quote number (R-04) come from Salesforce (Eng Lead). Still open: how we get them — Salesforce API, Snowflake, or stored on our side and kept in sync (options under discussion). Integration needs work with the Salesforce team; action item and ticket exist (ticket ID not recorded here yet). | High — no data source for pricing or the legal agreement until the integration exists | Pricing design; legal agreement content; **blocks Phase 1** | rthota-sonata@2u.com with the Salesforce team; Justin Grabowski | Before impl-plan chunk 17 starts; blocks the Phase 1 release |
-| OQ-4 | **Resolved 2026-10-19.** Does Stripe's own screening satisfy R-10 (SDN per transaction and per payment-method change), or is a separate check required? Stripe's screening is enough (Eng Lead). The PRD's R-10 already names Stripe. enterprise-access adds no SDN check, and the 403 `payment_screening_failed` code is removed. impl-plan chunk 18 and chunk 11's SDN interface can be dropped. Counting the SDN guardrail moves to OQ-13. | High — compliance gate before any charge | SDN design; security review; no longer blocks Phase 1 | Legal / Compliance | Closed |
+| OQ-4 | **Resolved 2026-10-19.** Does Stripe's own screening satisfy R-10 (SDN per transaction and per payment-method change), or is a separate check required? Stripe's screening is enough (Eng Lead). The PRD's R-10 already names Stripe. enterprise-access adds no SDN check, and the 403 `payment_screening_failed` code is removed. impl-plan chunk 18 and chunk 11's SDN interface can be dropped. Counting the SDN guardrail moves to OQ-13. **Basis corrected 2026-11-03** (Eng Lead; review gap G-18): R-10 rests on Stripe's controls as its published policy describes them. Stripe screens its users against sanctions lists, and blocks transactions involving sanctioned financial institutions or comprehensively sanctioned jurisdictions. The policy doesn't say each payer is checked against the SDN list (Current State). `pay` adds the embargoed-country check enterprise-access already has, 400 `country_not_supported`. | High — compliance gate before any charge | SDN design; security review; no longer blocks Phase 1 | Legal / Compliance | Closed |
 | OQ-5 | **Partly answered 2026-10-19:** the opportunity is created with `is_commission_eligible: false` (Eng Lead confirmed). edx-internal has no setting for it, and no Salesforce config for enterprise-access (Current State), so the chosen route has to set it. A new outbound integration would also need Salesforce credentials added to enterprise-access's config; none exist. Still open: the route. Is it created by Stripe's connector per EA ADR 0026, or by a new outbound integration? | High — R-11 is now Phase 1 (KD-1) | Salesforce integration design; **blocks Phase 1** | Justin Grabowski | Before impl-plan chunk 20 starts; blocks the Phase 1 release |
 | OQ-6 | **Resolved 2026-10-19.** Are `ENABLE_BILLING_MANAGEMENT_API` (enterprise-access) and `ENABLE_NATIVE_BILLING` (admin portal) on in production? Yes, both, in production and stage, per edx-internal `master@e342615e0`: `ENABLE_BILLING_MANAGEMENT_API: true` (`INT:argocd/applications/enterprise-access/prod-config.yaml:188`; `stage-config.yaml:249`), and `FEATURE_ENABLE_NATIVE_BILLING: 'true'` (`INT:frontends/frontend-app-admin-portal/prod_config.yml:53`; `stage_config.yml:51`), which the portal reads as `ENABLE_NATIVE_BILLING` (`AP:src/config/index.js:75`). Saved cards can be listed for pre-selection in Phase 1. For Phase 3, the Billing page and API exist in production, but the page is still hidden from customers without an active subscription (`AP:src/components/billing/data/utils.ts:17-18`). R-13's gate (shown after the first top-up) has to replace or extend that check. | High — Phase 1 lists saved cards through `billing-management/payment-methods` (API Contracts). It also decides whether billing history (R-13) can reuse the existing page and API. | Saved-card pre-selection (R-08); billing history decision (Phase 3). No longer blocks either. | rthota-sonata@2u.com | Closed |
 | OQ-7 | **Resolved 2026-10-12.** Does a top-up add the full selected amount as credit while charging the card the discounted total (for example, $1,000 of credit for $900)? Yes. The total (full selected) amount is credited, not the discounted amount. `amount_cents` is the ES deposit quantity and the `spend_limit` increase; the card is charged `charge_amount_cents` = `amount_cents − discount_cents` (Data Model). | High — sets both the deposit and the charge, and the two failure modes are defined against these numbers | Data Model; pricing design; no longer blocks Phase 1 | Alberto Del Toro, with Finance | Closed |
@@ -1413,7 +1617,7 @@ chunk that cannot proceed until this resolves — this is what the Ready-to-Buil
 | OQ-9 | **Resolved 2026-10-21, from code and config.** Does enterprise-access's backend-service OAuth user hold `enterprise_openedx_operator` in enterprise-subsidy in production? In effect, yes. The deposit endpoint requires operator access (`ES:enterprise_subsidy/apps/subsidy/rules.py:105`), and every Learner Credit redemption already passes the same check: redemptions POST to enterprise-subsidy's v2 admin transactions endpoint, whose permission maps to the same `has_operator_level_access` predicate on the same context, the subsidy's enterprise (Current State). So any subsidy enterprise-access can redeem against, it can deposit into. The grant row itself lives in the LMS (`/admin/enterprise/systemwideenterpriseuserroleassignment/`), not in any repo, and nothing grants it automatically. Looking up the service user's row there, or the first deposit on stage, confirms it directly. The P1 alert on a deposit 403 stays. | High — without it, every fulfillment deposit gets a 403 | Deposit step; no longer blocks Phase 1 | rthota-sonata@2u.com | Closed |
 | OQ-10 | **Resolved 2026-10-21.** How does top-up data reach Snowflake for K-04 (repeat top-ups per admin) and K-05 (enterprises with at least one top-up)? Through Segment events (Eng Lead); the `LearnerCreditTopUp` table isn't replicated. A ticket is being written to build and fire them. `tickets.md` already drafts that work as Ticket 15 (server events, chunk 15), with the portal funnel events in Ticket 26 (chunk 27). The lifecycle event carries `enterprise_customer_uuid` and the admin as the Segment `user_id`, which is what K-04 and K-05 count. Landing Segment data in Snowflake stays with the data team (Dependencies). | Medium — without it, two KPIs can't be measured. It doesn't block the build. | S-03 event design (Event / Message Contracts) | Alberto Del Toro, with the data team | Closed |
 | OQ-11 | **Resolved 2026-10-21: option (a).** A charge can succeed after its quote expired: a 3DS challenge finished after `expires_at` charges the card, but the state machine had no `expired → paid` path (found while writing Monitoring & Alerting; impl-plan Open Items 12). Options were: (a) allow `expired → paid`, so money taken is always credited; (b) cancel the PaymentIntent when a quote in `requires_action` expires, which still races with a challenge being finished. The Eng Lead chose (a), recorded as KD-7; the state diagram and Webhook changes now include it. | High — failure mode 1 (TR-3) | State machine (impl-plan chunk 5); webhook handler (chunk 12) | rthota-sonata@2u.com (Eng Lead) | Closed |
-| OQ-12 | **Resolved 2026-10-19:** a Django setting that gates route registration, the way SSP is gated (Eng Lead; KD-6). The recommendation below, (a), was not taken. How does enterprise-access read `FEATURE_TOP_UP_LEARNER_CREDIT`? It has one global waffle flag and no per-enterprise mechanism (`EA:enterprise_access/toggles.py:18`). Options, grounded 2026-10-19 (Current State): **(a)** a global edx-toggles waffle flag, like the existing one. It can be turned on for everyone, a percentage, or named users and groups, so a pilot works by putting the pilot enterprises' admins in a waffle group. No new code beyond the flag. **(b)** (a) plus a per-enterprise allowlist, so rollout goes one enterprise at a time without listing admins. New code, and a new pattern for the repo. **(c)** The LMS's `enterprise_features`. Grounding shows these are global waffle flags too, so this adds an LMS call and an edx-enterprise release without giving per-enterprise control. For (a) or (b) to limit who sees Add Funds, the portal must hide it when eligibility returns 404, because the portal's flag is build-time and global (#183; impl-plan chunk 21). **Recommendation: (a).** (impl-plan Open Items 1.) | Medium — decides whether rollout can go one enterprise at a time. With KD-6 it can't: rollout is per environment. | Feature Flags; eligibility endpoint and the 404s (impl-plan chunk 6); no longer blocks chunk 6 | rthota-sonata@2u.com (Eng Lead) | Closed |
+| OQ-12 | **Resolved 2026-10-19:** a Django setting that gates route registration, the way SSP is gated (Eng Lead; KD-6). Since 2026-11-03 the setting is checked on every request instead, as #319 built it (KD-6, G-3). The recommendation below, (a), was not taken. How does enterprise-access read `FEATURE_TOP_UP_LEARNER_CREDIT`? It has one global waffle flag and no per-enterprise mechanism (`EA:enterprise_access/toggles.py:18`). Options, grounded 2026-10-19 (Current State): **(a)** a global edx-toggles waffle flag, like the existing one. It can be turned on for everyone, a percentage, or named users and groups, so a pilot works by putting the pilot enterprises' admins in a waffle group. No new code beyond the flag. **(b)** (a) plus a per-enterprise allowlist, so rollout goes one enterprise at a time without listing admins. New code, and a new pattern for the repo. **(c)** The LMS's `enterprise_features`. Grounding shows these are global waffle flags too, so this adds an LMS call and an edx-enterprise release without giving per-enterprise control. For (a) or (b) to limit who sees Add Funds, the portal must hide it when eligibility returns 404, because the portal's flag is build-time and global (#183; impl-plan chunk 21). **Recommendation: (a).** (impl-plan Open Items 1.) | Medium — decides whether rollout can go one enterprise at a time. With KD-6 it can't: rollout is per environment. | Feature Flags; eligibility endpoint and the 404s (impl-plan chunk 6); no longer blocks chunk 6 | rthota-sonata@2u.com (Eng Lead) | Closed |
 | OQ-13 | **Closed 2026-10-21: out of scope** (Eng Lead). How is the SDN failure rate (S-04 guardrail) counted now that Stripe screens (OQ-4)? Phase 1 doesn't count it in enterprise-access. enterprise-access sees only the failed payment and, `[Assumed]` (not load-bearing), can't tell a screening block from other declines. A note under the `LearnerCreditTopUp` constraints (Data Model) records what a future change would need. The failed-payment guardrail is unaffected. | Medium — one S-04 guardrail isn't measured in Phase 1 | S-04; Monitoring & Alerting (SDN row) | rthota-sonata@2u.com, with Alberto Del Toro | Closed |
 | OQ-14 | Does every card 3DS challenge stay in the page when the PaymentIntent is cards only and confirmed with `use_stripe_sdk` and no `return_url` (KD-3)? `[Assumed]` yes: enterprise-access already relies on cards needing no `return_url` (`EA:.../customer_billing/stripe_api.py:77-79`, at `ff071483`), but nobody has tested it with a PaymentIntent confirmed on the server. To be checked in stage with Stripe's 3DS test cards, through the portal. | Medium — if a challenge did redirect, that payment would fail without a return path, and the reload recovery ADR 0014 planned for would be needed after all | Impl-plan chunks 13 and 25; doesn't block Phase 1 from starting | rthota-sonata@2u.com; the test is run by the chunk 13 owner | Before chunk 13 merges |
 
@@ -1422,12 +1626,12 @@ chunk that cannot proceed until this resolves — this is what the Ready-to-Buil
 | Dependency | Type (Internal / External) | Owner | What We Need | By When | Status |
 | --- | --- | --- | --- | --- | --- |
 | Salesforce | External | Justin Grabowski (RevOps), with rthota-sonata@2u.com | (1) Each enterprise's discount rate and quote number, read when a quote is made (R-04, R-05); Salesforce is the source, and the access route is open (OQ-3). (2) An opportunity for every top-up, created asynchronously with `is_commission_eligible: false` (R-11), either through Stripe's Salesforce connector (EA ADR 0026) or a new outbound integration (OQ-5). (3) Probably account standing and agreement type for the eligibility check (R-09, OQ-8). | Phase 1 launch: OQ-3, OQ-5 and OQ-8 all block Phase 1 | Partly answered: Salesforce is the pricing source (OQ-3, 2026-09-25). `is_commission_eligible: false` confirmed (OQ-5, 2026-10-19); no deployed setting for it exists in edx-internal, so the integration must send it. The access route, the opportunity route and the standing data are still open. An action item and a ticket with the Salesforce team exist (ticket ID not recorded here yet). |
-| Stripe | External | Not named: whoever administers the Stripe account and its webhook configuration | (1) One-time card charges: one PaymentIntent per top-up, created and confirmed on the server with idempotency keys (KD-3). Today only subscription checkout exists. (2) The webhook endpoint subscribed to `payment_intent.*` events (API Contracts, Modified Endpoints). (3) A Stripe customer for every enterprise, created when missing (KD-4). (4) SDN screening on every charge and new payment method (R-10): Stripe's own screening is enough (OQ-4, resolved 2026-10-19). (5) Phase 2: Financial Connections and ACH bank payments (R-07). | (1)–(4) Phase 1 launch; (5) Phase 2 | Already integrated for subscriptions: signed webhooks and saved payment methods (Current State). One-time charges, `payment_intent` handling and Financial Connections are net-new. OQ-4 resolved: Stripe's screening is enough. |
-| enterprise-subsidy | Internal | rthota-sonata@2u.com (Eng Lead, enterprise-subsidy owner) | (1) The deposit endpoint changes in KD-5: replay, 409, 429. (2) Rejecting metadata keys that clash with ledger columns. (3) The `stripe_payment_intent` provider row. (4) Operator access for enterprise-access's service user: already in place, because redemptions pass the same check (OQ-9, resolved 2026-10-21). | Deployed before the enterprise-access fulfillment code (deploy order, Data Model) | (1)–(3) are impl-plan chunks 1–3, drafted and not started. (4) is in place (OQ-9). |
+| Stripe | External | Not named: whoever administers the Stripe account and its webhook configuration | (1) One-time card charges: one PaymentIntent per top-up, created and confirmed on the server with idempotency keys (KD-3). Today only subscription checkout exists. (2) The webhook endpoint subscribed to `payment_intent.*` events (API Contracts, Modified Endpoints). (3) A Stripe customer for every enterprise, created when missing (KD-4). (4) Sanctions controls on every charge (R-10), as Stripe's published policy describes them (OQ-4; basis corrected 2026-11-03). (5) Phase 2: Financial Connections and ACH bank payments (R-07). | (1)–(4) Phase 1 launch; (5) Phase 2 | Already integrated for subscriptions: signed webhooks and saved payment methods (Current State). One-time charges, `payment_intent` handling and Financial Connections are net-new. OQ-4 resolved: Stripe's published controls, plus `pay`'s embargoed-country check. |
+| enterprise-subsidy | Internal | rthota-sonata@2u.com (Eng Lead, enterprise-subsidy owner) | (1) The deposit endpoint changes in KD-5: replay, 409, 429. (2) Rejecting metadata keys that clash with ledger columns. (3) The `stripe_payment_intent` provider row. (4) Operator access for enterprise-access's service user: already in place, because redemptions pass the same check (OQ-9, resolved 2026-10-21). | Deployed before the enterprise-access fulfillment code (deploy order, Data Model) | (3) merged (#83, `ac79733`, 2026-10-26). (2) is in review (#88; it differs from this spec on empty metadata, review gap G-39). (1) hasn't started: no enterprise-subsidy change exists. (4) is in place (OQ-9). Checked 2026-11-03. |
 | openedx-ledger | Internal (pip) | Open edX shared library | No change. Phase 1 uses the existing deposit API and ledger lock at `2.0.0`. | — | No change needed |
-| frontend-app-admin-portal | Internal | `group:2u-enterprise`; impl-plan chunk owners | Add Funds driven by eligibility, the checkout route and its three steps, saved and new cards (reusing `AddPaymentMethodModal` and `StripeProvider`), the decline, 3DS and polling states, the confirmation banner, the funnel events. An amendment to ADR 0014 (KD-3, 2026-11-02): 3DS stays in the page through `handleNextAction`, with no `returnUrl` reload, and the Confirmation step reads the top-up by its UUID, not a Stripe session ID (where the UUID lives in the route is G-8). | Phase 1 launch | Flag and a disabled Add Funds button merged (#183, `ac9849ae`). The rest (impl-plan chunks 21–27) is not started. |
+| frontend-app-admin-portal | Internal | `group:2u-enterprise`; impl-plan chunk owners | Add Funds driven by eligibility, the checkout route and its three steps, saved and new cards (a new card is attached through billing-management with `setAsDefault: false` before Pay, reusing `AddPaymentMethodModal` and `StripeProvider`; G-10), the decline, 3DS and polling states, the confirmation banner, the funnel events. An amendment to ADR 0014 (KD-3, 2026-11-02): 3DS stays in the page through `handleNextAction`, with no `returnUrl` reload, and the Confirmation step reads the top-up by its UUID, not a Stripe session ID (where the UUID lives in the route is G-8). | Phase 1 launch | Merged: the flag and a disabled Add Funds button (#183, `ac9849ae`); the flow skeleton, with four steps (#190, `cc1550aa`); and Select Amount (#192, `91402183`). In review: Add Funds gated on eligibility (#201, chunk 21). Not started: chunks 23–27. Checked 2026-11-03. |
 | Braze campaigns | External | Not named. The PRD's RACI has no email row; Marketing (Sam Creek) is the likely owner. | Two API-triggered campaigns with approved copy: receipt (R-16) and payment failure (R-19), with the trigger properties in Integration Points. Their IDs go into enterprise-access settings. Phase 2 adds the ACH-started and ACH-cleared emails (R-17, R-18). | Phase 1 launch (Phase 2 emails with Phase 2) | Not started. No top-up campaigns exist (Current State). |
-| Legal | Internal | Legal (responsible for legal review in the PRD's RACI; Alberto Del Toro accountable) | (1) The Top-Up Legal Agreement text and its version string, stored as `agreement_version` (R-04). (2) Phase 2: the ACH authorization wording (ADR 0012). | (1) Phase 1 launch; (2) Phase 2 | No agreement text exists in these repos. The SDN question is closed (OQ-4, 2026-10-19). |
+| Legal | Internal | Legal (responsible for legal review in the PRD's RACI; Alberto Del Toro accountable) | (1) The Top-Up Legal Agreement text and its version string, stored as `agreement_version` (R-04). (2) Phase 2: the ACH authorization wording (ADR 0012). | (1) Phase 1 launch; (2) Phase 2 | No agreement text exists in these repos. The SDN question is closed on Stripe's published policy (OQ-4; basis corrected 2026-11-03). |
 | Security review | Internal | Not named. The PRD's RACI makes Legal responsible for the compliance and security review. | The pre-release security review that NFR-02 requires, against Security Design. Phase 2 adds the pentest and NACHA audit (ADR 0012). | Before the Phase 1 release | Not scheduled |
 | Data team (Snowflake) | Internal | Alberto Del Toro, with the data team | K-04 and K-05 counted in Snowflake from the top-up Segment events (OQ-10: the route is Segment events), and agreement on the event names in Event / Message Contracts | Before GA metrics reporting | OQ-10 resolved 2026-10-21; a ticket to build and fire the events is being written (drafted as `tickets.md` Tickets 15 and 26) |
 
@@ -1446,8 +1650,8 @@ the Eng Lead's to confirm.*
 
 | Metric / Alert | Condition | Severity (P1 / P2 / P3) | Response |
 | --- | --- | --- | --- |
-| Charged but not credited | A top-up stays in `paid` or `deposited` with no change for 60 minutes (Fulfillment rule 4; Eng Lead, 2026-11-02, replacing the proposed 15). By then the task's own retries (about 25 minutes) and the re-run job, which queues it again after 45 minutes, have both failed to move it. | P1 | Page on-call. Check that the Celery worker and the re-run job are running. Check `last_error` and whether ES already holds a deposit for `lc-top-up-<uuid>`, then re-run the top-up by hand (Recovery jobs); it is idempotent. |
-| Fulfillment failed | A top-up reaches `errored_fulfillment` with a 400, 403, 409 or 422, or with a retryable error after 3 automatic re-runs (Recovery jobs) | P1 | Page on-call. Fix the record or its cause, then re-run it by hand (`--top-up-uuid`). There is no refund in Phase 1. |
+| Charged but not credited | A top-up stays in `paid` or `deposited` with no change for 60 minutes (Fulfillment rule 4; Eng Lead, 2026-11-02, replacing the proposed 15). By then the task's own retries (up to about 25 minutes) and the re-run job, which queues it again after 45 minutes, have both failed to move it. | P1 | Page on-call. Check that the Celery worker and the re-run job are running. Check `last_error` and whether ES already holds a deposit for `lc-top-up-<uuid>`, then re-run the top-up by hand (Recovery jobs); it is idempotent. |
+| Fulfillment failed | A top-up reaches `errored_fulfillment` with a 400, 403, 404, 409 or 422, or with a retryable error after 3 automatic re-runs (Recovery jobs) | P1 | Page on-call. Fix the record or its cause, then re-run it by hand (`--top-up-uuid`). There is no refund in Phase 1. |
 | Payment taken, top-up not moved | The Stripe check job (every 10 minutes, Recovery jobs) finds a succeeded PaymentIntent whose top-up is still `created`, `requires_action` or `expired`: the `pay` request, `finalize` and the webhook all missed it. The job moves the top-up to `paid` and queues fulfillment itself. Since KD-7, a charge that succeeds after its quote expired moves `expired → paid` through the webhook, so it only shows up here if the webhook missed it too. | P1 | Page on-call. The job has already moved the top-up on; find out why the webhook missed it (Stripe webhook delivery, below). |
 | Failed-payment rate (guardrail) | Declined or failed payments (402 `payment_declined` and `payment_intent.payment_failed`) are more than 5% of payment attempts (S-04, PRD guardrail) | P2 | Break the failures down by `decline_code` to tell issuer declines from an integration fault, and check Stripe's status. Tell the PM: this is a launch guardrail. |
 | SDN screening failures (guardrail) | Out of scope for Phase 1 (OQ-13): enterprise-access doesn't count screening blocks. Kept for a future change (Data Model note). | — | None in Phase 1. Compliance can review Stripe's blocked payments in Stripe. |
@@ -1469,7 +1673,12 @@ the Eng Lead's to confirm.*
 
 | Flag Name | Default | Controls | Rollback Behavior |
 | --- | --- | --- | --- |
-| `FEATURE_TOP_UP_LEARNER_CREDIT` (the same flag as the PRD's `FEATURE_LEARNER_CREDIT_TOP_UP`; see NFR-05) | OFF | **Admin portal:** every top-up entry point, meaning Add Funds on Budget List and Budget Detail and the checkout route. The portal reads it as a build-time setting or through `hasFeatureFlagEnabled('TOP_UP_LEARNER_CREDIT')` (`AP:src/config/index.js:76` as of `ac9849ae`, #183). edx-internal already sets it: `'true'` on stage, off in production (`INT:frontends/frontend-app-admin-portal/stage_config.yml:46`; `prod_config.yml:46`). **enterprise-access:** a Django setting of the same name, default `False`, set per environment in edx-internal. When it is off, `api/v1/urls.py` doesn't register the `/api/v1/learner-credit-top-ups/` routes, so every top-up endpoint returns 404 (NFR-05; KD-6, the SSP pattern). It applies to a whole environment, not to one enterprise. | Turning it off takes an edx-internal change and a redeploy of each side; it is not a runtime toggle. Turning it off hides the entry points and makes the endpoints return 404; nothing is migrated or deleted. The Stripe webhook route is gated by `ENABLE_CUSTOMER_BILLING_API`, not by this flag (KD-6). Proposed: the `payment_intent.*` webhook handlers, the fulfillment task and the recovery jobs don't check the flag either, so a top-up that was already paid is still credited, and turning the flag off can't cause "charged but not credited". |
+| `FEATURE_TOP_UP_LEARNER_CREDIT` (the same flag as the PRD's `FEATURE_LEARNER_CREDIT_TOP_UP`; see NFR-05) | OFF | **Admin portal:** every top-up entry point, meaning Add Funds on Budget List and Budget Detail and the checkout route. The portal reads it as a build-time setting or through `hasFeatureFlagEnabled('TOP_UP_LEARNER_CREDIT')` (`AP:src/config/index.js:76` as of `ac9849ae`, #183). edx-internal already sets it: `'true'` on stage, off in production (`INT:frontends/frontend-app-admin-portal/stage_config.yml:46`; `prod_config.yml:46`). **enterprise-access:** a Django setting of the same name, default `False`, set per environment in edx-internal. When it is off, every `/api/v1/learner-credit-top-ups/` endpoint returns 404: the routes stay registered, and the viewset checks the setting on every request (NFR-05; KD-6, as #319 built it). It applies to a whole environment, not to one enterprise. | Turning it off takes an edx-internal change and a redeploy of each side; it is not a runtime toggle. Turning it off hides the entry points and makes the endpoints return 404; nothing is migrated or deleted. The Stripe webhook route is gated by `ENABLE_CUSTOMER_BILLING_API`, not by this flag (KD-6). Proposed: the `payment_intent.*` webhook handlers, the fulfillment task and the recovery jobs don't check the flag either, so a top-up that was already paid is still credited, and turning the flag off can't cause "charged but not credited". |
+
+`FEATURE_TOP_UP_LEARNER_CREDIT` is the only top-up flag (KD-6). `ENABLE_CUSTOMER_BILLING_API` and
+`ENABLE_BILLING_MANAGEMENT_API` are SSP's existing settings, already `true` in stage and production
+(Current State). Top-up needs both on, the first for the Stripe webhook and the second for saved cards,
+but it doesn't change them, and a top-up rollback leaves them on.
 
 ### Rollback Plan
 
@@ -1478,10 +1687,12 @@ the Eng Lead's to confirm.*
    the backend first: the top-up endpoints then return 404, so the portal's checkout can't start a
    new top-up even before its own redeploy finishes. Nothing is migrated or deleted. The webhook handlers, fulfillment and the recovery
    jobs ignore the flag (Feature Flags, proposed), so a top-up that was already paid is still credited.
+   Leave `ENABLE_CUSTOMER_BILLING_API` and `ENABLE_BILLING_MANAGEMENT_API` on: they are SSP's settings,
+   and the webhook needs the first.
 2. **Settle the top-ups in flight.** The recovery jobs keep running and finish most top-ups in
    `paid`, `deposited` or `errored_fulfillment`. Re-run any that stay in `errored_fulfillment` by hand
-   once the cause is fixed (Recovery jobs); there is no refund in Phase 1. Quotes in
-   `created` expire on their own. A quote in `requires_action` can still be charged if the admin
+   once the cause is fixed (Recovery jobs); there is no refund in Phase 1. The expiry job moves
+   unpaid quotes to `expired`. A quote in `requires_action` can still be charged if the admin
    finishes the challenge, and the webhook credits it (`finalize` returns 404 while the flag is off).
 3. **Roll back enterprise-access code only if the flag isn't enough.** The code can roll back on
    its own: the Stripe-customer lookup falls back to `CheckoutIntent`. Before removing the webhook
@@ -1489,9 +1700,11 @@ the Eng Lead's to confirm.*
    `payment_intent.succeeded` has no handler, and only the reconciliation alert would catch it. Keep
    the new tables once a real top-up exists: they hold payment records.
 4. **Leave the enterprise-subsidy changes in place.** For calls without a key, the deposit endpoint
-   changes only these answers: a locked ledger gets 429 instead of 422, and `metadata` with a
-   reserved key, or that isn't a JSON object, gets 400. Never reverse the provider migration: its reverse does nothing on purpose,
-   because deleting the provider row would delete every top-up deposit.
+   changes only these answers: a locked ledger gets 429 instead of 422; `metadata` with a
+   reserved key, or that isn't a JSON object, gets 400; a subsidy deleted during the request gets
+   404 instead of 500; and an invalid request to an expired subsidy gets 400 instead of 422, because
+   validation now runs first (Deposit endpoint changes). Never reverse the provider migration: its
+   reverse does nothing on purpose, because deleting the provider row would delete every top-up deposit.
 
 ## Build Phases (High-Level)
 
@@ -1522,9 +1735,9 @@ explains why, so nothing falls through silently.*
 | R-05 | `discount_rate` (`NULL` vs `0`); 400 `quote_not_available` | Designed. Source waits on OQ-3. |
 | R-06 | Response body: `uuid` as transaction ID, `payment_method`; GET top-up | Card: designed. Pending: Phase 2. |
 | R-07 | Phased Delivery | Phase 2 (KD-1) |
-| R-08 | KD-4; `setup_future_usage`; payment-methods endpoint; Sequence Diagrams part 2 | Card: designed. Bank: Phase 2. |
+| R-08 | KD-4; a new card attached through billing-management with `setAsDefault: false` (G-10); payment-methods endpoint; Sequence Diagrams part 2 | Card: designed. Bank: Phase 2. |
 | R-09 | Eligibility endpoint; 403 codes; TR-13 | Designed. Standing and agreement type wait on OQ-8. |
-| R-10 | Stripe's own screening on every charge and payment method (OQ-4, resolved 2026-10-19); Security Design | Designed: enterprise-access adds no screening code |
+| R-10 | Stripe's sanctions controls as its published policy describes them (OQ-4, basis corrected 2026-11-03); `pay`'s embargoed-country check, 400 `country_not_supported`; Security Design | Designed |
 | R-11 | `salesforce_*` fields; Integration Points; Sequence Diagrams part 3 | Designed. Route waits on OQ-5. |
 | R-12 | `state=processing` (Data Model) | Phase 2 (KD-1) |
 | R-13 | List endpoint with `state=fulfilled`; KD-3's stated cost | Phase 3 (KD-1) |
@@ -1615,3 +1828,5 @@ gate's grounding bar is the same whether you co-authored or handcrafted.*
 | 2026-10-27 | **`discount_cents` is nullable** (reverses the 2026-10-21 "not null, default `0`"). It is `NULL` exactly when `discount_rate` is `NULL` (no discount on record), and `0` for a 0% rate. When set, it is at least 0 and less than `amount_cents`. The card is charged `amount_cents − discount_cents`, or `amount_cents` when it is `NULL`. The API returns `null` with `discount_rate` and the portal hides the discount row. Data Model (field table, grounded in chunk 5's model validation at `cfba79a7`, PR #323) and the top-up response-body notes updated. | Eng Lead: `discount_cents` should be nullable. Chunk 5 (#323) already builds it that way. |
 | 2026-10-27 | **Tech-lead review refreshed** against the working copy and the code merged since 2026-10-23. The G numbers are unchanged. **Done:** G-19, G-20, G-28 and G-29 (turn 1). **Narrowed:** G-4 (the `discount_cents` decision is final); G-5 (chunk 5's PR #323 locks the top-up row on every state change; other `spend_limit` writers are still unguarded); G-21 (nullability decided; the rounding rule is still open); G-22 (#323 sends the ops re-run through `paid` or `deposited`; the state diagram here still has to follow). **Sharper:** G-8 (the merged portal route has no top-up UUID, and a refresh restarts the flow). **New, major:** G-31, the merged portal flow (#190) has four steps where PRD UX-01 and this spec have three, and it gates on the budget's own status, not the eligibility endpoint. **Open:** 4 blockers (G-1–G-4), 15 majors (G-5–G-18, G-31), 8 minors (G-21–G-27, G-30). Current State gets "Merged or in review since 2026-10-23" (subsidy #83, enterprise-access #323, portal #190), and the chunk 5 citation in the Data Model moves to #323's head, `cfba79a7`. **Order:** unchanged; G-31 joins turn 4. Next is turn 2, Key Decisions and Alternatives (G-3 item 2, G-7, G-13, G-16, G-17). | Eng Lead asked again for a tech-lead review, then for its gaps to be worked one section per turn. |
 | 2026-10-29 | **Tech-lead review refreshed** against the working copy and the code merged since 2026-10-27. The G numbers are unchanged, and none closed. **Merged:** chunk 5 (EA #323, `ed1a16b1`, 2026-10-28); its citations in Current State and the Data Model's `discount_cents` row move from `cfba79a7` to `ed1a16b1`. The portal's Select Amount step, order summary and ADR 0014 (#192, `AP@91402183`), recorded in Current State. EA #325 (unrelated) moves `subsidy_access_policy/models.py` lines 13 higher on `main` from line 111. **New, major:** G-32, step 1's order summary can't show the discount or the amount charged (R-02 "updates live", R-05, R-06, UX-01), because the discount arrives only with the quote, which is made after step 1; #192 shows Total Cost equal to the credit amount. G-33, portal ADR 0014 expects 3DS to come back through a full-page reload and rebuild from a "Stripe session id"; this spec confirms on the server and runs 3DS in the page, doesn't say whether the confirm sends a `return_url`, and the portal URL has no top-up UUID to recover the top-up after a reload. **Open:** 4 blockers (G-1–G-4), 17 majors (G-5–G-18, G-31–G-33), 8 minors (G-21–G-27, G-30). **Order:** G-33 joins turn 2 with G-17 (KD-3 after 3DS); G-32 joins turn 4. Next is still turn 2, Key Decisions and Alternatives. | Eng Lead asked again for a tech-lead review, then for its gaps to be worked one section per turn. |
+| 2026-11-03 | **Critical review, with every claim validated.** Four read-only checkers read each citation at its pinned ref and again on current `main`. Of about 350 claims, about 300 held as written. Most of the rest were line shifts or stale greps; 18 changed meaning. Each finding was rechecked by hand before this row. One was wrong: production runs 4 sync gunicorn workers per pod, not 2. **Verdict:** the core money path works (one PaymentIntent per top-up, a keyed deposit before a locked spend-limit raise, webhook and job backstops). It isn't gate-ready. **Done:** G-2, G-19, G-20, G-22 (every #323 transition matches the diagram), G-23, G-28, G-29, G-33. **Blockers:** G-3 (adopt #319's contract, which #201 already uses, or change both); G-4 (open items and "Proposed" values aren't OQs); G-18, raised to blocker (Stripe's policy describes screening its users, not each payer against the SDN list; get Stripe's or Legal's written confirmation). **Majors:** G-1, now only quote expiry (nothing moves a top-up to `expired`; add a cron job); G-5 (three unlocked `spend_limit` writers; one locked raise method); G-6 (workers never clear the request cache, and a failed read becomes a `ValidationError`; read fresh with `raise_on_error=True` before the lock); G-7 (D2: siblings must have a `spend_limit`); G-8 (UUID in the route; warn when a top-up is in flight); G-9 (create the PaymentIntent once without a card; pass the card on confirm; a 5xx on create is replayed for 24 h); G-10 (attach a new card with `setAsDefault: false`); G-11 (split the lookup; three subscription actions need the intent); G-12 (customers are per admin email; key `Customer.create`); G-13 (D3: quote and `pay` admin-only); G-14 (no `on_failure` hook; `SoftTimeLimitExceeded` isn't retried; use the existing per-call timeout pattern; the dedicated queue needs a worker); G-15 (poll limit; email on inline declines; count failures once); G-16 (D1: a WaffleSwitch kill switch, per architecture-patterns §20); G-31; G-32. New: **G-34** (`get_stripe_payment_intent` is cached 60 s with the `client_secret`; `finalize` and the jobs need an uncached retrieve); **G-35** (chunk 1's contract: the 429 body is `{"detail"}`, the same-key race fails on the Deposit's one-to-one, a replay check before the expiry check must validate the request itself, and a mid-request delete is a 500); **G-36** (the runbook's "extend the subsidy" for a 422 breaks S-02; refund by hand in Stripe instead); **G-38** (the impl-plan tracker is stale, and #329 gitignores `docs/plans/`). **Minors:** G-17 (only the webhook owner is left); G-21; G-24; G-25; G-26; G-27; G-30; new **G-37** (state the web capacity in TR-7); **G-39** (#88 rejects `[]` and `""`); **G-40** (`transition_to()` raises; the alert fires at 60 min, but a re-queue lands at 45–75 min); **G-41** (agreement version and text, the billing form, brand and last 4 read on every poll); **G-42** (`revenue_category` and `internal_only` subsidies, and tax, for Finance); **G-43** (citation fixes). **Order, one section per turn:** (1) Current State: G-43; (2) Key Decisions: D1–D3, G-3 item 2, G-17; (3) Data Model and Recovery jobs: G-1, G-5, G-6, G-12, G-21, G-36, G-40; (4) API Contracts, quote, `pay` and `finalize`: G-8, G-9, G-10, G-15, G-32, G-34, G-41; (5) API Contracts, eligibility, deposit, lookup, webhook and portal: G-3, G-11, G-24, G-31, G-35, G-39; (6) Integration Points and Non-Functional Design: G-14, G-25, G-27, G-37, G-42; (7) Operational Design: G-15's guardrail, G-30, G-36's runbook, G-40's alert timing; (8) Risks, Open Questions, Dependencies, Traceability and the impl-plan tracker: G-4, G-18, G-26, G-38. | Eng Lead: "act as a critical reviewer … validate all claims", then work the gaps one section per turn in this file and the impl-plan only. |
+| 2026-11-03 | **Turn 1, Current State and citations (G-43).** Every item below was rechecked by hand at the cited ref. **Baseline:** heads and line offsets on `main` recorded for enterprise-subsidy (`89531f4`, 15 commits on), enterprise-access (`ff071483`, 33 on; offsets by region for `subsidy_access_policy/models.py`, `settings/base.py` and `views/customer_billing.py`) and the admin portal (`43f979f6`, 14 on). Also: stripe-python's PaymentIntent type filter, and edx-rbac's pin line. **New Current State facts**, which later turns build on: the request cache is never cleared between Celery tasks, and a failed read inside `clean_spend_limit` becomes a `ValidationError` (G-6); `create_deposit()` raises `TypeError` on an unlimited budget, and three unlocked `spend_limit` writers exist (G-5); the 429 body is `{"detail"}`, a repeated key fails at the `Deposit` insert, the expiry check runs before validation, and both test databases are SQLite (G-35); the lookup's tuple and which actions use each half (G-11); `get_stripe_payment_intent` is cached (G-34); what `transition_to()` returns and raises (G-40); runtime facts: retries with full jitter, no failure hook, one worker with no `-Q`, 4–16 pods with 4 gunicorn workers each, and the existing per-call timeout pattern (G-14, G-37); what Stripe's sanctions policy does and doesn't say (G-18, tagged `[Assumed]`); the three WaffleSwitches and §20 (G-16); a new subsection on what merged or opened since 2026-10-29: ES #87 and #88 (G-39), no chunk 1 work, AP #201 and #194, EA #329. **Fixed:** the stale greps (discount or quote, idempotency, account standing, `select_for_update`); the `subsidy_record` and TieredCache lines; the dedup citation; ADR 0026's connector lines; the "differ" table's row 1; the ERC and Stripe retry citations (Stripe also retries any 409 and any status of 500 or more); the provider slug on `main`; Integration Points now names stripe `16.0.0`; the 30-minute expiry is built, not proposed; `initiated_by_lms_user_id` is nullable and `retained`; the backoff has full jitter (the first retry comes within 0–60 s; up to about 25 minutes in all); TR-5 notes that SQLite tests don't prove the lock; TR-7 states the web capacity; "PRD Principle 2", "A-3" and "open question 3" now cite the repo PRD they come from; the Dependencies rows for enterprise-subsidy and the admin portal now show what merged. No design decision changed. **Done:** G-43. **Open:** 3 blockers, 19 majors, 12 minors. Next is turn 2, Key Decisions and Alternatives. | Eng Lead: "go and reverify and cross check", then apply. |
