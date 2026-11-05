@@ -7,10 +7,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        (
-            "customer_billing",
-            "0041_alter_historicalsspproduct_catalog_query_id_and_more",
-        ),
+        ("customer_billing", "0042_add_learner_credit_top_up"),
     ]
 
     operations = [

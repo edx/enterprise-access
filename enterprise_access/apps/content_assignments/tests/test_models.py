@@ -14,7 +14,8 @@ from ..constants import (
     AssignmentActionErrors,
     AssignmentActions,
     AssignmentActorTypes,
-    AssignmentSources
+    AssignmentSources,
+    LearnerContentAssignmentStateChoices
 )
 from ..models import AssignmentConfiguration, LearnerContentAssignmentAction
 from .factories import LearnerContentAssignmentFactory
@@ -39,6 +40,17 @@ class TestAssignmentActions(TestCase):
             assignment_configuration=cls.assignment_configuration,
         )
 
+    def _assert_audit_fields(self, action, actor_type, source, actor_lms_user_id=None):
+        """
+        Asserts the audit trail fields that are recorded on the given action.
+        """
+        self.assertEqual(action.actor_type, actor_type)
+        self.assertEqual(action.source, source)
+        self.assertEqual(action.actor_lms_user_id, actor_lms_user_id)
+        self.assertEqual(action.learner_email, self.assignment.learner_email)
+        self.assertEqual(action.learner_lms_user_id, self.assignment.lms_user_id)
+        self.assertEqual(action.enterprise_customer_uuid, self.assignment_configuration.enterprise_customer_uuid)
+
     def test_get_set_linked_action(self):
         """
         Tests that we can idempotently get/set the linked action for an assignment.
@@ -51,6 +63,7 @@ class TestAssignmentActions(TestCase):
 
         self.assertEqual(linked_action.action_type, AssignmentActions.LEARNER_LINKED)
         self.assertIsNone(linked_action.error_reason)
+        self._assert_audit_fields(linked_action, AssignmentActorTypes.SYSTEM, AssignmentSources.CELERY_TASK)
         self.assertAlmostEqual(
             timezone.now(),
             linked_action.completed_at,
@@ -84,6 +97,7 @@ class TestAssignmentActions(TestCase):
 
         self.assertEqual(notified_action.action_type, AssignmentActions.NOTIFIED)
         self.assertIsNone(notified_action.error_reason)
+        self._assert_audit_fields(notified_action, AssignmentActorTypes.SYSTEM, AssignmentSources.CELERY_TASK)
         self.assertAlmostEqual(
             timezone.now(),
             notified_action.completed_at,
@@ -196,6 +210,35 @@ class TestAssignmentActions(TestCase):
 
         email_sent_action = self.assignment.add_successful_expiration_action()
         self.assertEqual(self.assignment.get_last_successful_expiration_action(), email_sent_action)
+        self._assert_audit_fields(email_sent_action, AssignmentActorTypes.SYSTEM, AssignmentSources.CELERY_TASK)
+
+    def test_acknowledged_actions_record_learner_as_actor(self):
+        """
+        Tests that acknowledging cancelled/expired assignments records the acknowledging learner in the audit trail.
+        """
+        cancelled, expired = (
+            LearnerContentAssignmentFactory.create(
+                assignment_configuration=self.assignment_configuration,
+                learner_email=self.assignment.learner_email,
+                lms_user_id=self.assignment.lms_user_id,
+                state=state,
+            )
+            for state in (LearnerContentAssignmentStateChoices.CANCELLED, LearnerContentAssignmentStateChoices.EXPIRED)
+        )
+
+        acknowledged, _, _ = self.assignment_configuration.acknowledge_assignments(
+            [cancelled.uuid, expired.uuid], self.assignment.lms_user_id,
+        )
+
+        self.assertCountEqual(acknowledged, [cancelled, expired])
+        for action in (
+            cancelled.get_last_successful_acknowledged_cancelled_action(),
+            expired.get_last_successful_acknowledged_expired_action(),
+        ):
+            self.assertIsNotNone(action.completed_at)
+            self._assert_audit_fields(
+                action, AssignmentActorTypes.LEARNER, AssignmentSources.API, self.assignment.lms_user_id,
+            )
 
     def test_successful_expiration_email_filter_and_bulk_lookup_agree(self):
         """
