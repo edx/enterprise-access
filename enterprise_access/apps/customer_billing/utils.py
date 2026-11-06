@@ -2,12 +2,15 @@
 Utility functions for customer billing app
 """
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Union
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import unquote_plus, urlsplit, urlunsplit
 
 from django.apps import apps
 from django.conf import settings
+
+from enterprise_access.apps.customer_billing.constants import ATTRIBUTION_KEYS, ATTRIBUTION_VALUE_MAX_LENGTH
 
 
 def datetime_from_timestamp(timestamp: Union[int, float]) -> datetime:
@@ -23,16 +26,74 @@ def datetime_from_timestamp(timestamp: Union[int, float]) -> datetime:
     return datetime.fromtimestamp(timestamp, tz=timezone.utc)
 
 
-def strip_query_and_fragment(url: str) -> str | None:
+# An email address, the PII that most often ends up in marketing parameters (e.g. ``utm_content=jane@example.com``).
+EMAIL_ADDRESS_PATTERN = re.compile(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}')
+REFERRER_SCHEMES = ('http', 'https')
+
+
+def contains_email_address(value: str) -> bool:
     """
-    Drop the query string and fragment from a URL, which may carry PII (e.g. ``?email=...``).
-    Returns None if the URL can't be parsed (``urlsplit`` raises ValueError for e.g. ``http://[``).
+    Whether ``value`` contains an email address, also when percent-encoded (``jane%40example.com``, or encoded twice).
+    """
+    for _ in range(3):
+        if EMAIL_ADDRESS_PATTERN.search(value):
+            return True
+        decoded = unquote_plus(value)
+        if decoded == value:
+            return False
+        value = decoded
+    return bool(EMAIL_ADDRESS_PATTERN.search(value))
+
+
+def sanitize_referrer(url: str) -> str | None:
+    """
+    Reduce a referrer URL to its origin, ``scheme://host[:port]/``, or return None if it is not an http(s) URL with a
+    host.
+
+    Only the origin is kept. The username and password, query string and fragment are dropped, and so is the path:
+    path segments can identify a person (``/u/jane-doe``, ``/reset/<token>``), and no path pattern is safe in
+    general. Browsers already send only the origin for cross-site referrers by default
+    (``strict-origin-when-cross-origin``), so this mostly drops paths of same-site referrers.
     """
     try:
-        parts = urlsplit(url)
+        parts = urlsplit(url.strip())
+        hostname = parts.hostname  # lowercased, without the username and password
+        port = parts.port  # raises ValueError for a port that is not a number
     except ValueError:
         return None
-    return urlunsplit((parts.scheme, parts.netloc, parts.path, '', ''))
+    scheme = parts.scheme.lower()
+    if scheme not in REFERRER_SCHEMES or not hostname:
+        return None
+    host = f'[{hostname}]' if ':' in hostname else hostname  # IPv6
+    netloc = f'{host}:{port}' if port else host
+    return urlunsplit((scheme, netloc, '/', '', ''))
+
+
+def sanitize_attribution(attribution) -> dict | None:
+    """
+    Return the parts of ``attribution`` that may be stored and sent to Segment, or None if nothing is left.
+
+    Keeps only ``ATTRIBUTION_KEYS`` whose value is a non-empty string without an email address, capped at
+    ``ATTRIBUTION_VALUE_MAX_LENGTH`` characters, with the referrer reduced to its origin (``sanitize_referrer``).
+    Anything else is dropped rather than rejected, so this never raises. A key allowlist alone does not make values
+    safe, which is why each value is checked too. The checks catch the obvious cases (emails, URL credentials and
+    paths, nested objects); they cannot recognize every kind of personal data in free text.
+    """
+    if not isinstance(attribution, dict):
+        return None
+    cleaned = {}
+    for key in ATTRIBUTION_KEYS:
+        value = attribution.get(key)
+        if not isinstance(value, str):
+            continue
+        value = value.strip()
+        if key == 'referrer':
+            value = sanitize_referrer(value)
+        # Checked before truncating, so a cut-off email address is still found.
+        if not value or contains_email_address(value):
+            continue
+        cleaned[key] = value[:ATTRIBUTION_VALUE_MAX_LENGTH]
+    return cleaned or None
 
 
 logger = logging.getLogger(__name__)

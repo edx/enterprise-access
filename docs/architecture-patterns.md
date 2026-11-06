@@ -201,6 +201,24 @@ before either writes, which proves the stored-state check but not the lock.
 - Pass a deterministic `message_id` so Segment drops a resend after a success that wasn't recorded
 - Example: `customer_billing.tasks.send_checkout_segment_event_task`
 
+### 26. A Celery task that must not be lost: transactional outbox, not a swallowed `.delay()`
+Catching a `.delay()` failure and logging it keeps the webhook healthy but loses the work: Celery cannot retry a
+task that never reached the broker. When the work must happen eventually (e.g. analytics events recorded as sent):
+- Save a row describing the work (status `pending`) first, unique on the work's natural key, with `get_or_create`
+  so a redelivered webhook finds it. Publish with `transaction.on_commit`.
+- Publish under `select_for_update(skip_locked=True)` on the `pending` row, mark it `dispatched` in the same
+  transaction *before* calling `.delay()`, and roll back on a publish error. A worker that picks the task up at once
+  waits for the lock; an eager task (tests, `CELERY_ALWAYS_EAGER` devstacks) runs inside `.delay()` and its final
+  status is not overwritten afterwards.
+- A scheduled management command publishes `pending` rows and re-queues `dispatched` rows older than the task's own
+  retry window, failing them after a bounded number of dispatches. Don't count a failed publish as an attempt.
+- Make every status change a conditional update (`.filter(status=...).update(...)` or excluding final statuses) so a
+  stale copy or a second worker never moves a final row back.
+- The task decides between retry (transient), `failed` (retrying can't help) and `skipped` (not applicable), so
+  nothing ends silently.
+- Example: `customer_billing.segment_outbox` and `dispatch_checkout_segment_events`. See
+  `docs/references/checkout_segment_events.md`.
+
 ### Key Takeaways for Implementation:
 - Check permissions early using `@permission_required` decorator
 - Use separate serializers for request/response

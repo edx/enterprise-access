@@ -2,6 +2,7 @@
 Tests for the ``enterprise_access.customer_billing.signals`` module.
 """
 from decimal import Decimal
+from unittest import mock
 
 from django.test import TestCase
 
@@ -165,3 +166,24 @@ class TestStripeEventDataSignals(TestCase):
         summary.refresh_from_db()
         self.assertEqual(summary.invoice_amount_paid, 2000)
         self.assertEqual(summary.invoice_quantity, 8)
+
+
+class TestCheckoutIntentLifecycleSignal(TestCase):
+    """Tests for the CheckoutIntent lifecycle Segment event."""
+
+    @mock.patch('enterprise_access.apps.customer_billing.signals.track_event')
+    def test_lifecycle_event_never_carries_attribution(self, mock_track_event):
+        """
+        The read-only serializer includes every field, but attribution is only sent on order_completed (behind
+        FEATURE_SSP_CHECKOUT_SEGMENT_EVENTS_V2), so the lifecycle event must not forward it.
+        """
+        CheckoutIntent.create_intent(
+            user=UserFactory(), slug='acme', name='Acme', quantity=10,
+            attribution={'utm_source': 'newsletter', 'referrer': 'https://www.google.com/'},
+        )
+
+        mock_track_event.assert_called_once()
+        properties = mock_track_event.call_args.kwargs['properties']
+        self.assertNotIn('attribution', properties)
+        self.assertNotIn('newsletter', str(properties))
+        self.assertEqual(properties['new_state'], 'created')

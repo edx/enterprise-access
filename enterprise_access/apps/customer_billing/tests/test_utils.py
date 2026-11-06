@@ -13,11 +13,13 @@ from django.utils import timezone
 
 from enterprise_access.apps.customer_billing.models import SspProduct
 from enterprise_access.apps.customer_billing.utils import (
+    contains_email_address,
     datetime_from_timestamp,
     get_campaign_id,
     get_default_ssp_price_lookup_key,
     get_product_type,
-    strip_query_and_fragment
+    sanitize_attribution,
+    sanitize_referrer
 )
 
 
@@ -227,20 +229,54 @@ class TestGetCampaignId(TestCase):
 
 
 @ddt.ddt
-class TestStripQueryAndFragment(TestCase):
+class TestAttributionSanitizers(TestCase):
     """
-    Tests for ``strip_query_and_fragment``.
+    Tests for ``contains_email_address``, ``sanitize_referrer`` and ``sanitize_attribution``.
     """
     @ddt.data(
-        ('https://www.google.com/search?email=foo@bar.com&q=x#frag', 'https://www.google.com/search'),
-        ('https://example.com/page', 'https://example.com/page'),
-        ('not a url', 'not a url'),
+        ('jane@example.com', True),
+        ('Jane.Doe+promo@mail.example.co.uk', True),
+        ('jane%40example.com', True),
+        ('jane%2540example.com', True),
+        ('jane+doe%40example.com', True),
+        ('jane%252540example.com', True),  # encoded three times
+        ('spring_campaign_2026', False),
+        ('@edXOnline', False),  # a brand handle is not an email address
+        ('', False),
     )
     @ddt.unpack
-    def test_strips_query_and_fragment(self, url, expected):
-        self.assertEqual(strip_query_and_fragment(url), expected)
+    def test_contains_email_address(self, value, expected):
+        self.assertEqual(contains_email_address(value), expected)
 
-    @ddt.data('http://[', 'https://[::1/path?email=foo@bar.com')
-    def test_unparseable_url_returns_none(self, url):
+    @ddt.data(
+        ('https://www.google.com/search?email=foo@bar.com&q=x#frag', 'https://www.google.com/'),
+        ('https://user:pass@example.com/u/jane', 'https://example.com/'),
+        ('  https://example.com/page  ', 'https://example.com/'),
+        ('http://localhost:8734/checkout', 'http://localhost:8734/'),
+    )
+    @ddt.unpack
+    def test_sanitize_referrer_keeps_only_the_origin(self, url, expected):
+        self.assertEqual(sanitize_referrer(url), expected)
+
+    @ddt.data('http://[', 'https://[::1/path?email=foo@bar.com', 'ftp://example.com/', 'not a url', 'https://')
+    def test_sanitize_referrer_drops_what_is_not_an_http_url(self, url):
         """``urlsplit`` raises ValueError for a malformed IPv6 host; callers drop the value instead of failing."""
-        self.assertIsNone(strip_query_and_fragment(url))
+        self.assertIsNone(sanitize_referrer(url))
+
+    @ddt.data(None, 'utm_source=google', ['utm_source'])
+    def test_sanitize_attribution_never_raises_on_a_wrong_shape(self, value):
+        self.assertIsNone(sanitize_attribution(value))
+
+    def test_sanitize_attribution_drops_unsafe_values(self):
+        self.assertEqual(
+            sanitize_attribution({
+                'utm_source': ' google ',
+                'utm_medium': 42,
+                'utm_campaign': {'nested': 'value'},
+                'utm_content': 'jane@example.com',
+                'utm_term': '',
+                'referrer': 'https://jane:pw@example.com/u/jane?x=1',
+                'unknown': 'value',
+            }),
+            {'utm_source': 'google', 'referrer': 'https://example.com/'},
+        )

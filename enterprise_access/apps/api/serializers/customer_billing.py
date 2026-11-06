@@ -10,10 +10,7 @@ from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 from rest_framework.exceptions import APIException
 
-from enterprise_access.apps.customer_billing.constants import (
-    ALLOWED_CHECKOUT_INTENT_STATE_TRANSITIONS,
-    ATTRIBUTION_KEYS
-)
+from enterprise_access.apps.customer_billing.constants import ALLOWED_CHECKOUT_INTENT_STATE_TRANSITIONS
 from enterprise_access.apps.customer_billing.embargo import get_embargoed_countries
 from enterprise_access.apps.customer_billing.models import (
     CheckoutIntent,
@@ -22,7 +19,7 @@ from enterprise_access.apps.customer_billing.models import (
     SspProduct,
     StripeEventSummary
 )
-from enterprise_access.apps.customer_billing.utils import strip_query_and_fragment
+from enterprise_access.apps.customer_billing.utils import sanitize_attribution
 
 
 class RecordConflictError(APIException):
@@ -233,26 +230,28 @@ class CheckoutIntentCreateRequestSerializer(CountryFieldMixin, serializers.Model
 
     def validate_attribution(self, value):
         """
-        Only accept a flat dict of the known attribution keys with string values, with the
-        referrer's query string and fragment removed (and an unparseable referrer dropped).
-        Returns None if none of the known keys are present.
+        Accept only a flat object whose values are strings (or null), then keep only what ``sanitize_attribution``
+        allows: the known UTM keys and the referrer's origin, without email addresses. Returns None if nothing is
+        left.
+
+        A wrong shape (not an object, or a nested object, list, number or boolean value) is a client bug and is
+        rejected, because stringifying it would store whatever it contains. A value that is a string but unsafe (an
+        email address, a referrer that is not an http(s) URL) is dropped instead: it comes from the link the customer
+        followed, which they don't control, and attribution is optional.
         """
         if value is None:
             return value
         if not isinstance(value, dict):
             raise serializers.ValidationError('attribution must be a dictionary/object.')
-        cleaned = {
-            key: str(value[key])[:500]
-            for key in ATTRIBUTION_KEYS
-            if value.get(key) not in (None, '')
-        }
-        if 'referrer' in cleaned:
-            # A referrer URL's query string or fragment can carry PII (e.g. ?email=...); never store it.
-            # Attribution is optional, so a referrer that can't be parsed is dropped rather than failing the request.
-            referrer = strip_query_and_fragment(cleaned.pop('referrer'))
-            if referrer:
-                cleaned['referrer'] = referrer
-        return cleaned or None
+        non_string_keys = sorted(
+            str(key) for key, item in value.items() if item is not None and not isinstance(item, str)
+        )
+        if non_string_keys:
+            # Name the keys only: the values are what may hold personal data.
+            raise serializers.ValidationError(
+                f'attribution values must be strings; got other values for: {", ".join(non_string_keys)}.'
+            )
+        return sanitize_attribution(value)
 
     # Put some reasonable validation bounds at this layer, and let
     # the customer_billing.api business logic handle more detailed validation

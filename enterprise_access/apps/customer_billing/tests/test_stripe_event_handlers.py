@@ -11,17 +11,21 @@ from unittest import mock
 import ddt
 import stripe
 from django.contrib.auth.models import AbstractUser
-from django.test import TestCase
+from django.db import OperationalError
+from django.test import TestCase, override_settings
 from django.utils import timezone
 
 from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.customer_billing.constants import (
     SUBSCRIPTION_ITEM_TYPE,
     CheckoutIntentState,
+    CheckoutSegmentEvents,
+    SegmentEventEmissionStatus,
     StripeSubscriptionStatus
 )
 from enterprise_access.apps.customer_billing.models import (
     CheckoutIntent,
+    SegmentEventEmission,
     SelfServiceSubscriptionRenewal,
     StripeEventData,
     StripeEventSummary
@@ -48,6 +52,8 @@ from enterprise_access.apps.provisioning.models import (
     GetCreateTrialSubscriptionPlanStep
 )
 from enterprise_access.apps.provisioning.tests.factories import ProvisionNewCustomerWorkflowFactory
+
+SEGMENT_TASK = 'enterprise_access.apps.customer_billing.segment_outbox.send_checkout_segment_event_task'
 
 
 def _rand_numeric_string():
@@ -1211,97 +1217,144 @@ class TestStripeEventHandler(TestCase):
         summary.stripe_event_created_at = timezone.now() - timedelta(hours=hours_ago)
         summary.save()
 
-    def _dispatch_subscription_deletion(self, subscription_id, latest_invoice='in_unpaid_renewal'):
-        """Dispatch ``customer.subscription.deleted`` for the subscription."""
+    def _subscription_deletion_event(self, subscription_id, latest_invoice='in_unpaid_renewal'):
+        """Build a ``customer.subscription.deleted`` event for the subscription."""
         subscription_data = {
             'id': subscription_id,
             'status': 'canceled',
             'latest_invoice': latest_invoice,
             'metadata': self._create_mock_stripe_subscription(self.checkout_intent),
         }
-        StripeEventHandler.dispatch(self._create_mock_stripe_event('customer.subscription.deleted', subscription_data))
+        return self._create_mock_stripe_event('customer.subscription.deleted', subscription_data)
 
+    def _dispatch_subscription_deletion(self, subscription_id, latest_invoice='in_unpaid_renewal'):
+        """Dispatch ``customer.subscription.deleted`` for the subscription."""
+        StripeEventHandler.dispatch(self._subscription_deletion_event(subscription_id, latest_invoice))
+
+    def _set_checkout_session(self, session_id='cs_order'):
+        """The purchase's Stripe Checkout Session ID is the Segment order_id."""
+        self.checkout_intent.update_stripe_identifiers(session_id=session_id)
+
+    @override_settings(FEATURE_SSP_CHECKOUT_SEGMENT_EVENTS_V2=True)
+    @mock.patch(SEGMENT_TASK)
     @mock.patch(
         "enterprise_access.apps.customer_billing.stripe_event_handlers.cancel_all_future_plans"
     )
-    @mock.patch(
-        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_checkout_segment_event_task"
-    )
-    @ddt.data(StripeSubscriptionStatus.ACTIVE, StripeSubscriptionStatus.PAST_DUE)
-    def test_subscription_deleted_enqueues_order_cancelled_for_last_paid_invoice(
-        self, previous_status, mock_segment_task, _mock_cancel,
+    @ddt.data(StripeSubscriptionStatus.ACTIVE, StripeSubscriptionStatus.PAST_DUE, StripeSubscriptionStatus.TRIALING)
+    def test_subscription_deleted_records_order_cancelled_before_any_invoice_history(
+        self, previous_status, _mock_cancel, mock_segment_task,
     ):
         """
-        order_cancelled references the last invoice that collected money, never the subscription's latest invoice.
-        PAST_DUE is the most common churn path: a renewal charge fails, the subscription goes past due and is then
-        cancelled, so its latest invoice is the unpaid renewal, whose total was never collected.
+        The deletion webhook arrived before any paid-invoice summary. order_cancelled is still recorded, under the
+        order's Checkout Session ID, and dispatched; whether the order was ever paid, and which invoice was the
+        order's, is resolved later by the send task from Stripe, never from the local history.
         """
+        self._set_checkout_session()
         subscription_id = 'sub_cancel_segment'
         self._create_existing_event_data_records(subscription_id, subscription_status=previous_status)
-        self._record_paid_invoice(subscription_id, 'in_first_paid', hours_ago=3)
-        self._record_paid_invoice(subscription_id, 'in_last_paid', hours_ago=2)
 
-        with mock.patch('enterprise_access.toggles.CHECKOUT_SEGMENT_EVENTS_V2.is_enabled', return_value=True):
+        with self.captureOnCommitCallbacks(execute=True):
             self._dispatch_subscription_deletion(subscription_id, latest_invoice='in_unpaid_renewal')
 
-        mock_segment_task.delay.assert_called_once_with(
-            event_name='edx.ui.enterprise.checkout.order_cancelled',
-            checkout_intent_id=self.checkout_intent.id,
-            invoice_id='in_last_paid',
-        )
+        emission = SegmentEventEmission.objects.get(event_name=CheckoutSegmentEvents.ORDER_CANCELLED)
+        self.assertEqual(emission.order_id, 'cs_order')
+        self.assertEqual(emission.stripe_subscription_id, subscription_id)
+        self.assertEqual(emission.checkout_intent, self.checkout_intent)
+        self.assertIsNone(emission.stripe_invoice_id)  # never the latest_invoice: resolved by the send task
+        self.assertEqual(emission.status, SegmentEventEmissionStatus.DISPATCHED)
+        mock_segment_task.delay.assert_called_once_with(emission.pk)
 
+    @override_settings(FEATURE_SSP_CHECKOUT_SEGMENT_EVENTS_V2=True)
+    @mock.patch(SEGMENT_TASK)
     @mock.patch(
         "enterprise_access.apps.customer_billing.stripe_event_handlers.cancel_all_future_plans"
     )
+    def test_duplicate_subscription_deleted_deliveries_record_one_stable_order_cancelled(
+        self, _mock_cancel, mock_segment_task,
+    ):
+        """
+        Stripe redelivers the deletion after more invoice summaries arrived. The event keeps the same order_id (and so
+        the same Segment messageId), and is recorded and dispatched once.
+        """
+        self._set_checkout_session()
+        subscription_id = 'sub_cancel_twice'
+        self._create_existing_event_data_records(subscription_id, subscription_status=StripeSubscriptionStatus.ACTIVE)
+        self._record_paid_invoice(subscription_id, 'in_first_paid', hours_ago=3)
+        event = self._subscription_deletion_event(subscription_id)
+
+        with self.captureOnCommitCallbacks(execute=True):
+            StripeEventHandler.dispatch(event)
+        self._record_paid_invoice(subscription_id, 'in_license_change', hours_ago=1)
+        with self.captureOnCommitCallbacks(execute=True):
+            StripeEventHandler.dispatch(event)
+
+        emission = SegmentEventEmission.objects.get(event_name=CheckoutSegmentEvents.ORDER_CANCELLED)
+        self.assertEqual(emission.order_id, 'cs_order')
+        mock_segment_task.delay.assert_called_once_with(emission.pk)
+
+    @override_settings(FEATURE_SSP_CHECKOUT_SEGMENT_EVENTS_V2=True)
+    @mock.patch(SEGMENT_TASK)
     @mock.patch(
-        "enterprise_access.apps.customer_billing.stripe_event_handlers._paid_invoice_summaries",
-        side_effect=RuntimeError('db down'),
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.cancel_all_future_plans"
     )
-    def test_subscription_deleted_segment_failure_does_not_stop_cancellation(self, _mock_paid, mock_cancel):
-        """An analytics-side error must never prevent the future plans from being cancelled."""
+    def test_subscription_deleted_with_broker_down_keeps_the_event_pending(self, mock_cancel, mock_segment_task):
+        """
+        The reviewer's scenario: publishing the task fails. The webhook still completes (billing work done, event marked
+        handled), and the event is not lost: it stays PENDING for the dispatcher command.
+        """
+        self._set_checkout_session()
         self.checkout_intent.enterprise_uuid = uuid.uuid4()
         self.checkout_intent.save()
-        with mock.patch('enterprise_access.toggles.CHECKOUT_SEGMENT_EVENTS_V2.is_enabled', return_value=True):
+        mock_segment_task.delay.side_effect = ConnectionError('broker down')
+        event = self._subscription_deletion_event('sub_broker_down')
+
+        with self.captureOnCommitCallbacks(execute=True):
+            StripeEventHandler.dispatch(event)
+
+        mock_cancel.assert_called_once()
+        self.assertIsNotNone(StripeEventData.objects.get(event_id=event.id).handled_at)
+        emission = SegmentEventEmission.objects.get(event_name=CheckoutSegmentEvents.ORDER_CANCELLED)
+        self.assertEqual(emission.status, SegmentEventEmissionStatus.PENDING)
+        self.assertEqual(emission.dispatch_attempts, 0)
+        self.assertIn('broker down', emission.last_error)
+
+    @override_settings(FEATURE_SSP_CHECKOUT_SEGMENT_EVENTS_V2=True)
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.cancel_all_future_plans"
+    )
+    def test_subscription_deleted_segment_failure_does_not_stop_cancellation(self, mock_cancel):
+        """A database error while recording the analytics event must never prevent the future plans' cancellation."""
+        self._set_checkout_session()
+        self.checkout_intent.enterprise_uuid = uuid.uuid4()
+        self.checkout_intent.save()
+        with mock.patch.object(
+            SegmentEventEmission.objects, 'get_or_create', side_effect=OperationalError('db down'),
+        ), self.assertLogs('enterprise_access.apps.customer_billing.segment_outbox', level='ERROR'):
             self._dispatch_subscription_deletion('sub_segment_boom')
         mock_cancel.assert_called_once()
 
+    @override_settings(FEATURE_SSP_CHECKOUT_SEGMENT_EVENTS_V2=True)
+    @mock.patch(SEGMENT_TASK)
     @mock.patch(
         "enterprise_access.apps.customer_billing.stripe_event_handlers.cancel_all_future_plans"
     )
-    @mock.patch(
-        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_checkout_segment_event_task"
-    )
-    @ddt.data(
-        StripeSubscriptionStatus.TRIALING,
-        StripeSubscriptionStatus.PAST_DUE,
-        StripeSubscriptionStatus.UNPAID,
-        StripeSubscriptionStatus.ACTIVE,
-    )
-    def test_subscription_deleted_without_paid_invoice_does_not_enqueue_order_cancelled(
-        self, previous_status, mock_segment_task, _mock_cancel,
-    ):
-        """
-        A subscription that never collected money is not an order to cancel: a trial, a first charge that failed,
-        or an active subscription whose invoices were all $0.
-        """
-        subscription_id = 'sub_trial_cancel_segment'
-        self._create_existing_event_data_records(subscription_id, subscription_status=previous_status)
-        self._record_paid_invoice(subscription_id, 'in_trial', amount_paid=0)
-
-        with mock.patch('enterprise_access.toggles.CHECKOUT_SEGMENT_EVENTS_V2.is_enabled', return_value=True):
-            self._dispatch_subscription_deletion(subscription_id, latest_invoice='in_trial')
-
+    def test_subscription_deleted_without_checkout_session_is_not_recorded(self, _mock_cancel, mock_segment_task):
+        """Without a Checkout Session there is no stable order_id; that is logged rather than sent with another ID."""
+        with self.assertLogs('enterprise_access.apps.customer_billing.segment_outbox', level='ERROR'):
+            self._dispatch_subscription_deletion('sub_no_session')
+        self.assertFalse(SegmentEventEmission.objects.exists())
         mock_segment_task.delay.assert_not_called()
 
+    @mock.patch(SEGMENT_TASK)
     @mock.patch(
         "enterprise_access.apps.customer_billing.stripe_event_handlers.cancel_all_future_plans"
     )
-    @mock.patch(
-        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_checkout_segment_event_task"
-    )
-    def test_subscription_deleted_flag_off_no_event(self, mock_segment_task, _mock_cancel):
+    def test_subscription_deleted_flag_off_no_event(self, _mock_cancel, mock_segment_task):
+        self._set_checkout_session()
         self._record_paid_invoice('sub_cancel_segment', 'in_paid')
-        self._dispatch_subscription_deletion('sub_cancel_segment')
+        with self.captureOnCommitCallbacks(execute=True):
+            self._dispatch_subscription_deletion('sub_cancel_segment')
+        self.assertFalse(SegmentEventEmission.objects.exists())
         mock_segment_task.delay.assert_not_called()
 
     @ddt.data(
@@ -1320,6 +1373,7 @@ class TestStripeEventHandler(TestCase):
         (5000, None, None, False),
     )
     @ddt.unpack
+    @override_settings(FEATURE_SSP_CHECKOUT_SEGMENT_EVENTS_V2=True)
     @mock.patch(
         "enterprise_access.apps.customer_billing.stripe_event_handlers.send_paid_subscription_renewal_notice_email_task"
     )
@@ -1327,52 +1381,68 @@ class TestStripeEventHandler(TestCase):
         "enterprise_access.apps.customer_billing.stripe_event_handlers._handle_invoice_paid_status_updated"
     )
     @mock.patch("enterprise_access.apps.customer_billing.stripe_event_handlers.send_payment_receipt_email")
-    @mock.patch("enterprise_access.apps.customer_billing.stripe_event_handlers.send_checkout_segment_event_task")
-    def test_invoice_paid_enqueues_order_completed_only_for_first_paid_invoice(
+    @mock.patch(SEGMENT_TASK)
+    def test_invoice_paid_records_order_completed_only_for_first_paid_invoice(
         self, total, billing_reason, earlier_invoice_amount_paid, expect_order_completed,
         mock_segment_task, _mock_receipt, _mock_status, _mock_renewal_notice,
     ):
-        """order_completed fires once per subscription, for its first invoice that collected money."""
+        """order_completed is recorded once per order, for its first invoice that collected money."""
+        self._set_checkout_session()
         if earlier_invoice_amount_paid is not None:
             self._record_paid_invoice('sub_1', 'in_earlier', amount_paid=earlier_invoice_amount_paid)
 
-        with mock.patch(
-            'enterprise_access.apps.customer_billing.stripe_event_handlers.checkout_segment_events_v2_enabled',
-            return_value=True,
-        ):
+        with self.captureOnCommitCallbacks(execute=True):
             StripeEventHandler.dispatch(self._paid_invoice_event(total, billing_reason))
 
+        emissions = SegmentEventEmission.objects.filter(event_name=CheckoutSegmentEvents.ORDER_COMPLETED)
         if expect_order_completed:
-            mock_segment_task.delay.assert_called_once_with(
-                event_name='edx.ui.enterprise.checkout.order_completed',
-                checkout_intent_id=self.checkout_intent.id,
-                invoice_id=f'in_total_{total}_{billing_reason}',
-            )
+            emission = emissions.get()
+            self.assertEqual(emission.order_id, 'cs_order')
+            self.assertEqual(emission.stripe_invoice_id, f'in_total_{total}_{billing_reason}')
+            self.assertEqual(emission.stripe_subscription_id, 'sub_1')
+            mock_segment_task.delay.assert_called_once_with(emission.pk)
         else:
+            self.assertFalse(emissions.exists())
             mock_segment_task.delay.assert_not_called()
 
+    @override_settings(FEATURE_SSP_CHECKOUT_SEGMENT_EVENTS_V2=True)
+    @mock.patch(SEGMENT_TASK)
+    def test_invoice_paid_with_broker_down_marks_event_handled_and_keeps_order_completed(self, mock_segment_task):
+        """A failed publish neither fails the webhook nor loses order_completed."""
+        self._set_checkout_session()
+        mock_segment_task.delay.side_effect = ConnectionError('broker down')
+        event = self._paid_invoice_event(5000, 'subscription_create')
+
+        with mock.patch(
+            'enterprise_access.apps.customer_billing.stripe_event_handlers.send_payment_receipt_email'
+        ), mock.patch(
+            'enterprise_access.apps.customer_billing.stripe_event_handlers._handle_invoice_paid_status_updated'
+        ) as mock_status, self.captureOnCommitCallbacks(execute=True):
+            StripeEventHandler.dispatch(event)
+
+        mock_status.assert_called_once()  # the billing work after the event was recorded still ran
+        self.assertIsNotNone(StripeEventData.objects.get(event_id=event.id).handled_at)
+        emission = SegmentEventEmission.objects.get(event_name=CheckoutSegmentEvents.ORDER_COMPLETED)
+        self.assertEqual(emission.status, SegmentEventEmissionStatus.PENDING)
+
+    @override_settings(FEATURE_SSP_CHECKOUT_SEGMENT_EVENTS_V2=True)
     def test_invoice_paid_accepts_constructed_stripe_event(self):
         """A real StripeObject invoice supports conversion with to_dict, not dict.get."""
+        self._set_checkout_session()
         event_data = self._paid_invoice_event(5000, 'subscription_create').to_dict()
         event = stripe.Event.construct_from(event_data, stripe.api_key)
 
         with mock.patch(
-            'enterprise_access.apps.customer_billing.stripe_event_handlers.checkout_segment_events_v2_enabled',
-            return_value=True,
-        ), mock.patch(
             'enterprise_access.apps.customer_billing.stripe_event_handlers.send_payment_receipt_email'
         ), mock.patch(
             'enterprise_access.apps.customer_billing.stripe_event_handlers._handle_invoice_paid_status_updated'
-        ), mock.patch(
-            'enterprise_access.apps.customer_billing.stripe_event_handlers.send_checkout_segment_event_task'
-        ) as mock_segment_task:
+        ), mock.patch(SEGMENT_TASK) as mock_segment_task, self.captureOnCommitCallbacks(execute=True):
             StripeEventHandler.dispatch(event)
 
-        mock_segment_task.delay.assert_called_once_with(
-            event_name='edx.ui.enterprise.checkout.order_completed',
-            checkout_intent_id=self.checkout_intent.id,
-            invoice_id='in_total_5000_subscription_create',
-        )
+        emission = SegmentEventEmission.objects.get(event_name=CheckoutSegmentEvents.ORDER_COMPLETED)
+        self.assertEqual(emission.stripe_invoice_id, 'in_total_5000_subscription_create')
+        self.assertEqual(emission.stripe_subscription_id, 'sub_1')
+        mock_segment_task.delay.assert_called_once_with(emission.pk)
 
     def _paid_invoice_event(self, total, billing_reason):
         return self._create_mock_stripe_event('invoice.paid', {

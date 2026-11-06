@@ -32,8 +32,10 @@ from .constants import (
     LEARNER_CREDIT_TOP_UP_MAX_AMOUNT_CENTS,
     LEARNER_CREDIT_TOP_UP_MIN_AMOUNT_CENTS,
     LEARNER_CREDIT_TOP_UP_QUOTE_MINUTES,
+    SEGMENT_EVENT_EMISSION_FINAL_STATUSES,
     CheckoutIntentState,
-    LearnerCreditTopUpState
+    LearnerCreditTopUpState,
+    SegmentEventEmissionStatus
 )
 from .utils import datetime_from_timestamp
 
@@ -1452,15 +1454,55 @@ class StripeEventSummary(TimeStampedModel):
 
 class SegmentEventEmission(TimeStampedModel):
     """
-    Idempotency record for server-side checkout Segment events: at most one emission per
-    (event_name, order_id), where order_id is the Stripe invoice ID. ``emitted_at`` is set only after the
-    event was handed to Segment; a row without it means the send has not succeeded yet and may be retried.
+    Transactional outbox and idempotency record for one server-side checkout Segment event.
+
+    The webhook handler saves the row (PENDING) before it hands the send task to Celery, so a broker outage cannot
+    lose the event: the ``dispatch_checkout_segment_events`` command publishes PENDING rows again, and re-publishes
+    DISPATCHED rows that never finished. There is at most one row per (event_name, order_id). ``order_id`` is the
+    Stripe Checkout Session ID of the purchase, which is fixed once the CheckoutIntent is paid, so a redelivered
+    webhook finds the same row. Status moves are conditional updates, so a stale copy never moves a finished row back.
 
     .. no_pii: This model has no PII
     """
     event_name = models.CharField(max_length=255)
-    order_id = models.CharField(max_length=255, help_text='Stripe invoice ID used as the Segment order_id')
-    emitted_at = models.DateTimeField(null=True, blank=True)
+    order_id = models.CharField(
+        max_length=255,
+        help_text='Segment order_id: the Stripe Checkout Session ID of the purchase (CheckoutIntent).',
+    )
+    checkout_intent = models.ForeignKey(
+        CheckoutIntent,
+        null=True,
+        on_delete=models.SET_NULL,
+        related_name='segment_event_emissions',
+        help_text='The purchase this event is about.',
+    )
+    stripe_subscription_id = models.CharField(
+        max_length=255,
+        db_index=True,
+        help_text='Stripe subscription created by the purchase.',
+    )
+    stripe_invoice_id = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        help_text=(
+            "The order's first paid invoice, which supplies revenue. Set from the webhook for order_completed, and "
+            "found by the send task for order_cancelled."
+        ),
+    )
+    status = models.CharField(
+        max_length=32,
+        choices=[(status.value, status.value) for status in SegmentEventEmissionStatus],
+        default=SegmentEventEmissionStatus.PENDING.value,
+        db_index=True,
+    )
+    dispatch_attempts = models.PositiveIntegerField(
+        default=0,
+        help_text='How many times the send task was handed to the broker.',
+    )
+    last_dispatched_at = models.DateTimeField(null=True, blank=True)
+    emitted_at = models.DateTimeField(null=True, blank=True, help_text='When Segment accepted the event.')
+    last_error = models.TextField(null=True, blank=True)
 
     class Meta:
         constraints = [
@@ -1468,7 +1510,31 @@ class SegmentEventEmission(TimeStampedModel):
         ]
 
     def __str__(self):
-        return f'{self.event_name} {self.order_id}'
+        return f'{self.event_name} {self.order_id} ({self.status})'
+
+    @property
+    def is_final(self) -> bool:
+        """True once the event was sent, skipped or failed; nothing else may change the row's status."""
+        return self.status in SEGMENT_EVENT_EMISSION_FINAL_STATUSES
+
+    def finish(self, status: SegmentEventEmissionStatus, error: str | None = None) -> bool:
+        """
+        Move a row that is not final yet to the final ``status``. Returns False, changing nothing, if the row is
+        already final (e.g. another worker sent it). Updates the row and this instance.
+        """
+        now = timezone.now()
+        values = {'status': status, 'last_error': error[:1000] if error else None, 'modified': now}
+        if status == SegmentEventEmissionStatus.SENT:
+            values['emitted_at'] = now
+        updated = SegmentEventEmission.objects.filter(
+            pk=self.pk,
+        ).exclude(
+            status__in=SEGMENT_EVENT_EMISSION_FINAL_STATUSES,
+        ).update(**values)
+        if updated:
+            for field, value in values.items():
+                setattr(self, field, value)
+        return bool(updated)
 
 
 class InvalidLearnerCreditTopUpTransition(Exception):

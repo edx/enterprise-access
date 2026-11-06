@@ -16,6 +16,7 @@ from enterprise_access.apps.customer_billing.stripe_api import (
     get_stripe_invoice,
     get_stripe_payment_intent,
     get_stripe_payment_method,
+    list_paid_subscription_invoices,
     stripe_cache
 )
 from enterprise_access.apps.customer_billing.tests.utils import unsupported_stripe_params
@@ -397,6 +398,28 @@ class TestStripeInvoice(StripeApiFunctionsTests):
         # Call function and verify exception is raised
         with self.assertRaises(stripe.StripeError):
             get_stripe_invoice(self.invoice_id)
+
+
+class TestListPaidSubscriptionInvoices(StripeApiFunctionsTests):
+    """Tests for list_paid_subscription_invoices."""
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Invoice.list')
+    def test_lists_every_page_of_paid_invoices_without_caching(self, mock_list):
+        invoices = [{'id': 'in_2'}, {'id': 'in_1'}]
+        mock_list.return_value.auto_paging_iter.return_value = iter(invoices)
+
+        self.assertEqual(list_paid_subscription_invoices('sub_123'), invoices)
+        mock_list.assert_called_once_with(subscription='sub_123', status='paid', limit=100)
+
+        mock_list.return_value.auto_paging_iter.return_value = iter([])
+        self.assertEqual(list_paid_subscription_invoices('sub_123'), [])  # not served from a cache
+        self.assertEqual(mock_list.call_count, 2)
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Invoice.list')
+    def test_stripe_errors_propagate(self, mock_list):
+        mock_list.side_effect = stripe.APIConnectionError('Network error')
+        with self.assertRaises(stripe.APIConnectionError):
+            list_paid_subscription_invoices('sub_123')
 
 
 class TestStripePaymentMethod(StripeApiFunctionsTests):
