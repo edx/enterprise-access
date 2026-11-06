@@ -606,7 +606,7 @@ class CheckoutIntentAttributionValidationTests(TestCase):
         value = {
             'utm_source': 'linkedin',
             'utm_medium': 'paid_social',
-            'utm_campaign': 'Q4 2026 – Teams launch',
+            'utm_campaign': 'Q4 2026 - Teams launch',
             'utm_content': 'carousel-ad_v2',
             'utm_term': 'enterprise learning',
         }
@@ -703,11 +703,22 @@ class CheckoutIntentAttributionValidationTests(TestCase):
         with self.assertRaises(ValidationError):
             self.serializer.validate_attribution(value)
 
-    def test_values_are_truncated_to_500_chars(self):
-        result = self.serializer.validate_attribution({'utm_campaign': 'x' * 600})
-        self.assertEqual(len(result['utm_campaign']), 500)
-
-    def test_email_past_the_truncation_point_is_still_found(self):
-        """The check runs before truncating, so a cut-off email address cannot slip through."""
-        value = 'x' * 495 + 'jane.doe@example.com'
+    @ddt.data(
+        'spring_sale_' * 9,
+        # Nothing is truncated, so what follows a cut-off point can't slip through.
+        'spring_sale_' * 8 + 'jane.doe@example.com',
+    )
+    def test_values_over_100_chars_are_dropped_not_truncated(self, value):
         self.assertIsNone(self.serializer.validate_attribution({'utm_campaign': value}))
+
+    @ddt.data(
+        # (description, value)
+        ('phone number', '+1 (555) 123-4567'),
+        ('account number', 'customer_00123456'),
+        ('opaque token', 'a8f5f167f44f4964e6c998dee827110c'),
+        ('UUID', 'deadbeef-cafe-babe-f00d-abcdefabcdef'),
+    )
+    @ddt.unpack
+    def test_values_that_look_like_identifiers_are_dropped(self, _description, value):
+        result = self.serializer.validate_attribution({'utm_source': 'newsletter', 'utm_content': value})
+        self.assertEqual(result, {'utm_source': 'newsletter'})

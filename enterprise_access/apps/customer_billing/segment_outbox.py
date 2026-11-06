@@ -50,6 +50,11 @@ def _record(event_name, checkout_intent, subscription_id, invoice_id=None):
 
     The ``order_id`` is the purchase's Stripe Checkout Session ID, which cannot change once the CheckoutIntent is
     paid, so a redelivered webhook finds the same row.
+
+    A database error is raised, never swallowed: the webhook must fail, so that Stripe redelivers it, rather than be
+    acknowledged without a row that anything could send the event from. Handlers call this after their billing work,
+    so the outbox never holds that work up, and the redelivery repeats it (handlers are idempotent) and then records
+    the event.
     """
     if not checkout_segment_events_v2_enabled():
         return None
@@ -72,14 +77,13 @@ def _record(event_name, checkout_intent, subscription_id, invoice_id=None):
             },
         )
     except DatabaseError:
-        # Logged, not raised, so analytics never interrupts the billing work in the handler. This only fails when
-        # the database does, and then the handler's next writes (marking the Stripe event handled) fail too, the
-        # webhook errors, and Stripe redelivers it, which records the event.
+        # Logged here for the context, then raised so the webhook fails and Stripe redelivers it.
         logger.exception(
-            'Could not record Segment event %s for CheckoutIntent %s (subscription %s, invoice %s)',
+            'Could not record Segment event %s for CheckoutIntent %s (subscription %s, invoice %s); failing the '
+            'webhook so Stripe redelivers it',
             event_name, checkout_intent.id, subscription_id, invoice_id,
         )
-        return None
+        raise
     logger.info(
         '%s Segment event %s for order %s (status %s)',
         'Recorded' if created else 'Already recorded', event_name, order_id, emission.status,

@@ -231,13 +231,13 @@ class CheckoutIntentCreateRequestSerializer(CountryFieldMixin, serializers.Model
     def validate_attribution(self, value):
         """
         Accept only a flat object whose values are strings (or null), then keep only what ``sanitize_attribution``
-        allows: the known UTM keys and the referrer's origin, without email addresses. Returns None if nothing is
-        left.
+        allows: known UTM keys whose values are campaign labels in the agreed format, and the referrer's origin.
+        Returns None if nothing is left.
 
         A wrong shape (not an object, or a nested object, list, number or boolean value) is a client bug and is
         rejected, because stringifying it would store whatever it contains. A value that is a string but unsafe (an
-        email address, a referrer that is not an http(s) URL) is dropped instead: it comes from the link the customer
-        followed, which they don't control, and attribution is optional.
+        email address, a phone number or token, a referrer that is not an http(s) URL) is dropped instead: it comes
+        from the link the customer followed, which they don't control, and attribution is optional.
         """
         if value is None:
             return value

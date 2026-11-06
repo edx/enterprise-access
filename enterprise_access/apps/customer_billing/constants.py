@@ -164,14 +164,16 @@ SEGMENT_EVENT_EMISSION_FINAL_STATUSES = (
 
 # Invoice billing reasons that can be the first paid invoice of a new order:
 # the creation invoice, or the subscription_cycle invoice issued when a trial ends.
-# Annual renewals are also subscription_cycle; those are excluded separately
-# via _is_annual_renewal_invoice.
+# Renewals are also subscription_cycle; the send task skips them by checking the
+# order's first paid invoice in Stripe's history (segment_payloads.find_order_invoice).
 ORDER_COMPLETED_BILLING_REASONS = ('subscription_create', 'subscription_cycle')
 
 
 # Keys of ``CheckoutIntent.attribution`` that are passed through to Segment.
 ATTRIBUTION_KEYS = ('utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'referrer')
-ATTRIBUTION_VALUE_MAX_LENGTH = 500
+# Longer values are dropped, not truncated: a cut-off identifier still identifies. Analytics tools cap campaign
+# values at about this length too.
+ATTRIBUTION_VALUE_MAX_LENGTH = 100
 
 
 ALLOWED_CHECKOUT_INTENT_STATE_TRANSITIONS = {

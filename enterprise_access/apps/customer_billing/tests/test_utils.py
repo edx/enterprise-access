@@ -3,6 +3,7 @@ Tests for the ``enterprise_access.apps.customer_billing.utils`` module.
 """
 
 import datetime
+import time
 from unittest import mock
 from uuid import uuid4
 
@@ -13,13 +14,13 @@ from django.utils import timezone
 
 from enterprise_access.apps.customer_billing.models import SspProduct
 from enterprise_access.apps.customer_billing.utils import (
-    contains_email_address,
     datetime_from_timestamp,
     get_campaign_id,
     get_default_ssp_price_lookup_key,
     get_product_type,
     sanitize_attribution,
-    sanitize_referrer
+    sanitize_referrer,
+    sanitize_utm_value
 )
 
 
@@ -231,22 +232,52 @@ class TestGetCampaignId(TestCase):
 @ddt.ddt
 class TestAttributionSanitizers(TestCase):
     """
-    Tests for ``contains_email_address``, ``sanitize_referrer`` and ``sanitize_attribution``.
+    Tests for ``sanitize_utm_value``, ``sanitize_referrer`` and ``sanitize_attribution``.
     """
     @ddt.data(
-        ('jane@example.com', True),
-        ('Jane.Doe+promo@mail.example.co.uk', True),
-        ('jane%40example.com', True),
-        ('jane%2540example.com', True),
-        ('jane+doe%40example.com', True),
-        ('jane%252540example.com', True),  # encoded three times
-        ('spring_campaign_2026', False),
-        ('@edXOnline', False),  # a brand handle is not an email address
-        ('', False),
+        'google',
+        'paid_social',
+        'Q4 2026 - Teams launch',
+        'carousel-ad_v2',
+        'enterprise learning',
+        'brand|search|us',
+        'spring_sale_2026',
+        'q4_2026_11_06',  # underscores separate the numbers, so this is not one long number
+        'formación',
+        'v1.2',
+        ('abcdefghi_' * 10)[:100],  # exactly the maximum length
+    )
+    def test_campaign_labels_are_kept(self, value):
+        self.assertEqual(sanitize_utm_value(value), value)
+
+    @ddt.data(
+        # (description, value)
+        ('email address', 'jane.doe@example.com'),
+        ('percent-encoded email address', 'jane.doe%40example.com'),
+        ('brand handle', '@edXOnline'),
+        ('URL', 'https://example.com/?email=jane'),
+        ('key=value pairs', 'email=jane&id=1'),
+        ('markup', '<b>hi</b>'),
+        ('phone number', '555-123-4567'),
+        ('international phone number', '+44 20 7946 0958'),
+        ('phone number inside a label', 'call_5551234567_now'),
+        ('account number', 'acct 1234567'),
+        ('full date written as one number', 'launch-20261106'),
+        ('opaque token', 'a8f5f167f44f4964e6c998dee827110c'),
+        ('JWT', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJqYW5lIn0.c2ln'),
+        ('UUID', 'deadbeef-cafe-babe-f00d-abcdefabcdef'),
+        ('longer than 100 characters', 'abcdefghi_' * 10 + 'x'),
+        ('empty', ''),
     )
     @ddt.unpack
-    def test_contains_email_address(self, value, expected):
-        self.assertEqual(contains_email_address(value), expected)
+    def test_values_that_can_carry_contact_details_or_identifiers_are_dropped(self, _description, value):
+        self.assertIsNone(sanitize_utm_value(value))
+
+    def test_a_huge_value_is_dropped_without_being_scanned(self):
+        """The length is checked before any pattern, so a client-supplied value can't tie up a web worker."""
+        started = time.monotonic()
+        self.assertIsNone(sanitize_attribution({'utm_campaign': 'a' * 1_000_000, 'referrer': 'a' * 1_000_000}))
+        self.assertLess(time.monotonic() - started, 1)
 
     @ddt.data(
         ('https://www.google.com/search?email=foo@bar.com&q=x#frag', 'https://www.google.com/'),
@@ -258,7 +289,10 @@ class TestAttributionSanitizers(TestCase):
     def test_sanitize_referrer_keeps_only_the_origin(self, url, expected):
         self.assertEqual(sanitize_referrer(url), expected)
 
-    @ddt.data('http://[', 'https://[::1/path?email=foo@bar.com', 'ftp://example.com/', 'not a url', 'https://')
+    @ddt.data(
+        'http://[', 'https://[::1/path?email=foo@bar.com', 'ftp://example.com/', 'not a url', 'https://',
+        f'https://{"a" * 95}.com/',  # an origin longer than 100 characters
+    )
     def test_sanitize_referrer_drops_what_is_not_an_http_url(self, url):
         """``urlsplit`` raises ValueError for a malformed IPv6 host; callers drop the value instead of failing."""
         self.assertIsNone(sanitize_referrer(url))
@@ -274,7 +308,7 @@ class TestAttributionSanitizers(TestCase):
                 'utm_medium': 42,
                 'utm_campaign': {'nested': 'value'},
                 'utm_content': 'jane@example.com',
-                'utm_term': '',
+                'utm_term': '555 123 4567',
                 'referrer': 'https://jane:pw@example.com/u/jane?x=1',
                 'unknown': 'value',
             }),

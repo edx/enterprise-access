@@ -22,7 +22,6 @@ from enterprise_access.apps.customer_billing.constants import (
     SegmentEventEmissionStatus
 )
 from enterprise_access.apps.customer_billing.models import CheckoutIntent, SegmentEventEmission
-from enterprise_access.apps.customer_billing.pricing_api import StripePricingError
 from enterprise_access.apps.customer_billing.segment_outbox import (
     _dispatch_after_commit,
     dispatch_pending_segment_events,
@@ -32,7 +31,6 @@ from enterprise_access.apps.customer_billing.segment_outbox import (
 )
 from enterprise_access.apps.customer_billing.segment_payloads import (
     IncompleteOrderPayloadError,
-    StripePriceTemporarilyUnavailable,
     build_order_cancelled_properties,
     build_order_completed_properties,
     find_order_invoice,
@@ -115,14 +113,6 @@ def make_subscription(items=None, **item_kwargs):
     }, 'sk_test')
 
 
-def pricing_error(cause):
-    """A StripePricingError chained to ``cause``, as get_stripe_price_data raises it."""
-    try:
-        raise StripePricingError(f'Failed to fetch price: {cause}') from cause
-    except StripePricingError as exc:
-        return exc
-
-
 TRANSIENT_STRIPE_ERRORS = (
     stripe.APIConnectionError('Network error communicating with Stripe'),
     stripe.APIConnectionError('Request to Stripe timed out'),  # stripe-python raises this for timeouts
@@ -137,14 +127,14 @@ class CheckoutSegmentTestCase(TestCase):
 
     def setUp(self):
         super().setUp()
-        TieredCache.dangerous_clear_all_tiers()  # get_stripe_invoice and get_stripe_price_data cache
+        TieredCache.dangerous_clear_all_tiers()  # get_stripe_invoice and get_stripe_price cache
         self.user = UserFactory()
         self.intent = CheckoutIntent.create_intent(
             user=self.user, quantity=10, slug='acme', name='Acme',
             attribution={**{key: f'{key}-value' for key in UTM_KEYS}, 'referrer': 'https://www.google.com/'},
         )
         self.intent.update_stripe_identifiers(session_id='cs_123')
-        price_patcher = mock.patch(f'{PAYLOADS}.get_stripe_price_data', return_value=YEARLY_PRICE)
+        price_patcher = mock.patch(f'{PAYLOADS}.get_stripe_price', return_value=YEARLY_PRICE)
         self.mock_price = price_patcher.start()
         self.addCleanup(price_patcher.stop)
 
@@ -259,7 +249,7 @@ class TestOrderCompletedPayload(CheckoutSegmentTestCase):
 
 @ddt.ddt
 class TestPaymentSchedule(TestCase):
-    """get_payment_schedule, with the real (cached) get_stripe_price_data and only Stripe's API mocked."""
+    """get_payment_schedule, with the real (cached) get_stripe_price and only Stripe's API mocked."""
 
     def setUp(self):
         super().setUp()
@@ -267,22 +257,31 @@ class TestPaymentSchedule(TestCase):
         self.line = make_line(price='price_123')
 
     @staticmethod
-    def _stripe_price(interval='year', active=True):
+    def _stripe_price(interval='year', active=True, recurring=True):
         return stripe.Price.construct_from({
-            'id': 'price_123', 'object': 'price', 'currency': 'usd', 'unit_amount': 1250, 'type': 'recurring',
-            'active': active, 'billing_scheme': 'per_unit', 'lookup_key': None,
-            'recurring': {'interval': interval, 'interval_count': 1, 'usage_type': 'licensed'},
-            'product': {
-                'id': 'prod_abc', 'object': 'product', 'name': 'Teams', 'active': True, 'description': None,
-                'metadata': {'ssp_product_slug': 'teams-yearly'},
-            },
+            'id': 'price_123', 'object': 'price', 'currency': 'usd', 'unit_amount': 1250,
+            'type': 'recurring' if recurring else 'one_time', 'active': active, 'product': 'prod_abc',
+            'recurring': {'interval': interval, 'interval_count': 1, 'usage_type': 'licensed'} if recurring else None,
         }, 'sk_test')
 
     @ddt.data(('year', 'yearly'), ('month', 'monthly'), ('week', None))
     @ddt.unpack
     def test_payment_schedule_from_stripe_price(self, interval, expected):
-        with mock.patch(f'{PAYLOADS}.get_stripe_price_data', return_value={'recurring': {'interval': interval}}):
+        with mock.patch('stripe.Price.retrieve', return_value=self._stripe_price(interval)):
             self.assertEqual(get_payment_schedule(self.line), expected)
+
+    def test_archived_price_still_gives_the_schedule(self):
+        """
+        Archiving a price (e.g. during the trial) doesn't change the subscriptions and invoices that use it, so an
+        already paid order must still be reported.
+        """
+        with mock.patch('stripe.Price.retrieve', return_value=self._stripe_price(active=False)) as mock_retrieve:
+            self.assertEqual(get_payment_schedule(self.line), 'yearly')
+        mock_retrieve.assert_called_once_with('price_123')
+
+    def test_one_time_price_means_no_schedule(self):
+        with mock.patch('stripe.Price.retrieve', return_value=self._stripe_price(recurring=False)):
+            self.assertIsNone(get_payment_schedule(self.line))
 
     def test_no_price_on_the_line(self):
         self.assertIsNone(get_payment_schedule({}))
@@ -292,9 +291,9 @@ class TestPaymentSchedule(TestCase):
     def test_transient_stripe_failure_is_raised_for_retry_and_not_cached(self, error):
         """Connection errors, timeouts, 429 and 5xx: a passing outage must not look like missing pricing data."""
         with mock.patch('stripe.Price.retrieve', side_effect=error):
-            with self.assertRaises(StripePriceTemporarilyUnavailable) as ctx:
+            with self.assertRaises(type(error)) as ctx:
                 get_payment_schedule(self.line)
-        self.assertIs(ctx.exception.__cause__.__cause__, error)
+        self.assertIs(ctx.exception, error)
         with mock.patch('stripe.Price.retrieve', return_value=self._stripe_price()):
             self.assertEqual(get_payment_schedule(self.line), 'yearly')
 
@@ -304,11 +303,6 @@ class TestPaymentSchedule(TestCase):
     )
     def test_stripe_error_a_retry_cannot_fix_means_no_schedule(self, error):
         with mock.patch('stripe.Price.retrieve', side_effect=error):
-            self.assertIsNone(get_payment_schedule(self.line))
-
-    def test_inactive_price_means_no_schedule(self):
-        """get_stripe_price_data rejects inactive prices without a Stripe error behind it: not transient."""
-        with mock.patch('stripe.Price.retrieve', return_value=self._stripe_price(active=False)):
             self.assertIsNone(get_payment_schedule(self.line))
 
 
@@ -421,11 +415,19 @@ class TestSendCheckoutSegmentEventTask(CheckoutSegmentTestCase):
     def setUp(self):
         super().setUp()
         invoice_patcher = mock.patch(f'{TASKS}.get_stripe_invoice', return_value=make_invoice())
-        subscription_patcher = mock.patch(f'{TASKS}.get_stripe_subscription', return_value=make_subscription())
+        subscription_patcher = mock.patch(
+            f'{TASKS}.get_stripe_subscription_uncached', return_value=make_subscription(),
+        )
+        # Stripe's payment history: by default only the recorded invoice (in_123), which is then the order's first.
+        paid_invoices_patcher = mock.patch(
+            f'{TASKS}.list_paid_subscription_invoices', return_value=[make_invoice()],
+        )
         self.mock_get_stripe_invoice = invoice_patcher.start()
         self.mock_get_stripe_subscription = subscription_patcher.start()
+        self.mock_list_paid_invoices = paid_invoices_patcher.start()
         self.addCleanup(invoice_patcher.stop)
         self.addCleanup(subscription_patcher.stop)
+        self.addCleanup(paid_invoices_patcher.stop)
 
     def run_task_expecting_retry(self, emission, retry_exc_type):
         """Run the task as Celery does, with ``retry`` stubbed to raise; returns the retry mock."""
@@ -631,9 +633,9 @@ class TestSendCheckoutSegmentEventTask(CheckoutSegmentTestCase):
     @mock.patch(f'{TASKS}.send_event_synchronously')
     def test_transient_pricing_failure_is_retried_not_sent_incomplete(self, error, mock_send):
         emission = self.make_emission()
-        self.mock_price.side_effect = pricing_error(error)
-        mock_retry = self.run_task_expecting_retry(emission, StripePriceTemporarilyUnavailable)
-        self.assertIsInstance(mock_retry.call_args.kwargs['exc'], StripePriceTemporarilyUnavailable)
+        self.mock_price.side_effect = error
+        mock_retry = self.run_task_expecting_retry(emission, type(error))
+        self.assertIs(mock_retry.call_args.kwargs['exc'], error)
         mock_send.assert_not_called()
         emission.refresh_from_db()
         self.assertEqual(emission.status, DISPATCHED)
@@ -642,7 +644,7 @@ class TestSendCheckoutSegmentEventTask(CheckoutSegmentTestCase):
     def test_successful_retry_after_a_transient_pricing_failure(self, mock_send):
         """Celery's own (eager) retry: the first attempt can't reach Stripe, the retry sends the complete event."""
         emission = self.make_emission()
-        self.mock_price.side_effect = [pricing_error(stripe.APIConnectionError('timed out')), YEARLY_PRICE]
+        self.mock_price.side_effect = [stripe.APIConnectionError('timed out'), YEARLY_PRICE]
 
         send_checkout_segment_event_task.apply(args=(emission.pk,))
 
@@ -655,7 +657,7 @@ class TestSendCheckoutSegmentEventTask(CheckoutSegmentTestCase):
     @mock.patch(f'{TASKS}.send_event_synchronously')
     def test_genuinely_unavailable_pricing_fails_the_row_without_retry(self, mock_send):
         emission = self.make_emission()
-        self.mock_price.side_effect = pricing_error(stripe.InvalidRequestError('No such price', 'price'))
+        self.mock_price.side_effect = stripe.InvalidRequestError('No such price', 'price')
         with mock.patch.object(send_checkout_segment_event_task, 'retry') as mock_retry:
             send_checkout_segment_event_task.apply(args=(emission.pk,), throw=True).get()
         mock_retry.assert_not_called()
@@ -695,6 +697,62 @@ class TestSendCheckoutSegmentEventTask(CheckoutSegmentTestCase):
         mock_send.assert_not_called()
         emission.refresh_from_db()
         self.assertEqual(emission.status, SENT)
+
+    @ddt.data(
+        # (description, recorded invoice's ``created``, Stripe's other paid invoices as
+        #  (id, billing_reason, total, created), whether Stripe already lists the recorded invoice, expected status)
+        ('trial-end payment, after a license change whose webhook was handled first', 2000,
+         [('in_license_change', 'subscription_update', 2500, 3000)], True, SENT),
+        ("trial-end payment that Stripe's list doesn't show yet", 2000, [], False, SENT),
+        ('renewal: an earlier invoice paid for the order', 4000,
+         [('in_trial_end', 'subscription_cycle', 10000, 2000)], True, SKIPPED),
+    )
+    @ddt.unpack
+    @mock.patch(f'{TASKS}.send_event_synchronously', return_value=True)
+    def test_order_completed_is_sent_only_for_the_orders_first_paid_invoice(
+        self, _description, created, other_paid_invoices, listed, expected_status, mock_send,
+    ):
+        """
+        The webhook records order_completed for every paid creation or subscription_cycle invoice. Stripe's payment
+        history, not the order in which the webhooks arrived, decides whether it was the order's first payment.
+        """
+        recorded = make_invoice(invoice_id='in_123', billing_reason='subscription_cycle', created=created)
+        self.mock_get_stripe_invoice.return_value = recorded
+        self.mock_list_paid_invoices.return_value = [
+            *[make_invoice(invoice_id=invoice_id, billing_reason=reason, total=total, created=invoice_created)
+              for invoice_id, reason, total, invoice_created in other_paid_invoices],
+            *([recorded] if listed else []),
+        ]
+        emission = self.make_emission(ORDER_COMPLETED, invoice_id='in_123')
+
+        send_checkout_segment_event_task(emission.pk)
+
+        self.mock_list_paid_invoices.assert_called_once_with('sub_123')
+        emission.refresh_from_db()
+        self.assertEqual(emission.status, expected_status)
+        if expected_status == SENT:
+            self.assertEqual(mock_send.call_args.kwargs['properties']['revenue'], 100.0)
+        else:
+            mock_send.assert_not_called()
+            self.assertIn('in_trial_end', emission.last_error)
+
+    @mock.patch(f'{TASKS}.send_event_synchronously', return_value=True)
+    def test_cancellation_ignores_an_order_completed_row_that_was_not_the_order(self, mock_send):
+        """A skipped order_completed row holds a renewal's invoice, so the order's invoice is looked up in Stripe."""
+        self.make_emission(ORDER_COMPLETED, invoice_id='in_renewal', status=SKIPPED)
+        cancellation = self.make_emission(ORDER_CANCELLED, invoice_id=None)
+        self.mock_list_paid_invoices.return_value = [
+            make_invoice(invoice_id='in_renewal', billing_reason='subscription_cycle', total=12000, created=4000),
+            make_invoice(invoice_id='in_trial_end', billing_reason='subscription_cycle', total=10000, created=2000),
+        ]
+        self.mock_get_stripe_invoice.return_value = make_invoice(invoice_id='in_trial_end', total=10000)
+
+        send_checkout_segment_event_task(cancellation.pk)
+
+        self.mock_get_stripe_invoice.assert_called_once_with('in_trial_end')
+        self.assertEqual(mock_send.call_args.kwargs['properties']['revenue'], 100.0)
+        cancellation.refresh_from_db()
+        self.assertEqual((cancellation.stripe_invoice_id, cancellation.status), ('in_trial_end', SENT))
 
     @mock.patch(f'{TASKS}.list_paid_subscription_invoices')
     @mock.patch(f'{TASKS}.send_event_synchronously', return_value=True)
@@ -767,16 +825,17 @@ class TestSendCheckoutSegmentEventTask(CheckoutSegmentTestCase):
         self.assertEqual(cancellation.status, SKIPPED)
         self.assertIn('never collected a payment', cancellation.last_error)
 
-    @mock.patch(f'{TASKS}.list_paid_subscription_invoices')
+    @ddt.data((ORDER_COMPLETED, 'in_123'), (ORDER_CANCELLED, None))
+    @ddt.unpack
     @mock.patch(f'{TASKS}.send_event_synchronously')
-    def test_transient_failure_listing_invoices_is_retried(self, mock_send, mock_list):
-        mock_list.side_effect = stripe.RateLimitError('Too many requests', http_status=429)
-        cancellation = self.make_emission(ORDER_CANCELLED, invoice_id=None)
-        self.run_task_expecting_retry(cancellation, stripe.RateLimitError)
+    def test_transient_failure_listing_invoices_is_retried(self, event_name, invoice_id, mock_send):
+        self.mock_list_paid_invoices.side_effect = stripe.RateLimitError('Too many requests', http_status=429)
+        emission = self.make_emission(event_name, invoice_id=invoice_id)
+        self.run_task_expecting_retry(emission, stripe.RateLimitError)
         mock_send.assert_not_called()
-        cancellation.refresh_from_db()
-        self.assertEqual(cancellation.status, DISPATCHED)
-        self.assertIsNone(cancellation.stripe_invoice_id)
+        emission.refresh_from_db()
+        self.assertEqual(emission.status, DISPATCHED)
+        self.assertEqual(emission.stripe_invoice_id, invoice_id)
 
     def test_unique_constraint_on_event_and_order(self):
         self.make_emission()
@@ -839,10 +898,15 @@ class TestSegmentOutbox(CheckoutSegmentTestCase):
             self.assertIsNone(record_order_cancelled_segment_event(self.intent, 'sub_123'))
         self.assertFalse(SegmentEventEmission.objects.exists())
 
-    def test_database_error_while_recording_is_logged_not_raised(self):
+    def test_database_error_while_recording_is_raised(self):
+        """
+        Never swallowed: the webhook must fail, so Stripe redelivers it, rather than be acknowledged without a row
+        that anything could send the event from.
+        """
         with mock.patch.object(SegmentEventEmission.objects, 'get_or_create', side_effect=OperationalError('down')), \
-                self.assertLogs(OUTBOX, level='ERROR'):
-            self.assertIsNone(record_order_completed_segment_event(self.intent, 'in_123', 'sub_123'))
+                self.assertLogs(OUTBOX, level='ERROR'), self.assertRaises(OperationalError):
+            record_order_completed_segment_event(self.intent, 'in_123', 'sub_123')
+        self.mock_task.delay.assert_not_called()
 
     def test_broker_failure_keeps_the_row_pending_until_the_dispatcher_publishes_it(self):
         self.mock_task.delay.side_effect = ConnectionError('broker down')
@@ -879,9 +943,10 @@ class TestSegmentOutbox(CheckoutSegmentTestCase):
         self.assertFalse(dispatch_segment_event(emission.pk))
         self.mock_task.delay.assert_called_once_with(emission.pk)
 
+    @mock.patch(f'{TASKS}.list_paid_subscription_invoices', return_value=[make_invoice()])
     @mock.patch(f'{TASKS}.get_stripe_invoice', return_value=make_invoice())
     @mock.patch(f'{TASKS}.send_event_synchronously', return_value=True)
-    def test_eager_task_result_is_not_overwritten_by_the_dispatcher(self, mock_send, _mock_invoice):
+    def test_eager_task_result_is_not_overwritten_by_the_dispatcher(self, mock_send, _mock_invoice, _mock_list):
         """With Celery eager (tests, some devstacks) the task finishes inside delay(); the row must stay SENT."""
         self.mock_task.delay.side_effect = send_checkout_segment_event_task.delay
         with self.captureOnCommitCallbacks(execute=True):

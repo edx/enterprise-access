@@ -622,17 +622,7 @@ class StripeEventHandler:
                 enterprise_customer_name=checkout_intent.enterprise_name,
                 enterprise_slug=checkout_intent.enterprise_slug,
             )
-            # This is inside the ``invoice.total > 0`` branch, so $0 invoices never send order_completed.
-            # order_completed fires once, on the first paid invoice of a subscription: the
-            # creation invoice, or the subscription_cycle invoice issued when a trial ends.
-            # Annual renewals, license changes (subscription_update) and one-off/manual
-            # invoices are not new orders.
-            is_annual_renewal = _is_annual_renewal_invoice(invoice, subscription_details)
-            if invoice.to_dict().get('billing_reason') in ORDER_COMPLETED_BILLING_REASONS and not is_annual_renewal:
-                record_order_completed_segment_event(
-                    checkout_intent, invoice.id, subscription_details.to_dict().get('subscription'),
-                )
-            if is_annual_renewal:
+            if _is_annual_renewal_invoice(invoice, subscription_details):
                 # Renewal records only track the trial→paid transition, so later paid terms have nothing
                 # to process. Just let the admins know the subscription renewed.
                 logger.info(
@@ -643,9 +633,18 @@ class StripeEventHandler:
                     checkout_intent_id=checkout_intent.id,
                     invoice_data=invoice.to_dict(),
                 )
-                return
-            # only update status for non-trial invoice.paid events
-            _handle_invoice_paid_status_updated(event, checkout_intent)
+            else:
+                # only update status for non-trial invoice.paid events
+                _handle_invoice_paid_status_updated(event, checkout_intent)
+            # After the billing work (see segment_outbox._record), and only for paid invoices. The order's first paid
+            # invoice is its creation invoice or the subscription_cycle invoice issued when the trial ends; license
+            # changes (subscription_update) and manual invoices never are. Renewals are subscription_cycle too, but
+            # aren't excluded here: the local history depends on the order webhooks arrive in, so the send task
+            # checks Stripe's history and skips the event unless this invoice was the order's first payment.
+            if invoice.to_dict().get('billing_reason') in ORDER_COMPLETED_BILLING_REASONS:
+                record_order_completed_segment_event(
+                    checkout_intent, invoice.id, subscription_details.to_dict().get('subscription'),
+                )
             return
 
         try:
@@ -949,9 +948,6 @@ class StripeEventHandler:
             )
         _update_renewal_cancellation_state(checkout_intent, is_canceled=True, subscription_cancel_at=None)
 
-        # Recorded for every deletion; the send task asks Stripe whether the order was ever paid, and skips it if not.
-        record_order_cancelled_segment_event(checkout_intent, subscription['id'])
-
         previous_summary = checkout_intent.previous_summary(event, stripe_object_type='subscription')
         if previous_summary:
             if previous_summary.subscription_status == StripeSubscriptionStatus.ACTIVE:
@@ -983,6 +979,10 @@ class StripeEventHandler:
                 send_trial_ended_cancellation_email_task.delay(
                     checkout_intent_id=checkout_intent.id,
                 )
+
+        # After the billing work (see segment_outbox._record). Recorded for every deletion; the send task asks Stripe
+        # whether the order was ever paid, and skips it if not.
+        record_order_cancelled_segment_event(checkout_intent, subscription['id'])
 
 
 def _process_trial_to_paid_renewal(

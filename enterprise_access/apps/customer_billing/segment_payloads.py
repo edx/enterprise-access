@@ -9,7 +9,7 @@ import logging
 import stripe
 
 from enterprise_access.apps.customer_billing.constants import SUBSCRIPTION_ITEM_TYPE
-from enterprise_access.apps.customer_billing.pricing_api import StripePricingError, get_stripe_price_data
+from enterprise_access.apps.customer_billing.stripe_api import get_stripe_price
 from enterprise_access.apps.customer_billing.utils import get_product_type, sanitize_attribution
 from enterprise_access.utils import cents_to_dollars
 
@@ -32,10 +32,6 @@ TRANSIENT_STRIPE_ERRORS = (stripe.APIConnectionError, stripe.RateLimitError, str
 
 class IncompleteOrderPayloadError(Exception):
     """A required order property could not be determined from Stripe's data. Retrying gives the same result."""
-
-
-class StripePriceTemporarilyUnavailable(Exception):
-    """Stripe could not be reached for a price's billing interval. A later attempt can succeed."""
 
 
 def _get(obj, key, default=None):
@@ -83,25 +79,25 @@ def _subscription_item(subscription):
 
 def get_payment_schedule(line) -> str | None:
     """
-    Billing interval of the invoice line, read from the (cached) Stripe price's recurring interval.
+    Billing interval of the invoice line, read from its (cached) Stripe price's recurring interval.
 
-    Returns None if the line has no price, or Stripe has no usable price for it (e.g. it does not exist, or isn't
-    an active recurring price); the interval is never guessed from the line's period, which can be a prorated
-    fragment. Raises ``StripePriceTemporarilyUnavailable`` if Stripe could not be reached, so the caller retries
-    instead of treating a passing outage as missing data.
+    The price is read even if it has been archived since: that doesn't change the subscriptions and invoices that use
+    it, and an order that was paid must still be reported. Returns None if the line has no price, or Stripe has no
+    such price or it isn't recurring; the interval is never guessed from the line's period, which can be a prorated
+    fragment. Transient Stripe errors (``TRANSIENT_STRIPE_ERRORS``) are raised, so the caller retries instead of
+    treating a passing outage as missing data.
     """
     price_id = _get(_get(_get(line, 'pricing'), 'price_details'), 'price')
     if not price_id:
         return None
     try:
-        price_data = get_stripe_price_data(price_id)
-    except StripePricingError as exc:
-        # get_stripe_price_data wraps every failure in StripePricingError; the Stripe error it chains says which.
-        if isinstance(exc.__cause__, TRANSIENT_STRIPE_ERRORS):
-            raise StripePriceTemporarilyUnavailable(f'Could not fetch Stripe price {price_id}: {exc}') from exc
+        price = get_stripe_price(price_id)
+    except TRANSIENT_STRIPE_ERRORS:
+        raise
+    except stripe.StripeError as exc:
         logger.warning('Stripe price %s gives no payment_schedule for the Segment event: %s', price_id, exc)
         return None
-    return PAYMENT_SCHEDULES.get(_get(_get(price_data, 'recurring'), 'interval'))
+    return PAYMENT_SCHEDULES.get(_get(_get(price, 'recurring'), 'interval'))
 
 
 def _ssp_product_properties(checkout_intent) -> dict:

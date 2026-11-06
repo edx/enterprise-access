@@ -27,7 +27,6 @@ from enterprise_access.apps.customer_billing.models import CheckoutIntent, Segme
 from enterprise_access.apps.customer_billing.segment_payloads import (
     TRANSIENT_STRIPE_ERRORS,
     IncompleteOrderPayloadError,
-    StripePriceTemporarilyUnavailable,
     build_order_cancelled_properties,
     build_order_completed_properties,
     find_order_invoice
@@ -37,6 +36,7 @@ from enterprise_access.apps.customer_billing.stripe_api import (
     get_stripe_payment_intent,
     get_stripe_payment_method,
     get_stripe_subscription,
+    get_stripe_subscription_uncached,
     get_stripe_trialing_subscription,
     list_paid_subscription_invoices
 )
@@ -1157,21 +1157,42 @@ def _send_checkout_segment_event(lms_user_id, event_name, properties, order_id) 
         raise SegmentSendError(f'Segment send failed for {event_name} order {order_id}: {exc}') from exc
 
 
+def _confirm_first_paid_order_invoice(emission: SegmentEventEmission, invoice):
+    """
+    Raise ``SkipCheckoutSegmentEvent`` unless ``invoice`` is the order's first paid invoice in Stripe's history.
+
+    The webhook records ``order_completed`` for every paid creation or ``subscription_cycle`` invoice, because the
+    local history can't tell a trial-end payment from a renewal: webhooks arrive out of order (a later license
+    change can be handled first), and the event summaries it relies on are best-effort. The recorded invoice is
+    included as a candidate in case Stripe's list doesn't show it yet.
+    """
+    paid_invoices = list_paid_subscription_invoices(emission.stripe_subscription_id)
+    order_invoice = find_order_invoice([invoice, *paid_invoices], ORDER_COMPLETED_BILLING_REASONS)
+    if order_invoice is None or order_invoice['id'] != invoice['id']:
+        first_paid = order_invoice['id'] if order_invoice else 'none'
+        raise SkipCheckoutSegmentEvent(
+            f'Invoice {invoice["id"]} is not the order\'s first paid invoice (that is {first_paid}), e.g. a renewal'
+        )
+
+
 def _resolve_order_invoice_id(emission: SegmentEventEmission) -> str:
     """
     The order's first paid invoice, which supplies an ``order_cancelled`` event's revenue. Saved on the row, so every
     retry of the event uses the same invoice.
 
-    Uses the invoice ``order_completed`` was recorded for if there is one. Otherwise it asks Stripe, which has the
-    full payment history even when the invoice webhooks have not arrived yet: a missing local record is not proof
-    that the customer never paid. Raises ``SkipCheckoutSegmentEvent`` only when Stripe shows no payment for the order
-    (e.g. a subscription cancelled during its trial).
+    Uses the invoice of the order's sent ``order_completed`` (confirmed as the order's first payment) if there is
+    one. Otherwise it asks Stripe, which has the full payment history even when the invoice webhooks have not
+    arrived yet: a missing local record is not proof that the customer never paid. Raises
+    ``SkipCheckoutSegmentEvent`` only when Stripe shows no payment for the order (e.g. a subscription cancelled during
+    its trial).
     """
     if emission.stripe_invoice_id:
         return emission.stripe_invoice_id
+    # Only a SENT row: a skipped or unfinished one may hold a renewal's invoice.
     invoice_id = SegmentEventEmission.objects.filter(
         event_name=CheckoutSegmentEvents.ORDER_COMPLETED,
         order_id=emission.order_id,
+        status=SegmentEventEmissionStatus.SENT,
         stripe_invoice_id__isnull=False,
     ).values_list('stripe_invoice_id', flat=True).first()
     if not invoice_id:
@@ -1210,11 +1231,13 @@ def _build_checkout_segment_event(emission: SegmentEventEmission) -> tuple[str, 
         if not emission.stripe_invoice_id:
             raise CheckoutSegmentEventError('order_completed was recorded without its paid invoice')
         invoice = get_stripe_invoice(emission.stripe_invoice_id)
+        _confirm_first_paid_order_invoice(emission, invoice)
         return lms_user_id, build_order_completed_properties(checkout_intent, invoice, emission.order_id)
 
     if emission.event_name == CheckoutSegmentEvents.ORDER_CANCELLED:
         invoice = get_stripe_invoice(_resolve_order_invoice_id(emission))
-        subscription = get_stripe_subscription(emission.stripe_subscription_id)
+        # Not cached: a copy fetched before a license change would be recorded as the state at cancellation.
+        subscription = get_stripe_subscription_uncached(emission.stripe_subscription_id)
         return lms_user_id, build_order_cancelled_properties(
             checkout_intent, invoice, subscription, emission.order_id,
         )
@@ -1226,7 +1249,6 @@ def _build_checkout_segment_event(emission: SegmentEventEmission) -> tuple[str, 
     base=LoggedTaskWithRetry,
     autoretry_for=(
         *TRANSIENT_STRIPE_ERRORS,
-        StripePriceTemporarilyUnavailable,
         SegmentSendError,
         OperationalError,
     ),

@@ -5,7 +5,7 @@ import logging
 import re
 from datetime import datetime, timezone
 from typing import Union
-from urllib.parse import unquote_plus, urlsplit, urlunsplit
+from urllib.parse import urlsplit, urlunsplit
 
 from django.apps import apps
 from django.conf import settings
@@ -26,29 +26,44 @@ def datetime_from_timestamp(timestamp: Union[int, float]) -> datetime:
     return datetime.fromtimestamp(timestamp, tz=timezone.utc)
 
 
-# An email address, the PII that most often ends up in marketing parameters (e.g. ``utm_content=jane@example.com``).
-EMAIL_ADDRESS_PATTERN = re.compile(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}')
 REFERRER_SCHEMES = ('http', 'https')
 
+# The format a UTM value must have: a campaign label of letters, digits, spaces and ``_ - . + | ,``. That leaves out
+# every character that marks an email address, a URL or encoded data (``@ % / : = & ? #``), markup and quotes.
+UTM_VALUE_PATTERN = re.compile(r'[\w .+|,-]+')
+# Identifiers that fit that format: 7 or more digits, together or split by spaces, dots, plus signs or hyphens
+# (phone, account and order numbers, and dates written as one number); 20 or more letters and digits in a row
+# (tokens, hashes); a UUID. Only ever run on values of at most ATTRIBUTION_VALUE_MAX_LENGTH characters.
+UTM_IDENTIFIER_PATTERN = re.compile(
+    r'\d(?:[ .+-]*\d){6,}'
+    r'|[A-Za-z0-9]{20,}'
+    r'|[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}'
+)
 
-def contains_email_address(value: str) -> bool:
+
+def sanitize_utm_value(value: str) -> str | None:
     """
-    Whether ``value`` contains an email address, also when percent-encoded (``jane%40example.com``, or encoded twice).
+    Return the UTM value if it is a campaign label in the agreed format, or None.
+
+    Kept: at most ``ATTRIBUTION_VALUE_MAX_LENGTH`` characters matching ``UTM_VALUE_PATTERN``, with nothing that looks
+    like an identifier (``UTM_IDENTIFIER_PATTERN``). This drops email addresses (also percent-encoded), URLs, query
+    strings, phone and account numbers, tokens and UUIDs. The length is checked first, so a long client-supplied value
+    is never scanned. Longer values are dropped, not truncated.
+
+    No format can tell a person's name from a campaign label (``jane_doe`` and ``spring_sale`` look alike), so this
+    narrows what can get through; it does not prove that a value holds no personal data.
     """
-    for _ in range(3):
-        if EMAIL_ADDRESS_PATTERN.search(value):
-            return True
-        decoded = unquote_plus(value)
-        if decoded == value:
-            return False
-        value = decoded
-    return bool(EMAIL_ADDRESS_PATTERN.search(value))
+    if not value or len(value) > ATTRIBUTION_VALUE_MAX_LENGTH:
+        return None
+    if not UTM_VALUE_PATTERN.fullmatch(value) or UTM_IDENTIFIER_PATTERN.search(value):
+        return None
+    return value
 
 
 def sanitize_referrer(url: str) -> str | None:
     """
     Reduce a referrer URL to its origin, ``scheme://host[:port]/``, or return None if it is not an http(s) URL with a
-    host.
+    host, or the origin is longer than ``ATTRIBUTION_VALUE_MAX_LENGTH``.
 
     Only the origin is kept. The username and password, query string and fragment are dropped, and so is the path:
     path segments can identify a person (``/u/jane-doe``, ``/reset/<token>``), and no path pattern is safe in
@@ -66,18 +81,18 @@ def sanitize_referrer(url: str) -> str | None:
         return None
     host = f'[{hostname}]' if ':' in hostname else hostname  # IPv6
     netloc = f'{host}:{port}' if port else host
-    return urlunsplit((scheme, netloc, '/', '', ''))
+    origin = urlunsplit((scheme, netloc, '/', '', ''))
+    return origin if len(origin) <= ATTRIBUTION_VALUE_MAX_LENGTH else None
 
 
 def sanitize_attribution(attribution) -> dict | None:
     """
     Return the parts of ``attribution`` that may be stored and sent to Segment, or None if nothing is left.
 
-    Keeps only ``ATTRIBUTION_KEYS`` whose value is a non-empty string without an email address, capped at
-    ``ATTRIBUTION_VALUE_MAX_LENGTH`` characters, with the referrer reduced to its origin (``sanitize_referrer``).
-    Anything else is dropped rather than rejected, so this never raises. A key allowlist alone does not make values
-    safe, which is why each value is checked too. The checks catch the obvious cases (emails, URL credentials and
-    paths, nested objects); they cannot recognize every kind of personal data in free text.
+    Keeps only ``ATTRIBUTION_KEYS`` with string values: UTM values that are campaign labels in the agreed format
+    (``sanitize_utm_value``), and the referrer reduced to its origin (``sanitize_referrer``). Anything else is dropped
+    rather than rejected, so this never raises. A key allowlist alone does not make values safe, which is why each
+    value is checked too.
     """
     if not isinstance(attribution, dict):
         return None
@@ -87,12 +102,9 @@ def sanitize_attribution(attribution) -> dict | None:
         if not isinstance(value, str):
             continue
         value = value.strip()
-        if key == 'referrer':
-            value = sanitize_referrer(value)
-        # Checked before truncating, so a cut-off email address is still found.
-        if not value or contains_email_address(value):
-            continue
-        cleaned[key] = value[:ATTRIBUTION_VALUE_MAX_LENGTH]
+        value = sanitize_referrer(value) if key == 'referrer' else sanitize_utm_value(value)
+        if value:
+            cleaned[key] = value
     return cleaned or None
 
 
