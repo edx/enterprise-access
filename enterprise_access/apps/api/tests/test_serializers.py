@@ -10,7 +10,9 @@ import ddt
 from django.conf import settings
 from django.test import TestCase
 from freezegun import freeze_time
+from rest_framework.exceptions import ValidationError
 
+from enterprise_access.apps.api.serializers.customer_billing import CheckoutIntentCreateRequestSerializer
 from enterprise_access.apps.api.serializers.subsidy_access_policy import (
     SubsidyAccessPolicyAggregatesSerializer,
     SubsidyAccessPolicyCreditsAvailableResponseSerializer,
@@ -574,3 +576,149 @@ class TestLearnerCreditRequestBulkCancelSerializer(TestCase):
         serializer = LearnerCreditRequestBulkCancelSerializer(data=data)
         self.assertFalse(serializer.is_valid())
         self.assertIn('learner_credit_request_uuids', serializer.errors)
+
+
+@ddt.ddt
+class CheckoutIntentAttributionValidationTests(TestCase):
+    """
+    Tests for CheckoutIntentCreateRequestSerializer.validate_attribution: a wrong shape is rejected, and string values
+    that could carry personal data are dropped before anything is stored or sent to Segment.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.serializer = CheckoutIntentCreateRequestSerializer()
+
+    @ddt.data(
+        {},
+        {'unknown_key': 'x'},
+        {'utm_source': '', 'utm_medium': None},
+        {'utm_source': '   '},
+    )
+    def test_returns_none_when_no_known_keys_present(self, value):
+        self.assertIsNone(self.serializer.validate_attribution(value))
+
+    def test_keeps_only_known_keys(self):
+        result = self.serializer.validate_attribution({'utm_source': 'google', 'unknown_key': 'x'})
+        self.assertEqual(result, {'utm_source': 'google'})
+
+    def test_valid_utm_values_are_preserved(self):
+        value = {
+            'utm_source': 'linkedin',
+            'utm_medium': 'paid_social',
+            'utm_campaign': 'Q4 2026 - Teams launch',
+            'utm_content': 'carousel-ad_v2',
+            'utm_term': 'enterprise learning',
+        }
+        self.assertEqual(self.serializer.validate_attribution(value), value)
+
+    @ddt.data(
+        # (description, attribution)
+        ('nested object', {'utm_content': {'customer_email': 'test@example.com'}}),
+        ('nested object in the referrer', {'referrer': {'email': 'alice@example.com'}}),
+        ('list', {'utm_source': ['google', 'bing']}),
+        ('list of objects', {'utm_term': [{'email': 'test@example.com'}]}),
+        ('number', {'utm_campaign': 123}),
+        ('boolean', {'utm_medium': True}),
+        ('float', {'utm_content': 1.5}),
+        ('non-string value under an unknown key', {'utm_source': 'google', 'gclid': {'id': 'x'}}),
+    )
+    @ddt.unpack
+    def test_non_string_values_are_rejected(self, _description, value):
+        """Stringifying them would store and forward whatever they contain."""
+        with self.assertRaises(ValidationError) as ctx:
+            self.serializer.validate_attribution(value)
+        self.assertNotIn('example.com', str(ctx.exception.detail))  # the error names keys, never values
+
+    def test_nested_attribution_is_rejected_by_the_create_api_serializer(self):
+        serializer = CheckoutIntentCreateRequestSerializer(data={
+            'enterprise_slug': 'acme', 'enterprise_name': 'Acme', 'quantity': 10,
+            'attribution': {'utm_content': {'customer_email': 'test@example.com'}},
+        })
+        self.assertFalse(serializer.is_valid())
+        self.assertIn('attribution', serializer.errors)
+
+    @ddt.data(
+        'jane.doe@example.com',
+        'promo-jane.doe+checkout@example.co.uk',
+        'jane.doe%40example.com',
+        'jane.doe%2540example.com',
+        'utm content jane.doe@example.com spring',
+    )
+    def test_values_with_email_addresses_are_dropped(self, email_value):
+        result = self.serializer.validate_attribution({'utm_source': 'newsletter', 'utm_content': email_value})
+        self.assertEqual(result, {'utm_source': 'newsletter'})
+
+    @ddt.data(
+        # (description, referrer, stored referrer)
+        ('query and fragment', 'https://www.google.com/search?email=foo@bar.com#frag', 'https://www.google.com/'),
+        ('username and password', 'https://jane:hunter2@partner.example.com/page', 'https://partner.example.com/'),
+        ('username only', 'http://jane@example.com/', 'http://example.com/'),
+        ('identifying path segments', 'https://community.example.com/u/jane-doe/profile/12345',
+         'https://community.example.com/'),
+        ('token in the path', 'https://example.com/reset/3f9a8c7d6e5b4a3f', 'https://example.com/'),
+        ('email in the path', 'https://example.com/users/jane@example.com', 'https://example.com/'),
+        ('plain http', 'http://example.com/page', 'http://example.com/'),
+        ('https origin only', 'https://www.edx.org/', 'https://www.edx.org/'),
+        ('port kept', 'https://example.com:8443/a/b', 'https://example.com:8443/'),
+        ('scheme and host normalized', 'HTTPS://WWW.Example.COM/Path', 'https://www.example.com/'),
+        ('IPv6 host', 'https://[2001:db8::1]:8080/x?y=z', 'https://[2001:db8::1]:8080/'),
+    )
+    @ddt.unpack
+    def test_referrer_is_reduced_to_its_origin(self, _description, referrer, expected):
+        result = self.serializer.validate_attribution({'referrer': referrer, 'utm_source': 'google'})
+        self.assertEqual(result, {'referrer': expected, 'utm_source': 'google'})
+
+    @ddt.data(
+        'ftp://files.example.com/report.pdf',
+        'javascript:alert(document.cookie)',
+        'mailto:jane@example.com',
+        'data:text/html,<p>hi</p>',
+        'file:///etc/passwd',
+        'android-app://com.google.android.gm/',
+        '//example.com/no-scheme',
+        'example.com/no-scheme',
+        'not a url',
+        'https://',
+    )
+    def test_referrer_that_is_not_an_http_url_is_dropped(self, referrer):
+        result = self.serializer.validate_attribution({'referrer': referrer, 'utm_source': 'google'})
+        self.assertEqual(result, {'utm_source': 'google'})
+
+    @ddt.data(
+        ({'referrer': 'http://[', 'utm_source': 'google'}, {'utm_source': 'google'}),
+        ({'referrer': 'https://[::1/path?email=foo@bar.com'}, None),
+        ({'referrer': 'https://example.com:notaport/'}, None),
+    )
+    @ddt.unpack
+    def test_unparseable_referrer_is_dropped_rather_than_a_server_error(self, value, expected):
+        """``urlsplit`` raises ValueError here, which DRF would turn into a 500; attribution is optional."""
+        self.assertEqual(self.serializer.validate_attribution(value), expected)
+
+    def test_none_is_allowed(self):
+        self.assertIsNone(self.serializer.validate_attribution(None))
+
+    @ddt.data(['utm_source'], 'utm_source=google', 123)
+    def test_rejects_non_dict(self, value):
+        with self.assertRaises(ValidationError):
+            self.serializer.validate_attribution(value)
+
+    @ddt.data(
+        'spring_sale_' * 9,
+        # Nothing is truncated, so what follows a cut-off point can't slip through.
+        'spring_sale_' * 8 + 'jane.doe@example.com',
+    )
+    def test_values_over_100_chars_are_dropped_not_truncated(self, value):
+        self.assertIsNone(self.serializer.validate_attribution({'utm_campaign': value}))
+
+    @ddt.data(
+        # (description, value)
+        ('phone number', '+1 (555) 123-4567'),
+        ('account number', 'customer_00123456'),
+        ('opaque token', 'a8f5f167f44f4964e6c998dee827110c'),
+        ('UUID', 'deadbeef-cafe-babe-f00d-abcdefabcdef'),
+    )
+    @ddt.unpack
+    def test_values_that_look_like_identifiers_are_dropped(self, _description, value):
+        result = self.serializer.validate_attribution({'utm_source': 'newsletter', 'utm_content': value})
+        self.assertEqual(result, {'utm_source': 'newsletter'})

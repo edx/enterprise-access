@@ -5,28 +5,46 @@ Tasks for customer billing app.
 import logging
 from datetime import datetime
 
+import requests
 import stripe
+from analytics.request import APIError as SegmentAPIError
 from braze.exceptions import BrazeClientError
 from celery import shared_task
 from django.conf import settings
+from django.db import OperationalError, transaction
 
 from enterprise_access.apps.api_client.braze_client import BrazeApiClient
 from enterprise_access.apps.api_client.lms_client import LmsApiClient
 from enterprise_access.apps.customer_billing.constants import (
     BRAZE_DATE_FORMAT_1,
     BRAZE_DATE_FORMAT_2,
-    BRAZE_TIMESTAMP_FORMAT
+    BRAZE_TIMESTAMP_FORMAT,
+    ORDER_COMPLETED_BILLING_REASONS,
+    CheckoutSegmentEvents,
+    SegmentEventEmissionStatus
 )
-from enterprise_access.apps.customer_billing.models import CheckoutIntent, StripeEventSummary
+from enterprise_access.apps.customer_billing.models import CheckoutIntent, SegmentEventEmission, StripeEventSummary
+from enterprise_access.apps.customer_billing.segment_payloads import (
+    TRANSIENT_STRIPE_ERRORS,
+    IncompleteOrderPayloadError,
+    build_order_cancelled_properties,
+    build_order_completed_properties,
+    find_order_invoice
+)
 from enterprise_access.apps.customer_billing.stripe_api import (
+    get_stripe_invoice,
     get_stripe_payment_intent,
     get_stripe_payment_method,
     get_stripe_subscription,
-    get_stripe_trialing_subscription
+    get_stripe_subscription_uncached,
+    get_stripe_trialing_subscription,
+    list_paid_subscription_invoices
 )
 from enterprise_access.apps.customer_billing.utils import datetime_from_timestamp, get_campaign_id, get_product_type
 from enterprise_access.apps.provisioning.utils import validate_trial_subscription
+from enterprise_access.apps.track.segment import send_event_synchronously
 from enterprise_access.tasks import LoggedTaskWithRetry
+from enterprise_access.toggles import checkout_segment_events_v2_enabled
 from enterprise_access.utils import cents_to_dollars, format_cents_for_user_display, format_datetime_obj
 
 logger = logging.getLogger(__name__)
@@ -1102,3 +1120,202 @@ def send_payment_receipt_email(
         organization_name=enterprise_customer_name,
         email_description='payment receipt email',
     )
+
+
+class SegmentSendError(Exception):
+    """Segment did not accept a checkout event because of a network error, timeout, 429 or 5xx; retryable."""
+
+
+class SkipCheckoutSegmentEvent(Exception):
+    """The recorded event turned out not to be an order event, e.g. a cancelled subscription that never paid."""
+
+
+class CheckoutSegmentEventError(Exception):
+    """The event cannot be sent and retrying won't change that, e.g. its CheckoutIntent no longer exists."""
+
+
+def _send_checkout_segment_event(lms_user_id, event_name, properties, order_id) -> bool:
+    """
+    Send the event synchronously and return whether Segment accepted it (False if SEGMENT_KEY is unset).
+
+    Failures that a later attempt can fix raise ``SegmentSendError`` so the task retries. Like analytics-python's
+    own uploader, a 4xx other than 429 is not retried: the request itself is invalid and would fail the same way
+    every time. Invalid arguments (``AssertionError``) are not retried for the same reason.
+    """
+    try:
+        return send_event_synchronously(
+            lms_user_id=str(lms_user_id),
+            event_name=event_name,
+            properties=properties,
+            message_id=f'{event_name}:{order_id}',
+        )
+    except SegmentAPIError as exc:
+        if 400 <= exc.status < 500 and exc.status != 429:
+            raise
+        raise SegmentSendError(f'Segment rejected {event_name} for order {order_id}: {exc}') from exc
+    except requests.RequestException as exc:
+        raise SegmentSendError(f'Segment send failed for {event_name} order {order_id}: {exc}') from exc
+
+
+def _confirm_first_paid_order_invoice(emission: SegmentEventEmission, invoice):
+    """
+    Raise ``SkipCheckoutSegmentEvent`` unless ``invoice`` is the order's first paid invoice in Stripe's history.
+
+    The webhook records ``order_completed`` for every paid creation or ``subscription_cycle`` invoice, because the
+    local history can't tell a trial-end payment from a renewal: webhooks arrive out of order (a later license
+    change can be handled first), and the event summaries it relies on are best-effort. The recorded invoice is
+    included as a candidate in case Stripe's list doesn't show it yet.
+    """
+    paid_invoices = list_paid_subscription_invoices(emission.stripe_subscription_id)
+    order_invoice = find_order_invoice([invoice, *paid_invoices], ORDER_COMPLETED_BILLING_REASONS)
+    if order_invoice is None or order_invoice['id'] != invoice['id']:
+        first_paid = order_invoice['id'] if order_invoice else 'none'
+        raise SkipCheckoutSegmentEvent(
+            f'Invoice {invoice["id"]} is not the order\'s first paid invoice (that is {first_paid}), e.g. a renewal'
+        )
+
+
+def _resolve_order_invoice_id(emission: SegmentEventEmission) -> str:
+    """
+    The order's first paid invoice, which supplies an ``order_cancelled`` event's revenue. Saved on the row, so every
+    retry of the event uses the same invoice.
+
+    Uses the invoice of the order's sent ``order_completed`` (confirmed as the order's first payment) if there is
+    one. Otherwise it asks Stripe, which has the full payment history even when the invoice webhooks have not
+    arrived yet: a missing local record is not proof that the customer never paid. Raises
+    ``SkipCheckoutSegmentEvent`` only when Stripe shows no payment for the order (e.g. a subscription cancelled during
+    its trial).
+    """
+    if emission.stripe_invoice_id:
+        return emission.stripe_invoice_id
+    # Only a SENT row: a skipped or unfinished one may hold a renewal's invoice.
+    invoice_id = SegmentEventEmission.objects.filter(
+        event_name=CheckoutSegmentEvents.ORDER_COMPLETED,
+        order_id=emission.order_id,
+        status=SegmentEventEmissionStatus.SENT,
+        stripe_invoice_id__isnull=False,
+    ).values_list('stripe_invoice_id', flat=True).first()
+    if not invoice_id:
+        order_invoice = find_order_invoice(
+            list_paid_subscription_invoices(emission.stripe_subscription_id), ORDER_COMPLETED_BILLING_REASONS,
+        )
+        if order_invoice is None:
+            raise SkipCheckoutSegmentEvent(
+                f'Stripe subscription {emission.stripe_subscription_id} never collected a payment for the order'
+            )
+        invoice_id = order_invoice['id']
+    SegmentEventEmission.objects.filter(
+        pk=emission.pk, stripe_invoice_id__isnull=True,
+    ).update(stripe_invoice_id=invoice_id)
+    emission.stripe_invoice_id = invoice_id
+    return invoice_id
+
+
+def _build_checkout_segment_event(emission: SegmentEventEmission) -> tuple[str, dict]:
+    """
+    Return the LMS user ID and Segment properties for the recorded event.
+
+    Raises ``CheckoutSegmentEventError`` or ``IncompleteOrderPayloadError`` if it cannot be sent,
+    ``SkipCheckoutSegmentEvent`` if it is not an order event after all, and a transient Stripe error (retried by the
+    task) if Stripe can't be reached.
+    """
+    checkout_intent = emission.checkout_intent
+    if checkout_intent is None:
+        raise CheckoutSegmentEventError('The CheckoutIntent no longer exists')
+    lms_user_id = checkout_intent.user.lms_user_id
+    if not lms_user_id:
+        # The local DB user id is not an LMS user id, so it is never used instead.
+        raise CheckoutSegmentEventError(f'CheckoutIntent {checkout_intent.id} has no lms_user_id')
+
+    if emission.event_name == CheckoutSegmentEvents.ORDER_COMPLETED:
+        if not emission.stripe_invoice_id:
+            raise CheckoutSegmentEventError('order_completed was recorded without its paid invoice')
+        invoice = get_stripe_invoice(emission.stripe_invoice_id)
+        _confirm_first_paid_order_invoice(emission, invoice)
+        return lms_user_id, build_order_completed_properties(checkout_intent, invoice, emission.order_id)
+
+    if emission.event_name == CheckoutSegmentEvents.ORDER_CANCELLED:
+        invoice = get_stripe_invoice(_resolve_order_invoice_id(emission))
+        # Not cached: a copy fetched before a license change would be recorded as the state at cancellation.
+        subscription = get_stripe_subscription_uncached(emission.stripe_subscription_id)
+        return lms_user_id, build_order_cancelled_properties(
+            checkout_intent, invoice, subscription, emission.order_id,
+        )
+
+    raise CheckoutSegmentEventError(f'Unknown checkout Segment event {emission.event_name}')
+
+
+@shared_task(
+    base=LoggedTaskWithRetry,
+    autoretry_for=(
+        *TRANSIENT_STRIPE_ERRORS,
+        SegmentSendError,
+        OperationalError,
+    ),
+)
+def send_checkout_segment_event_task(emission_id):
+    """
+    Send one recorded checkout event (a ``SegmentEventEmission`` outbox row) to Segment, at most once.
+
+    Stripe failures that a later attempt can fix (network errors and timeouts, 429, 5xx, including when fetching the
+    price for ``payment_schedule``), retryable Segment failures and DB ``OperationalError`` are retried with
+    exponential backoff, and the row is left as it was. If Celery gives up, the ``dispatch_checkout_segment_events``
+    command publishes the row again later, a bounded number of times.
+
+    The row is set to SENT only after Segment accepted the event. It is set to SKIPPED when the event turns out not to
+    be an order event, and to FAILED when it cannot be sent as is (a required property is missing, the CheckoutIntent
+    is gone, Stripe or Segment rejected the request), so it is never sent incomplete. The row is locked while sending,
+    so concurrent deliveries send once. The send is synchronous with a short timeout, so the lock is held for one
+    bounded request, never for retries.
+    """
+    if not checkout_segment_events_v2_enabled():
+        # Left as is; the dispatcher publishes it again once the flag is back on.
+        logger.info('Checkout Segment events are disabled; not sending SegmentEventEmission %s', emission_id)
+        return
+
+    emission = SegmentEventEmission.objects.select_related(
+        'checkout_intent__user', 'checkout_intent__ssp_product',
+    ).filter(pk=emission_id).first()
+    if emission is None:
+        # Retrying cannot make a missing row appear.
+        logger.error('Skipping checkout Segment event: SegmentEventEmission %s does not exist', emission_id)
+        return
+    if emission.is_final:
+        # Cheap check before any Stripe call; the locked re-check below is the authoritative one.
+        logger.info('Segment event %s for order %s is already %s, skipping', emission.event_name, emission.order_id,
+                    emission.status)
+        return
+
+    try:
+        lms_user_id, properties = _build_checkout_segment_event(emission)
+    except SkipCheckoutSegmentEvent as exc:
+        logger.info('Not sending Segment event %s for order %s: %s', emission.event_name, emission.order_id, exc)
+        emission.finish(SegmentEventEmissionStatus.SKIPPED, str(exc))
+        return
+    except (CheckoutSegmentEventError, IncompleteOrderPayloadError) as exc:
+        logger.error('Cannot send Segment event %s for order %s: %s', emission.event_name, emission.order_id, exc)
+        emission.finish(SegmentEventEmissionStatus.FAILED, str(exc))
+        return
+    except stripe.InvalidRequestError as exc:
+        # E.g. the invoice does not exist: the same request fails the same way every time.
+        emission.finish(SegmentEventEmissionStatus.FAILED, f'Stripe rejected the request: {exc}')
+        raise
+
+    try:
+        with transaction.atomic():
+            # The row lock makes a concurrent delivery wait, then see the final status and skip.
+            locked = SegmentEventEmission.objects.select_for_update().get(pk=emission.pk)
+            if locked.is_final:
+                logger.info('Segment event %s for order %s is already %s, skipping', locked.event_name,
+                            locked.order_id, locked.status)
+                return
+            if not _send_checkout_segment_event(lms_user_id, locked.event_name, properties, locked.order_id):
+                # SEGMENT_KEY is not set, so nothing was sent; the dispatcher publishes the row again later.
+                return
+            locked.finish(SegmentEventEmissionStatus.SENT)
+            logger.info('Sent Segment event %s for order %s', locked.event_name, locked.order_id)
+    except (SegmentAPIError, AssertionError) as exc:
+        # Segment rejected the request itself (a 4xx other than 429; _send_checkout_segment_event turns retryable
+        # statuses into SegmentSendError) or the arguments are invalid: it would fail the same way every time.
+        emission.finish(SegmentEventEmissionStatus.FAILED, f'Segment rejected the event: {exc!r}')
+        raise

@@ -19,6 +19,7 @@ from enterprise_access.apps.customer_billing.models import (
     SspProduct,
     StripeEventSummary
 )
+from enterprise_access.apps.customer_billing.utils import sanitize_attribution
 
 
 class RecordConflictError(APIException):
@@ -222,9 +223,35 @@ class CheckoutIntentCreateRequestSerializer(CountryFieldMixin, serializers.Model
                 'quantity',
                 'country',
                 'terms_metadata',
+                'attribution',
                 'ssp_product'
             ]
         ]
+
+    def validate_attribution(self, value):
+        """
+        Accept only a flat object whose values are strings (or null), then keep only what ``sanitize_attribution``
+        allows: known UTM keys whose values are campaign labels in the agreed format, and the referrer's origin.
+        Returns None if nothing is left.
+
+        A wrong shape (not an object, or a nested object, list, number or boolean value) is a client bug and is
+        rejected, because stringifying it would store whatever it contains. A value that is a string but unsafe (an
+        email address, a phone number or token, a referrer that is not an http(s) URL) is dropped instead: it comes
+        from the link the customer followed, which they don't control, and attribution is optional.
+        """
+        if value is None:
+            return value
+        if not isinstance(value, dict):
+            raise serializers.ValidationError('attribution must be a dictionary/object.')
+        non_string_keys = sorted(
+            str(key) for key, item in value.items() if item is not None and not isinstance(item, str)
+        )
+        if non_string_keys:
+            # Name the keys only: the values are what may hold personal data.
+            raise serializers.ValidationError(
+                f'attribution values must be strings; got other values for: {", ".join(non_string_keys)}.'
+            )
+        return sanitize_attribution(value)
 
     # Put some reasonable validation bounds at this layer, and let
     # the customer_billing.api business logic handle more detailed validation
@@ -268,6 +295,7 @@ class CheckoutIntentCreateRequestSerializer(CountryFieldMixin, serializers.Model
                 country=validated_data.get('country'),
                 terms_metadata=validated_data.get('terms_metadata'),
                 ssp_product=ssp_product,
+                attribution=validated_data.get('attribution'),
             )
 
         # Catch exceptions that should return 422:

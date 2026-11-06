@@ -133,6 +133,49 @@ class StripeSegmentEvents:
     SUBSCRIPTION_CANCELED = 'edx.server.enterprise-access.stripe.subscription.canceled'
 
 
+class CheckoutSegmentEvents:
+    """
+    Final checkout events sent to Segment from the server (setting: FEATURE_SSP_CHECKOUT_SEGMENT_EVENTS_V2).
+    """
+    ORDER_COMPLETED = 'edx.ui.enterprise.checkout.order_completed'
+    ORDER_CANCELLED = 'edx.ui.enterprise.checkout.order_cancelled'
+
+
+class SegmentEventEmissionStatus(StrEnum):
+    """
+    Status of a ``SegmentEventEmission`` (the outbox row of one checkout Segment event).
+
+    PENDING -> DISPATCHED -> SENT, SKIPPED or FAILED. A row stays PENDING while the broker is unreachable, and goes
+    back to PENDING if it was dispatched but never finished (Celery gave up, or the broker lost the message).
+    """
+    PENDING = 'pending'  # Recorded; the send task has not been handed to the broker yet.
+    DISPATCHED = 'dispatched'  # The send task was handed to the broker.
+    SENT = 'sent'  # Segment accepted the event.
+    SKIPPED = 'skipped'  # Not an order event after all, e.g. a cancelled subscription that never collected money.
+    FAILED = 'failed'  # Will not be sent without a fix: a permanent error, or every dispatch attempt failed.
+
+
+SEGMENT_EVENT_EMISSION_FINAL_STATUSES = (
+    SegmentEventEmissionStatus.SENT,
+    SegmentEventEmissionStatus.SKIPPED,
+    SegmentEventEmissionStatus.FAILED,
+)
+
+
+# Invoice billing reasons that can be the first paid invoice of a new order:
+# the creation invoice, or the subscription_cycle invoice issued when a trial ends.
+# Renewals are also subscription_cycle; the send task skips them by checking the
+# order's first paid invoice in Stripe's history (segment_payloads.find_order_invoice).
+ORDER_COMPLETED_BILLING_REASONS = ('subscription_create', 'subscription_cycle')
+
+
+# Keys of ``CheckoutIntent.attribution`` that are passed through to Segment.
+ATTRIBUTION_KEYS = ('utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'referrer')
+# Longer values are dropped, not truncated: a cut-off identifier still identifies. Analytics tools cap campaign
+# values at about this length too.
+ATTRIBUTION_VALUE_MAX_LENGTH = 100
+
+
 ALLOWED_CHECKOUT_INTENT_STATE_TRANSITIONS = {
     CheckoutIntentState.CREATED: [
         CheckoutIntentState.PAID,

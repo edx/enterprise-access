@@ -12,6 +12,7 @@ from simple_history.utils import bulk_update_with_history
 
 from enterprise_access.apps.api_client.license_manager_client import LicenseManagerApiClient
 from enterprise_access.apps.customer_billing.constants import (
+    ORDER_COMPLETED_BILLING_REASONS,
     SUBSCRIPTION_ITEM_TYPE,
     StripeSegmentEvents,
     StripeSubscriptionStatus
@@ -21,6 +22,10 @@ from enterprise_access.apps.customer_billing.models import (
     SelfServiceSubscriptionRenewal,
     StripeEventData,
     StripeEventSummary
+)
+from enterprise_access.apps.customer_billing.segment_outbox import (
+    record_order_cancelled_segment_event,
+    record_order_completed_segment_event
 )
 from enterprise_access.apps.customer_billing.stripe_event_types import StripeEventType
 from enterprise_access.apps.customer_billing.tasks import (
@@ -311,6 +316,15 @@ def _try_enable_pending_updates(stripe_subscription_id):
         logger.error('Failed to enable pending updates for subscription %s: %s', stripe_subscription_id, e)
 
 
+def _paid_invoice_summaries(subscription_id):
+    """``invoice.paid`` event summaries for the subscription's invoices that collected a non-zero amount."""
+    return StripeEventSummary.objects.filter(
+        stripe_subscription_id=subscription_id,
+        event_type='invoice.paid',
+        invoice_amount_paid__gt=0,
+    )
+
+
 def track_subscription_cancellation(checkout_intent: CheckoutIntent, cancellation_details: dict):
     """
     Track subscription cancellation event to Segment with cancellation details.
@@ -395,10 +409,8 @@ def _is_annual_renewal_invoice(invoice, subscription_details) -> bool:
     """
     if invoice.to_dict().get('billing_reason') != 'subscription_cycle':
         return False
-    return StripeEventSummary.objects.filter(
-        stripe_subscription_id=subscription_details.to_dict().get('subscription'),
-        event_type='invoice.paid',
-        invoice_amount_paid__gt=0,
+    return _paid_invoice_summaries(
+        subscription_details.to_dict().get('subscription'),
     ).exclude(stripe_invoice_id=invoice['id']).exists()
 
 
@@ -621,9 +633,18 @@ class StripeEventHandler:
                     checkout_intent_id=checkout_intent.id,
                     invoice_data=invoice.to_dict(),
                 )
-                return
-            # only update status for non-trial invoice.paid events
-            _handle_invoice_paid_status_updated(event, checkout_intent)
+            else:
+                # only update status for non-trial invoice.paid events
+                _handle_invoice_paid_status_updated(event, checkout_intent)
+            # After the billing work (see segment_outbox._record), and only for paid invoices. The order's first paid
+            # invoice is its creation invoice or the subscription_cycle invoice issued when the trial ends; license
+            # changes (subscription_update) and manual invoices never are. Renewals are subscription_cycle too, but
+            # aren't excluded here: the local history depends on the order webhooks arrive in, so the send task
+            # checks Stripe's history and skips the event unless this invoice was the order's first payment.
+            if invoice.to_dict().get('billing_reason') in ORDER_COMPLETED_BILLING_REASONS:
+                record_order_completed_segment_event(
+                    checkout_intent, invoice.id, subscription_details.to_dict().get('subscription'),
+                )
             return
 
         try:
@@ -958,6 +979,10 @@ class StripeEventHandler:
                 send_trial_ended_cancellation_email_task.delay(
                     checkout_intent_id=checkout_intent.id,
                 )
+
+        # After the billing work (see segment_outbox._record). Recorded for every deletion; the send task asks Stripe
+        # whether the order was ever paid, and skips it if not.
+        record_order_cancelled_segment_event(checkout_intent, subscription['id'])
 
 
 def _process_trial_to_paid_renewal(

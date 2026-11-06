@@ -1,5 +1,6 @@
 """Feature toggles for enterprise-access."""
 
+from django.conf import settings
 from edx_toggles.toggles import WaffleFlag, WaffleSwitch
 
 ENTERPRISE_ACCESS_NAMESPACE = 'enterprise_access'
@@ -25,6 +26,14 @@ ENABLE_MULTI_LICENSE_ENTITLEMENTS_BFF = WaffleFlag(
 def enable_multi_license_entitlements_bff():
     """Return whether multi-license BFF behavior is enabled."""
     return ENABLE_MULTI_LICENSE_ENTITLEMENTS_BFF.is_enabled()
+
+
+def checkout_segment_events_v2_enabled():
+    """
+    Return whether server-side checkout Segment events are enabled: the ``FEATURE_SSP_CHECKOUT_SEGMENT_EVENTS_V2``
+    Django setting (annotated in ``settings/base.py``), the flag name shared with the checkout frontend.
+    """
+    return bool(getattr(settings, 'FEATURE_SSP_CHECKOUT_SEGMENT_EVENTS_V2', False))
 
 
 # A ``WaffleSwitch`` rather than a ``WaffleFlag``, deliberately. A switch is a single
