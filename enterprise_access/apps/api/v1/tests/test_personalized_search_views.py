@@ -141,3 +141,60 @@ class PersonalizedSearchTurnViewTests(APITest):
             response = self.post()
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json()['code'], 'catalog_unavailable')
+
+
+@override_settings(OPENAI_API_KEY='test-key', PERSONALIZED_SEARCH_OPENAI_MODELS=MODELS)
+@override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
+class PersonalizedSearchTurnAccessTests(APITest):
+    """Who a turn may run for: the enterprise checked is the one used, sessions are the learner's own."""
+
+    def setUp(self):
+        super().setUp()
+        self.addCleanup(cache.clear)
+        self.url = reverse('api:v1:personalized-search-turns')
+        self.set_jwt_cookie([{'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE, 'context': ENTERPRISE}])
+        for target, value in (('steps', fake_steps()), ('get_and_cache_secured_algolia_search_keys', {}),
+                              ('secured_key_from_payload', 'secured-key')):
+            patcher = mock.patch(f'enterprise_access.apps.personalized_search.wiring.{target}', return_value=value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def post(self, query='', **body):
+        payload = {'enterprise_customer_uuid': ENTERPRISE, 'session_uuid': None, 'message': 'Lead a team', **body}
+        return self.client.post(self.url + query, payload, format='json')
+
+    def test_a_query_string_enterprise_cannot_stand_in_for_the_body_enterprise(self):
+        response = self.post(query=f'?enterprise_customer_uuid={ENTERPRISE}', enterprise_customer_uuid=OTHER_ENTERPRISE)
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(ChatSession.objects.exists())
+
+    def test_another_learners_session_is_404(self):
+        session_uuid = parse_sse(self.post())[1]['data']['session_uuid']
+        ChatSession.objects.filter(uuid=session_uuid).update(lms_user_id=self.user.lms_user_id + 1000)
+        self.assertEqual(self.post(session_uuid=session_uuid).status_code, 404)
+
+    def test_the_same_session_under_another_enterprise_is_404(self):
+        session_uuid = parse_sse(self.post())[1]['data']['session_uuid']
+        ChatSession.objects.filter(uuid=session_uuid).update(enterprise_customer_uuid=OTHER_ENTERPRISE)
+        self.assertEqual(self.post(session_uuid=session_uuid).status_code, 404)
+
+    def test_a_user_without_an_lms_id_is_403(self):
+        with mock.patch.object(type(self.user), 'lms_user_id', None, create=True):
+            with mock.patch('enterprise_access.apps.api.v1.views.personalized_search.getattr',
+                            side_effect=lambda obj, name, default=None: None if name == 'lms_user_id' else default,
+                            create=True):
+                response = self.post()
+        self.assertEqual(response.status_code, 403)
+
+    def test_anonymous_is_401(self):
+        self.client.cookies.clear()
+        self.client.logout()
+        self.assertEqual(self.post().status_code, 401)
+
+    def test_a_failure_before_streaming_releases_the_session_lock(self):
+        session_uuid = parse_sse(self.post())[1]['data']['session_uuid']
+        target = 'enterprise_access.apps.personalized_search.wiring.turn_context'
+        with mock.patch(target, side_effect=RuntimeError('boom')):
+            with self.assertRaises(RuntimeError):
+                self.post(session_uuid=session_uuid)
+        self.assertIsNone(ChatSession.objects.get(uuid=session_uuid).active_turn_started_at)
