@@ -4,6 +4,7 @@ from unittest import mock
 from django.test import TestCase, override_settings
 
 from enterprise_access.apps.personalized_search import wiring
+from enterprise_access.apps.personalized_search.core import constants
 
 MODELS = {'gpt-4.1-mini': (0.4, 0.1, 1.6)}
 
@@ -18,6 +19,17 @@ class WiringTests(TestCase):
         steps = wiring.steps(catalog=catalog, store=mock.Mock())
         steps.retrieve({'query': 'q', 'item_types': ['course']}, mock.Mock(filter='f'), [], timeout_s=0.75)
         self.assertEqual(catalog.search.call_args.kwargs['timeout_s'], 0.75)
+
+    def test_model_calls_go_through_the_registry_with_the_step_token_caps(self):
+        registry = mock.Mock()
+        steps = wiring.steps(registry=registry, catalog=mock.Mock(), store=mock.Mock())
+        steps.intent(system='s', user='u', model='m', effort=None, timeout_s=3)
+        self.assertEqual(registry.complete_json.call_args.kwargs['max_tokens'], constants.INTENT_MAX_TOKENS)
+        usage = mock.Mock()
+        steps.compose(system='s', user='u', model='m', effort='low', timeout_s=5, usage=usage)
+        compose_kwargs = registry.stream_text.call_args.kwargs
+        self.assertEqual((compose_kwargs['max_tokens'], compose_kwargs['timeout_s'], compose_kwargs['usage']),
+                         (constants.COMPOSE_MAX_TOKENS, 5, usage))
 
     def test_turn_context_uses_the_timeout_settings(self):
         intent, compose = wiring.default_models()

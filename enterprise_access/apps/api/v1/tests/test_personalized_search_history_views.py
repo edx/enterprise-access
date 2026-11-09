@@ -59,6 +59,12 @@ class SessionEndpointsTests(APITest):
         second = self.client.get(url, {'enterprise_customer_uuid': ENTERPRISE, 'page': 2}).json()
         self.assertEqual(len(second['results']), 1)
 
+    def test_a_page_past_the_last_is_404(self):
+        self.session()
+        response = self.client.get(reverse('api:v1:personalized-search-sessions'),
+                                   {'enterprise_customer_uuid': ENTERPRISE, 'page': 5})
+        self.assertEqual(response.status_code, 404)
+
     def test_retrieve_returns_parts_but_never_the_upstream_id(self):
         row = self.session(turns=2)
         response = self.client.get(reverse('api:v1:personalized-search-session', args=[row.uuid]),
@@ -160,6 +166,11 @@ class ItemFeedbackAccessTests(APITest):
         ok = self.client.post(self.url, self.body(card_snapshot={'title': 'T', 'secret': 'drop me'}), format='json')
         self.assertEqual(ok.status_code, 201)
         self.assertEqual(ok.json()['card_snapshot'], {'title': 'T'})
+
+    def test_a_null_snapshot_is_stored_as_none(self):
+        response = self.client.post(self.url, self.body(card_snapshot=None), format='json')
+        self.assertEqual(response.status_code, 201)
+        self.assertIsNone(response.json()['card_snapshot'])
 
     def test_a_foreign_session_uuid_is_ignored_not_linked(self):
         other = ChatSession.objects.create(lms_user_id=self.user.lms_user_id + 1000,
