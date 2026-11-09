@@ -8,6 +8,7 @@ The turn view works with a plain dict (``load_or_create``), locks the session ro
 from datetime import timedelta
 
 from django.core.exceptions import ValidationError
+from django.core.paginator import EmptyPage, Paginator
 from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
@@ -103,3 +104,41 @@ class DjangoSessionStore:
                 follow_up_attribute=turn.get('follow_up_attribute') or '', backend=turn.get('backend') or '',
                 timing=turn.get('timing'),
             )
+
+
+class DjangoHistoryStore:
+    """The learner's past sessions and their stored turns (history panel, REQ-010)."""
+
+    page_size = 20
+
+    def list_sessions(self, *, lms_user_id, enterprise_customer_uuid, page: int) -> dict | None:
+        """One page of sessions with at least one turn, newest first; None past the last page."""
+        sessions = ChatSession.objects.filter(
+            lms_user_id=lms_user_id, enterprise_customer_uuid=enterprise_customer_uuid, turn_count__gt=0,
+        ).order_by('-last_message_at')
+        paginator = Paginator(sessions, self.page_size)
+        try:
+            current = paginator.page(page)
+        except EmptyPage:
+            return None
+        return {
+            'count': paginator.count,
+            'next_page': current.next_page_number() if current.has_next() else None,
+            'previous_page': current.previous_page_number() if current.has_previous() else None,
+            'results': [{'uuid': str(s.uuid), 'title': s.title, 'first_prompt': s.first_prompt,
+                         'item_count': s.item_count, 'last_message_at': s.last_message_at, 'created': s.created}
+                        for s in current.object_list],
+        }
+
+    def get_session(self, *, session_uuid, lms_user_id, enterprise_customer_uuid) -> dict:
+        """One session with its turns' stored parts, in sequence order. Raises ``SessionNotFound``."""
+        try:
+            session = ChatSession.objects.get(uuid=session_uuid, lms_user_id=lms_user_id,
+                                              enterprise_customer_uuid=enterprise_customer_uuid)
+        except ChatSession.DoesNotExist as exc:
+            raise SessionNotFound() from exc
+        return {
+            'uuid': str(session.uuid), 'title': session.title, 'created': session.created,
+            'turns': [{'sequence': t.sequence, 'user_message': t.user_message, 'parts': t.parts,
+                       'created': t.created} for t in session.turns.order_by('sequence')],
+        }
