@@ -1,8 +1,8 @@
 """The Personalized Search tables can be dropped and recreated cleanly (they belong to this app alone)."""
-from django.apps import apps
-from django.core.management import call_command
 from uuid import uuid4
 
+from django.apps import apps
+from django.core.management import call_command
 from django.db import IntegrityError, connection, transaction
 from django.test import TestCase, TransactionTestCase
 
