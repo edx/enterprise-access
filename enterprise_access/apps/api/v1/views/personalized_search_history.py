@@ -12,6 +12,8 @@ Every query filters on the requesting learner's ``lms_user_id`` and the enterpri
 enterprise-scoped learner permission. All endpoints 404 while the feature flag is off. Reads and
 writes go through the history and feedback stores (``personalized_search.adapters.django_store``).
 """
+import json
+
 from edx_rbac.decorators import permission_required
 from edx_rest_framework_extensions.auth.jwt.authentication import JwtAuthentication
 from rest_framework import permissions, serializers, status
@@ -20,6 +22,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from enterprise_access.apps.api.utils import get_or_fetch_enterprise_uuid_for_bff_request
+from enterprise_access.apps.api.v1.views.personalized_search import body_enterprise_uuid
 from enterprise_access.apps.core.constants import PERSONALIZED_SEARCH_LEARNER_PERMISSION
 from enterprise_access.apps.personalized_search.adapters.django_store import DjangoFeedbackStore, DjangoHistoryStore
 from enterprise_access.apps.personalized_search.core import constants
@@ -27,6 +30,10 @@ from enterprise_access.apps.personalized_search.core.errors import SessionNotFou
 from enterprise_access.toggles import personalized_search_enabled
 
 FEEDBACK_KINDS = DjangoFeedbackStore.kinds
+# What the Saved view needs to draw a card without the original turn: the ItemCard fields (Block catalog v1).
+CARD_SNAPSHOT_FIELDS = ('item_id', 'item_type', 'title', 'image_url', 'partner_name', 'partner_logo_url', 'link',
+                        'facts', 'why', 'fit')
+MAX_SNAPSHOT_BYTES = 8 * 1024
 
 
 def enterprise_uuid_for_request(request, *args, **kwargs):
@@ -117,6 +124,17 @@ class ItemFeedbackWriteSerializer(EnterpriseQuerySerializer):  # pylint: disable
     session_uuid = serializers.UUIDField(required=False, allow_null=True)
     card_snapshot = serializers.JSONField(required=False, allow_null=True)
 
+    def validate_card_snapshot(self, value):
+        """An object of the item card's own fields, at most ``MAX_SNAPSHOT_BYTES`` serialized; others are dropped."""
+        if value is None:
+            return None
+        if not isinstance(value, dict):
+            raise serializers.ValidationError('Must be an object.')
+        kept = {key: value[key] for key in CARD_SNAPSHOT_FIELDS if key in value}
+        if len(json.dumps(kept)) > MAX_SNAPSHOT_BYTES:
+            raise serializers.ValidationError('Too large.')
+        return kept
+
 
 class ItemFeedbackListQuerySerializer(EnterpriseQuerySerializer):  # pylint: disable=abstract-method
     kind = serializers.ChoiceField(choices=list(FEEDBACK_KINDS), default=FEEDBACK_KINDS[0])
@@ -139,7 +157,7 @@ class PersonalizedSearchItemFeedbackView(_LearnerView):
             kind=query['kind'],
         )})
 
-    @permission_required(PERSONALIZED_SEARCH_LEARNER_PERMISSION, fn=enterprise_uuid_for_request)
+    @permission_required(PERSONALIZED_SEARCH_LEARNER_PERMISSION, fn=body_enterprise_uuid)
     def post(self, request):
         """Record feedback; an existing row for the same item and kind is returned as-is (200)."""
         data = _validated(ItemFeedbackWriteSerializer, request.data)
