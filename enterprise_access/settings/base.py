@@ -598,6 +598,8 @@ PERSONALIZED_SEARCH_OPENAI_MODELS = {
     'gpt-5.6-terra': (2.00, 0.20, 12.00),
     'gpt-5.6-sol': (4.00, 0.40, 20.00),
 }
+# The Xpert platform (model id 'xpert') is available once XPERT_API_BASE_URL and XPERT_API_CLIENT_ID are
+# set; its calls use XPERT_REQUEST_TIMEOUT instead of the step timeouts above.
 
 # The enterprise customer the evaluation harness scopes to (Open Decision 1). Production
 # requests take the customer from the request; this is only for offline runs, which have

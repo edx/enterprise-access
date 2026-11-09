@@ -10,6 +10,7 @@ from enterprise_access.apps.bffs.api import get_and_cache_secured_algolia_search
 from enterprise_access.apps.personalized_search.adapters.algolia import AlgoliaCatalog, secured_key_from_payload
 from enterprise_access.apps.personalized_search.adapters.django_store import DjangoSessionStore
 from enterprise_access.apps.personalized_search.adapters.openai_backend import OpenAIBackend
+from enterprise_access.apps.personalized_search.adapters.xpert_backend import XpertBackend
 from enterprise_access.apps.personalized_search.core import constants, retrieval
 from enterprise_access.apps.personalized_search.core.errors import ModelConfigurationError
 from enterprise_access.apps.personalized_search.core.model_registry import ModelRegistry
@@ -17,11 +18,19 @@ from enterprise_access.apps.personalized_search.core.orchestrator import ModelCh
 from enterprise_access.apps.personalized_search.core.retrieval import CatalogScope
 
 
+def xpert_backend() -> XpertBackend:
+    """The Xpert platform backend, from ``XPERT_API_*`` (unconfigured, it lists no models)."""
+    return XpertBackend(base_url=getattr(settings, 'XPERT_API_BASE_URL', ''),
+                        client_id=getattr(settings, 'XPERT_API_CLIENT_ID', ''),
+                        request_timeout_s=float(getattr(settings, 'XPERT_REQUEST_TIMEOUT', 45)))
+
+
 def model_registry() -> ModelRegistry:
-    """OpenAI (the ``PERSONALIZED_SEARCH_OPENAI_MODELS`` allowlist)."""
+    """OpenAI (the ``PERSONALIZED_SEARCH_OPENAI_MODELS`` allowlist), then Xpert when configured."""
     return ModelRegistry([
         OpenAIBackend(api_key=getattr(settings, 'OPENAI_API_KEY', '') or '',
                       models=settings.PERSONALIZED_SEARCH_OPENAI_MODELS),
+        xpert_backend(),
     ])
 
 
@@ -56,7 +65,7 @@ def steps(*, registry: ModelRegistry | None = None, catalog=None, store=None, pe
 
 
 def _step_timeout(registry: ModelRegistry, model: str, default_s: float) -> float:
-    """A backend that brings its own request timeout uses it; others use the setting."""
+    """A backend that brings its own request timeout (Xpert) uses it; others use the setting."""
     try:
         own = getattr(registry.backend_for(model), 'request_timeout_s', None)
     except ModelConfigurationError:  # unknown model: the turn refuses it
