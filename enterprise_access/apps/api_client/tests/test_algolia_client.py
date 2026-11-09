@@ -85,6 +85,12 @@ class TestMultiSearchCatalogIndex(TestCase):
             AlgoliaSearchClient().multi_search_catalog_index([{'query': 'x'}], allow_unscoped=True)
         self.mock_search_client.create.assert_not_called()
 
+    @override_settings(ALGOLIA_CATALOG_INDEX_NAME='')
+    def test_a_missing_index_name_is_a_configuration_error(self):
+        with self.assertRaises(AlgoliaConfigurationError):
+            AlgoliaSearchClient().multi_search_catalog_index([{'query': 'x'}], secured_key=_live_secured_key())
+        self.mock_search_client.create.assert_not_called()
+
     @ddt.data({}, {'results': None}, {'results': [{'hits': []}]})
     def test_a_result_count_that_does_not_match_the_requests_is_an_error(self, response):
         self.mock_client.multiple_queries.return_value = response
