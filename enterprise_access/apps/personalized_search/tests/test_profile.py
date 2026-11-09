@@ -9,7 +9,7 @@ from enterprise_access.apps.personalized_search.tests.helpers import (
     candidate,
     course_hit,
     default_candidates,
-    program_hit,
+    program_hit
 )
 
 
