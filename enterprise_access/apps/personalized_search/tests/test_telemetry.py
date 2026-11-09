@@ -61,6 +61,24 @@ class TurnEventTests(TestCase):
         self.assertEqual(props['compose_output_tokens'], 50)
         self.assert_flat_and_private(props)
 
+    def test_completed_turn_lists_its_blocks_with_content_digests(self):
+        parts = self.run_with()
+        blocks = [p['data'] for p in parts if p['type'] == 'data-block']
+        props = self.sent[0][2]
+        self.assertEqual(props['shown_block_types'], [b['type'] for b in blocks])
+        self.assertEqual(props['shown_block_digests'], [telemetry.block_digest(b) for b in blocks])
+        self.assertTrue(all(len(d) == 16 for d in props['shown_block_digests']))
+
+    def test_block_digest_ignores_server_card_fields_and_changes_with_content(self):
+        card = {'item_id': 'edX+C1', 'title': 'Course', 'why': 'Fits.'}
+        block = {'v': 1, 'type': 'item_section', 'props': {'dek': 'Start here', 'items': [card]}}
+        same = {'v': 1, 'type': 'item_section',
+                'props': {'dek': 'Start here', 'items': [dict(card, status='new', section='course', position=4)]}}
+        reworded = {'v': 1, 'type': 'item_section', 'props': {'dek': 'Start here', 'items': [dict(card, why='Other.')]}}
+        self.assertEqual(telemetry.block_digest(block), telemetry.block_digest(same))
+        self.assertNotEqual(telemetry.block_digest(block), telemetry.block_digest(reworded))
+        self.assertNotEqual(telemetry.block_digest(block), telemetry.block_digest(dict(block, type='compare')))
+
     def test_text_only_turn_is_completed_as_no_match(self):
         self.run_with(retrieve=lambda *a, **kw: [])
         self.assertEqual(self.sent[0][2]['outcome'], 'no_match')
