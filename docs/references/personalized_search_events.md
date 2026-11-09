@@ -44,10 +44,11 @@ Item events also carry `item_key` and `item_type`. Array properties hold primiti
 | `results.results_rendered` | A live turn's results finish rendering (not on history replay) | join keys only |
 | `results.result_clicked` | A card is opened | `item_key`, `item_type`, `item_section`, `item_position` |
 | `results.item_save_toggled` | Save or unsave | `item_key`, `item_type`, `item_section`, `item_position`, `saved` |
-| `results.item_dismissed` | Not for me, or Undo | `item_key`, `item_type`, `item_section`, `item_position`, `dismissed`, `replaced_by_item_key` |
+| `results.item_dismissed` | Not for me, Undo, or Include again on the Excluded tab (`item_section: excluded_tab`) | `item_key`, `item_type`, `item_section`, `item_position`, `dismissed`, `replaced_by_item_key` |
 | `results.explanation_opened` | Why this?, Why these? or the suggested order's info opens | `scope` (`tile`, `set`, `order`), `item_key` (tile only) |
 | `chat.new_chat_started` | New chat | join keys of the chat being left |
 | `results.saved_tab_opened` | The Saved tab opens | join keys only |
+| `results.excluded_tab_opened` | The Excluded tab opens | join keys only |
 | `history.history_opened` | The History panel opens | join keys only |
 
 `item_section` and `item_position` come from the card as the server sent it, so the portal computes nothing.
