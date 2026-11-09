@@ -2,7 +2,8 @@
 from enterprise_access.apps.personalized_search.core.retrieval import hydrate_card
 
 
-def course_hit(key, *, level='Introductory', weeks=4, pacing='self_paced', exec_ed=False, skills=('Leadership',)):
+def course_hit(key, *, level='Introductory', weeks=4, pacing='self_paced', exec_ed=False, skills=('Leadership',),
+               effort=(2, 4)):
     return {
         'key': key, 'aggregation_key': f'course:{key}', 'content_type': 'course',
         'learning_type': 'Executive Education' if exec_ed else 'Course',
@@ -10,7 +11,8 @@ def course_hit(key, *, level='Introductory', weeks=4, pacing='self_paced', exec_
         'title': f'Course {key}', 'short_description': '<p>Learn <b>things</b></p>', 'level_type': level,
         'partners': [{'name': 'edX', 'logo_image_url': 'https://logo/edx.png'}],
         'card_image_url': None, 'original_image_url': f'https://img/{key}.png', 'skill_names': list(skills),
-        'advertised_course_run': {'weeks_to_complete': weeks, 'pacing_type': pacing},
+        'advertised_course_run': {'weeks_to_complete': weeks, 'pacing_type': pacing, 'min_effort': effort[0],
+                                  'max_effort': effort[1]},
     }
 
 
