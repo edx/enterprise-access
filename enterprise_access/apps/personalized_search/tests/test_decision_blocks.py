@@ -91,3 +91,32 @@ class DecisionBlockTests(TestCase):
         parts = parser.feed('r\n@@BLOCKS@@\n' + line({'block': 'top_pick', 'item_id': 'p-1', 'reason': 'R'}) +
                             line({'block': 'compare', 'options': [option('p-1'), option('p-2')]})) + parser.finish()
         self.assertFalse([p for p in parts if p['type'] == 'data-block'])
+
+
+class CaveatAndInsightTests(TestCase):
+    """A caveat warns once per turn, even with no results; an insight also comes at most once."""
+
+    def parse(self, body, candidates=None):
+        parser = ComposeParser(candidates=default_candidates() if candidates is None else candidates, shown_ids=[],
+                               followup_attribute='level')
+        parts = parser.feed('r\n@@BLOCKS@@\n' + body) + parser.finish()
+        return parser, [p['data'] for p in parts if p['type'] == 'data-block']
+
+    def test_caveat_is_capped_and_comes_once(self):
+        parser, blocks = self.parse(line({'block': 'caveat', 'title': 'T' * 80, 'body': 'B' * 400}) +
+                                    line({'block': 'caveat', 'title': 'Again', 'body': 'Again'}) +
+                                    line({'block': 'caveat', 'title': '', 'body': 'x'}))
+        caveats = [b['props'] for b in blocks if b['type'] == 'caveat']
+        self.assertEqual(caveats, [{'title': 'T' * 60, 'body': 'B' * 300}])
+        self.assertEqual(parser.dropped, ['caveat_extra', 'caveat_invalid'])
+
+    def test_caveat_shows_on_a_text_only_turn(self):
+        caveat = line({'block': 'caveat', 'title': 'No match', 'body': 'Nothing on this.'})
+        _, blocks = self.parse(caveat, candidates=[])
+        self.assertEqual([b['type'] for b in blocks], ['caveat'])
+
+    def test_a_second_insight_is_dropped(self):
+        parser, blocks = self.parse(line({'block': 'insight', 'title': 'A', 'body': 'a'}) +
+                                    line({'block': 'insight', 'title': 'B', 'body': 'b'}))
+        self.assertEqual([b['props']['title'] for b in blocks if b['type'] == 'insight'], ['A'])
+        self.assertIn('insight_extra', parser.dropped)
