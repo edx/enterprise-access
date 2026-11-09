@@ -21,7 +21,14 @@ class ChatSession(TimeStampedModel, SoftDeletableModel):
     """
     One learner's conversation in one enterprise (tech spec "Data Model").
 
-    .. pii: first_prompt and title hold learner-written text; lms_user_id links the row to the learner.
+    A session is soft-deleted by default (``SoftDeletableModel``): ``delete()`` only sets ``is_removed``, so the
+    cascade to ``ChatTurn`` and the ``SET_NULL`` on ``ItemFeedback`` do not run. Any purge must use
+    ``delete(soft=False)`` or ``ChatSession.all_objects``.
+
+    .. pii: first_prompt and title hold learner-written text; lms_user_id links the row to the learner;
+       merged_intent and asked_attributes are derived from what the learner wrote. Retirement is deferred
+       with retention (tech spec, out of scope): this is a stage-only proof of concept, and the feature
+       flags must stay off outside stage until a retirement path (a hard delete by lms_user_id) ships.
     .. pii_types: id, other
     .. pii_retirement: retained
     """
@@ -55,7 +62,9 @@ class ChatTurn(TimeStampedModel):
     """
     One finished turn, with the stream's parts kept for replay (history reopen).
 
-    .. pii: user_message and parts hold learner-written text and the reply.
+    .. pii: user_message, reply_text, intent and parts hold learner-written text, the reply, and data
+       derived from them. Kept for the same reason as ChatSession: retirement is deferred, so the feature
+       flags stay off outside stage until a retirement path ships.
     .. pii_types: other
     .. pii_retirement: retained
     """
@@ -84,7 +93,8 @@ class ItemFeedback(TimeStampedModel):
     """
     A learner's saved or not-interested item, scoped to the learner and the enterprise.
 
-    .. pii: lms_user_id links the row to the learner; card_snapshot is catalog metadata only.
+    .. pii: lms_user_id links the row to the learner; card_snapshot is catalog metadata only. Kept for the
+       same reason as ChatSession: retirement is deferred, so the feature flags stay off outside stage.
     .. pii_types: id
     .. pii_retirement: retained
     """
