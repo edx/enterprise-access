@@ -22,7 +22,7 @@ class IntentParseTests(TestCase):
         self.assertEqual(len(out['intent']['skills']), 8)
         self.assertIsNone(out['intent']['level'])
         self.assertEqual(out['intent']['item_types'], ['course'])
-        self.assertEqual(out['intent']['constraints'], {'max_weeks': 4, 'pacing': None})
+        self.assertEqual(out['intent']['constraints'], {'max_weeks': 4, 'max_hours_per_week': None, 'pacing': None})
 
     @ddt.data(
         ({'on_topic': False, 'redirect_reason': 'unsafe'}, 'unsafe'),
@@ -40,6 +40,24 @@ class IntentParseTests(TestCase):
     def test_invalid(self, text):
         with self.assertRaises(intent.IntentInvalid):
             intent.parse(text)
+
+
+class IntentHoursTests(TestCase):
+    """``max_hours_per_week`` is a whole number of hours or nothing."""
+
+    def test_hours_per_week_is_kept_when_usable(self):
+        def hours(value):
+            raw = {'on_topic': True, 'intent': {'query': 'q', 'constraints': {'max_hours_per_week': value}}}
+            return intent.parse(json.dumps(raw))['intent']['constraints']['max_hours_per_week']
+        self.assertEqual(hours(5), 5)
+        self.assertEqual(hours(4.5), 4)
+        for unusable in (None, 0, -2, True, 'five'):
+            self.assertIsNone(hours(unusable))
+
+    def test_a_refinement_adds_hours_to_the_prior_constraints(self):
+        prior = intent.empty_intent()
+        merged = intent.merge(prior, {'constraints': {'max_hours_per_week': 4}}, 'refine', message='x')
+        self.assertEqual(merged['constraints']['max_hours_per_week'], 4)
 
 
 class IntentMergeTests(TestCase):

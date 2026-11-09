@@ -61,6 +61,13 @@ def item_id_of(hit: dict) -> str | None:
     return hit.get('key')
 
 
+def _hours(value) -> int | None:
+    """A positive whole number of hours, or None (bools, zero, negatives and non-numbers are dropped)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        return None
+    return int(value)
+
+
 def hydrate_card(hit: dict) -> dict:
     """ItemCard minus ``why``/``fit`` (spec "ItemCard" table)."""
     item_type = item_type_of(hit)
@@ -79,7 +86,10 @@ def hydrate_card(hit: dict) -> dict:
         image = hit.get('card_image_url') or hit.get('original_image_url')
         link = {'kind': 'course', 'course_key': item_id, 'course_type': hit.get('course_type')}
         facts = {'level_type': hit.get('level_type'), 'weeks_to_complete': run.get('weeks_to_complete'),
-                 'pacing_type': run.get('pacing_type')}
+                 'pacing_type': run.get('pacing_type'),
+                 # Hours per week, from the advertised run's effort range (optional; older clients ignore it).
+                 'hours_per_week_min': _hours(run.get('min_effort')),
+                 'hours_per_week_max': _hours(run.get('max_effort'))}
     return {
         'item_id': item_id, 'item_type': item_type, 'title': hit.get('title') or '',
         'image_url': image, 'partner_name': partner_name, 'partner_logo_url': partner_logo,
@@ -95,6 +105,7 @@ def compose_view(candidate: dict) -> dict:
         'item_id': card['item_id'], 'item_type': card['item_type'], 'title': card['title'],
         'partner': card['partner_name'], 'level': hit.get('level_type'),
         'pacing': card['facts'].get('pacing_type'), 'weeks': card['facts'].get('weeks_to_complete'),
+        'hours_per_week': [card['facts'].get('hours_per_week_min'), card['facts'].get('hours_per_week_max')],
         'short_description': _strip_html(description)[:300], 'skills': (hit.get('skill_names') or [])[:6],
     }
 
@@ -164,6 +175,9 @@ def prefilter(raw: list[dict], intent: dict) -> list[dict]:
             score += 1
         if constraints.get('pacing') and card['facts'].get('pacing_type') == constraints['pacing']:
             score += 1
+        min_hours = card['facts'].get('hours_per_week_min')
+        if constraints.get('max_hours_per_week') and min_hours and min_hours <= constraints['max_hours_per_week']:
+            score += 1
         if card['item_id'] not in best or score > best[card['item_id']]['score']:
             best[card['item_id']] = dict(cand, score=score)
     counts = {t: 0 for t in constants.ITEM_TYPES}
@@ -188,7 +202,8 @@ def choose_followup_attribute(candidates: list[dict], intent: dict, asked: list[
     """Spec "Follow-up attribute (R-15)": the most even split, ties in level, time, pacing, type order."""
     constraints = intent.get('constraints') or {}
     already = {
-        'level': bool(intent.get('level')), 'time': bool(constraints.get('max_weeks')),
+        'level': bool(intent.get('level')),
+        'time': bool(constraints.get('max_weeks') or constraints.get('max_hours_per_week')),
         'pacing': bool(constraints.get('pacing')),
         'type': len(intent.get('item_types') or constants.ITEM_TYPES) < len(constants.ITEM_TYPES),
     }
