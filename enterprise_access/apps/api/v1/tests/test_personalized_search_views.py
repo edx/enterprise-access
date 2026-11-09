@@ -18,6 +18,7 @@ from test_utils import APITest
 ENTERPRISE = str(uuid.uuid4())
 OTHER_ENTERPRISE = str(uuid.uuid4())
 MODELS = {'gpt-4.1-mini': (0.4, 0.1, 1.6), 'gpt-5.4-mini': (0.75, 0.075, 4.5), 'gpt-4.1': (2.0, 0.5, 8.0)}
+DEV_SCOPE = {'filter': 'enterprise_catalog_query_uuids:"q"', 'label': 'Test catalog'}
 
 
 def parse_sse(response):
@@ -133,6 +134,35 @@ class PersonalizedSearchTurnViewTests(APITest):
         response = self.post()
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json()['code'], 'backend_unsupported')
+
+    @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
+    def test_debug_overrides_ignored_unless_enabled(self):
+        parts = parse_sse(self.post(debug={'compose_model': 'gpt-4.1'}))
+        timing = [p for p in parts if p['type'] == 'data-timing'][0]['data']
+        self.assertEqual(timing['model_compose'], 'gpt-5.4-mini')
+        self.assertNotIn('debug', timing)
+
+    @override_settings(PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED=True,
+                       PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE=DEV_SCOPE, ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH=True)
+    @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
+    def test_debug_overrides_applied_when_enabled(self):
+        parts = parse_sse(self.post(debug={'compose_model': 'gpt-4.1', 'compose_effort': None}))
+        timing = [p for p in parts if p['type'] == 'data-timing'][0]['data']
+        self.assertEqual(timing['model_compose'], 'gpt-4.1')
+        self.assertEqual(timing['debug']['catalog'], 'Test catalog')
+
+    @override_settings(PERSONALIZED_SEARCH_INTENT_MODEL='xpert', PERSONALIZED_SEARCH_COMPOSE_MODEL='xpert',
+                       OPENAI_API_KEY='', XPERT_API_BASE_URL='https://xpert.test', XPERT_API_CLIENT_ID='client-123')
+    @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
+    def test_xpert_turn_needs_no_openai_key(self):
+        parts = parse_sse(self.post())
+        timing = [p for p in parts if p['type'] == 'data-timing'][0]['data']
+        self.assertEqual((timing['backend'], timing['model_compose']), ('xpert', 'xpert'))
+
+    @override_settings(PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED=True)
+    @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
+    def test_debug_override_must_be_allowed(self):
+        self.assertEqual(self.post(debug={'compose_model': 'gpt-9'}).status_code, 400)
 
     @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
     def test_secured_key_failure_is_503(self):

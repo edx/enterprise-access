@@ -10,6 +10,7 @@ from enterprise_access.apps.bffs.api import get_and_cache_secured_algolia_search
 from enterprise_access.apps.personalized_search.adapters.algolia import AlgoliaCatalog, secured_key_from_payload
 from enterprise_access.apps.personalized_search.adapters.django_store import DjangoSessionStore
 from enterprise_access.apps.personalized_search.adapters.openai_backend import OpenAIBackend
+from enterprise_access.apps.personalized_search.adapters.xpert_backend import XpertBackend
 from enterprise_access.apps.personalized_search.core import constants, retrieval
 from enterprise_access.apps.personalized_search.core.errors import ModelConfigurationError
 from enterprise_access.apps.personalized_search.core.model_registry import ModelRegistry
@@ -17,11 +18,19 @@ from enterprise_access.apps.personalized_search.core.orchestrator import ModelCh
 from enterprise_access.apps.personalized_search.core.retrieval import CatalogScope
 
 
+def xpert_backend() -> XpertBackend:
+    """The Xpert platform backend, from ``XPERT_API_*`` (unconfigured, it lists no models)."""
+    return XpertBackend(base_url=getattr(settings, 'XPERT_API_BASE_URL', ''),
+                        client_id=getattr(settings, 'XPERT_API_CLIENT_ID', ''),
+                        request_timeout_s=float(getattr(settings, 'XPERT_REQUEST_TIMEOUT', 45)))
+
+
 def model_registry() -> ModelRegistry:
-    """OpenAI (the ``PERSONALIZED_SEARCH_OPENAI_MODELS`` allowlist)."""
+    """OpenAI (the ``PERSONALIZED_SEARCH_OPENAI_MODELS`` allowlist), then Xpert when configured."""
     return ModelRegistry([
         OpenAIBackend(api_key=getattr(settings, 'OPENAI_API_KEY', '') or '',
                       models=settings.PERSONALIZED_SEARCH_OPENAI_MODELS),
+        xpert_backend(),
     ])
 
 
@@ -56,7 +65,7 @@ def steps(*, registry: ModelRegistry | None = None, catalog=None, store=None, pe
 
 
 def _step_timeout(registry: ModelRegistry, model: str, default_s: float) -> float:
-    """A backend that brings its own request timeout uses it; others use the setting."""
+    """A backend that brings its own request timeout (Xpert) uses it; others use the setting."""
     try:
         own = getattr(registry.backend_for(model), 'request_timeout_s', None)
     except ModelConfigurationError:  # unknown model: the turn refuses it
@@ -77,10 +86,29 @@ def turn_context(*, session: dict, message: str, intent_model: ModelChoice, comp
     )
 
 
+def dev_catalog_scope() -> CatalogScope | None:
+    """
+    Dev only: the plain key plus an explicit catalog filter (``PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE``).
+    The Algolia client still refuses it unless ``ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH`` is on.
+    """
+    dev_scope = getattr(settings, 'PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE', None)
+    if not dev_scope:
+        return None
+    return CatalogScope(filter=dev_scope['filter'], allow_unscoped=True, label=dev_scope.get('label'))
+
+
 def catalog_scope(request, enterprise_customer_uuid: str) -> CatalogScope:
-    """The learner's secured key and the enterprise filter."""
+    """The learner's secured key and enterprise filter, or the dev catalog scope when configured."""
+    dev_scope = dev_catalog_scope()
+    if dev_scope:
+        return dev_scope
     payload = get_and_cache_secured_algolia_search_keys(request, enterprise_customer_uuid)
     return CatalogScope(
         filter=f'enterprise_customer_uuids:"{enterprise_customer_uuid}"',
         secured_key=secured_key_from_payload(payload),
     )
+
+
+def debug_overrides_enabled() -> bool:
+    """Whether per-turn model overrides and the debug read-out are allowed in this environment."""
+    return bool(getattr(settings, 'PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED', False))
