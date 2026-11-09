@@ -132,3 +132,47 @@ class LearnerIdTests(TestCase):
         for lms_user_id in (None, 0):
             with self.assertRaises(PermissionDenied):
                 learner_id(SimpleNamespace(user=SimpleNamespace(lms_user_id=lms_user_id, id=5)))
+
+
+@override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
+class ItemFeedbackAccessTests(APITest):
+    """Feedback is written under the enterprise that was permission-checked, and its snapshot is bounded."""
+
+    def setUp(self):
+        super().setUp()
+        self.set_jwt_cookie([{'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE, 'context': ENTERPRISE}])
+        self.url = reverse('api:v1:personalized-search-item-feedback')
+
+    def body(self, **extra):
+        return {'enterprise_customer_uuid': ENTERPRISE, 'item_id': 'edX+C1', 'item_type': 'course', 'kind': 'saved',
+                **extra}
+
+    def test_a_query_string_enterprise_cannot_stand_in_for_the_body_enterprise(self):
+        response = self.client.post(f'{self.url}?enterprise_customer_uuid={ENTERPRISE}',
+                                    self.body(enterprise_customer_uuid=OTHER_ENTERPRISE), format='json')
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(ItemFeedback.objects.exists())
+
+    def test_snapshot_must_be_an_object_within_the_size_limit_and_keeps_only_card_fields(self):
+        self.assertEqual(self.client.post(self.url, self.body(card_snapshot=['x']), format='json').status_code, 400)
+        big = {'title': 'x' * 9000}
+        self.assertEqual(self.client.post(self.url, self.body(card_snapshot=big), format='json').status_code, 400)
+        ok = self.client.post(self.url, self.body(card_snapshot={'title': 'T', 'secret': 'drop me'}), format='json')
+        self.assertEqual(ok.status_code, 201)
+        self.assertEqual(ok.json()['card_snapshot'], {'title': 'T'})
+
+    def test_a_foreign_session_uuid_is_ignored_not_linked(self):
+        other = ChatSession.objects.create(lms_user_id=self.user.lms_user_id + 1000,
+                                           enterprise_customer_uuid=ENTERPRISE, first_prompt='x')
+        self.assertEqual(self.client.post(self.url, self.body(session_uuid=str(other.uuid)), format='json').status_code,
+                         201)
+        self.assertIsNone(ItemFeedback.objects.get().session)
+
+    def test_saved_and_not_interested_are_separate_rows(self):
+        self.client.post(self.url, self.body(kind='saved'), format='json')
+        self.client.post(self.url, self.body(kind='not_interested'), format='json')
+        self.assertEqual(ItemFeedback.objects.count(), 2)
+
+    @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=False)
+    def test_flag_off_is_404(self):
+        self.assertEqual(self.client.get(f'{self.url}?enterprise_customer_uuid={ENTERPRISE}').status_code, 404)
