@@ -1,7 +1,9 @@
 """Tests for the Personalized Search harness, its scoring and its management commands."""
 import json
+import os
 from io import StringIO
 from tempfile import NamedTemporaryFile
+from unittest import mock
 
 import ddt
 from django.core.cache import cache
@@ -14,6 +16,7 @@ from enterprise_access.apps.personalized_search import harness
 from enterprise_access.apps.personalized_search.adapters.openai_backend import OpenAIBackend
 from enterprise_access.apps.personalized_search.adapters.xpert_backend import XpertBackend
 from enterprise_access.apps.personalized_search.core import harness_scoring
+from enterprise_access.apps.personalized_search.core.errors import ModelError
 from enterprise_access.apps.personalized_search.core.model_registry import ModelRegistry
 from enterprise_access.apps.personalized_search.core.orchestrator import ModelChoice
 from enterprise_access.apps.personalized_search.core.ports import Usage
@@ -124,6 +127,46 @@ class HarnessRunTests(TestCase):
         self.assertTrue(all(c.message and len(c.message) <= 500 for c in personas))
         self.assertTrue(any(c.expected_course_keys for c in personas))
 
+    def test_persona_cases_can_be_limited_to_some_ids(self):
+        everyone = harness.persona_cases(load_personas)
+        wanted = everyone[0].id
+        self.assertEqual([c.id for c in harness.persona_cases(load_personas, [wanted])], [wanted])
+
+    def test_prior_turns_seed_the_session(self):
+        case = harness.Case(id='R9', message='make it shorter', kind='demo', history=('lead a team',))
+        record = next(run(cases=[case], arms=ARMS[:1], scope=None, steps=fake_steps()))
+        self.assertEqual(record['status'], 'done')
+
+    def test_an_error_part_marks_the_turn(self):
+        # pylint: disable-next=protected-access
+        turn = harness._summarize_turn([{'type': 'error', 'errorText': 'model_failed'}])
+        self.assertEqual((turn['status'], turn['error']), ('error', 'model_failed'))
+
+    def test_a_page_without_items_is_not_judged(self):
+        case = harness.Case(id='A1', message='Weather?', kind='demo', expect={'redirect_reason': 'off_topic'})
+        steps = fake_steps(intent_text='{"on_topic": false, "redirect_reason": "off_topic"}')
+        record = next(run(cases=[case], arms=ARMS[:1], scope=None, steps=steps, judge=True))
+        self.assertEqual(record['judge'], {'skipped': 'no items on the page'})
+
+    def test_a_failed_or_unreadable_judge_is_recorded_not_raised(self):
+        def failing(**_):
+            raise ModelError('down')
+
+        def unreadable(**_):
+            return 'no json at all', Usage(model=harness.JUDGE_MODEL, effort='low')
+
+        for judge_call, name in ((failing, 'ModelError'), (unreadable, 'ValueError')):
+            record = next(run(cases=[CASE], arms=ARMS[:1], scope=None, steps=fake_steps(), judge=True,
+                              complete_json=judge_call))
+            self.assertEqual(record['judge'], {'error': name})
+
+    def test_the_budget_can_run_out_before_the_judge(self):
+        messages = []
+        records = list(run(cases=[CASE, CASE], arms=ARMS[:1], scope=None, steps=fake_steps(), judge=True,
+                           max_calls=2, log=messages.append))
+        self.assertEqual(len(records), 1)
+        self.assertTrue(any('before judging' in m for m in messages))
+
 
 class HarnessScoringTests(TestCase):
     """Per-turn scoring and the per-arm summary."""
@@ -136,6 +179,38 @@ class HarnessScoringTests(TestCase):
         debug['merged_intent']['constraints']['max_weeks'] = 4
         self.assertTrue(harness_scoring.score_intent(expect, debug)['pass'])
         self.assertIsNone(harness_scoring.score_intent(None, debug))
+
+    def test_score_intent_redirect_variants(self):
+        def seen(on_topic, redirect):
+            return {'intent_result': {'on_topic': on_topic, 'redirect_reason': redirect}}
+
+        either = {'redirect_reason': 'injection_or_on_topic'}
+        self.assertTrue(harness_scoring.score_intent(either, seen(False, 'injection'))['pass'])
+        self.assertTrue(harness_scoring.score_intent(either, seen(True, None))['pass'])
+        self.assertFalse(harness_scoring.score_intent(either, seen(False, 'off_topic'))['pass'])
+        other = {'redirect_reason': 'injection_or_off_topic'}
+        self.assertTrue(harness_scoring.score_intent(other, seen(False, 'off_topic'))['pass'])
+        self.assertFalse(harness_scoring.score_intent(other, seen(True, None))['pass'])
+
+    def test_score_intent_flags_a_wrong_merge_mode(self):
+        debug = {'intent_result': {'on_topic': True, 'redirect_reason': None, 'merge': 'replace'}}
+        score = harness_scoring.score_intent({'on_topic': True, 'merge': 'refine'}, debug)
+        self.assertEqual(score, {'pass': False, 'why': 'merge=replace'})
+
+    def test_score_intent_checks_each_expected_field(self):
+        debug = {'intent_result': {'on_topic': True, 'redirect_reason': None},
+                 'merged_intent': {'level': 'introductory', 'item_types': ['program', 'course'],
+                                   'skills': ['Team Leadership'], 'roles': ['manager'],
+                                   'constraints': {'max_weeks': 3, 'pacing': 'self_paced'}}}
+        good = {'on_topic': True, 'pacing': 'self_paced', 'level': 'introductory', 'level_in': ['introductory'],
+                'item_types': ['course', 'program'], 'skills_contain': 'leader', 'career': True}
+        self.assertTrue(harness_scoring.score_intent(good, debug)['pass'])
+        bad = {'on_topic': True, 'pacing': 'instructor_led', 'level': 'advanced', 'level_in': ['advanced'],
+               'item_types': ['course'], 'skills_contain': 'python', 'career': True}
+        debug['merged_intent']['roles'] = []
+        why = harness_scoring.score_intent(bad, debug)['why']
+        for name in ('pacing', 'level', 'item_types', 'skills', 'career'):
+            self.assertIn(name, why)
 
     def test_recall(self):
         self.assertEqual(harness_scoring.recall(['a', 'b'], ['b', 'c']), 0.5)
@@ -179,6 +254,48 @@ class HarnessCommandTests(TestCase):
         with self.assertRaises(CommandError):
             call_command('run_personalized_search_harness', '--case-id', 'O1', '--max-calls', '2',
                          stdout=StringIO())
+
+    def test_an_unknown_arm_model_is_a_command_error(self):
+        with self.assertRaises(CommandError):
+            call_command('run_personalized_search_harness', '--arm', 'x=gpt-9,gpt-4.1-mini', '--max-calls', '2',
+                         stdout=StringIO())
+
+    def test_no_matching_cases_is_a_command_error(self):
+        with self.assertRaises(CommandError):
+            call_command('run_personalized_search_harness', '--case-id', 'nope', '--max-calls', '2',
+                         stdout=StringIO())
+
+    @override_settings(OPENAI_API_KEY='k', PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE={'filter': 'f', 'label': 'l'})
+    def test_a_run_writes_one_row_per_turn_to_the_output_file(self):
+        with NamedTemporaryFile(suffix='.jsonl', delete=False) as handle:
+            path = handle.name
+        self.addCleanup(os.remove, path)
+        err = StringIO()
+        with mock.patch('enterprise_access.apps.personalized_search.wiring.steps', return_value=fake_steps()):
+            call_command('run_personalized_search_harness', '--case-id', 'O1', '--arm',
+                         'a=gpt-4.1-mini,gpt-5.4-mini@low', '--max-calls', '10', '--output', path,
+                         stdout=StringIO(), stderr=err)
+        with open(path, encoding='utf-8') as written:
+            rows = [json.loads(line) for line in written]
+        self.assertEqual([r['case_id'] for r in rows], ['O1'])
+        self.assertIn('Wrote 1 turns.', err.getvalue())
+
+    @override_settings(OPENAI_API_KEY='k', PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE={'filter': 'f', 'label': 'l'})
+    def test_a_run_without_an_output_file_prints_the_rows(self):
+        out = StringIO()
+        with mock.patch('enterprise_access.apps.personalized_search.wiring.steps', return_value=fake_steps()):
+            call_command('run_personalized_search_harness', '--case-id', 'O1', '--arm',
+                         'a=gpt-4.1-mini,gpt-5.4-mini@low', '--max-calls', '10', stdout=out, stderr=StringIO())
+        self.assertIn('"case_id": "O1"', out.getvalue())
+
+    def test_report_needs_a_readable_file_with_records(self):
+        with self.assertRaises(CommandError):
+            call_command('report_personalized_search_harness', '/nonexistent/harness.jsonl', stdout=StringIO())
+        with NamedTemporaryFile('w', suffix='.jsonl', delete=False) as handle:
+            handle.write('\n')
+        self.addCleanup(os.remove, handle.name)
+        with self.assertRaises(CommandError):
+            call_command('report_personalized_search_harness', handle.name, stdout=StringIO())
 
     def test_report(self):
         row = {'arm': 'a', 'case_id': 'O1', 'models': ['m1', 'm2'], 'status': 'done', 'redirected': False,
