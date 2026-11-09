@@ -40,7 +40,7 @@ Item events also carry `item_key` and `item_type`. Array properties hold primiti
 | Event | Fires when | Properties |
 | --- | --- | --- |
 | `tab.tab_viewed` | The tab loads | `entry_point` (`nav_tab`, `deep_link`, `pathways_redirect`, `skills_quiz_redirect`) |
-| `chat.prompt_submitted` | A message is sent | `prompt_source` (`typed`, `starter_chip`, `followup_chip`), `chip_label` (fixed chip copy only) |
+| `chat.prompt_submitted` | A message is sent | `prompt_source` (`typed`, `starter_chip`, `followup_chip`, `suggested_chip`, `more_like_this`), `chip_label` (fixed chip copy only; never an AI-suggested chip's text) |
 | `results.results_rendered` | A live turn's results finish rendering (not on history replay) | join keys only |
 | `results.result_clicked` | A card is opened | `item_key`, `item_type`, `item_section`, `item_position` |
 | `results.item_save_toggled` | Save or unsave | `item_key`, `item_type`, `item_section`, `item_position`, `saved` |
