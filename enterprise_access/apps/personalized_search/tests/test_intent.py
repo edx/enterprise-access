@@ -4,7 +4,7 @@ import json
 import ddt
 from django.test import TestCase
 
-from enterprise_access.apps.personalized_search.core import intent
+from enterprise_access.apps.personalized_search.core import constants, intent
 
 
 @ddt.ddt
@@ -68,6 +68,24 @@ class IntentMergeTests(TestCase):
     def test_query_falls_back_to_message(self):
         merged = intent.merge(None, {}, 'replace', message='learn ' * 20)
         self.assertEqual(len(merged['query'].split()), 12)
+
+
+class IntentEdgeCaseTests(TestCase):
+    """Fields of the wrong type are dropped rather than trusted."""
+
+    def test_a_skills_field_that_is_not_a_list_becomes_empty(self):
+        out = intent.parse(json.dumps({'on_topic': True, 'intent': {'query': 'q', 'skills': 'python', 'roles': 7}}))
+        self.assertEqual((out['intent']['skills'], out['intent']['roles']), ([], []))
+
+    def test_non_text_model_output_is_invalid(self):
+        for text in (None, 42, {'on_topic': True}):
+            with self.assertRaises(intent.IntentInvalid):
+                intent.parse(text)
+
+    def test_a_refinement_of_an_intent_with_no_item_types_allows_every_type(self):
+        prior = {**intent.empty_intent(), 'query': 'q', 'item_types': []}
+        merged = intent.merge(prior, {}, 'refine', message='x')
+        self.assertEqual(merged['item_types'], list(constants.ITEM_TYPES))
 
 
 @ddt.ddt
