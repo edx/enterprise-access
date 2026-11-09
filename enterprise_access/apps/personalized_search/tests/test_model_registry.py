@@ -53,3 +53,16 @@ class ModelRegistryTests(TestCase):
             next(gen)
         with self.assertRaises(ModelConfigurationError):
             self.registry.complete_json(model='m9')
+
+    def test_register_appends_a_backend_and_returns_the_registry(self):
+        registry = ModelRegistry()
+        self.assertIs(registry.register(FakeBackend('openai', ['m1'])), registry)
+        self.assertEqual(registry.available_models(), ['m1'])
+
+    def test_is_configured_is_false_for_an_unlisted_model(self):
+        self.assertFalse(self.registry.is_configured('m9'))
+
+    def test_effort_is_resolved_by_the_serving_backend(self):
+        self.assertEqual(self.registry.resolve_effort('m3', 'low'), 'low')
+        with self.assertRaises(ModelConfigurationError):
+            self.registry.resolve_effort('m9', 'low')
