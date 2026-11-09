@@ -871,7 +871,6 @@ Closed by the Eng Lead from the review queue; each follows existing repository c
 | Xpert backend (optional adapter) | Off unless `XPERT_API_BASE_URL` and `XPERT_API_CLIENT_ID` are set. Do not set them where the Personalized Search flags are on until retention of conversation content by that service is confirmed (OQ-5). The default backend is OpenAI. |
 | OpenAI backend | Sending learner text to OpenAI needs security, privacy and vendor approval before the flags are enabled outside stage. This gates enablement, not merging, because both flags default to off. |
 | PII retirement | The three tables keep learner-written text and use `pii_retirement: retained` with the reason stated in each model. Retirement is deferred with retention. Do not enable either flag outside stage until a retirement path (a hard delete by `lms_user_id`) ships. A session soft-deletes by default, so any purge must use `delete(soft=False)`. |
-| Wildcard roles | The JWT branch of the permission follows the repository-wide `*` context semantics. The database branch requires the exact enterprise. |
 | Flag overrides and schema versions | WaffleFlag override safety (keep `WAFFLE_OVERRIDE` off, never use the flag's Testing mode) is part of the runbook. Schemas are `v1`; a breaking change bumps the version. |
 
 ## Changelog
@@ -884,4 +883,4 @@ The full changelog is maintained with the team. Highlights:
 | 2026-10-29 | KD-2 amended: OpenAI is the live backend; Xpert stream framing confirmed (spike 2); OpenAI model benchmark |
 | 2026-11-03 | OQ-2 devstack half confirmed (spike 3); OQ-8 decided (best-fit OpenAI defaults); OQ-9 opened (fallback section) |
 | 2026-11-04 | KD-8 amended (two dedicated flags); KD-10 added (portability: ports and adapters, JSON Schemas); timeouts restored as settings; stream header sent; C4 L3 diagrams; OQ-10 opened, OQ-11 closed |
-| 2026-11-09 | Review decisions recorded (timeouts, prompts, optional Xpert adapter, PII retirement, wildcard roles) |
+| 2026-11-09 | Review decisions recorded (timeouts, prompts, optional Xpert adapter, PII retirement) |
