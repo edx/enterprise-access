@@ -9,7 +9,7 @@ The learner portal's Personalized Search tab is a chat that recommends learning 
 | `POST turns/` | Streams one turn as AI SDK UI Message Stream v1 over SSE, with the header `x-vercel-ai-ui-message-stream: v1`. `?mode=buffered` returns the parts as JSON instead. |
 | `GET sessions/`, `GET sessions/<uuid>/` | The learner's past searches, and one search's stored parts for replay. |
 | `GET/POST/DELETE item-feedback/` | Saved and not-interested items. Not-interested items are excluded from later turns. |
-| `POST turns/<session>/<sequence>/feedback/` | Thumbs up or down on one reply (planned, KD-11). |
+| `POST sessions/<uuid>/turns/<sequence>/feedback/` | Thumbs up (1), down (-1) or cleared (null) on one of the learner's replies. |
 | `GET debug/` | The `?debug=true` model menu. 404 unless `PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED`, which is dev only. |
 
 Every endpoint requires the enterprise-scoped learner permission (`personalized_search.has_learner_access`) and returns 404 while the `enterprise_access.personalized_search_enabled` WaffleFlag is off for the user. The portal shows the tab from a separate LMS flag, `enterprise.personalized_search_enabled`. Enable this app's flag first, for the same users, so a visible tab never gets a 404.

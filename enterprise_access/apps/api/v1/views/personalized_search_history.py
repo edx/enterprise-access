@@ -5,6 +5,8 @@ Personalized Search history and item feedback (tech spec "API Contracts"; chunks
   at least one turn, newest first, 20 per page.
 - ``GET sessions/{uuid}/?enterprise_customer_uuid=``: one session with its turns' stored parts, for replay.
   ``upstream_conversation_id`` is never returned. Another learner's or enterprise's session is 404.
+- ``POST sessions/{uuid}/turns/{sequence}/feedback/`` with ``{enterprise_customer_uuid, rating}``: thumbs up
+  (1), down (-1) or cleared (null) on one of the learner's replies. Another learner's turn is 404.
 - ``GET item-feedback/?enterprise_customer_uuid=&kind=saved``, ``POST item-feedback/`` (idempotent:
   201, then 200 for the same item and kind) and ``DELETE item-feedback/?enterprise_customer_uuid=&item_id=&kind=``.
 
@@ -177,3 +179,26 @@ class PersonalizedSearchItemFeedbackView(_LearnerView):
             item_id=query['item_id'], kind=query['kind'],
         )
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class TurnRatingSerializer(EnterpriseQuerySerializer):  # pylint: disable=abstract-method
+    """POST body for a reply's thumbs."""
+
+    rating = serializers.ChoiceField(choices=[1, -1], allow_null=True)
+
+
+class PersonalizedSearchTurnFeedbackView(_LearnerView):
+    """``POST sessions/{uuid}/turns/{sequence}/feedback/``: thumbs on one of the learner's replies."""
+
+    @permission_required(PERSONALIZED_SEARCH_LEARNER_PERMISSION, fn=body_enterprise_uuid)
+    def post(self, request, session_uuid, sequence):
+        """Set (1 or -1) or clear (null) the rating; 404 for a turn that isn't the learner's."""
+        body = _validated(TurnRatingSerializer, request.data)
+        try:
+            row = DjangoHistoryStore().rate_turn(
+                session_uuid=session_uuid, sequence=sequence, lms_user_id=learner_id(request),
+                enterprise_customer_uuid=body['enterprise_customer_uuid'], rating=body['rating'],
+            )
+        except SessionNotFound as exc:
+            raise NotFound() from exc
+        return Response(row)
