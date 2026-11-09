@@ -1,4 +1,5 @@
 """Tests for the core's contract modules: ports, errors and constants."""
+# pylint: disable=unused-argument,missing-class-docstring,missing-function-docstring
 from unittest import TestCase
 
 from enterprise_access.apps.personalized_search.core import constants
