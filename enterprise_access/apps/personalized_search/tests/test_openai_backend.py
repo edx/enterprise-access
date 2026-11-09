@@ -52,6 +52,19 @@ class RequestParamsTests(TestCase):
         with self.assertRaises(ModelConfigurationError):
             registry.check_model('gpt-9')
 
+    def test_prices_and_effort_resolution_delegate_to_the_model_table(self):
+        backend = OpenAIBackend(api_key='k', models=MODELS)
+        self.assertEqual(backend.prices('gpt-4.1-mini'), MODELS['gpt-4.1-mini'])
+        self.assertIsNone(backend.prices('gpt-9'))
+        self.assertIsNone(backend.resolve_effort('gpt-4.1-mini', 'low'))
+        self.assertEqual(backend.resolve_effort('gpt-5.4-mini', 'low'), 'low')
+
+    def test_default_client_is_built_with_the_key_and_no_retries(self):
+        with mock.patch('openai.OpenAI') as client_class:
+            client = OpenAIBackend(api_key='k', models=MODELS)._client(2.5)  # pylint: disable=protected-access
+        client_class.assert_called_once_with(api_key='k', timeout=2.5, max_retries=0)
+        self.assertIs(client, client_class.return_value)
+
     def test_missing_key(self):
         registry = ModelRegistry([OpenAIBackend(api_key='', models=MODELS)])
         self.assertFalse(registry.is_configured('gpt-4.1-mini'))
