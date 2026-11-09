@@ -129,6 +129,13 @@ def build_sub_requests(intent: dict, scope: CatalogScope, excluded_ids: list[str
                              'filters': f'{course_filter} AND ({skills_clause})', 'hitsPerPage': 30})
         requests.append({'tier': 1, 'query': broad_query, 'filters': course_filter, 'hitsPerPage': 30,
                          'removeWordsIfNoResults': 'allOptional'})
+        for item_type in sorted(types & {'course', 'executive_education'}):
+            # Count only (no hits) for "See all (n)": one per type, in the same round trip.
+            exec_clause = f'learning_type:{_quote(EXEC_ED)}'
+            type_filter = exec_clause if item_type == 'executive_education' else f'NOT {exec_clause}'
+            base = f'content_type:course AND language:"English" AND ({scope.filter}) AND {type_filter}'
+            requests.append({'tier': 0, 'count_for': item_type, 'query': broad_query, 'filters': base,
+                             'hitsPerPage': 0, 'removeWordsIfNoResults': 'allOptional'})
     if 'program' in types:
         program_filter = f'content_type:program AND ({scope.filter})'
         program_filter += ''.join(f' AND NOT aggregation_key:{_quote("program:" + i)}' for i in excluded_ids)
@@ -137,26 +144,41 @@ def build_sub_requests(intent: dict, scope: CatalogScope, excluded_ids: list[str
                              'filters': f'{program_filter} AND ({skills_clause})', 'hitsPerPage': 15})
         requests.append({'tier': 1, 'query': broad_query, 'filters': program_filter, 'hitsPerPage': 15,
                          'removeWordsIfNoResults': 'allOptional'})
+        requests.append({'tier': 0, 'count_for': 'program', 'query': broad_query,
+                         'filters': f'content_type:program AND ({scope.filter})', 'hitsPerPage': 0,
+                         'removeWordsIfNoResults': 'allOptional'})
     return requests
+
+
+class SearchResults(list):
+    """Candidates, plus the catalog's total matches per item type (for "See all (n)")."""
+
+    def __init__(self, candidates=(), totals: dict | None = None):
+        super().__init__(candidates)
+        self.totals = totals or {}
 
 
 def search(intent: dict, scope: CatalogScope, excluded_ids: list[str], *, catalog: CatalogSearch,
            timeout_s: float = 2.0) -> list[dict]:
     """Run the sub-requests in one catalog round trip; return candidates ``{hit, card, tier, rank}``."""
     requests = build_sub_requests(intent, scope, excluded_ids)
-    queries = [{k: v for k, v in req.items() if k != 'tier'} for req in requests]
+    queries = [{k: v for k, v in req.items() if k not in ('tier', 'count_for')} for req in requests]
     for query in queries:
         query.update(distinct=True, attributesToRetrieve=constants.ATTRIBUTES_TO_RETRIEVE)
     try:
         results = catalog.search(queries, scope=scope, timeout_s=timeout_s)
     except Exception as exc:  # noqa: BLE001  # AlgoliaSearchError / configuration errors
         raise RetrievalFailed(f'Catalog search failed ({type(exc).__name__}).') from exc
-    out = []
+    out, totals = [], {}
     for req, result in zip(requests, results):
+        if req.get('count_for'):
+            if isinstance(result.get('nbHits'), int):
+                totals[req['count_for']] = result['nbHits']
+            continue
         for rank, hit in enumerate(result.get('hits') or []):
             if isinstance(hit, dict) and item_id_of(hit):
                 out.append({'hit': hit, 'card': hydrate_card(hit), 'tier': req['tier'], 'rank': rank})
-    return out
+    return SearchResults(out, totals)
 
 
 def prefilter(raw: list[dict], intent: dict) -> list[dict]:

@@ -239,6 +239,7 @@ def _turn_parts(ctx: TurnContext, steps: Steps, record: dict) -> Iterator[dict]:
         raw = steps.retrieve(merged, ctx.scope, _excluded_ids(session),
                              timeout_s=min(constants.RETRIEVAL_TIMEOUT_S, remaining()))
         candidates = prefilter(raw, merged)
+        totals = getattr(raw, 'totals', {})
     except RetrievalFailed:
         yield {'type': 'error', 'errorText': 'retrieval_failed'}
         return
@@ -250,7 +251,7 @@ def _turn_parts(ctx: TurnContext, steps: Steps, record: dict) -> Iterator[dict]:
     # Step 4: compose
     yield {'type': 'data-status', 'data': {'step': 'writing'}, 'transient': True}
     parser = ComposeParser(candidates=candidates, shown_ids=_excluded_ids(session), followup_attribute=attribute,
-                           profile=profile_props(merged))
+                           profile=profile_props(merged), totals=totals)
     record['item_ids'] = parser.emitted_ids  # the parser's own list, so an aborted turn logs what it showed
     usages['compose'] = Usage(model=ctx.compose_model.model, effort=ctx.compose_model.effort)
     stream = steps.compose(

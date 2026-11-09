@@ -120,3 +120,34 @@ class CaveatAndInsightTests(TestCase):
                                     line({'block': 'insight', 'title': 'B', 'body': 'b'}))
         self.assertEqual([b['props']['title'] for b in blocks if b['type'] == 'insight'], ['A'])
         self.assertIn('insight_extra', parser.dropped)
+
+
+class SectionExtrasTests(TestCase):
+    """Sections carry the catalog total for their type and up to two reserve cards."""
+
+    def parse(self, body, totals=None, shown=()):
+        parser = ComposeParser(candidates=default_candidates(), shown_ids=list(shown), followup_attribute='level',
+                               totals=totals)
+        parts = parser.feed('r\n@@BLOCKS@@\n' + body) + parser.finish()
+        return [p['data']['props'] for p in parts if p['type'] == 'data-block' and p['data']['type'] == 'item_section']
+
+    def section(self, item_type, ids):
+        return line({'block': 'item_section', 'item_type': item_type, 'dek': 'd',
+                     'items': [{'item_id': i, 'why': 'w', 'fit': []} for i in ids]})
+
+    def test_total_and_reserve(self):
+        props = self.parse(self.section('course', ['edX+C1']), totals={'course': 37}, shown=['edX+C2'])[0]
+        self.assertEqual(props['total'], 37)
+        self.assertEqual([c['item_id'] for c in props['reserve']], ['edX+C3', 'edX+C4'])
+        self.assertTrue(all(c['why'] is None and c['fit'] == [] for c in props['reserve']))
+
+    def test_no_total_or_reserve_when_unknown_or_empty(self):
+        props = self.parse(self.section('program', ['p-1', 'p-2']))[0]
+        self.assertNotIn('total', props)
+        self.assertNotIn('reserve', props)
+
+    def test_the_fallback_section_gets_them_too(self):
+        props = self.parse('', totals={'course': 9})[0]
+        self.assertTrue(props['fallback'])
+        self.assertEqual(props['total'], 9)
+        self.assertEqual([c['item_id'] for c in props['reserve']], ['edX+C4'])
