@@ -63,6 +63,8 @@ urlpatterns = [
          name='personalized-search-sessions'),
     path('personalized-search/sessions/<uuid:session_uuid>/', views.PersonalizedSearchSessionDetailView.as_view(),
          name='personalized-search-session'),
+    path('personalized-search/item-feedback/', views.PersonalizedSearchItemFeedbackView.as_view(),
+         name='personalized-search-item-feedback'),
     path(
         'subsidy-access-policies/<uuid>/group-members',
         views.SubsidyAccessPolicyGroupViewset.as_view({'get': 'get_group_member_data_with_aggregates'}),
