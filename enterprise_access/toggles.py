@@ -35,7 +35,9 @@ def enable_multi_license_entitlements_bff():
 #     A WaffleFlag, so it rolls out per user, group or percentage. The learner portal shows the
 #     tab from the LMS flag enterprise.personalized_search_enabled; enable this one first, for the
 #     same users, so a visible tab never meets a 404.
-# .. toggle_warning: Unlike the pathway switches, this is a flag so it can roll out per user. It is
+# .. toggle_warning: Do not enable this outside stage until learner-data retirement ships: the chat tables
+#     keep learner-written text and the PII retirement path is deferred (see apps/personalized_search/models.py).
+#     Unlike the pathway switches, this is a flag so it can roll out per user. It is
 #     safe from URL overrides only while WAFFLE_OVERRIDE is off (the django-waffle default; asserted
 #     in tests) and the flag's own "Testing" mode is never turned on in Django admin.
 # .. toggle_use_cases: open_edx
