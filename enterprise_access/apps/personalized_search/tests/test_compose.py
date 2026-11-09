@@ -1,10 +1,11 @@
 """Tests for the compose prompt input and the streaming line parser (KD-5 validation)."""
 import json
 import re
+from unittest import mock
 
 from django.test import TestCase
 
-from enterprise_access.apps.personalized_search.core import compose
+from enterprise_access.apps.personalized_search.core import compose, constants
 from enterprise_access.apps.personalized_search.tests.helpers import default_candidates
 
 
@@ -162,7 +163,8 @@ class ComposeParserTests(TestCase):
     def test_per_turn_item_cap_across_sections(self):
         text = ('r\n@@BLOCKS@@\n' + line(section('course', ['edX+C1', 'edX+C2', 'edX+C3'])) +
                 line(section('executive_education', ['Yale+E1', 'Yale+E2'])) + line(section('program', ['p-1'])))
-        parser, parts = self.parse(text)
+        with mock.patch.object(constants, 'MAX_ITEMS_PER_TURN', 5):
+            parser, parts = self.parse(text)
         sections = self.blocks(parts, 'item_section')
         self.assertEqual([len(s['props']['items']) for s in sections], [3, 2])
         self.assertEqual(len(parser.emitted_ids), 5)
