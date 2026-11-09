@@ -13,13 +13,14 @@ DEFAULT_COMPOSE_READ_TIMEOUT_S = 5
 SESSION_LOCK_S = 20
 SESSION_TTL_S = 24 * 60 * 60
 INTENT_MAX_TOKENS = 400
-COMPOSE_MAX_TOKENS = 1200
+COMPOSE_MAX_TOKENS = 1800  # room for the top pick and the comparison (KD-11)
 
 # Prefilter caps (spec "Retrieval": top 20 with type caps).
 CANDIDATE_CAPS = {'course': 10, 'executive_education': 5, 'program': 5}
 MAX_CANDIDATES = 20
 MAX_ITEMS_PER_SECTION = 3
-MAX_ITEMS_PER_TURN = 5
+MAX_ITEMS_PER_TURN = 12  # top pick + up to 3 compared + sections (KD-11)
+MAX_COMPARE_OPTIONS = 3
 
 PAGE_HEADER_LABEL = 'Your results'
 SECTION_LABELS = {'course': 'Courses', 'executive_education': 'Executive education', 'program': 'Programs'}
@@ -47,6 +48,7 @@ CAPS = {
     'title': 80, 'dek': 400, 'section_dek': 200, 'why': 400, 'fit_tag': 24, 'fit_count': 3,
     'question': 200, 'suggestion': 48, 'session_title': 60,
     'insight_title': 60, 'insight_body': 600, 'plan_note': 80,
+    'reason': 160, 'check': 40, 'check_count': 3, 'best_for': 60,
 }
 
 ATTRIBUTES_TO_RETRIEVE = [
