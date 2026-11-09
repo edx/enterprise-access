@@ -5,7 +5,7 @@ from edx_toggles.toggles.testutils import override_waffle_flag
 from rest_framework.reverse import reverse
 
 from enterprise_access.apps.core.constants import SYSTEM_ENTERPRISE_LEARNER_ROLE
-from enterprise_access.apps.personalized_search.models import ChatSession, ChatTurn
+from enterprise_access.apps.personalized_search.models import ChatSession, ChatTurn, ItemFeedback
 from enterprise_access.toggles import PERSONALIZED_SEARCH_ENABLED
 from test_utils import APITest
 
@@ -79,3 +79,39 @@ class SessionEndpointsTests(APITest):
         response = self.client.get(reverse('api:v1:personalized-search-sessions'),
                                    {'enterprise_customer_uuid': ENTERPRISE})
         self.assertEqual(response.status_code, 404)
+
+
+@override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
+class ItemFeedbackEndpointTests(APITest):
+    """GET/POST/DELETE item-feedback/"""
+
+    def setUp(self):
+        super().setUp()
+        self.set_jwt_cookie([{'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE, 'context': ENTERPRISE}])
+        self.url = reverse('api:v1:personalized-search-item-feedback')
+        self.body = {'enterprise_customer_uuid': ENTERPRISE, 'item_id': 'edX+C1', 'item_type': 'course',
+                     'kind': 'saved', 'card_snapshot': {'title': 'Course C1'}}
+
+    def test_post_is_idempotent_then_listed(self):
+        self.assertEqual(self.client.post(self.url, self.body, format='json').status_code, 201)
+        self.assertEqual(self.client.post(self.url, self.body, format='json').status_code, 200)
+        self.assertEqual(ItemFeedback.objects.count(), 1)
+        results = self.client.get(self.url, {'enterprise_customer_uuid': ENTERPRISE, 'kind': 'saved'}).json()['results']
+        self.assertEqual([(r['item_id'], r['card_snapshot']['title']) for r in results], [('edX+C1', 'Course C1')])
+
+    def test_delete_undoes(self):
+        self.client.post(self.url, self.body, format='json')
+        response = self.client.delete(f'{self.url}?enterprise_customer_uuid={ENTERPRISE}&item_id=edX%2BC1&kind=saved')
+        self.assertEqual(response.status_code, 204)
+        self.assertFalse(ItemFeedback.objects.exists())
+
+    def test_rows_are_scoped_to_the_learner(self):
+        ItemFeedback.objects.create(lms_user_id=999, enterprise_customer_uuid=ENTERPRISE, item_id='x',
+                                    item_type='course', kind='saved')
+        results = self.client.get(self.url, {'enterprise_customer_uuid': ENTERPRISE}).json()['results']
+        self.assertEqual(results, [])
+
+    def test_validation_and_other_enterprise(self):
+        self.assertEqual(self.client.post(self.url, dict(self.body, kind='love'), format='json').status_code, 400)
+        response = self.client.post(self.url, dict(self.body, enterprise_customer_uuid=OTHER_ENTERPRISE), format='json')
+        self.assertEqual(response.status_code, 403)
