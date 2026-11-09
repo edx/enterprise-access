@@ -13,7 +13,7 @@ writes go through the history and feedback stores (``personalized_search.adapter
 from edx_rbac.decorators import permission_required
 from edx_rest_framework_extensions.auth.jwt.authentication import JwtAuthentication
 from rest_framework import permissions, serializers
-from rest_framework.exceptions import NotFound
+from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -30,8 +30,14 @@ def enterprise_uuid_for_request(request, *args, **kwargs):
 
 
 def learner_id(request) -> int:
-    """The requesting learner's LMS user id (the key every session and feedback row is scoped by)."""
-    return getattr(request.user, 'lms_user_id', None) or request.user.id
+    """
+    The requesting learner's LMS user id (the key every session and feedback row is scoped by).
+    No LMS id means no access: the Django pk is a different id space and must never stand in for it.
+    """
+    lms_user_id = getattr(request.user, 'lms_user_id', None)
+    if not lms_user_id:
+        raise PermissionDenied()
+    return lms_user_id
 
 
 class _LearnerView(APIView):

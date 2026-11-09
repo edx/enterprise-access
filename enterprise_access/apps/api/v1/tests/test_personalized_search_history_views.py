@@ -1,9 +1,13 @@
 """Tests for the Personalized Search sessions and item-feedback endpoints (chunks 28, 30)."""
 import uuid
+from types import SimpleNamespace
 
+from django.test import TestCase
 from edx_toggles.toggles.testutils import override_waffle_flag
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.reverse import reverse
 
+from enterprise_access.apps.api.v1.views.personalized_search_history import learner_id
 from enterprise_access.apps.core.constants import SYSTEM_ENTERPRISE_LEARNER_ROLE
 from enterprise_access.apps.personalized_search.models import ChatSession, ChatTurn
 from enterprise_access.toggles import PERSONALIZED_SEARCH_ENABLED
@@ -79,3 +83,16 @@ class SessionEndpointsTests(APITest):
         response = self.client.get(reverse('api:v1:personalized-search-sessions'),
                                    {'enterprise_customer_uuid': ENTERPRISE})
         self.assertEqual(response.status_code, 404)
+
+
+class LearnerIdTests(TestCase):
+    """The owner id is the LMS user id; a request without one is refused rather than falling back to the pk."""
+
+    def test_lms_user_id_is_used(self):
+        request = SimpleNamespace(user=SimpleNamespace(lms_user_id=77, id=5))
+        self.assertEqual(learner_id(request), 77)
+
+    def test_no_lms_user_id_is_refused(self):
+        for lms_user_id in (None, 0):
+            with self.assertRaises(PermissionDenied):
+                learner_id(SimpleNamespace(user=SimpleNamespace(lms_user_id=lms_user_id, id=5)))
