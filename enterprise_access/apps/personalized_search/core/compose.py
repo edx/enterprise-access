@@ -86,7 +86,7 @@ class ComposeParser:
     """
 
     def __init__(self, *, candidates: list[dict], shown_ids: list[str], followup_attribute: str,
-                 id_prefix: str = 'blk', profile: dict | None = None):
+                 id_prefix: str = 'blk', profile: dict | None = None, totals: dict | None = None):
         self.cards = {c['card']['item_id']: c['card'] for c in candidates}
         self.candidates = candidates
         self.shown = set(shown_ids)
@@ -109,6 +109,7 @@ class ComposeParser:
         self.used_fallback = False
         self.profile = profile          # the profile block's props, emitted once before the other blocks
         self.profile_emitted = False
+        self.totals = totals or {}     # catalog matches per item type, for "See all (n)"
         self.top_pick_id: str | None = None
         self.compare_emitted = False
         self.caveat_emitted = False
@@ -294,10 +295,22 @@ class ComposeParser:
         self.section_types.add(item_type)
         self.emitted_ids += [i['item_id'] for i in items]
         self.first_section_emitted = True
-        return [self._block('item_section', {
+        return [self._block('item_section', self._section_extras(item_type, {
             'item_type': item_type, 'label': section_label(item_type, len(items)),
             'dek': _text(obj.get('dek'), constants.CAPS['section_dek']), 'fallback': False, 'items': items,
-        })]
+        }))]
+
+    def _section_extras(self, item_type: str, props: dict) -> dict:
+        """Optional ``total`` (catalog matches) and ``reserve`` (next-best cards to fill a dismissed one)."""
+        if isinstance(self.totals.get(item_type), int):
+            props['total'] = self.totals[item_type]
+        taken = set(self.emitted_ids) | self.shown
+        reserve = [dict(c['card'], why=None, fit=[]) for c in self.candidates
+                   if c['card']['item_type'] == item_type and c['card']['item_id'] not in taken]
+        reserve = reserve[:constants.RESERVE_PER_SECTION]
+        if reserve:
+            props['reserve'] = reserve
+        return props
 
     def _followups(self, question: str, suggestions) -> dict:
         """The data-followups part, topping suggestions up to 3 from the attribute's default chips."""
@@ -375,7 +388,7 @@ class ComposeParser:
         self.emitted_ids += [i['item_id'] for i in items]
         self.first_section_emitted = True
         self.used_fallback = True
-        return [self._block('item_section', {
+        return [self._block('item_section', self._section_extras(item_type, {
             'item_type': item_type, 'label': section_label(item_type, len(items)), 'dek': '',
             'fallback': True, 'items': items,
-        })]
+        }))]
