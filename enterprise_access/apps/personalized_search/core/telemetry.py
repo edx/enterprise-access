@@ -56,6 +56,12 @@ def _completed(ctx, record: dict) -> dict:
         usage = (record.get('usages') or {}).get(step)
         for name, attr in _USAGE_FIELDS:
             props[f'{step}_{name}'] = getattr(usage, attr, None) if usage else None
+        # The response cache (KD-13): whether the call was replayed, and the original call's tokens.
+        extra = usage.extra if usage else {}
+        props[f'{step}_cache_hit'] = extra.get('cache') == 'hit'
+        saved = extra.get('saved') or {}
+        for name, attr in _USAGE_FIELDS:
+            props[f'{step}_cache_saved_{name}'] = saved.get(attr) if saved else None
     return props
 
 
