@@ -24,6 +24,7 @@ def join_keys(ctx, record: dict) -> dict:
 
 
 def _completed(ctx, record: dict) -> dict:
+    """The ``turn.completed`` facts: intent, where each shown card sat, models, raw tokens and timings."""
     merged = record.get('merged_intent') or {}
     constraints = merged.get('constraints') or {}
     placements = record.get('placements') or []

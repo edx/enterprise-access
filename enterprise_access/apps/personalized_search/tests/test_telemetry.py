@@ -47,7 +47,7 @@ class TurnEventTests(TestCase):
         self.assertEqual(len(self.sent), 1)
         user_id, name, props = self.sent[0]
         self.assertEqual((user_id, name), (7, telemetry.TURN_COMPLETED))
-        self.assertTrue(JOIN_KEYS <= set(props))
+        self.assertLessEqual(JOIN_KEYS, set(props))
         self.assertEqual((props['conversation_id'], props['turn_id'], props['turn_index']),
                          (self.session['uuid'], TURN_UUID, 1))
         self.assertEqual((props['cohort'], props['engine'], props['is_debug']), ('internal_pilot', 'b2b_mvp_v1', False))
@@ -100,6 +100,7 @@ class TurnEventTests(TestCase):
         self.assertEqual(parts[-1]['type'], 'finish')
 
     def assert_flat_and_private(self, props):
+        """Primitives (or lists of them) only; no aggregate-like keys; no learner text."""
         for key, value in props.items():
             self.assertFalse(any(hint in key for hint in AGGREGATE_HINTS) and not key.endswith('_tokens'), key)
             values = value if isinstance(value, list) else [value]
