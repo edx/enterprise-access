@@ -17,8 +17,9 @@ SYSTEM_PROMPT = """You recommend learning to a learner in the edX enterprise lea
 Output format, in this exact order:
 1. One short, conversational sentence for the chat. On the first turn, say what you put at the top and why; after that, say what you changed ("OK, I've updated your results to focus on ..."). Don't list or describe every result: the results show them. If nothing qualifies, say so plainly.
 2. A line containing only @@BLOCKS@@
-3. One JSON object per line, no blank lines, no code fences. The "block" value is always one of: page_header, top_pick, compare, item_section, followup, insight, plan.
+3. One JSON object per line, no blank lines, no code fences. The "block" value is always one of: page_header, caveat, top_pick, compare, item_section, followup, insight, plan.
 {"block":"page_header","title":"...","dek":"..."}
+{"block":"caveat","title":"...","body":"..."}   (only when the results can't meet something the learner asked for)
 {"block":"top_pick","item_id":"<option id>","reason":"...","checks":["...","..."]}
 {"block":"compare","options":[{"item_id":"<option id>","best_for":"..."},{"item_id":"<option id>","best_for":"..."},{"item_id":"<option id>","best_for":"..."}]}
 Then up to three section lines, at most one per item_type, best section first, written exactly like these:
@@ -32,6 +33,7 @@ Then up to three section lines, at most one per item_type, best section first, w
 Rules:
 - Put each item in the section matching its item_type.
 - top_pick: the single best fit to start with. reason: one sentence to the learner ("Because you want to ...", max 160 characters). checks: 1-3 short phrases (max 40 characters each) naming the learner's stated preferences this item meets, such as "Self-paced" or "~4 hrs/week"; only claims the option's facts support.
+- caveat: when no option can meet a goal the learner stated (for example a full qualification, license or degree, a language, or a time limit), say so plainly: title max 60 characters, body max 300 characters, one at most. Never use it for anything else.
 - compare: 2-3 strong options that differ in what they're best for (they may include the top pick). best_for completes "Best for ..." (max 60 characters), e.g. "a recognized credential" or "a quick start".
 - Sections hold the other good options, not those already in top_pick or compare: up to 3 per section and at most 12 items in total, best first, only items that genuinely fit the learner's cumulative goal. Fewer or zero is fine; never pad with weak matches. Reject options whose main subject isn't the learner's topic or career goal, even if they match the level or format.
 - why: 1-2 sentences to the learner ("you") connecting the item to their goal, level and constraints; name concrete skills they will practice. Plain, specific, no hype. Max 400 characters.
@@ -109,6 +111,8 @@ class ComposeParser:
         self.profile_emitted = False
         self.top_pick_id: str | None = None
         self.compare_emitted = False
+        self.caveat_emitted = False
+        self.insight_emitted = False
 
     # -- text before the marker --------------------------------------------------------------
     def _text_parts(self, text: str) -> list[dict]:
@@ -200,7 +204,7 @@ class ComposeParser:
         block = obj.get('block')
         handler = {
             'page_header': self._page_header, 'item_section': self._item_section,
-            'top_pick': self._top_pick, 'compare': self._compare,
+            'top_pick': self._top_pick, 'compare': self._compare, 'caveat': self._caveat,
             'followup': self._followup, 'insight': self._insight, 'plan': self._plan,
         }.get(block) if isinstance(block, str) else None
         return handler(obj) if handler else self._drop(f"unknown_block:{str(block)[:30]}")
@@ -326,7 +330,21 @@ class ComposeParser:
         body = _text(obj.get('body'), constants.CAPS['insight_body'])
         if not (title and body) or not self.candidates:
             return self._drop('insight_invalid')
+        if self.insight_emitted:
+            return self._drop('insight_extra')
+        self.insight_emitted = True
         return [self._block('insight', {'title': title, 'body': body})]
+
+    def _caveat(self, obj: dict) -> list[dict]:
+        """A warning that the results can't meet a stated goal; once per turn, also on a text-only turn."""
+        title = _text(obj.get('title'), constants.CAPS['caveat_title'])
+        body = _text(obj.get('body'), constants.CAPS['caveat_body'])
+        if not (title and body):
+            return self._drop('caveat_invalid')
+        if self.caveat_emitted:
+            return self._drop('caveat_extra')
+        self.caveat_emitted = True
+        return [self._block('caveat', {'title': title, 'body': body})]
 
     def _plan(self, obj: dict) -> list[dict]:
         """2-4 steps over items already on the page, only when 3 or more are on it."""
