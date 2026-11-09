@@ -198,6 +198,10 @@ class ComposeParserTests(TestCase):
                                              candidates=default_candidates()[:1])
         self.assertIn('FOLLOW-UP ATTRIBUTE: level', content)
         self.assertIn('ALREADY ASKED: time', content)
+        self.assertIn('RESPONSE LANGUAGE: English', content)
+        spanish = compose.build_user_content(merged_intent={'query': 'q'}, followup_attribute='level', asked=[],
+                                             history=[], message='m', candidates=[], language='Spanish')
+        self.assertTrue(spanish.startswith('RESPONSE LANGUAGE: Spanish\n'))
         self.assertIn('"item_id": "edX+C1"', content)
 
     def test_wrong_field_types_drop_the_line_instead_of_failing(self):
