@@ -450,7 +450,7 @@ All blocks are `{v: 1, type, props}`. The frontend renders only `v === 1` and th
 
 | Addition | Shape | Rendering |
 | --- | --- | --- |
-| `profile` | `summary` (≤ 200), `chips[]` (≤ 6, each ≤ 40), built from the merged intent with no model call | "Why these?" `Popover` |
+| `profile` | `summary` (≤ 200), `chips[]` (≤ 6, each ≤ 40), built from the merged intent with no model call, after the results. A preference stays only when at least half the shown results that have the fact meet it (the goal always stays), so "Why these?" never cites something that no longer drives the results | "Why these?" `Popover` |
 | `top_pick` | `item: ItemCard`, `reason` (≤ 160), `checks[]` (≤ 3, each ≤ 40) | Top pick card plus details |
 | `compare` | `options[2..3]{best_for ≤ 60, item: ItemCard}` | Three mini cards under "Best for…" headings |
 | `caveat` | `title` (≤ 60), `body` (≤ 300); at most one per turn | Warning `Alert` |
@@ -902,4 +902,5 @@ The full changelog is maintained with the team. Highlights:
 | 2026-11-04 | KD-8 amended (two dedicated flags); KD-10 added (portability: ports and adapters, JSON Schemas); timeouts restored as settings; stream header sent; C4 L3 diagrams; OQ-10 opened, OQ-11 closed |
 | 2026-11-09 | Review decisions recorded (timeouts, prompts, optional Xpert adapter, PII retirement) |
 | 2026-11-09 | KD-11 (results pane as a decision guide; results update in place, REQ-007 amended; REQ-016) and KD-12 (telemetry; REQ-017) from the design and analytics reviews |
+| 2026-11-09 | `profile` built after the results from the preferences they reflect |
 | 2026-11-09 | Follow-up chips: fixed narrowing chips plus up to 3 model-written ideas, which replace the opening chips when nothing is left to narrow |

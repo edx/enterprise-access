@@ -5,6 +5,7 @@ model's reply + ``@@BLOCKS@@`` lines into protocol parts. Lines are validated an
 import json
 
 from enterprise_access.apps.personalized_search.core import constants
+from enterprise_access.apps.personalized_search.core.profile import profile_props
 from enterprise_access.apps.personalized_search.core.retrieval import compose_view
 
 MARKER = '@@BLOCKS@@'
@@ -86,7 +87,7 @@ class ComposeParser:
     """
 
     def __init__(self, *, candidates: list[dict], shown_ids: list[str], followup_attribute: str,
-                 id_prefix: str = 'blk', profile: dict | None = None, totals: dict | None = None,
+                 id_prefix: str = 'blk', intent: dict | None = None, totals: dict | None = None,
                  seen_ids: list[str] | None = None):
         self.cards = {c['card']['item_id']: c['card'] for c in candidates}
         self.candidates = candidates
@@ -108,7 +109,7 @@ class ComposeParser:
         self.text_started = False
         self.first_section_emitted = False
         self.used_fallback = False
-        self.profile = profile          # the profile block's props, emitted once before the other blocks
+        self.intent = intent            # the merged intent, restated by the profile block once the results are known
         self.profile_emitted = False
         self.totals = totals or {}     # catalog matches per item type, for "See all (n)"
         self.seen = set(seen_ids or [])  # items shown in earlier turns; the rest are flagged new
@@ -143,7 +144,6 @@ class ComposeParser:
                 self._after_marker = True
                 if self.text_started:
                     parts.append({'type': 'text-end', 'id': 'reply'})
-                parts += self._profile()
                 delta = after
             else:
                 keep = len(MARKER) + 2  # the marker plus the line break before it
@@ -166,9 +166,9 @@ class ComposeParser:
         elif self._line.strip():
             parts += self._handle_line(self._line)
         self._line = ''
-        parts += self._profile()
         if not self.first_section_emitted and self.candidates:
             parts += self._fallback_section()
+        parts += self._profile()
         if not self.followups_emitted:
             question, _ = constants.FOLLOWUP_TEMPLATES[self.attribute]
             parts.append(self._followups(question))
@@ -183,11 +183,16 @@ class ComposeParser:
         return {'type': 'data-block', 'id': self._next_id(), 'data': {'v': 1, 'type': block_type, 'props': props}}
 
     def _profile(self) -> list[dict]:
-        """The profile block, once per turn and only when there are results to explain."""
-        if self.profile_emitted or not self.profile or not self.candidates:
+        """
+        The profile block, once per turn after the results, and only when there are results to explain:
+        a preference the shown results don't reflect is left out.
+        """
+        if self.profile_emitted or not self.emitted_ids:
             return []
         self.profile_emitted = True
-        return [self._block('profile', self.profile)]
+        by_id = {c['card']['item_id']: c for c in self.candidates}
+        props = profile_props(self.intent, shown=[by_id[i] for i in self.emitted_ids if i in by_id])
+        return [self._block('profile', props)] if props else []
 
     def _card(self, card: dict, *, why: str | None = None, fit: list | None = None) -> dict:
         """A hydrated card for this turn. After the first turn, cards new to the conversation get ``status: new``."""

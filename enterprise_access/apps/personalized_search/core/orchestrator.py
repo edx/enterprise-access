@@ -25,7 +25,6 @@ from enterprise_access.apps.personalized_search.core.compose import ComposeParse
 from enterprise_access.apps.personalized_search.core.compose import build_user_content as compose_user
 from enterprise_access.apps.personalized_search.core.errors import ModelError
 from enterprise_access.apps.personalized_search.core.ports import Usage
-from enterprise_access.apps.personalized_search.core.profile import profile_props
 from enterprise_access.apps.personalized_search.core.retrieval import (
     RetrievalFailed,
     choose_followup_attribute,
@@ -276,7 +275,7 @@ def _turn_parts(ctx: TurnContext, steps: Steps, record: dict) -> Iterator[dict]:
     # Step 4: compose
     yield {'type': 'data-status', 'data': {'step': 'writing'}, 'transient': True}
     parser = ComposeParser(candidates=candidates, shown_ids=_excluded_ids(session), followup_attribute=attribute,
-                           profile=profile_props(merged), totals=totals, seen_ids=session['shown_item_ids'])
+                           intent=merged, totals=totals, seen_ids=session['shown_item_ids'])
     record['item_ids'] = parser.emitted_ids  # the parser's own list, so an aborted turn logs what it showed
     record.update(placements=parser.placements, dropped=parser.dropped)
     usages['compose'] = Usage(model=ctx.compose_model.model, effort=ctx.compose_model.effort)
