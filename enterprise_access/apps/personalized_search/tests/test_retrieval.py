@@ -59,16 +59,19 @@ class SubRequestTests(TestCase):
 
     def test_all_types_strict_and_broad(self):
         reqs = retrieval.build_sub_requests(INTENT, SCOPE, ['edX+OLD'])
-        self.assertEqual([r['tier'] for r in reqs], [2, 1, 2, 1])
+        self.assertEqual([r['tier'] for r in reqs], [2, 1, 0, 0, 2, 1, 0])
+        self.assertEqual([r.get('count_for') for r in reqs if r['tier'] == 0],
+                         ['course', 'executive_education', 'program'])
+        self.assertTrue(all(r['hitsPerPage'] == 0 for r in reqs if r['tier'] == 0))
         self.assertIn('(skill_names:"Leadership" OR skill_names:"Coaching")', reqs[0]['filters'])
         self.assertIn('NOT key:"edX+OLD"', reqs[1]['filters'])
-        self.assertIn('NOT aggregation_key:"program:edX+OLD"', reqs[3]['filters'])
+        self.assertIn('NOT aggregation_key:"program:edX+OLD"', reqs[5]['filters'])
         self.assertTrue(all('(enterprise_customer_uuids:"e-1")' in r['filters'] for r in reqs))
 
     @ddt.data(
-        (['executive_education'], 'AND learning_type:"Executive Education"', 2),
-        (['course'], 'AND NOT learning_type:"Executive Education"', 2),
-        (['program'], None, 2),
+        (['executive_education'], 'AND learning_type:"Executive Education"', 3),
+        (['course'], 'AND NOT learning_type:"Executive Education"', 3),
+        (['program'], None, 3),
     )
     @ddt.unpack
     def test_type_filters(self, types, clause, count):
@@ -83,14 +86,16 @@ class SubRequestTests(TestCase):
         client = mock.Mock()
         client.multi_search_catalog_index.return_value = [
             {'hits': [course_hit('edX+C1'), {'title': 'no id'}]}, {'hits': [course_hit('edX+C2')]},
+            {'hits': [], 'nbHits': 42},
         ]
         scope = retrieval.CatalogScope(filter='x:"y"', allow_unscoped=True)
         out = retrieval.search(dict(INTENT, item_types=['course']), scope, [], catalog=AlgoliaCatalog(client),
                                timeout_s=1.5)
         self.assertEqual([(c['card']['item_id'], c['tier']) for c in out], [('edX+C1', 2), ('edX+C2', 1)])
         queries = client.multi_search_catalog_index.call_args.args[0]
-        self.assertEqual(len(queries), 2)
-        self.assertTrue(all(q['distinct'] and 'tier' not in q for q in queries))
+        self.assertEqual(len(queries), 3)
+        self.assertTrue(all(q['distinct'] and 'tier' not in q and 'count_for' not in q for q in queries))
+        self.assertEqual(out.totals, {'course': 42})
         kwargs = client.multi_search_catalog_index.call_args.kwargs
         self.assertEqual((kwargs['allow_unscoped'], kwargs['secured_key'], kwargs['timeout_s']), (True, None, 1.5))
 
@@ -156,7 +161,7 @@ class FilterHelperTests(TestCase):
 
     def test_no_skills_sends_only_broadened_requests(self):
         requests = retrieval.build_sub_requests(dict(INTENT, skills=[], roles=['Team lead']), SCOPE, [])
-        self.assertEqual([r['tier'] for r in requests], [1, 1])
+        self.assertEqual([r['tier'] for r in requests], [1, 0, 0, 1, 0])
         self.assertTrue(all(r['query'] == 'Team lead' for r in requests))
 
     def test_weeks_buckets(self):
