@@ -149,13 +149,15 @@ class DjangoHistoryStore:
 
     def rate_turn(self, *, session_uuid, sequence: int, lms_user_id, enterprise_customer_uuid, rating) -> dict:
         """Set or clear the learner's thumbs on one of their replies. Raises ``SessionNotFound``."""
-        updated = ChatTurn.objects.filter(
+        turn = ChatTurn.objects.filter(
             session__uuid=session_uuid, session__lms_user_id=lms_user_id,
             session__enterprise_customer_uuid=enterprise_customer_uuid, sequence=sequence,
-        ).update(rating=rating)
-        if not updated:
+        ).first()
+        if not turn:
             raise SessionNotFound()
-        return {'sequence': sequence, 'rating': rating}
+        turn.rating = rating
+        turn.save(update_fields=['rating', 'modified'])
+        return {'sequence': sequence, 'rating': rating, 'turn_id': str(turn.uuid)}
 
 
 class DjangoFeedbackStore:

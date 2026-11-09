@@ -197,9 +197,14 @@ class ComposeParser:
         return out
 
     def _place(self, cards: list[dict], section: str) -> None:
-        """Record where accepted cards sit, in order, for the turn's usage event."""
-        self.placements += [{'item_id': c['item_id'], 'item_type': c['item_type'], 'section': section,
-                             'status': c.get('status')} for c in cards]
+        """
+        Record where accepted cards sit, in order, for the turn's usage event, and put the same
+        ``section`` and ``position`` on each card so the portal's click events can echo them (KD-12).
+        """
+        for card in cards:
+            self.placements.append({'item_id': card['item_id'], 'item_type': card['item_type'], 'section': section,
+                                    'status': card.get('status')})
+            card.update(section=section, position=len(self.placements))
 
     def _drop(self, reason: str = 'invalid') -> list[dict]:
         self.dropped_lines += 1
