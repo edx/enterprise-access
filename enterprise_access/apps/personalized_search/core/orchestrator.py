@@ -196,13 +196,9 @@ def _turn_parts(ctx: TurnContext, steps: Steps, record: dict) -> Iterator[dict]:
                 **timing}
         if ctx.debug:
             costs = [u.cost_usd() for u in usages.values() if u.cost_usd() is not None]
-            saved = [u.extra['saved'] for u in usages.values() if u.extra.get('saved')]
             data['debug'] = dict(debug, intent=usages['intent'].as_dict() if 'intent' in usages else None,
                                  compose=usages['compose'].as_dict() if 'compose' in usages else None,
-                                 cost_usd=round(sum(costs), 6) if costs else None,
-                                 tokens_saved={name: sum(s.get(name) or 0 for s in saved)
-                                               for name in ('input_tokens', 'output_tokens', 'reasoning_tokens')}
-                                 if saved else None)
+                                 cost_usd=round(sum(costs), 6) if costs else None)
         return {'type': 'data-timing', 'id': 'timing', 'transient': True, 'data': data}
 
     record.update(stage='intent', usages=usages, excluded_ids=_excluded_ids(session))

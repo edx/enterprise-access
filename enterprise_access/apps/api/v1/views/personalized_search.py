@@ -166,7 +166,7 @@ class PersonalizedSearchTurnView(APIView):
                                       compose_model=compose_choice, scope=scope,
                                       debug=wiring.debug_overrides_enabled(), registry=registry)
             _record_pre_stream(ctx, enterprise_customer_uuid, started)
-            parts = run_turn(ctx, wiring.steps(registry=registry, store=store, cache_scope=enterprise_customer_uuid))
+            parts = run_turn(ctx, wiring.steps(registry=registry, store=store))
         except Exception:  # pylint: disable=broad-exception-caught
             release()  # don't leave the session locked for the lock window
             raise
