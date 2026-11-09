@@ -72,6 +72,20 @@ class PersonalizedSearchTurnViewTests(APITest):
         self.assertEqual(parts[1]['data']['turn_sequence'], 2)
 
     @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
+    @mock.patch('enterprise_access.apps.personalized_search.events.segment_emit')
+    def test_resuming_a_reopened_search_sends_session_resumed(self, emit):
+        session_uuid = parse_sse(self.post())[1]['data']['session_uuid']
+        parse_sse(self.post(session_uuid=session_uuid, message='Shorter'))
+        emit.assert_not_called()
+        parse_sse(self.post(session_uuid=session_uuid, message='Cheaper', resumed_from_history=True))
+        name, props = emit.call_args.args[1], emit.call_args.args[2]
+        self.assertEqual((name, props['conversation_id'], props['turn_index']),
+                         ('history.session-resumed', session_uuid, 3))
+        emit.reset_mock()
+        parse_sse(self.post(resumed_from_history=True))  # a new session has nothing to resume
+        emit.assert_not_called()
+
+    @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
     def test_accepts_event_stream(self):
         # The portal's SSE transport sends this Accept header; DRF must not answer 406.
         payload = {'enterprise_customer_uuid': ENTERPRISE, 'message': 'Lead a team'}

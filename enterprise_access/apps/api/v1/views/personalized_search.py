@@ -25,7 +25,7 @@ from rest_framework.views import APIView
 
 from enterprise_access.apps.api.utils import get_enterprise_uuid_from_request_data
 from enterprise_access.apps.core.constants import PERSONALIZED_SEARCH_LEARNER_PERMISSION
-from enterprise_access.apps.personalized_search import wiring
+from enterprise_access.apps.personalized_search import events, wiring
 from enterprise_access.apps.personalized_search.core import constants
 from enterprise_access.apps.personalized_search.core.errors import SessionNotFound, TurnInProgress
 from enterprise_access.apps.personalized_search.core.orchestrator import ModelChoice, TurnContext, platform_of, run_turn
@@ -55,9 +55,13 @@ class DebugOverridesSerializer(serializers.Serializer):  # pylint: disable=abstr
 
 
 class TurnRequestSerializer(serializers.Serializer):  # pylint: disable=abstract-method
+    """POST body for one turn."""
+
     enterprise_customer_uuid = serializers.UUIDField()
     session_uuid = serializers.UUIDField(required=False, allow_null=True)
     message = serializers.CharField(max_length=constants.MAX_MESSAGE_CHARS, trim_whitespace=True)
+    # The portal sets this on the first message after reopening a past search (usage events, KD-12).
+    resumed_from_history = serializers.BooleanField(required=False, default=False)
     debug = DebugOverridesSerializer(required=False, allow_null=True)
 
 
@@ -150,6 +154,10 @@ class PersonalizedSearchTurnView(APIView):
 
         def release():
             store.unlock(session['uuid'])
+
+        if data.get('resumed_from_history') and session_uuid:  # only a past search can be resumed
+            events.send(lms_user_id, events.SESSION_RESUMED, conversation_id=session['uuid'],
+                        enterprise_customer_uuid=enterprise_customer_uuid, turn_index=session['turn_count'] + 1)
 
         try:
             ctx = wiring.turn_context(session=session, message=data['message'], intent_model=intent_choice,

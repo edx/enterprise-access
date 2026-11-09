@@ -87,7 +87,13 @@ class RunTurnTests(TestCase):
     def test_normal_turn(self):
         parts = list(run_turn(self.ctx, fake_steps()))
         types = [p['type'] for p in parts]
-        self.assertEqual(types[:3], ['start', 'data-session', 'data-status'])
+        self.assertEqual(types[:4], ['start', 'data-session', 'data-analytics', 'data-status'])
+        analytics = parts[2]['data']
+        self.assertEqual((analytics['conversation_id'], analytics['turn_id'], analytics['turn_index']),
+                         (self.session['uuid'], TURN_UUID, 1))
+        section = [p['data'] for p in parts if p['type'] == 'data-block' and p['data']['type'] == 'item_section'][0]
+        self.assertEqual({k: section['props']['items'][0][k] for k in ('section', 'position')},
+                         {'section': 'course', 'position': 1})
         self.assertEqual(types[-3:], ['data-session', 'data-timing', 'finish'])
         self.assertEqual(parts[0]['messageId'], f'turn_{TURN_UUID}')
         self.assertEqual([p['data']['step'] for p in parts if p['type'] == 'data-status'],
