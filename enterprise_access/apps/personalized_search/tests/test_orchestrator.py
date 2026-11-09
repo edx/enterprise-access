@@ -120,6 +120,27 @@ class RunTurnTests(TestCase):
         self.assertEqual(ChatTurn.objects.get(session_id=self.session['uuid']).item_ids, [])
         self.assertIsNone(self.saved().merged_intent)
 
+    def test_an_unexpected_failure_ends_with_an_internal_error_and_persists_nothing(self):
+        steps = fake_steps(retrieve=lambda *a, **k: (_ for _ in ()).throw(KeyError('bug')))
+        with self.assertLogs('enterprise_access.apps.personalized_search.core.orchestrator', level='INFO') as logs:
+            parts = list(run_turn(self.ctx, steps))
+        self.assertEqual(parts[-1], {'type': 'error', 'errorText': 'internal'})
+        self.assertFalse(ChatTurn.objects.exists())
+        record = [json.loads(r.getMessage().split(' ', 1)[1]) for r in logs.records
+                  if r.getMessage().startswith('personalized_search.turn ')][0]
+        self.assertEqual((record['outcome'], record['error']), ('error', 'internal'))
+
+    def test_a_turn_past_its_deadline_stops_with_deadline_exceeded(self):
+        ticks = itertools.count()
+        # Each clock read advances 5 s, so the deadline (20 s) passes while the reply is still streaming.
+        ctx = TurnContext(session=self.session, message='I want to lead a team',
+                          intent_model=ModelChoice('gpt-4.1-mini', None),
+                          compose_model=ModelChoice('gpt-5.4-mini', 'low'), scope=None, debug=True,
+                          clock=lambda: next(ticks) * 5.0, id_factory=lambda: TURN_UUID, platform=openai_platform)
+        parts = list(run_turn(ctx, fake_steps()))
+        self.assertEqual(parts[-1], {'type': 'error', 'errorText': 'deadline_exceeded'})
+        self.assertFalse(ChatTurn.objects.exists())
+
     def test_errors_persist_nothing(self):
         cases = [
             (fake_steps(intent_text='not json'), 'intent_invalid'),
