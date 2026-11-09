@@ -26,6 +26,7 @@ from .customer_billing import (
 )
 from .pathways import CareerDiscoveryViewSet, PathwayViewSet
 from .personalized_search import PersonalizedSearchTurnView
+from .personalized_search_debug import PersonalizedSearchDebugConfigView
 from .personalized_search_history import (
     PersonalizedSearchItemFeedbackView,
     PersonalizedSearchSessionDetailView,
