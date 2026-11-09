@@ -6,11 +6,13 @@ Anything that passes these can back the turn view or the harness.
 import uuid
 from datetime import timedelta
 
+from django.db import IntegrityError
 from django.test import TestCase
 from django.utils import timezone
 
 from enterprise_access.apps.personalized_search.adapters.django_store import DjangoSessionStore
 from enterprise_access.apps.personalized_search.adapters.memory_store import InMemorySessionStore
+from enterprise_access.apps.personalized_search.core import constants
 from enterprise_access.apps.personalized_search.core.errors import SessionNotFound, TurnInProgress
 from enterprise_access.apps.personalized_search.core.ports import SessionStore
 from enterprise_access.apps.personalized_search.models import ChatSession, ChatTurn, ItemFeedback
@@ -71,6 +73,34 @@ class StoreContract:  # pylint: disable=no-member  # mixed into TestCase subclas
         self.store.lock(self.store.load_or_create(session_uuid=session['uuid'], lms_user_id=7,
                                                   enterprise_customer_uuid=ENTERPRISE, message='y'))
 
+    def persist(self, session, message, reply='r'):
+        session.update(turn_count=session['turn_count'] + 1, title='t')
+        self.store.persist_turn(session, {'uuid': str(uuid.uuid4()), 'user_message': message, 'reply_text': reply,
+                                          'item_ids': [], 'parts': []})
+
+    def test_a_turn_that_loaded_a_stale_session_cannot_take_the_lock(self):
+        first = self.new_session()
+        self.store.lock(first)
+        stale = self.store.load_or_create(session_uuid=first['uuid'], lms_user_id=7,
+                                          enterprise_customer_uuid=ENTERPRISE, message='b')
+        self.persist(first, 'a')  # the first turn finishes (and releases the lock) after the snapshot was taken
+        with self.assertRaises(TurnInProgress):
+            self.store.lock(stale)
+        fresh = self.store.load_or_create(session_uuid=first['uuid'], lms_user_id=7,
+                                          enterprise_customer_uuid=ENTERPRISE, message='b')
+        self.store.lock(fresh)
+
+    def test_history_is_the_newest_turns_in_order(self):
+        session = self.new_session()
+        self.store.lock(session)
+        for i in range(constants.HISTORY_TURNS + 2):
+            self.persist(session, f'q{i}', reply=f'a{i}')
+            session = self.store.load_or_create(session_uuid=session['uuid'], lms_user_id=7,
+                                                enterprise_customer_uuid=ENTERPRISE, message='next')
+            self.store.lock(session)
+        expected = [{'user': f'q{i}', 'reply': f'a{i}'} for i in range(2, constants.HISTORY_TURNS + 2)]
+        self.assertEqual(session['history'], expected)
+
     def test_other_learners_and_enterprises_cannot_load_it(self):
         session = self.new_session()
         self.store.lock(session)
@@ -123,6 +153,21 @@ class DjangoSessionStoreTests(StoreContract, TestCase):
 
     def stored_parts(self, session_uuid):
         return ChatTurn.objects.get(session_id=session_uuid).parts
+
+    def test_persist_turn_rolls_back_the_session_when_the_turn_cannot_be_written(self):
+        session = self.new_session()
+        self.store.lock(session)
+        session.update(turn_count=1, title='kept?')
+        turn = {'uuid': str(uuid.uuid4()), 'user_message': 'a', 'reply_text': 'r', 'item_ids': [], 'parts': []}
+        self.store.persist_turn(session, turn)
+        again = self.store.load_or_create(session_uuid=session['uuid'], lms_user_id=7,
+                                          enterprise_customer_uuid=ENTERPRISE, message='b')
+        self.store.lock(again)
+        again.update(turn_count=1, title='changed')  # same sequence as the stored turn: the insert must fail
+        with self.assertRaises(IntegrityError):
+            self.store.persist_turn(again, dict(turn, uuid=str(uuid.uuid4())))
+        row = ChatSession.objects.get(uuid=session['uuid'])
+        self.assertEqual((row.title, row.turn_count, ChatTurn.objects.count()), ('kept?', 1, 1))
 
     def test_new_session_row_is_created_locked(self):
         session = self.new_session()

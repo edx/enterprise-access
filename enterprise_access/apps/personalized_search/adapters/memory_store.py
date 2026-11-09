@@ -61,6 +61,8 @@ class InMemorySessionStore:
         row = self.sessions[session['uuid']]
         if row['locked_at'] is not None and now - row['locked_at'] < constants.SESSION_LOCK_S:
             raise TurnInProgress()
+        if row['turn_count'] != session['turn_count']:  # another turn finished since this one loaded the session
+            raise TurnInProgress()
         row['locked_at'] = now
 
     def unlock(self, session_uuid: str) -> None:

@@ -79,7 +79,11 @@ class DjangoSessionStore:
             return
         stale = now - timedelta(seconds=constants.SESSION_LOCK_S)
         unlocked = Q(active_turn_started_at__isnull=True) | Q(active_turn_started_at__lt=stale)
-        taken = ChatSession.objects.filter(unlocked, uuid=session['uuid']).update(active_turn_started_at=now)
+        # turn_count must still be what this turn loaded: another turn that finished since then changed the
+        # session, and running on the stale snapshot would repeat its sequence number and lose its state.
+        taken = ChatSession.objects.filter(
+            unlocked, uuid=session['uuid'], turn_count=session['turn_count'],
+        ).update(active_turn_started_at=now)
         if not taken:
             raise TurnInProgress()
 
