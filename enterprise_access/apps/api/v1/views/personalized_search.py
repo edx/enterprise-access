@@ -28,18 +28,37 @@ from enterprise_access.apps.core.constants import PERSONALIZED_SEARCH_LEARNER_PE
 from enterprise_access.apps.personalized_search import wiring
 from enterprise_access.apps.personalized_search.core import constants
 from enterprise_access.apps.personalized_search.core.errors import SessionNotFound, TurnInProgress
-from enterprise_access.apps.personalized_search.core.orchestrator import TurnContext, platform_of, run_turn
+from enterprise_access.apps.personalized_search.core.orchestrator import ModelChoice, TurnContext, platform_of, run_turn
 from enterprise_access.apps.personalized_search.core.stream import STREAM_PROTOCOL_HEADER, sse_frames
 from enterprise_access.apps.personalized_search.renderers import EventStreamRenderer
 from enterprise_access.toggles import personalized_search_enabled
 
 logger = logging.getLogger(__name__)
 
+EFFORTS = ('none', 'minimal', 'low', 'medium', 'high')
+
+
+class DebugOverridesSerializer(serializers.Serializer):  # pylint: disable=abstract-method
+    """Per-turn model overrides. Honoured only when PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED."""
+
+    intent_model = serializers.CharField(required=False)
+    intent_effort = serializers.ChoiceField(choices=EFFORTS, required=False, allow_null=True)
+    compose_model = serializers.CharField(required=False)
+    compose_effort = serializers.ChoiceField(choices=EFFORTS, required=False, allow_null=True)
+
+    def validate(self, attrs):
+        allowed = wiring.model_registry().available_models()
+        for key in ('intent_model', 'compose_model'):
+            if attrs.get(key) and attrs[key] not in allowed:
+                raise serializers.ValidationError({key: 'Not an allowed model.'})
+        return attrs
+
 
 class TurnRequestSerializer(serializers.Serializer):  # pylint: disable=abstract-method
     enterprise_customer_uuid = serializers.UUIDField()
     session_uuid = serializers.UUIDField(required=False, allow_null=True)
     message = serializers.CharField(max_length=constants.MAX_MESSAGE_CHARS, trim_whitespace=True)
+    debug = DebugOverridesSerializer(required=False, allow_null=True)
 
 
 def body_enterprise_uuid(request, *args, **kwargs):  # pylint: disable=unused-argument
@@ -52,6 +71,18 @@ def body_enterprise_uuid(request, *args, **kwargs):  # pylint: disable=unused-ar
 
 def _error(code: str, http_status: int, detail: str = '') -> JsonResponse:
     return JsonResponse({'code': code, 'detail': detail}, status=http_status)
+
+
+def _model_choices(overrides: dict) -> tuple[ModelChoice, ModelChoice]:
+    """The configured models, or the debug overrides when this environment allows them."""
+    intent_default, compose_default = wiring.default_models()
+    if overrides and not wiring.debug_overrides_enabled():
+        logger.info('Ignoring Personalized Search debug overrides: not enabled in this environment.')
+        overrides = {}
+    return (ModelChoice(overrides.get('intent_model') or intent_default.model,
+                        overrides.get('intent_effort', intent_default.effort)),
+            ModelChoice(overrides.get('compose_model') or compose_default.model,
+                        overrides.get('compose_effort', compose_default.effort)))
 
 
 def _record_pre_stream(ctx: TurnContext, enterprise_customer_uuid: str, started: float) -> None:
@@ -91,7 +122,7 @@ class PersonalizedSearchTurnView(APIView):
         enterprise_customer_uuid = str(data['enterprise_customer_uuid'])
 
         registry = wiring.model_registry()
-        intent_choice, compose_choice = wiring.default_models()
+        intent_choice, compose_choice = _model_choices(data.get('debug') or {})
         if not all(registry.is_configured(choice.model) for choice in (intent_choice, compose_choice)):
             return _error('backend_unsupported', status.HTTP_503_SERVICE_UNAVAILABLE, 'No model backend is configured.')
 
@@ -122,7 +153,8 @@ class PersonalizedSearchTurnView(APIView):
 
         try:
             ctx = wiring.turn_context(session=session, message=data['message'], intent_model=intent_choice,
-                                      compose_model=compose_choice, scope=scope, registry=registry)
+                                      compose_model=compose_choice, scope=scope,
+                                      debug=wiring.debug_overrides_enabled(), registry=registry)
             _record_pre_stream(ctx, enterprise_customer_uuid, started)
             parts = run_turn(ctx, wiring.steps(registry=registry, store=store))
         except Exception:  # pylint: disable=broad-exception-caught
