@@ -47,9 +47,6 @@ class Usage:
             'elapsed_ms': self.elapsed_ms,
             'first_token_ms': self.first_token_ms,
             'cost_usd': round(cost, 6) if cost is not None else None,
-            # Set by the response cache: 'hit' or 'miss', and on a hit the original call's tokens.
-            'cache': self.extra.get('cache'),
-            'tokens_saved': self.extra.get('saved'),
         }
 
 
