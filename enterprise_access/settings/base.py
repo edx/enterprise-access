@@ -598,6 +598,15 @@ PERSONALIZED_SEARCH_OPENAI_MODELS = {
     'gpt-5.6-terra': (2.00, 0.20, 12.00),
     'gpt-5.6-sol': (4.00, 0.40, 20.00),
 }
+# The Xpert platform (model id 'xpert') is available once XPERT_API_BASE_URL and XPERT_API_CLIENT_ID are
+# set; its calls use XPERT_REQUEST_TIMEOUT instead of the step timeouts above.
+# Development only. When True, a turn request may carry a ``debug`` object that overrides the
+# per-step models and efforts, and the stream's timing part carries token and cost detail.
+PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED = False
+# Development only. ``{'filter': '<algolia filter>', 'label': '<text>'}`` replaces the
+# per-learner secured key with the plain search key plus this explicit catalog filter.
+# Requires ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH. Never set in a deployed environment.
+PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE = None
 
 # The enterprise customer the evaluation harness scopes to (Open Decision 1). Production
 # requests take the customer from the request; this is only for offline runs, which have
