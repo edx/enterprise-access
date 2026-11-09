@@ -26,6 +26,7 @@ from .customer_billing import (
 )
 from .pathways import CareerDiscoveryViewSet, PathwayViewSet
 from .personalized_search import PersonalizedSearchTurnView
+from .personalized_search_history import PersonalizedSearchSessionDetailView, PersonalizedSearchSessionListView
 from .prompt import LearnerPathwaysViewSet
 from .provisioning import ProvisioningCreateView, SubscriptionPlanOLIUpdateView
 from .subsidy_access_policy import (
