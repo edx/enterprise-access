@@ -50,7 +50,7 @@ MAX_IDEAS = 3
 CAPS = {
     'title': 80, 'dek': 400, 'section_dek': 200, 'why': 400, 'fit_tag': 24, 'fit_count': 3,
     'question': 200, 'suggestion': 48, 'session_title': 60,
-    'insight_title': 60, 'insight_body': 600, 'plan_note': 80,
+    'insight_title': 60, 'insight_body': 600, 'plan_note': 80, 'plan_why': 160,
     'reason': 160, 'check': 40, 'check_count': 3, 'best_for': 60, 'caveat_title': 60, 'caveat_body': 300,
 }
 
