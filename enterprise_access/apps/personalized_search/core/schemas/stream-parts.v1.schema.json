@@ -26,6 +26,13 @@
       "properties": {"question": {"type": "string", "maxLength": 200},
                      "attribute": {"enum": ["level", "time", "pacing", "type", "open"]},
                      "suggestions": {"type": "array", "items": {"type": "string"}}}}}, "required": ["data"]},
+    {"properties": {"type": {"const": "data-analytics"}, "id": {"type": "string"}, "data": {
+      "type": "object", "required": ["conversation_id", "turn_id", "turn_index"],
+      "description": "Join keys for usage events (KD-12). Added in v1, 2026-11-09.",
+      "properties": {"conversation_id": {"type": "string"}, "turn_id": {"type": "string"},
+                     "turn_index": {"type": "integer", "minimum": 1}, "enterprise_customer_uuid": {"type": "string"},
+                     "cohort": {"type": ["string", "null"]}, "engine": {"type": ["string", "null"]},
+                     "is_debug": {"type": "boolean"}}}}, "required": ["id", "data"]},
     {"properties": {"type": {"const": "data-timing"}, "transient": {"const": true}, "data": {
       "type": "object", "required": ["backend", "model_intent", "model_compose"]}}, "required": ["data", "transient"]}
   ]
