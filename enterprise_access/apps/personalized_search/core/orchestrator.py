@@ -140,6 +140,13 @@ def run_turn(ctx: TurnContext, steps: Steps) -> Iterator[dict]:
                 record['outcome'] = 'redirect' if record.get('redirected') else 'done'
             emitted.append(part)
             yield part
+    except Exception:  # pylint: disable=broad-exception-caught
+        # A bug or an unexpected failure in any step: end the turn with an error the client can show,
+        # and log it as an error rather than an abort.
+        logger.exception('Personalized Search turn %s of session %s failed unexpectedly.',
+                         record['sequence'], record['session_uuid'])
+        record['outcome'], record['error'] = 'error', 'internal'
+        yield {'type': 'error', 'errorText': 'internal'}
     finally:
         parts.close()
         record['item_count'] = len(record['item_ids'])
