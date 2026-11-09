@@ -1,6 +1,6 @@
 # Personalized Search (chat)
 
-The learner portal's Personalized Search tab is a chat that composes a learning page from the learner's enterprise catalog. This app serves it. The design is in [`personalized-search-tech-spec.md`](personalized-search-tech-spec.md).
+The learner portal's Personalized Search tab is a chat that recommends learning from the learner's enterprise catalog, with results beside the chat that update as the learner refines. This app serves it. The design is in [`personalized-search-tech-spec.md`](personalized-search-tech-spec.md).
 
 ## Endpoints (`/api/v1/personalized-search/`)
 
@@ -9,6 +9,7 @@ The learner portal's Personalized Search tab is a chat that composes a learning 
 | `POST turns/` | Streams one turn as AI SDK UI Message Stream v1 over SSE, with the header `x-vercel-ai-ui-message-stream: v1`. `?mode=buffered` returns the parts as JSON instead. |
 | `GET sessions/`, `GET sessions/<uuid>/` | The learner's past searches, and one search's stored parts for replay. |
 | `GET/POST/DELETE item-feedback/` | Saved and not-interested items. Not-interested items are excluded from later turns. |
+| `POST turns/<session>/<sequence>/feedback/` | Thumbs up or down on one reply (planned, KD-11). |
 | `GET debug/` | The `?debug=true` model menu. 404 unless `PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED`, which is dev only. |
 
 Every endpoint requires the enterprise-scoped learner permission (`personalized_search.has_learner_access`) and returns 404 while the `enterprise_access.personalized_search_enabled` WaffleFlag is off for the user. The portal shows the tab from a separate LMS flag, `enterprise.personalized_search_enabled`. Enable this app's flag first, for the same users, so a visible tab never gets a 404.
@@ -57,8 +58,13 @@ for part in run_turn(ctx, steps):
 | `PERSONALIZED_SEARCH_OPENAI_MODELS` | allowlist with prices | The OpenAI models a turn may use. Prices are used only in the debug cost read-out. |
 | `PERSONALIZED_SEARCH_INTENT_TIMEOUT_S`, `_COMPOSE_READ_TIMEOUT_S` | 3, 5 | Step timeouts, each also capped by the 20 s turn deadline. The Xpert platform uses `XPERT_REQUEST_TIMEOUT`. |
 | `OPENAI_API_KEY`; `XPERT_API_BASE_URL`, `XPERT_API_CLIENT_ID` | empty | Backend credentials. Keys come only from settings. |
+| `PERSONALIZED_SEARCH_ANALYTICS_COHORT`, `PERSONALIZED_SEARCH_ENGINE_LABEL` | `internal_pilot`, `b2b_mvp_v1` | Tags on every Segment event (planned, KD-12). See [`personalized_search_events.md`](personalized_search_events.md). |
 | `PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED` | `False` | Dev only. Allows per-turn model overrides and the debug read-out. |
 | `PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE` | `None` | Dev only. Uses the plain search key plus an explicit catalog filter instead of the learner's secured key. Also needs `ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH`. Never set it in a deployed environment. |
+
+## Results update in place (KD-11)
+
+Only items the learner marked "Not for me" are excluded from later turns. Items shown earlier can appear again in the refreshed results, and each card says whether it is new or updated since the previous turn. The redesign is additive within block catalog v1: older portals ignore the new block types.
 
 ## Removing the feature
 
