@@ -21,7 +21,7 @@ MAX_CANDIDATES = 20
 MAX_ITEMS_PER_SECTION = 3
 MAX_ITEMS_PER_TURN = 5
 
-PAGE_HEADER_LABEL = 'Your learning page'
+PAGE_HEADER_LABEL = 'Your results'
 SECTION_LABELS = {'course': 'Courses', 'executive_education': 'Executive education', 'program': 'Programs'}
 
 REDIRECT_REPLY = (
