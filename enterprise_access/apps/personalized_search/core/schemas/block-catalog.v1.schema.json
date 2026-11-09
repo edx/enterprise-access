@@ -40,7 +40,8 @@
         },
         "facts": {"type": "object"},
         "why": {"type": ["string", "null"], "maxLength": 400},
-        "fit": {"type": "array", "maxItems": 3, "items": {"type": "string", "maxLength": 24}}
+        "fit": {"type": "array", "maxItems": 3, "items": {"type": "string", "maxLength": 24}},
+        "status": {"enum": ["new"], "description": "New to the conversation since the previous turn (optional, v1 2026-11-09)"}
       }
     },
     "item_section": {

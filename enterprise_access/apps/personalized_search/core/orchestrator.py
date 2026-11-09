@@ -87,8 +87,11 @@ def _ms(ctx: TurnContext, at: float | None) -> int | None:
 
 
 def _excluded_ids(session: dict) -> list[str]:
-    """Items this turn must not show: already shown in the session, or dismissed by the learner."""
-    return list(dict.fromkeys(session['shown_item_ids'] + session.get('not_interested_ids', [])))
+    """
+    Items this turn must not show: those the learner dismissed. Results update in place (KD-11), so
+    items shown in earlier turns may appear again; cards new to the conversation are flagged instead.
+    """
+    return list(dict.fromkeys(session.get('not_interested_ids', [])))
 
 
 def _pending_turn(ctx: TurnContext, record: dict, *, reply: str, intent: dict, item_ids: list, attribute: str,
@@ -251,7 +254,7 @@ def _turn_parts(ctx: TurnContext, steps: Steps, record: dict) -> Iterator[dict]:
     # Step 4: compose
     yield {'type': 'data-status', 'data': {'step': 'writing'}, 'transient': True}
     parser = ComposeParser(candidates=candidates, shown_ids=_excluded_ids(session), followup_attribute=attribute,
-                           profile=profile_props(merged), totals=totals)
+                           profile=profile_props(merged), totals=totals, seen_ids=session['shown_item_ids'])
     record['item_ids'] = parser.emitted_ids  # the parser's own list, so an aborted turn logs what it showed
     usages['compose'] = Usage(model=ctx.compose_model.model, effort=ctx.compose_model.effort)
     stream = steps.compose(

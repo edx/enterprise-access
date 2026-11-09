@@ -14,7 +14,7 @@ from enterprise_access.apps.personalized_search.core.orchestrator import ModelCh
 from enterprise_access.apps.personalized_search.core.ports import Usage
 from enterprise_access.apps.personalized_search.core.retrieval import RetrievalFailed
 from enterprise_access.apps.personalized_search.models import ChatSession, ChatTurn, ItemFeedback
-from enterprise_access.apps.personalized_search.tests.helpers import course_hit, default_candidates
+from enterprise_access.apps.personalized_search.tests.helpers import default_candidates
 
 ON_TOPIC = json.dumps({'on_topic': True, 'redirect_reason': None, 'merge': 'replace',
                        'intent': {'query': 'team leadership', 'skills': ['Leadership']}})
@@ -171,7 +171,7 @@ class RunTurnTests(TestCase):
         self.assertEqual(list(run_turn(self.ctx, fake_steps(persist=None)))[-1]['type'], 'finish')
         self.assertFalse(ChatTurn.objects.exists())
 
-    def test_shown_and_dismissed_items_excluded_on_next_turn(self):
+    def test_only_dismissed_items_are_excluded_and_new_cards_are_flagged_on_the_next_turn(self):
         list(run_turn(self.ctx, fake_steps()))
         ItemFeedback.objects.create(lms_user_id=7, enterprise_customer_uuid=ENTERPRISE, item_id='edX+C4',
                                     item_type='course', kind=ItemFeedback.KIND_NOT_INTERESTED)
@@ -182,10 +182,24 @@ class RunTurnTests(TestCase):
         store.lock(session)
         ctx = TurnContext(session=session, message='more', intent_model=self.ctx.intent_model,
                           compose_model=self.ctx.compose_model, scope=None, clock=self.clock)
-        list(run_turn(ctx, fake_steps(retrieve=lambda intent, scope, excluded, **kw: seen.append(excluded) or [
-            {'hit': course_hit('edX+C9'), 'card': default_candidates()[0]['card'], 'tier': 1, 'rank': 0}])))
-        self.assertEqual(seen, [['edX+C1', 'edX+C4']])
+        compose = ('Updated.\n@@BLOCKS@@\n'
+                   '{"block":"item_section","item_type":"course","dek":"d","items":['
+                   '{"item_id":"edX+C1","why":"w","fit":[]},{"item_id":"edX+C2","why":"w","fit":[]}]}\n')
+        parts = list(run_turn(ctx, fake_steps(compose_text=compose, retrieve=lambda intent, scope, excluded, **kw: (
+            seen.append(excluded) or default_candidates()))))
+        # Results update in place: edX+C1 (shown on turn 1) may come back; only the dismissed item is excluded.
+        self.assertEqual(seen, [['edX+C4']])
+        section = [p['data'] for p in parts if p['type'] == 'data-block' and p['data']['type'] == 'item_section'][0]
+        self.assertEqual({i['item_id']: i.get('status') for i in section['props']['items']},
+                         {'edX+C1': None, 'edX+C2': 'new'})
         self.assertEqual(ChatTurn.objects.filter(session_id=self.session['uuid']).count(), 2)
+
+    def test_first_turn_cards_carry_no_status(self):
+        parts = list(run_turn(self.ctx, fake_steps()))
+        items = [i for p in parts if p['type'] == 'data-block' and p['data']['type'] == 'item_section'
+                 for i in p['data']['props']['items']]
+        self.assertTrue(items)
+        self.assertTrue(all('status' not in i for i in items))
 
 
 class TurnObservabilityTests(TestCase):
