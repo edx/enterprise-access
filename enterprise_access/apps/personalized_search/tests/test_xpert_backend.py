@@ -112,3 +112,49 @@ class XpertRequestTests(TestCase):
         self.assertFalse(unconfigured.is_configured('xpert'))
         with self.assertRaises(ModelConfigurationError):
             unconfigured.check_model('xpert')
+
+    def _complete(self):
+        return self.registry.complete_json(model='xpert', effort=None, system='S', user='U', max_tokens=10,
+                                           timeout_s=1)
+
+    def _stream(self, usage=None):
+        return self.registry.stream_text(model='xpert', effort=None, system='S', user='U', max_tokens=10,
+                                         timeout_s=1, usage=usage or Usage(model='xpert', effort=None))
+
+    def test_complete_json_http_error_is_a_model_error(self):
+        self.session.post.return_value = fake_response(status=500)
+        with self.assertRaises(ModelError):
+            self._complete()
+
+    def test_complete_json_unparseable_body_is_a_model_error(self):
+        response = fake_response(body=None)
+        response.json.side_effect = ValueError('not json')
+        self.session.post.return_value = response
+        with self.assertRaises(ModelError):
+            self._complete()
+
+    def test_complete_json_without_message_content_is_a_model_error(self):
+        self.session.post.return_value = fake_response(body=[{'role': 'assistant', 'content': None}])
+        with self.assertRaisesRegex(ModelError, 'no message content'):
+            self._complete()
+
+    def test_stream_failure_midway_is_a_model_error_and_closes_the_response(self):
+        def chunks():
+            yield b'[{"role": "assistant", "content": "Hel"}]'
+            raise requests.ConnectionError('reset')
+        response = fake_response()
+        response.iter_content.return_value = chunks()
+        self.session.post.return_value = response
+        stream = self._stream()
+        self.assertEqual(next(stream), 'Hel')
+        with self.assertRaises(ModelError):
+            next(stream)
+        response.close.assert_called_once()
+
+    def test_closing_the_stream_early_closes_the_http_response(self):
+        response = fake_response(chunks=[SAMPLE[:1000], SAMPLE[1000:]])
+        self.session.post.return_value = response
+        stream = self._stream()
+        next(stream)
+        stream.close()
+        response.close.assert_called_once()
