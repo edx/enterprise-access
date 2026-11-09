@@ -10,6 +10,7 @@ from enterprise_access.apps.bffs.api import get_and_cache_secured_algolia_search
 from enterprise_access.apps.personalized_search.adapters.algolia import AlgoliaCatalog, secured_key_from_payload
 from enterprise_access.apps.personalized_search.adapters.django_store import DjangoSessionStore
 from enterprise_access.apps.personalized_search.adapters.openai_backend import OpenAIBackend
+from enterprise_access.apps.personalized_search.adapters.segment_sink import segment_emit
 from enterprise_access.apps.personalized_search.adapters.xpert_backend import XpertBackend
 from enterprise_access.apps.personalized_search.core import constants, retrieval
 from enterprise_access.apps.personalized_search.core.errors import ModelConfigurationError
@@ -61,7 +62,8 @@ def steps(*, registry: ModelRegistry | None = None, catalog=None, store=None, pe
     def retrieve(merged, scope, excluded, timeout_s=constants.RETRIEVAL_TIMEOUT_S):
         return retrieval.search(merged, scope, excluded, catalog=catalog, timeout_s=timeout_s)
 
-    return Steps(intent=intent, retrieve=retrieve, compose=compose, persist=store.persist_turn if persist else None)
+    return Steps(intent=intent, retrieve=retrieve, compose=compose, persist=store.persist_turn if persist else None,
+                 emit=segment_emit if persist else None)
 
 
 def _step_timeout(registry: ModelRegistry, model: str, default_s: float) -> float:
@@ -80,6 +82,8 @@ def turn_context(*, session: dict, message: str, intent_model: ModelChoice, comp
     return TurnContext(
         session=session, message=message, intent_model=intent_model, compose_model=compose_model, scope=scope,
         debug=debug, platform=registry.platform_of,
+        analytics={'cohort': settings.PERSONALIZED_SEARCH_ANALYTICS_COHORT,
+                   'engine': settings.PERSONALIZED_SEARCH_ENGINE_LABEL},
         intent_timeout_s=_step_timeout(registry, intent_model.model, settings.PERSONALIZED_SEARCH_INTENT_TIMEOUT_S),
         compose_timeout_s=_step_timeout(registry, compose_model.model,
                                         settings.PERSONALIZED_SEARCH_COMPOSE_READ_TIMEOUT_S),
