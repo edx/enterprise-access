@@ -119,10 +119,12 @@ class Budget:
 
     max_calls: int | None
     used: int = 0
+    exhausted: bool = False  # run_turn swallows the exception below, so the run checks this flag instead
 
     def spend(self) -> None:
         """Count one paid call, or raise if it would exceed the cap."""
         if self.max_calls is not None and self.used >= self.max_calls:
+            self.exhausted = True
             raise BudgetExhausted()
         self.used += 1
 
@@ -230,9 +232,8 @@ def run(*, cases: list[Case], arms: list[Arm], scope, steps: Steps, complete_jso
                 ctx = turn_context(session=_seeded_session(case), message=case.message, intent_model=arm.intent,
                                    compose_model=arm.compose, scope=scope, debug=True)
                 started = time.monotonic()
-                try:
-                    parts = list(run_turn(ctx, _wrap_steps(steps, budget, recorder, retrieval_cache)))
-                except BudgetExhausted:
+                parts = list(run_turn(ctx, _wrap_steps(steps, budget, recorder, retrieval_cache)))
+                if budget.exhausted:  # run_turn turned the refused call into an error turn: drop it and stop
                     log(f'Stopped: max_calls={max_calls} reached after {budget.used} calls.')
                     return
                 turn = _summarize_turn(parts)

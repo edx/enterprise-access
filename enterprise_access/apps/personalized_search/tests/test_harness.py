@@ -88,6 +88,14 @@ class HarnessRunTests(TestCase):
         records = list(run(cases=[CASE, CASE], arms=ARMS, scope=None, steps=fake_steps(), max_calls=3))
         self.assertEqual(len(records), 1)  # intent+compose, then the next turn's intent fits, its compose doesn't
 
+    def test_budget_stop_is_logged_once_and_ends_the_run(self):
+        messages = []
+        records = list(run(cases=[CASE] * 3, arms=ARMS, scope=None, steps=fake_steps(), max_calls=3,
+                           log=messages.append))
+        self.assertEqual([m for m in messages if m.startswith('Stopped')],
+                         ['Stopped: max_calls=3 reached after 3 calls.'])
+        self.assertTrue(all(r['status'] == 'done' for r in records))  # no error turn from the refused call
+
     def test_judge(self):
         def fake_judge(**kwargs):
             self.assertEqual(kwargs['model'], harness.JUDGE_MODEL)
