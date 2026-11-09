@@ -26,3 +26,4 @@ Each entry is optional for consumers; older clients ignore it.
 | Date | Change |
 | --- | --- |
 | 2026-11-09 | `item_card.facts.hours_per_week_min` / `hours_per_week_max` (integers; courses and Executive Education) |
+| 2026-11-09 | New block type `profile` (`summary`, `chips[]`), emitted once per turn before the other blocks |
