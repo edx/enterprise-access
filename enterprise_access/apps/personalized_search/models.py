@@ -80,6 +80,8 @@ class ChatTurn(TimeStampedModel):
     follow_up_attribute = models.CharField(max_length=32, blank=True)
     backend = models.CharField(max_length=16, blank=True)
     timing = models.JSONField(null=True, blank=True)
+    # The learner's thumbs on this reply: 1 (up), -1 (down) or null. Holds no learner text.
+    rating = models.SmallIntegerField(null=True, blank=True)
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=['session', 'sequence'], name='ps_turn_session_sequence')]
