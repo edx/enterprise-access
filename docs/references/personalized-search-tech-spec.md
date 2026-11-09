@@ -357,7 +357,7 @@ Drawn with the KD-10 boundaries, so which dependencies stay out of the core is v
 … (at most one item_section per item_type)
 {"block":"followup","question":"…","ideas":["…"],"session_title":"…"}
 {"block":"insight","title":"…","body":"…"}                 (optional)
-{"block":"plan","steps":[{"item_id":"<id on page>","note":"…"}]}   (optional; only when ≥ 3 items are on the page)
+{"block":"plan","why":"…","steps":[{"item_id":"<id on page>","note":"…"}]}   (optional; only when ≥ 3 items are on the page)
 ```
 
 - Text before `@@BLOCKS@@` is streamed as `text-delta`. After the marker, each newline-terminated line is parsed on its own. Lines that are invalid JSON or invalid against the schema are **dropped and logged, never repaired**. Blank lines are skipped silently (OpenAI puts one between blocks; spike 2).
@@ -368,7 +368,7 @@ Drawn with the KD-10 boundaries, so which dependencies stay out of the core is v
   - `why` ≤ 400 (one or two sentences to "you"); `fit` ≤ 3 tags of ≤ 24
   - `question` ≤ 200 (REQ-006). The chips come in two kinds. `suggestions` are always the chosen attribute's fixed chips, which narrow the results. `ideas` are up to 3 model-written chips (≤ 48 each) specific to the conversation, without repeats of the fixed chips. When the attribute is `open` (nothing left to narrow), the ideas replace the fixed opening chips; the opening chips return only when the model wrote no ideas
   - `session_title` ≤ 60
-  - `insight.title` ≤ 60, `body` ≤ 600; `plan.steps` 2–4, `note` ≤ 80
+  - `insight.title` ≤ 60, `body` ≤ 600; `plan.steps` 2–4, `note` ≤ 80, optional `why` ≤ 160 (why this order: the best fit for the goal first, then each step building on the last, foundations before advanced and shorter before longer)
 - Prompt content: the merged intent; the follow-up attribute from step 3 and the attributes already asked; the ≤ 20 candidates as `{item_id, item_type, title, partner, level, pacing, weeks, short_description (HTML stripped; programs use subtitle) ≤ 300 chars, skills ≤ 6}`; and the last 4 turns. It follows the prototype's editorial rules (from the prototype): stay on topic, no hype, never pad, choose only from the candidates.
 - **Estimated output: about 600–750 tokens** for a full turn. The Phase 0 spike measures real throughput (KD-9).
 
@@ -432,7 +432,7 @@ All blocks are `{v: 1, type, props}`. The frontend renders only `v === 1` and th
 | `page_header` | `title` (≤ 80 chars), `dek` (≤ 400 chars), `label` (server-set: "Your learning page") | `Container` + heading + lead paragraph |
 | `insight` | `title` (≤ 60), `body` (≤ 600) | `Alert` (variant `info`, no dismiss) |
 | `item_section` | `item_type` (`course\|executive_education\|program`); `label` (server-set with the actual count, e.g. "Courses · 3 picks", per R-18); `dek` (≤ 200); `fallback` (bool); `items: ItemCard[1..3]`. At most one section per `item_type` per turn | section heading + `CardGrid` of `EditorialItemCard` |
-| `plan` | `steps: [{item_id, note ≤ 80}]` (2–4). Emitted only when ≥ 3 items are on the page | "A suggested order" `ol` beside the header |
+| `plan` | `steps: [{item_id, note ≤ 80}]` (2–4), optional `why` (≤ 160). Emitted only when ≥ 3 items are on the page | "A suggested order" `ol`, with an info button explaining how the steps were picked and why in this order |
 
 `ItemCard` is **server-hydrated from the Algolia hit**. The LLM supplies only `item_id`, `why` and `fit`.
 
@@ -902,5 +902,6 @@ The full changelog is maintained with the team. Highlights:
 | 2026-11-04 | KD-8 amended (two dedicated flags); KD-10 added (portability: ports and adapters, JSON Schemas); timeouts restored as settings; stream header sent; C4 L3 diagrams; OQ-10 opened, OQ-11 closed |
 | 2026-11-09 | Review decisions recorded (timeouts, prompts, optional Xpert adapter, PII retirement) |
 | 2026-11-09 | KD-11 (results pane as a decision guide; results update in place, REQ-007 amended; REQ-016) and KD-12 (telemetry; REQ-017) from the design and analytics reviews |
+| 2026-11-09 | `plan.why`: why the suggested order |
 | 2026-11-09 | `profile` built after the results from the preferences they reflect |
 | 2026-11-09 | Follow-up chips: fixed narrowing chips plus up to 3 model-written ideas, which replace the opening chips when nothing is left to narrow |
