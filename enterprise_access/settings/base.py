@@ -609,6 +609,8 @@ PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED = False
 PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE = None
 # Tags on every Personalized Search usage event (tech spec KD-12): the release cohort and the engine.
 PERSONALIZED_SEARCH_ANALYTICS_COHORT = 'internal_pilot'
+# Exact-match model response cache (tech spec KD-13), per enterprise; 0 turns it off.
+PERSONALIZED_SEARCH_RESPONSE_CACHE_SECONDS = 6 * 60 * 60
 # Portal locale -> Algolia `language` facet name for Personalized Search content, as Learner Pathways'
 # SUPPORTED_ALGOLIA_LANGUAGE_FILTERS. The catalog has `metadata_language` records for these; others use English.
 PERSONALIZED_SEARCH_CONTENT_LANGUAGES = {'en': 'English', 'es': 'Spanish'}
