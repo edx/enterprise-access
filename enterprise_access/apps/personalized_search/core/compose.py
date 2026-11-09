@@ -112,6 +112,7 @@ class ComposeParser:
         self.profile_emitted = False
         self.totals = totals or {}     # catalog matches per item type, for "See all (n)"
         self.seen = set(seen_ids or [])  # items shown in earlier turns; the rest are flagged new
+        self.placements: list[dict] = []  # every card shown, in order, with where it sits (for usage events)
         self.top_pick_id: str | None = None
         self.compare_emitted = False
         self.caveat_emitted = False
@@ -195,6 +196,11 @@ class ComposeParser:
             out['status'] = 'new'
         return out
 
+    def _place(self, cards: list[dict], section: str) -> None:
+        """Record where accepted cards sit, in order, for the turn's usage event."""
+        self.placements += [{'item_id': c['item_id'], 'item_type': c['item_type'], 'section': section,
+                             'status': c.get('status')} for c in cards]
+
     def _drop(self, reason: str = 'invalid') -> list[dict]:
         self.dropped_lines += 1
         self.dropped.append(reason)
@@ -251,7 +257,9 @@ class ComposeParser:
         self.top_pick_id = card['item_id']
         self.emitted_ids.append(card['item_id'])
         checks = _strings(obj.get('checks'), constants.CAPS['check'], constants.CAPS['check_count'])
-        return [self._block('top_pick', {'item': self._card(card, why=reason), 'reason': reason, 'checks': checks})]
+        item = self._card(card, why=reason)
+        self._place([item], 'top_pick')
+        return [self._block('top_pick', {'item': item, 'reason': reason, 'checks': checks})]
 
     def _compare(self, obj: dict) -> list[dict]:
         """2-3 options with what each is best for; once per turn. The top pick may appear again here."""
@@ -275,6 +283,7 @@ class ComposeParser:
         if len(options) < 2:
             return self._drop('compare_too_few_options')
         self.compare_emitted = True
+        self._place([o['item'] for o in options], 'compare')
         self.emitted_ids += [i for i in ids if i not in self.emitted_ids]
         return [self._block('compare', {'options': options})]
 
@@ -304,6 +313,7 @@ class ComposeParser:
         self.section_types.add(item_type)
         self.emitted_ids += [i['item_id'] for i in items]
         self.first_section_emitted = True
+        self._place(items, item_type)
         return [self._block('item_section', self._section_extras(item_type, {
             'item_type': item_type, 'label': section_label(item_type, len(items)),
             'dek': _text(obj.get('dek'), constants.CAPS['section_dek']), 'fallback': False, 'items': items,
@@ -397,6 +407,7 @@ class ComposeParser:
         self.emitted_ids += [i['item_id'] for i in items]
         self.first_section_emitted = True
         self.used_fallback = True
+        self._place(items, item_type)
         return [self._block('item_section', self._section_extras(item_type, {
             'item_type': item_type, 'label': section_label(item_type, len(items)), 'dek': '',
             'fallback': True, 'items': items,

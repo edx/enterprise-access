@@ -19,6 +19,7 @@ from typing import Callable, Iterator
 
 from enterprise_access.apps.personalized_search.core import constants
 from enterprise_access.apps.personalized_search.core import intent as intent_step
+from enterprise_access.apps.personalized_search.core import telemetry
 from enterprise_access.apps.personalized_search.core.compose import SYSTEM_PROMPT as COMPOSE_SYSTEM
 from enterprise_access.apps.personalized_search.core.compose import ComposeParser
 from enterprise_access.apps.personalized_search.core.compose import build_user_content as compose_user
@@ -66,6 +67,8 @@ class TurnContext:
     clock: Callable[[], float] = time.monotonic
     id_factory: Callable[[], str] = lambda: str(uuid.uuid4())
     t0: float = field(default=0.0)
+    # Event tags from the host (KD-12): ``cohort`` and ``engine``.
+    analytics: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -80,6 +83,8 @@ class Steps:
     compose: Callable[..., Iterator[str]]
     # (session, turn) -> None: write a finished turn (``SessionStore.persist_turn``). None: don't persist.
     persist: Callable[[dict, dict], None] | None = None
+    # (lms_user_id, event, properties) -> None: send a usage event (KD-12). None: send nothing.
+    emit: Callable[[object, str, dict], None] | None = None
 
 
 def _ms(ctx: TurnContext, at: float | None) -> int | None:
@@ -157,6 +162,18 @@ def run_turn(ctx: TurnContext, steps: Steps) -> Iterator[dict]:
         record['total_ms'] = _ms(ctx, ctx.clock())
         logged = {key: record[key] for key in TURN_LOG_FIELDS if key in record}
         logger.info('%s %s', TURN_LOG_EVENT, json.dumps(logged, sort_keys=True))
+        _send_event(ctx, steps, record)
+
+
+def _send_event(ctx: TurnContext, steps: Steps, record: dict) -> None:
+    """Send the turn's usage event. Never blocks the turn's outcome or raises (KD-12)."""
+    if not steps.emit:
+        return
+    try:
+        name, properties = telemetry.turn_event(ctx, record)
+        steps.emit(ctx.session.get('lms_user_id'), name, properties)
+    except Exception:  # pylint: disable=broad-exception-caught
+        logger.exception('Personalized Search could not send the usage event for turn %s.', record['sequence'])
 
 
 def _turn_parts(ctx: TurnContext, steps: Steps, record: dict) -> Iterator[dict]:
@@ -184,6 +201,7 @@ def _turn_parts(ctx: TurnContext, steps: Steps, record: dict) -> Iterator[dict]:
                                  cost_usd=round(sum(costs), 6) if costs else None)
         return {'type': 'data-timing', 'id': 'timing', 'transient': True, 'data': data}
 
+    record.update(stage='intent', usages=usages, excluded_ids=_excluded_ids(session))
     record['turn_uuid'] = ctx.id_factory()
     yield {'type': 'start', 'messageId': f"turn_{record['turn_uuid']}"}
     yield _session_part(session, sequence)
@@ -234,6 +252,7 @@ def _turn_parts(ctx: TurnContext, steps: Steps, record: dict) -> Iterator[dict]:
 
     merged = intent_step.merge(session['merged_intent'], result['intent'], result['merge'], message=ctx.message)
     debug['merged_intent'] = merged
+    record.update(merged_intent=merged, merge_mode=result['merge'], stage='search')
 
     # Steps 2-3: retrieval, prefilter, follow-up attribute
     yield {'type': 'data-status', 'data': {'step': 'searching'}, 'transient': True}
@@ -250,12 +269,14 @@ def _turn_parts(ctx: TurnContext, steps: Steps, record: dict) -> Iterator[dict]:
     record['candidate_ids'] = [c['card']['item_id'] for c in candidates]
     attribute = choose_followup_attribute(candidates, merged, session['asked_attributes'])
     debug.update(candidates=len(candidates), followup_attribute=attribute)
+    record.update(followup_attribute=attribute, stage='compose')
 
     # Step 4: compose
     yield {'type': 'data-status', 'data': {'step': 'writing'}, 'transient': True}
     parser = ComposeParser(candidates=candidates, shown_ids=_excluded_ids(session), followup_attribute=attribute,
                            profile=profile_props(merged), totals=totals, seen_ids=session['shown_item_ids'])
     record['item_ids'] = parser.emitted_ids  # the parser's own list, so an aborted turn logs what it showed
+    record.update(placements=parser.placements, dropped=parser.dropped)
     usages['compose'] = Usage(model=ctx.compose_model.model, effort=ctx.compose_model.effort)
     stream = steps.compose(
         system=COMPOSE_SYSTEM,
