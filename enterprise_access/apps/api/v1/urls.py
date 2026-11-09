@@ -63,6 +63,8 @@ urlpatterns = [
          name='personalized-search-sessions'),
     path('personalized-search/sessions/<uuid:session_uuid>/', views.PersonalizedSearchSessionDetailView.as_view(),
          name='personalized-search-session'),
+    path('personalized-search/sessions/<uuid:session_uuid>/turns/<int:sequence>/feedback/',
+         views.PersonalizedSearchTurnFeedbackView.as_view(), name='personalized-search-turn-feedback'),
     path('personalized-search/item-feedback/', views.PersonalizedSearchItemFeedbackView.as_view(),
          name='personalized-search-item-feedback'),
     path(

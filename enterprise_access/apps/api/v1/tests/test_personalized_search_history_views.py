@@ -187,3 +187,53 @@ class ItemFeedbackAccessTests(APITest):
     @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=False)
     def test_flag_off_is_404(self):
         self.assertEqual(self.client.get(f'{self.url}?enterprise_customer_uuid={ENTERPRISE}').status_code, 404)
+
+
+@override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
+class TurnFeedbackTests(APITest):
+    """POST sessions/{uuid}/turns/{sequence}/feedback/: thumbs on the learner's own replies."""
+
+    def setUp(self):
+        super().setUp()
+        self.set_jwt_cookie([{'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE, 'context': ENTERPRISE}])
+        self.session = ChatSession.objects.create(lms_user_id=self.user.lms_user_id,
+                                                  enterprise_customer_uuid=ENTERPRISE, first_prompt='Lead a team',
+                                                  turn_count=1)
+        ChatTurn.objects.create(session=self.session, sequence=1, user_message='m1', parts=[])
+
+    def url(self, session=None, sequence=1):
+        return reverse('api:v1:personalized-search-turn-feedback',
+                       kwargs={'session_uuid': session or self.session.uuid, 'sequence': sequence})
+
+    def post(self, rating, **kwargs):
+        return self.client.post(self.url(**kwargs), {'enterprise_customer_uuid': ENTERPRISE, 'rating': rating},
+                                format='json')
+
+    def test_rate_then_clear_and_replay_shows_it(self):
+        response = self.post(1)
+        self.assertEqual((response.status_code, response.json()), (200, {'sequence': 1, 'rating': 1}))
+        detail_url = reverse('api:v1:personalized-search-session', kwargs={'session_uuid': self.session.uuid})
+        detail = self.client.get(detail_url, {'enterprise_customer_uuid': ENTERPRISE}).json()
+        self.assertEqual(detail['turns'][0]['rating'], 1)
+        self.assertEqual(self.post(None).json()['rating'], None)
+        self.assertIsNone(ChatTurn.objects.get(session=self.session).rating)
+
+    def test_invalid_rating_is_400(self):
+        self.assertEqual(self.post(5).status_code, 400)
+
+    def test_someone_elses_or_a_missing_turn_is_404(self):
+        other = ChatSession.objects.create(lms_user_id=self.user.lms_user_id + 1000,
+                                           enterprise_customer_uuid=ENTERPRISE, first_prompt='x', turn_count=1)
+        ChatTurn.objects.create(session=other, sequence=1, user_message='m', parts=[])
+        self.assertEqual(self.post(1, session=other.uuid).status_code, 404)
+        self.assertEqual(self.post(1, sequence=9).status_code, 404)
+        self.assertIsNone(ChatTurn.objects.get(session=other).rating)
+
+    def test_other_enterprise_is_403(self):
+        response = self.client.post(self.url(), {'enterprise_customer_uuid': OTHER_ENTERPRISE, 'rating': 1},
+                                    format='json')
+        self.assertEqual(response.status_code, 403)
+
+    def test_flag_off_is_404(self):
+        with override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=False):
+            self.assertEqual(self.post(1).status_code, 404)
