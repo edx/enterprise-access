@@ -23,7 +23,7 @@ from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
-from enterprise_access.apps.api.utils import get_or_fetch_enterprise_uuid_for_bff_request
+from enterprise_access.apps.api.utils import get_enterprise_uuid_from_request_data
 from enterprise_access.apps.core.constants import PERSONALIZED_SEARCH_LEARNER_PERMISSION
 from enterprise_access.apps.personalized_search import wiring
 from enterprise_access.apps.personalized_search.core import constants
@@ -59,6 +59,14 @@ class TurnRequestSerializer(serializers.Serializer):  # pylint: disable=abstract
     session_uuid = serializers.UUIDField(required=False, allow_null=True)
     message = serializers.CharField(max_length=constants.MAX_MESSAGE_CHARS, trim_whitespace=True)
     debug = DebugOverridesSerializer(required=False, allow_null=True)
+
+
+def body_enterprise_uuid(request, *args, **kwargs):  # pylint: disable=unused-argument
+    """
+    The enterprise the permission is checked against: the request body's, the same one the turn runs under.
+    (Reading the query string first would let the two disagree.)
+    """
+    return get_enterprise_uuid_from_request_data(request)
 
 
 def _error(code: str, http_status: int, detail: str = '') -> JsonResponse:
@@ -101,7 +109,7 @@ class PersonalizedSearchTurnView(APIView):
     throttle_scope = 'personalized_search_turn'
     renderer_classes = (JSONRenderer, EventStreamRenderer)
 
-    @permission_required(PERSONALIZED_SEARCH_LEARNER_PERMISSION, fn=get_or_fetch_enterprise_uuid_for_bff_request)
+    @permission_required(PERSONALIZED_SEARCH_LEARNER_PERMISSION, fn=body_enterprise_uuid)
     def post(self, request):
         """Validate, lock the session, then stream the turn (or return it buffered)."""
         started = time.monotonic()
@@ -124,11 +132,14 @@ class PersonalizedSearchTurnView(APIView):
             logger.exception('Personalized Search could not scope the catalog for %s.', enterprise_customer_uuid)
             return _error('catalog_unavailable', status.HTTP_503_SERVICE_UNAVAILABLE)
 
+        lms_user_id = getattr(request.user, 'lms_user_id', None)
+        if not lms_user_id:  # sessions are owned by the LMS user id; the Django pk is a different id space
+            return _error('forbidden', status.HTTP_403_FORBIDDEN)
         store = wiring.session_store()
         session_uuid = str(data['session_uuid']) if data.get('session_uuid') else None
         try:
             session = store.load_or_create(
-                session_uuid=session_uuid, lms_user_id=getattr(request.user, 'lms_user_id', None) or request.user.id,
+                session_uuid=session_uuid, lms_user_id=lms_user_id,
                 enterprise_customer_uuid=enterprise_customer_uuid, message=data['message'],
             )
             store.lock(session)
@@ -137,14 +148,18 @@ class PersonalizedSearchTurnView(APIView):
         except TurnInProgress:
             return _error('turn_in_progress', status.HTTP_409_CONFLICT)
 
-        ctx = wiring.turn_context(session=session, message=data['message'], intent_model=intent_choice,
-                                  compose_model=compose_choice, scope=scope,
-                                  debug=wiring.debug_overrides_enabled(), registry=registry)
-        _record_pre_stream(ctx, enterprise_customer_uuid, started)
-        parts = run_turn(ctx, wiring.steps(registry=registry, store=store))
-
         def release():
             store.unlock(session['uuid'])
+
+        try:
+            ctx = wiring.turn_context(session=session, message=data['message'], intent_model=intent_choice,
+                                      compose_model=compose_choice, scope=scope,
+                                      debug=wiring.debug_overrides_enabled(), registry=registry)
+            _record_pre_stream(ctx, enterprise_customer_uuid, started)
+            parts = run_turn(ctx, wiring.steps(registry=registry, store=store))
+        except Exception:  # pylint: disable=broad-exception-caught
+            release()  # don't leave the session locked for the lock window
+            raise
 
         if request.query_params.get('mode') == 'buffered':
             try:
