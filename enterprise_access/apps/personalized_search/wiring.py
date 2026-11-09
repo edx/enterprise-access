@@ -90,7 +90,20 @@ def turn_context(*, session: dict, message: str, intent_model: ModelChoice, comp
     )
 
 
-def dev_catalog_scope() -> CatalogScope | None:
+def content_language(locale: str | None) -> tuple[str, str]:
+    """
+    ``(locale, Algolia language name)`` for the learner's portal locale, as Learner Pathways resolves it:
+    the base language (``es-419`` -> ``es``) when ``PERSONALIZED_SEARCH_CONTENT_LANGUAGES`` supports it,
+    otherwise English.
+    """
+    supported = getattr(settings, 'PERSONALIZED_SEARCH_CONTENT_LANGUAGES', None) or {'en': 'English'}
+    base = (locale or '').split('-')[0].split('_')[0].lower()
+    if base in supported:
+        return base, supported[base]
+    return 'en', supported.get('en', 'English')
+
+
+def dev_catalog_scope(locale: str | None = None) -> CatalogScope | None:
     """
     Dev only: the plain key plus an explicit catalog filter (``PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE``).
     The Algolia client still refuses it unless ``ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH`` is on.
@@ -98,18 +111,22 @@ def dev_catalog_scope() -> CatalogScope | None:
     dev_scope = getattr(settings, 'PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE', None)
     if not dev_scope:
         return None
-    return CatalogScope(filter=dev_scope['filter'], allow_unscoped=True, label=dev_scope.get('label'))
+    code, name = content_language(locale)
+    return CatalogScope(filter=dev_scope['filter'], allow_unscoped=True, label=dev_scope.get('label'),
+                        locale=code, language_name=name)
 
 
-def catalog_scope(request, enterprise_customer_uuid: str) -> CatalogScope:
-    """The learner's secured key and enterprise filter, or the dev catalog scope when configured."""
-    dev_scope = dev_catalog_scope()
+def catalog_scope(request, enterprise_customer_uuid: str, locale: str | None = None) -> CatalogScope:
+    """The learner's secured key and enterprise filter (or the dev scope), in the learner's content language."""
+    dev_scope = dev_catalog_scope(locale)
     if dev_scope:
         return dev_scope
     payload = get_and_cache_secured_algolia_search_keys(request, enterprise_customer_uuid)
+    code, name = content_language(locale)
     return CatalogScope(
         filter=f'enterprise_customer_uuids:"{enterprise_customer_uuid}"',
         secured_key=secured_key_from_payload(payload),
+        locale=code, language_name=name,
     )
 
 
