@@ -10,7 +10,6 @@ from enterprise_access.apps.bffs.api import get_and_cache_secured_algolia_search
 from enterprise_access.apps.personalized_search.adapters.algolia import AlgoliaCatalog, secured_key_from_payload
 from enterprise_access.apps.personalized_search.adapters.django_store import DjangoSessionStore
 from enterprise_access.apps.personalized_search.adapters.openai_backend import OpenAIBackend
-from enterprise_access.apps.personalized_search.adapters.response_cache import ResponseCache
 from enterprise_access.apps.personalized_search.adapters.segment_sink import segment_emit
 from enterprise_access.apps.personalized_search.adapters.xpert_backend import XpertBackend
 from enterprise_access.apps.personalized_search.core import constants, retrieval
@@ -46,18 +45,8 @@ def default_models() -> tuple[ModelChoice, ModelChoice]:
             ModelChoice(settings.PERSONALIZED_SEARCH_COMPOSE_MODEL, settings.PERSONALIZED_SEARCH_COMPOSE_EFFORT))
 
 
-def response_cache(scope: str | None) -> ResponseCache | None:
-    """The model response cache for one enterprise, or None when unscoped or turned off (0 seconds)."""
-    seconds = int(getattr(settings, 'PERSONALIZED_SEARCH_RESPONSE_CACHE_SECONDS', 0) or 0)
-    return ResponseCache(scope=scope, seconds=seconds) if scope and seconds > 0 else None
-
-
-def steps(*, registry: ModelRegistry | None = None, catalog=None, store=None, persist: bool = True,
-          cache_scope: str | None = None) -> Steps:
-    """
-    Model calls through the registry, catalog reads through Algolia, persistence through the store.
-    ``cache_scope`` (the enterprise) turns on the exact-match model response cache for those calls.
-    """
+def steps(*, registry: ModelRegistry | None = None, catalog=None, store=None, persist: bool = True) -> Steps:
+    """Model calls through the registry, catalog reads through Algolia, persistence through the store."""
     registry = registry or model_registry()
     catalog = catalog or AlgoliaCatalog()
     store = store or session_store()
@@ -69,10 +58,6 @@ def steps(*, registry: ModelRegistry | None = None, catalog=None, store=None, pe
     def compose(*, system, user, model, effort, timeout_s, usage):
         return registry.stream_text(model=model, effort=effort, system=system, user=user,
                                     max_tokens=constants.COMPOSE_MAX_TOKENS, timeout_s=timeout_s, usage=usage)
-
-    cache = response_cache(cache_scope)
-    if cache:
-        intent, compose = cache.intent(intent), cache.compose(compose)
 
     def retrieve(merged, scope, excluded, timeout_s=constants.RETRIEVAL_TIMEOUT_S):
         return retrieval.search(merged, scope, excluded, catalog=catalog, timeout_s=timeout_s)
