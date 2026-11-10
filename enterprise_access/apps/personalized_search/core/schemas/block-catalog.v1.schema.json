@@ -5,12 +5,13 @@
   "description": "The data of a data-block stream part: one learning-page block. Item cards are hydrated by the server from catalog hits; the model only chooses ids and writes why/fit.",
   "type": "object",
   "required": ["v", "type", "props"],
-  "properties": {"v": {"const": 1}, "type": {"enum": ["page_header", "item_section", "insight", "plan"]}},
+  "properties": {"v": {"const": 1}, "type": {"enum": ["page_header", "item_section", "insight", "plan", "profile"]}},
   "oneOf": [
     {"properties": {"type": {"const": "page_header"}, "props": {"$ref": "#/$defs/page_header"}}},
     {"properties": {"type": {"const": "item_section"}, "props": {"$ref": "#/$defs/item_section"}}},
     {"properties": {"type": {"const": "insight"}, "props": {"$ref": "#/$defs/insight"}}},
-    {"properties": {"type": {"const": "plan"}, "props": {"$ref": "#/$defs/plan"}}}
+    {"properties": {"type": {"const": "plan"}, "props": {"$ref": "#/$defs/plan"}}},
+    {"properties": {"type": {"const": "profile"}, "props": {"$ref": "#/$defs/profile"}}}
   ],
   "$defs": {
     "item_type": {"enum": ["course", "executive_education", "program"]},
@@ -55,6 +56,12 @@
       "properties": {"steps": {"type": "array", "minItems": 2, "maxItems": 4, "items": {
         "type": "object", "additionalProperties": false, "required": ["item_id", "note"],
         "properties": {"item_id": {"type": "string"}, "note": {"type": "string", "maxLength": 80}}}}}
+    },
+    "profile": {
+      "description": "What the AI knows about the learner, from the merged intent (no model call). Added in v1, 2026-11-09.",
+      "type": "object", "additionalProperties": false, "required": ["summary", "chips"],
+      "properties": {"summary": {"type": "string", "minLength": 1, "maxLength": 200},
+                     "chips": {"type": "array", "minItems": 1, "maxItems": 6, "items": {"type": "string", "minLength": 1, "maxLength": 40}}}
     }
   }
 }

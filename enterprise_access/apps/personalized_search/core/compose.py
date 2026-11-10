@@ -80,7 +80,7 @@ class ComposeParser:
     """
 
     def __init__(self, *, candidates: list[dict], shown_ids: list[str], followup_attribute: str,
-                 id_prefix: str = 'blk'):
+                 id_prefix: str = 'blk', profile: dict | None = None):
         self.cards = {c['card']['item_id']: c['card'] for c in candidates}
         self.candidates = candidates
         self.shown = set(shown_ids)
@@ -101,6 +101,8 @@ class ComposeParser:
         self.text_started = False
         self.first_section_emitted = False
         self.used_fallback = False
+        self.profile = profile          # the profile block's props, emitted once before the other blocks
+        self.profile_emitted = False
 
     # -- text before the marker --------------------------------------------------------------
     def _text_parts(self, text: str) -> list[dict]:
@@ -127,6 +129,7 @@ class ComposeParser:
                 self._after_marker = True
                 if self.text_started:
                     parts.append({'type': 'text-end', 'id': 'reply'})
+                parts += self._profile()
                 delta = after
             else:
                 keep = len(MARKER) + 2  # the marker plus the line break before it
@@ -149,6 +152,7 @@ class ComposeParser:
         elif self._line.strip():
             parts += self._handle_line(self._line)
         self._line = ''
+        parts += self._profile()
         if not self.first_section_emitted and self.candidates:
             parts += self._fallback_section()
         if not self.followups_emitted:
@@ -163,6 +167,13 @@ class ComposeParser:
 
     def _block(self, block_type: str, props: dict) -> dict:
         return {'type': 'data-block', 'id': self._next_id(), 'data': {'v': 1, 'type': block_type, 'props': props}}
+
+    def _profile(self) -> list[dict]:
+        """The profile block, once per turn and only when there are results to explain."""
+        if self.profile_emitted or not self.profile or not self.candidates:
+            return []
+        self.profile_emitted = True
+        return [self._block('profile', self.profile)]
 
     def _drop(self, reason: str = 'invalid') -> list[dict]:
         self.dropped_lines += 1
