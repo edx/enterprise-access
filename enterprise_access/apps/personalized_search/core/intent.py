@@ -42,8 +42,9 @@ JOURNEY_PATTERN = re.compile(
 QUICK_PATTERN = re.compile(
     r"\b(?:something|anything)\s+(?:short|quick|brief)(?:er|est)?\b(?!-)"
     r"|(?<!\bin )(?<!\btoo )\b(?:short|quick|brief)(?:er|est)?\b"
-    r"(?=\s+(?:courses?|programs?|ones?|options?|things?|class(?:es)?|lessons?|modules?|and|or|please)\b"
-    r"|\s*(?:[.,!?;:)]|$))",
+    r"(?=\s+(?:courses?|programs?|ones?|options?|things?|class(?:es)?|lessons?|modules?|and|or|please)\b)"
+    # Before punctuation or the end only "short"/"quick": "a legal brief." is a noun.
+    r"|(?<!\bin )(?<!\btoo )\b(?:short|quick)(?:er|est)?\b(?=\s*(?:[.,!?;:)]|$))",
     re.IGNORECASE,
 )
 QUICK_MAX_WEEKS = 4
@@ -51,7 +52,8 @@ QUICK_MAX_WEEKS = 4
 
 def _negated(words: str) -> re.Pattern:
     """``words`` within three words after a negation ("I don't need a certificate", "nothing too short")."""
-    return re.compile(rf"\b(?:no|not|nothing|never|without|don't|dont|doesn't|isn't)\b\W+(?:\w+\W+){{0,3}}?(?:{words})",
+    return re.compile(rf"\b(?:no|not|nothing|never|without|don['’]?t|doesn['’]t|isn['’]t)\b"
+                      rf"\W+(?:\w+\W+){{0,3}}?(?:{words})",
                       re.IGNORECASE)
 
 
