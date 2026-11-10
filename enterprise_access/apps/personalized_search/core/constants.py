@@ -45,6 +45,25 @@ FOLLOWUP_TEMPLATES = {
              ['Courses', 'Executive education', 'Programs']),
     'open': ('What else would you like to learn?', OPENING_CHIPS),
 }
+# What makes an idea cover a fixed chip (lowercase phrases; a match drops the fixed chip). Kept narrow, so an
+# idea about a topic ("deeper fermentation") doesn't stand in for a choice it doesn't make.
+FIXED_CHIP_MATCHES = {
+    'Introductory': ('introductory', 'beginner', 'basics', 'from scratch', 'new to'),
+    'Intermediate': ('intermediate',),
+    'Advanced': ('advanced', 'expert'),
+    'Under 4 weeks': ('under 4 weeks', 'quick', 'short', 'fastest'),
+    '1 to 3 months': ('month',),
+    'Longer is fine': ('longer', 'in-depth', 'in depth'),
+    'Self-paced': ('self-paced', 'self paced', 'own pace'),
+    'Instructor-led': ('instructor', 'live', 'cohort', 'scheduled'),
+    'Either works': ('either',),
+    # Only phrases that choose the type: "the shortest course" is about length, not courses over programs.
+    'Courses': ('individual course', 'single course', 'standalone course', 'just courses', 'only courses',
+                'courses only', 'courses instead'),
+    'Executive education': ('executive', 'exec ed'),
+    'Programs': ('program', 'certificate'),
+}
+
 # The model's own chip ideas per turn, shown after the fixed chips for the follow-up attribute.
 MAX_IDEAS = 3
 
