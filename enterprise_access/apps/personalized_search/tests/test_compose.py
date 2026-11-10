@@ -236,6 +236,14 @@ class ComposeParserTests(TestCase):
         self.assertEqual(followups['suggestions'], ['Intermediate', 'Advanced'])
         self.assertEqual(followups['ideas'], ["I'm a beginner", 'Show me deeper fermentation'])
 
+    def test_only_an_idea_that_chooses_courses_replaces_the_courses_chip(self):
+        def chips(ideas):
+            followup = {'block': 'followup', 'question': 'Type?', 'ideas': ideas}
+            _, parts = self.parse('Hi.\n@@BLOCKS@@\n' + line(followup), attribute='type')
+            return [p for p in parts if p['type'] == 'data-followups'][0]['data']['suggestions']
+        self.assertIn('Courses', chips(['I want the shortest course']))  # about length, not the type
+        self.assertNotIn('Courses', chips(['I want individual courses']))
+
     def test_the_reply_is_conversational_and_names_at_most_one_bolded_title(self):
         prompt = compose.SYSTEM_PROMPT
         self.assertIn('One or two short, friendly sentences', prompt)
