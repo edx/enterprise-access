@@ -62,7 +62,8 @@
     },
     "plan": {
       "type": "object", "additionalProperties": false, "required": ["steps"],
-      "properties": {"steps": {"type": "array", "minItems": 2, "maxItems": 4, "items": {
+      "properties": {"why": {"type": "string", "maxLength": 160, "description": "Why this order. Added in v1, 2026-11-09."},
+                     "steps": {"type": "array", "minItems": 2, "maxItems": 4, "items": {
         "type": "object", "additionalProperties": false, "required": ["item_id", "note"],
         "properties": {"item_id": {"type": "string"}, "note": {"type": "string", "maxLength": 80}}}}}
     },

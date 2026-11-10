@@ -28,7 +28,7 @@ Item events also carry `item_key` and `item_type`. Array properties hold primiti
 
 | Event | Fires when | Properties |
 | --- | --- | --- |
-| `turn.completed` | A turn finishes and is stored | **Outcome:** `outcome` (`done`, `no_match`, `redirected`), `redirect_reason`.<br>**Intent:** `intent_merge_mode` (`refine`, `replace`), `intent_skills[]`, `intent_roles[]`, `intent_level`, `intent_item_types[]`, `intent_max_weeks`, `intent_pacing`.<br>**Items:** `shown_item_keys[]`, `shown_item_types[]`, `shown_item_sections[]`, `shown_item_positions[]`, `shown_item_statuses[]`, `retrieved_item_keys[]`, `excluded_item_keys[]`, `dropped_reasons[]`, `followup_attribute`.<br>**Models:** `intent_model`, `intent_effort`, `compose_model`, `compose_effort`.<br>**Tokens:** `intent_input_tokens`, `intent_cached_tokens`, `intent_output_tokens`, `intent_reasoning_tokens`, and the same four for `compose_`.<br>**Timing:** `intent_ms`, `search_ms`, `first_text_ms`, `first_tiles_ms`, `page_done_ms`.<br>**Prompt:** `prompt_length` |
+| `turn.completed` | A turn finishes and is stored | **Outcome:** `outcome` (`done`, `no_match`, `redirected`), `redirect_reason`.<br>**Intent:** `intent_merge_mode` (`refine`, `replace`), `intent_skills[]`, `intent_roles[]`, `intent_level`, `intent_item_types[]`, `intent_max_weeks`, `intent_pacing`.<br>**Items:** `shown_item_keys[]`, `shown_item_types[]`, `shown_item_sections[]`, `shown_item_positions[]`, `shown_item_statuses[]`, `retrieved_item_keys[]`, `excluded_item_keys[]`, `dropped_reasons[]`, `followup_attribute`.<br>**Models:** `intent_model`, `intent_effort`, `compose_model`, `compose_effort`.<br>**Tokens:** `intent_input_tokens`, `intent_cached_tokens`, `intent_output_tokens`, `intent_reasoning_tokens`, and the same four for `compose_`.<br>**Blocks:** `shown_block_types[]` and `shown_block_digests[]` (parallel, stream order): each block's type and a 16-character hash of its content, without the server's per-turn card fields (`status`, `section`, `position`).<br>**Timing:** `intent_ms`, `search_ms`, `first_text_ms`, `first_tiles_ms`, `page_done_ms`.<br>**Prompt:** `prompt_length` |
 | `turn.failed` | A turn errors or hits the deadline | `error_type`, `stage` (`intent`, `search`, `compose`), `elapsed_ms` |
 | `turn.stopped` | The learner stops a turn (the stream is closed early) | `stage`, `elapsed_ms` |
 | `turn.rated` | Thumbs up or down on a reply | `rating` (`1`, `-1`, or `null` to clear) |
@@ -44,10 +44,11 @@ Item events also carry `item_key` and `item_type`. Array properties hold primiti
 | `results.results_rendered` | A live turn's results finish rendering (not on history replay) | join keys only |
 | `results.result_clicked` | A card is opened | `item_key`, `item_type`, `item_section`, `item_position` |
 | `results.item_save_toggled` | Save or unsave | `item_key`, `item_type`, `item_section`, `item_position`, `saved` |
-| `results.item_dismissed` | Not for me, or Undo | `item_key`, `item_type`, `item_section`, `item_position`, `dismissed`, `replaced_by_item_key` |
-| `results.explanation_opened` | Why this? or Why these? opens | `scope` (`tile`, `set`), `item_key` (tile only) |
+| `results.item_dismissed` | Not for me, Undo, or Include again on the Excluded tab (`item_section: excluded_tab`) | `item_key`, `item_type`, `item_section`, `item_position`, `dismissed`, `replaced_by_item_key` |
+| `results.explanation_opened` | Why this?, Why these? or the suggested order's info opens | `scope` (`tile`, `set`, `order`), `item_key` (tile only) |
 | `chat.new_chat_started` | New chat | join keys of the chat being left |
 | `results.saved_tab_opened` | The Saved tab opens | join keys only |
+| `results.excluded_tab_opened` | The Excluded tab opens | join keys only |
 | `history.history_opened` | The History panel opens | join keys only |
 
 `item_section` and `item_position` come from the card as the server sent it, so the portal computes nothing.
@@ -61,6 +62,7 @@ Item events also carry `item_key` and `item_type`. Array properties hold primiti
 | No-match rate; catalog gaps | `turn.completed` where `outcome = no_match`, grouped by `intent_skills` and `intent_roles` |
 | Dropped and excluded rates | `dropped_reasons`, `excluded_item_keys` over `shown_item_keys` |
 | Cost per turn | Token counts joined to a model price table by `*_model` |
+| How often a refinement repeats a block unchanged (the case for model-written diffs, KD-13) | Per `conversation_id`, compare each turn's `shown_block_digests` with the previous turn's, by `shown_block_types` |
 | Time to results | Percentiles of `first_text_ms`, `first_tiles_ms` and `page_done_ms` |
 | Topic shift | `intent_merge_mode = replace` with `turn_index > 1` |
 | Click-through by position or section | `result_clicked` over `results_rendered`, joined on `turn_id` |
