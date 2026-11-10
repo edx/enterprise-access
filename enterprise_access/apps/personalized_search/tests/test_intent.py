@@ -84,7 +84,8 @@ class IntentMergeTests(TestCase):
                         'no credentials needed, just skills', 'make it a learning path'):
             merged = intent.merge(opted_out, {}, 'refine', message=message)  # no item_types: unchanged
             self.assertEqual(merged['item_types'], ['course', 'executive_education'], message)
-        for message in ("I don't need a certificate, just teach me SQL", 'a learning path, not a program'):
+        for message in ("I don't need a certificate, just teach me SQL", 'I don’t need a certificate',
+                        'a learning path, not a program'):
             merged = intent.merge(None, {'skills': ['sql']}, 'replace', message=message)
             self.assertEqual(merged['item_types'], list(constants.ITEM_TYPES), message)
         # With no type chosen yet, a refinement into a journey still leads with programs.
@@ -102,7 +103,8 @@ class IntentMergeTests(TestCase):
         for message in ('I want a shortlist of SQL courses', 'help me get hired fast',
                         'My short-term goal is to become a manager', 'Quick question: what is good for SQL?',
                         'In short, I want to learn SQL', 'short selling strategies', 'legal brief writing',
-                        'nothing too short', 'I brief executives on strategy', 'short story writing'):
+                        'nothing too short', 'I brief executives on strategy', 'short story writing',
+                        'a legal brief.', 'I need to write a brief'):
             merged = intent.merge(None, {'skills': ['sql']}, 'replace', message=message)
             self.assertFalse((merged.get('constraints') or {}).get('max_weeks'), message)
         # A limit already in the conversation stays.
