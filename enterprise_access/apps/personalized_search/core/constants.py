@@ -75,6 +75,8 @@ CAPS = {
     'question': 200, 'suggestion': 48, 'session_title': 60,
     'insight_title': 60, 'insight_body': 600, 'plan_note': 80, 'plan_why': 160,
     'reason': 160, 'check': 40, 'check_count': 3, 'best_for': 60, 'caveat_title': 60, 'caveat_body': 300,
+    # The intent step's contract: how many skills and roles, and how long its query and each list entry may be.
+    'skills': 8, 'roles': 3, 'intent_query': 200, 'intent_list_item': 80,
 }
 
 ATTRIBUTES_TO_RETRIEVE = [

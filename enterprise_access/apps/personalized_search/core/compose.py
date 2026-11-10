@@ -162,6 +162,7 @@ class ComposeParser:
         self.profile_sent = False      # an early profile went out with the header
         self.totals = totals or {}     # catalog matches per item type, for "See all (n)"
         self.seen = set(seen_ids or [])  # items shown in earlier turns; the rest are flagged new
+        self.reserved: set[str] = set()  # sections' reserve cards, kept out of a later top pick or compare
         self.placements: list[dict] = []  # every card shown, in order, with where it sits (for usage events)
         self.top_pick_id: str | None = None
         self.compare_emitted = False
@@ -325,9 +326,12 @@ class ComposeParser:
         return [header, self._profile_part(early)]
 
     def _option(self, item_id) -> dict | None:
-        """The hydrated card for a valid option id the learner hasn't dismissed, within the per-turn cap."""
+        """
+        The hydrated card for a valid option id the learner hasn't dismissed, within the per-turn cap. A
+        section's reserve card is refused too: it could fill a removed card and show the item twice.
+        """
         card = self.cards.get(item_id) if isinstance(item_id, str) else None
-        if not card or item_id in self.excluded:
+        if not card or item_id in self.excluded or item_id in self.reserved:
             return None
         if item_id not in self.emitted_ids and len(self.emitted_ids) >= constants.MAX_ITEMS_PER_TURN:
             return None
@@ -356,7 +360,8 @@ class ComposeParser:
         if self.compare_emitted or not self.candidates:
             return self._drop('compare_extra_or_text_only')
         raw = obj.get('options') if isinstance(obj.get('options'), list) else []
-        options, ids = [], set()
+        options, ids = [], []  # ids in option order, as the turn records them
+        added = 0  # options not already on the page, counted against the per-turn cap as they're taken
         for option in raw:
             if not isinstance(option, dict):
                 continue
@@ -364,9 +369,14 @@ class ComposeParser:
             best_for = _text(option.get('best_for'), constants.CAPS['best_for'])
             if not card or not best_for or card['item_id'] in ids:
                 continue
-            if card['item_id'] in self.emitted_ids and card['item_id'] != self.top_pick_id:
+            repeat = card['item_id'] in self.emitted_ids
+            if repeat and card['item_id'] != self.top_pick_id:
                 continue
-            ids.add(card['item_id'])
+            if not repeat:
+                if len(self.emitted_ids) + added == constants.MAX_ITEMS_PER_TURN:
+                    continue  # the page is full; only the top pick may still be compared
+                added += 1
+            ids.append(card['item_id'])
             options.append({'best_for': best_for, 'item': self._card(card)})
             if len(options) == constants.MAX_COMPARE_OPTIONS:
                 break
@@ -414,13 +424,17 @@ class ComposeParser:
         }))]
 
     def _section_extras(self, item_type: str, props: dict) -> dict:
-        """Optional ``total`` (catalog matches) and ``reserve`` (next-best cards to fill a dismissed one)."""
+        """
+        Optional ``total`` (catalog matches) and ``reserve`` (next-best cards to fill a dismissed one). A
+        reserve card carries its ``section`` but no ``position``: it isn't on the page until it fills a card.
+        """
         if isinstance(self.totals.get(item_type), int):
             props['total'] = self.totals[item_type]
         taken = set(self.emitted_ids) | self.excluded
-        reserve = [self._card(c['card']) for c in self.candidates
+        reserve = [dict(self._card(c['card']), section=item_type) for c in self.candidates
                    if c['card']['item_type'] == item_type and c['card']['item_id'] not in taken]
         reserve = reserve[:constants.RESERVE_PER_SECTION]
+        self.reserved.update(card['item_id'] for card in reserve)
         if reserve:
             props['reserve'] = reserve
         return props
@@ -527,10 +541,16 @@ class ComposeParser:
         }))]
 
     def _fallback_section(self) -> list[dict]:
-        """Spec fallback: the type with the most candidates, its top skill-matched candidates, no why."""
+        """
+        Spec fallback: the type with the most skill-matched candidates (the only ones a server section uses),
+        its top ones, no why.
+        """
         counts: dict[str, int] = {}
         for cand in self.candidates:
-            counts[cand['card']['item_type']] = counts.get(cand['card']['item_type'], 0) + 1
+            if _related(cand):
+                counts[cand['card']['item_type']] = counts.get(cand['card']['item_type'], 0) + 1
+        if not counts:
+            return []
         parts = self._server_section(max(counts, key=counts.get))
         self.used_fallback = bool(parts)  # the model wrote no usable section (the logged "fallback")
         return parts
