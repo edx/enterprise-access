@@ -18,7 +18,8 @@ from test_utils import APITest
 
 ENTERPRISE = str(uuid.uuid4())
 OTHER_ENTERPRISE = str(uuid.uuid4())
-MODELS = {'gpt-4.1-mini': (0.4, 0.1, 1.6), 'gpt-5.4-mini': (0.75, 0.075, 4.5), 'gpt-4.1': (2.0, 0.5, 8.0)}
+MODELS = {'gpt-6-luna': (0.1, 0.01, 0.5), 'gpt-6.1-terra': (1.0, 0.05, 5.0), 'gpt-6.1-sol': (2.0, 0.1, 10.0),
+          'gpt-4.1-mini': (0.4, 0.1, 1.6), 'gpt-5.4-mini': (0.75, 0.075, 4.5), 'gpt-4.1': (2.0, 0.5, 8.0)}
 DEV_SCOPE = {'filter': 'enterprise_catalog_query_uuids:"q"', 'label': 'Test catalog'}
 
 
@@ -154,7 +155,7 @@ class PersonalizedSearchTurnViewTests(APITest):
     def test_debug_overrides_ignored_unless_enabled(self):
         parts = parse_sse(self.post(debug={'compose_model': 'gpt-4.1'}))
         timing = [p for p in parts if p['type'] == 'data-timing'][0]['data']
-        self.assertEqual(timing['model_compose'], 'gpt-5.4-mini')
+        self.assertEqual((timing['model_intent'], timing['model_compose']), ('gpt-6-luna', 'gpt-6-luna'))
         self.assertNotIn('debug', timing)
 
     @override_settings(PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED=True,

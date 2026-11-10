@@ -6,7 +6,7 @@ import json
 
 from enterprise_access.apps.personalized_search.core import constants
 from enterprise_access.apps.personalized_search.core.profile import SUMMARY, profile_props
-from enterprise_access.apps.personalized_search.core.retrieval import compose_view, preferred_types
+from enterprise_access.apps.personalized_search.core.retrieval import compose_view, preferred_types, programs_wanted
 
 MARKER = '@@BLOCKS@@'
 
@@ -22,18 +22,20 @@ Output format, in this exact order:
 {"block":"page_header","title":"...","dek":"..."}
 {"block":"followup","question":"...","ideas":["...","..."],"session_title":"..."}   (always exactly one, right after page_header)
 {"block":"caveat","title":"...","body":"..."}   (only when the results can't meet something the learner asked for)
-{"block":"top_pick","item_id":"<option id>","reason":"...","checks":["...","..."]}
+{"block":"top_pick","item_id":"<option id>","reason":"...","checks":["...","..."]}   (a related program when one fits)
 {"block":"compare","options":[{"item_id":"<option id>","best_for":"..."},{"item_id":"<option id>","best_for":"..."},{"item_id":"<option id>","best_for":"..."}]}
-Then up to three section lines, at most one per item_type, best section first, written exactly like these:
+Then up to three section lines, at most one per item_type: the program section first when there are related programs (or the preferred type's, when the learner asked for one), then only genuinely related courses or Executive Education. Written exactly like these:
+{"block":"item_section","item_type":"program","dek":"...","items":[{"item_id":"<option id>","why":"...","fit":["..."]}]}
 {"block":"item_section","item_type":"course","dek":"...","items":[{"item_id":"<option id>","why":"...","fit":["..."]}]}
 {"block":"item_section","item_type":"executive_education","dek":"...","items":[{"item_id":"<option id>","why":"...","fit":["..."]}]}
-{"block":"item_section","item_type":"program","dek":"...","items":[{"item_id":"<option id>","why":"...","fit":["..."]}]}
 {"block":"insight","title":"...","body":"..."}   (optional; only if the learner asked for information)
 {"block":"plan","why":"...","steps":[{"item_id":"<id in your results>","note":"..."}]}   (only when 3 or more items are in your results)
 
 Rules:
 - Put each item in the section matching its item_type.
-- Preferred types: when MERGED INTENT item_types lists fewer than all three types, the learner prefers those. Take the top pick and compare from them when they have good options, and write their section first. Then add sections of the other types as alternatives, when they have good options.
+- Programs first: read what the learner is interested in. When a program fits it, take the top pick from programs and write the program section first, even if no type was asked for, unless MERGED INTENT item_types includes "course" but not "program" (the learner asked for courses or doesn't want a predefined program) or prefers another type.
+- Courses and Executive Education: include them only when they are genuinely related to the learner's interest. Never add a section, or an item, just to fill space; fewer is better than loosely related.
+- Preferred types: when MERGED INTENT item_types lists fewer than all three types, the learner prefers those. Take the top pick and compare from them when they have good options, and write their section first. Then add sections of the other types as alternatives, only with options genuinely related to the learner's interest.
 - top_pick: the single best fit to start with. reason: one sentence to the learner ("Because you want to ...", max 160 characters). checks: 1-3 short phrases (max 40 characters each) naming the learner's stated preferences this item meets, such as "Self-paced" or "~4 hrs/week"; only claims the option's facts support.
 - caveat: when no option can meet a goal the learner stated (for example a full qualification, license or degree, a language, or a time limit), say so plainly: title max 60 characters, body max 300 characters, one at most. Never use it for anything else.
 - compare: 2-3 strong options that differ in what they're best for (they may include the top pick). best_for completes "Best for ..." (max 60 characters), e.g. "a recognized credential" or "a quick start".
@@ -76,6 +78,14 @@ def _strings(value, cap: int, limit: int) -> list[str]:
     if not isinstance(value, list):
         return []
     return [v.strip()[:cap] for v in value if isinstance(v, str) and v.strip()][:limit]
+
+
+def _related(candidate: dict) -> bool:
+    """
+    Whether a candidate is closely related to the learner's interest: it matched their skills (the
+    strict tier), or it's among the top keyword matches when they named no skills.
+    """
+    return candidate.get('tier', 0) >= 2 or candidate.get('rank', constants.RELATED_RANK) < constants.RELATED_RANK
 
 
 def _covered(chip: str, ideas: list[str]) -> bool:
@@ -450,18 +460,22 @@ class ComposeParser:
             props['why'] = why
         return [self._block('plan', props)]
 
-    def _server_section(self, item_type: str, *, dek: str = '') -> list[dict]:
-        """A section of ``item_type`` built from its unused candidates (no why), within the turn's caps."""
+    def _server_section(self, item_type: str, *, dek: str = '', related_only: bool = True) -> list[dict]:
+        """
+        A section of ``item_type`` built from its unused candidates (no why), within the turn's caps. Only
+        closely related candidates are used (``_related``), so a server-added section never pads the
+        results; the fallback (the model wrote no usable section) takes the type's best candidates.
+        """
         room = min(constants.MAX_ITEMS_PER_SECTION, constants.MAX_ITEMS_PER_TURN - len(self.emitted_ids))
         taken = set(self.emitted_ids) | self.shown
-        items = [self._card(c['card']) for c in self.candidates
-                 if c['card']['item_type'] == item_type and c['card']['item_id'] not in taken][:max(room, 0)]
+        usable = [c for c in self.candidates
+                  if c['card']['item_type'] == item_type and c['card']['item_id'] not in taken]
+        items = [self._card(c['card']) for c in usable if not related_only or _related(c)][:max(room, 0)]
         if not items or item_type in self.section_types:
             return []
         self.section_types.add(item_type)
         self.emitted_ids += [i['item_id'] for i in items]
         self.first_section_emitted = True
-        self.used_fallback = True
         self._place(items, item_type)
         return [self._block('item_section', self._section_extras(item_type, {
             'item_type': item_type, 'label': section_label(item_type, len(items)), 'dek': dek,
@@ -473,18 +487,30 @@ class ComposeParser:
         counts: dict[str, int] = {}
         for cand in self.candidates:
             counts[cand['card']['item_type']] = counts.get(cand['card']['item_type'], 0) + 1
-        return self._server_section(max(counts, key=counts.get))
+        parts = self._server_section(max(counts, key=counts.get), related_only=False)
+        self.used_fallback = bool(parts)  # the model wrote no usable section (the logged "fallback")
+        return parts
 
     def _alternative_sections(self) -> list[dict]:
         """
-        When the learner prefers some types, the other types stay as alternatives in "More options": any
-        type with unused candidates the model gave no section gets one built from them.
+        Related programs are always offered unless the learner opted out, and when the learner prefers
+        some types the other types stay as alternatives in "More options": such a type with unused
+        candidates the model gave no section gets one built from them.
         """
-        preferred = preferred_types(self.intent or {})
-        if not preferred or not self.candidates:
+        intent = self.intent
+        if intent is None or not self.candidates:  # no intent (tests, harness): nothing to infer
             return []
+        preferred = preferred_types(intent)
         parts: list[dict] = []
         for item_type in constants.ITEM_TYPES:
-            if item_type not in preferred and item_type not in self.section_types:
+            if item_type in self.section_types:
+                continue
+            # Related programs are always offered (unless the learner opted out); other types only as
+            # alternatives to a preferred type.
+            if item_type == 'program':
+                wanted = programs_wanted(intent)  # opting out of programs beats being an alternative
+            else:
+                wanted = bool(preferred) and item_type not in preferred
+            if wanted:
                 parts += self._server_section(item_type)
         return parts
