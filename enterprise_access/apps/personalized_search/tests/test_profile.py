@@ -97,6 +97,30 @@ class ProfileEmissionTests(TestCase):
         parts = self.parse('Nothing fits.\n@@BLOCKS@@\n', candidates=[])
         self.assertFalse([p for p in parts if p['type'] == 'data-block'])
 
+    def test_an_early_profile_comes_with_the_header_and_the_final_one_replaces_it(self):
+        header = {'block': 'page_header', 'title': 'Lead', 'dek': 'd'}
+        section = {'block': 'item_section', 'item_type': 'course', 'dek': 'd',
+                   'items': [{'item_id': 'edX+C1', 'why': 'w'}]}
+        parts = self.parse('Hi.\n@@BLOCKS@@\n' + json.dumps(header) + '\n' + json.dumps(section) + '\n')
+        blocks = [(p['id'], p['data']['type'], p['data']['props']) for p in parts if p['type'] == 'data-block']
+        types = [t for _, t, _ in blocks]
+        self.assertEqual(types, ['page_header', 'profile', 'item_section', 'profile'])
+        (_, _, _), (early_id, _, early), _, (final_id, _, final) = blocks
+        self.assertEqual(early_id, final_id)  # the client replaces the early profile in place
+        self.assertEqual(early['chips'], ['Leadership', 'Instructor-led'])  # what the learner said
+        self.assertEqual(final['chips'], ['Leadership'])  # what the results reflect
+
+    def test_an_early_profile_with_nothing_reflected_ends_with_no_chips(self):
+        parser = ComposeParser(candidates=default_candidates(), shown_ids=[], followup_attribute='level',
+                               intent=dict(empty_intent(), constraints={'pacing': 'instructor_paced'}))
+        header = {'block': 'page_header', 'title': 'Lead', 'dek': 'd'}
+        section = {'block': 'item_section', 'item_type': 'course', 'dek': 'd',
+                   'items': [{'item_id': 'edX+C1', 'why': 'w'}]}
+        parts = parser.feed('Hi.\n@@BLOCKS@@\n' + json.dumps(header) + '\n' + json.dumps(section) + '\n')
+        parts += parser.finish()
+        profiles = [p['data']['props'] for p in parts if p['type'] == 'data-block' and p['data']['type'] == 'profile']
+        self.assertEqual([p['chips'] for p in profiles], [['Instructor-led'], []])
+
     def test_not_emitted_when_nothing_the_learner_said_is_reflected(self):
         parser = ComposeParser(candidates=default_candidates(), shown_ids=[], followup_attribute='level',
                                intent=dict(empty_intent(), constraints={'pacing': 'instructor_paced'}))
