@@ -106,6 +106,10 @@ class Command(BaseCommand):
                 raise CommandError('--judge is not available for conversations.')
             self._run_conversations(arms, options, registry)
             return
+        arm_options = any(a.cold_effort or a.candidates or a.view != 'standard' for a in arms)
+        if arm_options or options['turn_deadline_s'] or options['no_server_sections']:
+            raise CommandError('+cold/+cands/+view, --turn-deadline-s and --no-server-sections apply only to '
+                               '--case-set conversations.')
         cases = []
         if options['case_set'] in ('demo', 'all'):
             cases += harness.demo_cases()
