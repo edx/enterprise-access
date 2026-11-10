@@ -68,6 +68,20 @@ class SubRequestTests(TestCase):
         self.assertIn('NOT aggregation_key:"program:edX+OLD"', reqs[5]['filters'])
         self.assertTrue(all('(enterprise_customer_uuids:"e-1")' in r['filters'] for r in reqs))
 
+    def test_english_by_default_and_the_learners_language_when_given(self):
+        english = retrieval.build_sub_requests(INTENT, SCOPE, [])
+        self.assertTrue(all('language:"English" AND metadata_language:"en"' in r['filters']
+                            for r in english if r['filters'].startswith('content_type:course')))
+        spanish_scope = retrieval.CatalogScope(filter=SCOPE.filter, locale='es', language_name='Spanish')
+        spanish = retrieval.build_sub_requests(INTENT, spanish_scope, [])
+        courses = [r for r in spanish if r['filters'].startswith('content_type:course')]
+        programs = [r for r in spanish if r['filters'].startswith('content_type:program')]
+        spanish_courses = 'language:"Spanish" AND metadata_language:"es"'
+        self.assertTrue(courses and all(spanish_courses in r['filters'] for r in courses))
+        # Programs carry translated metadata too, but no single teaching language.
+        self.assertTrue(programs and all('metadata_language:"es"' in r['filters'] and 'language:"' not in
+                                         r['filters'].replace('metadata_language:"', '') for r in programs))
+
     @ddt.data(
         (['executive_education'], 'AND learning_type:"Executive Education"', 3),
         (['course'], 'AND NOT learning_type:"Executive Education"', 3),

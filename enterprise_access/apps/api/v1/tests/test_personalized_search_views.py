@@ -10,6 +10,7 @@ from edx_toggles.toggles.testutils import override_waffle_flag, override_waffle_
 from rest_framework.reverse import reverse
 
 from enterprise_access.apps.core.constants import SYSTEM_ENTERPRISE_LEARNER_ROLE
+from enterprise_access.apps.personalized_search import wiring
 from enterprise_access.apps.personalized_search.models import ChatSession
 from enterprise_access.apps.personalized_search.tests.test_orchestrator import fake_steps
 from enterprise_access.toggles import LEARNER_PATHWAYS_SERVER_PIPELINE, PERSONALIZED_SEARCH_ENABLED
@@ -177,6 +178,15 @@ class PersonalizedSearchTurnViewTests(APITest):
     @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
     def test_debug_override_must_be_allowed(self):
         self.assertEqual(self.post(debug={'compose_model': 'gpt-9'}).status_code, 400)
+
+    @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
+    def test_the_learners_locale_scopes_the_catalog_language(self):
+        target = 'enterprise_access.apps.personalized_search.wiring.catalog_scope'
+        with mock.patch(target, wraps=wiring.catalog_scope) as scope:
+            self.assertEqual(self.post(locale='es-419').status_code, 200)
+            self.assertEqual(self.post().status_code, 200)
+        self.assertEqual([c.args[2] for c in scope.call_args_list], ['es-419', ''])
+        self.assertEqual(self.post(locale='x' * 17).status_code, 400)
 
     @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
     def test_secured_key_failure_is_503(self):

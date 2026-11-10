@@ -5,12 +5,38 @@ No event carries a count, rate, cost or age, and none carries learner-written te
 Those are derived downstream by joining events. The host sends them (``Steps.emit``); this module only
 builds the properties from what the turn already recorded.
 """
+import hashlib
+import json
+
 TURN_COMPLETED = 'turn.completed'
 TURN_FAILED = 'turn.failed'
 TURN_STOPPED = 'turn.stopped'
 
 _USAGE_FIELDS = (('input_tokens', 'input_tokens'), ('cached_tokens', 'cached_input_tokens'),
                  ('output_tokens', 'output_tokens'), ('reasoning_tokens', 'reasoning_tokens'))
+
+
+# Server-set card fields that change between turns without the model rewriting anything.
+_VOLATILE_CARD_FIELDS = frozenset({'status', 'section', 'position'})
+
+
+def _without_volatile(value):
+    """``value`` without the per-turn card fields, at any depth."""
+    if isinstance(value, dict):
+        return {k: _without_volatile(v) for k, v in value.items() if k not in _VOLATILE_CARD_FIELDS}
+    if isinstance(value, list):
+        return [_without_volatile(v) for v in value]
+    return value
+
+
+def block_digest(block: dict) -> str:
+    """
+    A short, stable hash of a block's type and learner-visible content, so the warehouse can tell when a
+    turn repeats a block unchanged from the previous turn (KD-13: measuring the case for model diffs).
+    """
+    content = json.dumps({'type': block.get('type'), 'props': _without_volatile(block.get('props'))},
+                         sort_keys=True, separators=(',', ':'), ensure_ascii=False)
+    return hashlib.sha256(content.encode('utf-8')).hexdigest()[:16]
 
 
 def join_keys(ctx, record: dict) -> dict:
@@ -41,6 +67,9 @@ def _completed(ctx, record: dict) -> dict:
         'shown_item_sections': [p['section'] for p in placements],
         'shown_item_positions': list(range(1, len(placements) + 1)),
         'shown_item_statuses': [p.get('status') or '' for p in placements],
+        # Parallel arrays, in stream order: each block's type and content digest.
+        'shown_block_types': [b.get('type') for b in record.get('blocks') or []],
+        'shown_block_digests': [block_digest(b) for b in record.get('blocks') or []],
         'retrieved_item_keys': list(record.get('candidate_ids') or []),
         'excluded_item_keys': list(record.get('excluded_ids') or []),
         'dropped_reasons': list(record.get('dropped') or []),

@@ -609,6 +609,9 @@ PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED = False
 PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE = None
 # Tags on every Personalized Search usage event (tech spec KD-12): the release cohort and the engine.
 PERSONALIZED_SEARCH_ANALYTICS_COHORT = 'internal_pilot'
+# Portal locale -> Algolia `language` facet name for Personalized Search content, as Learner Pathways'
+# SUPPORTED_ALGOLIA_LANGUAGE_FILTERS. The catalog has `metadata_language` records for these; others use English.
+PERSONALIZED_SEARCH_CONTENT_LANGUAGES = {'en': 'English', 'es': 'Spanish'}
 PERSONALIZED_SEARCH_ENGINE_LABEL = 'b2b_mvp_v1'
 
 # The enterprise customer the evaluation harness scopes to (Open Decision 1). Production
