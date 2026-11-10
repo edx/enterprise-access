@@ -131,6 +131,16 @@ def preferred_types(intent: dict) -> set[str]:
     return types if types and types != set(constants.ITEM_TYPES) else set()
 
 
+def programs_wanted(intent: dict) -> bool:
+    """
+    Related programs are always offered unless the learner opted out: they asked for courses (courses in
+    item_types without programs) or said they don't want a predefined program, which the intent step
+    records the same way.
+    """
+    types = set(intent.get('item_types') or constants.ITEM_TYPES)
+    return 'program' in types or 'course' not in types
+
+
 def _course_filter(scope: CatalogScope, types: set[str]) -> str:
     """Courses in the learner's language and scope, narrowed to regular or Executive Education when asked."""
     course_filter = f'content_type:course AND {scope.course_language_filter} AND ({scope.filter})'
@@ -198,7 +208,8 @@ def build_sub_requests(intent: dict, scope: CatalogScope, excluded_ids: list[str
     learner asked for is a preference, not a filter: its own requests are added so it's well covered,
     while the other types stay in the results as alternatives ("More options").
     """
-    requests = _hit_requests(intent, scope, excluded_ids, set(constants.ITEM_TYPES))
+    every_type = set(constants.ITEM_TYPES) if programs_wanted(intent) else set(constants.ITEM_TYPES) - {'program'}
+    requests = _hit_requests(intent, scope, excluded_ids, every_type)
     preferred = preferred_types(intent)
     if preferred:
         requests += [dict(req, preferred=True) for req in _hit_requests(intent, scope, excluded_ids, preferred)]
