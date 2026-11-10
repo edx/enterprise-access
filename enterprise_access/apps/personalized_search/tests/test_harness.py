@@ -198,23 +198,28 @@ class HarnessConversationTests(TestCase):
         with self.assertRaises(ModelError):
             harness.Arm.parse(spec, check_model=registry.check_model, check_effort=registry.resolve_effort)
 
-    def test_arm_overrides_scale_the_shortlist_and_restore_it(self):
-        arm = harness.Arm('x', ARMS[0].intent, ARMS[0].compose, candidates=40, view='rich')
-        intent = {'query': 'leadership', 'skills': ['Leadership']}
-        before = retrieval.build_sub_requests(intent, retrieval.CatalogScope(filter='f'), [])
+    def test_arm_overrides_swap_the_candidate_view_and_restore_it(self):
+        arm = harness.Arm('x', ARMS[0].intent, ARMS[0].compose, view='rich')
         with harness.arm_overrides(arm):
-            self.assertEqual(constants.MAX_CANDIDATES, 40)
-            self.assertEqual(constants.CANDIDATE_CAPS, {'course': 20, 'executive_education': 10, 'program': 10})
-            self.assertEqual(constants.PREFERRED_TYPE_CAP, 20)
             self.assertIn('outcome', constants.ATTRIBUTES_TO_RETRIEVE)
             self.assertIs(compose.compose_view, harness.rich_compose_view)
-            during = retrieval.build_sub_requests(intent, retrieval.CatalogScope(filter='f'), [])
-        self.assertEqual([r['hitsPerPage'] * 2 if r['hitsPerPage'] else 0 for r in before],
-                         [r['hitsPerPage'] for r in during])
-        self.assertEqual(constants.MAX_CANDIDATES, 20)
-        self.assertEqual(constants.CANDIDATE_CAPS, {'course': 10, 'executive_education': 5, 'program': 5})
         self.assertNotIn('outcome', constants.ATTRIBUTES_TO_RETRIEVE)
         self.assertIs(compose.compose_view, retrieval.compose_view)
+
+    def test_an_arms_shortlist_size_reaches_the_turn(self):
+        seen = []
+        steps = fake_steps()
+        base_retrieve = steps.retrieve
+
+        def retrieve(*args, **kwargs):
+            seen.append(kwargs.get('shortlist'))
+            return base_retrieve(*args, **kwargs)
+
+        steps.retrieve = retrieve
+        conversation = harness.Conversation(id='c1', goal='lead', messages=('first',))
+        arm = harness.Arm('x', ARMS[0].intent, ARMS[0].compose, candidates=40)
+        record, = harness.run_conversations(conversation_list=[conversation], arms=[arm], scope=None, steps=steps)
+        self.assertEqual((seen, record['arm_options']['cands']), ([40], 40))
 
     def test_rich_compose_view(self):
         course = {'hit': {'skill_names': [f's{i}' for i in range(10)], 'subjects': ['Data'],

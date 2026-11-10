@@ -61,6 +61,8 @@ class TurnContext:
     # Per-step timeouts (each is also capped by the time left before the turn deadline).
     intent_timeout_s: float = constants.DEFAULT_INTENT_TIMEOUT_S
     compose_timeout_s: float = constants.DEFAULT_COMPOSE_READ_TIMEOUT_S
+    # How many candidates the compose step chooses from (the prefilter's shortlist).
+    shortlist: int = constants.MAX_CANDIDATES
     # Model id -> platform name for logs and timing ('openai', 'xpert'); the model registry's platform_of.
     platform: Callable[[str], str] = lambda model: 'unknown'
     clock: Callable[[], float] = time.monotonic
@@ -76,7 +78,7 @@ class Steps:
 
     # (system, user, model, effort, timeout_s) -> (text, Usage)
     intent: Callable[..., tuple[str, Usage]]
-    # (intent, scope, excluded_ids, timeout_s=) -> raw candidates
+    # (intent, scope, excluded_ids, timeout_s=, shortlist=) -> raw candidates
     retrieve: Callable[..., list[dict]]
     # (system, user, model, effort, timeout_s, usage) -> Iterator[str]
     compose: Callable[..., Iterator[str]]
@@ -261,8 +263,8 @@ def _turn_parts(ctx: TurnContext, steps: Steps, record: dict) -> Iterator[dict]:
     retrieval_started = ctx.clock()
     try:
         raw = steps.retrieve(merged, ctx.scope, _excluded_ids(session),
-                             timeout_s=min(constants.RETRIEVAL_TIMEOUT_S, remaining()))
-        candidates = prefilter(raw, merged)
+                             timeout_s=min(constants.RETRIEVAL_TIMEOUT_S, remaining()), shortlist=ctx.shortlist)
+        candidates = prefilter(raw, merged, ctx.shortlist)
         totals = getattr(raw, 'totals', {})
     except RetrievalFailed:
         yield {'type': 'error', 'errorText': 'retrieval_failed'}
@@ -312,12 +314,14 @@ def _turn_parts(ctx: TurnContext, steps: Steps, record: dict) -> Iterator[dict]:
         stream.close()
     timing['dropped_lines'] = parser.dropped_lines
     debug['dropped'] = parser.dropped
+    debug['followup_switched_from'] = parser.followup_switched_from
     record.update(dropped_lines=parser.dropped_lines, fallback=parser.used_fallback)
 
     # Step 5: persist, final session title, timing; step 6: finish
     session['merged_intent'] = merged
     session['history'].append({'user': ctx.message, 'reply': parser.reply.strip()})
     session['shown_item_ids'] = session['shown_item_ids'] + parser.emitted_ids
+    attribute = parser.attribute  # 'open' when the results shown don't differ on the planned attribute
     if attribute != 'open' and attribute not in session['asked_attributes']:
         session['asked_attributes'].append(attribute)
     session['turn_count'] = sequence

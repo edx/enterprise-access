@@ -3,12 +3,21 @@ Compose step (tech spec "LLM step contracts", KD-5): prompt, and a streaming par
 model's reply + ``@@BLOCKS@@`` lines into protocol parts. Lines are validated and hydrated, never repaired.
 """
 import json
+import re
 
 from enterprise_access.apps.personalized_search.core import constants
 from enterprise_access.apps.personalized_search.core.profile import SUMMARY, profile_props
-from enterprise_access.apps.personalized_search.core.retrieval import compose_view, preferred_types, programs_wanted
+from enterprise_access.apps.personalized_search.core.retrieval import (
+    attribute_value,
+    compose_view,
+    preferred_types,
+    programs_wanted
+)
 
 MARKER = '@@BLOCKS@@'
+BOLD = re.compile(r'\*\*(.+?)\*\*')
+# Follow-up attributes that only make sense when the results shown differ on them.
+PAGE_SPLIT_ATTRIBUTES = ('level', 'time', 'pacing')
 
 # The grammar spells out one literal line per section type: in the model benchmark, writing it as
 # "course|executive_education|program" made cheaper models invent block names such as "program".
@@ -16,7 +25,7 @@ MARKER = '@@BLOCKS@@'
 SYSTEM_PROMPT = """You recommend learning to a learner in the edX enterprise learner portal. The results appear beside the chat. Choose ONLY from the options given, using their exact item_id values.
 
 Output format, in this exact order:
-1. One or two short, friendly sentences for the chat, the way a helpful advisor talks. React to what the learner just said in their own terms, then point them to what's worth a look and why. Name at most one course or program, by its title, and you may bold that title with **double asterisks**; no other markdown, lists or emoji. Vary how you start: don't open with "I put" or "I've updated your results". Don't list or describe every result: the results show them. If nothing qualifies, say so plainly and suggest a nearby direction.
+1. One or two short, friendly sentences for the chat, the way a helpful advisor talks. React to what the learner just said in their own terms, then point them to what's worth a look and why. Name at most one course or program: your top_pick, by its exact title, which you may bold with **double asterisks**. Never bold any other title, and no other markdown, lists or emoji. Vary how you start: don't open with "I put" or "I've updated your results". Don't list or describe every result: the results show them. If nothing qualifies, say so plainly and suggest a nearby direction.
 2. A line containing only @@BLOCKS@@
 3. One JSON object per line, no blank lines, no code fences. The "block" value is always one of: page_header, caveat, top_pick, compare, item_section, followup, insight, plan.
 {"block":"page_header","title":"...","dek":"..."}
@@ -82,10 +91,11 @@ def _strings(value, cap: int, limit: int) -> list[str]:
 
 def _related(candidate: dict) -> bool:
     """
-    Whether a candidate is closely related to the learner's interest: it matched their skills (the
-    strict tier), or it's among the top keyword matches when they named no skills.
+    Whether a candidate is closely related to the learner's interest: it matched the skills they named
+    (the strict tier). Keyword matches alone don't count: in review, server sections built from them read as
+    off-topic filler.
     """
-    return candidate.get('tier', 0) >= 2 or candidate.get('rank', constants.RELATED_RANK) < constants.RELATED_RANK
+    return candidate.get('tier', 0) >= 2
 
 
 def _covered(chip: str, ideas: list[str]) -> bool:
@@ -137,6 +147,8 @@ class ComposeParser:
         self.compare_emitted = False
         self.caveat_emitted = False
         self.insight_emitted = False
+        self._followup_line: tuple | None = None  # (question, ideas), sent once the page is known
+        self.followup_switched_from: str | None = None  # the planned attribute, when the results shown don't vary on it
 
     # -- text before the marker --------------------------------------------------------------
     def _text_parts(self, text: str) -> list[dict]:
@@ -189,10 +201,20 @@ class ComposeParser:
             parts += self._fallback_section()
         parts += self._alternative_sections()
         parts += self._profile()
-        if not self.followups_emitted:
-            question, _ = constants.FOLLOWUP_TEMPLATES[self.attribute]
-            parts.append(self._followups(question))
+        question, ideas = self._followup_line or (constants.FOLLOWUP_TEMPLATES[self.attribute][0], None)
+        if self.attribute in PAGE_SPLIT_ATTRIBUTES and not self._page_splits_on(self.attribute):
+            # Every result shown has the same pacing (or level, or length), so asking about it narrows nothing:
+            # ask what to explore next instead, with the model's ideas.
+            self.followup_switched_from, self.attribute = self.attribute, 'open'
+            question = constants.FOLLOWUP_TEMPLATES['open'][0]
+        parts.append(self._followups(question, ideas))
         return parts
+
+    def _page_splits_on(self, attribute: str) -> bool:
+        """Whether the results shown this turn take two or more values of ``attribute`` (no results: yes)."""
+        shown = [c for c in self.candidates if c['card']['item_id'] in self.emitted_ids]
+        values = {attribute_value(attribute, c) for c in shown} - {None}
+        return not shown or len(values) >= 2
 
     # -- block lines -------------------------------------------------------------------------
     def _next_id(self) -> str:
@@ -301,6 +323,9 @@ class ComposeParser:
             return self._drop('top_pick_invalid')
         self.top_pick_id = card['item_id']
         self.emitted_ids.append(card['item_id'])
+        bolded = [b.strip().casefold() for b in BOLD.findall(self.reply)]
+        if bolded and card['title'].strip().casefold() not in bolded:
+            self.dropped.append('reply_bold_not_top_pick')  # recorded for review; the reply has already streamed
         checks = _strings(obj.get('checks'), constants.CAPS['check'], constants.CAPS['check_count'])
         item = self._card(card, why=reason)
         self._place([item], 'top_pick')
@@ -356,14 +381,9 @@ class ComposeParser:
             fit = _strings(raw.get('fit'), constants.CAPS['fit_tag'], constants.CAPS['fit_count'])
             items.append(self._card(card, why=_text(raw.get('why'), constants.CAPS['why']) or None, fit=fit))
         if not items:
-            # The model often repeats the top pick or compare items, which are rejected here. Rather than
-            # lose the group, fill it from the type's unused candidates, keeping the model's dek.
-            refilled = collided and self._server_section(item_type,
-                                                         dek=_text(obj.get('dek'), constants.CAPS['section_dek']))
-            if refilled:
-                self.dropped.append(f'section_refilled:{item_type}')
-                return refilled
-            return self._drop(f'section_no_valid_items:{item_type}')
+            # A section that only repeats the top pick or compare items is dropped, not refilled: refills
+            # read as filler in review.
+            return self._drop(f"{'section_only_repeats' if collided else 'section_no_valid_items'}:{item_type}")
         self.section_types.add(item_type)
         self.emitted_ids += [i['item_id'] for i in items]
         self.first_section_emitted = True
@@ -406,8 +426,11 @@ class ComposeParser:
         return {'type': 'data-followups', 'id': 'followups', 'data': data}
 
     def _followup(self, obj: dict) -> list[dict]:
-        """A followup line becomes data-followups; its session_title is kept for the session."""
-        if self.followups_emitted:
+        """
+        A followup line is kept and sent as data-followups when the turn finishes, once the results shown are
+        known (``finish``); its session_title is kept for the session.
+        """
+        if self._followup_line:
             return self._drop('followup_extra')
         question = _text(obj.get('question'), constants.CAPS['question'])
         if not question:
@@ -416,7 +439,8 @@ class ComposeParser:
         if title:
             self.session_title = title
         # Older prompts called the ideas "suggestions"; accept either.
-        return [self._followups(question, obj.get('ideas') or obj.get('suggestions'))]
+        self._followup_line = (question, obj.get('ideas') or obj.get('suggestions'))
+        return []
 
     def _insight(self, obj: dict) -> list[dict]:
         """An insight needs a title and body, and isn't shown on a text-only turn."""
@@ -460,17 +484,17 @@ class ComposeParser:
             props['why'] = why
         return [self._block('plan', props)]
 
-    def _server_section(self, item_type: str, *, dek: str = '', related_only: bool = True) -> list[dict]:
+    def _server_section(self, item_type: str, *, dek: str = '') -> list[dict]:
         """
         A section of ``item_type`` built from its unused candidates (no why), within the turn's caps. Only
-        closely related candidates are used (``_related``), so a server-added section never pads the
-        results; the fallback (the model wrote no usable section) takes the type's best candidates.
+        candidates that matched the learner's skills are used (``_related``), so a server-added section never
+        pads the results.
         """
         room = min(constants.MAX_ITEMS_PER_SECTION, constants.MAX_ITEMS_PER_TURN - len(self.emitted_ids))
         taken = set(self.emitted_ids) | self.shown
         usable = [c for c in self.candidates
                   if c['card']['item_type'] == item_type and c['card']['item_id'] not in taken]
-        items = [self._card(c['card']) for c in usable if not related_only or _related(c)][:max(room, 0)]
+        items = [self._card(c['card']) for c in usable if _related(c)][:max(room, 0)]
         if not items or item_type in self.section_types:
             return []
         self.section_types.add(item_type)
@@ -483,11 +507,11 @@ class ComposeParser:
         }))]
 
     def _fallback_section(self) -> list[dict]:
-        """Spec fallback: the type with the most candidates, its top 3, no why."""
+        """Spec fallback: the type with the most candidates, its top skill-matched candidates, no why."""
         counts: dict[str, int] = {}
         for cand in self.candidates:
             counts[cand['card']['item_type']] = counts.get(cand['card']['item_type'], 0) + 1
-        parts = self._server_section(max(counts, key=counts.get), related_only=False)
+        parts = self._server_section(max(counts, key=counts.get))
         self.used_fallback = bool(parts)  # the model wrote no usable section (the logged "fallback")
         return parts
 
