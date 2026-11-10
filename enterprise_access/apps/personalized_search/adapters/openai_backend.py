@@ -141,6 +141,7 @@ class OpenAIBackend:
         Closing the generator closes the HTTP response (Stop).
         """
         usage.prices = self._models.get(model)
+        usage.effort = resolve_effort(model, effort)  # what is billed (sol and astra send low for None)
         client = self._client(timeout_s)
         started = time.monotonic()
         try:
