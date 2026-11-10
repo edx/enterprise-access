@@ -80,7 +80,7 @@ class CatalogSearch(Protocol):
     """Runs several catalog sub-requests in one round trip; ``scope`` is the adapter's own key/filter."""
 
     def search(self, queries: list[dict], *, scope, timeout_s: float) -> list[dict]:
-        """One result dict (with ``hits``) per query, in order. Raises on failure."""
+        """One result dict (with ``hits``) per query, in order. Raises ``CatalogSearchError`` on failure."""
 
 
 @runtime_checkable
