@@ -46,6 +46,10 @@ pymemcache
 pytz
 pyyaml                 # Persona fixture parsing (apps/pathway_eval)
 redis
+# Django resolves TIME_ZONE through zoneinfo, which needs IANA time zone data. Pin it directly rather than rely on
+# a transitive dependency (kombu 5.7.0 and python-dateutil 2.9 don't pull it in) or on the Docker image shipping
+# system tzdata.
+tzdata
 rules
 stripe
 drf-spectacular

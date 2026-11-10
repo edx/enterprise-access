@@ -428,6 +428,8 @@ typing-extensions==4.16.0
     #   typing-inspection
 typing-inspection==0.4.5
     # via pydantic
+tzdata==2026.6
+    # via -r requirements/base.in
 tzlocal==5.4.5
     # via celery
 uritemplate==4.2.0

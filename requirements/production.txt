@@ -545,6 +545,8 @@ typing-inspection==0.4.5
     # via
     #   -r requirements/base.txt
     #   pydantic
+tzdata==2026.6
+    # via -r requirements/base.txt
 tzlocal==5.4.5
     # via
     #   -r requirements/base.txt
