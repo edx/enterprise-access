@@ -26,6 +26,7 @@ from rest_framework.views import APIView
 from enterprise_access.apps.api.utils import get_or_fetch_enterprise_uuid_for_bff_request
 from enterprise_access.apps.api.v1.views.personalized_search import body_enterprise_uuid
 from enterprise_access.apps.core.constants import PERSONALIZED_SEARCH_LEARNER_PERMISSION
+from enterprise_access.apps.personalized_search import events
 from enterprise_access.apps.personalized_search.adapters.django_store import DjangoFeedbackStore, DjangoHistoryStore
 from enterprise_access.apps.personalized_search.core import constants
 from enterprise_access.apps.personalized_search.core.errors import SessionNotFound
@@ -108,13 +109,17 @@ class PersonalizedSearchSessionDetailView(_LearnerView):
     def get(self, request, session_uuid):
         """The session and its turns' stored parts, in sequence order."""
         query = _validated(EnterpriseQuerySerializer, request.query_params)
+        lms_user_id = learner_id(request)
         try:
-            return Response(DjangoHistoryStore().get_session(
-                session_uuid=session_uuid, lms_user_id=learner_id(request),
+            session = DjangoHistoryStore().get_session(
+                session_uuid=session_uuid, lms_user_id=lms_user_id,
                 enterprise_customer_uuid=query['enterprise_customer_uuid'],
-            ))
+            )
         except SessionNotFound as exc:
             raise NotFound() from exc
+        events.send(lms_user_id, events.SESSION_OPENED, conversation_id=session_uuid,
+                    enterprise_customer_uuid=query['enterprise_customer_uuid'])
+        return Response(session)
 
 
 class ItemFeedbackWriteSerializer(EnterpriseQuerySerializer):  # pylint: disable=abstract-method
@@ -194,11 +199,15 @@ class PersonalizedSearchTurnFeedbackView(_LearnerView):
     def post(self, request, session_uuid, sequence):
         """Set (1 or -1) or clear (null) the rating; 404 for a turn that isn't the learner's."""
         body = _validated(TurnRatingSerializer, request.data)
+        lms_user_id = learner_id(request)
         try:
             row = DjangoHistoryStore().rate_turn(
-                session_uuid=session_uuid, sequence=sequence, lms_user_id=learner_id(request),
+                session_uuid=session_uuid, sequence=sequence, lms_user_id=lms_user_id,
                 enterprise_customer_uuid=body['enterprise_customer_uuid'], rating=body['rating'],
             )
         except SessionNotFound as exc:
             raise NotFound() from exc
-        return Response(row)
+        events.send(lms_user_id, events.TURN_RATED, conversation_id=session_uuid,
+                    enterprise_customer_uuid=body['enterprise_customer_uuid'], turn_id=row['turn_id'],
+                    turn_index=sequence, rating=body['rating'])
+        return Response({'sequence': row['sequence'], 'rating': row['rating']})
