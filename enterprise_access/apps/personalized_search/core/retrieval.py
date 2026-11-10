@@ -125,32 +125,35 @@ def compose_view(candidate: dict) -> dict:
     }
 
 
-def build_sub_requests(intent: dict, scope: CatalogScope, excluded_ids: list[str]) -> list[dict]:
-    """Strict (skills) and broadened sub-requests for courses and programs, per the item types asked for."""
-    types = set(intent.get('item_types') or constants.ITEM_TYPES)
+def preferred_types(intent: dict) -> set[str]:
+    """The item types the learner asked for, when narrower than all of them; empty means no preference."""
+    types = set(intent.get('item_types') or ()) & set(constants.ITEM_TYPES)
+    return types if types and types != set(constants.ITEM_TYPES) else set()
+
+
+def _course_filter(scope: CatalogScope, types: set[str]) -> str:
+    """Courses in the learner's language and scope, narrowed to regular or Executive Education when asked."""
+    course_filter = f'content_type:course AND {scope.course_language_filter} AND ({scope.filter})'
+    if types & {'course', 'executive_education'} == {'executive_education'}:
+        course_filter += f' AND learning_type:{_quote(EXEC_ED)}'
+    elif 'executive_education' not in types:
+        course_filter += f' AND NOT learning_type:{_quote(EXEC_ED)}'
+    return course_filter
+
+
+def _hit_requests(intent: dict, scope: CatalogScope, excluded_ids: list[str], types: set[str]) -> list[dict]:
+    """Strict (skills) and broadened requests that return hits, for the given types."""
     skills = intent.get('skills') or []
     skills_clause = ' OR '.join(f'skill_names:{_quote(s)}' for s in skills)
     broad_query = ' '.join(skills + (intent.get('roles') or [])) or intent.get('query') or ''
     requests = []
     if types & {'course', 'executive_education'}:
-        course_filter = f'content_type:course AND {scope.course_language_filter} AND ({scope.filter})'
-        if types & {'course', 'executive_education'} == {'executive_education'}:
-            course_filter += f' AND learning_type:{_quote(EXEC_ED)}'
-        elif 'executive_education' not in types:
-            course_filter += f' AND NOT learning_type:{_quote(EXEC_ED)}'
-        course_filter += ''.join(f' AND NOT key:{_quote(i)}' for i in excluded_ids)
+        course_filter = _course_filter(scope, types) + ''.join(f' AND NOT key:{_quote(i)}' for i in excluded_ids)
         if skills_clause:
             requests.append({'tier': 2, 'query': intent.get('query') or '',
                              'filters': f'{course_filter} AND ({skills_clause})', 'hitsPerPage': 30})
         requests.append({'tier': 1, 'query': broad_query, 'filters': course_filter, 'hitsPerPage': 30,
                          'removeWordsIfNoResults': 'allOptional'})
-        for item_type in sorted(types & {'course', 'executive_education'}):
-            # Count only (no hits) for "See all (n)": one per type, in the same round trip.
-            exec_clause = f'learning_type:{_quote(EXEC_ED)}'
-            type_filter = exec_clause if item_type == 'executive_education' else f'NOT {exec_clause}'
-            base = f'content_type:course AND {scope.course_language_filter} AND ({scope.filter}) AND {type_filter}'
-            requests.append({'tier': 0, 'count_for': item_type, 'query': broad_query, 'filters': base,
-                             'hitsPerPage': 0, 'removeWordsIfNoResults': 'allOptional'})
     if 'program' in types:
         program_filter = f'content_type:program AND {scope.metadata_language_filter} AND ({scope.filter})'
         program_filter += ''.join(f' AND NOT aggregation_key:{_quote("program:" + i)}' for i in excluded_ids)
@@ -159,11 +162,47 @@ def build_sub_requests(intent: dict, scope: CatalogScope, excluded_ids: list[str
                              'filters': f'{program_filter} AND ({skills_clause})', 'hitsPerPage': 15})
         requests.append({'tier': 1, 'query': broad_query, 'filters': program_filter, 'hitsPerPage': 15,
                          'removeWordsIfNoResults': 'allOptional'})
-        requests.append({'tier': 0, 'count_for': 'program', 'query': broad_query,
-                         'filters': f'content_type:program AND {scope.metadata_language_filter} AND ({scope.filter})',
-                         'hitsPerPage': 0,
-                         'removeWordsIfNoResults': 'allOptional'})
     return requests
+
+
+def _count_requests(intent: dict, scope: CatalogScope) -> list[dict]:
+    """
+    Count-only requests (no hits) for "See all (n)", per type, in the same round trip. The cards come
+    from either the strict skills request or the broadened keyword one, so each type is counted both
+    ways and the larger count wins (``search``): a keyword-only count could show "See all (1)" above
+    three cards found by skill.
+    """
+    skills = intent.get('skills') or []
+    skills_clause = ' OR '.join(f'skill_names:{_quote(s)}' for s in skills)
+    broad_query = ' '.join(skills + (intent.get('roles') or [])) or intent.get('query') or ''
+    exec_clause = f'learning_type:{_quote(EXEC_ED)}'
+    bases = {
+        'course': f'content_type:course AND {scope.course_language_filter} AND ({scope.filter}) AND NOT {exec_clause}',
+        'executive_education': (f'content_type:course AND {scope.course_language_filter} AND ({scope.filter}) '
+                                f'AND {exec_clause}'),
+        'program': f'content_type:program AND {scope.metadata_language_filter} AND ({scope.filter})',
+    }
+    requests = []
+    for item_type in constants.ITEM_TYPES:
+        requests.append({'tier': 0, 'count_for': item_type, 'query': broad_query, 'filters': bases[item_type],
+                         'hitsPerPage': 0, 'removeWordsIfNoResults': 'allOptional'})
+        if skills_clause:
+            requests.append({'tier': 0, 'count_for': item_type, 'query': intent.get('query') or '',
+                             'filters': f'{bases[item_type]} AND ({skills_clause})', 'hitsPerPage': 0})
+    return requests
+
+
+def build_sub_requests(intent: dict, scope: CatalogScope, excluded_ids: list[str]) -> list[dict]:
+    """
+    Strict (skills) and broadened requests across every item type, plus counts per type. A type the
+    learner asked for is a preference, not a filter: its own requests are added so it's well covered,
+    while the other types stay in the results as alternatives ("More options").
+    """
+    requests = _hit_requests(intent, scope, excluded_ids, set(constants.ITEM_TYPES))
+    preferred = preferred_types(intent)
+    if preferred:
+        requests += [dict(req, preferred=True) for req in _hit_requests(intent, scope, excluded_ids, preferred)]
+    return requests + _count_requests(intent, scope)
 
 
 class SearchResults(list):
@@ -178,7 +217,7 @@ def search(intent: dict, scope: CatalogScope, excluded_ids: list[str], *, catalo
            timeout_s: float = 2.0) -> list[dict]:
     """Run the sub-requests in one catalog round trip; return candidates ``{hit, card, tier, rank}``."""
     requests = build_sub_requests(intent, scope, excluded_ids)
-    queries = [{k: v for k, v in req.items() if k not in ('tier', 'count_for')} for req in requests]
+    queries = [{k: v for k, v in req.items() if k not in ('tier', 'count_for', 'preferred')} for req in requests]
     for query in queries:
         query.update(distinct=True, attributesToRetrieve=constants.ATTRIBUTES_TO_RETRIEVE)
     try:
@@ -189,7 +228,7 @@ def search(intent: dict, scope: CatalogScope, excluded_ids: list[str], *, catalo
     for req, result in zip(requests, results):
         if req.get('count_for'):
             if isinstance(result.get('nbHits'), int):
-                totals[req['count_for']] = result['nbHits']
+                totals[req['count_for']] = max(totals.get(req['count_for'], 0), result['nbHits'])
             continue
         for rank, hit in enumerate(result.get('hits') or []):
             if isinstance(hit, dict) and item_id_of(hit):
@@ -200,6 +239,7 @@ def search(intent: dict, scope: CatalogScope, excluded_ids: list[str], *, catalo
 def prefilter(raw: list[dict], intent: dict) -> list[dict]:
     """Spec "Prefilter (deterministic)": dedupe, score, keep the top 20 with type caps."""
     best: dict[str, dict] = {}
+    preferred = preferred_types(intent)
     level = intent.get('level')
     constraints = intent.get('constraints') or {}
     for cand in raw:
@@ -216,13 +256,17 @@ def prefilter(raw: list[dict], intent: dict) -> list[dict]:
         min_hours = card['facts'].get('hours_per_week_min')
         if constraints.get('max_hours_per_week') and min_hours and min_hours <= constraints['max_hours_per_week']:
             score += 1
+        if card['item_type'] in preferred:
+            score += 2  # the learner's preferred type leads; the others stay as alternatives
         if card['item_id'] not in best or score > best[card['item_id']]['score']:
             best[card['item_id']] = dict(cand, score=score)
     counts = {t: 0 for t in constants.ITEM_TYPES}
+    caps = {t: max(cap, constants.PREFERRED_TYPE_CAP) if t in preferred else cap
+            for t, cap in constants.CANDIDATE_CAPS.items()}
     kept = []
     for cand in sorted(best.values(), key=lambda c: -c['score']):
         item_type = cand['card']['item_type']
-        if counts[item_type] < constants.CANDIDATE_CAPS[item_type]:
+        if counts[item_type] < caps[item_type]:
             counts[item_type] += 1
             kept.append(cand)
         if len(kept) == constants.MAX_CANDIDATES:

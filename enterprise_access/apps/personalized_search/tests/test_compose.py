@@ -249,6 +249,43 @@ class ComposeParserTests(TestCase):
         _, parts = self.parse(text)
         self.assertEqual([b['props']['fallback'] for b in self.blocks(parts, 'item_section')], [False])
 
+    def test_a_section_that_only_repeats_shown_items_is_refilled_from_unused_candidates(self):
+        compare = {'block': 'compare', 'options': [{'item_id': 'edX+C1', 'best_for': 'a'},
+                                                   {'item_id': 'edX+C2', 'best_for': 'b'}]}
+        text = 'Hi.\n@@BLOCKS@@\n' + line(compare) + line(section('course', ['edX+C1', 'edX+C2'], dek='Quick picks'))
+        parser, parts = self.parse(text)
+        course = self.blocks(parts, 'item_section')[0]['props']
+        ids = [i['item_id'] for i in course['items']]
+        self.assertTrue(ids and not {'edX+C1', 'edX+C2'} & set(ids))
+        self.assertEqual((course['dek'], course['fallback']), ('Quick picks', True))
+        self.assertIn('section_refilled:course', parser.dropped)
+        self.assertEqual(parser.dropped_lines, 0)
+
+    def test_with_a_preferred_type_the_other_types_stay_as_alternatives(self):
+        parser = compose.ComposeParser(candidates=default_candidates(), shown_ids=[], followup_attribute='level',
+                                       intent={'item_types': ['executive_education']})
+        exec_ed = {'block': 'item_section', 'item_type': 'executive_education', 'dek': 'd',
+                   'items': [{'item_id': 'Yale+E1', 'why': 'w'}]}
+        parts = parser.feed('Hi.\n@@BLOCKS@@\n' + line(exec_ed)) + parser.finish()
+        sections = [p['data']['props'] for p in parts
+                    if p['type'] == 'data-block' and p['data']['type'] == 'item_section']
+        self.assertEqual([s['item_type'] for s in sections], ['executive_education', 'course', 'program'])
+        self.assertTrue(all(s['fallback'] for s in sections[1:]))
+
+    def test_without_a_preferred_type_no_alternative_sections_are_added(self):
+        parser = compose.ComposeParser(candidates=default_candidates(), shown_ids=[], followup_attribute='level',
+                                       intent={'item_types': ['course', 'executive_education', 'program']})
+        parts = parser.feed('Hi.\n@@BLOCKS@@\n' + line(section('course', ['edX+C1']))) + parser.finish()
+        types = [p['data']['props']['item_type'] for p in parts
+                 if p['type'] == 'data-block' and p['data']['type'] == 'item_section']
+        self.assertEqual(types, ['course'])
+
+    def test_the_prompt_asks_for_the_followup_right_after_the_header(self):
+        prompt = compose.SYSTEM_PROMPT
+        self.assertLess(prompt.index('{"block":"page_header"'), prompt.index('{"block":"followup"'))
+        self.assertLess(prompt.index('{"block":"followup"'), prompt.index('{"block":"top_pick"'))
+        self.assertIn('always exactly one, right after page_header', prompt)
+
     def test_drop_reasons(self):
         lines = [
             {'block': 'page_header', 'title': ''},

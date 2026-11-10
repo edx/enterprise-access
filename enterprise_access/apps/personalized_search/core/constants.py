@@ -18,6 +18,8 @@ COMPOSE_MAX_TOKENS = 1800  # room for the top pick and the comparison (KD-11)
 # Prefilter caps (spec "Retrieval": top 20 with type caps).
 CANDIDATE_CAPS = {'course': 10, 'executive_education': 5, 'program': 5}
 MAX_CANDIDATES = 20
+# A type the learner prefers may fill up to this many shortlist places (the others keep their caps).
+PREFERRED_TYPE_CAP = 10
 MAX_ITEMS_PER_SECTION = 3
 MAX_ITEMS_PER_TURN = 12  # top pick + up to 3 compared + sections (KD-11)
 MAX_COMPARE_OPTIONS = 3

@@ -136,6 +136,9 @@ class OpenAIBackend:
                     _fill_usage(usage, chunk.usage)
                 if not chunk.choices:
                     continue
+                if getattr(chunk.choices[0], 'finish_reason', None):
+                    # 'length' means the token budget cut the answer short (the last lines are lost).
+                    usage.extra['finish_reason'] = chunk.choices[0].finish_reason
                 delta = chunk.choices[0].delta.content
                 if delta:
                     if usage.first_token_ms is None:
