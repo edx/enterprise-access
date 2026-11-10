@@ -367,7 +367,7 @@ Drawn with the KD-10 boundaries, so which dependencies stay out of the core is v
   - `page_header.title` ≤ 80, `dek` ≤ 400
   - `item_section.dek` ≤ 200
   - `why` ≤ 400 (one or two sentences to "you"); `fit` ≤ 3 tags of ≤ 24
-  - `question` ≤ 200 (REQ-006). The chips come in two kinds. `suggestions` are always the chosen attribute's fixed chips, which narrow the results. `ideas` are up to 3 model-written chips (≤ 48 each) specific to the conversation, without repeats of the fixed chips. When the attribute is `open` (nothing left to narrow), the ideas replace the fixed opening chips; the opening chips return only when the model wrote no ideas
+  - `question` ≤ 200 (REQ-006). The chips come in two kinds. `suggestions` are always the chosen attribute's fixed chips, which narrow the results. `ideas` are up to 3 model-written chips (≤ 48 each) specific to the conversation. When an idea covers a fixed choice ("I'm a beginner" covers "Introductory", per `FIXED_CHIP_MATCHES`), the idea wins and that fixed chip is dropped. When the attribute is `open` (nothing left to narrow), the ideas replace the fixed opening chips; the opening chips return only when the model wrote no ideas
   - `session_title` ≤ 60
   - `insight.title` ≤ 60, `body` ≤ 600; `plan.steps` 2–4, `note` ≤ 80, optional `why` ≤ 160 (why this order: the best fit for the goal first, then each step building on the last, foundations before advanced and shorter before longer)
 - Prompt content: the merged intent; the follow-up attribute from step 3 and the attributes already asked; the ≤ 20 candidates as `{item_id, item_type, title, partner, level, pacing, weeks, short_description (HTML stripped; programs use subtitle) ≤ 300 chars, skills ≤ 6}`; and the last 4 turns. It follows the prototype's editorial rules (from the prototype): stay on topic, no hype, never pad, choose only from the candidates.
@@ -905,6 +905,7 @@ The full changelog is maintained with the team. Highlights:
 | 2026-11-04 | KD-8 amended (two dedicated flags); KD-10 added (portability: ports and adapters, JSON Schemas); timeouts restored as settings; stream header sent; C4 L3 diagrams; OQ-10 opened, OQ-11 closed |
 | 2026-11-09 | Review decisions recorded (timeouts, prompts, optional Xpert adapter, PII retirement) |
 | 2026-11-09 | KD-11 (results pane as a decision guide; results update in place, REQ-007 amended; REQ-016) and KD-12 (telemetry; REQ-017) from the design and analytics reviews |
+| 2026-11-09 | Chat replies: one or two friendly sentences that react to the learner, at most one title in **bold**, varied openings; an AI chip that covers a fixed choice replaces that fixed chip |
 | 2026-11-09 | Item types are a preference (all types searched, preferred first, others as alternatives); "See all" counts take the larger of the keyword and skills counts; the follow-up line is required right after page_header; a section that only repeats shown items is refilled from unused candidates |
 | 2026-11-09 | KD-13: reusing model output deferred (response cache tried and removed); block digests on `turn.completed` |
 | 2026-11-09 | Content language follows the learner's portal locale (`metadata_language` + `language` filters, model text in that language), as Learner Pathways does |
