@@ -269,6 +269,8 @@ def prefilter(raw: list[dict], intent: dict) -> list[dict]:
             score += 1
         if card['item_type'] in preferred:
             score += 2  # the learner's preferred type leads; the others stay as alternatives
+        elif not preferred and card['item_type'] == 'program':
+            score += constants.PROGRAM_LEAD_BOOST  # with no type asked for, related programs lead
         if card['item_id'] not in best or score > best[card['item_id']]['score']:
             best[card['item_id']] = dict(cand, score=score)
     counts = {t: 0 for t in constants.ITEM_TYPES}
