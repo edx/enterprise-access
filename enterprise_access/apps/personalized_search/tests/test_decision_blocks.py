@@ -1,5 +1,6 @@
 """Tests for the top pick and comparison blocks (KD-11): validated, hydrated, once per turn."""
 import json
+from unittest import mock
 
 from django.test import TestCase
 
@@ -86,6 +87,36 @@ class DecisionBlockTests(TestCase):
         parser.emitted_ids = [f'x{i}' for i in range(constants.MAX_ITEMS_PER_TURN)]
         self.assertIsNone(parser._option('p-1'))  # pylint: disable=protected-access
 
+    def test_compare_counts_against_the_per_turn_cap_while_it_collects(self):
+        body = (line({'block': 'top_pick', 'item_id': 'p-1', 'reason': 'R'}) +
+                line({'block': 'item_section', 'item_type': 'course', 'dek': 'd',
+                      'items': [{'item_id': i, 'why': 'w', 'fit': []} for i in ('edX+C1', 'edX+C2', 'edX+C3')]}) +
+                line({'block': 'compare', 'options': [option('Yale+E2'), option('p-1'), option('Yale+E1')]}))
+        with mock.patch.object(constants, 'MAX_ITEMS_PER_TURN', 5):
+            parser, blocks = self.parse(body)
+        # Yale+E2 takes the last place; the top pick may still be compared; Yale+E1 would go past the cap.
+        self.assertEqual([o['item']['item_id'] for o in self.of(blocks, 'compare')[0]['props']['options']],
+                         ['Yale+E2', 'p-1'])
+        self.assertEqual(parser.emitted_ids, ['p-1', 'edX+C1', 'edX+C2', 'edX+C3', 'Yale+E2'])
+
+    def test_compared_items_are_recorded_in_option_order(self):
+        parser, _ = self.parse(line({'block': 'compare', 'options': [option('Yale+E2'), option('p-2'),
+                                                                     option('edX+C3')]}))
+        # (The fallback section adds its items after them.)
+        self.assertEqual(parser.emitted_ids[:3], ['Yale+E2', 'p-2', 'edX+C3'])
+        self.assertEqual([p['item_id'] for p in parser.placements][:3], ['Yale+E2', 'p-2', 'edX+C3'])
+
+    def test_a_later_top_pick_or_compare_never_repeats_a_reserve_card(self):
+        parser, blocks = self.parse(
+            line({'block': 'item_section', 'item_type': 'course', 'dek': 'd',
+                  'items': [{'item_id': 'edX+C1', 'why': 'w', 'fit': []}]}) +  # reserve: edX+C2, edX+C3
+            line({'block': 'top_pick', 'item_id': 'edX+C2', 'reason': 'R'}) +
+            line({'block': 'compare', 'options': [option('edX+C3'), option('p-1'), option('p-2')]}))
+        self.assertFalse(self.of(blocks, 'top_pick'))
+        self.assertIn('top_pick_invalid', parser.dropped)
+        self.assertEqual([o['item']['item_id'] for o in self.of(blocks, 'compare')[0]['props']['options']],
+                         ['p-1', 'p-2'])
+
     def test_text_only_turns_get_no_decision_blocks(self):
         parser = ComposeParser(candidates=[], excluded_ids=[], followup_attribute='level')
         parts = parser.feed('r\n@@BLOCKS@@\n' + line({'block': 'top_pick', 'item_id': 'p-1', 'reason': 'R'}) +
@@ -140,6 +171,8 @@ class SectionExtrasTests(TestCase):
         self.assertEqual(props['total'], 37)
         self.assertEqual([c['item_id'] for c in props['reserve']], ['edX+C3', 'edX+C4'])
         self.assertTrue(all(c['why'] is None and c['fit'] == [] for c in props['reserve']))
+        # A reserve card's section is known; it has no position until it fills a removed card.
+        self.assertTrue(all(c['section'] == 'course' and 'position' not in c for c in props['reserve']))
 
     def test_cards_new_to_the_conversation_are_flagged_wherever_they_sit(self):
         parser = ComposeParser(candidates=default_candidates(), excluded_ids=[], followup_attribute='level',
