@@ -86,14 +86,19 @@ def shortlist_size(compose_model: str) -> int:
 
 
 def turn_context(*, session: dict, message: str, intent_model: ModelChoice, compose_model: ModelChoice,
-                 scope: CatalogScope, debug: bool = False, registry: ModelRegistry | None = None) -> TurnContext:
-    """A ``TurnContext`` with the configured timeouts, shortlist size and the registry's platform names."""
+                 scope: CatalogScope, debug: bool = False, debug_overrides: bool = False,
+                 registry: ModelRegistry | None = None) -> TurnContext:
+    """
+    A ``TurnContext`` with the configured timeouts, shortlist size and the registry's platform names.
+    ``debug`` turns on the debug read-out; ``debug_overrides`` says this turn's models came from debug
+    overrides, which tags its usage events (``is_debug``).
+    """
     registry = registry or model_registry()
     return TurnContext(
         session=session, message=message, intent_model=intent_model, compose_model=compose_model, scope=scope,
         debug=debug, platform=registry.platform_of,
         analytics={'cohort': settings.PERSONALIZED_SEARCH_ANALYTICS_COHORT,
-                   'engine': settings.PERSONALIZED_SEARCH_ENGINE_LABEL},
+                   'engine': settings.PERSONALIZED_SEARCH_ENGINE_LABEL, 'is_debug': debug_overrides},
         intent_timeout_s=_step_timeout(registry, intent_model.model, settings.PERSONALIZED_SEARCH_INTENT_TIMEOUT_S),
         compose_timeout_s=_step_timeout(registry, compose_model.model,
                                         settings.PERSONALIZED_SEARCH_COMPOSE_READ_TIMEOUT_S),

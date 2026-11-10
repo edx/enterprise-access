@@ -280,3 +280,20 @@ class HistoryEventTests(APITest):
         name, props = emit.call_args.args[1], emit.call_args.args[2]
         self.assertEqual(name, 'turn.rated')
         self.assertEqual((props['turn_id'], props['turn_index'], props['rating']), (str(self.turn.uuid), 1, -1))
+
+    @mock.patch(EMIT)
+    def test_clearing_a_rating_sends_turn_rated_with_null(self, emit):
+        url = reverse('api:v1:personalized-search-turn-feedback',
+                      kwargs={'session_uuid': self.session.uuid, 'sequence': 1})
+        response = self.client.post(url, {'enterprise_customer_uuid': ENTERPRISE, 'rating': None}, format='json')
+        self.assertEqual(response.json(), {'sequence': 1, 'rating': None})
+        name, props = emit.call_args.args[1], emit.call_args.args[2]
+        self.assertEqual((name, props['turn_id'], props['rating']), ('turn.rated', str(self.turn.uuid), None))
+
+    @mock.patch(EMIT)
+    def test_rating_a_missing_turn_sends_nothing(self, emit):
+        url = reverse('api:v1:personalized-search-turn-feedback',
+                      kwargs={'session_uuid': self.session.uuid, 'sequence': 9})
+        response = self.client.post(url, {'enterprise_customer_uuid': ENTERPRISE, 'rating': 1}, format='json')
+        self.assertEqual(response.status_code, 404)
+        emit.assert_not_called()

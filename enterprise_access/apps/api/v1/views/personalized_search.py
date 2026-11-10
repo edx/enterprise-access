@@ -79,8 +79,11 @@ def _error(code: str, http_status: int, detail: str = '') -> JsonResponse:
     return JsonResponse({'code': code, 'detail': detail}, status=http_status)
 
 
-def _model_choices(overrides: dict) -> tuple[ModelChoice, ModelChoice]:
-    """The configured models, or the debug overrides when this environment allows them."""
+def _model_choices(overrides: dict) -> tuple[ModelChoice, ModelChoice, bool]:
+    """
+    The configured models, or the debug overrides when this environment allows them, and whether this
+    turn applied overrides (the usage events' ``is_debug``).
+    """
     intent_default, compose_default = wiring.default_models()
     if overrides and not wiring.debug_overrides_enabled():
         logger.info('Ignoring Personalized Search debug overrides: not enabled in this environment.')
@@ -88,7 +91,8 @@ def _model_choices(overrides: dict) -> tuple[ModelChoice, ModelChoice]:
     return (ModelChoice(overrides.get('intent_model') or intent_default.model,
                         overrides.get('intent_effort', intent_default.effort)),
             ModelChoice(overrides.get('compose_model') or compose_default.model,
-                        overrides.get('compose_effort', compose_default.effort)))
+                        overrides.get('compose_effort', compose_default.effort)),
+            bool(overrides))
 
 
 def _record_pre_stream(ctx: TurnContext, enterprise_customer_uuid: str, started: float) -> None:
@@ -128,7 +132,7 @@ class PersonalizedSearchTurnView(APIView):
         enterprise_customer_uuid = str(data['enterprise_customer_uuid'])
 
         registry = wiring.model_registry()
-        intent_choice, compose_choice = _model_choices(data.get('debug') or {})
+        intent_choice, compose_choice, overridden = _model_choices(data.get('debug') or {})
         if not all(registry.is_configured(choice.model) for choice in (intent_choice, compose_choice)):
             return _error('backend_unsupported', status.HTTP_503_SERVICE_UNAVAILABLE, 'No model backend is configured.')
 
@@ -157,15 +161,15 @@ class PersonalizedSearchTurnView(APIView):
         def release():
             store.unlock(session['uuid'])
 
-        if data.get('resumed_from_history') and session_uuid:  # only a past search can be resumed
-            events.send(lms_user_id, events.SESSION_RESUMED, conversation_id=session['uuid'],
-                        enterprise_customer_uuid=enterprise_customer_uuid, turn_index=session['turn_count'] + 1)
-
         try:
             ctx = wiring.turn_context(session=session, message=data['message'], intent_model=intent_choice,
                                       compose_model=compose_choice, scope=scope,
-                                      debug=wiring.debug_overrides_enabled(), registry=registry)
+                                      debug=wiring.debug_overrides_enabled(), debug_overrides=overridden,
+                                      registry=registry)
             _record_pre_stream(ctx, enterprise_customer_uuid, started)
+            if data.get('resumed_from_history') and session_uuid:  # only a past search can be resumed
+                events.send(lms_user_id, events.SESSION_RESUMED, conversation_id=session['uuid'],
+                            enterprise_customer_uuid=enterprise_customer_uuid, turn_index=session['turn_count'] + 1)
             parts = run_turn(ctx, wiring.steps(registry=registry, store=store))
         except Exception:  # pylint: disable=broad-exception-caught
             release()  # don't leave the session locked for the lock window

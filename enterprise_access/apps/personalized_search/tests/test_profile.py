@@ -27,7 +27,16 @@ class ProfilePropsTests(TestCase):
 
     def test_all_types_add_no_chip_and_some_types_do(self):
         merged = dict(empty_intent(), item_types=['executive_education'])
-        self.assertEqual(profile.profile_props(merged)['chips'], ['Executive Education'])
+        self.assertEqual(profile.profile_props(merged)['chips'], ['Executive education'])  # as its section says
+
+    def test_weeks_and_type_chips_have_their_formats(self):
+        merged = dict(empty_intent(), item_types=['course', 'program'], constraints={'max_weeks': 12})
+        self.assertEqual(profile.profile_props(merged)['chips'], ['Up to 12 weeks', 'Courses and Programs'])
+
+    def test_a_repeated_type_is_named_once(self):
+        for types, chip in ((['course', 'course'], 'Courses'),
+                            (['course', 'course', 'program'], 'Courses and Programs')):
+            self.assertEqual(profile.profile_props(dict(empty_intent(), item_types=types))['chips'], [chip], types)
 
     def test_chips_are_capped_deduplicated_and_non_empty(self):
         merged = dict(empty_intent(), roles=['x' * 60], skills=['Data', 'Data', '  '])
@@ -67,6 +76,16 @@ class ProfileFromResultsTests(TestCase):
     def test_skills_match_the_catalog_names_loosely(self):
         shown = [candidate(course_hit('edX+A', skills=('Leadership Development',)))]
         self.assertIn('Leadership', profile.profile_props(self.MERGED, shown)['chips'])
+
+    def test_skills_match_whole_words_only(self):
+        for skill, names in (('R', ('Leadership',)), ('SQL', ('PostgreSQL',)), ('Email Marketing', ('AI', 'Go'))):
+            shown = [candidate(course_hit('edX+A', skills=names))]
+            merged = dict(empty_intent(), roles=['Analyst'], skills=[skill])
+            self.assertNotIn(skill, profile.profile_props(merged, shown)['chips'], skill)
+
+    def test_a_range_that_starts_within_the_hours_limit_fits_as_in_the_prefilter(self):
+        shown = [candidate(course_hit('edX+A', effort=(2, 6)))]  # 2-6 hrs/week against a limit of 3
+        self.assertIn('Up to 3 hrs/week', profile.profile_props(self.MERGED, shown)['chips'])
 
 
 class ProfileEmissionTests(TestCase):
