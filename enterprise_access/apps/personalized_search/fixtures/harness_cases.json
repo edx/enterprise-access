@@ -423,6 +423,38 @@
    }
   },
   {
+   "id": "R11",
+   "message": "I only have about 3 hours a week",
+   "prior_intent": {
+    "query": "team leadership",
+    "skills": [
+     "leadership",
+     "team management",
+     "communication"
+    ],
+    "roles": [],
+    "level": null,
+    "item_types": [
+     "course",
+     "executive_education",
+     "program"
+    ],
+    "constraints": {
+     "max_weeks": null,
+     "pacing": null
+    }
+   },
+   "history": [
+    "I want to get better at leading a team"
+   ],
+   "expect": {
+    "on_topic": true,
+    "redirect_reason": null,
+    "merge": "refine",
+    "max_hours_per_week_le": 3
+   }
+  },
+  {
    "id": "C1",
    "message": "I'm a senior engineer and want to become an engineering manager",
    "prior_intent": null,

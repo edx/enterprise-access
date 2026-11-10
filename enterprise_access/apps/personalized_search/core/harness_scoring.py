@@ -38,6 +38,9 @@ def score_intent(expect: dict | None, debug: dict) -> dict | None:
         if 'max_weeks_le' in expect:
             weeks = constraints.get('max_weeks')
             checks.append(('max_weeks', weeks is not None and weeks <= expect['max_weeks_le']))
+        if 'max_hours_per_week_le' in expect:
+            hours = constraints.get('max_hours_per_week')
+            checks.append(('max_hours_per_week', hours is not None and hours <= expect['max_hours_per_week_le']))
         if 'pacing' in expect:
             checks.append(('pacing', constraints.get('pacing') == expect['pacing']))
         if 'level' in expect:

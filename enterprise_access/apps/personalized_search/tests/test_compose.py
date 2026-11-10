@@ -30,7 +30,7 @@ class ComposeParserTests(TestCase):
         """Feed ``text`` in fixed-size chunks and return the parser and every part."""
         candidates = default_candidates() if candidates is None else candidates
         parser = compose.ComposeParser(candidates=candidates,
-                                       shown_ids=list(shown), followup_attribute=attribute)
+                                       excluded_ids=list(shown), followup_attribute=attribute)
         parts = []
         for i in range(0, len(text), chunk):
             parts += parser.feed(text[i:i + chunk])
@@ -144,7 +144,7 @@ class ComposeParserTests(TestCase):
         expected = self.shape(self.parse(text, chunk=len(text))[1])
         self.assertEqual(expected[0], 'Here is your page, with picks.')
         for offset in range(1, len(text)):
-            parser = compose.ComposeParser(candidates=default_candidates(), shown_ids=[], followup_attribute='level')
+            parser = compose.ComposeParser(candidates=default_candidates(), excluded_ids=[], followup_attribute='level')
             parts = parser.feed(text[:offset]) + parser.feed(text[offset:]) + parser.finish()
             self.assertEqual(self.shape(parts), expected, offset)
             self.assertNotIn('@@', expected[0])
@@ -341,7 +341,7 @@ class ComposeParserTests(TestCase):
         self.assertEqual(parser.dropped_lines, 1)
 
     def test_with_a_preferred_type_the_other_types_stay_as_alternatives(self):
-        parser = compose.ComposeParser(candidates=default_candidates(), shown_ids=[], followup_attribute='level',
+        parser = compose.ComposeParser(candidates=default_candidates(), excluded_ids=[], followup_attribute='level',
                                        intent={'item_types': ['executive_education']})
         exec_ed = {'block': 'item_section', 'item_type': 'executive_education', 'dek': 'd',
                    'items': [{'item_id': 'Yale+E1', 'why': 'w'}]}
@@ -352,7 +352,7 @@ class ComposeParserTests(TestCase):
         self.assertTrue(all(s['fallback'] for s in sections[1:]))
 
     def section_types_for(self, item_types):
-        parser = compose.ComposeParser(candidates=default_candidates(), shown_ids=[], followup_attribute='level',
+        parser = compose.ComposeParser(candidates=default_candidates(), excluded_ids=[], followup_attribute='level',
                                        intent={'item_types': item_types})
         parts = parser.feed('Hi.\n@@BLOCKS@@\n' + line(section('course', ['edX+C1']))) + parser.finish()
         return [p['data']['props']['item_type'] for p in parts
@@ -372,7 +372,7 @@ class ComposeParserTests(TestCase):
     def test_server_added_sections_use_only_closely_related_candidates(self):
         def program_section(tier, rank):
             cands = [candidate(course_hit('edX+C1')), candidate(program_hit('p-9'), tier=tier, rank=rank)]
-            parser = compose.ComposeParser(candidates=cands, shown_ids=[], followup_attribute='level',
+            parser = compose.ComposeParser(candidates=cands, excluded_ids=[], followup_attribute='level',
                                            intent={'item_types': list(constants.ITEM_TYPES)})
             parts = parser.feed('Hi.\n@@BLOCKS@@\n' + line(section('course', ['edX+C1']))) + parser.finish()
             sections = [p['data']['props'] for p in parts
@@ -387,6 +387,10 @@ class ComposeParserTests(TestCase):
         parser, parts = self.parse('Nothing fits.\n@@BLOCKS@@\n', candidates=cands)
         self.assertEqual(self.blocks(parts, 'item_section'), [])
         self.assertFalse(parser.used_fallback)
+
+    def test_a_plan_that_starts_elsewhere_explains_how_it_leads_to_the_top_pick(self):
+        self.assertIn("when the top pick isn't the first step, say how the earlier steps lead to it",
+                      compose.SYSTEM_PROMPT)
 
     def test_the_prompt_asks_for_the_followup_right_after_the_header(self):
         prompt = compose.SYSTEM_PROMPT
