@@ -325,9 +325,6 @@ def _summarize_turn(parts: list[dict]) -> dict:
             out['blocks'].append(block)
             if block['type'] == 'item_section':
                 out['fallback'] = out['fallback'] or block['props'].get('fallback', False)
-                for item in block['props']['items']:
-                    out['item_ids'].append(item['item_id'])
-                    out['item_types'].append(item['item_type'])
         elif kind == 'data-followups':
             out['followups'] = part['data']
         elif kind == 'data-timing':
@@ -335,6 +332,9 @@ def _summarize_turn(parts: list[dict]) -> dict:
             out['debug'] = part['data'].get('debug') or {}
         elif kind == 'error':
             out['status'], out['error'] = 'error', part['errorText']
+    # Every card on the page, the top pick and comparison included, as the multi-turn path counts them.
+    items = page_items(out['blocks'])
+    out['item_ids'], out['item_types'] = [i['item_id'] for i in items], [i['item_type'] for i in items]
     return out
 
 

@@ -11,9 +11,6 @@ class SegmentEvents:
     TURN_COMPLETED = f'{PREFIX}.turn.completed'
     TURN_FAILED = f'{PREFIX}.turn.failed'
     TURN_STOPPED = f'{PREFIX}.turn.stopped'
-    TURN_RATED = f'{PREFIX}.turn.rated'
-    SESSION_OPENED = f'{PREFIX}.history.session-opened'
-    SESSION_RESUMED = f'{PREFIX}.history.session-resumed'
 
     @classmethod
     def name(cls, event: str) -> str:

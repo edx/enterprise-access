@@ -393,6 +393,14 @@ class ComposeParserTests(TestCase):
         self.assertEqual(self.blocks(parts, 'item_section'), [])
         self.assertFalse(parser.used_fallback)
 
+    def test_the_fallback_type_is_the_one_with_the_most_skill_matched_candidates(self):
+        cands = [candidate(course_hit(f'edX+C{i}'), tier=1) for i in range(3)]
+        cands += [candidate(program_hit('p-1'), tier=2), candidate(program_hit('p-2'), tier=2)]
+        parser, parts = self.parse('Nothing fits.\n@@BLOCKS@@\n', candidates=cands)
+        (props,) = [b['props'] for b in self.blocks(parts, 'item_section')]
+        self.assertEqual((props['item_type'], [i['item_id'] for i in props['items']]), ('program', ['p-1', 'p-2']))
+        self.assertTrue(parser.used_fallback)
+
     def test_a_plan_that_starts_elsewhere_explains_how_it_leads_to_the_top_pick(self):
         self.assertIn("when the top pick isn't the first step, say how the earlier steps lead to it",
                       compose.SYSTEM_PROMPT)
