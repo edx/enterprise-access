@@ -6,7 +6,7 @@ import json
 
 from enterprise_access.apps.personalized_search.core import constants
 from enterprise_access.apps.personalized_search.core.profile import profile_props
-from enterprise_access.apps.personalized_search.core.retrieval import compose_view
+from enterprise_access.apps.personalized_search.core.retrieval import compose_view, preferred_types
 
 MARKER = '@@BLOCKS@@'
 
@@ -20,6 +20,7 @@ Output format, in this exact order:
 2. A line containing only @@BLOCKS@@
 3. One JSON object per line, no blank lines, no code fences. The "block" value is always one of: page_header, caveat, top_pick, compare, item_section, followup, insight, plan.
 {"block":"page_header","title":"...","dek":"..."}
+{"block":"followup","question":"...","ideas":["...","..."],"session_title":"..."}   (always exactly one, right after page_header)
 {"block":"caveat","title":"...","body":"..."}   (only when the results can't meet something the learner asked for)
 {"block":"top_pick","item_id":"<option id>","reason":"...","checks":["...","..."]}
 {"block":"compare","options":[{"item_id":"<option id>","best_for":"..."},{"item_id":"<option id>","best_for":"..."},{"item_id":"<option id>","best_for":"..."}]}
@@ -27,16 +28,16 @@ Then up to three section lines, at most one per item_type, best section first, w
 {"block":"item_section","item_type":"course","dek":"...","items":[{"item_id":"<option id>","why":"...","fit":["..."]}]}
 {"block":"item_section","item_type":"executive_education","dek":"...","items":[{"item_id":"<option id>","why":"...","fit":["..."]}]}
 {"block":"item_section","item_type":"program","dek":"...","items":[{"item_id":"<option id>","why":"...","fit":["..."]}]}
-{"block":"followup","question":"...","ideas":["...","..."],"session_title":"..."}
 {"block":"insight","title":"...","body":"..."}   (optional; only if the learner asked for information)
 {"block":"plan","why":"...","steps":[{"item_id":"<id in your results>","note":"..."}]}   (only when 3 or more items are in your results)
 
 Rules:
 - Put each item in the section matching its item_type.
+- Preferred types: when MERGED INTENT item_types lists fewer than all three types, the learner prefers those. Take the top pick and compare from them when they have good options, and write their section first. Then add sections of the other types as alternatives, when they have good options.
 - top_pick: the single best fit to start with. reason: one sentence to the learner ("Because you want to ...", max 160 characters). checks: 1-3 short phrases (max 40 characters each) naming the learner's stated preferences this item meets, such as "Self-paced" or "~4 hrs/week"; only claims the option's facts support.
 - caveat: when no option can meet a goal the learner stated (for example a full qualification, license or degree, a language, or a time limit), say so plainly: title max 60 characters, body max 300 characters, one at most. Never use it for anything else.
 - compare: 2-3 strong options that differ in what they're best for (they may include the top pick). best_for completes "Best for ..." (max 60 characters), e.g. "a recognized credential" or "a quick start".
-- Sections hold the other good options, not those already in top_pick or compare: up to 3 per section and at most 12 items in total, best first, only items that genuinely fit the learner's cumulative goal. Fewer or zero is fine; never pad with weak matches. Reject options whose main subject isn't the learner's topic or career goal, even if they match the level or format.
+- Sections hold the other good options, never items already in top_pick or compare (those are rejected): up to 3 per section and at most 12 items in total, best first, only items that genuinely fit the learner's cumulative goal. Fewer or zero is fine; never pad with weak matches. Reject options whose main subject isn't the learner's topic or career goal, even if they match the level or format.
 - why: 1-2 sentences to the learner ("you") connecting the item to their goal, level and constraints; name concrete skills they will practice. Plain, specific, no hype. Max 400 characters.
 - fit: 2-3 short tags of 1-3 words (max 24 characters each).
 - page_header: title is an editorial headline specific to this learner (max 80 characters); dek is 2-3 sentences on what they're looking for and how the picks fit together (max 400 characters).
@@ -169,6 +170,7 @@ class ComposeParser:
         self._line = ''
         if not self.first_section_emitted and self.candidates:
             parts += self._fallback_section()
+        parts += self._alternative_sections()
         parts += self._profile()
         if not self.followups_emitted:
             question, _ = constants.FOLLOWUP_TEMPLATES[self.attribute]
@@ -305,13 +307,15 @@ class ComposeParser:
                 item_type in self.section_types or not self.candidates:
             return self._drop(f'section_rejected:{str(item_type)[:30]}')
         raw_items = obj.get('items') if isinstance(obj.get('items'), list) else []
-        items = []
+        items, collided = [], False
         for raw in raw_items:
             if not isinstance(raw, dict) or not isinstance(raw.get('item_id'), str):
                 continue
             item_id = raw['item_id']
             card = self.cards.get(item_id)
             duplicate = item_id in self.emitted_ids or any(i['item_id'] == item_id for i in items)
+            if card and card['item_type'] == item_type and item_id in self.emitted_ids:
+                collided = True  # a real item of this type, already used in the top pick, compare or a section
             if not card or card['item_type'] != item_type or item_id in self.shown or duplicate:
                 continue
             if len(items) == constants.MAX_ITEMS_PER_SECTION or \
@@ -320,6 +324,13 @@ class ComposeParser:
             fit = _strings(raw.get('fit'), constants.CAPS['fit_tag'], constants.CAPS['fit_count'])
             items.append(self._card(card, why=_text(raw.get('why'), constants.CAPS['why']) or None, fit=fit))
         if not items:
+            # The model often repeats the top pick or compare items, which are rejected here. Rather than
+            # lose the group, fill it from the type's unused candidates, keeping the model's dek.
+            refilled = collided and self._server_section(item_type,
+                                                         dek=_text(obj.get('dek'), constants.CAPS['section_dek']))
+            if refilled:
+                self.dropped.append(f'section_refilled:{item_type}')
+                return refilled
             return self._drop(f'section_no_valid_items:{item_type}')
         self.section_types.add(item_type)
         self.emitted_ids += [i['item_id'] for i in items]
@@ -416,21 +427,41 @@ class ComposeParser:
             props['why'] = why
         return [self._block('plan', props)]
 
-    def _fallback_section(self) -> list[dict]:
-        """Spec fallback: the type with the most candidates, its top 3, no why."""
-        counts: dict[str, int] = {}
-        for cand in self.candidates:
-            counts[cand['card']['item_type']] = counts.get(cand['card']['item_type'], 0) + 1
-        item_type = max(counts, key=counts.get)
+    def _server_section(self, item_type: str, *, dek: str = '') -> list[dict]:
+        """A section of ``item_type`` built from its unused candidates (no why), within the turn's caps."""
+        room = min(constants.MAX_ITEMS_PER_SECTION, constants.MAX_ITEMS_PER_TURN - len(self.emitted_ids))
+        taken = set(self.emitted_ids) | self.shown
         items = [self._card(c['card']) for c in self.candidates
-                 if c['card']['item_type'] == item_type and c['card']['item_id'] not in self.shown][:3]
-        if not items:
+                 if c['card']['item_type'] == item_type and c['card']['item_id'] not in taken][:max(room, 0)]
+        if not items or item_type in self.section_types:
             return []
+        self.section_types.add(item_type)
         self.emitted_ids += [i['item_id'] for i in items]
         self.first_section_emitted = True
         self.used_fallback = True
         self._place(items, item_type)
         return [self._block('item_section', self._section_extras(item_type, {
-            'item_type': item_type, 'label': section_label(item_type, len(items)), 'dek': '',
+            'item_type': item_type, 'label': section_label(item_type, len(items)), 'dek': dek,
             'fallback': True, 'items': items,
         }))]
+
+    def _fallback_section(self) -> list[dict]:
+        """Spec fallback: the type with the most candidates, its top 3, no why."""
+        counts: dict[str, int] = {}
+        for cand in self.candidates:
+            counts[cand['card']['item_type']] = counts.get(cand['card']['item_type'], 0) + 1
+        return self._server_section(max(counts, key=counts.get))
+
+    def _alternative_sections(self) -> list[dict]:
+        """
+        When the learner prefers some types, the other types stay as alternatives in "More options": any
+        type with unused candidates the model gave no section gets one built from them.
+        """
+        preferred = preferred_types(self.intent or {})
+        if not preferred or not self.candidates:
+            return []
+        parts: list[dict] = []
+        for item_type in constants.ITEM_TYPES:
+            if item_type not in preferred and item_type not in self.section_types:
+                parts += self._server_section(item_type)
+        return parts
