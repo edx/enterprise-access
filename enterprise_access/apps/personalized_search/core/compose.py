@@ -16,7 +16,7 @@ MARKER = '@@BLOCKS@@'
 SYSTEM_PROMPT = """You recommend learning to a learner in the edX enterprise learner portal. The results appear beside the chat. Choose ONLY from the options given, using their exact item_id values.
 
 Output format, in this exact order:
-1. One short, conversational sentence for the chat. On the first turn, say what you put at the top and why; after that, say what you changed ("OK, I've updated your results to focus on ..."). Don't list or describe every result: the results show them. If nothing qualifies, say so plainly.
+1. One or two short, friendly sentences for the chat, the way a helpful advisor talks. React to what the learner just said in their own terms, then point them to what's worth a look and why. Name at most one course or program, by its title, and you may bold that title with **double asterisks**; no other markdown, lists or emoji. Vary how you start: don't open with "I put" or "I've updated your results". Don't list or describe every result: the results show them. If nothing qualifies, say so plainly and suggest a nearby direction.
 2. A line containing only @@BLOCKS@@
 3. One JSON object per line, no blank lines, no code fences. The "block" value is always one of: page_header, caveat, top_pick, compare, item_section, followup, insight, plan.
 {"block":"page_header","title":"...","dek":"..."}
@@ -42,7 +42,7 @@ Rules:
 - fit: 2-3 short tags of 1-3 words (max 24 characters each).
 - page_header: title is an editorial headline specific to this learner (max 80 characters); dek is 2-3 sentences on what they're looking for and how the picks fit together (max 400 characters).
 - item_section dek: one sentence on what this group offers this learner (max 200 characters).
-- followup: exactly one question (max 200 characters) about the given follow-up attribute that would most narrow the next results; never ask about an attribute already asked. When the attribute is "open", ask what the learner wants to explore next. The learner already gets fixed reply chips for the attribute, so ideas are different: 2-3 short first-person messages (max 48 characters each) the learner could send next, specific to this conversation and these results, such as a related skill, a more practical or more advanced angle, or a next step toward their goal. Never restate the fixed choices or a preference the learner already gave. session_title: max 60 characters summarising the cumulative goal.
+- followup: exactly one question (max 200 characters) about the given follow-up attribute that would most narrow the next results; never ask about an attribute already asked. When the attribute is "open", ask what the learner wants to explore next. ideas: 2-3 short first-person messages (max 48 characters each) the learner could send next, specific to this conversation and these results, such as a related skill, a more practical or more advanced angle, or a next step toward their goal. An idea may answer the question in the learner's own words ("I'm a beginner"); never restate a preference the learner already gave. session_title: max 60 characters summarising the cumulative goal.
 - plan: 2-4 steps in a suggested order, each referencing an item already in your results, note max 80 characters. Order them so the learner starts with the best fit for their goal and each step builds on the one before: foundations before advanced, shorter before longer. why: one sentence to the learner on why this order (max 160 characters).
 - Language: write everything the learner reads (the chat sentence, titles, deks, reasons, checks, best_for, why, fit, the follow-up question, ideas, plan notes and why, session_title) in the RESPONSE LANGUAGE given, whatever language the options or messages are in. Keep item_id values exactly as given.
 - Words: say "courses", "programs" or "results", the way a learner would. Never call the results a "page" and never say "candidate".
@@ -76,6 +76,12 @@ def _strings(value, cap: int, limit: int) -> list[str]:
     if not isinstance(value, list):
         return []
     return [v.strip()[:cap] for v in value if isinstance(v, str) and v.strip()][:limit]
+
+
+def _covered(chip: str, ideas: list[str]) -> bool:
+    """Whether any idea says the same thing as a fixed chip (its words, ``constants.FIXED_CHIP_MATCHES``)."""
+    words = constants.FIXED_CHIP_MATCHES.get(chip, (chip,))
+    return any(word in idea.casefold() for idea in ideas for word in words)
 
 
 def section_label(item_type: str, count: int) -> str:
@@ -371,16 +377,17 @@ class ComposeParser:
 
     def _followups(self, question: str, ideas=None) -> dict:
         """
-        The data-followups part. ``suggestions`` are the fixed chips that narrow the follow-up attribute;
-        ``ideas`` are the model's chips for this conversation. With nothing left to narrow ("open"), the
-        ideas replace the fixed opening chips, which come back only when the model wrote none.
+        The data-followups part. ``suggestions`` are the fixed chips that narrow the follow-up attribute,
+        minus any an idea covers; ``ideas`` are the model's chips for this conversation. With nothing left
+        to narrow ("open"), the ideas replace the fixed opening chips, which come back only when the model
+        wrote none.
         """
         self.followups_emitted = True
         _, fixed = constants.FOLLOWUP_TEMPLATES[self.attribute]
-        suggestions = [] if self.attribute == 'open' else list(fixed)
-        taken = {chip.casefold() for chip in suggestions}
-        clean = [idea for idea in dict.fromkeys(_strings(ideas, constants.CAPS['suggestion'], 6))
-                 if idea.casefold() not in taken][:constants.MAX_IDEAS]
+        clean = list(dict.fromkeys(_strings(ideas, constants.CAPS['suggestion'], 6)))[:constants.MAX_IDEAS]
+        # When an idea covers a fixed choice ("I'm a beginner" covers "Introductory"), the idea wins: it's
+        # in the conversation's words, so the fixed chip is dropped rather than shown twice.
+        suggestions = [] if self.attribute == 'open' else [chip for chip in fixed if not _covered(chip, clean)]
         if not suggestions and not clean:
             suggestions = list(fixed)
         data = {'question': question, 'attribute': self.attribute, 'suggestions': suggestions}
