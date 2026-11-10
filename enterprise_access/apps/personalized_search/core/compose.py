@@ -99,9 +99,13 @@ def _related(candidate: dict) -> bool:
 
 
 def _covered(chip: str, ideas: list[str]) -> bool:
-    """Whether any idea says the same thing as a fixed chip (its words, ``constants.FIXED_CHIP_MATCHES``)."""
-    words = constants.FIXED_CHIP_MATCHES.get(chip, (chip,))
-    return any(word in idea.casefold() for idea in ideas for word in words)
+    """
+    Whether any idea says the same thing as a fixed chip: one of its phrases (``constants.FIXED_CHIP_MATCHES``)
+    as whole words, so "Python programming" doesn't cover Programs and "new tools" doesn't cover Introductory.
+    """
+    phrases = constants.FIXED_CHIP_MATCHES.get(chip, (chip.casefold(),))
+    pattern = re.compile('|'.join(rf'(?<!\w){re.escape(p)}s?(?!\w)' for p in phrases))
+    return any(pattern.search(idea.casefold()) for idea in ideas)
 
 
 def section_label(item_type: str, count: int) -> str:
@@ -398,7 +402,7 @@ class ComposeParser:
         if isinstance(self.totals.get(item_type), int):
             props['total'] = self.totals[item_type]
         taken = set(self.emitted_ids) | self.shown
-        reserve = [dict(c['card'], why=None, fit=[]) for c in self.candidates
+        reserve = [self._card(c['card']) for c in self.candidates
                    if c['card']['item_type'] == item_type and c['card']['item_id'] not in taken]
         reserve = reserve[:constants.RESERVE_PER_SECTION]
         if reserve:

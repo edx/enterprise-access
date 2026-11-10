@@ -83,8 +83,8 @@ def item_id_of(hit: dict) -> str | None:
 
 
 def _hours(value) -> int | None:
-    """A positive whole number of hours, or None (bools, zero, negatives and non-numbers are dropped)."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+    """A whole number of hours, or None (bools, < 1, non-finite and non-numbers are dropped), like ``intent._weeks``."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 1:
         return None
     return int(value)
 

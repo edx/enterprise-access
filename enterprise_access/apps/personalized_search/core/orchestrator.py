@@ -320,7 +320,7 @@ def _turn_parts(ctx: TurnContext, steps: Steps, record: dict) -> Iterator[dict]:
     # Step 5: persist, final session title, timing; step 6: finish
     session['merged_intent'] = merged
     session['history'].append({'user': ctx.message, 'reply': parser.reply.strip()})
-    session['shown_item_ids'] = session['shown_item_ids'] + parser.emitted_ids
+    session['shown_item_ids'] = list(dict.fromkeys(session['shown_item_ids'] + parser.emitted_ids))
     attribute = parser.attribute  # 'open' when the results shown don't differ on the planned attribute
     if attribute != 'open' and attribute not in session['asked_attributes']:
         session['asked_attributes'].append(attribute)
