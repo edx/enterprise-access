@@ -5,7 +5,7 @@ model's reply + ``@@BLOCKS@@`` lines into protocol parts. Lines are validated an
 import json
 
 from enterprise_access.apps.personalized_search.core import constants
-from enterprise_access.apps.personalized_search.core.profile import profile_props
+from enterprise_access.apps.personalized_search.core.profile import SUMMARY, profile_props
 from enterprise_access.apps.personalized_search.core.retrieval import compose_view, preferred_types
 
 MARKER = '@@BLOCKS@@'
@@ -113,6 +113,7 @@ class ComposeParser:
         self.used_fallback = False
         self.intent = intent            # the merged intent, restated by the profile block once the results are known
         self.profile_emitted = False
+        self.profile_sent = False      # an early profile went out with the header
         self.totals = totals or {}     # catalog matches per item type, for "See all (n)"
         self.seen = set(seen_ids or [])  # items shown in earlier turns; the rest are flagged new
         self.placements: list[dict] = []  # every card shown, in order, with where it sits (for usage events)
@@ -185,17 +186,26 @@ class ComposeParser:
     def _block(self, block_type: str, props: dict) -> dict:
         return {'type': 'data-block', 'id': self._next_id(), 'data': {'v': 1, 'type': block_type, 'props': props}}
 
+    def _profile_part(self, props: dict) -> dict:
+        """The profile block under one id per turn, so the final profile replaces the early one in place."""
+        self.profile_sent = True
+        return {'type': 'data-block', 'id': f'{self.id_prefix}_profile',
+                'data': {'v': 1, 'type': 'profile', 'props': props}}
+
     def _profile(self) -> list[dict]:
         """
-        The profile block, once per turn after the results, and only when there are results to explain:
-        a preference the shown results don't reflect is left out.
+        The final profile block, once per turn after the results, and only when there are results to
+        explain: a preference the shown results don't reflect is left out. If none is left, an early
+        profile is replaced by one with no chips, which hides "Why these?".
         """
         if self.profile_emitted or not self.emitted_ids:
             return []
         self.profile_emitted = True
         by_id = {c['card']['item_id']: c for c in self.candidates}
         props = profile_props(self.intent, shown=[by_id[i] for i in self.emitted_ids if i in by_id])
-        return [self._block('profile', props)] if props else []
+        if props:
+            return [self._profile_part(props)]
+        return [self._profile_part({'summary': SUMMARY, 'chips': []})] if self.profile_sent else []
 
     def _card(self, card: dict, *, why: str | None = None, fit: list | None = None) -> dict:
         """A hydrated card for this turn. After the first turn, cards new to the conversation get ``status: new``."""
@@ -246,9 +256,15 @@ class ComposeParser:
         if not title:
             return self._drop('page_header_no_title')
         self.header_emitted = True
-        return [self._block('page_header', {
+        header = self._block('page_header', {
             'title': title, 'dek': _text(obj.get('dek'), constants.CAPS['dek']), 'label': constants.PAGE_HEADER_LABEL,
-        })]
+        })
+        # "Why these?" comes with the headline: a first profile from what the learner said, replaced (same
+        # block id) once the results are known by the preferences they reflect (``_profile``).
+        early = profile_props(self.intent)
+        if not early:
+            return [header]
+        return [header, self._profile_part(early)]
 
     def _option(self, item_id) -> dict | None:
         """The hydrated card for a valid option id the learner hasn't dismissed, within the per-turn cap."""
