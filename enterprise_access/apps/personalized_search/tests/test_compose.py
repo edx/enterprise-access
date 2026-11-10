@@ -167,8 +167,8 @@ class ComposeParserTests(TestCase):
         self.assertEqual(len(self.blocks(parts, 'plan')[0]['props']['why']), 160)
         followups = [p for p in parts if p['type'] == 'data-followups'][0]['data']
         self.assertEqual(len(followups['question']), 200)
-        self.assertEqual(len(followups['ideas'][0]), 48)
-        self.assertEqual(len(followups['ideas']), 3)
+        # An over-long idea is dropped, not cut mid-word: a chip sends its text as the learner's message.
+        self.assertEqual(followups['ideas'], ['x', 'y', 'z'])
         self.assertEqual(len(parser.session_title), 60)
 
     def test_per_turn_item_cap_across_sections(self):
@@ -249,6 +249,11 @@ class ComposeParserTests(TestCase):
             _, parts = self.parse('r\n@@BLOCKS@@\n' + line(section('course', ['edX+C1', 'edX+C2', 'edX+C3'])) +
                                   line(plan))
             self.assertNotIn('why', self.blocks(parts, 'plan')[0]['props'], why)
+
+    def test_repeated_ideas_are_dropped_regardless_of_case(self):
+        followup = {'block': 'followup', 'question': 'Q?', 'ideas': ['More on SQL', 'more on sql', ' More on SQL ']}
+        _, parts = self.parse('Hi.\n@@BLOCKS@@\n' + line(followup), attribute='open')
+        self.assertEqual([p for p in parts if p['type'] == 'data-followups'][0]['data']['ideas'], ['More on SQL'])
 
     def test_an_idea_covers_a_fixed_chip_only_with_whole_words(self):
         def chips(attribute, ideas):
