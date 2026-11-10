@@ -32,6 +32,9 @@ JOURNEY_PATTERN = re.compile(
     r"|step[- ]by[- ]step|certificates?|credentials?)\b",
     re.IGNORECASE,
 )
+# A short time limit said in words: newer intent models leave max_weeks empty for these, so the merge sets it.
+QUICK_PATTERN = re.compile(r"\b(short|shorter|shortest|quick|quicker|quickest|brief)\b", re.IGNORECASE)
+QUICK_MAX_WEEKS = 4
 PACINGS = ('self_paced', 'instructor_paced')
 REDIRECT_REASONS = ('off_topic', 'unsafe', 'injection')
 
@@ -161,6 +164,9 @@ def merge(prior: dict | None, new: dict, mode: str, *, message: str) -> dict:
     for key, value in (new.get('constraints') or {}).items():
         if value is not None:
             base.setdefault('constraints', {})[key] = value
+    if QUICK_PATTERN.search(message or '') and not (base.get('constraints') or {}).get('max_weeks'):
+        # "Something short" or "quick, please" with no number is a time limit; the prefilter favours short items.
+        base.setdefault('constraints', {})['max_weeks'] = QUICK_MAX_WEEKS
     if not base.get('query'):
         base['query'] = ' '.join(message.split()[:12])
     if not base.get('item_types'):
