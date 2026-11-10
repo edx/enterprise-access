@@ -146,6 +146,7 @@ def run_turn(ctx: TurnContext, steps: Steps) -> Iterator[dict]:
                         yield {'type': 'error', 'errorText': 'internal'}
                         return
                 record['outcome'] = 'redirect' if record.get('redirected') else 'done'
+                record['blocks'] = [p['data'] for p in emitted if p['type'] == 'data-block']
             emitted.append(part)
             yield part
     except Exception:  # pylint: disable=broad-exception-caught
