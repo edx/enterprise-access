@@ -578,6 +578,10 @@ PERSONALIZED_SEARCH_INTENT_MODEL = 'gpt-6-luna'
 PERSONALIZED_SEARCH_INTENT_EFFORT = None
 PERSONALIZED_SEARCH_COMPOSE_MODEL = 'gpt-6-luna'
 PERSONALIZED_SEARCH_COMPOSE_EFFORT = None
+# How many candidates the compose step chooses from, by compose model (else the default). In the November 2026
+# comparison a 40-candidate list lifted gpt-6.1-terra's quality, while gpt-6-luna gained nothing significant.
+PERSONALIZED_SEARCH_SHORTLIST_SIZE = 20
+PERSONALIZED_SEARCH_SHORTLIST_SIZES = {'gpt-6.1-terra': 40}
 # The OpenAI models a turn may use (the allowlist), with standard-tier USD prices per 1M tokens
 # (input, cached input, output) used only for the debug cost read-out.
 PERSONALIZED_SEARCH_OPENAI_MODELS = {

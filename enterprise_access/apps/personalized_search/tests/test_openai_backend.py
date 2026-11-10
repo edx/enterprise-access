@@ -123,6 +123,16 @@ class OpenAICallTests(TestCase):
         self.assertEqual(usage.prices, MODELS['gpt-5.4-mini'])
         stream.close.assert_called_once()
 
+    def test_stream_text_records_the_effort_actually_sent(self):
+        stream = mock.MagicMock()
+        stream.__iter__.return_value = iter([chunk('Hi')])
+        self.client.chat.completions.create.return_value = stream
+        usage = Usage(model='gpt-6.1-sol', effort=None)
+        ''.join(self.backend.stream_text(model='gpt-6.1-sol', effort=None, system='S', user='U', max_tokens=10,
+                                         timeout_s=5, usage=usage))
+        self.assertEqual(usage.effort, 'low')
+        self.assertEqual(self.client.chat.completions.create.call_args.kwargs['reasoning_effort'], 'low')
+
     def test_sdk_errors_become_model_errors_without_the_message(self):
         self.client.chat.completions.create.side_effect = RuntimeError('learner text echoed here')
         with self.assertRaises(ModelError) as ctx:

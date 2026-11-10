@@ -1,6 +1,7 @@
 """Tests for the turn usage events (KD-12): raw facts and join keys, never aggregates or learner text."""
 import dataclasses
 import itertools
+import json
 from unittest import mock
 
 from django.test import TestCase, override_settings
@@ -11,8 +12,11 @@ from enterprise_access.apps.personalized_search.constants import SegmentEvents
 from enterprise_access.apps.personalized_search.core import telemetry
 from enterprise_access.apps.personalized_search.core.errors import ModelError
 from enterprise_access.apps.personalized_search.core.orchestrator import ModelChoice, TurnContext, run_turn
-from enterprise_access.apps.personalized_search.core.retrieval import RetrievalFailed
+from enterprise_access.apps.personalized_search.core.retrieval import CatalogScope, RetrievalFailed
+from enterprise_access.apps.personalized_search.models import ChatTurn
+from enterprise_access.apps.personalized_search.tests.helpers import candidate, course_hit
 from enterprise_access.apps.personalized_search.tests.test_orchestrator import (
+    COMPOSE,
     TURN_UUID,
     fake_steps,
     new_locked_session,
@@ -56,16 +60,56 @@ class TurnEventTests(TestCase):
         self.assertEqual(props['shown_item_keys'], ['edX+C1', 'p-1', 'p-2'])
         self.assertEqual(props['shown_item_sections'], ['course', 'program', 'program'])
         self.assertEqual(props['shown_item_positions'], [1, 2, 3])
-        self.assertIn('edX+C1', props['retrieved_item_keys'])  # related programs lead the shortlist
+        self.assertEqual(props['retrieved_item_keys'][:2], ['p-1', 'p-2'])  # related programs lead the shortlist
+        self.assertIn('edX+C1', props['retrieved_item_keys'])
         self.assertEqual(props['intent_merge_mode'], 'replace')
         self.assertEqual(props['prompt_length'], len(self.ctx.message))
         self.assertEqual(props['compose_output_tokens'], 50)
+        self.assertEqual((props['intent_max_hours_per_week'], props['content_locale']), (None, 'en'))
         self.assert_flat_and_private(props)
+
+    def test_completed_turn_carries_the_hours_limit_and_the_content_language(self):
+        intent = json.dumps({'on_topic': True, 'redirect_reason': None, 'merge': 'replace',
+                             'intent': {'query': 'q', 'skills': ['Leadership'],
+                                        'constraints': {'max_hours_per_week': 5}}})
+        self.ctx.scope = CatalogScope(filter='f', locale='es', language_name='Spanish')
+        self.run_with(intent_text=intent)
+        props = self.sent[0][2]
+        self.assertEqual((props['intent_max_hours_per_week'], props['content_locale']), (5, 'es'))
+
+    def test_is_debug_is_whether_this_turn_used_debug_overrides(self):
+        self.ctx.debug = True  # the environment allows overrides (and shows the debug read-out)
+        self.run_with(persist=None)
+        self.ctx.analytics['is_debug'] = True  # this turn's request applied them
+        self.run_with(persist=None)
+        self.assertEqual([sent[2]['is_debug'] for sent in self.sent], [False, True])
+
+    def test_dropped_reasons_never_carry_model_text(self):
+        compose = (COMPOSE + f'{{"block":"{MARKER}"}}\n'
+                   f'{{"block":"item_section","item_type":"{MARKER}","items":[]}}\n'
+                   '{"block":"item_section","item_type":"executive_education","items":[{"item_id":"nope"}]}\n')
+        self.run_with(compose_text=compose)
+        props = self.sent[0][2]
+        self.assertEqual(props['dropped_reasons'],
+                         ['unknown_block', 'section_rejected', 'section_no_valid_items:executive_education'])
+        self.assert_flat_and_private(props)
+
+    def test_the_event_reports_the_follow_up_the_learner_was_asked(self):
+        levels = ('Introductory', 'Introductory', 'Advanced', 'Advanced')
+        cands = [candidate(course_hit(f'edX+L{i}', level=level)) for i, level in enumerate(levels)]
+        compose = ('Here.\n@@BLOCKS@@\n{"block":"item_section","item_type":"course","dek":"d","items":'
+                   '[{"item_id":"edX+L0","why":"w"},{"item_id":"edX+L1","why":"w"}]}\n')
+        self.run_with(retrieve=lambda *a, **kw: cands, compose_text=compose)
+        # Level was planned, but both results shown are introductory, so the learner is asked what's next.
+        self.assertEqual(self.sent[0][2]['followup_attribute'], 'open')
+        self.assertEqual(ChatTurn.objects.get(uuid=TURN_UUID).follow_up_attribute, 'open')
 
     def test_completed_turn_lists_its_blocks_with_content_digests(self):
         parts = self.run_with()
-        blocks = [p['data'] for p in parts if p['type'] == 'data-block']
+        # One block per id, as clients apply them: the final profile replaces the early one in place.
+        blocks = list({p['id']: p['data'] for p in parts if p['type'] == 'data-block'}.values())
         props = self.sent[0][2]
+        self.assertEqual(props['shown_block_types'].count('profile'), 1)
         self.assertEqual(props['shown_block_types'], [b['type'] for b in blocks])
         self.assertEqual(props['shown_block_digests'], [telemetry.block_digest(b) for b in blocks])
         self.assertTrue(all(len(d) == 16 for d in props['shown_block_digests']))
@@ -77,6 +121,10 @@ class TurnEventTests(TestCase):
                 'props': {'dek': 'Start here', 'items': [dict(card, status='new', section='course', position=4)]}}
         reworded = {'v': 1, 'type': 'item_section', 'props': {'dek': 'Start here', 'items': [dict(card, why='Other.')]}}
         self.assertEqual(telemetry.block_digest(block), telemetry.block_digest(same))
+        # Per-turn catalog counts and reserve cards are the server's, so a repeated section still matches.
+        refreshed = {'v': 1, 'type': 'item_section',
+                     'props': dict(block['props'], total=37, reserve=[dict(card, item_id='edX+C9')])}
+        self.assertEqual(telemetry.block_digest(block), telemetry.block_digest(refreshed))
         self.assertNotEqual(telemetry.block_digest(block), telemetry.block_digest(reworded))
         self.assertNotEqual(telemetry.block_digest(block), telemetry.block_digest(dict(block, type='compare')))
 
@@ -101,6 +149,11 @@ class TurnEventTests(TestCase):
             name, props = self.sent[0][1], self.sent[0][2]
             self.assertEqual((name, props['error_type'], props['stage']), (telemetry.TURN_FAILED, error_type, stage))
             self.assertIsNotNone(props['elapsed_ms'])
+
+    def test_a_storage_failure_is_reported_at_the_persist_stage(self):
+        self.run_with(persist=mock.Mock(side_effect=RuntimeError('db down')))
+        name, props = self.sent[0][1], self.sent[0][2]
+        self.assertEqual((name, props['error_type'], props['stage']), (telemetry.TURN_FAILED, 'internal', 'persist'))
 
     def test_a_stopped_turn_sends_turn_stopped(self):
         steps = dataclasses.replace(fake_steps(), emit=lambda *args: self.sent.append(args))
@@ -143,6 +196,9 @@ class SegmentSinkTests(TestCase):
     def test_wiring_tags_turns_and_emits_only_when_persisting(self):
         intent, compose = wiring.default_models()
         ctx = wiring.turn_context(session={}, message='m', intent_model=intent, compose_model=compose, scope=None)
-        self.assertEqual(ctx.analytics, {'cohort': 'public', 'engine': 'xpert'})
+        self.assertEqual(ctx.analytics, {'cohort': 'public', 'engine': 'xpert', 'is_debug': False})
+        overridden = wiring.turn_context(session={}, message='m', intent_model=intent, compose_model=compose,
+                                         scope=None, debug_overrides=True)
+        self.assertTrue(overridden.analytics['is_debug'])
         self.assertIs(wiring.steps(catalog=mock.Mock(), store=mock.Mock()).emit, segment_emit)
         self.assertIsNone(wiring.steps(catalog=mock.Mock(), store=mock.Mock(), persist=False).emit)

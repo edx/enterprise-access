@@ -86,6 +86,11 @@ class PersonalizedSearchTurnViewTests(APITest):
         emit.reset_mock()
         parse_sse(self.post(resumed_from_history=True))  # a new session has nothing to resume
         emit.assert_not_called()
+        # A turn that fails before it starts doesn't count as a resume.
+        with mock.patch('enterprise_access.apps.personalized_search.wiring.turn_context', side_effect=RuntimeError):
+            with self.assertRaises(RuntimeError):
+                self.post(session_uuid=session_uuid, message='Again', resumed_from_history=True)
+        emit.assert_not_called()
 
     @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
     def test_accepts_event_stream(self):
@@ -157,6 +162,7 @@ class PersonalizedSearchTurnViewTests(APITest):
         timing = [p for p in parts if p['type'] == 'data-timing'][0]['data']
         self.assertEqual((timing['model_intent'], timing['model_compose']), ('gpt-6-luna', 'gpt-6-luna'))
         self.assertNotIn('debug', timing)
+        self.assertFalse([p for p in parts if p['type'] == 'data-analytics'][0]['data']['is_debug'])
 
     @override_settings(PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED=True,
                        PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE=DEV_SCOPE, ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH=True)
@@ -166,6 +172,10 @@ class PersonalizedSearchTurnViewTests(APITest):
         timing = [p for p in parts if p['type'] == 'data-timing'][0]['data']
         self.assertEqual(timing['model_compose'], 'gpt-4.1')
         self.assertEqual(timing['debug']['catalog'], 'Test catalog')
+        # Usage events say whether this turn used overrides, not whether the environment allows them.
+        self.assertTrue([p for p in parts if p['type'] == 'data-analytics'][0]['data']['is_debug'])
+        plain = parse_sse(self.post())
+        self.assertFalse([p for p in plain if p['type'] == 'data-analytics'][0]['data']['is_debug'])
 
     @override_settings(PERSONALIZED_SEARCH_INTENT_MODEL='xpert', PERSONALIZED_SEARCH_COMPOSE_MODEL='xpert',
                        OPENAI_API_KEY='', XPERT_API_BASE_URL='https://xpert.test', XPERT_API_CLIENT_ID='client-123')

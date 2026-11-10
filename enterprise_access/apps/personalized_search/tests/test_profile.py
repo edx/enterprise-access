@@ -27,7 +27,16 @@ class ProfilePropsTests(TestCase):
 
     def test_all_types_add_no_chip_and_some_types_do(self):
         merged = dict(empty_intent(), item_types=['executive_education'])
-        self.assertEqual(profile.profile_props(merged)['chips'], ['Executive Education'])
+        self.assertEqual(profile.profile_props(merged)['chips'], ['Executive education'])  # as its section says
+
+    def test_weeks_and_type_chips_have_their_formats(self):
+        merged = dict(empty_intent(), item_types=['course', 'program'], constraints={'max_weeks': 12})
+        self.assertEqual(profile.profile_props(merged)['chips'], ['Up to 12 weeks', 'Courses and Programs'])
+
+    def test_a_repeated_type_is_named_once(self):
+        for types, chip in ((['course', 'course'], 'Courses'),
+                            (['course', 'course', 'program'], 'Courses and Programs')):
+            self.assertEqual(profile.profile_props(dict(empty_intent(), item_types=types))['chips'], [chip], types)
 
     def test_chips_are_capped_deduplicated_and_non_empty(self):
         merged = dict(empty_intent(), roles=['x' * 60], skills=['Data', 'Data', '  '])
@@ -68,6 +77,16 @@ class ProfileFromResultsTests(TestCase):
         shown = [candidate(course_hit('edX+A', skills=('Leadership Development',)))]
         self.assertIn('Leadership', profile.profile_props(self.MERGED, shown)['chips'])
 
+    def test_skills_match_whole_words_only(self):
+        for skill, names in (('R', ('Leadership',)), ('SQL', ('PostgreSQL',)), ('Email Marketing', ('AI', 'Go'))):
+            shown = [candidate(course_hit('edX+A', skills=names))]
+            merged = dict(empty_intent(), roles=['Analyst'], skills=[skill])
+            self.assertNotIn(skill, profile.profile_props(merged, shown)['chips'], skill)
+
+    def test_a_range_that_starts_within_the_hours_limit_fits_as_in_the_prefilter(self):
+        shown = [candidate(course_hit('edX+A', effort=(2, 6)))]  # 2-6 hrs/week against a limit of 3
+        self.assertIn('Up to 3 hrs/week', profile.profile_props(self.MERGED, shown)['chips'])
+
 
 class ProfileEmissionTests(TestCase):
     """The parser emits the profile once, after the results, and only when there are results."""
@@ -75,7 +94,7 @@ class ProfileEmissionTests(TestCase):
     MERGED = dict(empty_intent(), skills=['Leadership'], constraints={'pacing': 'instructor_paced'})
 
     def parse(self, text, candidates=None):
-        parser = ComposeParser(candidates=default_candidates() if candidates is None else candidates, shown_ids=[],
+        parser = ComposeParser(candidates=default_candidates() if candidates is None else candidates, excluded_ids=[],
                                followup_attribute='level', intent=self.MERGED)
         return parser.feed(text) + parser.finish()
 
@@ -112,7 +131,7 @@ class ProfileEmissionTests(TestCase):
         self.assertEqual(final['chips'], ['Leadership'])  # what the results reflect
 
     def test_an_early_profile_with_nothing_reflected_ends_with_no_chips(self):
-        parser = ComposeParser(candidates=default_candidates(), shown_ids=[], followup_attribute='level',
+        parser = ComposeParser(candidates=default_candidates(), excluded_ids=[], followup_attribute='level',
                                intent=dict(empty_intent(), constraints={'pacing': 'instructor_paced'}))
         header = {'block': 'page_header', 'title': 'Lead', 'dek': 'd'}
         section = {'block': 'item_section', 'item_type': 'course', 'dek': 'd',
@@ -123,7 +142,7 @@ class ProfileEmissionTests(TestCase):
         self.assertEqual([p['chips'] for p in profiles], [['Instructor-led'], []])
 
     def test_not_emitted_when_nothing_the_learner_said_is_reflected(self):
-        parser = ComposeParser(candidates=default_candidates(), shown_ids=[], followup_attribute='level',
+        parser = ComposeParser(candidates=default_candidates(), excluded_ids=[], followup_attribute='level',
                                intent=dict(empty_intent(), constraints={'pacing': 'instructor_paced'}))
         section = {'block': 'item_section', 'item_type': 'course', 'dek': 'd',
                    'items': [{'item_id': 'edX+C1', 'why': 'w'}]}

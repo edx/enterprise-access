@@ -1,4 +1,5 @@
 """Tests for the turn orchestrator with fake steps (no OpenAI or Algolia), persisting through the Django store."""
+import dataclasses
 import itertools
 import json
 import uuid
@@ -12,7 +13,7 @@ from enterprise_access.apps.personalized_search.adapters.memory_store import InM
 from enterprise_access.apps.personalized_search.core.errors import ModelError
 from enterprise_access.apps.personalized_search.core.orchestrator import ModelChoice, Steps, TurnContext, run_turn
 from enterprise_access.apps.personalized_search.core.ports import Usage
-from enterprise_access.apps.personalized_search.core.retrieval import RetrievalFailed
+from enterprise_access.apps.personalized_search.core.retrieval import RetrievalFailed, SearchResults
 from enterprise_access.apps.personalized_search.models import ChatSession, ChatTurn, ItemFeedback
 from enterprise_access.apps.personalized_search.tests.helpers import default_candidates
 
@@ -201,6 +202,28 @@ class RunTurnTests(TestCase):
                          {'edX+C1': None, 'edX+C2': 'new'})
         self.assertEqual(ChatTurn.objects.filter(session_id=self.session['uuid']).count(), 2)
 
+    def test_catalog_totals_reach_the_section(self):
+        steps = fake_steps(retrieve=lambda *a, **kw: SearchResults(default_candidates(), {'course': 37}))
+        sections = {p['data']['props']['item_type']: p['data']['props'] for p in run_turn(self.ctx, steps)
+                    if p['type'] == 'data-block' and p['data']['type'] == 'item_section'}
+        self.assertEqual(sections['course']['total'], 37)  # "See all (37)"
+        self.assertNotIn('total', sections['program'])
+
+    def test_first_tiles_are_timed_from_the_first_block_with_cards(self):
+        reads, ticks = [], itertools.count()
+
+        def clock():
+            reads.append(next(ticks) * 0.1)
+            return reads[-1]
+
+        compose = COMPOSE.replace('@@BLOCKS@@\n', '@@BLOCKS@@\n{"block":"top_pick","item_id":"p-1","reason":"R"}\n')
+        at_top_pick, timing = None, None
+        for part in run_turn(dataclasses.replace(self.ctx, clock=clock), fake_steps(compose_text=compose)):
+            if part['type'] == 'data-block' and part['data']['type'] == 'top_pick':
+                at_top_pick = round(reads[-1] * 1000)  # the clock read just before the top pick went out
+            timing = part['data'] if part['type'] == 'data-timing' else timing
+        self.assertEqual(timing['first_section_ms'], at_top_pick)
+
     def test_first_turn_cards_carry_no_status(self):
         parts = list(run_turn(self.ctx, fake_steps()))
         items = [i for p in parts if p['type'] == 'data-block' and p['data']['type'] == 'item_section'
@@ -316,7 +339,7 @@ class PortableTurnTests(PlainTestCase):
         ctx = TurnContext(session=session, message='m', intent_model=ModelChoice('m1', None),
                           compose_model=ModelChoice('m1', None), scope=None, clock=lambda: next(times))
         steps = Steps(intent=lambda **_: (self.INTENT, Usage(model='m1', effort=None)),
-                      retrieve=lambda *a, timeout_s: seen.append(timeout_s) or [],
+                      retrieve=lambda *a, timeout_s, **_: seen.append(timeout_s) or [],
                       compose=lambda **_: (d for d in ['Nothing fits.']))
         list(run_turn(ctx, steps))
         self.assertEqual(len(seen), 1)
