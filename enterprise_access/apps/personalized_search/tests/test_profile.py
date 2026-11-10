@@ -84,14 +84,14 @@ class ProfileEmissionTests(TestCase):
                    'items': [{'item_id': 'edX+C1', 'why': 'w'}, {'item_id': 'edX+C2', 'why': 'w'}]}
         parts = self.parse('Here you go.\n@@BLOCKS@@\n' + json.dumps(section) + '\n')
         blocks = [p['data'] for p in parts if p['type'] == 'data-block']
-        self.assertEqual([b['type'] for b in blocks], ['item_section', 'profile'])
+        self.assertEqual([b['type'] for b in blocks], ['item_section', 'item_section', 'profile'])  # + programs
         # Both shown courses are self-paced, so the instructor-led preference isn't shown.
-        self.assertEqual(blocks[1]['props']['chips'], ['Leadership'])
+        self.assertEqual(blocks[2]['props']['chips'], ['Leadership'])
         self.assertEqual([p['type'] for p in parts][-1], 'data-followups')
 
     def test_emitted_after_the_fallback_section_when_the_model_never_writes_blocks(self):
         blocks = [p['data']['type'] for p in self.parse('Only text') if p['type'] == 'data-block']
-        self.assertEqual(blocks, ['item_section', 'profile'])
+        self.assertEqual(blocks, ['item_section', 'item_section', 'profile'])
 
     def test_not_emitted_without_results(self):
         parts = self.parse('Nothing fits.\n@@BLOCKS@@\n', candidates=[])
@@ -104,8 +104,9 @@ class ProfileEmissionTests(TestCase):
         parts = self.parse('Hi.\n@@BLOCKS@@\n' + json.dumps(header) + '\n' + json.dumps(section) + '\n')
         blocks = [(p['id'], p['data']['type'], p['data']['props']) for p in parts if p['type'] == 'data-block']
         types = [t for _, t, _ in blocks]
-        self.assertEqual(types, ['page_header', 'profile', 'item_section', 'profile'])
-        (_, _, _), (early_id, _, early), _, (final_id, _, final) = blocks
+        # The course section, then the related programs offered alongside it; the profile replaces itself.
+        self.assertEqual(types, ['page_header', 'profile', 'item_section', 'item_section', 'profile'])
+        (_, _, _), (early_id, _, early), _, _, (final_id, _, final) = blocks
         self.assertEqual(early_id, final_id)  # the client replaces the early profile in place
         self.assertEqual(early['chips'], ['Leadership', 'Instructor-led'])  # what the learner said
         self.assertEqual(final['chips'], ['Leadership'])  # what the results reflect

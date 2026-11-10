@@ -295,13 +295,22 @@ class ComposeParserTests(TestCase):
         self.assertEqual([s['item_type'] for s in sections], ['executive_education', 'course', 'program'])
         self.assertTrue(all(s['fallback'] for s in sections[1:]))
 
-    def test_without_a_preferred_type_no_alternative_sections_are_added(self):
+    def section_types_for(self, item_types):
         parser = compose.ComposeParser(candidates=default_candidates(), shown_ids=[], followup_attribute='level',
-                                       intent={'item_types': ['course', 'executive_education', 'program']})
+                                       intent={'item_types': item_types})
         parts = parser.feed('Hi.\n@@BLOCKS@@\n' + line(section('course', ['edX+C1']))) + parser.finish()
-        types = [p['data']['props']['item_type'] for p in parts
-                 if p['type'] == 'data-block' and p['data']['type'] == 'item_section']
-        self.assertEqual(types, ['course'])
+        return [p['data']['props']['item_type'] for p in parts
+                if p['type'] == 'data-block' and p['data']['type'] == 'item_section']
+
+    def test_related_programs_are_always_offered_but_other_types_only_as_alternatives(self):
+        self.assertEqual(self.section_types_for(['course', 'executive_education', 'program']), ['course', 'program'])
+
+    def test_no_programs_when_the_learner_asked_for_courses_or_opted_out(self):
+        self.assertEqual(self.section_types_for(['course']), ['course', 'executive_education'])
+        self.assertEqual(self.section_types_for(['course', 'executive_education']), ['course'])
+
+    def test_the_prompt_always_asks_for_related_programs_unless_opted_out(self):
+        self.assertIn('always write a program section', compose.SYSTEM_PROMPT)
 
     def test_the_prompt_asks_for_the_followup_right_after_the_header(self):
         prompt = compose.SYSTEM_PROMPT

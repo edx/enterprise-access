@@ -70,6 +70,17 @@ class SubRequestTests(TestCase):
         self.assertFalse(any(r.get('preferred') for r in reqs))
         self.assertTrue(all('(enterprise_customer_uuids:"e-1")' in r['filters'] for r in reqs))
 
+    def test_programs_are_searched_unless_the_learner_asked_for_courses(self):
+        def program_hits(types):
+            reqs = retrieval.build_sub_requests(dict(INTENT, item_types=types), SCOPE, [])
+            return [r for r in reqs if r['tier'] > 0 and r['filters'].startswith('content_type:program')]
+        self.assertTrue(program_hits(['executive_education']))  # programs stay alongside a preferred type
+        self.assertFalse(program_hits(['course']))
+        self.assertFalse(program_hits(['course', 'executive_education']))  # "I don't want a program"
+        self.assertEqual([retrieval.programs_wanted({'item_types': t}) for t in
+                          (None, ['program'], ['executive_education'], ['course'], ['course', 'executive_education'])],
+                         [True, True, True, False, False])
+
     def test_english_by_default_and_the_learners_language_when_given(self):
         english = retrieval.build_sub_requests(INTENT, SCOPE, [])
         self.assertTrue(all('language:"English" AND metadata_language:"en"' in r['filters']
@@ -94,8 +105,10 @@ class SubRequestTests(TestCase):
         reqs = retrieval.build_sub_requests(dict(INTENT, item_types=types), SCOPE, [])
         hits = [r for r in reqs if r['tier'] > 0]
         general, preferred = [r for r in hits if not r.get('preferred')], [r for r in hits if r.get('preferred')]
-        # Every type is still searched (courses with Executive Education, and programs) ...
-        self.assertTrue(any(r['filters'].startswith('content_type:program') for r in general))
+        # Every type is still searched (courses with Executive Education, and programs unless the learner
+        # asked for courses) ...
+        searches_programs = any(r['filters'].startswith('content_type:program') for r in general)
+        self.assertEqual(searches_programs, types != ['course'])
         self.assertTrue(any(r['filters'].startswith('content_type:course') and 'learning_type' not in r['filters']
                             for r in general))
         # ... plus the preferred type's own strict and broadened requests.
