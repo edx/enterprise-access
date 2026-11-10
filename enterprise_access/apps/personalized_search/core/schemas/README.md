@@ -31,3 +31,5 @@ Each entry is optional for consumers; older clients ignore it.
 | 2026-11-09 | New block type `caveat` (`title`, `body`), at most one per turn; `insight` is now also at most one per turn (server-side) |
 | 2026-11-09 | `item_section.total` (catalog matches for the type) and `item_section.reserve` (up to 2 next-best cards), both optional |
 | 2026-11-09 | Optional `item_card.status` (`new`): the card is new to the conversation since the previous turn. Results update in place, so earlier items may repeat |
+| 2026-11-09 | New stored part `data-analytics` (join keys for usage events); optional `item_card.section` and `item_card.position` |
+| 2026-11-09 | Optional `data-followups.ideas` (up to 3 model-written chips). `suggestions` are now always the fixed chips for the attribute, empty for `open` when there are ideas |

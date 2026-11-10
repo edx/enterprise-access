@@ -205,6 +205,8 @@ def _turn_parts(ctx: TurnContext, steps: Steps, record: dict) -> Iterator[dict]:
     record['turn_uuid'] = ctx.id_factory()
     yield {'type': 'start', 'messageId': f"turn_{record['turn_uuid']}"}
     yield _session_part(session, sequence)
+    # Join keys for the portal's interaction events (KD-12); stored, so a reopened search keeps them.
+    yield {'type': 'data-analytics', 'id': 'analytics', 'data': telemetry.join_keys(ctx, record)}
     yield {'type': 'data-status', 'data': {'step': 'understanding'}, 'transient': True}
 
     # Step 1: intent
