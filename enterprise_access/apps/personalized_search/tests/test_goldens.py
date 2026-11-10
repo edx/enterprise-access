@@ -24,19 +24,25 @@ GOLDEN = Path(__file__).resolve().parent / 'fixtures' / 'golden'
 REWRITE = os.environ.get('PERSONALIZED_SEARCH_REWRITE_GOLDENS') == '1'
 ON_TOPIC = json.dumps({'on_topic': True, 'redirect_reason': None, 'merge': 'replace',
                        'intent': {'query': 'team leadership', 'skills': ['Leadership'], 'level': 'introductory'}})
-COMPOSE = ('Here are picks for leading a team.\n@@BLOCKS@@\n'
+COMPOSE = ('I put a leadership certificate at the top.\n@@BLOCKS@@\n'
            '{"block":"page_header","title":"Lead with confidence","dek":"Short, practical picks."}\n'
+           '{"block":"top_pick","item_id":"p-1","reason":"Because you want to lead a team and earn a credential.",'
+           '"checks":["Introductory","Certificate"]}\n'
+           '{"block":"compare","options":[{"item_id":"p-1","best_for":"a recognized credential"},'
+           '{"item_id":"Yale+E1","best_for":"an executive-level perspective"},'
+           '{"item_id":"edX+C3","best_for":"a quick start"}]}\n'
            '{"block":"item_section","item_type":"course","dek":"Start here","items":['
            '{"item_id":"edX+C1","why":"Covers the basics you asked for.","fit":["Introductory","4 weeks"]},'
            '{"item_id":"edX+C2","why":"Builds on it.","fit":["Next step"]}]}\n'
            '{"block":"item_section","item_type":"program","dek":"Go deeper","items":['
-           '{"item_id":"p-1","why":"A full certificate.","fit":["Certificate"]}]}\n'
+           '{"item_id":"p-2","why":"A full certificate.","fit":["Certificate"]}]}\n'
            '{"block":"insight","title":"Start with people skills",'
            '"body":"New leads grow fastest by practising feedback."}\n'
            '{"block":"plan","steps":[{"item_id":"edX+C1","note":"Start"},{"item_id":"p-1","note":"Then"}]}\n'
            '{"block":"followup","question":"How much time can you give it?","suggestions":["Under 4 weeks",'
            '"1 to 3 months"],"session_title":"Leading a team"}\n')
 NO_MATCH = ('Nothing in your catalog covers underwater basket weaving.\n@@BLOCKS@@\n'
+            '{"block":"caveat","title":"No matching courses","body":"Your catalog has nothing on this topic yet."}\n'
             '{"block":"followup","question":"Is there another skill you want?","suggestions":["Data","AI"]}\n')
 
 
