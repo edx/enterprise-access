@@ -20,7 +20,7 @@ class DecisionBlockTests(TestCase):
     """``top_pick`` and ``compare`` lines."""
 
     def parse(self, body, shown=()):
-        parser = ComposeParser(candidates=default_candidates(), shown_ids=list(shown), followup_attribute='level')
+        parser = ComposeParser(candidates=default_candidates(), excluded_ids=list(shown), followup_attribute='level')
         parts = parser.feed('r\n@@BLOCKS@@\n' + body) + parser.finish()
         return parser, [p['data'] for p in parts if p['type'] == 'data-block']
 
@@ -82,12 +82,12 @@ class DecisionBlockTests(TestCase):
     def test_dismissed_items_and_the_per_turn_cap_are_respected(self):
         _, blocks = self.parse(line({'block': 'top_pick', 'item_id': 'p-1', 'reason': 'R'}), shown=['p-1'])
         self.assertFalse(self.of(blocks, 'top_pick'))
-        parser = ComposeParser(candidates=default_candidates(), shown_ids=[], followup_attribute='level')
+        parser = ComposeParser(candidates=default_candidates(), excluded_ids=[], followup_attribute='level')
         parser.emitted_ids = [f'x{i}' for i in range(constants.MAX_ITEMS_PER_TURN)]
         self.assertIsNone(parser._option('p-1'))  # pylint: disable=protected-access
 
     def test_text_only_turns_get_no_decision_blocks(self):
-        parser = ComposeParser(candidates=[], shown_ids=[], followup_attribute='level')
+        parser = ComposeParser(candidates=[], excluded_ids=[], followup_attribute='level')
         parts = parser.feed('r\n@@BLOCKS@@\n' + line({'block': 'top_pick', 'item_id': 'p-1', 'reason': 'R'}) +
                             line({'block': 'compare', 'options': [option('p-1'), option('p-2')]})) + parser.finish()
         self.assertFalse([p for p in parts if p['type'] == 'data-block'])
@@ -97,7 +97,7 @@ class CaveatAndInsightTests(TestCase):
     """A caveat warns once per turn, even with no results; an insight also comes at most once."""
 
     def parse(self, body, candidates=None):
-        parser = ComposeParser(candidates=default_candidates() if candidates is None else candidates, shown_ids=[],
+        parser = ComposeParser(candidates=default_candidates() if candidates is None else candidates, excluded_ids=[],
                                followup_attribute='level')
         parts = parser.feed('r\n@@BLOCKS@@\n' + body) + parser.finish()
         return parser, [p['data'] for p in parts if p['type'] == 'data-block']
@@ -126,7 +126,7 @@ class SectionExtrasTests(TestCase):
     """Sections carry the catalog total for their type and up to two reserve cards."""
 
     def parse(self, body, totals=None, shown=()):
-        parser = ComposeParser(candidates=default_candidates(), shown_ids=list(shown), followup_attribute='level',
+        parser = ComposeParser(candidates=default_candidates(), excluded_ids=list(shown), followup_attribute='level',
                                totals=totals)
         parts = parser.feed('r\n@@BLOCKS@@\n' + body) + parser.finish()
         return [p['data']['props'] for p in parts if p['type'] == 'data-block' and p['data']['type'] == 'item_section']
@@ -142,7 +142,7 @@ class SectionExtrasTests(TestCase):
         self.assertTrue(all(c['why'] is None and c['fit'] == [] for c in props['reserve']))
 
     def test_cards_new_to_the_conversation_are_flagged_wherever_they_sit(self):
-        parser = ComposeParser(candidates=default_candidates(), shown_ids=[], followup_attribute='level',
+        parser = ComposeParser(candidates=default_candidates(), excluded_ids=[], followup_attribute='level',
                                seen_ids=['edX+C1'])
         body = (line({'block': 'top_pick', 'item_id': 'edX+C2', 'reason': 'Because you want to lead.'}) +
                 line({'block': 'compare', 'options': [{'item_id': 'edX+C1', 'best_for': 'a'},

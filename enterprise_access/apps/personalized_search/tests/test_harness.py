@@ -119,7 +119,7 @@ class HarnessRunTests(TestCase):
 
     def test_cases(self):
         demo = harness.demo_cases()
-        self.assertEqual(len(demo), 42)
+        self.assertEqual(len(demo), 43)
         refine = [c for c in demo if c.id == 'R1'][0]
         self.assertEqual(refine.history, ('I want to get better at leading a team',))
         personas = harness.persona_cases(load_personas)
@@ -363,6 +363,15 @@ class HarnessScoringTests(TestCase):
         self.assertTrue(harness_scoring.score_intent(other, seen(False, 'off_topic'))['pass'])
         self.assertFalse(harness_scoring.score_intent(other, seen(True, None))['pass'])
 
+    def test_score_intent_checks_a_weekly_hours_limit(self):
+        debug = {'intent_result': {'on_topic': True, 'redirect_reason': None},
+                 'merged_intent': {'constraints': {'max_hours_per_week': 5}}}
+        expect = {'on_topic': True, 'max_hours_per_week_le': 3}
+        self.assertEqual(harness_scoring.score_intent(expect, debug),
+                         {'pass': False, 'why': 'missed max_hours_per_week'})
+        debug['merged_intent']['constraints']['max_hours_per_week'] = 3
+        self.assertTrue(harness_scoring.score_intent(expect, debug)['pass'])
+
     def test_score_intent_flags_a_wrong_merge_mode(self):
         debug = {'intent_result': {'on_topic': True, 'redirect_reason': None, 'merge': 'replace'}}
         score = harness_scoring.score_intent({'on_topic': True, 'merge': 'refine'}, debug)
@@ -418,7 +427,7 @@ class HarnessCommandTests(TestCase):
                      stdout=out)
         plan = json.loads(out.getvalue())
         self.assertEqual(plan['arms'], ['openai-best-fit', 'xpert'])
-        self.assertEqual(plan['turns'], 84)
+        self.assertEqual(plan['turns'], 86)
 
     @override_settings(PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE=None)
     def test_requires_dev_scope(self):
