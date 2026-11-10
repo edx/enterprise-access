@@ -23,12 +23,27 @@ class CatalogScope:
     How to scope catalog reads. Normal: the learner's secured key plus the enterprise filter.
     Dev only: the plain key plus an explicit catalog filter (``PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE``).
     ``secured_key`` is opaque here; only the catalog adapter reads it.
+
+    The content language follows the learner's portal language, as Learner Pathways does: ``locale``
+    picks the catalog records whose metadata (title, description) is in that language
+    (``metadata_language``), and courses are also limited to ones taught in it (``language``, the
+    facet's display name, e.g. "Spanish").
     """
 
     filter: str
     secured_key: object | None = None
     allow_unscoped: bool = False
     label: str | None = None
+    locale: str = 'en'
+    language_name: str = 'English'
+
+    @property
+    def course_language_filter(self) -> str:
+        return f'language:{_quote(self.language_name)} AND {self.metadata_language_filter}'
+
+    @property
+    def metadata_language_filter(self) -> str:
+        return f'metadata_language:{_quote(self.locale)}'
 
 
 class RetrievalFailed(Exception):
@@ -118,7 +133,7 @@ def build_sub_requests(intent: dict, scope: CatalogScope, excluded_ids: list[str
     broad_query = ' '.join(skills + (intent.get('roles') or [])) or intent.get('query') or ''
     requests = []
     if types & {'course', 'executive_education'}:
-        course_filter = f'content_type:course AND language:"English" AND ({scope.filter})'
+        course_filter = f'content_type:course AND {scope.course_language_filter} AND ({scope.filter})'
         if types & {'course', 'executive_education'} == {'executive_education'}:
             course_filter += f' AND learning_type:{_quote(EXEC_ED)}'
         elif 'executive_education' not in types:
@@ -133,11 +148,11 @@ def build_sub_requests(intent: dict, scope: CatalogScope, excluded_ids: list[str
             # Count only (no hits) for "See all (n)": one per type, in the same round trip.
             exec_clause = f'learning_type:{_quote(EXEC_ED)}'
             type_filter = exec_clause if item_type == 'executive_education' else f'NOT {exec_clause}'
-            base = f'content_type:course AND language:"English" AND ({scope.filter}) AND {type_filter}'
+            base = f'content_type:course AND {scope.course_language_filter} AND ({scope.filter}) AND {type_filter}'
             requests.append({'tier': 0, 'count_for': item_type, 'query': broad_query, 'filters': base,
                              'hitsPerPage': 0, 'removeWordsIfNoResults': 'allOptional'})
     if 'program' in types:
-        program_filter = f'content_type:program AND ({scope.filter})'
+        program_filter = f'content_type:program AND {scope.metadata_language_filter} AND ({scope.filter})'
         program_filter += ''.join(f' AND NOT aggregation_key:{_quote("program:" + i)}' for i in excluded_ids)
         if skills_clause:
             requests.append({'tier': 2, 'query': intent.get('query') or '',
@@ -145,7 +160,8 @@ def build_sub_requests(intent: dict, scope: CatalogScope, excluded_ids: list[str
         requests.append({'tier': 1, 'query': broad_query, 'filters': program_filter, 'hitsPerPage': 15,
                          'removeWordsIfNoResults': 'allOptional'})
         requests.append({'tier': 0, 'count_for': 'program', 'query': broad_query,
-                         'filters': f'content_type:program AND ({scope.filter})', 'hitsPerPage': 0,
+                         'filters': f'content_type:program AND {scope.metadata_language_filter} AND ({scope.filter})',
+                         'hitsPerPage': 0,
                          'removeWordsIfNoResults': 'allOptional'})
     return requests
 

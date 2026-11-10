@@ -146,6 +146,7 @@ def run_turn(ctx: TurnContext, steps: Steps) -> Iterator[dict]:
                         yield {'type': 'error', 'errorText': 'internal'}
                         return
                 record['outcome'] = 'redirect' if record.get('redirected') else 'done'
+                record['blocks'] = [p['data'] for p in emitted if p['type'] == 'data-block']
             emitted.append(part)
             yield part
     except Exception:  # pylint: disable=broad-exception-caught
@@ -282,7 +283,8 @@ def _turn_parts(ctx: TurnContext, steps: Steps, record: dict) -> Iterator[dict]:
     stream = steps.compose(
         system=COMPOSE_SYSTEM,
         user=compose_user(merged_intent=merged, followup_attribute=attribute, asked=session['asked_attributes'],
-                          history=session['history'], message=ctx.message, candidates=candidates),
+                          history=session['history'], message=ctx.message, candidates=candidates,
+                          language=getattr(ctx.scope, 'language_name', None) or 'English'),
         model=ctx.compose_model.model, effort=ctx.compose_model.effort,
         timeout_s=min(ctx.compose_timeout_s, remaining()), usage=usages['compose'],
     )
