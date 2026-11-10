@@ -42,6 +42,7 @@ COMPOSE = ('I put a leadership certificate at the top.\n@@BLOCKS@@\n'
            '{"block":"followup","question":"How much time can you give it?","suggestions":["Under 4 weeks",'
            '"1 to 3 months"],"session_title":"Leading a team"}\n')
 NO_MATCH = ('Nothing in your catalog covers underwater basket weaving.\n@@BLOCKS@@\n'
+            '{"block":"caveat","title":"No matching courses","body":"Your catalog has nothing on this topic yet."}\n'
             '{"block":"followup","question":"Is there another skill you want?","suggestions":["Data","AI"]}\n')
 
 
