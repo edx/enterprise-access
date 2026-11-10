@@ -60,9 +60,9 @@ class ComposeParserTests(TestCase):
         self.assertEqual(exec_ed['props']['label'], 'Executive education · 1 pick')
         followups = [p for p in parts if p['type'] == 'data-followups'][0]['data']
         self.assertEqual(followups['attribute'], 'level')
-        # The fixed chips for the attribute, then the model's ideas minus repeats of them.
-        self.assertEqual(followups['suggestions'], ['Introductory', 'Intermediate', 'Advanced'])
-        self.assertEqual(followups['ideas'], ['Coaching for new managers'])
+        # An idea that covers a fixed chip wins: "introductory" replaces the fixed Introductory chip.
+        self.assertEqual(followups['suggestions'], ['Intermediate', 'Advanced'])
+        self.assertEqual(followups['ideas'], ['Coaching for new managers', 'introductory'])
         self.assertEqual(len(self.blocks(parts, 'plan')[0]['props']['steps']), 2)
         self.assertEqual(self.blocks(parts, 'plan')[0]['props']['why'], 'Basics first.')
         self.assertEqual(parser.session_title, 'Leading a team')
@@ -226,6 +226,21 @@ class ComposeParserTests(TestCase):
         followups = [p for p in parts if p['type'] == 'data-followups'][0]['data']
         self.assertNotIn('ideas', followups)
         self.assertEqual(followups['suggestions'], ['Introductory', 'Intermediate', 'Advanced'])
+
+    def test_an_idea_in_the_learners_words_replaces_the_fixed_chip_it_covers(self):
+        followup = {'block': 'followup', 'question': 'Level?',
+                    'ideas': ["I'm a beginner", 'Show me deeper fermentation']}
+        _, parts = self.parse('Hi.\n@@BLOCKS@@\n' + line(followup))
+        followups = [p for p in parts if p['type'] == 'data-followups'][0]['data']
+        # "beginner" covers Introductory; a topic idea ("deeper fermentation") doesn't stand in for Advanced.
+        self.assertEqual(followups['suggestions'], ['Intermediate', 'Advanced'])
+        self.assertEqual(followups['ideas'], ["I'm a beginner", 'Show me deeper fermentation'])
+
+    def test_the_reply_is_conversational_and_names_at_most_one_bolded_title(self):
+        prompt = compose.SYSTEM_PROMPT
+        self.assertIn('One or two short, friendly sentences', prompt)
+        self.assertIn("don't open with \"I put\" or \"I've updated your results\"", prompt)
+        self.assertIn('bold that title with **double asterisks**; no other markdown', prompt)
 
     def test_with_nothing_left_to_narrow_the_ideas_replace_the_opening_chips(self):
         followup = {'block': 'followup', 'question': 'What next?', 'ideas': ['Negotiation for new leads']}
