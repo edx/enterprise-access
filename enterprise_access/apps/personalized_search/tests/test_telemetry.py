@@ -56,7 +56,7 @@ class TurnEventTests(TestCase):
         self.assertEqual(props['shown_item_keys'], ['edX+C1', 'p-1', 'p-2'])
         self.assertEqual(props['shown_item_sections'], ['course', 'program', 'program'])
         self.assertEqual(props['shown_item_positions'], [1, 2, 3])
-        self.assertEqual(props['retrieved_item_keys'][0], 'edX+C1')
+        self.assertIn('edX+C1', props['retrieved_item_keys'])  # related programs lead the shortlist
         self.assertEqual(props['intent_merge_mode'], 'replace')
         self.assertEqual(props['prompt_length'], len(self.ctx.message))
         self.assertEqual(props['compose_output_tokens'], 50)

@@ -6,7 +6,12 @@ from unittest import mock
 from django.test import TestCase
 
 from enterprise_access.apps.personalized_search.core import compose, constants
-from enterprise_access.apps.personalized_search.tests.helpers import default_candidates
+from enterprise_access.apps.personalized_search.tests.helpers import (
+    candidate,
+    course_hit,
+    default_candidates,
+    program_hit
+)
 
 
 def line(obj):
@@ -309,8 +314,22 @@ class ComposeParserTests(TestCase):
         self.assertEqual(self.section_types_for(['course']), ['course', 'executive_education'])
         self.assertEqual(self.section_types_for(['course', 'executive_education']), ['course'])
 
-    def test_the_prompt_always_asks_for_related_programs_unless_opted_out(self):
-        self.assertIn('always write a program section', compose.SYSTEM_PROMPT)
+    def test_the_prompt_leads_with_programs_and_never_pads(self):
+        self.assertIn('take the top pick from programs and write the program section first', compose.SYSTEM_PROMPT)
+        self.assertIn('Never add a section, or an item, just to fill space', compose.SYSTEM_PROMPT)
+
+    def test_server_added_sections_use_only_closely_related_candidates(self):
+        def program_section(tier, rank):
+            cands = [candidate(course_hit('edX+C1')), candidate(program_hit('p-9'), tier=tier, rank=rank)]
+            parser = compose.ComposeParser(candidates=cands, shown_ids=[], followup_attribute='level',
+                                           intent={'item_types': list(constants.ITEM_TYPES)})
+            parts = parser.feed('Hi.\n@@BLOCKS@@\n' + line(section('course', ['edX+C1']))) + parser.finish()
+            sections = [p['data']['props'] for p in parts
+                        if p['type'] == 'data-block' and p['data']['type'] == 'item_section']
+            return [props for props in sections if props['item_type'] == 'program']
+        self.assertTrue(program_section(tier=2, rank=12))   # matched the learner's skills
+        self.assertTrue(program_section(tier=1, rank=2))    # a top keyword match
+        self.assertFalse(program_section(tier=1, rank=12))  # loosely related: never added as filler
 
     def test_the_prompt_asks_for_the_followup_right_after_the_header(self):
         prompt = compose.SYSTEM_PROMPT
