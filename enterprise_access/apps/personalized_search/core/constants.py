@@ -57,7 +57,9 @@ FIXED_CHIP_MATCHES = {
     'Self-paced': ('self-paced', 'self paced', 'own pace'),
     'Instructor-led': ('instructor', 'live', 'cohort', 'scheduled'),
     'Either works': ('either',),
-    'Courses': ('course',),
+    # Only phrases that choose the type: "the shortest course" is about length, not courses over programs.
+    'Courses': ('individual course', 'single course', 'standalone course', 'just courses', 'only courses',
+                'courses only', 'courses instead'),
     'Executive education': ('executive', 'exec ed'),
     'Programs': ('program', 'certificate'),
 }
