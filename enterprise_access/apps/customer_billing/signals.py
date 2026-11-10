@@ -35,9 +35,6 @@ def track_checkout_intent_changes(sender, instance, created, **kwargs):  # pylin
             set_custom_attribute(CHECKOUT_LIFECYCLE_IS_ERROR_MONITORING_KEY, 'true')
 
         properties = dict(CheckoutIntentReadOnlySerializer(instance).data)
-        # Attribution is sent only on order_completed, behind FEATURE_SSP_CHECKOUT_SEGMENT_EVENTS_V2 and after
-        # sanitize_attribution; the serializer includes every field, so it must not ride along here.
-        properties.pop('attribution', None)
         properties["previous_state"] = previous_state
         properties["new_state"] = instance.state
 

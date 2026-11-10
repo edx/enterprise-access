@@ -2,6 +2,7 @@
 Tests for the server-side checkout Segment events (order_completed / order_cancelled): payloads, the send task and
 the transactional outbox that dispatches it.
 """
+import time
 from datetime import timedelta
 from unittest import mock
 
@@ -14,6 +15,7 @@ from django.test import TestCase, override_settings
 from django.utils import timezone
 from edx_django_utils.cache import TieredCache
 
+from enterprise_access.apps.api.serializers import CheckoutIntentReadOnlySerializer
 from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.customer_billing.constants import (
     ATTRIBUTION_KEYS,
@@ -34,7 +36,10 @@ from enterprise_access.apps.customer_billing.segment_payloads import (
     build_order_cancelled_properties,
     build_order_completed_properties,
     find_order_invoice,
-    get_payment_schedule
+    get_payment_schedule,
+    sanitize_attribution,
+    sanitize_referrer,
+    sanitize_utm_value
 )
 from enterprise_access.apps.customer_billing.tasks import SegmentSendError, send_checkout_segment_event_task
 from enterprise_access.apps.customer_billing.tests.utils import AttrDict
@@ -1048,3 +1053,108 @@ class TestCheckoutIntentAttribution(TestCase):
         intent.refresh_from_db()
         self.assertEqual(intent.id, self.intent.id)
         self.assertEqual(intent.attribution, {'utm_source': 'bing'})
+
+    @mock.patch('enterprise_access.apps.customer_billing.signals.track_event')
+    def test_lifecycle_event_and_read_serializer_never_carry_attribution(self, mock_track_event):
+        """
+        Attribution is only sent on order_completed, so the read-only serializer leaves it out, and with it the
+        lifecycle Segment event that the post_save signal builds from that serializer.
+        """
+        intent = CheckoutIntent.create_intent(
+            user=UserFactory(), slug='globex', name='Globex', quantity=10,
+            attribution={'utm_source': 'newsletter', 'referrer': 'https://www.google.com/'},
+        )
+
+        self.assertNotIn('attribution', CheckoutIntentReadOnlySerializer(intent).data)
+        mock_track_event.assert_called_once()
+        properties = mock_track_event.call_args.kwargs['properties']
+        self.assertNotIn('attribution', properties)
+        self.assertNotIn('newsletter', str(properties))
+        self.assertEqual(properties['new_state'], 'created')
+
+
+@ddt.ddt
+class TestAttributionSanitizers(TestCase):
+    """
+    Tests for ``sanitize_utm_value``, ``sanitize_referrer`` and ``sanitize_attribution``.
+    """
+    @ddt.data(
+        'google',
+        'paid_social',
+        'Q4 2026 - Teams launch',
+        'carousel-ad_v2',
+        'enterprise learning',
+        'brand|search|us',
+        'spring_sale_2026',
+        'q4_2026_11_06',  # underscores separate the numbers, so this is not one long number
+        'formación',
+        'v1.2',
+        ('abcdefghi_' * 10)[:100],  # exactly the maximum length
+    )
+    def test_campaign_labels_are_kept(self, value):
+        self.assertEqual(sanitize_utm_value(value), value)
+
+    @ddt.data(
+        # (description, value)
+        ('email address', 'jane.doe@example.com'),
+        ('percent-encoded email address', 'jane.doe%40example.com'),
+        ('brand handle', '@edXOnline'),
+        ('URL', 'https://example.com/?email=jane'),
+        ('key=value pairs', 'email=jane&id=1'),
+        ('markup', '<b>hi</b>'),
+        ('phone number', '555-123-4567'),
+        ('international phone number', '+44 20 7946 0958'),
+        ('phone number inside a label', 'call_5551234567_now'),
+        ('account number', 'acct 1234567'),
+        ('full date written as one number', 'launch-20261106'),
+        ('opaque token', 'a8f5f167f44f4964e6c998dee827110c'),
+        ('JWT', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJqYW5lIn0.c2ln'),
+        ('UUID', 'deadbeef-cafe-babe-f00d-abcdefabcdef'),
+        ('longer than 100 characters', 'abcdefghi_' * 10 + 'x'),
+        ('empty', ''),
+    )
+    @ddt.unpack
+    def test_values_that_can_carry_contact_details_or_identifiers_are_dropped(self, _description, value):
+        self.assertIsNone(sanitize_utm_value(value))
+
+    def test_a_huge_value_is_dropped_without_being_scanned(self):
+        """The length is checked before any pattern, so a client-supplied value can't tie up a web worker."""
+        started = time.monotonic()
+        self.assertIsNone(sanitize_attribution({'utm_campaign': 'a' * 1_000_000, 'referrer': 'a' * 1_000_000}))
+        self.assertLess(time.monotonic() - started, 1)
+
+    @ddt.data(
+        ('https://www.google.com/search?email=foo@bar.com&q=x#frag', 'https://www.google.com/'),
+        ('https://user:pass@example.com/u/jane', 'https://example.com/'),
+        ('  https://example.com/page  ', 'https://example.com/'),
+        ('http://localhost:8734/checkout', 'http://localhost:8734/'),
+    )
+    @ddt.unpack
+    def test_sanitize_referrer_keeps_only_the_origin(self, url, expected):
+        self.assertEqual(sanitize_referrer(url), expected)
+
+    @ddt.data(
+        'http://[', 'https://[::1/path?email=foo@bar.com', 'ftp://example.com/', 'not a url', 'https://',
+        f'https://{"a" * 95}.com/',  # an origin longer than 100 characters
+    )
+    def test_sanitize_referrer_drops_what_is_not_an_http_url(self, url):
+        """``urlsplit`` raises ValueError for a malformed IPv6 host; callers drop the value instead of failing."""
+        self.assertIsNone(sanitize_referrer(url))
+
+    @ddt.data(None, 'utm_source=google', ['utm_source'])
+    def test_sanitize_attribution_never_raises_on_a_wrong_shape(self, value):
+        self.assertIsNone(sanitize_attribution(value))
+
+    def test_sanitize_attribution_drops_unsafe_values(self):
+        self.assertEqual(
+            sanitize_attribution({
+                'utm_source': ' google ',
+                'utm_medium': 42,
+                'utm_campaign': {'nested': 'value'},
+                'utm_content': 'jane@example.com',
+                'utm_term': '555 123 4567',
+                'referrer': 'https://jane:pw@example.com/u/jane?x=1',
+                'unknown': 'value',
+            }),
+            {'utm_source': 'google', 'referrer': 'https://example.com/'},
+        )

@@ -44,7 +44,6 @@ from enterprise_access.apps.customer_billing.utils import datetime_from_timestam
 from enterprise_access.apps.provisioning.utils import validate_trial_subscription
 from enterprise_access.apps.track.segment import send_event_synchronously
 from enterprise_access.tasks import LoggedTaskWithRetry
-from enterprise_access.toggles import checkout_segment_events_v2_enabled
 from enterprise_access.utils import cents_to_dollars, format_cents_for_user_display, format_datetime_obj
 
 logger = logging.getLogger(__name__)
@@ -1268,7 +1267,7 @@ def send_checkout_segment_event_task(emission_id):
     so concurrent deliveries send once. The send is synchronous with a short timeout, so the lock is held for one
     bounded request, never for retries.
     """
-    if not checkout_segment_events_v2_enabled():
+    if not settings.FEATURE_SSP_CHECKOUT_SEGMENT_EVENTS_V2:
         # Left as is; the dispatcher publishes it again once the flag is back on.
         logger.info('Checkout Segment events are disabled; not sending SegmentEventEmission %s', emission_id)
         return

@@ -192,40 +192,6 @@ copy's other fields. For records where that can cost money (`LearnerCreditTopUp.
 The test database is SQLite, where `select_for_update()` does nothing: test with two copies of one row loaded
 before either writes, which proves the stored-state check but not the lock.
 
-### 25. Record a Segment event as sent only after a synchronous send
-- `track_event` (and analytics-python's default client) queues events for a background thread that retries for
-  minutes, then drops a failed upload without telling the caller; `analytics.flush()` returns either way
-- When code records that an event was sent (an idempotency row, a retry decision), use
-  `track.segment.send_event_synchronously`: one bounded request that raises unless Segment returns 200
-- Retry network errors, 429 and 5xx; don't retry other 4xx or invalid arguments, which fail the same way every time
-- Pass a deterministic `message_id` so Segment drops a resend after a success that wasn't recorded
-- Example: `customer_billing.tasks.send_checkout_segment_event_task`
-
-### 26. A Celery task that must not be lost: transactional outbox, not a swallowed `.delay()`
-Catching a `.delay()` failure and logging it keeps the webhook healthy but loses the work: Celery cannot retry a
-task that never reached the broker. When the work must happen eventually (e.g. analytics events recorded as sent):
-- Save a row describing the work (status `pending`) first, unique on the work's natural key, with `get_or_create`
-  so a redelivered webhook finds it. Publish with `transaction.on_commit`.
-- If saving the row fails, raise: the webhook must fail so the sender redelivers it. A swallowed insert error
-  acknowledges the delivery with nothing left to recover the work from, and later writes in the same handler are not
-  guaranteed to fail too (a lock timeout hits one table). Save the row at the end of the handler, so it never holds
-  up the main work, and keep that work idempotent, since the redelivery repeats it.
-- Publish under `select_for_update(skip_locked=True)` on the `pending` row, mark it `dispatched` in the same
-  transaction *before* calling `.delay()`, and roll back on a publish error. A worker that picks the task up at once
-  waits for the lock; an eager task (tests, `CELERY_ALWAYS_EAGER` devstacks) runs inside `.delay()` and its final
-  status is not overwritten afterwards.
-- A scheduled management command publishes `pending` rows and re-queues `dispatched` rows older than the task's own
-  retry window, failing them after a bounded number of dispatches. Don't count a failed publish as an attempt.
-  This service has no Celery beat: scheduled commands are cronjobs in `edx/edx-internal`
-  (`argocd/applications/enterprise-access/{stage,prod}-config.yaml`), so the schedule ships separately and must exist
-  before the feature is turned on.
-- Make every status change a conditional update (`.filter(status=...).update(...)` or excluding final statuses) so a
-  stale copy or a second worker never moves a final row back.
-- The task decides between retry (transient), `failed` (retrying can't help) and `skipped` (not applicable), so
-  nothing ends silently.
-- Example: `customer_billing.segment_outbox` and `dispatch_checkout_segment_events`. See
-  `docs/references/checkout_segment_events.md`.
-
 ### Key Takeaways for Implementation:
 - Check permissions early using `@permission_required` decorator
 - Use separate serializers for request/response

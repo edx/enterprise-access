@@ -19,7 +19,7 @@ from enterprise_access.apps.customer_billing.models import (
     SspProduct,
     StripeEventSummary
 )
-from enterprise_access.apps.customer_billing.utils import sanitize_attribution
+from enterprise_access.apps.customer_billing.segment_payloads import sanitize_attribution
 
 
 class RecordConflictError(APIException):
@@ -147,7 +147,9 @@ class CheckoutIntentReadOnlySerializer(CountryFieldMixin, serializers.ModelSeria
 
     class Meta:
         model = CheckoutIntent
-        fields = '__all__'
+        # Attribution is sent only on order_completed, behind FEATURE_SSP_CHECKOUT_SEGMENT_EVENTS_V2. Leaving it out
+        # here keeps it out of API responses and of the lifecycle Segment event, which serializes with this class.
+        exclude = ['attribution']
         read_only_fields = [field.name for field in CheckoutIntent._meta.get_fields()]
 
 

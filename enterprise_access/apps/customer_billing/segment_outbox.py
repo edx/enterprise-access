@@ -10,6 +10,7 @@ import logging
 from datetime import timedelta
 from functools import partial
 
+from django.conf import settings
 from django.db import DatabaseError, transaction
 from django.db.models import F, Value
 from django.db.models.functions import Coalesce, Concat
@@ -18,7 +19,6 @@ from django.utils import timezone
 from enterprise_access.apps.customer_billing.constants import CheckoutSegmentEvents, SegmentEventEmissionStatus
 from enterprise_access.apps.customer_billing.models import SegmentEventEmission
 from enterprise_access.apps.customer_billing.tasks import send_checkout_segment_event_task
-from enterprise_access.toggles import checkout_segment_events_v2_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +56,7 @@ def _record(event_name, checkout_intent, subscription_id, invoice_id=None):
     so the outbox never holds that work up, and the redelivery repeats it (handlers are idempotent) and then records
     the event.
     """
-    if not checkout_segment_events_v2_enabled():
+    if not settings.FEATURE_SSP_CHECKOUT_SEGMENT_EVENTS_V2:
         return None
     order_id = checkout_intent.stripe_checkout_session_id
     if not order_id:
@@ -161,7 +161,7 @@ def dispatch_pending_segment_events(
     under a row lock. Does nothing while the feature setting is off, so recorded events wait instead of failing.
     """
     counts = {'failed': 0, 'requeued': 0, 'dispatched': 0, 'not_dispatched': 0}
-    if not checkout_segment_events_v2_enabled():
+    if not settings.FEATURE_SSP_CHECKOUT_SEGMENT_EVENTS_V2:
         logger.info('Checkout Segment events are disabled; not dispatching')
         return counts
 
