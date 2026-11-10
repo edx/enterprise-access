@@ -1,21 +1,22 @@
 """Tests for hydration, sub-request building, prefilter and the follow-up attribute."""
-from unittest import mock
+from unittest import TestCase, mock
 
 import ddt
-from django.test import TestCase
 
 from enterprise_access.apps.personalized_search.adapters.algolia import AlgoliaCatalog
 from enterprise_access.apps.personalized_search.core import retrieval
+from enterprise_access.apps.personalized_search.core.errors import CatalogSearchError
 from enterprise_access.apps.personalized_search.tests.helpers import candidate, course_hit, program_hit
 
 SCOPE = retrieval.CatalogScope(filter='enterprise_customer_uuids:"e-1"')
+EXEC_ED = '(learning_type:"Executive Education" OR course_type:"executive-education-2u")'
+NOT_EXEC_ED = 'NOT learning_type:"Executive Education" AND NOT course_type:"executive-education-2u"'
 INTENT = {
     'query': 'team leadership', 'skills': ['Leadership', 'Coaching'], 'roles': ['Manager'], 'level': None,
     'item_types': ['course', 'executive_education', 'program'], 'constraints': {'max_weeks': None, 'pacing': None},
 }
 
 
-@ddt.ddt
 class HydrationTests(TestCase):
     """``hydrate_card`` follows the spec's ItemCard table."""
 
@@ -91,32 +92,59 @@ class SubRequestTests(TestCase):
         programs = [r for r in spanish if r['filters'].startswith('content_type:program')]
         spanish_courses = 'language:"Spanish" AND metadata_language:"es"'
         self.assertTrue(courses and all(spanish_courses in r['filters'] for r in courses))
-        # Programs carry translated metadata too, but no single teaching language.
-        self.assertTrue(programs and all('metadata_language:"es"' in r['filters'] and 'language:"' not in
-                                         r['filters'].replace('metadata_language:"', '') for r in programs))
+        # Programs list every language they're taught in; one taught in the learner's language qualifies.
+        self.assertTrue(programs and all(spanish_courses in r['filters'] for r in programs))
+        english_programs = [r for r in english if r['filters'].startswith('content_type:program')]
+        self.assertTrue(english_programs and all('language:"English" AND metadata_language:"en"' in r['filters']
+                                                 for r in english_programs))
+
+    def test_a_larger_shortlist_asks_for_more_hits_and_keeps_more_candidates(self):
+        hits = [r['hitsPerPage'] for r in retrieval.build_sub_requests(INTENT, SCOPE, []) if r['hitsPerPage']]
+        more = [r['hitsPerPage'] for r in retrieval.build_sub_requests(INTENT, SCOPE, [], shortlist=40)
+                if r['hitsPerPage']]
+        self.assertEqual(more, [h * 2 for h in hits])
+        smaller = [r['hitsPerPage'] for r in retrieval.build_sub_requests(INTENT, SCOPE, [], shortlist=10)
+                   if r['hitsPerPage']]
+        self.assertEqual(smaller, hits)  # a smaller shortlist still searches as widely
+        raw = [candidate(course_hit(f'edX+K{i}'), rank=i) for i in range(30)] + \
+              [candidate(program_hit(f'p-{i}'), rank=i) for i in range(15)]
+        self.assertEqual(len(retrieval.prefilter(raw, {})), 15)  # course cap 10 + program cap 5
+        self.assertEqual(len(retrieval.prefilter(raw, {}, shortlist=40)), 30)  # caps scale: 20 + 10
+
+    def test_compose_view_names_a_programs_credential(self):
+        view = retrieval.compose_view(candidate(program_hit('p-1')))
+        self.assertEqual(view['program_type'], 'Professional Certificate')
+        self.assertNotIn('program_type', retrieval.compose_view(candidate(course_hit('edX+C1'))))
 
     @ddt.data(
-        (['executive_education'], 'AND learning_type:"Executive Education"'),
-        (['course'], 'AND NOT learning_type:"Executive Education"'),
-        (['program'], None),
+        (['executive_education'], f'AND {EXEC_ED}', 2),
+        (['course'], f'AND {NOT_EXEC_ED}', 2),
+        (['program'], None, 0),  # the program requests don't depend on the types, so they'd only repeat
+        (['course', 'executive_education'], None, 0),
     )
     @ddt.unpack
-    def test_a_preferred_type_adds_its_own_requests_and_keeps_every_type(self, types, clause):
+    def test_a_preferred_type_adds_its_own_requests_and_keeps_every_type(self, types, clause, own_requests):
         reqs = retrieval.build_sub_requests(dict(INTENT, item_types=types), SCOPE, [])
         hits = [r for r in reqs if r['tier'] > 0]
         general, preferred = [r for r in hits if not r.get('preferred')], [r for r in hits if r.get('preferred')]
         # Every type is still searched (courses with Executive Education, and programs unless the learner
         # asked for courses) ...
         searches_programs = any(r['filters'].startswith('content_type:program') for r in general)
-        self.assertEqual(searches_programs, types != ['course'])
+        self.assertEqual(searches_programs, 'program' in types or 'course' not in types)
         self.assertTrue(any(r['filters'].startswith('content_type:course') and 'learning_type' not in r['filters']
                             for r in general))
-        # ... plus the preferred type's own strict and broadened requests.
-        self.assertEqual(len(preferred), 2)
-        if clause:
-            self.assertTrue(all(clause in r['filters'] for r in preferred))
-        else:
-            self.assertTrue(all(r['filters'].startswith('content_type:program') for r in preferred))
+        # ... plus the preferred type's own strict and broadened requests, unless they'd repeat the general ones.
+        self.assertEqual(len(preferred), own_requests)
+        self.assertTrue(all(clause in r['filters'] for r in preferred))
+        self.assertEqual(len({(r['query'], r['filters']) for r in hits}), len(hits))
+
+    def test_executive_education_is_counted_and_filtered_as_item_type_of_classifies_it(self):
+        requests = retrieval.build_sub_requests(dict(INTENT, skills=[]), SCOPE, [])
+        counts = {r['count_for']: r['filters'] for r in requests if r.get('count_for')}
+        self.assertTrue(counts['executive_education'].endswith(f'AND {EXEC_ED}'))
+        self.assertTrue(counts['course'].endswith(f'AND {NOT_EXEC_ED}'))
+        by_course_type = dict(course_hit('Yale+E9'), learning_type='Course', course_type='executive-education-2u')
+        self.assertEqual(retrieval.item_type_of(by_course_type), 'executive_education')
 
     def test_search_uses_scope_in_one_multi_query(self):
         client = mock.Mock()
@@ -137,11 +165,17 @@ class SubRequestTests(TestCase):
         kwargs = client.multi_search_catalog_index.call_args.kwargs
         self.assertEqual((kwargs['allow_unscoped'], kwargs['secured_key'], kwargs['timeout_s']), (True, None, 1.5))
 
-    def test_search_failure(self):
-        client = mock.Mock()
-        client.multi_search_catalog_index.side_effect = RuntimeError('down')
-        with self.assertRaises(retrieval.RetrievalFailed):
-            retrieval.search(INTENT, SCOPE, [], catalog=AlgoliaCatalog(client))
+    def test_a_catalog_failure_is_logged_and_fails_retrieval(self):
+        catalog = mock.Mock(**{'search.side_effect': CatalogSearchError('Algolia search failed: timeout')})
+        with self.assertLogs('enterprise_access.apps.personalized_search.core.retrieval', level='WARNING') as logs:
+            with self.assertRaises(retrieval.RetrievalFailed):
+                retrieval.search(INTENT, SCOPE, [], catalog=catalog)
+        self.assertIn('timeout', logs.output[0])
+
+    def test_a_bug_in_the_catalog_adapter_is_not_hidden_as_a_retrieval_failure(self):
+        catalog = mock.Mock(**{'search.side_effect': TypeError('bug')})
+        with self.assertRaises(TypeError):
+            retrieval.search(INTENT, SCOPE, [], catalog=catalog)
 
 
 class PrefilterTests(TestCase):
@@ -153,13 +187,15 @@ class PrefilterTests(TestCase):
         self.assertEqual(kept[0]['card']['item_type'], 'program')
 
     def test_a_preferred_type_leads_and_may_fill_more_places(self):
-        raw = [candidate(course_hit(f'edX+C{i}'), tier=2, rank=i) for i in range(12)]
+        raw = [candidate(course_hit(f'edX+C{i}'), tier=2, rank=i) for i in range(15)]
         raw += [candidate(course_hit(f'Yale+E{i}', exec_ed=True), tier=1, rank=i) for i in range(12)]
+        raw += [candidate(program_hit(f'p-{i}'), tier=1, rank=i) for i in range(5)]
         kept = retrieval.prefilter(raw, dict(INTENT, item_types=['executive_education']))
         types = [c['card']['item_type'] for c in kept]
-        self.assertEqual(types[0], 'executive_education')
+        self.assertEqual((types[0], len(kept)), ('executive_education', 20))
         self.assertEqual(types.count('executive_education'), 10)  # above the usual cap of 5
-        self.assertEqual(types.count('course'), 10)  # the other type stays as alternatives
+        # The other types stay as alternatives: programs keep a section's worth, though courses score higher.
+        self.assertEqual((types.count('course'), types.count('program')), (7, 3))
 
     def test_caps_and_dedupe(self):
         raw = [candidate(course_hit(f'edX+C{i}'), tier=1, rank=i) for i in range(15)]
@@ -184,6 +220,19 @@ class PrefilterTests(TestCase):
                candidate(course_hit('edX+LIGHT', effort=(2, 3)), tier=1, rank=5)]
         kept = retrieval.prefilter(raw, dict(INTENT, constraints={'max_hours_per_week': 4}))
         self.assertEqual(kept[0]['card']['item_id'], 'edX+LIGHT')
+
+    def test_the_program_boost_reorders_within_a_tier_only(self):
+        skilled_course = candidate(course_hit('edX+SKILL'), tier=2, rank=0)
+        keyword_program = candidate(program_hit('p-kw'), tier=1, rank=0)
+        skilled_program = candidate(program_hit('p-sk'), tier=2, rank=3)
+        raw = [keyword_program, skilled_course, skilled_program]
+        kept = [c['card']['item_id'] for c in retrieval.prefilter(raw, {})]
+        self.assertEqual(kept, ['p-sk', 'edX+SKILL', 'p-kw'])
+
+    def test_hours_must_be_a_finite_whole_number(self):
+        for effort in ((0.5, 0.5), (float('nan'), float('inf'))):
+            facts = retrieval.hydrate_card(course_hit('edX+C1', effort=effort))['facts']
+            self.assertEqual((facts['hours_per_week_min'], facts['hours_per_week_max']), (None, None), effort)
 
     def test_level_match_scores_higher(self):
         raw = [candidate(course_hit('edX+ADV', level='Advanced'), tier=1, rank=0),

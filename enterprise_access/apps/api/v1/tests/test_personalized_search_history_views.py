@@ -235,6 +235,14 @@ class TurnFeedbackTests(APITest):
                                     format='json')
         self.assertEqual(response.status_code, 403)
 
+    def test_a_turn_from_another_enterprise_is_404_even_with_access_to_both(self):
+        self.set_jwt_cookie([{'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE, 'context': ENTERPRISE},
+                             {'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE, 'context': OTHER_ENTERPRISE}])
+        response = self.client.post(self.url(), {'enterprise_customer_uuid': OTHER_ENTERPRISE, 'rating': 1},
+                                    format='json')
+        self.assertEqual(response.status_code, 404)
+        self.assertIsNone(ChatTurn.objects.get(session=self.session).rating)
+
     def test_flag_off_is_404(self):
         with override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=False):
             self.assertEqual(self.post(1).status_code, 404)
@@ -280,3 +288,20 @@ class HistoryEventTests(APITest):
         name, props = emit.call_args.args[1], emit.call_args.args[2]
         self.assertEqual(name, 'turn.rated')
         self.assertEqual((props['turn_id'], props['turn_index'], props['rating']), (str(self.turn.uuid), 1, -1))
+
+    @mock.patch(EMIT)
+    def test_clearing_a_rating_sends_turn_rated_with_null(self, emit):
+        url = reverse('api:v1:personalized-search-turn-feedback',
+                      kwargs={'session_uuid': self.session.uuid, 'sequence': 1})
+        response = self.client.post(url, {'enterprise_customer_uuid': ENTERPRISE, 'rating': None}, format='json')
+        self.assertEqual(response.json(), {'sequence': 1, 'rating': None})
+        name, props = emit.call_args.args[1], emit.call_args.args[2]
+        self.assertEqual((name, props['turn_id'], props['rating']), ('turn.rated', str(self.turn.uuid), None))
+
+    @mock.patch(EMIT)
+    def test_rating_a_missing_turn_sends_nothing(self, emit):
+        url = reverse('api:v1:personalized-search-turn-feedback',
+                      kwargs={'session_uuid': self.session.uuid, 'sequence': 9})
+        response = self.client.post(url, {'enterprise_customer_uuid': ENTERPRISE, 'rating': 1}, format='json')
+        self.assertEqual(response.status_code, 404)
+        emit.assert_not_called()

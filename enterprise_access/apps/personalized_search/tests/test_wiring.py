@@ -50,3 +50,20 @@ class WiringTests(TestCase):
             ctx = wiring.turn_context(session={}, message='m', intent_model=intent, compose_model=compose, scope=None)
         self.assertEqual((ctx.intent_timeout_s, ctx.compose_timeout_s), (4, 6))
         self.assertEqual(ctx.platform('gpt-4.1-mini'), 'openai')
+
+    @override_settings(PERSONALIZED_SEARCH_SHORTLIST_SIZE=20, PERSONALIZED_SEARCH_SHORTLIST_SIZES={'gpt-6.1-terra': 40})
+    def test_the_shortlist_size_follows_the_compose_model(self):
+        intent, _ = wiring.default_models()
+
+        def shortlist(model):
+            return wiring.turn_context(session={}, message='m', intent_model=intent,
+                                       compose_model=wiring.ModelChoice(model, 'low'), scope=None).shortlist
+        self.assertEqual((shortlist('gpt-6.1-terra'), shortlist('gpt-6-luna')), (40, 20))
+
+    def test_retrieve_forwards_the_shortlist_size(self):
+        catalog = mock.Mock()
+        catalog.search.return_value = [{'hits': []}] * 20
+        steps = wiring.steps(catalog=catalog, store=mock.Mock())
+        steps.retrieve({'query': 'q', 'item_types': ['course']}, mock.Mock(filter='f', course_language_filter='l',
+                       program_language_filter='l', metadata_language_filter='m'), [], timeout_s=1, shortlist=40)
+        self.assertEqual(catalog.search.call_args.args[0][0]['hitsPerPage'], 60)

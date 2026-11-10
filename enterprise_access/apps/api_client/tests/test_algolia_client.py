@@ -1,8 +1,10 @@
 """
 Tests for the search-only Algolia client.
 """
+import json
 from datetime import datetime, timedelta, timezone
 from unittest import mock
+from urllib.parse import parse_qsl
 
 import ddt
 from algoliasearch.exceptions import AlgoliaException, AlgoliaUnreachableHostException, RequestException
@@ -63,9 +65,11 @@ class TestMultiSearchCatalogIndex(TestCase):
         self.mock_search_client.create.assert_called_once_with(APP_ID, 'secured-key-value')
         queries, options = self.mock_client.multiple_queries.call_args.args
         self.assertEqual([q['indexName'] for q in queries], [CATALOG_INDEX, CATALOG_INDEX])
-        self.assertIn('query=leadership', queries[0]['params'])
-        self.assertIn('distinct=true', queries[0]['params'])
-        self.assertIn('attributesToRetrieve=%5B%22key%22%2C+%22title%22%5D', queries[1]['params'])
+        # Decoded, so the test checks the values sent rather than how the SDK encodes them.
+        first, second = (dict(parse_qsl(q['params'])) for q in queries)
+        self.assertEqual((first['query'], json.loads(first['hitsPerPage']), first['filters'],
+                          json.loads(first['distinct'])), ('leadership', 30, 'content_type:course', True))
+        self.assertEqual((second['query'], json.loads(second['attributesToRetrieve'])), ('teams', ['key', 'title']))
         self.assertEqual(options, {'readTimeout': 1.5})
         self.mock_client.close.assert_called_once()
 
