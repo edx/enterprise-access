@@ -67,6 +67,22 @@ class IntentMergeTests(TestCase):
              'item_types': ['course', 'executive_education', 'program'],
              'constraints': {'max_weeks': None, 'pacing': None}}
 
+    def test_learning_journey_language_prefers_programs_when_no_type_is_named(self):
+        for message in ('I want a learning path into data science', 'Give me a roadmap to become a PM',
+                        'a step-by-step pathway for cloud skills', 'I want a certificate in finance'):
+            merged = intent.merge(None, {'skills': ['data']}, 'replace', message=message)
+            self.assertEqual(merged['item_types'], ['program'], message)
+        # A type the learner names wins, and other messages keep every type.
+        named = intent.merge(None, {'item_types': ['course']}, 'replace', message='a learning path, courses only')
+        self.assertEqual(named['item_types'], ['course'])
+        plain = intent.merge(None, {'skills': ['sql']}, 'replace', message='I want to learn SQL')
+        self.assertEqual(plain['item_types'], list(constants.ITEM_TYPES))
+
+    def test_the_prompt_maps_journey_language_to_programs(self):
+        self.assertIn('Learning journeys:', intent.SYSTEM_PROMPT)
+        self.assertIn('set item_types to ["program"]', intent.SYSTEM_PROMPT)
+        self.assertIn('set item_types to ["course", "executive_education"]', intent.SYSTEM_PROMPT)
+
     def test_refine_overlays(self):
         merged = intent.merge(self.prior, {'skills': ['coaching'], 'item_types': ['program'],
                                            'constraints': {'max_weeks': 4, 'pacing': None}}, 'refine', message='x')

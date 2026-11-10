@@ -66,7 +66,7 @@ class HarnessRunTests(TestCase):
         self.assertEqual([r['arm'] for r in records], ['a', 'b', 'b', 'a'])  # order alternates per case
         first = records[0]
         self.assertEqual(first['status'], 'done')
-        self.assertEqual(first['item_ids'], ['edX+C1'])
+        self.assertEqual(first['item_ids'], ['edX+C1', 'p-1', 'p-2'])  # related programs are offered too
         self.assertEqual(first['models'], ['gpt-4.1-mini', 'gpt-5.4-mini@low'])
         self.assertEqual(first['intent_score'], {'pass': True, 'why': ''})
         self.assertIn('complete_ms', first['timing'])

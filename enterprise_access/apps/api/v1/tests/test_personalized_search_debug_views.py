@@ -31,6 +31,11 @@ class PersonalizedSearchDebugConfigViewTests(APITest):
         self.assertEqual(models['gpt-4.1']['efforts'], [None])
         self.assertIn('low', models['gpt-5.4-mini']['efforts'])
         self.assertNotIn('minimal', models['gpt-5.4-mini']['efforts'])
+        # The November 2026 spike's pair is the default; its quality alternative is in the switcher.
+        self.assertEqual((body['defaults']['intent_model'], body['defaults']['compose_model']),
+                         ('gpt-6-luna', 'gpt-6-luna'))
+        self.assertEqual(models['gpt-6.1-terra']['efforts'], ['none', 'low', 'medium', 'high'])
+        self.assertEqual(models['gpt-6.1-sol']['efforts'], ['low', 'medium', 'high'])
         self.assertEqual(body['catalog'], 'Test catalog')
         self.assertNotIn('xpert', models)  # XPERT_API_BASE_URL is unset in test settings
 

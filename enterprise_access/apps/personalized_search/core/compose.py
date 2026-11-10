@@ -5,8 +5,8 @@ model's reply + ``@@BLOCKS@@`` lines into protocol parts. Lines are validated an
 import json
 
 from enterprise_access.apps.personalized_search.core import constants
-from enterprise_access.apps.personalized_search.core.profile import profile_props
-from enterprise_access.apps.personalized_search.core.retrieval import compose_view
+from enterprise_access.apps.personalized_search.core.profile import SUMMARY, profile_props
+from enterprise_access.apps.personalized_search.core.retrieval import compose_view, preferred_types, programs_wanted
 
 MARKER = '@@BLOCKS@@'
 
@@ -16,32 +16,35 @@ MARKER = '@@BLOCKS@@'
 SYSTEM_PROMPT = """You recommend learning to a learner in the edX enterprise learner portal. The results appear beside the chat. Choose ONLY from the options given, using their exact item_id values.
 
 Output format, in this exact order:
-1. One short, conversational sentence for the chat. On the first turn, say what you put at the top and why; after that, say what you changed ("OK, I've updated your results to focus on ..."). Don't list or describe every result: the results show them. If nothing qualifies, say so plainly.
+1. One or two short, friendly sentences for the chat, the way a helpful advisor talks. React to what the learner just said in their own terms, then point them to what's worth a look and why. Name at most one course or program, by its title, and you may bold that title with **double asterisks**; no other markdown, lists or emoji. Vary how you start: don't open with "I put" or "I've updated your results". Don't list or describe every result: the results show them. If nothing qualifies, say so plainly and suggest a nearby direction.
 2. A line containing only @@BLOCKS@@
 3. One JSON object per line, no blank lines, no code fences. The "block" value is always one of: page_header, caveat, top_pick, compare, item_section, followup, insight, plan.
 {"block":"page_header","title":"...","dek":"..."}
+{"block":"followup","question":"...","ideas":["...","..."],"session_title":"..."}   (always exactly one, right after page_header)
 {"block":"caveat","title":"...","body":"..."}   (only when the results can't meet something the learner asked for)
-{"block":"top_pick","item_id":"<option id>","reason":"...","checks":["...","..."]}
+{"block":"top_pick","item_id":"<option id>","reason":"...","checks":["...","..."]}   (a related program when one fits)
 {"block":"compare","options":[{"item_id":"<option id>","best_for":"..."},{"item_id":"<option id>","best_for":"..."},{"item_id":"<option id>","best_for":"..."}]}
-Then up to three section lines, at most one per item_type, best section first, written exactly like these:
+Then up to three section lines, at most one per item_type: the program section first when there are related programs (or the preferred type's, when the learner asked for one), then only genuinely related courses or Executive Education. Written exactly like these:
+{"block":"item_section","item_type":"program","dek":"...","items":[{"item_id":"<option id>","why":"...","fit":["..."]}]}
 {"block":"item_section","item_type":"course","dek":"...","items":[{"item_id":"<option id>","why":"...","fit":["..."]}]}
 {"block":"item_section","item_type":"executive_education","dek":"...","items":[{"item_id":"<option id>","why":"...","fit":["..."]}]}
-{"block":"item_section","item_type":"program","dek":"...","items":[{"item_id":"<option id>","why":"...","fit":["..."]}]}
-{"block":"followup","question":"...","ideas":["...","..."],"session_title":"..."}
 {"block":"insight","title":"...","body":"..."}   (optional; only if the learner asked for information)
 {"block":"plan","why":"...","steps":[{"item_id":"<id in your results>","note":"..."}]}   (only when 3 or more items are in your results)
 
 Rules:
 - Put each item in the section matching its item_type.
+- Programs first: read what the learner is interested in. When a program fits it, take the top pick from programs and write the program section first, even if no type was asked for, unless MERGED INTENT item_types includes "course" but not "program" (the learner asked for courses or doesn't want a predefined program) or prefers another type.
+- Courses and Executive Education: include them only when they are genuinely related to the learner's interest. Never add a section, or an item, just to fill space; fewer is better than loosely related.
+- Preferred types: when MERGED INTENT item_types lists fewer than all three types, the learner prefers those. Take the top pick and compare from them when they have good options, and write their section first. Then add sections of the other types as alternatives, only with options genuinely related to the learner's interest.
 - top_pick: the single best fit to start with. reason: one sentence to the learner ("Because you want to ...", max 160 characters). checks: 1-3 short phrases (max 40 characters each) naming the learner's stated preferences this item meets, such as "Self-paced" or "~4 hrs/week"; only claims the option's facts support.
 - caveat: when no option can meet a goal the learner stated (for example a full qualification, license or degree, a language, or a time limit), say so plainly: title max 60 characters, body max 300 characters, one at most. Never use it for anything else.
 - compare: 2-3 strong options that differ in what they're best for (they may include the top pick). best_for completes "Best for ..." (max 60 characters), e.g. "a recognized credential" or "a quick start".
-- Sections hold the other good options, not those already in top_pick or compare: up to 3 per section and at most 12 items in total, best first, only items that genuinely fit the learner's cumulative goal. Fewer or zero is fine; never pad with weak matches. Reject options whose main subject isn't the learner's topic or career goal, even if they match the level or format.
+- Sections hold the other good options, never items already in top_pick or compare (those are rejected): up to 3 per section and at most 12 items in total, best first, only items that genuinely fit the learner's cumulative goal. Fewer or zero is fine; never pad with weak matches. Reject options whose main subject isn't the learner's topic or career goal, even if they match the level or format.
 - why: 1-2 sentences to the learner ("you") connecting the item to their goal, level and constraints; name concrete skills they will practice. Plain, specific, no hype. Max 400 characters.
 - fit: 2-3 short tags of 1-3 words (max 24 characters each).
 - page_header: title is an editorial headline specific to this learner (max 80 characters); dek is 2-3 sentences on what they're looking for and how the picks fit together (max 400 characters).
 - item_section dek: one sentence on what this group offers this learner (max 200 characters).
-- followup: exactly one question (max 200 characters) about the given follow-up attribute that would most narrow the next results; never ask about an attribute already asked. When the attribute is "open", ask what the learner wants to explore next. The learner already gets fixed reply chips for the attribute, so ideas are different: 2-3 short first-person messages (max 48 characters each) the learner could send next, specific to this conversation and these results, such as a related skill, a more practical or more advanced angle, or a next step toward their goal. Never restate the fixed choices or a preference the learner already gave. session_title: max 60 characters summarising the cumulative goal.
+- followup: exactly one question (max 200 characters) about the given follow-up attribute that would most narrow the next results; never ask about an attribute already asked. When the attribute is "open", ask what the learner wants to explore next. ideas: 2-3 short first-person messages (max 48 characters each) the learner could send next, specific to this conversation and these results, such as a related skill, a more practical or more advanced angle, or a next step toward their goal. An idea may answer the question in the learner's own words ("I'm a beginner"); never restate a preference the learner already gave. session_title: max 60 characters summarising the cumulative goal.
 - plan: 2-4 steps in a suggested order, each referencing an item already in your results, note max 80 characters. Order them so the learner starts with the best fit for their goal and each step builds on the one before: foundations before advanced, shorter before longer. why: one sentence to the learner on why this order (max 160 characters).
 - Language: write everything the learner reads (the chat sentence, titles, deks, reasons, checks, best_for, why, fit, the follow-up question, ideas, plan notes and why, session_title) in the RESPONSE LANGUAGE given, whatever language the options or messages are in. Keep item_id values exactly as given.
 - Words: say "courses", "programs" or "results", the way a learner would. Never call the results a "page" and never say "candidate".
@@ -75,6 +78,20 @@ def _strings(value, cap: int, limit: int) -> list[str]:
     if not isinstance(value, list):
         return []
     return [v.strip()[:cap] for v in value if isinstance(v, str) and v.strip()][:limit]
+
+
+def _related(candidate: dict) -> bool:
+    """
+    Whether a candidate is closely related to the learner's interest: it matched their skills (the
+    strict tier), or it's among the top keyword matches when they named no skills.
+    """
+    return candidate.get('tier', 0) >= 2 or candidate.get('rank', constants.RELATED_RANK) < constants.RELATED_RANK
+
+
+def _covered(chip: str, ideas: list[str]) -> bool:
+    """Whether any idea says the same thing as a fixed chip (its words, ``constants.FIXED_CHIP_MATCHES``)."""
+    words = constants.FIXED_CHIP_MATCHES.get(chip, (chip,))
+    return any(word in idea.casefold() for idea in ideas for word in words)
 
 
 def section_label(item_type: str, count: int) -> str:
@@ -112,6 +129,7 @@ class ComposeParser:
         self.used_fallback = False
         self.intent = intent            # the merged intent, restated by the profile block once the results are known
         self.profile_emitted = False
+        self.profile_sent = False      # an early profile went out with the header
         self.totals = totals or {}     # catalog matches per item type, for "See all (n)"
         self.seen = set(seen_ids or [])  # items shown in earlier turns; the rest are flagged new
         self.placements: list[dict] = []  # every card shown, in order, with where it sits (for usage events)
@@ -169,6 +187,7 @@ class ComposeParser:
         self._line = ''
         if not self.first_section_emitted and self.candidates:
             parts += self._fallback_section()
+        parts += self._alternative_sections()
         parts += self._profile()
         if not self.followups_emitted:
             question, _ = constants.FOLLOWUP_TEMPLATES[self.attribute]
@@ -183,17 +202,26 @@ class ComposeParser:
     def _block(self, block_type: str, props: dict) -> dict:
         return {'type': 'data-block', 'id': self._next_id(), 'data': {'v': 1, 'type': block_type, 'props': props}}
 
+    def _profile_part(self, props: dict) -> dict:
+        """The profile block under one id per turn, so the final profile replaces the early one in place."""
+        self.profile_sent = True
+        return {'type': 'data-block', 'id': f'{self.id_prefix}_profile',
+                'data': {'v': 1, 'type': 'profile', 'props': props}}
+
     def _profile(self) -> list[dict]:
         """
-        The profile block, once per turn after the results, and only when there are results to explain:
-        a preference the shown results don't reflect is left out.
+        The final profile block, once per turn after the results, and only when there are results to
+        explain: a preference the shown results don't reflect is left out. If none is left, an early
+        profile is replaced by one with no chips, which hides "Why these?".
         """
         if self.profile_emitted or not self.emitted_ids:
             return []
         self.profile_emitted = True
         by_id = {c['card']['item_id']: c for c in self.candidates}
         props = profile_props(self.intent, shown=[by_id[i] for i in self.emitted_ids if i in by_id])
-        return [self._block('profile', props)] if props else []
+        if props:
+            return [self._profile_part(props)]
+        return [self._profile_part({'summary': SUMMARY, 'chips': []})] if self.profile_sent else []
 
     def _card(self, card: dict, *, why: str | None = None, fit: list | None = None) -> dict:
         """A hydrated card for this turn. After the first turn, cards new to the conversation get ``status: new``."""
@@ -244,9 +272,15 @@ class ComposeParser:
         if not title:
             return self._drop('page_header_no_title')
         self.header_emitted = True
-        return [self._block('page_header', {
+        header = self._block('page_header', {
             'title': title, 'dek': _text(obj.get('dek'), constants.CAPS['dek']), 'label': constants.PAGE_HEADER_LABEL,
-        })]
+        })
+        # "Why these?" comes with the headline: a first profile from what the learner said, replaced (same
+        # block id) once the results are known by the preferences they reflect (``_profile``).
+        early = profile_props(self.intent)
+        if not early:
+            return [header]
+        return [header, self._profile_part(early)]
 
     def _option(self, item_id) -> dict | None:
         """The hydrated card for a valid option id the learner hasn't dismissed, within the per-turn cap."""
@@ -305,13 +339,15 @@ class ComposeParser:
                 item_type in self.section_types or not self.candidates:
             return self._drop(f'section_rejected:{str(item_type)[:30]}')
         raw_items = obj.get('items') if isinstance(obj.get('items'), list) else []
-        items = []
+        items, collided = [], False
         for raw in raw_items:
             if not isinstance(raw, dict) or not isinstance(raw.get('item_id'), str):
                 continue
             item_id = raw['item_id']
             card = self.cards.get(item_id)
             duplicate = item_id in self.emitted_ids or any(i['item_id'] == item_id for i in items)
+            if card and card['item_type'] == item_type and item_id in self.emitted_ids:
+                collided = True  # a real item of this type, already used in the top pick, compare or a section
             if not card or card['item_type'] != item_type or item_id in self.shown or duplicate:
                 continue
             if len(items) == constants.MAX_ITEMS_PER_SECTION or \
@@ -320,6 +356,13 @@ class ComposeParser:
             fit = _strings(raw.get('fit'), constants.CAPS['fit_tag'], constants.CAPS['fit_count'])
             items.append(self._card(card, why=_text(raw.get('why'), constants.CAPS['why']) or None, fit=fit))
         if not items:
+            # The model often repeats the top pick or compare items, which are rejected here. Rather than
+            # lose the group, fill it from the type's unused candidates, keeping the model's dek.
+            refilled = collided and self._server_section(item_type,
+                                                         dek=_text(obj.get('dek'), constants.CAPS['section_dek']))
+            if refilled:
+                self.dropped.append(f'section_refilled:{item_type}')
+                return refilled
             return self._drop(f'section_no_valid_items:{item_type}')
         self.section_types.add(item_type)
         self.emitted_ids += [i['item_id'] for i in items]
@@ -344,16 +387,17 @@ class ComposeParser:
 
     def _followups(self, question: str, ideas=None) -> dict:
         """
-        The data-followups part. ``suggestions`` are the fixed chips that narrow the follow-up attribute;
-        ``ideas`` are the model's chips for this conversation. With nothing left to narrow ("open"), the
-        ideas replace the fixed opening chips, which come back only when the model wrote none.
+        The data-followups part. ``suggestions`` are the fixed chips that narrow the follow-up attribute,
+        minus any an idea covers; ``ideas`` are the model's chips for this conversation. With nothing left
+        to narrow ("open"), the ideas replace the fixed opening chips, which come back only when the model
+        wrote none.
         """
         self.followups_emitted = True
         _, fixed = constants.FOLLOWUP_TEMPLATES[self.attribute]
-        suggestions = [] if self.attribute == 'open' else list(fixed)
-        taken = {chip.casefold() for chip in suggestions}
-        clean = [idea for idea in dict.fromkeys(_strings(ideas, constants.CAPS['suggestion'], 6))
-                 if idea.casefold() not in taken][:constants.MAX_IDEAS]
+        clean = list(dict.fromkeys(_strings(ideas, constants.CAPS['suggestion'], 6)))[:constants.MAX_IDEAS]
+        # When an idea covers a fixed choice ("I'm a beginner" covers "Introductory"), the idea wins: it's
+        # in the conversation's words, so the fixed chip is dropped rather than shown twice.
+        suggestions = [] if self.attribute == 'open' else [chip for chip in fixed if not _covered(chip, clean)]
         if not suggestions and not clean:
             suggestions = list(fixed)
         data = {'question': question, 'attribute': self.attribute, 'suggestions': suggestions}
@@ -416,21 +460,57 @@ class ComposeParser:
             props['why'] = why
         return [self._block('plan', props)]
 
+    def _server_section(self, item_type: str, *, dek: str = '', related_only: bool = True) -> list[dict]:
+        """
+        A section of ``item_type`` built from its unused candidates (no why), within the turn's caps. Only
+        closely related candidates are used (``_related``), so a server-added section never pads the
+        results; the fallback (the model wrote no usable section) takes the type's best candidates.
+        """
+        room = min(constants.MAX_ITEMS_PER_SECTION, constants.MAX_ITEMS_PER_TURN - len(self.emitted_ids))
+        taken = set(self.emitted_ids) | self.shown
+        usable = [c for c in self.candidates
+                  if c['card']['item_type'] == item_type and c['card']['item_id'] not in taken]
+        items = [self._card(c['card']) for c in usable if not related_only or _related(c)][:max(room, 0)]
+        if not items or item_type in self.section_types:
+            return []
+        self.section_types.add(item_type)
+        self.emitted_ids += [i['item_id'] for i in items]
+        self.first_section_emitted = True
+        self._place(items, item_type)
+        return [self._block('item_section', self._section_extras(item_type, {
+            'item_type': item_type, 'label': section_label(item_type, len(items)), 'dek': dek,
+            'fallback': True, 'items': items,
+        }))]
+
     def _fallback_section(self) -> list[dict]:
         """Spec fallback: the type with the most candidates, its top 3, no why."""
         counts: dict[str, int] = {}
         for cand in self.candidates:
             counts[cand['card']['item_type']] = counts.get(cand['card']['item_type'], 0) + 1
-        item_type = max(counts, key=counts.get)
-        items = [self._card(c['card']) for c in self.candidates
-                 if c['card']['item_type'] == item_type and c['card']['item_id'] not in self.shown][:3]
-        if not items:
+        parts = self._server_section(max(counts, key=counts.get), related_only=False)
+        self.used_fallback = bool(parts)  # the model wrote no usable section (the logged "fallback")
+        return parts
+
+    def _alternative_sections(self) -> list[dict]:
+        """
+        Related programs are always offered unless the learner opted out, and when the learner prefers
+        some types the other types stay as alternatives in "More options": such a type with unused
+        candidates the model gave no section gets one built from them.
+        """
+        intent = self.intent
+        if intent is None or not self.candidates:  # no intent (tests, harness): nothing to infer
             return []
-        self.emitted_ids += [i['item_id'] for i in items]
-        self.first_section_emitted = True
-        self.used_fallback = True
-        self._place(items, item_type)
-        return [self._block('item_section', self._section_extras(item_type, {
-            'item_type': item_type, 'label': section_label(item_type, len(items)), 'dek': '',
-            'fallback': True, 'items': items,
-        }))]
+        preferred = preferred_types(intent)
+        parts: list[dict] = []
+        for item_type in constants.ITEM_TYPES:
+            if item_type in self.section_types:
+                continue
+            # Related programs are always offered (unless the learner opted out); other types only as
+            # alternatives to a preferred type.
+            if item_type == 'program':
+                wanted = programs_wanted(intent)  # opting out of programs beats being an alternative
+            else:
+                wanted = bool(preferred) and item_type not in preferred
+            if wanted:
+                parts += self._server_section(item_type)
+        return parts
