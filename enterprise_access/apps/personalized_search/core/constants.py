@@ -20,10 +20,8 @@ CANDIDATE_CAPS = {'course': 10, 'executive_education': 5, 'program': 5}
 MAX_CANDIDATES = 20
 # A type the learner prefers may fill up to this many shortlist places (the others keep their caps).
 PREFERRED_TYPE_CAP = 10
-# A keyword-search hit counts as closely related (for server-added sections) within this many top results.
-RELATED_RANK = 5
 # With no type asked for, related programs lead: their prefilter score gets this boost.
-PROGRAM_LEAD_BOOST = 1
+PROGRAM_LEAD_BOOST = 0.5  # less than a tier, so it reorders within a tier and never lifts a keyword-only program
 MAX_ITEMS_PER_SECTION = 3
 MAX_ITEMS_PER_TURN = 12  # top pick + up to 3 compared + sections (KD-11)
 MAX_COMPARE_OPTIONS = 3
@@ -55,16 +53,16 @@ FIXED_CHIP_MATCHES = {
     'Introductory': ('introductory', 'beginner', 'basics', 'from scratch', 'new to'),
     'Intermediate': ('intermediate',),
     'Advanced': ('advanced', 'expert'),
-    'Under 4 weeks': ('under 4 weeks', 'quick', 'short', 'fastest'),
+    'Under 4 weeks': ('under 4 weeks', 'quick', 'short', 'shortest', 'fastest'),
     '1 to 3 months': ('month',),
     'Longer is fine': ('longer', 'in-depth', 'in depth'),
     'Self-paced': ('self-paced', 'self paced', 'own pace'),
-    'Instructor-led': ('instructor', 'live', 'cohort', 'scheduled'),
+    'Instructor-led': ('instructor', 'instructor-led', 'live session', 'live class', 'cohort', 'scheduled'),
     'Either works': ('either',),
     # Only phrases that choose the type: "the shortest course" is about length, not courses over programs.
     'Courses': ('individual course', 'single course', 'standalone course', 'just courses', 'only courses',
                 'courses only', 'courses instead'),
-    'Executive education': ('executive', 'exec ed'),
+    'Executive education': ('executive education', 'exec ed'),
     'Programs': ('program', 'certificate'),
 }
 

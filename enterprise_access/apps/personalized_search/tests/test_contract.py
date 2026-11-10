@@ -20,7 +20,8 @@ INSIGHT_AND_PLAN = COMPOSE.replace(
     '{"block":"followup"',
     '{"block":"item_section","item_type":"program","dek":"p","items":[{"item_id":"p-1","why":"w"},'
     '{"item_id":"p-2","why":"w"}]}\n{"block":"insight","title":"T","body":"B"}\n'
-    '{"block":"plan","steps":[{"item_id":"edX+C1","note":"n"},{"item_id":"p-1","note":"n"}]}\n{"block":"followup"')
+    '{"block":"plan","why":"Basics first.","steps":[{"item_id":"edX+C1","note":"n"},{"item_id":"p-1","note":"n"}]}\n'
+    '{"block":"followup"')
 
 
 def validator():

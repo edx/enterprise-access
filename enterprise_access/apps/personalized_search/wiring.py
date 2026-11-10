@@ -59,8 +59,8 @@ def steps(*, registry: ModelRegistry | None = None, catalog=None, store=None, pe
         return registry.stream_text(model=model, effort=effort, system=system, user=user,
                                     max_tokens=constants.COMPOSE_MAX_TOKENS, timeout_s=timeout_s, usage=usage)
 
-    def retrieve(merged, scope, excluded, timeout_s=constants.RETRIEVAL_TIMEOUT_S):
-        return retrieval.search(merged, scope, excluded, catalog=catalog, timeout_s=timeout_s)
+    def retrieve(merged, scope, excluded, timeout_s=constants.RETRIEVAL_TIMEOUT_S, shortlist=constants.MAX_CANDIDATES):
+        return retrieval.search(merged, scope, excluded, catalog=catalog, timeout_s=timeout_s, shortlist=shortlist)
 
     return Steps(intent=intent, retrieve=retrieve, compose=compose, persist=store.persist_turn if persist else None,
                  emit=segment_emit if persist else None)
@@ -75,9 +75,19 @@ def _step_timeout(registry: ModelRegistry, model: str, default_s: float) -> floa
     return own or default_s
 
 
+def shortlist_size(compose_model: str) -> int:
+    """
+    How many candidates compose chooses from: ``PERSONALIZED_SEARCH_SHORTLIST_SIZES`` for the compose model,
+    else ``PERSONALIZED_SEARCH_SHORTLIST_SIZE``. Larger models make better use of a longer list.
+    """
+    sizes = getattr(settings, 'PERSONALIZED_SEARCH_SHORTLIST_SIZES', None) or {}
+    default = getattr(settings, 'PERSONALIZED_SEARCH_SHORTLIST_SIZE', None) or constants.MAX_CANDIDATES
+    return int(sizes.get(compose_model) or default)
+
+
 def turn_context(*, session: dict, message: str, intent_model: ModelChoice, compose_model: ModelChoice,
                  scope: CatalogScope, debug: bool = False, registry: ModelRegistry | None = None) -> TurnContext:
-    """A ``TurnContext`` with the configured timeouts and the registry's platform names."""
+    """A ``TurnContext`` with the configured timeouts, shortlist size and the registry's platform names."""
     registry = registry or model_registry()
     return TurnContext(
         session=session, message=message, intent_model=intent_model, compose_model=compose_model, scope=scope,
@@ -87,6 +97,7 @@ def turn_context(*, session: dict, message: str, intent_model: ModelChoice, comp
         intent_timeout_s=_step_timeout(registry, intent_model.model, settings.PERSONALIZED_SEARCH_INTENT_TIMEOUT_S),
         compose_timeout_s=_step_timeout(registry, compose_model.model,
                                         settings.PERSONALIZED_SEARCH_COMPOSE_READ_TIMEOUT_S),
+        shortlist=shortlist_size(compose_model.model),
     )
 
 

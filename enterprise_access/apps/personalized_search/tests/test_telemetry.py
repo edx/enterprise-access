@@ -56,7 +56,8 @@ class TurnEventTests(TestCase):
         self.assertEqual(props['shown_item_keys'], ['edX+C1', 'p-1', 'p-2'])
         self.assertEqual(props['shown_item_sections'], ['course', 'program', 'program'])
         self.assertEqual(props['shown_item_positions'], [1, 2, 3])
-        self.assertIn('edX+C1', props['retrieved_item_keys'])  # related programs lead the shortlist
+        self.assertEqual(props['retrieved_item_keys'][:2], ['p-1', 'p-2'])  # related programs lead the shortlist
+        self.assertIn('edX+C1', props['retrieved_item_keys'])
         self.assertEqual(props['intent_merge_mode'], 'replace')
         self.assertEqual(props['prompt_length'], len(self.ctx.message))
         self.assertEqual(props['compose_output_tokens'], 50)
@@ -77,6 +78,10 @@ class TurnEventTests(TestCase):
                 'props': {'dek': 'Start here', 'items': [dict(card, status='new', section='course', position=4)]}}
         reworded = {'v': 1, 'type': 'item_section', 'props': {'dek': 'Start here', 'items': [dict(card, why='Other.')]}}
         self.assertEqual(telemetry.block_digest(block), telemetry.block_digest(same))
+        # Per-turn catalog counts and reserve cards are the server's, so a repeated section still matches.
+        refreshed = {'v': 1, 'type': 'item_section',
+                     'props': dict(block['props'], total=37, reserve=[dict(card, item_id='edX+C9')])}
+        self.assertEqual(telemetry.block_digest(block), telemetry.block_digest(refreshed))
         self.assertNotEqual(telemetry.block_digest(block), telemetry.block_digest(reworded))
         self.assertNotEqual(telemetry.block_digest(block), telemetry.block_digest(dict(block, type='compare')))
 

@@ -119,7 +119,7 @@ class HarnessRunTests(TestCase):
 
     def test_cases(self):
         demo = harness.demo_cases()
-        self.assertEqual(len(demo), 42)
+        self.assertEqual(len(demo), 43)
         refine = [c for c in demo if c.id == 'R1'][0]
         self.assertEqual(refine.history, ('I want to get better at leading a team',))
         personas = harness.persona_cases(load_personas)
@@ -198,23 +198,28 @@ class HarnessConversationTests(TestCase):
         with self.assertRaises(ModelError):
             harness.Arm.parse(spec, check_model=registry.check_model, check_effort=registry.resolve_effort)
 
-    def test_arm_overrides_scale_the_shortlist_and_restore_it(self):
-        arm = harness.Arm('x', ARMS[0].intent, ARMS[0].compose, candidates=40, view='rich')
-        intent = {'query': 'leadership', 'skills': ['Leadership']}
-        before = retrieval.build_sub_requests(intent, retrieval.CatalogScope(filter='f'), [])
+    def test_arm_overrides_swap_the_candidate_view_and_restore_it(self):
+        arm = harness.Arm('x', ARMS[0].intent, ARMS[0].compose, view='rich')
         with harness.arm_overrides(arm):
-            self.assertEqual(constants.MAX_CANDIDATES, 40)
-            self.assertEqual(constants.CANDIDATE_CAPS, {'course': 20, 'executive_education': 10, 'program': 10})
-            self.assertEqual(constants.PREFERRED_TYPE_CAP, 20)
             self.assertIn('outcome', constants.ATTRIBUTES_TO_RETRIEVE)
             self.assertIs(compose.compose_view, harness.rich_compose_view)
-            during = retrieval.build_sub_requests(intent, retrieval.CatalogScope(filter='f'), [])
-        self.assertEqual([r['hitsPerPage'] * 2 if r['hitsPerPage'] else 0 for r in before],
-                         [r['hitsPerPage'] for r in during])
-        self.assertEqual(constants.MAX_CANDIDATES, 20)
-        self.assertEqual(constants.CANDIDATE_CAPS, {'course': 10, 'executive_education': 5, 'program': 5})
         self.assertNotIn('outcome', constants.ATTRIBUTES_TO_RETRIEVE)
         self.assertIs(compose.compose_view, retrieval.compose_view)
+
+    def test_an_arms_shortlist_size_reaches_the_turn(self):
+        seen = []
+        steps = fake_steps()
+        base_retrieve = steps.retrieve
+
+        def retrieve(*args, **kwargs):
+            seen.append(kwargs.get('shortlist'))
+            return base_retrieve(*args, **kwargs)
+
+        steps.retrieve = retrieve
+        conversation = harness.Conversation(id='c1', goal='lead', messages=('first',))
+        arm = harness.Arm('x', ARMS[0].intent, ARMS[0].compose, candidates=40)
+        record, = harness.run_conversations(conversation_list=[conversation], arms=[arm], scope=None, steps=steps)
+        self.assertEqual((seen, record['arm_options']['cands']), ([40], 40))
 
     def test_rich_compose_view(self):
         course = {'hit': {'skill_names': [f's{i}' for i in range(10)], 'subjects': ['Data'],
@@ -358,6 +363,15 @@ class HarnessScoringTests(TestCase):
         self.assertTrue(harness_scoring.score_intent(other, seen(False, 'off_topic'))['pass'])
         self.assertFalse(harness_scoring.score_intent(other, seen(True, None))['pass'])
 
+    def test_score_intent_checks_a_weekly_hours_limit(self):
+        debug = {'intent_result': {'on_topic': True, 'redirect_reason': None},
+                 'merged_intent': {'constraints': {'max_hours_per_week': 5}}}
+        expect = {'on_topic': True, 'max_hours_per_week_le': 3}
+        self.assertEqual(harness_scoring.score_intent(expect, debug),
+                         {'pass': False, 'why': 'missed max_hours_per_week'})
+        debug['merged_intent']['constraints']['max_hours_per_week'] = 3
+        self.assertTrue(harness_scoring.score_intent(expect, debug)['pass'])
+
     def test_score_intent_flags_a_wrong_merge_mode(self):
         debug = {'intent_result': {'on_topic': True, 'redirect_reason': None, 'merge': 'replace'}}
         score = harness_scoring.score_intent({'on_topic': True, 'merge': 'refine'}, debug)
@@ -413,7 +427,7 @@ class HarnessCommandTests(TestCase):
                      stdout=out)
         plan = json.loads(out.getvalue())
         self.assertEqual(plan['arms'], ['openai-best-fit', 'xpert'])
-        self.assertEqual(plan['turns'], 84)
+        self.assertEqual(plan['turns'], 86)
 
     @override_settings(PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE=None)
     def test_requires_dev_scope(self):
