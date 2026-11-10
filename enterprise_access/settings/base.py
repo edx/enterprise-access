@@ -607,6 +607,9 @@ PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED = False
 # per-learner secured key with the plain search key plus this explicit catalog filter.
 # Requires ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH. Never set in a deployed environment.
 PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE = None
+# Tags on every Personalized Search usage event (tech spec KD-12): the release cohort and the engine.
+PERSONALIZED_SEARCH_ANALYTICS_COHORT = 'internal_pilot'
+PERSONALIZED_SEARCH_ENGINE_LABEL = 'b2b_mvp_v1'
 
 # The enterprise customer the evaluation harness scopes to (Open Decision 1). Production
 # requests take the customer from the request; this is only for offline runs, which have

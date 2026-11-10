@@ -39,11 +39,12 @@ COMPOSE = ('I put a leadership certificate at the top.\n@@BLOCKS@@\n'
            '{"block":"insight","title":"Start with people skills",'
            '"body":"New leads grow fastest by practising feedback."}\n'
            '{"block":"plan","steps":[{"item_id":"edX+C1","note":"Start"},{"item_id":"p-1","note":"Then"}]}\n'
-           '{"block":"followup","question":"How much time can you give it?","suggestions":["Under 4 weeks",'
-           '"1 to 3 months"],"session_title":"Leading a team"}\n')
+           '{"block":"followup","question":"How much time can you give it?","ideas":["Giving feedback to my team",'
+           '"Leading remote teams"],"session_title":"Leading a team"}\n')
 NO_MATCH = ('Nothing in your catalog covers underwater basket weaving.\n@@BLOCKS@@\n'
             '{"block":"caveat","title":"No matching courses","body":"Your catalog has nothing on this topic yet."}\n'
-            '{"block":"followup","question":"Is there another skill you want?","suggestions":["Data","AI"]}\n')
+            '{"block":"followup","question":"Is there another skill you want?",'
+            '"ideas":["Data skills","AI for my job"]}\n')
 
 
 def steps(intent_text=ON_TOPIC, compose_text=COMPOSE, retrieve=None, compose_error=None):

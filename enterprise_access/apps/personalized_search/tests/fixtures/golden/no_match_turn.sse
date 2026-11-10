@@ -2,6 +2,8 @@ data: {"type":"start","messageId":"turn_00000000-0000-0000-0000-000000000b0b"}
 
 data: {"type":"data-session","id":"session","data":{"session_uuid":"00000000-0000-0000-0000-0000000a11ce","turn_sequence":1,"title":null}}
 
+data: {"type":"data-analytics","id":"analytics","data":{"conversation_id":"00000000-0000-0000-0000-0000000a11ce","turn_id":"00000000-0000-0000-0000-000000000b0b","turn_index":1,"enterprise_customer_uuid":"00000000-0000-0000-0000-000000000001","cohort":null,"engine":null,"is_debug":false}}
+
 data: {"type":"data-status","data":{"step":"understanding"},"transient":true}
 
 data: {"type":"data-status","data":{"step":"searching"},"transient":true}
@@ -32,11 +34,11 @@ data: {"type":"text-end","id":"reply"}
 
 data: {"type":"data-block","id":"blk_1","data":{"v":1,"type":"caveat","props":{"title":"No matching courses","body":"Your catalog has nothing on this topic yet."}}}
 
-data: {"type":"data-followups","id":"followups","data":{"question":"Is there another skill you want?","attribute":"open","suggestions":["Data","AI","Prepare for a leadership role"]}}
+data: {"type":"data-followups","id":"followups","data":{"question":"Is there another skill you want?","attribute":"open","suggestions":[],"ideas":["Data skills","AI for my job"]}}
 
 data: {"type":"data-session","id":"session","data":{"session_uuid":"00000000-0000-0000-0000-0000000a11ce","turn_sequence":1,"title":"Underwater basket weaving"}}
 
-data: {"type":"data-timing","id":"timing","transient":true,"data":{"backend":"openai","model_intent":"gpt-4.1-mini","model_compose":"gpt-5.4-mini","intent_ms":100,"retrieval_ms":100,"first_text_ms":400,"first_section_ms":null,"complete_ms":2300,"dropped_lines":0}}
+data: {"type":"data-timing","id":"timing","transient":true,"data":{"backend":"openai","model_intent":"gpt-4.1-mini","model_compose":"gpt-5.4-mini","intent_ms":100,"retrieval_ms":100,"first_text_ms":400,"first_section_ms":null,"complete_ms":2400,"dropped_lines":0}}
 
 data: {"type":"finish"}
 
