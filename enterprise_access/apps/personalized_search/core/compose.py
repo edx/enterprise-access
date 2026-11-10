@@ -86,7 +86,8 @@ class ComposeParser:
     """
 
     def __init__(self, *, candidates: list[dict], shown_ids: list[str], followup_attribute: str,
-                 id_prefix: str = 'blk', profile: dict | None = None):
+                 id_prefix: str = 'blk', profile: dict | None = None, totals: dict | None = None,
+                 seen_ids: list[str] | None = None):
         self.cards = {c['card']['item_id']: c['card'] for c in candidates}
         self.candidates = candidates
         self.shown = set(shown_ids)
@@ -109,6 +110,8 @@ class ComposeParser:
         self.used_fallback = False
         self.profile = profile          # the profile block's props, emitted once before the other blocks
         self.profile_emitted = False
+        self.totals = totals or {}     # catalog matches per item type, for "See all (n)"
+        self.seen = set(seen_ids or [])  # items shown in earlier turns; the rest are flagged new
         self.top_pick_id: str | None = None
         self.compare_emitted = False
         self.caveat_emitted = False
@@ -185,6 +188,13 @@ class ComposeParser:
         self.profile_emitted = True
         return [self._block('profile', self.profile)]
 
+    def _card(self, card: dict, *, why: str | None = None, fit: list | None = None) -> dict:
+        """A hydrated card for this turn. After the first turn, cards new to the conversation get ``status: new``."""
+        out = dict(card, why=why, fit=fit or [])
+        if self.seen and card['item_id'] not in self.seen:
+            out['status'] = 'new'
+        return out
+
     def _drop(self, reason: str = 'invalid') -> list[dict]:
         self.dropped_lines += 1
         self.dropped.append(reason)
@@ -241,7 +251,7 @@ class ComposeParser:
         self.top_pick_id = card['item_id']
         self.emitted_ids.append(card['item_id'])
         checks = _strings(obj.get('checks'), constants.CAPS['check'], constants.CAPS['check_count'])
-        return [self._block('top_pick', {'item': dict(card, why=reason, fit=[]), 'reason': reason, 'checks': checks})]
+        return [self._block('top_pick', {'item': self._card(card, why=reason), 'reason': reason, 'checks': checks})]
 
     def _compare(self, obj: dict) -> list[dict]:
         """2-3 options with what each is best for; once per turn. The top pick may appear again here."""
@@ -259,7 +269,7 @@ class ComposeParser:
             if card['item_id'] in self.emitted_ids and card['item_id'] != self.top_pick_id:
                 continue
             ids.add(card['item_id'])
-            options.append({'best_for': best_for, 'item': dict(card, why=None, fit=[])})
+            options.append({'best_for': best_for, 'item': self._card(card)})
             if len(options) == constants.MAX_COMPARE_OPTIONS:
                 break
         if len(options) < 2:
@@ -288,16 +298,28 @@ class ComposeParser:
                     len(self.emitted_ids) + len(items) == constants.MAX_ITEMS_PER_TURN:
                 break
             fit = _strings(raw.get('fit'), constants.CAPS['fit_tag'], constants.CAPS['fit_count'])
-            items.append(dict(card, why=_text(raw.get('why'), constants.CAPS['why']) or None, fit=fit))
+            items.append(self._card(card, why=_text(raw.get('why'), constants.CAPS['why']) or None, fit=fit))
         if not items:
             return self._drop(f'section_no_valid_items:{item_type}')
         self.section_types.add(item_type)
         self.emitted_ids += [i['item_id'] for i in items]
         self.first_section_emitted = True
-        return [self._block('item_section', {
+        return [self._block('item_section', self._section_extras(item_type, {
             'item_type': item_type, 'label': section_label(item_type, len(items)),
             'dek': _text(obj.get('dek'), constants.CAPS['section_dek']), 'fallback': False, 'items': items,
-        })]
+        }))]
+
+    def _section_extras(self, item_type: str, props: dict) -> dict:
+        """Optional ``total`` (catalog matches) and ``reserve`` (next-best cards to fill a dismissed one)."""
+        if isinstance(self.totals.get(item_type), int):
+            props['total'] = self.totals[item_type]
+        taken = set(self.emitted_ids) | self.shown
+        reserve = [dict(c['card'], why=None, fit=[]) for c in self.candidates
+                   if c['card']['item_type'] == item_type and c['card']['item_id'] not in taken]
+        reserve = reserve[:constants.RESERVE_PER_SECTION]
+        if reserve:
+            props['reserve'] = reserve
+        return props
 
     def _followups(self, question: str, suggestions) -> dict:
         """The data-followups part, topping suggestions up to 3 from the attribute's default chips."""
@@ -368,14 +390,14 @@ class ComposeParser:
         for cand in self.candidates:
             counts[cand['card']['item_type']] = counts.get(cand['card']['item_type'], 0) + 1
         item_type = max(counts, key=counts.get)
-        items = [dict(c['card'], why=None, fit=[]) for c in self.candidates
+        items = [self._card(c['card']) for c in self.candidates
                  if c['card']['item_type'] == item_type and c['card']['item_id'] not in self.shown][:3]
         if not items:
             return []
         self.emitted_ids += [i['item_id'] for i in items]
         self.first_section_emitted = True
         self.used_fallback = True
-        return [self._block('item_section', {
+        return [self._block('item_section', self._section_extras(item_type, {
             'item_type': item_type, 'label': section_label(item_type, len(items)), 'dek': '',
             'fallback': True, 'items': items,
-        })]
+        }))]

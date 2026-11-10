@@ -21,6 +21,7 @@ MAX_CANDIDATES = 20
 MAX_ITEMS_PER_SECTION = 3
 MAX_ITEMS_PER_TURN = 12  # top pick + up to 3 compared + sections (KD-11)
 MAX_COMPARE_OPTIONS = 3
+RESERVE_PER_SECTION = 2  # next-best cards per section, to fill one the learner removes
 
 PAGE_HEADER_LABEL = 'Your results'
 SECTION_LABELS = {'course': 'Courses', 'executive_education': 'Executive education', 'program': 'Programs'}

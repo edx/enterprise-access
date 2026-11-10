@@ -29,3 +29,5 @@ Each entry is optional for consumers; older clients ignore it.
 | 2026-11-09 | New block type `profile` (`summary`, `chips[]`), emitted once per turn before the other blocks |
 | 2026-11-09 | New block types `top_pick` (`item`, `reason`, `checks[]`) and `compare` (`options[2..3]{best_for, item}`); per-turn item cap 5 → 12 (server-side) |
 | 2026-11-09 | New block type `caveat` (`title`, `body`), at most one per turn; `insight` is now also at most one per turn (server-side) |
+| 2026-11-09 | `item_section.total` (catalog matches for the type) and `item_section.reserve` (up to 2 next-best cards), both optional |
+| 2026-11-09 | Optional `item_card.status` (`new`): the card is new to the conversation since the previous turn. Results update in place, so earlier items may repeat |
