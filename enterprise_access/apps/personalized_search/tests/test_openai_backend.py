@@ -34,6 +34,12 @@ class RequestParamsTests(TestCase):
         ('gpt-5.4-mini', 'minimal', 'none', 400),
         ('gpt-5.4-mini', 'low', 'low', 400 + openai_backend.REASONING_HEADROOM_TOKENS),
         ('gpt-5.6-terra', 'medium', 'medium', 400 + openai_backend.REASONING_HEADROOM_TOKENS),
+        ('gpt-5.6-luna', 'minimal', 'none', 400),
+        ('gpt-6-luna', None, 'none', 400),
+        ('gpt-6.1-terra', 'xhigh', 'xhigh', 400 + openai_backend.REASONING_HEADROOM_TOKENS),
+        # sol and astra start at low, which reasons, so it gets the headroom too.
+        ('gpt-6.1-sol', None, 'low', 400 + openai_backend.REASONING_HEADROOM_TOKENS),
+        ('gpt-6-astra', 'none', 'low', 400 + openai_backend.REASONING_HEADROOM_TOKENS),
     )
     @ddt.unpack
     def test_params(self, model, effort, expected_effort, expected_max):
@@ -41,6 +47,12 @@ class RequestParamsTests(TestCase):
         self.assertEqual(params.get('reasoning_effort'), expected_effort)
         self.assertEqual(params['max_completion_tokens'], expected_max)
         self.assertNotIn('max_tokens', params)
+
+    @ddt.data(('gpt-6-luna', 'max'), ('gpt-6.1-sol', 'max'), ('gpt-6.1-terra', 'extreme'))
+    @ddt.unpack
+    def test_tiered_family_refuses_an_effort_it_does_not_take(self, model, effort):
+        with self.assertRaises(ModelConfigurationError):
+            openai_backend.resolve_effort(model, effort)
 
     def test_cost(self):
         usage = Usage(model='gpt-4.1-mini', effort=None, input_tokens=1000, cached_input_tokens=500,
@@ -110,6 +122,16 @@ class OpenAICallTests(TestCase):
         self.assertEqual((usage.input_tokens, usage.output_tokens), (5, 2))
         self.assertEqual(usage.prices, MODELS['gpt-5.4-mini'])
         stream.close.assert_called_once()
+
+    def test_stream_text_records_the_effort_actually_sent(self):
+        stream = mock.MagicMock()
+        stream.__iter__.return_value = iter([chunk('Hi')])
+        self.client.chat.completions.create.return_value = stream
+        usage = Usage(model='gpt-6.1-sol', effort=None)
+        ''.join(self.backend.stream_text(model='gpt-6.1-sol', effort=None, system='S', user='U', max_tokens=10,
+                                         timeout_s=5, usage=usage))
+        self.assertEqual(usage.effort, 'low')
+        self.assertEqual(self.client.chat.completions.create.call_args.kwargs['reasoning_effort'], 'low')
 
     def test_sdk_errors_become_model_errors_without_the_message(self):
         self.client.chat.completions.create.side_effect = RuntimeError('learner text echoed here')

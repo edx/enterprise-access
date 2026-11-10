@@ -1,8 +1,9 @@
 """Tests for the Personalized Search sessions and item-feedback endpoints (chunks 28, 30)."""
 import uuid
 from types import SimpleNamespace
+from unittest import mock
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from edx_toggles.toggles.testutils import override_waffle_flag
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.reverse import reverse
@@ -187,3 +188,120 @@ class ItemFeedbackAccessTests(APITest):
     @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=False)
     def test_flag_off_is_404(self):
         self.assertEqual(self.client.get(f'{self.url}?enterprise_customer_uuid={ENTERPRISE}').status_code, 404)
+
+
+@override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
+class TurnFeedbackTests(APITest):
+    """POST sessions/{uuid}/turns/{sequence}/feedback/: thumbs on the learner's own replies."""
+
+    def setUp(self):
+        super().setUp()
+        self.set_jwt_cookie([{'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE, 'context': ENTERPRISE}])
+        self.session = ChatSession.objects.create(lms_user_id=self.user.lms_user_id,
+                                                  enterprise_customer_uuid=ENTERPRISE, first_prompt='Lead a team',
+                                                  turn_count=1)
+        ChatTurn.objects.create(session=self.session, sequence=1, user_message='m1', parts=[])
+
+    def url(self, session=None, sequence=1):
+        return reverse('api:v1:personalized-search-turn-feedback',
+                       kwargs={'session_uuid': session or self.session.uuid, 'sequence': sequence})
+
+    def post(self, rating, **kwargs):
+        return self.client.post(self.url(**kwargs), {'enterprise_customer_uuid': ENTERPRISE, 'rating': rating},
+                                format='json')
+
+    def test_rate_then_clear_and_replay_shows_it(self):
+        response = self.post(1)
+        self.assertEqual((response.status_code, response.json()), (200, {'sequence': 1, 'rating': 1}))
+        detail_url = reverse('api:v1:personalized-search-session', kwargs={'session_uuid': self.session.uuid})
+        detail = self.client.get(detail_url, {'enterprise_customer_uuid': ENTERPRISE}).json()
+        self.assertEqual(detail['turns'][0]['rating'], 1)
+        self.assertEqual(self.post(None).json()['rating'], None)
+        self.assertIsNone(ChatTurn.objects.get(session=self.session).rating)
+
+    def test_invalid_rating_is_400(self):
+        self.assertEqual(self.post(5).status_code, 400)
+
+    def test_someone_elses_or_a_missing_turn_is_404(self):
+        other = ChatSession.objects.create(lms_user_id=self.user.lms_user_id + 1000,
+                                           enterprise_customer_uuid=ENTERPRISE, first_prompt='x', turn_count=1)
+        ChatTurn.objects.create(session=other, sequence=1, user_message='m', parts=[])
+        self.assertEqual(self.post(1, session=other.uuid).status_code, 404)
+        self.assertEqual(self.post(1, sequence=9).status_code, 404)
+        self.assertIsNone(ChatTurn.objects.get(session=other).rating)
+
+    def test_other_enterprise_is_403(self):
+        response = self.client.post(self.url(), {'enterprise_customer_uuid': OTHER_ENTERPRISE, 'rating': 1},
+                                    format='json')
+        self.assertEqual(response.status_code, 403)
+
+    def test_a_turn_from_another_enterprise_is_404_even_with_access_to_both(self):
+        self.set_jwt_cookie([{'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE, 'context': ENTERPRISE},
+                             {'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE, 'context': OTHER_ENTERPRISE}])
+        response = self.client.post(self.url(), {'enterprise_customer_uuid': OTHER_ENTERPRISE, 'rating': 1},
+                                    format='json')
+        self.assertEqual(response.status_code, 404)
+        self.assertIsNone(ChatTurn.objects.get(session=self.session).rating)
+
+    def test_flag_off_is_404(self):
+        with override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=False):
+            self.assertEqual(self.post(1).status_code, 404)
+
+
+EMIT = 'enterprise_access.apps.personalized_search.events.segment_emit'
+
+
+@override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
+@override_settings(PERSONALIZED_SEARCH_ANALYTICS_COHORT='internal_pilot', PERSONALIZED_SEARCH_ENGINE_LABEL='b2b_mvp_v1')
+class HistoryEventTests(APITest):
+    """Reopening a search and rating a reply each send one event with the join keys (KD-12)."""
+
+    def setUp(self):
+        super().setUp()
+        self.set_jwt_cookie([{'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE, 'context': ENTERPRISE}])
+        self.session = ChatSession.objects.create(lms_user_id=self.user.lms_user_id,
+                                                  enterprise_customer_uuid=ENTERPRISE, first_prompt='Lead a team',
+                                                  turn_count=1)
+        self.turn = ChatTurn.objects.create(session=self.session, sequence=1, user_message='m1', parts=[])
+
+    @mock.patch(EMIT)
+    def test_reopening_a_search_sends_session_opened(self, emit):
+        self.client.get(reverse('api:v1:personalized-search-session', kwargs={'session_uuid': self.session.uuid}),
+                        {'enterprise_customer_uuid': ENTERPRISE})
+        emit.assert_called_once_with(self.user.lms_user_id, 'history.session-opened', {
+            'conversation_id': str(self.session.uuid), 'enterprise_customer_uuid': ENTERPRISE,
+            'cohort': 'internal_pilot', 'engine': 'b2b_mvp_v1',
+        })
+
+    @mock.patch(EMIT)
+    def test_a_missing_session_sends_nothing(self, emit):
+        self.client.get(reverse('api:v1:personalized-search-session', kwargs={'session_uuid': uuid.uuid4()}),
+                        {'enterprise_customer_uuid': ENTERPRISE})
+        emit.assert_not_called()
+
+    @mock.patch(EMIT)
+    def test_rating_a_reply_sends_turn_rated(self, emit):
+        url = reverse('api:v1:personalized-search-turn-feedback',
+                      kwargs={'session_uuid': self.session.uuid, 'sequence': 1})
+        response = self.client.post(url, {'enterprise_customer_uuid': ENTERPRISE, 'rating': -1}, format='json')
+        self.assertEqual(response.json(), {'sequence': 1, 'rating': -1})
+        name, props = emit.call_args.args[1], emit.call_args.args[2]
+        self.assertEqual(name, 'turn.rated')
+        self.assertEqual((props['turn_id'], props['turn_index'], props['rating']), (str(self.turn.uuid), 1, -1))
+
+    @mock.patch(EMIT)
+    def test_clearing_a_rating_sends_turn_rated_with_null(self, emit):
+        url = reverse('api:v1:personalized-search-turn-feedback',
+                      kwargs={'session_uuid': self.session.uuid, 'sequence': 1})
+        response = self.client.post(url, {'enterprise_customer_uuid': ENTERPRISE, 'rating': None}, format='json')
+        self.assertEqual(response.json(), {'sequence': 1, 'rating': None})
+        name, props = emit.call_args.args[1], emit.call_args.args[2]
+        self.assertEqual((name, props['turn_id'], props['rating']), ('turn.rated', str(self.turn.uuid), None))
+
+    @mock.patch(EMIT)
+    def test_rating_a_missing_turn_sends_nothing(self, emit):
+        url = reverse('api:v1:personalized-search-turn-feedback',
+                      kwargs={'session_uuid': self.session.uuid, 'sequence': 9})
+        response = self.client.post(url, {'enterprise_customer_uuid': ENTERPRISE, 'rating': 1}, format='json')
+        self.assertEqual(response.status_code, 404)
+        emit.assert_not_called()

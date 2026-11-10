@@ -10,6 +10,7 @@ from edx_toggles.toggles.testutils import override_waffle_flag, override_waffle_
 from rest_framework.reverse import reverse
 
 from enterprise_access.apps.core.constants import SYSTEM_ENTERPRISE_LEARNER_ROLE
+from enterprise_access.apps.personalized_search import wiring
 from enterprise_access.apps.personalized_search.models import ChatSession
 from enterprise_access.apps.personalized_search.tests.test_orchestrator import fake_steps
 from enterprise_access.toggles import LEARNER_PATHWAYS_SERVER_PIPELINE, PERSONALIZED_SEARCH_ENABLED
@@ -17,7 +18,8 @@ from test_utils import APITest
 
 ENTERPRISE = str(uuid.uuid4())
 OTHER_ENTERPRISE = str(uuid.uuid4())
-MODELS = {'gpt-4.1-mini': (0.4, 0.1, 1.6), 'gpt-5.4-mini': (0.75, 0.075, 4.5), 'gpt-4.1': (2.0, 0.5, 8.0)}
+MODELS = {'gpt-6-luna': (0.1, 0.01, 0.5), 'gpt-6.1-terra': (1.0, 0.05, 5.0), 'gpt-6.1-sol': (2.0, 0.1, 10.0),
+          'gpt-4.1-mini': (0.4, 0.1, 1.6), 'gpt-5.4-mini': (0.75, 0.075, 4.5), 'gpt-4.1': (2.0, 0.5, 8.0)}
 DEV_SCOPE = {'filter': 'enterprise_catalog_query_uuids:"q"', 'label': 'Test catalog'}
 
 
@@ -70,6 +72,25 @@ class PersonalizedSearchTurnViewTests(APITest):
         # The lock was released, and the session continues on the next turn.
         parts = parse_sse(self.post(session_uuid=session_uuid, message='Shorter'))
         self.assertEqual(parts[1]['data']['turn_sequence'], 2)
+
+    @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
+    @mock.patch('enterprise_access.apps.personalized_search.events.segment_emit')
+    def test_resuming_a_reopened_search_sends_session_resumed(self, emit):
+        session_uuid = parse_sse(self.post())[1]['data']['session_uuid']
+        parse_sse(self.post(session_uuid=session_uuid, message='Shorter'))
+        emit.assert_not_called()
+        parse_sse(self.post(session_uuid=session_uuid, message='Cheaper', resumed_from_history=True))
+        name, props = emit.call_args.args[1], emit.call_args.args[2]
+        self.assertEqual((name, props['conversation_id'], props['turn_index']),
+                         ('history.session-resumed', session_uuid, 3))
+        emit.reset_mock()
+        parse_sse(self.post(resumed_from_history=True))  # a new session has nothing to resume
+        emit.assert_not_called()
+        # A turn that fails before it starts doesn't count as a resume.
+        with mock.patch('enterprise_access.apps.personalized_search.wiring.turn_context', side_effect=RuntimeError):
+            with self.assertRaises(RuntimeError):
+                self.post(session_uuid=session_uuid, message='Again', resumed_from_history=True)
+        emit.assert_not_called()
 
     @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
     def test_accepts_event_stream(self):
@@ -139,8 +160,9 @@ class PersonalizedSearchTurnViewTests(APITest):
     def test_debug_overrides_ignored_unless_enabled(self):
         parts = parse_sse(self.post(debug={'compose_model': 'gpt-4.1'}))
         timing = [p for p in parts if p['type'] == 'data-timing'][0]['data']
-        self.assertEqual(timing['model_compose'], 'gpt-5.4-mini')
+        self.assertEqual((timing['model_intent'], timing['model_compose']), ('gpt-6-luna', 'gpt-6-luna'))
         self.assertNotIn('debug', timing)
+        self.assertFalse([p for p in parts if p['type'] == 'data-analytics'][0]['data']['is_debug'])
 
     @override_settings(PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED=True,
                        PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE=DEV_SCOPE, ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH=True)
@@ -150,6 +172,10 @@ class PersonalizedSearchTurnViewTests(APITest):
         timing = [p for p in parts if p['type'] == 'data-timing'][0]['data']
         self.assertEqual(timing['model_compose'], 'gpt-4.1')
         self.assertEqual(timing['debug']['catalog'], 'Test catalog')
+        # Usage events say whether this turn used overrides, not whether the environment allows them.
+        self.assertTrue([p for p in parts if p['type'] == 'data-analytics'][0]['data']['is_debug'])
+        plain = parse_sse(self.post())
+        self.assertFalse([p for p in plain if p['type'] == 'data-analytics'][0]['data']['is_debug'])
 
     @override_settings(PERSONALIZED_SEARCH_INTENT_MODEL='xpert', PERSONALIZED_SEARCH_COMPOSE_MODEL='xpert',
                        OPENAI_API_KEY='', XPERT_API_BASE_URL='https://xpert.test', XPERT_API_CLIENT_ID='client-123')
@@ -163,6 +189,15 @@ class PersonalizedSearchTurnViewTests(APITest):
     @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
     def test_debug_override_must_be_allowed(self):
         self.assertEqual(self.post(debug={'compose_model': 'gpt-9'}).status_code, 400)
+
+    @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
+    def test_the_learners_locale_scopes_the_catalog_language(self):
+        target = 'enterprise_access.apps.personalized_search.wiring.catalog_scope'
+        with mock.patch(target, wraps=wiring.catalog_scope) as scope:
+            self.assertEqual(self.post(locale='es-419').status_code, 200)
+            self.assertEqual(self.post().status_code, 200)
+        self.assertEqual([c.args[2] for c in scope.call_args_list], ['es-419', ''])
+        self.assertEqual(self.post(locale='x' * 17).status_code, 400)
 
     @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
     def test_secured_key_failure_is_503(self):

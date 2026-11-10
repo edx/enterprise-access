@@ -6,10 +6,10 @@ The learner portal's Personalized Search tab is a chat that recommends learning 
 
 | Endpoint | Purpose |
 | --- | --- |
-| `POST turns/` | Streams one turn as AI SDK UI Message Stream v1 over SSE, with the header `x-vercel-ai-ui-message-stream: v1`. `?mode=buffered` returns the parts as JSON instead. |
+| `POST turns/` | Streams one turn as AI SDK UI Message Stream v1 over SSE, with the header `x-vercel-ai-ui-message-stream: v1`. `?mode=buffered` returns the parts as JSON instead. The body takes an optional `locale` (the portal's language, e.g. `es`). |
 | `GET sessions/`, `GET sessions/<uuid>/` | The learner's past searches, and one search's stored parts for replay. |
 | `GET/POST/DELETE item-feedback/` | Saved and not-interested items. Not-interested items are excluded from later turns. |
-| `POST turns/<session>/<sequence>/feedback/` | Thumbs up or down on one reply (planned, KD-11). |
+| `POST sessions/<uuid>/turns/<sequence>/feedback/` | Thumbs up (1), down (-1) or cleared (null) on one of the learner's replies. |
 | `GET debug/` | The `?debug=true` model menu. 404 unless `PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED`, which is dev only. |
 
 Every endpoint requires the enterprise-scoped learner permission (`personalized_search.has_learner_access`) and returns 404 while the `enterprise_access.personalized_search_enabled` WaffleFlag is off for the user. The portal shows the tab from a separate LMS flag, `enterprise.personalized_search_enabled`. Enable this app's flag first, for the same users, so a visible tab never gets a 404.
@@ -53,12 +53,14 @@ for part in run_turn(ctx, steps):
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `PERSONALIZED_SEARCH_INTENT_MODEL`, `_EFFORT` | `gpt-4.1-mini`, `None` | Intent step model |
-| `PERSONALIZED_SEARCH_COMPOSE_MODEL`, `_EFFORT` | `gpt-5.4-mini`, `low` | Compose step model |
+| `PERSONALIZED_SEARCH_INTENT_MODEL`, `_EFFORT` | `gpt-6-luna`, `None` | Intent step model |
+| `PERSONALIZED_SEARCH_COMPOSE_MODEL`, `_EFFORT` | `gpt-6-luna`, `None` | Compose step model |
+| `PERSONALIZED_SEARCH_SHORTLIST_SIZE`, `_SIZES` | `20`, `{'gpt-6.1-terra': 40}` | Candidates compose chooses from: the default, and per compose model |
 | `PERSONALIZED_SEARCH_OPENAI_MODELS` | allowlist with prices | The OpenAI models a turn may use. Prices are used only in the debug cost read-out. |
 | `PERSONALIZED_SEARCH_INTENT_TIMEOUT_S`, `_COMPOSE_READ_TIMEOUT_S` | 3, 5 | Step timeouts, each also capped by the 20 s turn deadline. The Xpert platform uses `XPERT_REQUEST_TIMEOUT`. |
 | `OPENAI_API_KEY`; `XPERT_API_BASE_URL`, `XPERT_API_CLIENT_ID` | empty | Backend credentials. Keys come only from settings. |
 | `PERSONALIZED_SEARCH_ANALYTICS_COHORT`, `PERSONALIZED_SEARCH_ENGINE_LABEL` | `internal_pilot`, `b2b_mvp_v1` | Tags on every Segment event (planned, KD-12). See [`personalized_search_events.md`](personalized_search_events.md). |
+| `PERSONALIZED_SEARCH_CONTENT_LANGUAGES` | `{'en': 'English', 'es': 'Spanish'}` | Portal locale → Algolia `language` name. A turn's `locale` (from the portal) picks `metadata_language` records and, for courses, the teaching language, and the model writes in that language. Unlisted locales use English. Mirrors the portal's `SUPPORTED_ALGOLIA_LANGUAGE_FILTERS` for Learner Pathways. |
 | `PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED` | `False` | Dev only. Allows per-turn model overrides and the debug read-out. |
 | `PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE` | `None` | Dev only. Uses the plain search key plus an explicit catalog filter instead of the learner's secured key. Also needs `ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH`. Never set it in a deployed environment. |
 

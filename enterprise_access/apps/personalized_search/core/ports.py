@@ -47,6 +47,7 @@ class Usage:
             'elapsed_ms': self.elapsed_ms,
             'first_token_ms': self.first_token_ms,
             'cost_usd': round(cost, 6) if cost is not None else None,
+            'finish_reason': self.extra.get('finish_reason'),
         }
 
 
@@ -79,7 +80,7 @@ class CatalogSearch(Protocol):
     """Runs several catalog sub-requests in one round trip; ``scope`` is the adapter's own key/filter."""
 
     def search(self, queries: list[dict], *, scope, timeout_s: float) -> list[dict]:
-        """One result dict (with ``hits``) per query, in order. Raises on failure."""
+        """One result dict (with ``hits``) per query, in order. Raises ``CatalogSearchError`` on failure."""
 
 
 @runtime_checkable

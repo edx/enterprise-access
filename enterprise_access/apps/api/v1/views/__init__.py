@@ -30,7 +30,8 @@ from .personalized_search_debug import PersonalizedSearchDebugConfigView
 from .personalized_search_history import (
     PersonalizedSearchItemFeedbackView,
     PersonalizedSearchSessionDetailView,
-    PersonalizedSearchSessionListView
+    PersonalizedSearchSessionListView,
+    PersonalizedSearchTurnFeedbackView
 )
 from .prompt import LearnerPathwaysViewSet
 from .provisioning import ProvisioningCreateView, SubscriptionPlanOLIUpdateView
