@@ -205,6 +205,19 @@ class PrefilterTests(TestCase):
         kept = retrieval.prefilter(raw, dict(INTENT, constraints={'max_hours_per_week': 4}))
         self.assertEqual(kept[0]['card']['item_id'], 'edX+LIGHT')
 
+    def test_the_program_boost_reorders_within_a_tier_only(self):
+        skilled_course = candidate(course_hit('edX+SKILL'), tier=2, rank=0)
+        keyword_program = candidate(program_hit('p-kw'), tier=1, rank=0)
+        skilled_program = candidate(program_hit('p-sk'), tier=2, rank=3)
+        raw = [keyword_program, skilled_course, skilled_program]
+        kept = [c['card']['item_id'] for c in retrieval.prefilter(raw, {})]
+        self.assertEqual(kept, ['p-sk', 'edX+SKILL', 'p-kw'])
+
+    def test_hours_must_be_a_finite_whole_number(self):
+        for effort in ((0.5, 0.5), (float('nan'), float('inf'))):
+            facts = retrieval.hydrate_card(course_hit('edX+C1', effort=effort))['facts']
+            self.assertEqual((facts['hours_per_week_min'], facts['hours_per_week_max']), (None, None), effort)
+
     def test_level_match_scores_higher(self):
         raw = [candidate(course_hit('edX+ADV', level='Advanced'), tier=1, rank=0),
                candidate(course_hit('edX+INTRO', level='Introductory'), tier=1, rank=5)]

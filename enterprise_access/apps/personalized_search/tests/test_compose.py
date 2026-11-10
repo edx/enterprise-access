@@ -241,6 +241,28 @@ class ComposeParserTests(TestCase):
         self.assertEqual(followups['suggestions'], ['Intermediate', 'Advanced'])
         self.assertEqual(followups['ideas'], ["I'm a beginner", 'Show me deeper fermentation'])
 
+    def test_a_plan_without_a_why_has_no_why(self):
+        for why in (None, '  ', 7):
+            plan = {'block': 'plan', 'steps': [{'item_id': 'edX+C1', 'note': 'n'}, {'item_id': 'edX+C2', 'note': 'm'}]}
+            if why is not None:
+                plan['why'] = why
+            _, parts = self.parse('r\n@@BLOCKS@@\n' + line(section('course', ['edX+C1', 'edX+C2', 'edX+C3'])) +
+                                  line(plan))
+            self.assertNotIn('why', self.blocks(parts, 'plan')[0]['props'], why)
+
+    def test_an_idea_covers_a_fixed_chip_only_with_whole_words(self):
+        def chips(attribute, ideas):
+            followup = {'block': 'followup', 'question': 'Q?', 'ideas': ideas}
+            _, parts = self.parse('Hi.\n@@BLOCKS@@\n' + line(followup), attribute=attribute)
+            return [p for p in parts if p['type'] == 'data-followups'][0]['data']['suggestions']
+        self.assertIn('Programs', chips('type', ['Python programming for analysts']))
+        self.assertNotIn('Programs', chips('type', ['Show me programs']))
+        self.assertIn('Introductory', chips('level', ['Explore new tools for my job']))
+        self.assertIn('Advanced', chips('level', ['Build on my expertise']))
+        self.assertNotIn('Advanced', chips('level', ["I'm an expert already"]))
+        self.assertIn('Instructor-led', chips('pacing', ['Deliver live data dashboards']))
+        self.assertIn('Executive education', chips('type', ['Lead as an executive']))
+
     def test_only_an_idea_that_chooses_courses_replaces_the_courses_chip(self):
         def chips(ideas):
             followup = {'block': 'followup', 'question': 'Type?', 'ideas': ideas}
@@ -406,4 +428,4 @@ class ComposeParserTests(TestCase):
                                              history=[], message='m', candidates=[])
         for text in (compose.SYSTEM_PROMPT, content):
             words = re.sub(r'page_header|"page"|"candidate"', '', text)
-            self.assertNotRegex(words.lower(), r'\b(page|candidates?)\b')
+            self.assertNotRegex(words.lower(), r'\b(pages?|candidates?)\b')

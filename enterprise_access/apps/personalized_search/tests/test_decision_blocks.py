@@ -141,6 +141,19 @@ class SectionExtrasTests(TestCase):
         self.assertEqual([c['item_id'] for c in props['reserve']], ['edX+C3', 'edX+C4'])
         self.assertTrue(all(c['why'] is None and c['fit'] == [] for c in props['reserve']))
 
+    def test_cards_new_to_the_conversation_are_flagged_wherever_they_sit(self):
+        parser = ComposeParser(candidates=default_candidates(), shown_ids=[], followup_attribute='level',
+                               seen_ids=['edX+C1'])
+        body = (line({'block': 'top_pick', 'item_id': 'edX+C2', 'reason': 'Because you want to lead.'}) +
+                line({'block': 'compare', 'options': [{'item_id': 'edX+C1', 'best_for': 'a'},
+                                                      {'item_id': 'edX+C2', 'best_for': 'b'}]}) +
+                self.section('executive_education', ['Yale+E1']))
+        parts = parser.feed('r\n@@BLOCKS@@\n' + body) + parser.finish()
+        props = {p['data']['type']: p['data']['props'] for p in parts if p['type'] == 'data-block'}
+        self.assertEqual(props['top_pick']['item'].get('status'), 'new')
+        self.assertEqual([o['item'].get('status') for o in props['compare']['options']], [None, 'new'])
+        self.assertTrue(all(c.get('status') == 'new' for c in props['item_section'].get('reserve', [])))
+
     def test_no_total_or_reserve_when_unknown_or_empty(self):
         props = self.parse(self.section('program', ['p-1', 'p-2']))[0]
         self.assertNotIn('total', props)
