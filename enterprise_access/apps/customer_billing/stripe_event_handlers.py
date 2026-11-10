@@ -612,6 +612,16 @@ class StripeEventHandler:
 
         link_event_data_to_checkout_intent(event, checkout_intent)
         if invoice.total > 0:
+            # Before the emails below (see segment_outbox._record): recording raises on a database error so that Stripe
+            # redelivers the webhook, and the emails would be queued again by that redelivery. The order's first paid
+            # invoice is its creation invoice or the subscription_cycle invoice issued when the trial ends; license
+            # changes (subscription_update) and manual invoices never are. Renewals are subscription_cycle too, but
+            # aren't excluded here: the local history depends on the order webhooks arrive in, so the send task
+            # checks Stripe's history and skips the event unless this invoice was the order's first payment.
+            if invoice.to_dict().get('billing_reason') in ORDER_COMPLETED_BILLING_REASONS:
+                record_order_completed_segment_event(
+                    checkout_intent, invoice.id, subscription_details.to_dict().get('subscription'),
+                )
             # Attempt to send the receipt FIRST before triggering renewal.
             # Renewal might want to force a retry by raising, risking duplicate receipt emails. We'll
             # mitigate this by configuring the Braze campaign to avoid sending more than 1 in a 3
@@ -636,15 +646,6 @@ class StripeEventHandler:
             else:
                 # only update status for non-trial invoice.paid events
                 _handle_invoice_paid_status_updated(event, checkout_intent)
-            # After the billing work (see segment_outbox._record), and only for paid invoices. The order's first paid
-            # invoice is its creation invoice or the subscription_cycle invoice issued when the trial ends; license
-            # changes (subscription_update) and manual invoices never are. Renewals are subscription_cycle too, but
-            # aren't excluded here: the local history depends on the order webhooks arrive in, so the send task
-            # checks Stripe's history and skips the event unless this invoice was the order's first payment.
-            if invoice.to_dict().get('billing_reason') in ORDER_COMPLETED_BILLING_REASONS:
-                record_order_completed_segment_event(
-                    checkout_intent, invoice.id, subscription_details.to_dict().get('subscription'),
-                )
             return
 
         try:
@@ -929,6 +930,11 @@ class StripeEventHandler:
             "Subscription %s status was deleted via event %s", subscription['id'], event.id,
         )
 
+        # Before the cancellation work, emails and Segment event below (see segment_outbox._record): recording raises
+        # on a database error so that Stripe redelivers the webhook, and that redelivery would repeat them. Recorded for
+        # every deletion; the send task asks Stripe whether the order was ever paid, and skips it if not.
+        record_order_cancelled_segment_event(checkout_intent, subscription['id'])
+
         cancellation_details = subscription.get('cancellation_details')
         # Track cancellation event if cancellation details are present
         if cancellation_details:
@@ -979,10 +985,6 @@ class StripeEventHandler:
                 send_trial_ended_cancellation_email_task.delay(
                     checkout_intent_id=checkout_intent.id,
                 )
-
-        # After the billing work (see segment_outbox._record). Recorded for every deletion; the send task asks Stripe
-        # whether the order was ever paid, and skips it if not.
-        record_order_cancelled_segment_event(checkout_intent, subscription['id'])
 
 
 def _process_trial_to_paid_renewal(

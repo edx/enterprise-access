@@ -22,8 +22,11 @@ class Command(BaseCommand):
 
     Webhook handlers record each event before handing its send task to Celery. This command publishes the events
     whose task never reached the broker (PENDING, e.g. during a broker outage), and the events handed to the broker
-    that never finished (Celery gave up, or the broker lost the message), up to a bounded number of attempts. Meant
-    to run on a schedule, e.g. every 10 minutes. It is safe to run concurrently with itself and with the webhooks.
+    that never finished (Celery gave up, or the broker lost the message), up to a bounded number of attempts. Runs
+    every 10 minutes as the ``edx-enterprise-access-dispatch-segment-events`` cronjob in edx/edx-internal
+    (``argocd/applications/enterprise-access/{stage,prod}-config.yaml``), which must exist before
+    FEATURE_SSP_CHECKOUT_SEGMENT_EVENTS_V2 is turned on. It is safe to run concurrently with itself and with the
+    webhooks.
 
     Usage:
         ./manage.py dispatch_checkout_segment_events

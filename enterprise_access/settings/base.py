@@ -761,6 +761,8 @@ SEGMENT_KEY = None
 # .. toggle_description: Sends the checkout order_completed and order_cancelled Segment events from the server, from the
 #     Stripe webhooks. Same name as the frontend-app-enterprise-checkout flag that gates the browser-side checkout
 #     events (ENT-12328). Off: no event is recorded or sent, and recorded events wait unsent until it is back on.
+#     Before turning it on, schedule the dispatch_checkout_segment_events cronjob (edx/edx-internal), which re-sends
+#     events whose send task never reached Celery or never finished.
 # .. toggle_use_cases: temporary
 # .. toggle_creation_date: 2026-10-09
 # .. toggle_target_removal_date: 2027-03-31
