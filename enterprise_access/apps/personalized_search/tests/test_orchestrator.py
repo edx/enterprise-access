@@ -103,12 +103,13 @@ class RunTurnTests(TestCase):
         self.assertLessEqual(timing['first_text_ms'], timing['first_section_ms'])
         self.assertIsNotNone(timing['debug']['cost_usd'])
         saved = self.saved()
-        self.assertEqual((saved.turn_count, saved.item_count, saved.title), (1, 1, 'Leading'))
-        self.assertEqual(saved.shown_item_ids, ['edX+C1'])
+        # The scripted course section, plus the related programs offered alongside it.
+        self.assertEqual((saved.turn_count, saved.item_count, saved.title), (1, 3, 'Leading'))
+        self.assertEqual(saved.shown_item_ids, ['edX+C1', 'p-1', 'p-2'])
         self.assertIsNone(saved.active_turn_started_at)
         turn = ChatTurn.objects.get(session=saved)
         self.assertEqual((str(turn.uuid), turn.sequence, turn.reply_text), (TURN_UUID, 1, 'Your page.'))
-        self.assertEqual(turn.item_ids, ['edX+C1'])
+        self.assertEqual(turn.item_ids, ['edX+C1', 'p-1', 'p-2'])
         stored = [p['type'] for p in turn.parts]
         self.assertNotIn('data-timing', stored)
         self.assertNotIn('data-status', stored)
@@ -234,8 +235,8 @@ class TurnObservabilityTests(TestCase):
         self.assertEqual(record['outcome'], 'done')
         self.assertEqual(record['session_uuid'], self.session['uuid'])
         self.assertEqual((record['sequence'], record['backend']), (1, 'openai'))
-        self.assertEqual(record['item_ids'], ['edX+C1'])
-        self.assertEqual(record['item_count'], 1)
+        self.assertEqual(record['item_ids'], ['edX+C1', 'p-1', 'p-2'])
+        self.assertEqual(record['item_count'], 3)  # the course plus the related programs
         self.assertEqual(len(record['candidate_ids']), 8)
         self.assertFalse(record['fallback'])
         self.assertEqual(record['dropped_lines'], 0)
@@ -261,7 +262,7 @@ class TurnObservabilityTests(TestCase):
             gen.close()
         (record,) = self.turn_records(logs)
         self.assertEqual(record['outcome'], 'aborted')
-        self.assertEqual(record['item_ids'], ['edX+C1'])
+        self.assertEqual(record['item_ids'], ['edX+C1'])  # stopped before the related programs were added
 
     def test_redirect_makes_exactly_one_model_call(self):
         calls = []
@@ -304,7 +305,7 @@ class PortableTurnTests(PlainTestCase):
         parts = list(run_turn(ctx, steps))
         self.assertEqual(parts[-1]['type'], 'finish')
         self.assertEqual(parts[-2]['data']['backend'], 'fake')
-        self.assertEqual(memory.sessions[session['uuid']]['shown_item_ids'], ['edX+C1'])
+        self.assertEqual(memory.sessions[session['uuid']]['shown_item_ids'], ['edX+C1', 'p-1', 'p-2'])
         self.assertIsNone(memory.sessions[session['uuid']]['locked_at'])
 
     def test_retrieval_timeout_is_capped_by_the_deadline(self):

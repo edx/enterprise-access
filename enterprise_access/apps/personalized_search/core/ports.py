@@ -47,6 +47,7 @@ class Usage:
             'elapsed_ms': self.elapsed_ms,
             'first_token_ms': self.first_token_ms,
             'cost_usd': round(cost, 6) if cost is not None else None,
+            'finish_reason': self.extra.get('finish_reason'),
         }
 
 

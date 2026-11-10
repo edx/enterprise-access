@@ -53,8 +53,8 @@ for part in run_turn(ctx, steps):
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `PERSONALIZED_SEARCH_INTENT_MODEL`, `_EFFORT` | `gpt-4.1-mini`, `None` | Intent step model |
-| `PERSONALIZED_SEARCH_COMPOSE_MODEL`, `_EFFORT` | `gpt-5.4-mini`, `low` | Compose step model |
+| `PERSONALIZED_SEARCH_INTENT_MODEL`, `_EFFORT` | `gpt-6-luna`, `None` | Intent step model |
+| `PERSONALIZED_SEARCH_COMPOSE_MODEL`, `_EFFORT` | `gpt-6-luna`, `None` | Compose step model |
 | `PERSONALIZED_SEARCH_OPENAI_MODELS` | allowlist with prices | The OpenAI models a turn may use. Prices are used only in the debug cost read-out. |
 | `PERSONALIZED_SEARCH_INTENT_TIMEOUT_S`, `_COMPOSE_READ_TIMEOUT_S` | 3, 5 | Step timeouts, each also capped by the 20 s turn deadline. The Xpert platform uses `XPERT_REQUEST_TIMEOUT`. |
 | `OPENAI_API_KEY`; `XPERT_API_BASE_URL`, `XPERT_API_CLIENT_ID` | empty | Backend credentials. Keys come only from settings. |

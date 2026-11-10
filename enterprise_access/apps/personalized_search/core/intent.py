@@ -4,6 +4,7 @@ then merge it with the session's prior intent.
 """
 import json
 import math
+import re
 
 from enterprise_access.apps.personalized_search.core import constants
 
@@ -18,10 +19,19 @@ Rules:
 - merge is "refine" when the message adjusts the previous search (narrower, shorter, a format, a level, a type, "different ones"); "replace" when it starts a new goal or there is no prior intent.
 - intent describes the search after this message. With "refine", return only what this message changes or adds; null means unchanged.
 - skills: at most 8, always in English (the catalog's skill names are English), whatever language the learner writes in. roles: at most 3. level: null | "introductory" | "intermediate" | "advanced". item_types: any of "course", "executive_education", "program" (a program is a multi-course certificate). pacing: null | "self_paced" | "instructor_paced". max_weeks: an integer or null. max_hours_per_week: the most hours a week the learner can give, an integer or null.
+- Learning journeys: when the learner describes a learning journey, a path or pathway, a roadmap, a curriculum, a series of courses, or wants a certificate or credential, set item_types to ["program"] (programs bundle courses into one path) unless the message names another type.
+- Not programs: when the learner says they don't want a program, certificate or multi-course path, set item_types to ["course", "executive_education"].
 - Career advancement: when the learner states a goal to move into or prepare for a role, put the target role and adjacent leadership roles in roles and add the leadership and management skills that role needs to skills."""  # noqa: E501
 # pylint: enable=line-too-long
 
 LEVELS = ('introductory', 'intermediate', 'advanced')
+# Journey language that points to programs (a bundle of courses as one path). Used when the model names no
+# type for such a message, so "a learning path into data science" still leads with programs.
+JOURNEY_PATTERN = re.compile(
+    r"\b(learning (journey|path|track)|journey|path ?ways?|career path|roadmap|curriculum|series of courses"
+    r"|step[- ]by[- ]step|certificates?|credentials?)\b",
+    re.IGNORECASE,
+)
 PACINGS = ('self_paced', 'instructor_paced')
 REDIRECT_REASONS = ('off_topic', 'unsafe', 'injection')
 
@@ -145,6 +155,9 @@ def merge(prior: dict | None, new: dict, mode: str, *, message: str) -> dict:
     for key in ('query', 'level', 'item_types'):
         if new.get(key):
             base[key] = new[key]
+    if not new.get('item_types') and JOURNEY_PATTERN.search(message or ''):
+        # A learning journey or credential points to programs; they lead, other types stay as alternatives.
+        base['item_types'] = ['program']
     for key, value in (new.get('constraints') or {}).items():
         if value is not None:
             base.setdefault('constraints', {})[key] = value

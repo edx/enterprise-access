@@ -59,14 +59,27 @@ class SubRequestTests(TestCase):
 
     def test_all_types_strict_and_broad(self):
         reqs = retrieval.build_sub_requests(INTENT, SCOPE, ['edX+OLD'])
-        self.assertEqual([r['tier'] for r in reqs], [2, 1, 0, 0, 2, 1, 0])
+        self.assertEqual([r['tier'] for r in reqs], [2, 1, 2, 1, 0, 0, 0, 0, 0, 0])
+        # Each type is counted with the keyword query and with the skills filter; the larger count wins.
         self.assertEqual([r.get('count_for') for r in reqs if r['tier'] == 0],
-                         ['course', 'executive_education', 'program'])
+                         ['course', 'course', 'executive_education', 'executive_education', 'program', 'program'])
         self.assertTrue(all(r['hitsPerPage'] == 0 for r in reqs if r['tier'] == 0))
         self.assertIn('(skill_names:"Leadership" OR skill_names:"Coaching")', reqs[0]['filters'])
         self.assertIn('NOT key:"edX+OLD"', reqs[1]['filters'])
-        self.assertIn('NOT aggregation_key:"program:edX+OLD"', reqs[5]['filters'])
+        self.assertIn('NOT aggregation_key:"program:edX+OLD"', reqs[3]['filters'])
+        self.assertFalse(any(r.get('preferred') for r in reqs))
         self.assertTrue(all('(enterprise_customer_uuids:"e-1")' in r['filters'] for r in reqs))
+
+    def test_programs_are_searched_unless_the_learner_asked_for_courses(self):
+        def program_hits(types):
+            reqs = retrieval.build_sub_requests(dict(INTENT, item_types=types), SCOPE, [])
+            return [r for r in reqs if r['tier'] > 0 and r['filters'].startswith('content_type:program')]
+        self.assertTrue(program_hits(['executive_education']))  # programs stay alongside a preferred type
+        self.assertFalse(program_hits(['course']))
+        self.assertFalse(program_hits(['course', 'executive_education']))  # "I don't want a program"
+        self.assertEqual([retrieval.programs_wanted({'item_types': t}) for t in
+                          (None, ['program'], ['executive_education'], ['course'], ['course', 'executive_education'])],
+                         [True, True, True, False, False])
 
     def test_english_by_default_and_the_learners_language_when_given(self):
         english = retrieval.build_sub_requests(INTENT, SCOPE, [])
@@ -83,33 +96,44 @@ class SubRequestTests(TestCase):
                                          r['filters'].replace('metadata_language:"', '') for r in programs))
 
     @ddt.data(
-        (['executive_education'], 'AND learning_type:"Executive Education"', 3),
-        (['course'], 'AND NOT learning_type:"Executive Education"', 3),
-        (['program'], None, 3),
+        (['executive_education'], 'AND learning_type:"Executive Education"'),
+        (['course'], 'AND NOT learning_type:"Executive Education"'),
+        (['program'], None),
     )
     @ddt.unpack
-    def test_type_filters(self, types, clause, count):
+    def test_a_preferred_type_adds_its_own_requests_and_keeps_every_type(self, types, clause):
         reqs = retrieval.build_sub_requests(dict(INTENT, item_types=types), SCOPE, [])
-        self.assertEqual(len(reqs), count)
+        hits = [r for r in reqs if r['tier'] > 0]
+        general, preferred = [r for r in hits if not r.get('preferred')], [r for r in hits if r.get('preferred')]
+        # Every type is still searched (courses with Executive Education, and programs unless the learner
+        # asked for courses) ...
+        searches_programs = any(r['filters'].startswith('content_type:program') for r in general)
+        self.assertEqual(searches_programs, types != ['course'])
+        self.assertTrue(any(r['filters'].startswith('content_type:course') and 'learning_type' not in r['filters']
+                            for r in general))
+        # ... plus the preferred type's own strict and broadened requests.
+        self.assertEqual(len(preferred), 2)
         if clause:
-            self.assertIn(clause, reqs[0]['filters'])
+            self.assertTrue(all(clause in r['filters'] for r in preferred))
         else:
-            self.assertTrue(reqs[0]['filters'].startswith('content_type:program'))
+            self.assertTrue(all(r['filters'].startswith('content_type:program') for r in preferred))
 
     def test_search_uses_scope_in_one_multi_query(self):
         client = mock.Mock()
         client.multi_search_catalog_index.return_value = [
             {'hits': [course_hit('edX+C1'), {'title': 'no id'}]}, {'hits': [course_hit('edX+C2')]},
-            {'hits': [], 'nbHits': 42},
+            {'hits': []}, {'hits': []},
+            # Counts: keyword then skills, per type; the larger one is the total.
+            {'hits': [], 'nbHits': 1}, {'hits': [], 'nbHits': 42}, {'hits': [], 'nbHits': 9}, {'hits': [], 'nbHits': 3},
+            {'hits': [], 'nbHits': 0}, {'hits': []},
         ]
         scope = retrieval.CatalogScope(filter='x:"y"', allow_unscoped=True)
-        out = retrieval.search(dict(INTENT, item_types=['course']), scope, [], catalog=AlgoliaCatalog(client),
-                               timeout_s=1.5)
+        out = retrieval.search(INTENT, scope, [], catalog=AlgoliaCatalog(client), timeout_s=1.5)
         self.assertEqual([(c['card']['item_id'], c['tier']) for c in out], [('edX+C1', 2), ('edX+C2', 1)])
         queries = client.multi_search_catalog_index.call_args.args[0]
-        self.assertEqual(len(queries), 3)
-        self.assertTrue(all(q['distinct'] and 'tier' not in q and 'count_for' not in q for q in queries))
-        self.assertEqual(out.totals, {'course': 42})
+        self.assertEqual(len(queries), 10)
+        self.assertTrue(all(q['distinct'] and not {'tier', 'count_for', 'preferred'} & set(q) for q in queries))
+        self.assertEqual(out.totals, {'course': 42, 'executive_education': 9, 'program': 0})
         kwargs = client.multi_search_catalog_index.call_args.kwargs
         self.assertEqual((kwargs['allow_unscoped'], kwargs['secured_key'], kwargs['timeout_s']), (True, None, 1.5))
 
@@ -122,6 +146,20 @@ class SubRequestTests(TestCase):
 
 class PrefilterTests(TestCase):
     """``prefilter`` dedupes, scores and caps."""
+
+    def test_with_no_type_asked_for_related_programs_lead(self):
+        raw = [candidate(course_hit('edX+C1'), tier=2, rank=0), candidate(program_hit('p-1'), tier=2, rank=0)]
+        kept = retrieval.prefilter(raw, dict(INTENT, level=None))
+        self.assertEqual(kept[0]['card']['item_type'], 'program')
+
+    def test_a_preferred_type_leads_and_may_fill_more_places(self):
+        raw = [candidate(course_hit(f'edX+C{i}'), tier=2, rank=i) for i in range(12)]
+        raw += [candidate(course_hit(f'Yale+E{i}', exec_ed=True), tier=1, rank=i) for i in range(12)]
+        kept = retrieval.prefilter(raw, dict(INTENT, item_types=['executive_education']))
+        types = [c['card']['item_type'] for c in kept]
+        self.assertEqual(types[0], 'executive_education')
+        self.assertEqual(types.count('executive_education'), 10)  # above the usual cap of 5
+        self.assertEqual(types.count('course'), 10)  # the other type stays as alternatives
 
     def test_caps_and_dedupe(self):
         raw = [candidate(course_hit(f'edX+C{i}'), tier=1, rank=i) for i in range(15)]
@@ -175,7 +213,7 @@ class FilterHelperTests(TestCase):
 
     def test_no_skills_sends_only_broadened_requests(self):
         requests = retrieval.build_sub_requests(dict(INTENT, skills=[], roles=['Team lead']), SCOPE, [])
-        self.assertEqual([r['tier'] for r in requests], [1, 0, 0, 1, 0])
+        self.assertEqual([r['tier'] for r in requests], [1, 1, 0, 0, 0])
         self.assertTrue(all(r['query'] == 'Team lead' for r in requests))
 
     def test_weeks_buckets(self):
