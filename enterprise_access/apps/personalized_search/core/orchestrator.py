@@ -25,7 +25,6 @@ from enterprise_access.apps.personalized_search.core.compose import ComposeParse
 from enterprise_access.apps.personalized_search.core.compose import build_user_content as compose_user
 from enterprise_access.apps.personalized_search.core.errors import ModelError
 from enterprise_access.apps.personalized_search.core.ports import Usage
-from enterprise_access.apps.personalized_search.core.profile import profile_props
 from enterprise_access.apps.personalized_search.core.retrieval import (
     RetrievalFailed,
     choose_followup_attribute,
@@ -147,6 +146,7 @@ def run_turn(ctx: TurnContext, steps: Steps) -> Iterator[dict]:
                         yield {'type': 'error', 'errorText': 'internal'}
                         return
                 record['outcome'] = 'redirect' if record.get('redirected') else 'done'
+                record['blocks'] = [p['data'] for p in emitted if p['type'] == 'data-block']
             emitted.append(part)
             yield part
     except Exception:  # pylint: disable=broad-exception-caught
@@ -276,14 +276,15 @@ def _turn_parts(ctx: TurnContext, steps: Steps, record: dict) -> Iterator[dict]:
     # Step 4: compose
     yield {'type': 'data-status', 'data': {'step': 'writing'}, 'transient': True}
     parser = ComposeParser(candidates=candidates, shown_ids=_excluded_ids(session), followup_attribute=attribute,
-                           profile=profile_props(merged), totals=totals, seen_ids=session['shown_item_ids'])
+                           intent=merged, totals=totals, seen_ids=session['shown_item_ids'])
     record['item_ids'] = parser.emitted_ids  # the parser's own list, so an aborted turn logs what it showed
     record.update(placements=parser.placements, dropped=parser.dropped)
     usages['compose'] = Usage(model=ctx.compose_model.model, effort=ctx.compose_model.effort)
     stream = steps.compose(
         system=COMPOSE_SYSTEM,
         user=compose_user(merged_intent=merged, followup_attribute=attribute, asked=session['asked_attributes'],
-                          history=session['history'], message=ctx.message, candidates=candidates),
+                          history=session['history'], message=ctx.message, candidates=candidates,
+                          language=getattr(ctx.scope, 'language_name', None) or 'English'),
         model=ctx.compose_model.model, effort=ctx.compose_model.effort,
         timeout_s=min(ctx.compose_timeout_s, remaining()), usage=usages['compose'],
     )

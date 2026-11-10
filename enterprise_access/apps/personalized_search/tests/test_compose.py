@@ -46,8 +46,8 @@ class ComposeParserTests(TestCase):
                 line({'block': 'followup', 'question': 'What level?',
                       'ideas': ['Coaching for new managers', 'introductory', 'Coaching for new managers'],
                       'session_title': 'Leading a team'}) +
-                line({'block': 'plan', 'steps': [{'item_id': 'edX+C1', 'note': 'First'},
-                                                 {'item_id': 'Yale+E1', 'note': 'Then'}]}))
+                line({'block': 'plan', 'why': ' Basics first. ',
+                      'steps': [{'item_id': 'edX+C1', 'note': 'First'}, {'item_id': 'Yale+E1', 'note': 'Then'}]}))
         parser, parts = self.parse(text)
         reply = ''.join(p['delta'] for p in parts if p['type'] == 'text-delta')
         self.assertEqual(reply, 'Here is your page.')
@@ -64,6 +64,7 @@ class ComposeParserTests(TestCase):
         self.assertEqual(followups['suggestions'], ['Introductory', 'Intermediate', 'Advanced'])
         self.assertEqual(followups['ideas'], ['Coaching for new managers'])
         self.assertEqual(len(self.blocks(parts, 'plan')[0]['props']['steps']), 2)
+        self.assertEqual(self.blocks(parts, 'plan')[0]['props']['why'], 'Basics first.')
         self.assertEqual(parser.session_title, 'Leading a team')
         self.assertEqual(parser.dropped, [])
 
@@ -148,8 +149,8 @@ class ComposeParserTests(TestCase):
                 line({'block': 'page_header', 'title': 't' * 120, 'dek': 'd' * 500}) +
                 line(section('course', ['edX+C1', 'edX+C2', 'edX+C3'])) +
                 line({'block': 'insight', 'title': 'i' * 90, 'body': 'b' * 700}) +
-                line({'block': 'plan', 'steps': [{'item_id': 'edX+C1', 'note': 'n' * 100},
-                                                 {'item_id': 'edX+C2', 'note': 'n'}]}) +
+                line({'block': 'plan', 'why': 'w' * 200,
+                      'steps': [{'item_id': 'edX+C1', 'note': 'n' * 100}, {'item_id': 'edX+C2', 'note': 'n'}]}) +
                 line({'block': 'followup', 'question': 'q' * 300, 'ideas': ['s' * 60, 'x', 'y', 'z'],
                       'session_title': 'z' * 90}))
         parser, parts = self.parse(text)
@@ -158,6 +159,7 @@ class ComposeParserTests(TestCase):
         insight = self.blocks(parts, 'insight')[0]['props']
         self.assertEqual((len(insight['title']), len(insight['body'])), (60, 600))
         self.assertEqual(len(self.blocks(parts, 'plan')[0]['props']['steps'][0]['note']), 80)
+        self.assertEqual(len(self.blocks(parts, 'plan')[0]['props']['why']), 160)
         followups = [p for p in parts if p['type'] == 'data-followups'][0]['data']
         self.assertEqual(len(followups['question']), 200)
         self.assertEqual(len(followups['ideas'][0]), 48)
@@ -196,6 +198,10 @@ class ComposeParserTests(TestCase):
                                              candidates=default_candidates()[:1])
         self.assertIn('FOLLOW-UP ATTRIBUTE: level', content)
         self.assertIn('ALREADY ASKED: time', content)
+        self.assertIn('RESPONSE LANGUAGE: English', content)
+        spanish = compose.build_user_content(merged_intent={'query': 'q'}, followup_attribute='level', asked=[],
+                                             history=[], message='m', candidates=[], language='Spanish')
+        self.assertTrue(spanish.startswith('RESPONSE LANGUAGE: Spanish\n'))
         self.assertIn('"item_id": "edX+C1"', content)
 
     def test_wrong_field_types_drop_the_line_instead_of_failing(self):

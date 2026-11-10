@@ -62,6 +62,8 @@ class TurnRequestSerializer(serializers.Serializer):  # pylint: disable=abstract
     message = serializers.CharField(max_length=constants.MAX_MESSAGE_CHARS, trim_whitespace=True)
     # The portal sets this on the first message after reopening a past search (usage events, KD-12).
     resumed_from_history = serializers.BooleanField(required=False, default=False)
+    # The learner's portal language (e.g. "es"); results and model text follow it when it's supported.
+    locale = serializers.CharField(required=False, allow_blank=True, max_length=16, default='')
     debug = DebugOverridesSerializer(required=False, allow_null=True)
 
 
@@ -131,7 +133,7 @@ class PersonalizedSearchTurnView(APIView):
             return _error('backend_unsupported', status.HTTP_503_SERVICE_UNAVAILABLE, 'No model backend is configured.')
 
         try:
-            scope = wiring.catalog_scope(request, enterprise_customer_uuid)
+            scope = wiring.catalog_scope(request, enterprise_customer_uuid, data.get('locale'))
         except Exception:  # pylint: disable=broad-exception-caught  # enterprise-catalog failure or no secured key
             logger.exception('Personalized Search could not scope the catalog for %s.', enterprise_customer_uuid)
             return _error('catalog_unavailable', status.HTTP_503_SERVICE_UNAVAILABLE)

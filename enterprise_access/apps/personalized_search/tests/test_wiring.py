@@ -31,6 +31,19 @@ class WiringTests(TestCase):
         self.assertEqual((compose_kwargs['max_tokens'], compose_kwargs['timeout_s'], compose_kwargs['usage']),
                          (constants.COMPOSE_MAX_TOKENS, 5, usage))
 
+    @override_settings(PERSONALIZED_SEARCH_CONTENT_LANGUAGES={'en': 'English', 'es': 'Spanish'})
+    def test_content_language_follows_the_portal_locale_like_learner_pathways(self):
+        cases = {'es': ('es', 'Spanish'), 'es-419': ('es', 'Spanish'), 'ES_mx': ('es', 'Spanish'),
+                 'fr': ('en', 'English'), '': ('en', 'English'), None: ('en', 'English')}
+        for locale, expected in cases.items():
+            self.assertEqual(wiring.content_language(locale), expected, locale)
+
+    @override_settings(PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE={'filter': 'x:"y"'},
+                       PERSONALIZED_SEARCH_CONTENT_LANGUAGES={'en': 'English', 'es': 'Spanish'})
+    def test_the_catalog_scope_carries_the_content_language(self):
+        scope = wiring.catalog_scope(request=None, enterprise_customer_uuid='e-1', locale='es')
+        self.assertEqual((scope.locale, scope.language_name), ('es', 'Spanish'))
+
     def test_turn_context_uses_the_timeout_settings(self):
         intent, compose = wiring.default_models()
         with override_settings(PERSONALIZED_SEARCH_INTENT_TIMEOUT_S=4, PERSONALIZED_SEARCH_COMPOSE_READ_TIMEOUT_S=6):
