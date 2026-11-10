@@ -78,14 +78,31 @@ class IntentMergeTests(TestCase):
         plain = intent.merge(None, {'skills': ['sql']}, 'replace', message='I want to learn SQL')
         self.assertEqual(plain['item_types'], list(constants.ITEM_TYPES))
 
+    def test_journey_language_never_overrides_a_chosen_type_or_a_negation(self):
+        opted_out = dict(self.prior, item_types=['course', 'executive_education'])  # "no programs, please"
+        for message in ("shorter ones please, I don't need a certificate", 'does this one come with a certificate?',
+                        'no credentials needed, just skills', 'make it a learning path'):
+            merged = intent.merge(opted_out, {}, 'refine', message=message)  # no item_types: unchanged
+            self.assertEqual(merged['item_types'], ['course', 'executive_education'], message)
+        for message in ("I don't need a certificate, just teach me SQL", 'a learning path, not a program'):
+            merged = intent.merge(None, {'skills': ['sql']}, 'replace', message=message)
+            self.assertEqual(merged['item_types'], list(constants.ITEM_TYPES), message)
+        # With no type chosen yet, a refinement into a journey still leads with programs.
+        journey = intent.merge(self.prior, {}, 'refine', message='make it a learning path')
+        self.assertEqual(journey['item_types'], ['program'])
+
     def test_short_or_quick_in_words_sets_a_four_week_limit(self):
-        for message in ('Advanced level, and short.', 'Practical and quick, please', 'something brief'):
+        for message in ('Advanced level, and short.', 'Practical and quick, please', 'something brief',
+                        'I want short courses on SQL', 'Something short and practical'):
             merged = intent.merge(None, {'skills': ['ml']}, 'replace', message=message)
             self.assertEqual(merged['constraints']['max_weeks'], intent.QUICK_MAX_WEEKS, message)
         # A number the learner gave wins, and other wording sets nothing.
         stated = intent.merge(None, {'constraints': {'max_weeks': 8}}, 'replace', message='quick, under 8 weeks')
         self.assertEqual(stated['constraints']['max_weeks'], 8)
-        for message in ('I want a shortlist of SQL courses', 'help me get hired fast'):
+        for message in ('I want a shortlist of SQL courses', 'help me get hired fast',
+                        'My short-term goal is to become a manager', 'Quick question: what is good for SQL?',
+                        'In short, I want to learn SQL', 'short selling strategies', 'legal brief writing',
+                        'nothing too short', 'I brief executives on strategy', 'short story writing'):
             merged = intent.merge(None, {'skills': ['sql']}, 'replace', message=message)
             self.assertFalse((merged.get('constraints') or {}).get('max_weeks'), message)
         # A limit already in the conversation stays.
