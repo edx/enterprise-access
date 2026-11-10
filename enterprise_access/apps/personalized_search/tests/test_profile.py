@@ -75,7 +75,7 @@ class ProfileEmissionTests(TestCase):
     MERGED = dict(empty_intent(), skills=['Leadership'], constraints={'pacing': 'instructor_paced'})
 
     def parse(self, text, candidates=None):
-        parser = ComposeParser(candidates=default_candidates() if candidates is None else candidates, shown_ids=[],
+        parser = ComposeParser(candidates=default_candidates() if candidates is None else candidates, excluded_ids=[],
                                followup_attribute='level', intent=self.MERGED)
         return parser.feed(text) + parser.finish()
 
@@ -112,7 +112,7 @@ class ProfileEmissionTests(TestCase):
         self.assertEqual(final['chips'], ['Leadership'])  # what the results reflect
 
     def test_an_early_profile_with_nothing_reflected_ends_with_no_chips(self):
-        parser = ComposeParser(candidates=default_candidates(), shown_ids=[], followup_attribute='level',
+        parser = ComposeParser(candidates=default_candidates(), excluded_ids=[], followup_attribute='level',
                                intent=dict(empty_intent(), constraints={'pacing': 'instructor_paced'}))
         header = {'block': 'page_header', 'title': 'Lead', 'dek': 'd'}
         section = {'block': 'item_section', 'item_type': 'course', 'dek': 'd',
@@ -123,7 +123,7 @@ class ProfileEmissionTests(TestCase):
         self.assertEqual([p['chips'] for p in profiles], [['Instructor-led'], []])
 
     def test_not_emitted_when_nothing_the_learner_said_is_reflected(self):
-        parser = ComposeParser(candidates=default_candidates(), shown_ids=[], followup_attribute='level',
+        parser = ComposeParser(candidates=default_candidates(), excluded_ids=[], followup_attribute='level',
                                intent=dict(empty_intent(), constraints={'pacing': 'instructor_paced'}))
         section = {'block': 'item_section', 'item_type': 'course', 'dek': 'd',
                    'items': [{'item_id': 'edX+C1', 'why': 'w'}]}
