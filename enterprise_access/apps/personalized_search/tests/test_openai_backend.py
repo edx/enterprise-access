@@ -34,6 +34,12 @@ class RequestParamsTests(TestCase):
         ('gpt-5.4-mini', 'minimal', 'none', 400),
         ('gpt-5.4-mini', 'low', 'low', 400 + openai_backend.REASONING_HEADROOM_TOKENS),
         ('gpt-5.6-terra', 'medium', 'medium', 400 + openai_backend.REASONING_HEADROOM_TOKENS),
+        ('gpt-5.6-luna', 'minimal', 'none', 400),
+        ('gpt-6-luna', None, 'none', 400),
+        ('gpt-6.1-terra', 'xhigh', 'xhigh', 400 + openai_backend.REASONING_HEADROOM_TOKENS),
+        # sol and astra start at low, which reasons, so it gets the headroom too.
+        ('gpt-6.1-sol', None, 'low', 400 + openai_backend.REASONING_HEADROOM_TOKENS),
+        ('gpt-6-astra', 'none', 'low', 400 + openai_backend.REASONING_HEADROOM_TOKENS),
     )
     @ddt.unpack
     def test_params(self, model, effort, expected_effort, expected_max):
@@ -41,6 +47,12 @@ class RequestParamsTests(TestCase):
         self.assertEqual(params.get('reasoning_effort'), expected_effort)
         self.assertEqual(params['max_completion_tokens'], expected_max)
         self.assertNotIn('max_tokens', params)
+
+    @ddt.data(('gpt-6-luna', 'max'), ('gpt-6.1-sol', 'max'), ('gpt-6.1-terra', 'extreme'))
+    @ddt.unpack
+    def test_tiered_family_refuses_an_effort_it_does_not_take(self, model, effort):
+        with self.assertRaises(ModelConfigurationError):
+            openai_backend.resolve_effort(model, effort)
 
     def test_cost(self):
         usage = Usage(model='gpt-4.1-mini', effort=None, input_tokens=1000, cached_input_tokens=500,

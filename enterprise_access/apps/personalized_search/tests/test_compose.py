@@ -6,7 +6,12 @@ from unittest import mock
 from django.test import TestCase
 
 from enterprise_access.apps.personalized_search.core import compose, constants
-from enterprise_access.apps.personalized_search.tests.helpers import default_candidates
+from enterprise_access.apps.personalized_search.tests.helpers import (
+    candidate,
+    course_hit,
+    default_candidates,
+    program_hit
+)
 
 
 def line(obj):
@@ -295,13 +300,36 @@ class ComposeParserTests(TestCase):
         self.assertEqual([s['item_type'] for s in sections], ['executive_education', 'course', 'program'])
         self.assertTrue(all(s['fallback'] for s in sections[1:]))
 
-    def test_without_a_preferred_type_no_alternative_sections_are_added(self):
+    def section_types_for(self, item_types):
         parser = compose.ComposeParser(candidates=default_candidates(), shown_ids=[], followup_attribute='level',
-                                       intent={'item_types': ['course', 'executive_education', 'program']})
+                                       intent={'item_types': item_types})
         parts = parser.feed('Hi.\n@@BLOCKS@@\n' + line(section('course', ['edX+C1']))) + parser.finish()
-        types = [p['data']['props']['item_type'] for p in parts
-                 if p['type'] == 'data-block' and p['data']['type'] == 'item_section']
-        self.assertEqual(types, ['course'])
+        return [p['data']['props']['item_type'] for p in parts
+                if p['type'] == 'data-block' and p['data']['type'] == 'item_section']
+
+    def test_related_programs_are_always_offered_but_other_types_only_as_alternatives(self):
+        self.assertEqual(self.section_types_for(['course', 'executive_education', 'program']), ['course', 'program'])
+
+    def test_no_programs_when_the_learner_asked_for_courses_or_opted_out(self):
+        self.assertEqual(self.section_types_for(['course']), ['course', 'executive_education'])
+        self.assertEqual(self.section_types_for(['course', 'executive_education']), ['course'])
+
+    def test_the_prompt_leads_with_programs_and_never_pads(self):
+        self.assertIn('take the top pick from programs and write the program section first', compose.SYSTEM_PROMPT)
+        self.assertIn('Never add a section, or an item, just to fill space', compose.SYSTEM_PROMPT)
+
+    def test_server_added_sections_use_only_closely_related_candidates(self):
+        def program_section(tier, rank):
+            cands = [candidate(course_hit('edX+C1')), candidate(program_hit('p-9'), tier=tier, rank=rank)]
+            parser = compose.ComposeParser(candidates=cands, shown_ids=[], followup_attribute='level',
+                                           intent={'item_types': list(constants.ITEM_TYPES)})
+            parts = parser.feed('Hi.\n@@BLOCKS@@\n' + line(section('course', ['edX+C1']))) + parser.finish()
+            sections = [p['data']['props'] for p in parts
+                        if p['type'] == 'data-block' and p['data']['type'] == 'item_section']
+            return [props for props in sections if props['item_type'] == 'program']
+        self.assertTrue(program_section(tier=2, rank=12))   # matched the learner's skills
+        self.assertTrue(program_section(tier=1, rank=2))    # a top keyword match
+        self.assertFalse(program_section(tier=1, rank=12))  # loosely related: never added as filler
 
     def test_the_prompt_asks_for_the_followup_right_after_the_header(self):
         prompt = compose.SYSTEM_PROMPT
