@@ -147,6 +147,11 @@ class SubRequestTests(TestCase):
 class PrefilterTests(TestCase):
     """``prefilter`` dedupes, scores and caps."""
 
+    def test_with_no_type_asked_for_related_programs_lead(self):
+        raw = [candidate(course_hit('edX+C1'), tier=2, rank=0), candidate(program_hit('p-1'), tier=2, rank=0)]
+        kept = retrieval.prefilter(raw, dict(INTENT, level=None))
+        self.assertEqual(kept[0]['card']['item_type'], 'program')
+
     def test_a_preferred_type_leads_and_may_fill_more_places(self):
         raw = [candidate(course_hit(f'edX+C{i}'), tier=2, rank=i) for i in range(12)]
         raw += [candidate(course_hit(f'Yale+E{i}', exec_ed=True), tier=1, rank=i) for i in range(12)]
