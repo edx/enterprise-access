@@ -1,4 +1,5 @@
 """Tests for the turn orchestrator with fake steps (no OpenAI or Algolia), persisting through the Django store."""
+import dataclasses
 import itertools
 import json
 import uuid
@@ -12,7 +13,7 @@ from enterprise_access.apps.personalized_search.adapters.memory_store import InM
 from enterprise_access.apps.personalized_search.core.errors import ModelError
 from enterprise_access.apps.personalized_search.core.orchestrator import ModelChoice, Steps, TurnContext, run_turn
 from enterprise_access.apps.personalized_search.core.ports import Usage
-from enterprise_access.apps.personalized_search.core.retrieval import RetrievalFailed
+from enterprise_access.apps.personalized_search.core.retrieval import RetrievalFailed, SearchResults
 from enterprise_access.apps.personalized_search.models import ChatSession, ChatTurn, ItemFeedback
 from enterprise_access.apps.personalized_search.tests.helpers import default_candidates
 
@@ -87,7 +88,13 @@ class RunTurnTests(TestCase):
     def test_normal_turn(self):
         parts = list(run_turn(self.ctx, fake_steps()))
         types = [p['type'] for p in parts]
-        self.assertEqual(types[:3], ['start', 'data-session', 'data-status'])
+        self.assertEqual(types[:4], ['start', 'data-session', 'data-analytics', 'data-status'])
+        analytics = parts[2]['data']
+        self.assertEqual((analytics['conversation_id'], analytics['turn_id'], analytics['turn_index']),
+                         (self.session['uuid'], TURN_UUID, 1))
+        section = [p['data'] for p in parts if p['type'] == 'data-block' and p['data']['type'] == 'item_section'][0]
+        self.assertEqual({k: section['props']['items'][0][k] for k in ('section', 'position')},
+                         {'section': 'course', 'position': 1})
         self.assertEqual(types[-3:], ['data-session', 'data-timing', 'finish'])
         self.assertEqual(parts[0]['messageId'], f'turn_{TURN_UUID}')
         self.assertEqual([p['data']['step'] for p in parts if p['type'] == 'data-status'],
@@ -97,12 +104,13 @@ class RunTurnTests(TestCase):
         self.assertLessEqual(timing['first_text_ms'], timing['first_section_ms'])
         self.assertIsNotNone(timing['debug']['cost_usd'])
         saved = self.saved()
-        self.assertEqual((saved.turn_count, saved.item_count, saved.title), (1, 1, 'Leading'))
-        self.assertEqual(saved.shown_item_ids, ['edX+C1'])
+        # The scripted course section, plus the related programs offered alongside it.
+        self.assertEqual((saved.turn_count, saved.item_count, saved.title), (1, 3, 'Leading'))
+        self.assertEqual(saved.shown_item_ids, ['edX+C1', 'p-1', 'p-2'])
         self.assertIsNone(saved.active_turn_started_at)
         turn = ChatTurn.objects.get(session=saved)
         self.assertEqual((str(turn.uuid), turn.sequence, turn.reply_text), (TURN_UUID, 1, 'Your page.'))
-        self.assertEqual(turn.item_ids, ['edX+C1'])
+        self.assertEqual(turn.item_ids, ['edX+C1', 'p-1', 'p-2'])
         stored = [p['type'] for p in turn.parts]
         self.assertNotIn('data-timing', stored)
         self.assertNotIn('data-status', stored)
@@ -194,6 +202,28 @@ class RunTurnTests(TestCase):
                          {'edX+C1': None, 'edX+C2': 'new'})
         self.assertEqual(ChatTurn.objects.filter(session_id=self.session['uuid']).count(), 2)
 
+    def test_catalog_totals_reach_the_section(self):
+        steps = fake_steps(retrieve=lambda *a, **kw: SearchResults(default_candidates(), {'course': 37}))
+        sections = {p['data']['props']['item_type']: p['data']['props'] for p in run_turn(self.ctx, steps)
+                    if p['type'] == 'data-block' and p['data']['type'] == 'item_section'}
+        self.assertEqual(sections['course']['total'], 37)  # "See all (37)"
+        self.assertNotIn('total', sections['program'])
+
+    def test_first_tiles_are_timed_from_the_first_block_with_cards(self):
+        reads, ticks = [], itertools.count()
+
+        def clock():
+            reads.append(next(ticks) * 0.1)
+            return reads[-1]
+
+        compose = COMPOSE.replace('@@BLOCKS@@\n', '@@BLOCKS@@\n{"block":"top_pick","item_id":"p-1","reason":"R"}\n')
+        at_top_pick, timing = None, None
+        for part in run_turn(dataclasses.replace(self.ctx, clock=clock), fake_steps(compose_text=compose)):
+            if part['type'] == 'data-block' and part['data']['type'] == 'top_pick':
+                at_top_pick = round(reads[-1] * 1000)  # the clock read just before the top pick went out
+            timing = part['data'] if part['type'] == 'data-timing' else timing
+        self.assertEqual(timing['first_section_ms'], at_top_pick)
+
     def test_first_turn_cards_carry_no_status(self):
         parts = list(run_turn(self.ctx, fake_steps()))
         items = [i for p in parts if p['type'] == 'data-block' and p['data']['type'] == 'item_section'
@@ -228,8 +258,8 @@ class TurnObservabilityTests(TestCase):
         self.assertEqual(record['outcome'], 'done')
         self.assertEqual(record['session_uuid'], self.session['uuid'])
         self.assertEqual((record['sequence'], record['backend']), (1, 'openai'))
-        self.assertEqual(record['item_ids'], ['edX+C1'])
-        self.assertEqual(record['item_count'], 1)
+        self.assertEqual(record['item_ids'], ['edX+C1', 'p-1', 'p-2'])
+        self.assertEqual(record['item_count'], 3)  # the course plus the related programs
         self.assertEqual(len(record['candidate_ids']), 8)
         self.assertFalse(record['fallback'])
         self.assertEqual(record['dropped_lines'], 0)
@@ -255,7 +285,7 @@ class TurnObservabilityTests(TestCase):
             gen.close()
         (record,) = self.turn_records(logs)
         self.assertEqual(record['outcome'], 'aborted')
-        self.assertEqual(record['item_ids'], ['edX+C1'])
+        self.assertEqual(record['item_ids'], ['edX+C1'])  # stopped before the related programs were added
 
     def test_redirect_makes_exactly_one_model_call(self):
         calls = []
@@ -298,7 +328,7 @@ class PortableTurnTests(PlainTestCase):
         parts = list(run_turn(ctx, steps))
         self.assertEqual(parts[-1]['type'], 'finish')
         self.assertEqual(parts[-2]['data']['backend'], 'fake')
-        self.assertEqual(memory.sessions[session['uuid']]['shown_item_ids'], ['edX+C1'])
+        self.assertEqual(memory.sessions[session['uuid']]['shown_item_ids'], ['edX+C1', 'p-1', 'p-2'])
         self.assertIsNone(memory.sessions[session['uuid']]['locked_at'])
 
     def test_retrieval_timeout_is_capped_by_the_deadline(self):
@@ -309,7 +339,7 @@ class PortableTurnTests(PlainTestCase):
         ctx = TurnContext(session=session, message='m', intent_model=ModelChoice('m1', None),
                           compose_model=ModelChoice('m1', None), scope=None, clock=lambda: next(times))
         steps = Steps(intent=lambda **_: (self.INTENT, Usage(model='m1', effort=None)),
-                      retrieve=lambda *a, timeout_s: seen.append(timeout_s) or [],
+                      retrieve=lambda *a, timeout_s, **_: seen.append(timeout_s) or [],
                       compose=lambda **_: (d for d in ['Nothing fits.']))
         list(run_turn(ctx, steps))
         self.assertEqual(len(seen), 1)

@@ -18,6 +18,10 @@ COMPOSE_MAX_TOKENS = 1800  # room for the top pick and the comparison (KD-11)
 # Prefilter caps (spec "Retrieval": top 20 with type caps).
 CANDIDATE_CAPS = {'course': 10, 'executive_education': 5, 'program': 5}
 MAX_CANDIDATES = 20
+# A type the learner prefers may fill up to this many shortlist places (the others keep their caps).
+PREFERRED_TYPE_CAP = 10
+# With no type asked for, related programs lead: their prefilter score gets this boost.
+PROGRAM_LEAD_BOOST = 0.5  # less than a tier, so it reorders within a tier and never lifts a keyword-only program
 MAX_ITEMS_PER_SECTION = 3
 MAX_ITEMS_PER_TURN = 12  # top pick + up to 3 compared + sections (KD-11)
 MAX_COMPARE_OPTIONS = 3
@@ -43,13 +47,36 @@ FOLLOWUP_TEMPLATES = {
              ['Courses', 'Executive education', 'Programs']),
     'open': ('What else would you like to learn?', OPENING_CHIPS),
 }
+# What makes an idea cover a fixed chip (lowercase phrases; a match drops the fixed chip). Kept narrow, so an
+# idea about a topic ("deeper fermentation") doesn't stand in for a choice it doesn't make.
+FIXED_CHIP_MATCHES = {
+    'Introductory': ('introductory', 'beginner', 'basics', 'from scratch', 'new to'),
+    'Intermediate': ('intermediate',),
+    'Advanced': ('advanced', 'expert'),
+    'Under 4 weeks': ('under 4 weeks', 'quick', 'short', 'shortest', 'fastest'),
+    '1 to 3 months': ('month',),
+    'Longer is fine': ('longer', 'in-depth', 'in depth'),
+    'Self-paced': ('self-paced', 'self paced', 'own pace'),
+    'Instructor-led': ('instructor', 'instructor-led', 'live session', 'live class', 'cohort', 'scheduled'),
+    'Either works': ('either',),
+    # Only phrases that choose the type: "the shortest course" is about length, not courses over programs.
+    'Courses': ('individual course', 'single course', 'standalone course', 'just courses', 'only courses',
+                'courses only', 'courses instead'),
+    'Executive education': ('executive education', 'exec ed'),
+    'Programs': ('program', 'certificate'),
+}
+
+# The model's own chip ideas per turn, shown after the fixed chips for the follow-up attribute.
+MAX_IDEAS = 3
 
 # Character caps (spec "LLM step contracts": the caps are authoritative).
 CAPS = {
     'title': 80, 'dek': 400, 'section_dek': 200, 'why': 400, 'fit_tag': 24, 'fit_count': 3,
     'question': 200, 'suggestion': 48, 'session_title': 60,
-    'insight_title': 60, 'insight_body': 600, 'plan_note': 80,
+    'insight_title': 60, 'insight_body': 600, 'plan_note': 80, 'plan_why': 160,
     'reason': 160, 'check': 40, 'check_count': 3, 'best_for': 60, 'caveat_title': 60, 'caveat_body': 300,
+    # The intent step's contract: how many skills and roles, and how long its query and each list entry may be.
+    'skills': 8, 'roles': 3, 'intent_query': 200, 'intent_list_item': 80,
 }
 
 ATTRIBUTES_TO_RETRIEVE = [

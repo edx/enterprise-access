@@ -31,9 +31,39 @@ class WiringTests(TestCase):
         self.assertEqual((compose_kwargs['max_tokens'], compose_kwargs['timeout_s'], compose_kwargs['usage']),
                          (constants.COMPOSE_MAX_TOKENS, 5, usage))
 
+    @override_settings(PERSONALIZED_SEARCH_CONTENT_LANGUAGES={'en': 'English', 'es': 'Spanish'})
+    def test_content_language_follows_the_portal_locale_like_learner_pathways(self):
+        cases = {'es': ('es', 'Spanish'), 'es-419': ('es', 'Spanish'), 'ES_mx': ('es', 'Spanish'),
+                 'fr': ('en', 'English'), '': ('en', 'English'), None: ('en', 'English')}
+        for locale, expected in cases.items():
+            self.assertEqual(wiring.content_language(locale), expected, locale)
+
+    @override_settings(PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE={'filter': 'x:"y"'},
+                       PERSONALIZED_SEARCH_CONTENT_LANGUAGES={'en': 'English', 'es': 'Spanish'})
+    def test_the_catalog_scope_carries_the_content_language(self):
+        scope = wiring.catalog_scope(request=None, enterprise_customer_uuid='e-1', locale='es')
+        self.assertEqual((scope.locale, scope.language_name), ('es', 'Spanish'))
+
     def test_turn_context_uses_the_timeout_settings(self):
         intent, compose = wiring.default_models()
         with override_settings(PERSONALIZED_SEARCH_INTENT_TIMEOUT_S=4, PERSONALIZED_SEARCH_COMPOSE_READ_TIMEOUT_S=6):
             ctx = wiring.turn_context(session={}, message='m', intent_model=intent, compose_model=compose, scope=None)
         self.assertEqual((ctx.intent_timeout_s, ctx.compose_timeout_s), (4, 6))
         self.assertEqual(ctx.platform('gpt-4.1-mini'), 'openai')
+
+    @override_settings(PERSONALIZED_SEARCH_SHORTLIST_SIZE=20, PERSONALIZED_SEARCH_SHORTLIST_SIZES={'gpt-6.1-terra': 40})
+    def test_the_shortlist_size_follows_the_compose_model(self):
+        intent, _ = wiring.default_models()
+
+        def shortlist(model):
+            return wiring.turn_context(session={}, message='m', intent_model=intent,
+                                       compose_model=wiring.ModelChoice(model, 'low'), scope=None).shortlist
+        self.assertEqual((shortlist('gpt-6.1-terra'), shortlist('gpt-6-luna')), (40, 20))
+
+    def test_retrieve_forwards_the_shortlist_size(self):
+        catalog = mock.Mock()
+        catalog.search.return_value = [{'hits': []}] * 20
+        steps = wiring.steps(catalog=catalog, store=mock.Mock())
+        steps.retrieve({'query': 'q', 'item_types': ['course']}, mock.Mock(filter='f', course_language_filter='l',
+                       program_language_filter='l', metadata_language_filter='m'), [], timeout_s=1, shortlist=40)
+        self.assertEqual(catalog.search.call_args.args[0][0]['hitsPerPage'], 60)

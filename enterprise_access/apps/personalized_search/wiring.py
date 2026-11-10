@@ -10,6 +10,7 @@ from enterprise_access.apps.bffs.api import get_and_cache_secured_algolia_search
 from enterprise_access.apps.personalized_search.adapters.algolia import AlgoliaCatalog, secured_key_from_payload
 from enterprise_access.apps.personalized_search.adapters.django_store import DjangoSessionStore
 from enterprise_access.apps.personalized_search.adapters.openai_backend import OpenAIBackend
+from enterprise_access.apps.personalized_search.adapters.segment_sink import segment_emit
 from enterprise_access.apps.personalized_search.adapters.xpert_backend import XpertBackend
 from enterprise_access.apps.personalized_search.core import constants, retrieval
 from enterprise_access.apps.personalized_search.core.errors import ModelConfigurationError
@@ -58,10 +59,11 @@ def steps(*, registry: ModelRegistry | None = None, catalog=None, store=None, pe
         return registry.stream_text(model=model, effort=effort, system=system, user=user,
                                     max_tokens=constants.COMPOSE_MAX_TOKENS, timeout_s=timeout_s, usage=usage)
 
-    def retrieve(merged, scope, excluded, timeout_s=constants.RETRIEVAL_TIMEOUT_S):
-        return retrieval.search(merged, scope, excluded, catalog=catalog, timeout_s=timeout_s)
+    def retrieve(merged, scope, excluded, timeout_s=constants.RETRIEVAL_TIMEOUT_S, shortlist=constants.MAX_CANDIDATES):
+        return retrieval.search(merged, scope, excluded, catalog=catalog, timeout_s=timeout_s, shortlist=shortlist)
 
-    return Steps(intent=intent, retrieve=retrieve, compose=compose, persist=store.persist_turn if persist else None)
+    return Steps(intent=intent, retrieve=retrieve, compose=compose, persist=store.persist_turn if persist else None,
+                 emit=segment_emit if persist else None)
 
 
 def _step_timeout(registry: ModelRegistry, model: str, default_s: float) -> float:
@@ -73,20 +75,51 @@ def _step_timeout(registry: ModelRegistry, model: str, default_s: float) -> floa
     return own or default_s
 
 
+def shortlist_size(compose_model: str) -> int:
+    """
+    How many candidates compose chooses from: ``PERSONALIZED_SEARCH_SHORTLIST_SIZES`` for the compose model,
+    else ``PERSONALIZED_SEARCH_SHORTLIST_SIZE``. Larger models make better use of a longer list.
+    """
+    sizes = getattr(settings, 'PERSONALIZED_SEARCH_SHORTLIST_SIZES', None) or {}
+    default = getattr(settings, 'PERSONALIZED_SEARCH_SHORTLIST_SIZE', None) or constants.MAX_CANDIDATES
+    return int(sizes.get(compose_model) or default)
+
+
 def turn_context(*, session: dict, message: str, intent_model: ModelChoice, compose_model: ModelChoice,
-                 scope: CatalogScope, debug: bool = False, registry: ModelRegistry | None = None) -> TurnContext:
-    """A ``TurnContext`` with the configured timeouts and the registry's platform names."""
+                 scope: CatalogScope, debug: bool = False, debug_overrides: bool = False,
+                 registry: ModelRegistry | None = None) -> TurnContext:
+    """
+    A ``TurnContext`` with the configured timeouts, shortlist size and the registry's platform names.
+    ``debug`` turns on the debug read-out; ``debug_overrides`` says this turn's models came from debug
+    overrides, which tags its usage events (``is_debug``).
+    """
     registry = registry or model_registry()
     return TurnContext(
         session=session, message=message, intent_model=intent_model, compose_model=compose_model, scope=scope,
         debug=debug, platform=registry.platform_of,
+        analytics={'cohort': settings.PERSONALIZED_SEARCH_ANALYTICS_COHORT,
+                   'engine': settings.PERSONALIZED_SEARCH_ENGINE_LABEL, 'is_debug': debug_overrides},
         intent_timeout_s=_step_timeout(registry, intent_model.model, settings.PERSONALIZED_SEARCH_INTENT_TIMEOUT_S),
         compose_timeout_s=_step_timeout(registry, compose_model.model,
                                         settings.PERSONALIZED_SEARCH_COMPOSE_READ_TIMEOUT_S),
+        shortlist=shortlist_size(compose_model.model),
     )
 
 
-def dev_catalog_scope() -> CatalogScope | None:
+def content_language(locale: str | None) -> tuple[str, str]:
+    """
+    ``(locale, Algolia language name)`` for the learner's portal locale, as Learner Pathways resolves it:
+    the base language (``es-419`` -> ``es``) when ``PERSONALIZED_SEARCH_CONTENT_LANGUAGES`` supports it,
+    otherwise English.
+    """
+    supported = getattr(settings, 'PERSONALIZED_SEARCH_CONTENT_LANGUAGES', None) or {'en': 'English'}
+    base = (locale or '').split('-')[0].split('_')[0].lower()
+    if base in supported:
+        return base, supported[base]
+    return 'en', supported.get('en', 'English')
+
+
+def dev_catalog_scope(locale: str | None = None) -> CatalogScope | None:
     """
     Dev only: the plain key plus an explicit catalog filter (``PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE``).
     The Algolia client still refuses it unless ``ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH`` is on.
@@ -94,18 +127,22 @@ def dev_catalog_scope() -> CatalogScope | None:
     dev_scope = getattr(settings, 'PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE', None)
     if not dev_scope:
         return None
-    return CatalogScope(filter=dev_scope['filter'], allow_unscoped=True, label=dev_scope.get('label'))
+    code, name = content_language(locale)
+    return CatalogScope(filter=dev_scope['filter'], allow_unscoped=True, label=dev_scope.get('label'),
+                        locale=code, language_name=name)
 
 
-def catalog_scope(request, enterprise_customer_uuid: str) -> CatalogScope:
-    """The learner's secured key and enterprise filter, or the dev catalog scope when configured."""
-    dev_scope = dev_catalog_scope()
+def catalog_scope(request, enterprise_customer_uuid: str, locale: str | None = None) -> CatalogScope:
+    """The learner's secured key and enterprise filter (or the dev scope), in the learner's content language."""
+    dev_scope = dev_catalog_scope(locale)
     if dev_scope:
         return dev_scope
     payload = get_and_cache_secured_algolia_search_keys(request, enterprise_customer_uuid)
+    code, name = content_language(locale)
     return CatalogScope(
         filter=f'enterprise_customer_uuids:"{enterprise_customer_uuid}"',
         secured_key=secured_key_from_payload(payload),
+        locale=code, language_name=name,
     )
 
 

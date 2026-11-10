@@ -9,6 +9,9 @@ outside Django. Rules from the model benchmark:
   otherwise spend the whole budget reasoning; 5.1 and later take ``none`` (not ``minimal``);
   4.x rejects the parameter;
 - reasoning tokens count against ``max_completion_tokens``, so efforts above the lowest need headroom.
+
+GPT-6 and the gpt-5.6 tiers (probed 2026-11-09 through Chat Completions) take ``none`` to ``xhigh``,
+except the larger sol and astra tiers, whose lowest is ``low``; none of them takes ``minimal`` or ``max``.
 """
 import re
 import time
@@ -19,12 +22,31 @@ from enterprise_access.apps.personalized_search.core.ports import Usage
 
 REASONING_HEADROOM_TOKENS = 3000
 _FIRST_GEN_GPT5 = re.compile(r'^gpt-5(-mini|-nano)?(-\d{4}-\d{2}-\d{2})?$')
+_TIERED = re.compile(r'^gpt-(6(\.\d+)?|5\.6)-(luna|terra|sol|astra)$')
+# Efforts each tiered family accepts, lowest first.
+TIER_EFFORTS = {
+    'luna': ('none', 'low', 'medium', 'high', 'xhigh'),
+    'terra': ('none', 'low', 'medium', 'high', 'xhigh'),
+    'sol': ('low', 'medium', 'high', 'xhigh'),
+    'astra': ('low', 'medium', 'high', 'xhigh'),
+}
 
 
 def resolve_effort(model: str, effort: str | None) -> str | None:
-    """The ``reasoning_effort`` to send for ``model``, or None to omit it."""
+    """
+    The ``reasoning_effort`` to send for ``model``, or None to omit it. None, ``none`` and ``minimal``
+    mean the family's lowest; an effort a tiered family doesn't take raises ``ModelConfigurationError``.
+    """
     if model.startswith('gpt-4'):
         return None
+    tiered = _TIERED.match(model)
+    if tiered:
+        efforts = TIER_EFFORTS[tiered.group(3)]
+        if effort in (None, '', 'none', 'minimal'):
+            return efforts[0]
+        if effort not in efforts:
+            raise ModelConfigurationError(f'{model!r} does not take reasoning effort {effort!r}; use one of {efforts}.')
+        return effort
     lowest = 'minimal' if _FIRST_GEN_GPT5.match(model) else 'none'
     if effort in (None, '', 'none', 'minimal'):
         return lowest
@@ -119,6 +141,7 @@ class OpenAIBackend:
         Closing the generator closes the HTTP response (Stop).
         """
         usage.prices = self._models.get(model)
+        usage.effort = resolve_effort(model, effort)  # what is billed (sol and astra send low for None)
         client = self._client(timeout_s)
         started = time.monotonic()
         try:
@@ -136,6 +159,9 @@ class OpenAIBackend:
                     _fill_usage(usage, chunk.usage)
                 if not chunk.choices:
                     continue
+                if getattr(chunk.choices[0], 'finish_reason', None):
+                    # 'length' means the token budget cut the answer short (the last lines are lost).
+                    usage.extra['finish_reason'] = chunk.choices[0].finish_reason
                 delta = chunk.choices[0].delta.content
                 if delta:
                     if usage.first_token_ms is None:

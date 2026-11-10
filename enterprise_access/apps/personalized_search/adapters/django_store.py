@@ -144,8 +144,20 @@ class DjangoHistoryStore:
         return {
             'uuid': str(session.uuid), 'title': session.title, 'created': session.created,
             'turns': [{'sequence': t.sequence, 'user_message': t.user_message, 'parts': t.parts,
-                       'created': t.created} for t in session.turns.order_by('sequence')],
+                       'rating': t.rating, 'created': t.created} for t in session.turns.order_by('sequence')],
         }
+
+    def rate_turn(self, *, session_uuid, sequence: int, lms_user_id, enterprise_customer_uuid, rating) -> dict:
+        """Set or clear the learner's thumbs on one of their replies. Raises ``SessionNotFound``."""
+        turn = ChatTurn.objects.filter(
+            session__uuid=session_uuid, session__lms_user_id=lms_user_id,
+            session__enterprise_customer_uuid=enterprise_customer_uuid, sequence=sequence,
+        ).first()
+        if not turn:
+            raise SessionNotFound()
+        turn.rating = rating
+        turn.save(update_fields=['rating', 'modified'])
+        return {'sequence': sequence, 'rating': rating, 'turn_id': str(turn.uuid)}
 
 
 class DjangoFeedbackStore:

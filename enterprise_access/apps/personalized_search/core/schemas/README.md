@@ -5,7 +5,7 @@ These schemas describe what `POST /api/v1/personalized-search/turns/` streams, s
 | File | Describes |
 | --- | --- |
 | `stream-parts.v1.schema.json` | One stream part. Each SSE frame is `data: <part JSON>`, and the stream ends with `data: [DONE]`. The parts are a subset of the AI SDK UI Message Stream v1, and the response carries the header `x-vercel-ai-ui-message-stream: v1`. |
-| `block-catalog.v1.schema.json` | The `data` of a `data-block` part: a learning-page block (`page_header`, `item_section`, `insight`, `plan`) at catalog version `v: 1`. |
+| `block-catalog.v1.schema.json` | The `data` of a `data-block` part: a learning-page block (`page_header`, `profile`, `caveat`, `top_pick`, `compare`, `item_section`, `insight`, `plan`) at catalog version `v: 1`. |
 
 ## Rules
 - A turn starts with `start` and `data-session`, and ends with `finish` or `error`. Nothing follows either of those except `[DONE]`.
@@ -31,3 +31,9 @@ Each entry is optional for consumers; older clients ignore it.
 | 2026-11-09 | New block type `caveat` (`title`, `body`), at most one per turn; `insight` is now also at most one per turn (server-side) |
 | 2026-11-09 | `item_section.total` (catalog matches for the type) and `item_section.reserve` (up to 2 next-best cards), both optional |
 | 2026-11-09 | Optional `item_card.status` (`new`): the card is new to the conversation since the previous turn. Results update in place, so earlier items may repeat |
+| 2026-11-09 | New stored part `data-analytics` (join keys for usage events); optional `item_card.section` and `item_card.position` |
+| 2026-11-10 | `item_section.reserve` cards carry `section` but no `position`: a reserve card isn't on the page until it fills a removed card |
+| 2026-11-09 | Optional `plan.why` (≤ 160): one sentence on why the steps are in this order |
+| 2026-11-09 | `profile` goes out twice under one block id: early (with the header, from the merged intent) and final (after the results), which replaces it in place. `chips` may be empty (nothing the results reflect: hide "Why these?") |
+| 2026-11-09 | `profile` is now emitted after the results, and keeps only the preferences at least half the shown results meet (server-side) |
+| 2026-11-09 | Optional `data-followups.ideas` (up to 3 model-written chips). `suggestions` are now always the fixed chips for the attribute, empty for `open` when there are ideas |
