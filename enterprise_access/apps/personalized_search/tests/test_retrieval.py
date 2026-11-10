@@ -91,9 +91,29 @@ class SubRequestTests(TestCase):
         programs = [r for r in spanish if r['filters'].startswith('content_type:program')]
         spanish_courses = 'language:"Spanish" AND metadata_language:"es"'
         self.assertTrue(courses and all(spanish_courses in r['filters'] for r in courses))
-        # Programs carry translated metadata too, but no single teaching language.
-        self.assertTrue(programs and all('metadata_language:"es"' in r['filters'] and 'language:"' not in
-                                         r['filters'].replace('metadata_language:"', '') for r in programs))
+        # Programs list every language they're taught in; one taught in the learner's language qualifies.
+        self.assertTrue(programs and all(spanish_courses in r['filters'] for r in programs))
+        english_programs = [r for r in english if r['filters'].startswith('content_type:program')]
+        self.assertTrue(english_programs and all('language:"English" AND metadata_language:"en"' in r['filters']
+                                                 for r in english_programs))
+
+    def test_a_larger_shortlist_asks_for_more_hits_and_keeps_more_candidates(self):
+        hits = [r['hitsPerPage'] for r in retrieval.build_sub_requests(INTENT, SCOPE, []) if r['hitsPerPage']]
+        more = [r['hitsPerPage'] for r in retrieval.build_sub_requests(INTENT, SCOPE, [], shortlist=40)
+                if r['hitsPerPage']]
+        self.assertEqual(more, [h * 2 for h in hits])
+        smaller = [r['hitsPerPage'] for r in retrieval.build_sub_requests(INTENT, SCOPE, [], shortlist=10)
+                   if r['hitsPerPage']]
+        self.assertEqual(smaller, hits)  # a smaller shortlist still searches as widely
+        raw = [candidate(course_hit(f'edX+K{i}'), rank=i) for i in range(30)] + \
+              [candidate(program_hit(f'p-{i}'), rank=i) for i in range(15)]
+        self.assertEqual(len(retrieval.prefilter(raw, {})), 15)  # course cap 10 + program cap 5
+        self.assertEqual(len(retrieval.prefilter(raw, {}, shortlist=40)), 30)  # caps scale: 20 + 10
+
+    def test_compose_view_names_a_programs_credential(self):
+        view = retrieval.compose_view(candidate(program_hit('p-1')))
+        self.assertEqual(view['program_type'], 'Professional Certificate')
+        self.assertNotIn('program_type', retrieval.compose_view(candidate(course_hit('edX+C1'))))
 
     @ddt.data(
         (['executive_education'], 'AND learning_type:"Executive Education"'),
