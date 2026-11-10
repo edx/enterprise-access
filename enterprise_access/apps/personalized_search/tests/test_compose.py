@@ -43,7 +43,8 @@ class ComposeParserTests(TestCase):
                 '\n' +  # blank lines are skipped silently
                 line(section('course', ['edX+C1', 'edX+C2'])) +
                 line(section('executive_education', ['Yale+E1'])) +
-                line({'block': 'followup', 'question': 'What level?', 'suggestions': ['Beginner'],
+                line({'block': 'followup', 'question': 'What level?',
+                      'ideas': ['Coaching for new managers', 'introductory', 'Coaching for new managers'],
                       'session_title': 'Leading a team'}) +
                 line({'block': 'plan', 'steps': [{'item_id': 'edX+C1', 'note': 'First'},
                                                  {'item_id': 'Yale+E1', 'note': 'Then'}]}))
@@ -59,7 +60,9 @@ class ComposeParserTests(TestCase):
         self.assertEqual(exec_ed['props']['label'], 'Executive education · 1 pick')
         followups = [p for p in parts if p['type'] == 'data-followups'][0]['data']
         self.assertEqual(followups['attribute'], 'level')
-        self.assertEqual(followups['suggestions'], ['Beginner', 'Introductory', 'Intermediate'])  # topped up to 3
+        # The fixed chips for the attribute, then the model's ideas minus repeats of them.
+        self.assertEqual(followups['suggestions'], ['Introductory', 'Intermediate', 'Advanced'])
+        self.assertEqual(followups['ideas'], ['Coaching for new managers'])
         self.assertEqual(len(self.blocks(parts, 'plan')[0]['props']['steps']), 2)
         self.assertEqual(parser.session_title, 'Leading a team')
         self.assertEqual(parser.dropped, [])
@@ -147,7 +150,7 @@ class ComposeParserTests(TestCase):
                 line({'block': 'insight', 'title': 'i' * 90, 'body': 'b' * 700}) +
                 line({'block': 'plan', 'steps': [{'item_id': 'edX+C1', 'note': 'n' * 100},
                                                  {'item_id': 'edX+C2', 'note': 'n'}]}) +
-                line({'block': 'followup', 'question': 'q' * 300, 'suggestions': ['s' * 60, 'x'],
+                line({'block': 'followup', 'question': 'q' * 300, 'ideas': ['s' * 60, 'x', 'y', 'z'],
                       'session_title': 'z' * 90}))
         parser, parts = self.parse(text)
         header = self.blocks(parts, 'page_header')[0]['props']
@@ -157,7 +160,8 @@ class ComposeParserTests(TestCase):
         self.assertEqual(len(self.blocks(parts, 'plan')[0]['props']['steps'][0]['note']), 80)
         followups = [p for p in parts if p['type'] == 'data-followups'][0]['data']
         self.assertEqual(len(followups['question']), 200)
-        self.assertEqual(len(followups['suggestions'][0]), 48)
+        self.assertEqual(len(followups['ideas'][0]), 48)
+        self.assertEqual(len(followups['ideas']), 3)
         self.assertEqual(len(parser.session_title), 60)
 
     def test_per_turn_item_cap_across_sections(self):
@@ -213,9 +217,26 @@ class ComposeParserTests(TestCase):
         followup = {'block': 'followup', 'question': 'Level?', 'suggestions': 'Intro'}
         _, parts = self.parse('Hi.\n@@BLOCKS@@\n' + line(item) + line(followup))
         self.assertEqual(self.blocks(parts, 'item_section')[0]['props']['items'][0]['fit'], [])
-        chips = [p for p in parts if p['type'] == 'data-followups'][0]['data']['suggestions']
-        self.assertNotIn('I', chips)
-        self.assertEqual(len(chips), 3)  # topped up from the attribute's defaults
+        followups = [p for p in parts if p['type'] == 'data-followups'][0]['data']
+        self.assertNotIn('ideas', followups)
+        self.assertEqual(followups['suggestions'], ['Introductory', 'Intermediate', 'Advanced'])
+
+    def test_with_nothing_left_to_narrow_the_ideas_replace_the_opening_chips(self):
+        followup = {'block': 'followup', 'question': 'What next?', 'ideas': ['Negotiation for new leads']}
+        _, parts = self.parse('Hi.\n@@BLOCKS@@\n' + line(followup), attribute='open')
+        followups = [p for p in parts if p['type'] == 'data-followups'][0]['data']
+        self.assertEqual((followups['suggestions'], followups['ideas']), ([], ['Negotiation for new leads']))
+
+    def test_the_opening_chips_come_back_only_without_ideas(self):
+        _, parts = self.parse('Hi.\n@@BLOCKS@@\n', attribute='open')
+        followups = [p for p in parts if p['type'] == 'data-followups'][0]['data']
+        self.assertEqual(followups['suggestions'], constants.OPENING_CHIPS)
+        self.assertNotIn('ideas', followups)
+
+    def test_older_prompts_suggestions_are_read_as_ideas(self):
+        followup = {'block': 'followup', 'question': 'Level?', 'suggestions': ['Team coaching']}
+        _, parts = self.parse('Hi.\n@@BLOCKS@@\n' + line(followup))
+        self.assertEqual([p for p in parts if p['type'] == 'data-followups'][0]['data']['ideas'], ['Team coaching'])
 
     def test_last_line_without_a_newline_is_handled(self):
         text = 'Hi.\n@@BLOCKS@@\n' + json.dumps(section('course', ['edX+C1']))
