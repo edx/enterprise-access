@@ -8,11 +8,16 @@ Xpert platform. Example:
         --output /tmp/ps-harness.jsonl
     ./manage.py report_personalized_search_harness /tmp/ps-harness.jsonl
 
+Three-turn persona conversations, with arm options (first-turn effort, shortlist size, candidate view):
+
+    ./manage.py run_personalized_search_harness --case-set conversations --conversation-style fixed \\
+        --arm 'luna=gpt-6-luna,gpt-6-luna@none+cold:high+cands:40+view:rich' --max-calls 100 \\
+        --output /tmp/ps-conversations.jsonl
+
 Catalog reads have no request to vend a secured key from, so this needs
 PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE (a dev-only explicit catalog filter) and
 ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH, like the pathway harness's --unscoped.
 """
-import functools
 import json
 import logging
 
@@ -38,22 +43,49 @@ def _load_personas():
     return load_personas()
 
 
+def _turn_context(registry, options):
+    """``wiring.turn_context`` with the registry, and any harness-only step timeouts."""
+    def build(**kwargs):
+        ctx = wiring.turn_context(registry=registry, **kwargs)
+        if options.get('intent_timeout_s'):
+            ctx.intent_timeout_s = options['intent_timeout_s']
+        if options.get('compose_timeout_s'):
+            ctx.compose_timeout_s = options['compose_timeout_s']
+        return ctx
+    return build
+
+
 class Command(BaseCommand):
     """``run_personalized_search_harness``."""
 
     help = 'Compare model arms (default: OpenAI best fit vs Xpert) on the same Personalized Search turns.'
 
     def add_arguments(self, parser):
-        parser.add_argument('--case-set', choices=('demo', 'personas', 'all'), default='all',
-                            help='Demo-script prompts, pathway_eval personas, or both.')
+        parser.add_argument('--case-set', choices=('demo', 'personas', 'all', 'conversations'), default='all',
+                            help='Demo-script prompts, pathway_eval personas, both, or three-turn persona '
+                                 'conversations.')
+        parser.add_argument('--conversation-style', choices=harness.CONVERSATION_STYLES, default='fixed',
+                            help='Conversations: scripted turns (fixed) or the best-matching follow-up chip '
+                                 '(adaptive).')
         parser.add_argument('--case-id', action='append', dest='case_ids',
                             help='Only these case or persona ids (repeatable).')
         parser.add_argument('--arm', action='append', dest='arms',
-                            help='NAME=INTENT[@EFFORT],COMPOSE[@EFFORT] (repeatable). Default: best fit and xpert.')
+                            help='NAME=INTENT[@EFFORT],COMPOSE[@EFFORT][+cold:EFFORT][+cands:N][+view:rich] '
+                                 '(repeatable). Default: best fit and xpert.')
         parser.add_argument('--runs', type=int, default=1, help='Repeat every case this many times.')
         parser.add_argument('--max-calls', type=int, required=True,
                             help='Hard cap on paid model calls, checked before each call.')
         parser.add_argument('--judge', action='store_true', help=f'Blind-judge each page with {harness.JUDGE_MODEL}.')
+        parser.add_argument('--intent-timeout-s', type=float,
+                            help='Harness only: the intent step timeout (default: the setting). Rows keep the '
+                                 'timings, so turns can still be checked against the production timeouts.')
+        parser.add_argument('--compose-timeout-s', type=float,
+                            help='Harness only: the compose read timeout (default: the setting).')
+        parser.add_argument('--no-server-sections', action='store_true',
+                            help='Conversations: show only the sections the model chose (no fallback, related-'
+                                 'program, alternative or refilled sections), to compare models alone.')
+        parser.add_argument('--turn-deadline-s', type=float,
+                            help='Harness only: the turn deadline (default: the spec\'s 20 s).')
         parser.add_argument('--dry-run', action='store_true', help='Print the plan and make no calls.')
         parser.add_argument('--output', help='JSONL path (default: stdout).')
 
@@ -65,10 +97,15 @@ class Command(BaseCommand):
             logging.getLogger(name).setLevel(logging.WARNING)
         registry = wiring.model_registry()
         try:
-            arms = ([harness.Arm.parse(spec, check_model=registry.check_model) for spec in options['arms']]
-                    if options['arms'] else _default_arms(registry))
+            arms = ([harness.Arm.parse(spec, check_model=registry.check_model, check_effort=registry.resolve_effort)
+                     for spec in options['arms']] if options['arms'] else _default_arms(registry))
         except (ValueError, ModelConfigurationError) as exc:
             raise CommandError(str(exc)) from exc
+        if options['case_set'] == 'conversations':
+            if options['judge']:
+                raise CommandError('--judge is not available for conversations.')
+            self._run_conversations(arms, options, registry)
+            return
         cases = []
         if options['case_set'] in ('demo', 'all'):
             cases += harness.demo_cases()
@@ -94,12 +131,44 @@ class Command(BaseCommand):
             for record in harness.run(cases=cases, arms=arms, scope=scope,
                                       steps=wiring.steps(registry=registry, persist=False),
                                       complete_json=registry.complete_json,
-                                      turn_context=functools.partial(wiring.turn_context, registry=registry),
+                                      turn_context=_turn_context(registry, options),
                                       runs=options['runs'], max_calls=options['max_calls'], judge=options['judge'],
                                       log=self.stderr.write):
                 out.write(json.dumps(record) + '\n')
                 out.flush()
                 count += 1
+        finally:
+            if options['output']:
+                out.close()
+        self.stderr.write(f'Wrote {count} turns.')
+
+    def _run_conversations(self, arms, options, registry):
+        """``--case-set conversations``: one row per turn of each persona conversation."""
+        conversation_list = harness.conversations(_load_personas, options['case_ids'])
+        if not conversation_list:
+            raise CommandError('No conversations selected.')
+        self.stdout.write(json.dumps(harness.plan_conversations(conversation_list, arms, options['runs'])))
+        if options['dry_run']:
+            return
+        scope = wiring.dev_catalog_scope()
+        if not scope:
+            raise CommandError('Set PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE: there is no request to vend a secured key.')
+        # pylint: disable=consider-using-with
+        out = open(options['output'], 'w', encoding='utf-8') if options['output'] else self.stdout
+        count = 0
+        try:
+            records = harness.run_conversations(
+                conversation_list=conversation_list, arms=arms, scope=scope,
+                steps=wiring.steps(registry=registry, persist=False), style=options['conversation_style'],
+                turn_context=_turn_context(registry, options),
+                runs=options['runs'], max_calls=options['max_calls'],
+                server_sections=not options['no_server_sections'], log=self.stderr.write,
+            )
+            with harness.turn_deadline(options['turn_deadline_s']):
+                for record in records:
+                    out.write(json.dumps(record) + '\n')
+                    out.flush()
+                    count += 1
         finally:
             if options['output']:
                 out.close()
