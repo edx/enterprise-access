@@ -143,30 +143,24 @@ class CheckoutSegmentEvents:
 
 class SegmentEventEmissionStatus(StrEnum):
     """
-    Status of a ``SegmentEventEmission`` (the outbox row of one checkout Segment event).
+    Status of a ``SegmentEventEmission``, the idempotency record of one checkout Segment event.
 
-    PENDING -> DISPATCHED -> SENT, SKIPPED or FAILED. A row stays PENDING while the broker is unreachable, and goes
-    back to PENDING if it was dispatched but never finished (Celery gave up, or the broker lost the message).
+    PENDING -> SENT or FAILED. A row stays PENDING while its send task is retrying.
     """
-    PENDING = 'pending'  # Recorded; the send task has not been handed to the broker yet.
-    DISPATCHED = 'dispatched'  # The send task was handed to the broker.
+    PENDING = 'pending'  # Not sent yet.
     SENT = 'sent'  # Segment accepted the event.
-    SKIPPED = 'skipped'  # Not an order event after all, e.g. a cancelled subscription that never collected money.
-    FAILED = 'failed'  # Will not be sent without a fix: a permanent error, or every dispatch attempt failed.
+    FAILED = 'failed'  # Will not be sent without a fix, e.g. a required property is missing.
 
 
 SEGMENT_EVENT_EMISSION_FINAL_STATUSES = (
     SegmentEventEmissionStatus.SENT,
-    SegmentEventEmissionStatus.SKIPPED,
     SegmentEventEmissionStatus.FAILED,
 )
 
 
-# Invoice billing reasons that can be the first paid invoice of a new order:
-# the creation invoice, or the subscription_cycle invoice issued when a trial ends.
-# Renewals are also subscription_cycle; the send task skips them by checking the
-# order's first paid invoice in Stripe's history (segment_payloads.find_order_invoice).
-ORDER_COMPLETED_BILLING_REASONS = ('subscription_create', 'subscription_cycle')
+# The billing reason of a subscription's first invoice, which Stripe issues at checkout. Its ``invoice.paid`` is
+# when Stripe confirms the order, so it triggers order_completed. With the SSP free trial its total is $0.
+ORDER_COMPLETED_BILLING_REASON = 'subscription_create'
 
 
 # Keys of ``CheckoutIntent.attribution`` that are passed through to Segment.

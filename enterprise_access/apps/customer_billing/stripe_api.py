@@ -211,23 +211,6 @@ def get_stripe_invoice(invoice_id) -> stripe.Invoice:
     return stripe.Invoice.retrieve(invoice_id)
 
 
-def list_paid_subscription_invoices(subscription_id) -> list[stripe.Invoice]:
-    """
-    List every paid invoice of a Stripe Subscription, newest first. Not cached: callers use it as the authoritative
-    payment history when the invoice webhooks may not have arrived yet.
-
-    Args:
-        subscription_id (str): The Stripe Subscription ID
-
-    Returns:
-        list: The paid Stripe Invoice objects
-
-    Docs: https://docs.stripe.com/api/invoices/list
-    """
-    invoices = stripe.Invoice.list(subscription=subscription_id, status='paid', limit=100)
-    return list(invoices.auto_paging_iter())
-
-
 @stripe_cache()
 def get_stripe_payment_method(payment_method_id) -> stripe.PaymentMethod:
     """
@@ -270,18 +253,6 @@ def get_stripe_subscription(subscription_id) -> stripe.Subscription:
 
     Returns:
         dict: The Stripe Subscription object
-
-    Docs: https://stripe.com/docs/api/subscriptions/retrieve
-    """
-    return stripe.Subscription.retrieve(subscription_id)
-
-
-def get_stripe_subscription_uncached(subscription_id) -> stripe.Subscription:
-    """
-    Retrieve a Stripe Subscription's current state, bypassing the cache that ``get_stripe_subscription`` uses.
-
-    Use it when the state is recorded for good, e.g. a cancelled subscription's final items: a cached copy may have
-    been fetched before a later license change.
 
     Docs: https://stripe.com/docs/api/subscriptions/retrieve
     """

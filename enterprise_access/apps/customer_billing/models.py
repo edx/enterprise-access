@@ -225,6 +225,9 @@ class CheckoutIntent(TimeStampedModel):
     4. Mark as fulfilled after provisioning
     intent.mark_as_fulfilled(workflow)
 
+    ``attribution`` holds only campaign labels and a referrer's origin: ``utils.sanitize_attribution`` drops email
+    addresses, URLs, phone numbers and referrer paths before anything is stored.
+
     .. no_pii: This model has no PII
     """
     class Meta:
@@ -885,7 +888,9 @@ class CheckoutIntent(TimeStampedModel):
                 existing_intent.terms_metadata = (existing_intent.terms_metadata or {}) | (terms_metadata or {})
                 if ssp_product is not None:
                     existing_intent.ssp_product = ssp_product
-                if attribution and not existing_intent.attribution:
+                # Replaced whole, never merged: the checkout MFE sends what it holds, which a later link with UTM
+                # values replaces, so the newest campaign is the one that led to the purchase.
+                if attribution:
                     existing_intent.attribution = attribution
                 existing_intent.save()
                 logger.info(
@@ -1454,13 +1459,12 @@ class StripeEventSummary(TimeStampedModel):
 
 class SegmentEventEmission(TimeStampedModel):
     """
-    Transactional outbox and idempotency record for one server-side checkout Segment event.
+    Idempotency record for one server-side checkout Segment event.
 
-    The webhook handler saves the row (PENDING) before it hands the send task to Celery, so a broker outage cannot
-    lose the event: the ``dispatch_checkout_segment_events`` command publishes PENDING rows again, and re-publishes
-    DISPATCHED rows that never finished. There is at most one row per (event_name, order_id). ``order_id`` is the
-    Stripe Checkout Session ID of the purchase, which is fixed once the CheckoutIntent is paid, so a redelivered
-    webhook finds the same row. Status moves are conditional updates, so a stale copy never moves a finished row back.
+    The send task creates the row and sends the event at most once per (event_name, order_id), so a redelivered
+    webhook (and so a second task) finds the same row. ``order_id`` is the Stripe Checkout Session ID of the purchase;
+    ``order_cancelled`` reuses the order_id of its subscription's ``order_completed`` row. Status moves are
+    conditional updates, so a stale copy never moves a finished row back.
 
     .. no_pii: This model has no PII
     """
@@ -1486,8 +1490,8 @@ class SegmentEventEmission(TimeStampedModel):
         null=True,
         blank=True,
         help_text=(
-            "The order's first paid invoice, which supplies revenue. Set from the webhook for order_completed, and "
-            "found by the send task for order_cancelled."
+            "The order's first invoice (billing reason subscription_create), which supplies revenue. Set from the "
+            "webhook for order_completed, and found by the send task for order_cancelled."
         ),
     )
     status = models.CharField(
@@ -1496,11 +1500,6 @@ class SegmentEventEmission(TimeStampedModel):
         default=SegmentEventEmissionStatus.PENDING.value,
         db_index=True,
     )
-    dispatch_attempts = models.PositiveIntegerField(
-        default=0,
-        help_text='How many times the send task was handed to the broker.',
-    )
-    last_dispatched_at = models.DateTimeField(null=True, blank=True)
     emitted_at = models.DateTimeField(null=True, blank=True, help_text='When Segment accepted the event.')
     last_error = models.TextField(null=True, blank=True)
 
@@ -1514,7 +1513,7 @@ class SegmentEventEmission(TimeStampedModel):
 
     @property
     def is_final(self) -> bool:
-        """True once the event was sent, skipped or failed; nothing else may change the row's status."""
+        """True once the event was sent or failed; nothing else may change the row's status."""
         return self.status in SEGMENT_EVENT_EMISSION_FINAL_STATUSES
 
     def finish(self, status: SegmentEventEmissionStatus, error: str | None = None) -> bool:

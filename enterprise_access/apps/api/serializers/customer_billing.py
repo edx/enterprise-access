@@ -19,7 +19,7 @@ from enterprise_access.apps.customer_billing.models import (
     SspProduct,
     StripeEventSummary
 )
-from enterprise_access.apps.customer_billing.segment_payloads import sanitize_attribution
+from enterprise_access.apps.customer_billing.utils import sanitize_attribution
 
 
 class RecordConflictError(APIException):
@@ -160,7 +160,8 @@ class CheckoutIntentUpdateRequestSerializer(CountryFieldMixin, serializers.Model
 
     class Meta:
         model = CheckoutIntent
-        fields = '__all__'
+        # Left out of PATCH responses, like CheckoutIntentReadOnlySerializer: attribution is only sent to Segment.
+        exclude = ['attribution']
         read_only_fields = [
             field.name for field in CheckoutIntent._meta.get_fields()
             if field.name not in ('state', 'country', 'terms_metadata')
@@ -229,16 +230,18 @@ class CheckoutIntentCreateRequestSerializer(CountryFieldMixin, serializers.Model
                 'ssp_product'
             ]
         ]
+        # Accepted on create but left out of the response, like CheckoutIntentReadOnlySerializer.
+        extra_kwargs = {'attribution': {'write_only': True}}
 
     def validate_attribution(self, value):
         """
         Accept only a flat object whose values are strings (or null), then keep only what ``sanitize_attribution``
-        allows: known UTM keys whose values are campaign labels in the agreed format, and the referrer's origin.
-        Returns None if nothing is left.
+        allows: known UTM keys whose values are campaign labels, and the referrer's origin. Returns None if nothing
+        is left.
 
         A wrong shape (not an object, or a nested object, list, number or boolean value) is a client bug and is
-        rejected, because stringifying it would store whatever it contains. A value that is a string but unsafe (an
-        email address, a phone number or token, a referrer that is not an http(s) URL) is dropped instead: it comes
+        rejected, because stringifying it would store whatever it contains. A value that is a string but not in the
+        accepted format (an email address, a URL, a referrer that is not an http(s) URL) is dropped instead: it comes
         from the link the customer followed, which they don't control, and attribution is optional.
         """
         if value is None:
