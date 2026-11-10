@@ -27,7 +27,14 @@ class HydrationTests(TestCase):
         self.assertEqual(card['partner_name'], 'edX')
         self.assertEqual(card['link'], {'kind': 'course', 'course_key': 'edX+C1', 'course_type': 'verified-audit'})
         self.assertEqual(card['facts'],
-                         {'level_type': 'Introductory', 'weeks_to_complete': 4, 'pacing_type': 'self_paced'})
+                         {'level_type': 'Introductory', 'weeks_to_complete': 4, 'pacing_type': 'self_paced',
+                          'hours_per_week_min': 2, 'hours_per_week_max': 4})
+
+    def test_effort_that_is_missing_or_not_a_positive_number_is_dropped(self):
+        for effort in ((None, None), (0, -1), (True, '3')):
+            facts = retrieval.hydrate_card(course_hit('edX+C1', effort=effort))['facts']
+            self.assertEqual((facts['hours_per_week_min'], facts['hours_per_week_max']), (None, None))
+        self.assertEqual(retrieval.compose_view(candidate(course_hit('edX+C1')))['hours_per_week'], [2, 4])
 
     def test_exec_ed(self):
         card = retrieval.hydrate_card(course_hit('Yale+E1', exec_ed=True))
@@ -115,6 +122,12 @@ class PrefilterTests(TestCase):
         kept = retrieval.prefilter(raw, dict(INTENT, constraints={'max_weeks': 4, 'pacing': None}))
         self.assertEqual(kept[0]['card']['item_id'], 'edX+SHORT')
 
+    def test_hours_per_week_within_the_learners_limit_scores_higher(self):
+        raw = [candidate(course_hit('edX+HEAVY', effort=(8, 10)), tier=1, rank=0),
+               candidate(course_hit('edX+LIGHT', effort=(2, 3)), tier=1, rank=5)]
+        kept = retrieval.prefilter(raw, dict(INTENT, constraints={'max_hours_per_week': 4}))
+        self.assertEqual(kept[0]['card']['item_id'], 'edX+LIGHT')
+
     def test_level_match_scores_higher(self):
         raw = [candidate(course_hit('edX+ADV', level='Advanced'), tier=1, rank=0),
                candidate(course_hit('edX+INTRO', level='Introductory'), tier=1, rank=5)]
@@ -165,3 +178,10 @@ class FollowupAttributeTests(TestCase):
         self.assertEqual(retrieval.choose_followup_attribute(cands, INTENT, ['level']), 'pacing')
         self.assertEqual(retrieval.choose_followup_attribute(
             cands, dict(INTENT, constraints={'max_weeks': None, 'pacing': 'self_paced'}), ['level']), 'open')
+
+    def test_a_known_hours_limit_counts_as_time_already_set(self):
+        cands = [candidate(course_hit(f'edX+S{i}', level='Advanced', weeks=2)) for i in range(3)]
+        cands += [candidate(course_hit(f'edX+L{i}', level='Advanced', weeks=20)) for i in range(3)]
+        self.assertEqual(retrieval.choose_followup_attribute(cands, INTENT, []), 'time')
+        self.assertEqual(retrieval.choose_followup_attribute(
+            cands, dict(INTENT, constraints={'max_hours_per_week': 4}), []), 'open')

@@ -18,3 +18,11 @@ These schemas describe what `POST /api/v1/personalized-search/turns/` streams, s
 - A change that breaks an existing client bumps the version: `v: 2` for blocks, a new stream protocol header value for parts.
 
 The enterprise-access tests validate every part the orchestrator emits against these schemas (`tests/test_contract.py`).
+
+## v1 additive changes
+
+Each entry is optional for consumers; older clients ignore it.
+
+| Date | Change |
+| --- | --- |
+| 2026-11-09 | `item_card.facts.hours_per_week_min` / `hours_per_week_max` (integers; courses and Executive Education) |
