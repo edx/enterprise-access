@@ -571,13 +571,13 @@ PATHWAYS_OPENAI_MODEL = 'gpt-4o'
 # capped by the time left before the 20 s turn deadline.
 PERSONALIZED_SEARCH_INTENT_TIMEOUT_S = 3
 PERSONALIZED_SEARCH_COMPOSE_READ_TIMEOUT_S = 5
-# Per-step models (KD-2 amended; OQ-8 decided 2026-11-03: the best fit below): any
-# PERSONALIZED_SEARCH_OPENAI_MODELS entry. Effort is the reasoning_effort sent to GPT-5 models; None means
-# the family's lowest setting.
-PERSONALIZED_SEARCH_INTENT_MODEL = 'gpt-4.1-mini'
+# Per-step models (KD-2 amended; OQ-8 re-decided 2026-11-10 by the November model spike: gpt-6-luna for both
+# steps; gpt-4.1-mini, the previous intent model, shuts down 2027-01-14): any PERSONALIZED_SEARCH_OPENAI_MODELS
+# entry. Effort is the reasoning_effort sent to GPT-5 and later models; None means the family's lowest setting.
+PERSONALIZED_SEARCH_INTENT_MODEL = 'gpt-6-luna'
 PERSONALIZED_SEARCH_INTENT_EFFORT = None
-PERSONALIZED_SEARCH_COMPOSE_MODEL = 'gpt-5.4-mini'
-PERSONALIZED_SEARCH_COMPOSE_EFFORT = 'low'
+PERSONALIZED_SEARCH_COMPOSE_MODEL = 'gpt-6-luna'
+PERSONALIZED_SEARCH_COMPOSE_EFFORT = None
 # The OpenAI models a turn may use (the allowlist), with standard-tier USD prices per 1M tokens
 # (input, cached input, output) used only for the debug cost read-out.
 PERSONALIZED_SEARCH_OPENAI_MODELS = {
@@ -597,6 +597,10 @@ PERSONALIZED_SEARCH_OPENAI_MODELS = {
     'gpt-5.6-luna': (0.20, 0.02, 1.20),
     'gpt-5.6-terra': (2.00, 0.20, 12.00),
     'gpt-5.6-sol': (4.00, 0.40, 20.00),
+    'gpt-6-luna': (0.10, 0.01, 0.50),
+    'gpt-6.1-terra': (1.00, 0.05, 5.00),
+    'gpt-6.1-sol': (2.00, 0.10, 10.00),
+    'gpt-6-astra': (10.00, 1.00, 50.00),
 }
 # The Xpert platform (model id 'xpert') is available once XPERT_API_BASE_URL and XPERT_API_CLIENT_ID are
 # set; its calls use XPERT_REQUEST_TIMEOUT instead of the step timeouts above.
