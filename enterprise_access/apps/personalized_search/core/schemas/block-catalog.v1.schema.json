@@ -5,13 +5,16 @@
   "description": "The data of a data-block stream part: one learning-page block. Item cards are hydrated by the server from catalog hits; the model only chooses ids and writes why/fit.",
   "type": "object",
   "required": ["v", "type", "props"],
-  "properties": {"v": {"const": 1}, "type": {"enum": ["page_header", "item_section", "insight", "plan", "profile"]}},
+  "properties": {"v": {"const": 1}, "type": {"enum": ["page_header", "item_section", "insight", "plan", "profile", "top_pick", "compare", "caveat"]}},
   "oneOf": [
     {"properties": {"type": {"const": "page_header"}, "props": {"$ref": "#/$defs/page_header"}}},
     {"properties": {"type": {"const": "item_section"}, "props": {"$ref": "#/$defs/item_section"}}},
     {"properties": {"type": {"const": "insight"}, "props": {"$ref": "#/$defs/insight"}}},
     {"properties": {"type": {"const": "plan"}, "props": {"$ref": "#/$defs/plan"}}},
-    {"properties": {"type": {"const": "profile"}, "props": {"$ref": "#/$defs/profile"}}}
+    {"properties": {"type": {"const": "profile"}, "props": {"$ref": "#/$defs/profile"}}},
+    {"properties": {"type": {"const": "top_pick"}, "props": {"$ref": "#/$defs/top_pick"}}},
+    {"properties": {"type": {"const": "compare"}, "props": {"$ref": "#/$defs/compare"}}},
+    {"properties": {"type": {"const": "caveat"}, "props": {"$ref": "#/$defs/caveat"}}}
   ],
   "$defs": {
     "item_type": {"enum": ["course", "executive_education", "program"]},
@@ -62,6 +65,25 @@
       "type": "object", "additionalProperties": false, "required": ["summary", "chips"],
       "properties": {"summary": {"type": "string", "minLength": 1, "maxLength": 200},
                      "chips": {"type": "array", "minItems": 1, "maxItems": 6, "items": {"type": "string", "minLength": 1, "maxLength": 40}}}
+    },
+    "top_pick": {
+      "description": "The one item to start with. Added in v1, 2026-11-09.",
+      "type": "object", "additionalProperties": false, "required": ["item", "reason", "checks"],
+      "properties": {"item": {"$ref": "#/$defs/item_card"}, "reason": {"type": "string", "minLength": 1, "maxLength": 160},
+                     "checks": {"type": "array", "maxItems": 3, "items": {"type": "string", "minLength": 1, "maxLength": 40}}}
+    },
+    "compare": {
+      "description": "2-3 options with what each is best for. Added in v1, 2026-11-09.",
+      "type": "object", "additionalProperties": false, "required": ["options"],
+      "properties": {"options": {"type": "array", "minItems": 2, "maxItems": 3, "items": {
+        "type": "object", "additionalProperties": false, "required": ["best_for", "item"],
+        "properties": {"best_for": {"type": "string", "minLength": 1, "maxLength": 60}, "item": {"$ref": "#/$defs/item_card"}}}}}
+    },
+    "caveat": {
+      "description": "A warning that the results can't meet a goal the learner stated. Added in v1, 2026-11-09.",
+      "type": "object", "additionalProperties": false, "required": ["title", "body"],
+      "properties": {"title": {"type": "string", "minLength": 1, "maxLength": 60},
+                     "body": {"type": "string", "minLength": 1, "maxLength": 300}}
     }
   }
 }

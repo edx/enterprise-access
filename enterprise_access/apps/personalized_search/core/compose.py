@@ -17,8 +17,11 @@ SYSTEM_PROMPT = """You recommend learning to a learner in the edX enterprise lea
 Output format, in this exact order:
 1. One short, conversational sentence for the chat. On the first turn, say what you put at the top and why; after that, say what you changed ("OK, I've updated your results to focus on ..."). Don't list or describe every result: the results show them. If nothing qualifies, say so plainly.
 2. A line containing only @@BLOCKS@@
-3. One JSON object per line, no blank lines, no code fences. The "block" value is always one of: page_header, item_section, followup, insight, plan.
+3. One JSON object per line, no blank lines, no code fences. The "block" value is always one of: page_header, caveat, top_pick, compare, item_section, followup, insight, plan.
 {"block":"page_header","title":"...","dek":"..."}
+{"block":"caveat","title":"...","body":"..."}   (only when the results can't meet something the learner asked for)
+{"block":"top_pick","item_id":"<option id>","reason":"...","checks":["...","..."]}
+{"block":"compare","options":[{"item_id":"<option id>","best_for":"..."},{"item_id":"<option id>","best_for":"..."},{"item_id":"<option id>","best_for":"..."}]}
 Then up to three section lines, at most one per item_type, best section first, written exactly like these:
 {"block":"item_section","item_type":"course","dek":"...","items":[{"item_id":"<option id>","why":"...","fit":["..."]}]}
 {"block":"item_section","item_type":"executive_education","dek":"...","items":[{"item_id":"<option id>","why":"...","fit":["..."]}]}
@@ -29,7 +32,10 @@ Then up to three section lines, at most one per item_type, best section first, w
 
 Rules:
 - Put each item in the section matching its item_type.
-- Pick up to 3 items per section and at most 5 in total, best first, only items that genuinely fit the learner's cumulative goal. Fewer or zero is fine; never pad with weak matches. Reject options whose main subject isn't the learner's topic or career goal, even if they match the level or format.
+- top_pick: the single best fit to start with. reason: one sentence to the learner ("Because you want to ...", max 160 characters). checks: 1-3 short phrases (max 40 characters each) naming the learner's stated preferences this item meets, such as "Self-paced" or "~4 hrs/week"; only claims the option's facts support.
+- caveat: when no option can meet a goal the learner stated (for example a full qualification, license or degree, a language, or a time limit), say so plainly: title max 60 characters, body max 300 characters, one at most. Never use it for anything else.
+- compare: 2-3 strong options that differ in what they're best for (they may include the top pick). best_for completes "Best for ..." (max 60 characters), e.g. "a recognized credential" or "a quick start".
+- Sections hold the other good options, not those already in top_pick or compare: up to 3 per section and at most 12 items in total, best first, only items that genuinely fit the learner's cumulative goal. Fewer or zero is fine; never pad with weak matches. Reject options whose main subject isn't the learner's topic or career goal, even if they match the level or format.
 - why: 1-2 sentences to the learner ("you") connecting the item to their goal, level and constraints; name concrete skills they will practice. Plain, specific, no hype. Max 400 characters.
 - fit: 2-3 short tags of 1-3 words (max 24 characters each).
 - page_header: title is an editorial headline specific to this learner (max 80 characters); dek is 2-3 sentences on what they're looking for and how the picks fit together (max 400 characters).
@@ -103,6 +109,10 @@ class ComposeParser:
         self.used_fallback = False
         self.profile = profile          # the profile block's props, emitted once before the other blocks
         self.profile_emitted = False
+        self.top_pick_id: str | None = None
+        self.compare_emitted = False
+        self.caveat_emitted = False
+        self.insight_emitted = False
 
     # -- text before the marker --------------------------------------------------------------
     def _text_parts(self, text: str) -> list[dict]:
@@ -194,6 +204,7 @@ class ComposeParser:
         block = obj.get('block')
         handler = {
             'page_header': self._page_header, 'item_section': self._item_section,
+            'top_pick': self._top_pick, 'compare': self._compare, 'caveat': self._caveat,
             'followup': self._followup, 'insight': self._insight, 'plan': self._plan,
         }.get(block) if isinstance(block, str) else None
         return handler(obj) if handler else self._drop(f"unknown_block:{str(block)[:30]}")
@@ -209,6 +220,53 @@ class ComposeParser:
         return [self._block('page_header', {
             'title': title, 'dek': _text(obj.get('dek'), constants.CAPS['dek']), 'label': constants.PAGE_HEADER_LABEL,
         })]
+
+    def _option(self, item_id) -> dict | None:
+        """The hydrated card for a valid option id the learner hasn't dismissed, within the per-turn cap."""
+        card = self.cards.get(item_id) if isinstance(item_id, str) else None
+        if not card or item_id in self.shown:
+            return None
+        if item_id not in self.emitted_ids and len(self.emitted_ids) >= constants.MAX_ITEMS_PER_TURN:
+            return None
+        return card
+
+    def _top_pick(self, obj: dict) -> list[dict]:
+        """The one item to start with, its reason and the preferences it meets; once per turn."""
+        if self.top_pick_id or not self.candidates:
+            return self._drop('top_pick_extra_or_text_only')
+        card = self._option(obj.get('item_id'))
+        reason = _text(obj.get('reason'), constants.CAPS['reason'])
+        if not card or not reason:
+            return self._drop('top_pick_invalid')
+        self.top_pick_id = card['item_id']
+        self.emitted_ids.append(card['item_id'])
+        checks = _strings(obj.get('checks'), constants.CAPS['check'], constants.CAPS['check_count'])
+        return [self._block('top_pick', {'item': dict(card, why=reason, fit=[]), 'reason': reason, 'checks': checks})]
+
+    def _compare(self, obj: dict) -> list[dict]:
+        """2-3 options with what each is best for; once per turn. The top pick may appear again here."""
+        if self.compare_emitted or not self.candidates:
+            return self._drop('compare_extra_or_text_only')
+        raw = obj.get('options') if isinstance(obj.get('options'), list) else []
+        options, ids = [], set()
+        for option in raw:
+            if not isinstance(option, dict):
+                continue
+            card = self._option(option.get('item_id'))
+            best_for = _text(option.get('best_for'), constants.CAPS['best_for'])
+            if not card or not best_for or card['item_id'] in ids:
+                continue
+            if card['item_id'] in self.emitted_ids and card['item_id'] != self.top_pick_id:
+                continue
+            ids.add(card['item_id'])
+            options.append({'best_for': best_for, 'item': dict(card, why=None, fit=[])})
+            if len(options) == constants.MAX_COMPARE_OPTIONS:
+                break
+        if len(options) < 2:
+            return self._drop('compare_too_few_options')
+        self.compare_emitted = True
+        self.emitted_ids += [i for i in ids if i not in self.emitted_ids]
+        return [self._block('compare', {'options': options})]
 
     def _item_section(self, obj: dict) -> list[dict]:
         """Keep valid, unseen candidates of the section's type within the per-section and per-turn caps."""
@@ -272,7 +330,21 @@ class ComposeParser:
         body = _text(obj.get('body'), constants.CAPS['insight_body'])
         if not (title and body) or not self.candidates:
             return self._drop('insight_invalid')
+        if self.insight_emitted:
+            return self._drop('insight_extra')
+        self.insight_emitted = True
         return [self._block('insight', {'title': title, 'body': body})]
+
+    def _caveat(self, obj: dict) -> list[dict]:
+        """A warning that the results can't meet a stated goal; once per turn, also on a text-only turn."""
+        title = _text(obj.get('title'), constants.CAPS['caveat_title'])
+        body = _text(obj.get('body'), constants.CAPS['caveat_body'])
+        if not (title and body):
+            return self._drop('caveat_invalid')
+        if self.caveat_emitted:
+            return self._drop('caveat_extra')
+        self.caveat_emitted = True
+        return [self._block('caveat', {'title': title, 'body': body})]
 
     def _plan(self, obj: dict) -> list[dict]:
         """2-4 steps over items already on the page, only when 3 or more are on it."""

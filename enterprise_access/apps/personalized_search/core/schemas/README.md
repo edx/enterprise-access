@@ -27,3 +27,5 @@ Each entry is optional for consumers; older clients ignore it.
 | --- | --- |
 | 2026-11-09 | `item_card.facts.hours_per_week_min` / `hours_per_week_max` (integers; courses and Executive Education) |
 | 2026-11-09 | New block type `profile` (`summary`, `chips[]`), emitted once per turn before the other blocks |
+| 2026-11-09 | New block types `top_pick` (`item`, `reason`, `checks[]`) and `compare` (`options[2..3]{best_for, item}`); per-turn item cap 5 → 12 (server-side) |
+| 2026-11-09 | New block type `caveat` (`title`, `body`), at most one per turn; `insight` is now also at most one per turn (server-side) |
