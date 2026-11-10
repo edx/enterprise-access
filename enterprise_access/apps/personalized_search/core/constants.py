@@ -43,6 +43,8 @@ FOLLOWUP_TEMPLATES = {
              ['Courses', 'Executive education', 'Programs']),
     'open': ('What else would you like to learn?', OPENING_CHIPS),
 }
+# The model's own chip ideas per turn, shown after the fixed chips for the follow-up attribute.
+MAX_IDEAS = 3
 
 # Character caps (spec "LLM step contracts": the caps are authoritative).
 CAPS = {
