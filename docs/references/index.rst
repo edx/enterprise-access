@@ -12,4 +12,5 @@ Reference notes on specific features. These are Markdown files, read on GitHub r
 - `Learner Credit top-ups <learner_credit_top_ups.md>`_
 - `Multi-license tie breaking <multi_license_tie_breaking.md>`_
 - `Personalized Search (chat) <personalized_search.md>`_
+- `Personalized Search Segment events <personalized_search_events.md>`_
 - `Stripe SDK upgrades <stripe_sdk_upgrades.md>`_
