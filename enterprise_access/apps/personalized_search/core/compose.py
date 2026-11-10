@@ -98,6 +98,22 @@ def _related(candidate: dict) -> bool:
     return candidate.get('tier', 0) >= 2
 
 
+def _ideas(value) -> list[str]:
+    """
+    The model's chip ideas a learner can send as is: an idea longer than the cap is dropped rather than cut
+    mid-word (a chip sends its text), and repeats are dropped regardless of case.
+    """
+    if not isinstance(value, list):
+        return []
+    out, seen = [], set()
+    for idea in value:
+        text = idea.strip() if isinstance(idea, str) else ''
+        if text and len(text) <= constants.CAPS['suggestion'] and text.casefold() not in seen:
+            seen.add(text.casefold())
+            out.append(text)
+    return out[:constants.MAX_IDEAS]
+
+
 def _covered(chip: str, ideas: list[str]) -> bool:
     """
     Whether any idea says the same thing as a fixed chip: one of its phrases (``constants.FIXED_CHIP_MATCHES``)
@@ -418,7 +434,7 @@ class ComposeParser:
         """
         self.followups_emitted = True
         _, fixed = constants.FOLLOWUP_TEMPLATES[self.attribute]
-        clean = list(dict.fromkeys(_strings(ideas, constants.CAPS['suggestion'], 6)))[:constants.MAX_IDEAS]
+        clean = _ideas(ideas)
         # When an idea covers a fixed choice ("I'm a beginner" covers "Introductory"), the idea wins: it's
         # in the conversation's words, so the fixed chip is dropped rather than shown twice.
         suggestions = [] if self.attribute == 'open' else [chip for chip in fixed if not _covered(chip, clean)]
