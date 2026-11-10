@@ -235,6 +235,14 @@ class TurnFeedbackTests(APITest):
                                     format='json')
         self.assertEqual(response.status_code, 403)
 
+    def test_a_turn_from_another_enterprise_is_404_even_with_access_to_both(self):
+        self.set_jwt_cookie([{'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE, 'context': ENTERPRISE},
+                             {'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE, 'context': OTHER_ENTERPRISE}])
+        response = self.client.post(self.url(), {'enterprise_customer_uuid': OTHER_ENTERPRISE, 'rating': 1},
+                                    format='json')
+        self.assertEqual(response.status_code, 404)
+        self.assertIsNone(ChatTurn.objects.get(session=self.session).rating)
+
     def test_flag_off_is_404(self):
         with override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=False):
             self.assertEqual(self.post(1).status_code, 404)

@@ -440,6 +440,12 @@ class HarnessCommandTests(TestCase):
             call_command('run_personalized_search_harness', '--arm', 'x=gpt-9,gpt-4.1-mini', '--max-calls', '2',
                          stdout=StringIO())
 
+    def test_conversation_only_options_are_refused_for_single_turn_cases(self):
+        for args in (['--arm', 'x=gpt-6-luna,gpt-6-luna@none+cands:40'], ['--no-server-sections']):
+            with self.assertRaises(CommandError):
+                call_command('run_personalized_search_harness', '--case-set', 'demo', '--max-calls', '2', *args,
+                             stdout=StringIO())
+
     def test_no_matching_cases_is_a_command_error(self):
         with self.assertRaises(CommandError):
             call_command('run_personalized_search_harness', '--case-id', 'nope', '--max-calls', '2',
