@@ -20,6 +20,10 @@ CANDIDATE_CAPS = {'course': 10, 'executive_education': 5, 'program': 5}
 MAX_CANDIDATES = 20
 # A type the learner prefers may fill up to this many shortlist places (the others keep their caps).
 PREFERRED_TYPE_CAP = 10
+# A keyword-search hit counts as closely related (for server-added sections) within this many top results.
+RELATED_RANK = 5
+# With no type asked for, related programs lead: their prefilter score gets this boost.
+PROGRAM_LEAD_BOOST = 1
 MAX_ITEMS_PER_SECTION = 3
 MAX_ITEMS_PER_TURN = 12  # top pick + up to 3 compared + sections (KD-11)
 MAX_COMPARE_OPTIONS = 3
