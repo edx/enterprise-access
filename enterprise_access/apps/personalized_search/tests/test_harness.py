@@ -15,7 +15,7 @@ from enterprise_access.apps.pathway_eval.personas import load_personas
 from enterprise_access.apps.personalized_search import harness
 from enterprise_access.apps.personalized_search.adapters.openai_backend import OpenAIBackend
 from enterprise_access.apps.personalized_search.adapters.xpert_backend import XpertBackend
-from enterprise_access.apps.personalized_search.core import harness_scoring
+from enterprise_access.apps.personalized_search.core import compose, constants, harness_scoring, retrieval
 from enterprise_access.apps.personalized_search.core.errors import ModelError
 from enterprise_access.apps.personalized_search.core.model_registry import ModelRegistry
 from enterprise_access.apps.personalized_search.core.orchestrator import ModelChoice
@@ -119,7 +119,7 @@ class HarnessRunTests(TestCase):
 
     def test_cases(self):
         demo = harness.demo_cases()
-        self.assertEqual(len(demo), 42)
+        self.assertEqual(len(demo), 43)
         refine = [c for c in demo if c.id == 'R1'][0]
         self.assertEqual(refine.history, ('I want to get better at leading a team',))
         personas = harness.persona_cases(load_personas)
@@ -168,6 +168,177 @@ class HarnessRunTests(TestCase):
         self.assertTrue(any('before judging' in m for m in messages))
 
 
+@ddt.ddt
+class HarnessConversationTests(TestCase):
+    """Three-turn conversations and the harness-only arm options."""
+
+    def setUp(self):
+        super().setUp()
+        self.addCleanup(cache.clear)
+
+    def test_arm_parse_options(self):
+        arm = harness.Arm.parse('x=gpt-4.1-mini,gpt-5.4-mini@low+cold:high+cands:40+view:rich',
+                                check_model=REGISTRY.check_model)
+        self.assertEqual((arm.cold_effort, arm.candidates, arm.view), ('high', 40, 'rich'))
+        self.assertEqual(arm.compose_for_turn(0), ModelChoice('gpt-5.4-mini', 'high'))
+        self.assertEqual(arm.compose_for_turn(1), ModelChoice('gpt-5.4-mini', 'low'))
+        self.assertEqual(arm.options, {'cold': 'high', 'cands': 40, 'view': 'rich'})
+        plain = harness.Arm.parse('y=gpt-4.1-mini,gpt-5.4-mini')
+        self.assertEqual(plain.options, {'cold': None, 'cands': 20, 'view': 'standard'})
+        self.assertEqual(plain.compose_for_turn(0), plain.compose)
+
+    @ddt.data('+cold', '+speed:1', '+view:huge', '+cands:0', '+cands:many')
+    def test_arm_parse_rejects_bad_options(self, option):
+        with self.assertRaises(ValueError):
+            harness.Arm.parse(f'x=gpt-4.1-mini,gpt-5.4-mini{option}')
+
+    @ddt.data('x=gpt-4.1-mini,gpt-6.1-sol@max', 'x=gpt-4.1-mini,gpt-6.1-sol@low+cold:max')
+    def test_arm_parse_checks_each_effort(self, spec):
+        registry = ModelRegistry([OpenAIBackend(api_key='k', models=dict(MODELS, **{'gpt-6.1-sol': (2, 0.1, 10)}))])
+        with self.assertRaises(ModelError):
+            harness.Arm.parse(spec, check_model=registry.check_model, check_effort=registry.resolve_effort)
+
+    def test_arm_overrides_swap_the_candidate_view_and_restore_it(self):
+        arm = harness.Arm('x', ARMS[0].intent, ARMS[0].compose, view='rich')
+        with harness.arm_overrides(arm):
+            self.assertIn('outcome', constants.ATTRIBUTES_TO_RETRIEVE)
+            self.assertIs(compose.compose_view, harness.rich_compose_view)
+        self.assertNotIn('outcome', constants.ATTRIBUTES_TO_RETRIEVE)
+        self.assertIs(compose.compose_view, retrieval.compose_view)
+
+    def test_an_arms_shortlist_size_reaches_the_turn(self):
+        seen = []
+        steps = fake_steps()
+        base_retrieve = steps.retrieve
+
+        def retrieve(*args, **kwargs):
+            seen.append(kwargs.get('shortlist'))
+            return base_retrieve(*args, **kwargs)
+
+        steps.retrieve = retrieve
+        conversation = harness.Conversation(id='c1', goal='lead', messages=('first',))
+        arm = harness.Arm('x', ARMS[0].intent, ARMS[0].compose, candidates=40)
+        record, = harness.run_conversations(conversation_list=[conversation], arms=[arm], scope=None, steps=steps)
+        self.assertEqual((seen, record['arm_options']['cands']), ([40], 40))
+
+    def test_rich_compose_view(self):
+        course = {'hit': {'skill_names': [f's{i}' for i in range(10)], 'subjects': ['Data'],
+                          'outcome': '<ul><li>Write SQL</li></ul>', 'prerequisites': '<p>None</p>'},
+                  'card': {'item_id': 'edX+C1', 'item_type': 'course', 'title': 'SQL', 'partner_name': 'edX',
+                           'facts': {}}}
+        view = harness.rich_compose_view(course)
+        self.assertEqual(len(view['skills']), 8)
+        self.assertEqual((view['you_will_learn'], view['prerequisites'], view['subjects']),
+                         ('Write SQL', 'None', ['Data']))
+        program = {'hit': {'learning_items': ['<p>Lead teams</p>', {'title': 'Plan work'}],
+                           'course_details': [{'title': 'Course A'}, {'key': 'no-title'}]},
+                   'card': {'item_id': 'p-1', 'item_type': 'program', 'title': 'Leading', 'partner_name': 'edX',
+                            'facts': {}}}
+        view = harness.rich_compose_view(program)
+        self.assertEqual((view['you_will_learn'], view['courses']), (['Lead teams', 'Plan work'], ['Course A']))
+
+    def test_choose_chip(self):
+        followups = {'suggestions': ['Introductory', 'Advanced'], 'ideas': ['Show me advanced MLOps']}
+        self.assertEqual(harness.choose_chip(followups, ('advanced', 'mlops')), 'Show me advanced MLOps')
+        self.assertEqual(harness.choose_chip(followups, ('advanced',)), 'Advanced')  # ties go to the first
+        self.assertIsNone(harness.choose_chip(followups, ('welding',)))
+        self.assertIsNone(harness.choose_chip(None, ('advanced',)))
+
+    def test_conversations_open_with_each_persona_message(self):
+        openings = {c.id: c.message for c in harness.persona_cases(load_personas)}
+        loaded = harness.conversations(load_personas)
+        self.assertEqual(len(loaded), 10)
+        for conversation in loaded:
+            self.assertEqual(len(conversation.messages), 3)
+            self.assertEqual(conversation.messages[0], openings[conversation.id])
+            self.assertTrue(conversation.goal and conversation.keywords)
+        self.assertEqual([c.id for c in harness.conversations(load_personas, ['p010-welder'])], ['p010-welder'])
+
+    def test_a_conversation_carries_one_session_through_its_turns(self):
+        seen = []
+        steps = fake_steps()
+        base_intent = steps.intent
+
+        def intent(**kwargs):
+            seen.append(kwargs['user'])
+            return base_intent(**kwargs)
+
+        steps.intent = intent
+        conversation = harness.Conversation(id='c1', goal='lead', messages=('first ask', 'second ask', 'third ask'))
+        arm = harness.Arm('a', ARMS[0].intent, ARMS[0].compose, cold_effort='high')
+        records = list(harness.run_conversations(conversation_list=[conversation], arms=[arm], scope=None,
+                                                 steps=steps))
+        self.assertEqual([r['turn_index'] for r in records], [0, 1, 2])
+        self.assertEqual([r['message'] for r in records], ['first ask', 'second ask', 'third ask'])
+        self.assertEqual([r['models'][1] for r in records], ['gpt-5.4-mini@high', 'gpt-5.4-mini@low',
+                                                             'gpt-5.4-mini@low'])
+        self.assertIn('first ask', seen[2])  # the third turn's intent step sees the earlier turns
+        first = records[0]
+        self.assertEqual(first['status'], 'done')
+        self.assertTrue(first['page_item_ids'])
+        self.assertEqual(first['block_types'][0], 'page_header')
+        self.assertEqual(first['usage']['compose']['output_tokens'], 50)
+        self.assertEqual(first['arm_options'], {'cold': 'high', 'cands': 20, 'view': 'standard'})
+        self.assertIsNone(first['chosen_chip'])
+
+    def test_an_adaptive_learner_answers_with_a_matching_chip(self):
+        conversation = harness.Conversation(id='c1', goal='lead', messages=('first', 'second', 'third'),
+                                            keywords=tuple('aeiou'))
+        records = list(harness.run_conversations(conversation_list=[conversation], arms=ARMS[:1], scope=None,
+                                                 steps=fake_steps(), style='adaptive'))
+        chips = records[0]['followups']['suggestions'] + (records[0]['followups'].get('ideas') or [])
+        self.assertIn(records[1]['chosen_chip'], chips)
+        self.assertEqual(records[1]['message'], records[1]['chosen_chip'])
+        unmatched = harness.Conversation(id='c2', goal='lead', messages=('first', 'second'), keywords=('zzz',))
+        records = list(harness.run_conversations(conversation_list=[unmatched], arms=ARMS[:1], scope=None,
+                                                 steps=fake_steps(), style='adaptive'))
+        self.assertEqual(records[1]['message'], 'second')
+
+    @ddt.data('compose', 'intent')
+    def test_a_failed_model_call_is_recorded_with_its_reason(self, step):
+        error = ModelError('OpenAI stream failed (APITimeoutError) for model x.')
+        steps = fake_steps(**{f'{step}_error': error})
+        conversation = harness.Conversation(id='c1', goal='lead', messages=('first',))
+        record, = harness.run_conversations(conversation_list=[conversation], arms=ARMS[:1], scope=None, steps=steps)
+        self.assertEqual((record['status'], record['error']), ('error', 'model_failed'))
+        self.assertEqual(record['model_error'], f'{step}: OpenAI stream failed (APITimeoutError) for model x.')
+        if step == 'compose':  # the stream got as far as its text before failing
+            self.assertEqual(record['usage']['compose']['output_tokens'], 50)
+
+    def test_model_sections_only_drops_server_sections(self):
+        original = compose.ComposeParser._server_section  # pylint: disable=protected-access
+        conversation = harness.Conversation(id='c1', goal='lead', messages=('first',))
+        with_server, = harness.run_conversations(conversation_list=[conversation], arms=ARMS[:1], scope=None,
+                                                 steps=fake_steps())
+        model_only, = harness.run_conversations(conversation_list=[conversation], arms=ARMS[:1], scope=None,
+                                                steps=fake_steps(), server_sections=False)
+        server_built = [b for b in with_server['blocks'] if b['type'] == 'item_section' and b['props']['fallback']]
+        self.assertTrue(server_built)  # the canned page gets related programs from the server
+        self.assertFalse([b for b in model_only['blocks'] if b['type'] == 'item_section' and b['props']['fallback']])
+        self.assertEqual((with_server['server_sections'], model_only['server_sections']), (True, False))
+        self.assertIs(compose.ComposeParser._server_section, original)  # pylint: disable=protected-access
+
+    def test_turn_deadline_is_restored(self):
+        with harness.turn_deadline(60):
+            self.assertEqual(constants.TURN_DEADLINE_S, 60)
+        self.assertEqual(constants.TURN_DEADLINE_S, 20)
+        with harness.turn_deadline(None):
+            self.assertEqual(constants.TURN_DEADLINE_S, 20)
+
+    def test_conversation_budget_and_style_checks(self):
+        conversation = harness.Conversation(id='c1', goal='lead', messages=('first', 'second'))
+        messages = []
+        records = list(harness.run_conversations(conversation_list=[conversation], arms=ARMS[:1], scope=None,
+                                                 steps=fake_steps(), max_calls=3, log=messages.append))
+        self.assertEqual(len(records), 1)
+        self.assertTrue(any('max_calls=3' in m for m in messages))
+        with self.assertRaises(ValueError):
+            list(harness.run_conversations(conversation_list=[conversation], arms=ARMS[:1], scope=None,
+                                           steps=fake_steps(), style='chatty'))
+        plan = harness.plan_conversations([conversation], ARMS, runs=2)
+        self.assertEqual((plan['turns'], plan['max_paid_calls']), (8, 16))
+
+
 class HarnessScoringTests(TestCase):
     """Per-turn scoring and the per-arm summary."""
 
@@ -191,6 +362,15 @@ class HarnessScoringTests(TestCase):
         other = {'redirect_reason': 'injection_or_off_topic'}
         self.assertTrue(harness_scoring.score_intent(other, seen(False, 'off_topic'))['pass'])
         self.assertFalse(harness_scoring.score_intent(other, seen(True, None))['pass'])
+
+    def test_score_intent_checks_a_weekly_hours_limit(self):
+        debug = {'intent_result': {'on_topic': True, 'redirect_reason': None},
+                 'merged_intent': {'constraints': {'max_hours_per_week': 5}}}
+        expect = {'on_topic': True, 'max_hours_per_week_le': 3}
+        self.assertEqual(harness_scoring.score_intent(expect, debug),
+                         {'pass': False, 'why': 'missed max_hours_per_week'})
+        debug['merged_intent']['constraints']['max_hours_per_week'] = 3
+        self.assertTrue(harness_scoring.score_intent(expect, debug)['pass'])
 
     def test_score_intent_flags_a_wrong_merge_mode(self):
         debug = {'intent_result': {'on_topic': True, 'redirect_reason': None, 'merge': 'replace'}}
@@ -247,7 +427,7 @@ class HarnessCommandTests(TestCase):
                      stdout=out)
         plan = json.loads(out.getvalue())
         self.assertEqual(plan['arms'], ['openai-best-fit', 'xpert'])
-        self.assertEqual(plan['turns'], 84)
+        self.assertEqual(plan['turns'], 86)
 
     @override_settings(PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE=None)
     def test_requires_dev_scope(self):
@@ -259,6 +439,12 @@ class HarnessCommandTests(TestCase):
         with self.assertRaises(CommandError):
             call_command('run_personalized_search_harness', '--arm', 'x=gpt-9,gpt-4.1-mini', '--max-calls', '2',
                          stdout=StringIO())
+
+    def test_conversation_only_options_are_refused_for_single_turn_cases(self):
+        for args in (['--arm', 'x=gpt-6-luna,gpt-6-luna@none+cands:40'], ['--no-server-sections']):
+            with self.assertRaises(CommandError):
+                call_command('run_personalized_search_harness', '--case-set', 'demo', '--max-calls', '2', *args,
+                             stdout=StringIO())
 
     def test_no_matching_cases_is_a_command_error(self):
         with self.assertRaises(CommandError):
@@ -287,6 +473,72 @@ class HarnessCommandTests(TestCase):
             call_command('run_personalized_search_harness', '--case-id', 'O1', '--arm',
                          'a=gpt-4.1-mini,gpt-5.4-mini@low', '--max-calls', '10', stdout=out, stderr=StringIO())
         self.assertIn('"case_id": "O1"', out.getvalue())
+
+    def test_conversations_dry_run(self):
+        out = StringIO()
+        call_command('run_personalized_search_harness', '--case-set', 'conversations', '--max-calls', '10',
+                     '--dry-run', stdout=out)
+        plan = json.loads(out.getvalue())
+        self.assertEqual((plan['conversations'], plan['turns']), (10, 60))
+
+    @override_settings(OPENAI_API_KEY='k', PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE={'filter': 'f', 'label': 'l'})
+    def test_harness_timeouts_override_the_settings(self):
+        seen = []
+        steps = fake_steps()
+        base_compose = steps.compose
+
+        def timed_compose(**kwargs):
+            seen.append(kwargs['timeout_s'])
+            return base_compose(**kwargs)
+
+        steps.compose = timed_compose
+        with mock.patch('enterprise_access.apps.personalized_search.wiring.steps', return_value=steps):
+            call_command('run_personalized_search_harness', '--case-set', 'conversations', '--case-id',
+                         'p010-welder', '--arm', 'a=gpt-4.1-mini,gpt-5.4-mini@low', '--max-calls', '10',
+                         '--compose-timeout-s', '12', '--intent-timeout-s', '6', '--turn-deadline-s', '40',
+                         stdout=StringIO(), stderr=StringIO())
+        self.assertTrue(seen and all(timeout > 5 for timeout in seen))
+
+    def test_conversations_have_no_judge(self):
+        with self.assertRaises(CommandError):
+            call_command('run_personalized_search_harness', '--case-set', 'conversations', '--judge',
+                         '--max-calls', '10', stdout=StringIO())
+
+    def test_no_matching_conversations_is_a_command_error(self):
+        with self.assertRaises(CommandError):
+            call_command('run_personalized_search_harness', '--case-set', 'conversations', '--case-id', 'nope',
+                         '--max-calls', '10', stdout=StringIO())
+
+    @override_settings(PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE=None)
+    def test_conversations_require_dev_scope(self):
+        with self.assertRaises(CommandError):
+            call_command('run_personalized_search_harness', '--case-set', 'conversations', '--max-calls', '10',
+                         stdout=StringIO())
+
+    @override_settings(OPENAI_API_KEY='k', PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE={'filter': 'f', 'label': 'l'})
+    def test_a_conversation_run_writes_one_row_per_turn(self):
+        out, err = StringIO(), StringIO()
+        with mock.patch('enterprise_access.apps.personalized_search.wiring.steps', return_value=fake_steps()):
+            call_command('run_personalized_search_harness', '--case-set', 'conversations', '--case-id',
+                         'p010-welder', '--conversation-style', 'adaptive', '--arm',
+                         'a=gpt-4.1-mini,gpt-5.4-mini@low+cold:high', '--max-calls', '10', stdout=out, stderr=err)
+        rows = [json.loads(line) for line in out.getvalue().splitlines()[1:]]
+        self.assertEqual([(r['conversation_id'], r['turn_index'], r['style']) for r in rows],
+                         [('p010-welder', i, 'adaptive') for i in range(3)])
+        self.assertIn('Wrote 3 turns.', err.getvalue())
+
+    @override_settings(OPENAI_API_KEY='k', PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE={'filter': 'f', 'label': 'l'})
+    def test_a_conversation_run_can_write_a_file(self):
+        with NamedTemporaryFile(suffix='.jsonl', delete=False) as handle:
+            path = handle.name
+        self.addCleanup(os.remove, path)
+        with mock.patch('enterprise_access.apps.personalized_search.wiring.steps', return_value=fake_steps()):
+            call_command('run_personalized_search_harness', '--case-set', 'conversations', '--case-id',
+                         'p010-welder', '--arm', 'a=gpt-4.1-mini,gpt-5.4-mini@low', '--max-calls', '10',
+                         '--no-server-sections', '--output', path, stdout=StringIO(), stderr=StringIO())
+        with open(path, encoding='utf-8') as written:
+            rows = [json.loads(line) for line in written]
+        self.assertEqual([r['server_sections'] for r in rows], [False, False, False])
 
     def test_report_needs_a_readable_file_with_records(self):
         with self.assertRaises(CommandError):

@@ -8,6 +8,8 @@ builds the properties from what the turn already recorded.
 import hashlib
 import json
 
+from enterprise_access.apps.personalized_search.core import constants
+
 TURN_COMPLETED = 'turn.completed'
 TURN_FAILED = 'turn.failed'
 TURN_STOPPED = 'turn.stopped'
@@ -17,7 +19,8 @@ _USAGE_FIELDS = (('input_tokens', 'input_tokens'), ('cached_tokens', 'cached_inp
 
 
 # Server-set card fields that change between turns without the model rewriting anything.
-_VOLATILE_CARD_FIELDS = frozenset({'status', 'section', 'position'})
+# Set per turn by the server, not written by the model: a repeated block must digest the same across turns.
+_VOLATILE_CARD_FIELDS = frozenset({'status', 'section', 'position', 'total', 'reserve'})
 
 
 def _without_volatile(value):
@@ -40,13 +43,26 @@ def block_digest(block: dict) -> str:
 
 
 def join_keys(ctx, record: dict) -> dict:
-    """The keys every event carries, so events join to each other and to enrollments."""
+    """
+    The keys every event carries, so events join to each other and to enrollments. ``is_debug`` is whether
+    this turn's models came from debug overrides (the host's tag), not whether the environment allows them.
+    """
     session = ctx.session
     return {
         'conversation_id': session['uuid'], 'turn_id': record.get('turn_uuid'), 'turn_index': record['sequence'],
         'enterprise_customer_uuid': session['enterprise_customer_uuid'],
-        'cohort': ctx.analytics.get('cohort'), 'engine': ctx.analytics.get('engine'), 'is_debug': bool(ctx.debug),
+        'cohort': ctx.analytics.get('cohort'), 'engine': ctx.analytics.get('engine'),
+        'is_debug': bool(ctx.analytics.get('is_debug')),
     }
+
+
+def _reason_code(reason: str) -> str:
+    """
+    A dropped line's reason without model-written text: the code, plus its item type when the suffix is one
+    (``section_no_valid_items:course``). Other suffixes (an unknown block or item type) are the model's.
+    """
+    code, _, suffix = reason.partition(':')
+    return reason if suffix in constants.ITEM_TYPES else code
 
 
 def _completed(ctx, record: dict) -> dict:
@@ -61,7 +77,8 @@ def _completed(ctx, record: dict) -> dict:
         'intent_merge_mode': record.get('merge_mode'),
         'intent_skills': list(merged.get('skills') or []), 'intent_roles': list(merged.get('roles') or []),
         'intent_level': merged.get('level'), 'intent_item_types': list(merged.get('item_types') or []),
-        'intent_max_weeks': constraints.get('max_weeks'), 'intent_pacing': constraints.get('pacing'),
+        'intent_max_weeks': constraints.get('max_weeks'),
+        'intent_max_hours_per_week': constraints.get('max_hours_per_week'), 'intent_pacing': constraints.get('pacing'),
         'shown_item_keys': [p['item_id'] for p in placements],
         'shown_item_types': [p['item_type'] for p in placements],
         'shown_item_sections': [p['section'] for p in placements],
@@ -72,7 +89,7 @@ def _completed(ctx, record: dict) -> dict:
         'shown_block_digests': [block_digest(b) for b in record.get('blocks') or []],
         'retrieved_item_keys': list(record.get('candidate_ids') or []),
         'excluded_item_keys': list(record.get('excluded_ids') or []),
-        'dropped_reasons': list(record.get('dropped') or []),
+        'dropped_reasons': [_reason_code(reason) for reason in record.get('dropped') or []],
         'followup_attribute': record.get('followup_attribute'),
         'intent_model': ctx.intent_model.model, 'intent_effort': ctx.intent_model.effort,
         'compose_model': ctx.compose_model.model, 'compose_effort': ctx.compose_model.effort,
@@ -80,6 +97,8 @@ def _completed(ctx, record: dict) -> dict:
         'first_text_ms': timing.get('first_text_ms'), 'first_tiles_ms': timing.get('first_section_ms'),
         'page_done_ms': timing.get('complete_ms'),
         'prompt_length': len(ctx.message),
+        # The catalog records' language (``CatalogScope.locale``); a turn with no scope (harness, tests) is English.
+        'content_locale': getattr(ctx.scope, 'locale', None) or 'en',
     }
     for step in ('intent', 'compose'):
         usage = (record.get('usages') or {}).get(step)

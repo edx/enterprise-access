@@ -27,6 +27,7 @@ from enterprise_access.apps.personalized_search.core.errors import ModelError
 from enterprise_access.apps.personalized_search.core.ports import Usage
 from enterprise_access.apps.personalized_search.core.retrieval import (
     RetrievalFailed,
+    SearchResults,
     choose_followup_attribute,
     prefilter
 )
@@ -35,6 +36,8 @@ logger = logging.getLogger(__name__)
 TURN_LOG_EVENT = 'personalized_search.turn'
 # The only fields the turn log may carry: ids, models, timings and counts, never learner text
 # (``pending_turn`` holds the message and reply until they're persisted, so it's excluded).
+# Blocks that carry cards: the first one starts the "first tiles" timing (``first_section_ms``).
+CARD_BLOCKS = ('top_pick', 'compare', 'item_section')
 TURN_LOG_FIELDS = (
     'session_uuid', 'sequence', 'turn_uuid', 'backend', 'model_intent', 'model_compose', 'outcome', 'error',
     'redirect_reason', 'timing', 'item_count', 'dropped_lines', 'fallback', 'candidate_ids', 'item_ids',
@@ -61,12 +64,14 @@ class TurnContext:
     # Per-step timeouts (each is also capped by the time left before the turn deadline).
     intent_timeout_s: float = constants.DEFAULT_INTENT_TIMEOUT_S
     compose_timeout_s: float = constants.DEFAULT_COMPOSE_READ_TIMEOUT_S
+    # How many candidates the compose step chooses from (the prefilter's shortlist).
+    shortlist: int = constants.MAX_CANDIDATES
     # Model id -> platform name for logs and timing ('openai', 'xpert'); the model registry's platform_of.
     platform: Callable[[str], str] = lambda model: 'unknown'
     clock: Callable[[], float] = time.monotonic
     id_factory: Callable[[], str] = lambda: str(uuid.uuid4())
     t0: float = field(default=0.0)
-    # Event tags from the host (KD-12): ``cohort`` and ``engine``.
+    # Event tags from the host (KD-12): ``cohort``, ``engine`` and ``is_debug`` (the turn used debug overrides).
     analytics: dict = field(default_factory=dict)
 
 
@@ -76,8 +81,8 @@ class Steps:
 
     # (system, user, model, effort, timeout_s) -> (text, Usage)
     intent: Callable[..., tuple[str, Usage]]
-    # (intent, scope, excluded_ids, timeout_s=) -> raw candidates
-    retrieve: Callable[..., list[dict]]
+    # (intent, scope, excluded_ids, timeout_s=, shortlist=) -> raw candidates and the catalog totals per type
+    retrieve: Callable[..., SearchResults]
     # (system, user, model, effort, timeout_s, usage) -> Iterator[str]
     compose: Callable[..., Iterator[str]]
     # (session, turn) -> None: write a finished turn (``SessionStore.persist_turn``). None: don't persist.
@@ -137,6 +142,7 @@ def run_turn(ctx: TurnContext, steps: Steps) -> Iterator[dict]:
             elif part['type'] == 'finish':
                 # Spec step 5-6: persist before finish; if that fails, the turn ends in an error instead.
                 if steps.persist and record.get('pending_turn'):
+                    record['stage'] = 'persist'  # a storage failure is reported as such, not as compose
                     try:
                         steps.persist(ctx.session, dict(record['pending_turn'], parts=emitted))
                     except Exception:  # pylint: disable=broad-exception-caught
@@ -146,7 +152,13 @@ def run_turn(ctx: TurnContext, steps: Steps) -> Iterator[dict]:
                         yield {'type': 'error', 'errorText': 'internal'}
                         return
                 record['outcome'] = 'redirect' if record.get('redirected') else 'done'
-                record['blocks'] = [p['data'] for p in emitted if p['type'] == 'data-block']
+                # One block per id, where it first appeared: a block sent again under its id (the final profile)
+                # replaces the earlier one, as clients apply it.
+                blocks: dict[str, dict] = {}
+                for p in emitted:
+                    if p['type'] == 'data-block':
+                        blocks[p['id']] = p['data']
+                record['blocks'] = list(blocks.values())
             emitted.append(part)
             yield part
     except Exception:  # pylint: disable=broad-exception-caught
@@ -261,9 +273,9 @@ def _turn_parts(ctx: TurnContext, steps: Steps, record: dict) -> Iterator[dict]:
     retrieval_started = ctx.clock()
     try:
         raw = steps.retrieve(merged, ctx.scope, _excluded_ids(session),
-                             timeout_s=min(constants.RETRIEVAL_TIMEOUT_S, remaining()))
-        candidates = prefilter(raw, merged)
-        totals = getattr(raw, 'totals', {})
+                             timeout_s=min(constants.RETRIEVAL_TIMEOUT_S, remaining()), shortlist=ctx.shortlist)
+        candidates = prefilter(raw, merged, ctx.shortlist)
+        totals = getattr(raw, 'totals', {})  # a plain list (a test fake) carries no totals
     except RetrievalFailed:
         yield {'type': 'error', 'errorText': 'retrieval_failed'}
         return
@@ -275,7 +287,7 @@ def _turn_parts(ctx: TurnContext, steps: Steps, record: dict) -> Iterator[dict]:
 
     # Step 4: compose
     yield {'type': 'data-status', 'data': {'step': 'writing'}, 'transient': True}
-    parser = ComposeParser(candidates=candidates, shown_ids=_excluded_ids(session), followup_attribute=attribute,
+    parser = ComposeParser(candidates=candidates, excluded_ids=_excluded_ids(session), followup_attribute=attribute,
                            intent=merged, totals=totals, seen_ids=session['shown_item_ids'])
     record['item_ids'] = parser.emitted_ids  # the parser's own list, so an aborted turn logs what it showed
     record.update(placements=parser.placements, dropped=parser.dropped)
@@ -293,8 +305,8 @@ def _turn_parts(ctx: TurnContext, steps: Steps, record: dict) -> Iterator[dict]:
         for part in parts:
             if part['type'] == 'text-delta' and timing['first_text_ms'] is None:
                 timing['first_text_ms'] = _ms(ctx, ctx.clock())
-            is_section = part['type'] == 'data-block' and part['data']['type'] == 'item_section'
-            if is_section and timing['first_section_ms'] is None:
+            has_cards = part['type'] == 'data-block' and part['data']['type'] in CARD_BLOCKS
+            if has_cards and timing['first_section_ms'] is None:
                 timing['first_section_ms'] = _ms(ctx, ctx.clock())
             yield part
 
@@ -312,12 +324,15 @@ def _turn_parts(ctx: TurnContext, steps: Steps, record: dict) -> Iterator[dict]:
         stream.close()
     timing['dropped_lines'] = parser.dropped_lines
     debug['dropped'] = parser.dropped
+    debug['followup_switched_from'] = parser.followup_switched_from
     record.update(dropped_lines=parser.dropped_lines, fallback=parser.used_fallback)
 
     # Step 5: persist, final session title, timing; step 6: finish
     session['merged_intent'] = merged
     session['history'].append({'user': ctx.message, 'reply': parser.reply.strip()})
-    session['shown_item_ids'] = session['shown_item_ids'] + parser.emitted_ids
+    session['shown_item_ids'] = list(dict.fromkeys(session['shown_item_ids'] + parser.emitted_ids))
+    attribute = parser.attribute  # 'open' when the results shown don't differ on the planned attribute
+    record['followup_attribute'] = attribute  # the event reports the follow-up the learner was asked
     if attribute != 'open' and attribute not in session['asked_attributes']:
         session['asked_attributes'].append(attribute)
     session['turn_count'] = sequence

@@ -1,5 +1,6 @@
 """``CatalogSearch`` over enterprise-access's Algolia client (one ``multiple_queries`` round trip)."""
-from enterprise_access.apps.api_client.algolia_client import AlgoliaSearchClient, SecuredAlgoliaKey
+from enterprise_access.apps.api_client.algolia_client import AlgoliaClientError, AlgoliaSearchClient, SecuredAlgoliaKey
+from enterprise_access.apps.personalized_search.core.errors import CatalogSearchError
 
 
 class AlgoliaCatalog:
@@ -13,9 +14,13 @@ class AlgoliaCatalog:
         self._client = client
 
     def search(self, queries: list[dict], *, scope, timeout_s: float) -> list[dict]:
-        client = self._client or AlgoliaSearchClient()
-        return client.multi_search_catalog_index(queries, secured_key=scope.secured_key,
-                                                 allow_unscoped=scope.allow_unscoped, timeout_s=timeout_s)
+        """The client's results; its search and configuration errors become the port's ``CatalogSearchError``."""
+        try:
+            client = self._client or AlgoliaSearchClient()
+            return client.multi_search_catalog_index(queries, secured_key=scope.secured_key,
+                                                     allow_unscoped=scope.allow_unscoped, timeout_s=timeout_s)
+        except AlgoliaClientError as exc:
+            raise CatalogSearchError(str(exc)) from exc
 
 
 def secured_key_from_payload(payload: dict) -> SecuredAlgoliaKey:
