@@ -40,14 +40,18 @@
         },
         "facts": {"type": "object"},
         "why": {"type": ["string", "null"], "maxLength": 400},
-        "fit": {"type": "array", "maxItems": 3, "items": {"type": "string", "maxLength": 24}}
+        "fit": {"type": "array", "maxItems": 3, "items": {"type": "string", "maxLength": 24}},
+        "status": {"enum": ["new"], "description": "New to the conversation since the previous turn (optional, v1 2026-11-09)"}
       }
     },
     "item_section": {
       "type": "object", "additionalProperties": false, "required": ["item_type", "label", "dek", "fallback", "items"],
       "properties": {"item_type": {"$ref": "#/$defs/item_type"}, "label": {"type": "string"},
                      "dek": {"type": "string", "maxLength": 200}, "fallback": {"type": "boolean"},
-                     "items": {"type": "array", "minItems": 1, "maxItems": 3, "items": {"$ref": "#/$defs/item_card"}}}
+                     "items": {"type": "array", "minItems": 1, "maxItems": 3, "items": {"$ref": "#/$defs/item_card"}},
+                     "total": {"type": "integer", "minimum": 0, "description": "Catalog matches for this type (optional, v1 2026-11-09)"},
+                     "reserve": {"type": "array", "maxItems": 2, "items": {"$ref": "#/$defs/item_card"},
+                                 "description": "Next-best cards to fill one the learner removes (optional, v1 2026-11-09)"}}
     },
     "insight": {
       "type": "object", "additionalProperties": false, "required": ["title", "body"],
