@@ -71,7 +71,7 @@
       "description": "What the AI knows about the learner, from the merged intent (no model call). Added in v1, 2026-11-09.",
       "type": "object", "additionalProperties": false, "required": ["summary", "chips"],
       "properties": {"summary": {"type": "string", "minLength": 1, "maxLength": 200},
-                     "chips": {"type": "array", "minItems": 1, "maxItems": 6, "items": {"type": "string", "minLength": 1, "maxLength": 40}}}
+                     "chips": {"type": "array", "minItems": 0, "maxItems": 6, "items": {"type": "string", "minLength": 1, "maxLength": 40}}}
     },
     "top_pick": {
       "description": "The one item to start with. Added in v1, 2026-11-09.",
