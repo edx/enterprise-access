@@ -62,7 +62,7 @@ Item events also carry `item_key` and `item_type`. Array properties hold primiti
 | No-match rate; catalog gaps | `turn.completed` where `outcome = no_match`, grouped by `intent_skills` and `intent_roles` |
 | Dropped and excluded rates | `dropped_reasons`, `excluded_item_keys` over `shown_item_keys` |
 | Cost per turn | Token counts joined to a model price table by `*_model` |
-| How often a refinement repeats a block unchanged (the case for model-written diffs, KD-13) | Per `conversation_id`, compare each turn's `shown_block_digests` with the previous turn's, by `shown_block_types` |
+| How often a refinement repeats a block unchanged (the case for model-written diffs, KD-13) | Per `conversation_id`, count a block as repeated when its digest appears in the previous turn's `shown_block_digests` (digests leave out server-set fields: status, section, position, total, reserve) |
 | Time to results | Percentiles of `first_text_ms`, `first_tiles_ms` and `page_done_ms` |
 | Topic shift | `intent_merge_mode = replace` with `turn_index > 1` |
 | Click-through by position or section | `result_clicked` over `results_rendered`, joined on `turn_id` |

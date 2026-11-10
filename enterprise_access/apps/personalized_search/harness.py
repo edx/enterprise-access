@@ -24,7 +24,6 @@ larger shortlist, or a fuller candidate view (``Arm.parse``); those apply only i
 """
 import contextlib
 import json
-import math
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -172,8 +171,9 @@ def model_sections_only(enabled: bool):
 @contextlib.contextmanager
 def arm_overrides(arm: Arm):
     """
-    Apply an arm's shortlist size and candidate view for the turns run inside the block, by swapping the
-    module values the core reads at call time. Harness only: turns run one at a time in one process.
+    Apply an arm's candidate view for the turns run inside the block, by swapping the module values the core
+    reads at call time. Harness only: turns run one at a time in one process. (The shortlist size is the turn
+    context's ``shortlist``, set from ``+cands``.)
     """
     saved = []
 
@@ -182,18 +182,6 @@ def arm_overrides(arm: Arm):
         setattr(target, name, value)
 
     try:
-        if arm.candidates and arm.candidates != constants.MAX_CANDIDATES:
-            scale = arm.candidates / constants.MAX_CANDIDATES
-            hit_requests = retrieval._hit_requests  # pylint: disable=protected-access
-            caps = {item_type: math.ceil(cap * scale) for item_type, cap in constants.CANDIDATE_CAPS.items()}
-            swap(constants, 'CANDIDATE_CAPS', caps)
-            swap(constants, 'PREFERRED_TYPE_CAP', math.ceil(constants.PREFERRED_TYPE_CAP * scale))
-            swap(constants, 'MAX_CANDIDATES', arm.candidates)
-            hits_scale = max(scale, 1)  # a smaller shortlist still searches as widely
-            swap(retrieval, '_hit_requests', lambda *args, **kwargs: [
-                dict(req, hitsPerPage=math.ceil(req['hitsPerPage'] * hits_scale))
-                for req in hit_requests(*args, **kwargs)
-            ])
         if arm.view == 'rich':
             swap(constants, 'ATTRIBUTES_TO_RETRIEVE', constants.ATTRIBUTES_TO_RETRIEVE + RICH_ATTRIBUTES)
             swap(compose_step, 'compose_view', rich_compose_view)
@@ -282,8 +270,8 @@ def _wrap_steps(base: Steps, budget: Budget, recorder: _Recorder, retrieval_cach
             raise
 
     def retrieve(merged, scope, excluded, **kwargs):
-        # The timeout isn't part of the memo key.
-        key = json.dumps([merged, sorted(excluded), memo_tag], sort_keys=True)
+        # The timeout isn't part of the memo key; the shortlist size is (it sets how many hits are asked for).
+        key = json.dumps([merged, sorted(excluded), memo_tag, kwargs.get('shortlist')], sort_keys=True)
         if key not in retrieval_cache:
             retrieval_cache[key] = base.retrieve(merged, scope, excluded, **kwargs)
         raw = retrieval_cache[key]
@@ -528,6 +516,8 @@ def run_conversations(*, conversation_list: list[Conversation], arms: list[Arm],
                     recorder = _Recorder()
                     ctx = turn_context(session=session, message=message, intent_model=arm.intent,
                                        compose_model=arm.compose_for_turn(turn_index), scope=scope, debug=True)
+                    if arm.candidates:
+                        ctx.shortlist = arm.candidates
                     started = time.monotonic()
                     with arm_overrides(arm), model_sections_only(not server_sections):
                         parts = list(run_turn(ctx, _wrap_steps(steps, budget, recorder, retrieval_cache,
@@ -542,7 +532,7 @@ def run_conversations(*, conversation_list: list[Conversation], arms: list[Arm],
                     compose_model = arm.compose_for_turn(turn_index)
                     record = {
                         'run': run_index, 'conversation_id': conversation.id, 'turn_index': turn_index,
-                        'style': style, 'arm': arm.name, 'arm_options': arm.options,
+                        'style': style, 'arm': arm.name, 'arm_options': dict(arm.options, cands=ctx.shortlist),
                         'server_sections': server_sections,
                         'models': [_label(arm.intent), _label(compose_model)],
                         'message': message, 'chosen_chip': chip, 'goal': conversation.goal,

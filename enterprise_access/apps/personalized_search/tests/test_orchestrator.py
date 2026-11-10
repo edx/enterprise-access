@@ -316,7 +316,7 @@ class PortableTurnTests(PlainTestCase):
         ctx = TurnContext(session=session, message='m', intent_model=ModelChoice('m1', None),
                           compose_model=ModelChoice('m1', None), scope=None, clock=lambda: next(times))
         steps = Steps(intent=lambda **_: (self.INTENT, Usage(model='m1', effort=None)),
-                      retrieve=lambda *a, timeout_s: seen.append(timeout_s) or [],
+                      retrieve=lambda *a, timeout_s, **_: seen.append(timeout_s) or [],
                       compose=lambda **_: (d for d in ['Nothing fits.']))
         list(run_turn(ctx, steps))
         self.assertEqual(len(seen), 1)

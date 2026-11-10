@@ -8,6 +8,7 @@ Queries and hits use Algolia's catalog-index vocabulary (filters, ``content_type
 another catalog only has to accept and return that shape.
 """
 import html
+import math
 import re
 from dataclasses import dataclass
 
@@ -45,6 +46,11 @@ class CatalogScope:
     def metadata_language_filter(self) -> str:
         return f'metadata_language:{_quote(self.locale)}'
 
+    @property
+    def program_language_filter(self) -> str:
+        """Programs taught in the learner's language (a program lists every language it's offered in)."""
+        return f'language:{_quote(self.language_name)} AND {self.metadata_language_filter}'
+
 
 class RetrievalFailed(Exception):
     """Algolia couldn't be searched."""
@@ -77,8 +83,8 @@ def item_id_of(hit: dict) -> str | None:
 
 
 def _hours(value) -> int | None:
-    """A positive whole number of hours, or None (bools, zero, negatives and non-numbers are dropped)."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+    """A whole number of hours, or None (bools, < 1, non-finite and non-numbers are dropped), like ``intent._weeks``."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 1:
         return None
     return int(value)
 
@@ -116,13 +122,18 @@ def compose_view(candidate: dict) -> dict:
     """The candidate as the compose prompt sees it (spec "LLM step contracts")."""
     hit, card = candidate['hit'], candidate['card']
     description = hit.get('subtitle') if card['item_type'] == 'program' else hit.get('short_description')
-    return {
+    view = {
         'item_id': card['item_id'], 'item_type': card['item_type'], 'title': card['title'],
         'partner': card['partner_name'], 'level': hit.get('level_type'),
         'pacing': card['facts'].get('pacing_type'), 'weeks': card['facts'].get('weeks_to_complete'),
         'hours_per_week': [card['facts'].get('hours_per_week_min'), card['facts'].get('hours_per_week_max')],
         'short_description': _strip_html(description)[:300], 'skills': (hit.get('skill_names') or [])[:6],
     }
+    if card['item_type'] == 'program':
+        # The credential ("Professional Certificate", "MicroMasters"): without it the model can't say a program
+        # earns a certificate, and hedges when a learner asks for one.
+        view['program_type'] = card['facts'].get('program_type')
+    return view
 
 
 def preferred_types(intent: dict) -> set[str]:
@@ -151,8 +162,14 @@ def _course_filter(scope: CatalogScope, types: set[str]) -> str:
     return course_filter
 
 
-def _hit_requests(intent: dict, scope: CatalogScope, excluded_ids: list[str], types: set[str]) -> list[dict]:
-    """Strict (skills) and broadened requests that return hits, for the given types."""
+def _hit_requests(intent: dict, scope: CatalogScope, excluded_ids: list[str], types: set[str],
+                  shortlist: int = constants.MAX_CANDIDATES) -> list[dict]:
+    """
+    Strict (skills) and broadened requests that return hits, for the given types. A shortlist larger than
+    the default asks for proportionally more hits, so the prefilter has enough to choose from.
+    """
+    scale = max(1.0, shortlist / constants.MAX_CANDIDATES)
+    course_hits, program_hits = math.ceil(30 * scale), math.ceil(15 * scale)
     skills = intent.get('skills') or []
     skills_clause = ' OR '.join(f'skill_names:{_quote(s)}' for s in skills)
     broad_query = ' '.join(skills + (intent.get('roles') or [])) or intent.get('query') or ''
@@ -161,16 +178,16 @@ def _hit_requests(intent: dict, scope: CatalogScope, excluded_ids: list[str], ty
         course_filter = _course_filter(scope, types) + ''.join(f' AND NOT key:{_quote(i)}' for i in excluded_ids)
         if skills_clause:
             requests.append({'tier': 2, 'query': intent.get('query') or '',
-                             'filters': f'{course_filter} AND ({skills_clause})', 'hitsPerPage': 30})
-        requests.append({'tier': 1, 'query': broad_query, 'filters': course_filter, 'hitsPerPage': 30,
+                             'filters': f'{course_filter} AND ({skills_clause})', 'hitsPerPage': course_hits})
+        requests.append({'tier': 1, 'query': broad_query, 'filters': course_filter, 'hitsPerPage': course_hits,
                          'removeWordsIfNoResults': 'allOptional'})
     if 'program' in types:
-        program_filter = f'content_type:program AND {scope.metadata_language_filter} AND ({scope.filter})'
+        program_filter = f'content_type:program AND {scope.program_language_filter} AND ({scope.filter})'
         program_filter += ''.join(f' AND NOT aggregation_key:{_quote("program:" + i)}' for i in excluded_ids)
         if skills_clause:
             requests.append({'tier': 2, 'query': intent.get('query') or '',
-                             'filters': f'{program_filter} AND ({skills_clause})', 'hitsPerPage': 15})
-        requests.append({'tier': 1, 'query': broad_query, 'filters': program_filter, 'hitsPerPage': 15,
+                             'filters': f'{program_filter} AND ({skills_clause})', 'hitsPerPage': program_hits})
+        requests.append({'tier': 1, 'query': broad_query, 'filters': program_filter, 'hitsPerPage': program_hits,
                          'removeWordsIfNoResults': 'allOptional'})
     return requests
 
@@ -190,7 +207,7 @@ def _count_requests(intent: dict, scope: CatalogScope) -> list[dict]:
         'course': f'content_type:course AND {scope.course_language_filter} AND ({scope.filter}) AND NOT {exec_clause}',
         'executive_education': (f'content_type:course AND {scope.course_language_filter} AND ({scope.filter}) '
                                 f'AND {exec_clause}'),
-        'program': f'content_type:program AND {scope.metadata_language_filter} AND ({scope.filter})',
+        'program': f'content_type:program AND {scope.program_language_filter} AND ({scope.filter})',
     }
     requests = []
     for item_type in constants.ITEM_TYPES:
@@ -202,17 +219,19 @@ def _count_requests(intent: dict, scope: CatalogScope) -> list[dict]:
     return requests
 
 
-def build_sub_requests(intent: dict, scope: CatalogScope, excluded_ids: list[str]) -> list[dict]:
+def build_sub_requests(intent: dict, scope: CatalogScope, excluded_ids: list[str],
+                       shortlist: int = constants.MAX_CANDIDATES) -> list[dict]:
     """
     Strict (skills) and broadened requests across every item type, plus counts per type. A type the
     learner asked for is a preference, not a filter: its own requests are added so it's well covered,
     while the other types stay in the results as alternatives ("More options").
     """
     every_type = set(constants.ITEM_TYPES) if programs_wanted(intent) else set(constants.ITEM_TYPES) - {'program'}
-    requests = _hit_requests(intent, scope, excluded_ids, every_type)
+    requests = _hit_requests(intent, scope, excluded_ids, every_type, shortlist)
     preferred = preferred_types(intent)
     if preferred:
-        requests += [dict(req, preferred=True) for req in _hit_requests(intent, scope, excluded_ids, preferred)]
+        requests += [dict(req, preferred=True)
+                     for req in _hit_requests(intent, scope, excluded_ids, preferred, shortlist)]
     return requests + _count_requests(intent, scope)
 
 
@@ -225,9 +244,9 @@ class SearchResults(list):
 
 
 def search(intent: dict, scope: CatalogScope, excluded_ids: list[str], *, catalog: CatalogSearch,
-           timeout_s: float = 2.0) -> list[dict]:
+           timeout_s: float = 2.0, shortlist: int = constants.MAX_CANDIDATES) -> list[dict]:
     """Run the sub-requests in one catalog round trip; return candidates ``{hit, card, tier, rank}``."""
-    requests = build_sub_requests(intent, scope, excluded_ids)
+    requests = build_sub_requests(intent, scope, excluded_ids, shortlist)
     queries = [{k: v for k, v in req.items() if k not in ('tier', 'count_for', 'preferred')} for req in requests]
     for query in queries:
         query.update(distinct=True, attributesToRetrieve=constants.ATTRIBUTES_TO_RETRIEVE)
@@ -247,8 +266,12 @@ def search(intent: dict, scope: CatalogScope, excluded_ids: list[str], *, catalo
     return SearchResults(out, totals)
 
 
-def prefilter(raw: list[dict], intent: dict) -> list[dict]:
-    """Spec "Prefilter (deterministic)": dedupe, score, keep the top 20 with type caps."""
+def prefilter(raw: list[dict], intent: dict, shortlist: int = constants.MAX_CANDIDATES) -> list[dict]:
+    """
+    Spec "Prefilter (deterministic)": dedupe, score, keep the top ``shortlist`` (20 by default) with type
+    caps that scale with it.
+    """
+    scale = shortlist / constants.MAX_CANDIDATES
     best: dict[str, dict] = {}
     preferred = preferred_types(intent)
     level = intent.get('level')
@@ -274,7 +297,7 @@ def prefilter(raw: list[dict], intent: dict) -> list[dict]:
         if card['item_id'] not in best or score > best[card['item_id']]['score']:
             best[card['item_id']] = dict(cand, score=score)
     counts = {t: 0 for t in constants.ITEM_TYPES}
-    caps = {t: max(cap, constants.PREFERRED_TYPE_CAP) if t in preferred else cap
+    caps = {t: math.ceil((max(cap, constants.PREFERRED_TYPE_CAP) if t in preferred else cap) * scale)
             for t, cap in constants.CANDIDATE_CAPS.items()}
     kept = []
     for cand in sorted(best.values(), key=lambda c: -c['score']):
@@ -282,7 +305,7 @@ def prefilter(raw: list[dict], intent: dict) -> list[dict]:
         if counts[item_type] < caps[item_type]:
             counts[item_type] += 1
             kept.append(cand)
-        if len(kept) == constants.MAX_CANDIDATES:
+        if len(kept) == shortlist:
             break
     return kept
 
@@ -291,6 +314,19 @@ def _weeks_bucket(weeks):
     if not weeks:
         return None
     return '<=4' if weeks <= 4 else ('5-12' if weeks <= 12 else '>12')
+
+
+def attribute_value(attribute: str, candidate: dict):
+    """A candidate's value for a follow-up attribute (level, time bucket, pacing or type), or None."""
+    if attribute == 'level':
+        return candidate['hit'].get('level_type') or None
+    if attribute == 'time':
+        return _weeks_bucket(candidate['card']['facts'].get('weeks_to_complete'))
+    if attribute == 'pacing':
+        return candidate['card']['facts'].get('pacing_type')
+    if attribute == 'type':
+        return candidate['card']['item_type']
+    return None
 
 
 def choose_followup_attribute(candidates: list[dict], intent: dict, asked: list[str]) -> str:
@@ -302,19 +338,13 @@ def choose_followup_attribute(candidates: list[dict], intent: dict, asked: list[
         'pacing': bool(constraints.get('pacing')),
         'type': len(intent.get('item_types') or constants.ITEM_TYPES) < len(constants.ITEM_TYPES),
     }
-    values = {
-        'level': lambda c: (c['hit'].get('level_type') or None),
-        'time': lambda c: _weeks_bucket(c['card']['facts'].get('weeks_to_complete')),
-        'pacing': lambda c: c['card']['facts'].get('pacing_type'),
-        'type': lambda c: c['card']['item_type'],
-    }
     best, best_share = 'open', None
     for attr in ('level', 'time', 'pacing', 'type'):
         if attr in asked or already[attr]:
             continue
         buckets: dict[str, int] = {}
         for cand in candidates:
-            value = values[attr](cand)
+            value = attribute_value(attr, cand)
             if value:
                 buckets[value] = buckets.get(value, 0) + 1
         if len(buckets) < 2 or min(buckets.values()) < 2:

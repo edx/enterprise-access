@@ -78,6 +78,20 @@ class IntentMergeTests(TestCase):
         plain = intent.merge(None, {'skills': ['sql']}, 'replace', message='I want to learn SQL')
         self.assertEqual(plain['item_types'], list(constants.ITEM_TYPES))
 
+    def test_short_or_quick_in_words_sets_a_four_week_limit(self):
+        for message in ('Advanced level, and short.', 'Practical and quick, please', 'something brief'):
+            merged = intent.merge(None, {'skills': ['ml']}, 'replace', message=message)
+            self.assertEqual(merged['constraints']['max_weeks'], intent.QUICK_MAX_WEEKS, message)
+        # A number the learner gave wins, and other wording sets nothing.
+        stated = intent.merge(None, {'constraints': {'max_weeks': 8}}, 'replace', message='quick, under 8 weeks')
+        self.assertEqual(stated['constraints']['max_weeks'], 8)
+        for message in ('I want a shortlist of SQL courses', 'help me get hired fast'):
+            merged = intent.merge(None, {'skills': ['sql']}, 'replace', message=message)
+            self.assertFalse((merged.get('constraints') or {}).get('max_weeks'), message)
+        # A limit already in the conversation stays.
+        kept = intent.merge(dict(self.prior, constraints={'max_weeks': 2}), {}, 'refine', message='keep it short')
+        self.assertEqual(kept['constraints']['max_weeks'], 2)
+
     def test_the_prompt_maps_journey_language_to_programs(self):
         self.assertIn('Learning journeys:', intent.SYSTEM_PROMPT)
         self.assertIn('set item_types to ["program"]', intent.SYSTEM_PROMPT)

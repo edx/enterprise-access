@@ -30,7 +30,7 @@ class ComposeParserTests(TestCase):
         """Feed ``text`` in fixed-size chunks and return the parser and every part."""
         candidates = default_candidates() if candidates is None else candidates
         parser = compose.ComposeParser(candidates=candidates,
-                                       shown_ids=list(shown), followup_attribute=attribute)
+                                       excluded_ids=list(shown), followup_attribute=attribute)
         parts = []
         for i in range(0, len(text), chunk):
             parts += parser.feed(text[i:i + chunk])
@@ -144,7 +144,7 @@ class ComposeParserTests(TestCase):
         expected = self.shape(self.parse(text, chunk=len(text))[1])
         self.assertEqual(expected[0], 'Here is your page, with picks.')
         for offset in range(1, len(text)):
-            parser = compose.ComposeParser(candidates=default_candidates(), shown_ids=[], followup_attribute='level')
+            parser = compose.ComposeParser(candidates=default_candidates(), excluded_ids=[], followup_attribute='level')
             parts = parser.feed(text[:offset]) + parser.feed(text[offset:]) + parser.finish()
             self.assertEqual(self.shape(parts), expected, offset)
             self.assertNotIn('@@', expected[0])
@@ -167,8 +167,8 @@ class ComposeParserTests(TestCase):
         self.assertEqual(len(self.blocks(parts, 'plan')[0]['props']['why']), 160)
         followups = [p for p in parts if p['type'] == 'data-followups'][0]['data']
         self.assertEqual(len(followups['question']), 200)
-        self.assertEqual(len(followups['ideas'][0]), 48)
-        self.assertEqual(len(followups['ideas']), 3)
+        # An over-long idea is dropped, not cut mid-word: a chip sends its text as the learner's message.
+        self.assertEqual(followups['ideas'], ['x', 'y', 'z'])
         self.assertEqual(len(parser.session_title), 60)
 
     def test_per_turn_item_cap_across_sections(self):
@@ -225,12 +225,12 @@ class ComposeParserTests(TestCase):
     def test_string_fit_and_suggestions_are_not_split_into_letters(self):
         item = {'block': 'item_section', 'item_type': 'course', 'dek': 'd',
                 'items': [{'item_id': 'edX+C1', 'why': 'w', 'fit': 'Short'}]}
-        followup = {'block': 'followup', 'question': 'Level?', 'suggestions': 'Intro'}
-        _, parts = self.parse('Hi.\n@@BLOCKS@@\n' + line(item) + line(followup))
+        followup = {'block': 'followup', 'question': 'Type?', 'suggestions': 'Intro'}
+        _, parts = self.parse('Hi.\n@@BLOCKS@@\n' + line(item) + line(followup), attribute='type')
         self.assertEqual(self.blocks(parts, 'item_section')[0]['props']['items'][0]['fit'], [])
         followups = [p for p in parts if p['type'] == 'data-followups'][0]['data']
         self.assertNotIn('ideas', followups)
-        self.assertEqual(followups['suggestions'], ['Introductory', 'Intermediate', 'Advanced'])
+        self.assertEqual(followups['suggestions'], ['Courses', 'Executive education', 'Programs'])
 
     def test_an_idea_in_the_learners_words_replaces_the_fixed_chip_it_covers(self):
         followup = {'block': 'followup', 'question': 'Level?',
@@ -240,6 +240,33 @@ class ComposeParserTests(TestCase):
         # "beginner" covers Introductory; a topic idea ("deeper fermentation") doesn't stand in for Advanced.
         self.assertEqual(followups['suggestions'], ['Intermediate', 'Advanced'])
         self.assertEqual(followups['ideas'], ["I'm a beginner", 'Show me deeper fermentation'])
+
+    def test_a_plan_without_a_why_has_no_why(self):
+        for why in (None, '  ', 7):
+            plan = {'block': 'plan', 'steps': [{'item_id': 'edX+C1', 'note': 'n'}, {'item_id': 'edX+C2', 'note': 'm'}]}
+            if why is not None:
+                plan['why'] = why
+            _, parts = self.parse('r\n@@BLOCKS@@\n' + line(section('course', ['edX+C1', 'edX+C2', 'edX+C3'])) +
+                                  line(plan))
+            self.assertNotIn('why', self.blocks(parts, 'plan')[0]['props'], why)
+
+    def test_repeated_ideas_are_dropped_regardless_of_case(self):
+        followup = {'block': 'followup', 'question': 'Q?', 'ideas': ['More on SQL', 'more on sql', ' More on SQL ']}
+        _, parts = self.parse('Hi.\n@@BLOCKS@@\n' + line(followup), attribute='open')
+        self.assertEqual([p for p in parts if p['type'] == 'data-followups'][0]['data']['ideas'], ['More on SQL'])
+
+    def test_an_idea_covers_a_fixed_chip_only_with_whole_words(self):
+        def chips(attribute, ideas):
+            followup = {'block': 'followup', 'question': 'Q?', 'ideas': ideas}
+            _, parts = self.parse('Hi.\n@@BLOCKS@@\n' + line(followup), attribute=attribute)
+            return [p for p in parts if p['type'] == 'data-followups'][0]['data']['suggestions']
+        self.assertIn('Programs', chips('type', ['Python programming for analysts']))
+        self.assertNotIn('Programs', chips('type', ['Show me programs']))
+        self.assertIn('Introductory', chips('level', ['Explore new tools for my job']))
+        self.assertIn('Advanced', chips('level', ['Build on my expertise']))
+        self.assertNotIn('Advanced', chips('level', ["I'm an expert already"]))
+        self.assertIn('Instructor-led', chips('pacing', ['Deliver live data dashboards']))
+        self.assertIn('Executive education', chips('type', ['Lead as an executive']))
 
     def test_only_an_idea_that_chooses_courses_replaces_the_courses_chip(self):
         def chips(ideas):
@@ -253,7 +280,39 @@ class ComposeParserTests(TestCase):
         prompt = compose.SYSTEM_PROMPT
         self.assertIn('One or two short, friendly sentences', prompt)
         self.assertIn("don't open with \"I put\" or \"I've updated your results\"", prompt)
-        self.assertIn('bold that title with **double asterisks**; no other markdown', prompt)
+        self.assertIn('your top_pick, by its exact title, which you may bold with **double asterisks**', prompt)
+        self.assertIn('Never bold any other title', prompt)
+
+    def test_a_bolded_title_other_than_the_top_pick_is_recorded(self):
+        top_pick = {'block': 'top_pick', 'item_id': 'edX+C1', 'reason': 'Because you want to lead.'}
+        parser, _ = self.parse('Try **Course edX+C2** first.\n@@BLOCKS@@\n' + line(top_pick))
+        self.assertIn('reply_bold_not_top_pick', parser.dropped)
+        self.assertEqual(parser.dropped_lines, 0)
+        parser, _ = self.parse('Try **Course edX+C1** first.\n@@BLOCKS@@\n' + line(top_pick))
+        self.assertNotIn('reply_bold_not_top_pick', parser.dropped)
+        parser, _ = self.parse('Try this one first.\n@@BLOCKS@@\n' + line(top_pick))
+        self.assertNotIn('reply_bold_not_top_pick', parser.dropped)
+
+    def test_a_followup_about_something_the_results_shown_all_share_becomes_open(self):
+        followup = {'block': 'followup', 'question': 'Self-paced or instructor-led?', 'ideas': ['More on coaching']}
+        same_pacing = line(section('course', ['edX+C1', 'edX+C2']))  # both self-paced
+        parser, parts = self.parse('Hi.\n@@BLOCKS@@\n' + line(followup) + same_pacing, attribute='pacing')
+        followups = [p for p in parts if p['type'] == 'data-followups'][0]['data']
+        self.assertEqual((followups['attribute'], followups['question']),
+                         ('open', 'What else would you like to learn?'))
+        self.assertEqual((followups['suggestions'], followups['ideas']), ([], ['More on coaching']))
+        self.assertEqual((parser.attribute, parser.followup_switched_from), ('open', 'pacing'))
+        mixed_pacing = line(section('course', ['edX+C1', 'edX+C3']))  # self-paced and instructor-led
+        parser, parts = self.parse('Hi.\n@@BLOCKS@@\n' + line(followup) + mixed_pacing, attribute='pacing')
+        followups = [p for p in parts if p['type'] == 'data-followups'][0]['data']
+        self.assertEqual((followups['attribute'], followups['question']), ('pacing', 'Self-paced or instructor-led?'))
+        self.assertIsNone(parser.followup_switched_from)
+
+    def test_the_followup_part_comes_after_the_results(self):
+        followup = {'block': 'followup', 'question': 'Level?', 'ideas': ['x']}
+        _, parts = self.parse('Hi.\n@@BLOCKS@@\n' + line(followup) + line(section('course', ['edX+C1', 'edX+C2'])))
+        types = [p['type'] if p['type'] != 'data-block' else p['data']['type'] for p in parts]
+        self.assertLess(types.index('item_section'), types.index('data-followups'))
 
     def test_with_nothing_left_to_narrow_the_ideas_replace_the_opening_chips(self):
         followup = {'block': 'followup', 'question': 'What next?', 'ideas': ['Negotiation for new leads']}
@@ -277,20 +336,17 @@ class ComposeParserTests(TestCase):
         _, parts = self.parse(text)
         self.assertEqual([b['props']['fallback'] for b in self.blocks(parts, 'item_section')], [False])
 
-    def test_a_section_that_only_repeats_shown_items_is_refilled_from_unused_candidates(self):
+    def test_a_section_that_only_repeats_shown_items_is_dropped_not_refilled(self):
         compare = {'block': 'compare', 'options': [{'item_id': 'edX+C1', 'best_for': 'a'},
                                                    {'item_id': 'edX+C2', 'best_for': 'b'}]}
         text = 'Hi.\n@@BLOCKS@@\n' + line(compare) + line(section('course', ['edX+C1', 'edX+C2'], dek='Quick picks'))
         parser, parts = self.parse(text)
-        course = self.blocks(parts, 'item_section')[0]['props']
-        ids = [i['item_id'] for i in course['items']]
-        self.assertTrue(ids and not {'edX+C1', 'edX+C2'} & set(ids))
-        self.assertEqual((course['dek'], course['fallback']), ('Quick picks', True))
-        self.assertIn('section_refilled:course', parser.dropped)
-        self.assertEqual(parser.dropped_lines, 0)
+        self.assertNotIn('Quick picks', [s['props']['dek'] for s in self.blocks(parts, 'item_section')])
+        self.assertIn('section_only_repeats:course', parser.dropped)
+        self.assertEqual(parser.dropped_lines, 1)
 
     def test_with_a_preferred_type_the_other_types_stay_as_alternatives(self):
-        parser = compose.ComposeParser(candidates=default_candidates(), shown_ids=[], followup_attribute='level',
+        parser = compose.ComposeParser(candidates=default_candidates(), excluded_ids=[], followup_attribute='level',
                                        intent={'item_types': ['executive_education']})
         exec_ed = {'block': 'item_section', 'item_type': 'executive_education', 'dek': 'd',
                    'items': [{'item_id': 'Yale+E1', 'why': 'w'}]}
@@ -301,7 +357,7 @@ class ComposeParserTests(TestCase):
         self.assertTrue(all(s['fallback'] for s in sections[1:]))
 
     def section_types_for(self, item_types):
-        parser = compose.ComposeParser(candidates=default_candidates(), shown_ids=[], followup_attribute='level',
+        parser = compose.ComposeParser(candidates=default_candidates(), excluded_ids=[], followup_attribute='level',
                                        intent={'item_types': item_types})
         parts = parser.feed('Hi.\n@@BLOCKS@@\n' + line(section('course', ['edX+C1']))) + parser.finish()
         return [p['data']['props']['item_type'] for p in parts
@@ -321,15 +377,25 @@ class ComposeParserTests(TestCase):
     def test_server_added_sections_use_only_closely_related_candidates(self):
         def program_section(tier, rank):
             cands = [candidate(course_hit('edX+C1')), candidate(program_hit('p-9'), tier=tier, rank=rank)]
-            parser = compose.ComposeParser(candidates=cands, shown_ids=[], followup_attribute='level',
+            parser = compose.ComposeParser(candidates=cands, excluded_ids=[], followup_attribute='level',
                                            intent={'item_types': list(constants.ITEM_TYPES)})
             parts = parser.feed('Hi.\n@@BLOCKS@@\n' + line(section('course', ['edX+C1']))) + parser.finish()
             sections = [p['data']['props'] for p in parts
                         if p['type'] == 'data-block' and p['data']['type'] == 'item_section']
             return [props for props in sections if props['item_type'] == 'program']
         self.assertTrue(program_section(tier=2, rank=12))   # matched the learner's skills
-        self.assertTrue(program_section(tier=1, rank=2))    # a top keyword match
-        self.assertFalse(program_section(tier=1, rank=12))  # loosely related: never added as filler
+        self.assertFalse(program_section(tier=1, rank=0))   # a keyword match alone read as filler in review
+        self.assertFalse(program_section(tier=1, rank=12))
+
+    def test_the_fallback_uses_only_skill_matched_candidates(self):
+        cands = [candidate(course_hit('edX+C1'), tier=1), candidate(course_hit('edX+C2'), tier=1)]
+        parser, parts = self.parse('Nothing fits.\n@@BLOCKS@@\n', candidates=cands)
+        self.assertEqual(self.blocks(parts, 'item_section'), [])
+        self.assertFalse(parser.used_fallback)
+
+    def test_a_plan_that_starts_elsewhere_explains_how_it_leads_to_the_top_pick(self):
+        self.assertIn("when the top pick isn't the first step, say how the earlier steps lead to it",
+                      compose.SYSTEM_PROMPT)
 
     def test_the_prompt_asks_for_the_followup_right_after_the_header(self):
         prompt = compose.SYSTEM_PROMPT
@@ -371,4 +437,4 @@ class ComposeParserTests(TestCase):
                                              history=[], message='m', candidates=[])
         for text in (compose.SYSTEM_PROMPT, content):
             words = re.sub(r'page_header|"page"|"candidate"', '', text)
-            self.assertNotRegex(words.lower(), r'\b(page|candidates?)\b')
+            self.assertNotRegex(words.lower(), r'\b(pages?|candidates?)\b')
