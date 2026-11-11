@@ -126,21 +126,18 @@ def assignment_course_run_ended_expiration_enabled():
     return ASSIGNMENT_COURSE_RUN_ENDED_EXPIRATION.is_enabled()
 
 
-# A ``WaffleSwitch``, not a flag: it is read in Stripe webhook handlers and Celery tasks, where
-# there is no request, and it can be flipped in Django admin without a deploy.
+# A switch because it is read off-request, in Stripe webhook handlers and Celery tasks; see the
+# note above LEARNER_PATHWAYS_SERVER_PIPELINE.
 #
 # .. toggle_name: enterprise_access.ssp_paid_renewal
 # .. toggle_implementation: WaffleSwitch
 # .. toggle_default: False
-# .. toggle_description: Enables paid-to-paid renewal for self-service (Teams / Essentials)
-#     subscriptions, i.e. a paid plan rolling into its next paid year. When on, the Stripe webhook
-#     handlers and Celery tasks: provision the next year's plan in license-manager when the renewal
-#     invoice is paid; on cancellation, keep the plan active until the end of the paid period (then
-#     learners' enrollments move to Audit) instead of ending it immediately; keep access during the
-#     grace period after a failed renewal payment; and send the renewal receipt. When off, the existing
-#     behaviour runs. Turning it off only changes how renewal events are handled from then on; it
-#     does not undo work already done while it was on (plans provisioned in license-manager,
-#     cancellations scheduled in Stripe, receipts sent).
+# .. toggle_description: Will gate the new paid-to-paid renewal handling for self-service
+#     (Teams / Essentials) subscriptions in the Stripe webhook handlers and Celery tasks:
+#     provisioning the next year's plan, keeping a cancelled plan active until the end of its paid
+#     period, and the grace period after a failed renewal payment. No code reads it yet; each of
+#     these is wired to it as it lands. When off, the current handling runs. Turning it off affects
+#     only events handled from then on and does not undo work done while it was on.
 # .. toggle_use_cases: temporary
 # .. toggle_creation_date: 2026-11-11
 # .. toggle_target_removal_date: 2027-06-30

@@ -27,18 +27,17 @@ def test_enable_multi_license_entitlements_bff_disabled(monkeypatch):
 @pytest.mark.parametrize('switch', [
     toggles.LEARNER_PATHWAYS_SERVER_PIPELINE,
     toggles.LEARNER_PATHWAYS_DISABLE_CANDIDATE_RERANK,
-    toggles.SSP_PAID_RENEWAL,
 ])
-def test_toggles_are_switches_not_flags(switch):
+def test_the_pathway_toggles_are_switches_not_flags(switch):
     """
-    These toggles must stay ``WaffleSwitch``.
+    Both pathway toggles must stay ``WaffleSwitch``.
 
     This is a product requirement, not a style preference: a switch is a single global
     boolean an administrator sets in Django admin, and waffle honours ``?name=1``
-    query-string overrides for *flags* only. Swapping any of these for a ``WaffleFlag``
-    would make unreleased behaviour reachable by crafting a URL, and would also
-    break the offline callers -- the harness, management commands, Stripe webhook handlers
-    and Celery tasks have no request to evaluate a flag against.
+    query-string overrides for *flags* only. Swapping either of these for a ``WaffleFlag``
+    would make an unreleased, paid pipeline reachable by crafting a URL, and would also
+    break the offline callers -- the harness and management commands have no request to
+    evaluate a flag against.
     """
     assert isinstance(switch, WaffleSwitch)
 
@@ -72,6 +71,11 @@ def test_reranking_is_on_by_default_because_its_switch_is_a_kill_switch():
 def test_reranking_stops_when_the_kill_switch_is_on():
     with override_waffle_switch(toggles.LEARNER_PATHWAYS_DISABLE_CANDIDATE_RERANK, True):
         assert toggles.learner_pathways_candidate_rerank_enabled() is False
+
+
+def test_ssp_paid_renewal_toggle_is_a_switch():
+    """It is read in webhook handlers and Celery tasks, where there is no request to evaluate a flag against."""
+    assert isinstance(toggles.SSP_PAID_RENEWAL, WaffleSwitch)
 
 
 @pytest.mark.django_db
