@@ -124,3 +124,26 @@ ASSIGNMENT_COURSE_RUN_ENDED_EXPIRATION = WaffleSwitch(
 def assignment_course_run_ended_expiration_enabled():
     """Return whether assignments expire (and have PII cleared) when their course runs have ended."""
     return ASSIGNMENT_COURSE_RUN_ENDED_EXPIRATION.is_enabled()
+
+
+# A ``WaffleSwitch``, not a flag: it is read in Stripe webhook handlers and Celery tasks, where
+# there is no request, and it can be flipped in Django admin without a deploy.
+#
+# .. toggle_name: enterprise_access.ssp_paid_renewal
+# .. toggle_implementation: WaffleSwitch
+# .. toggle_default: False
+# .. toggle_description: Gates self-service (Teams / Essentials) paid-to-paid renewal handling:
+#     year 2 provisioning, cancellation at period end, the renewal grace period and the renewal
+#     receipt. When off, the previous behaviour runs, so turning it off is the rollback.
+# .. toggle_use_cases: temporary
+# .. toggle_creation_date: 2026-11-11
+# .. toggle_target_removal_date: 2027-06-30
+FEATURE_SSP_PAID_RENEWAL = WaffleSwitch(
+    f'{ENTERPRISE_ACCESS_NAMESPACE}.ssp_paid_renewal',
+    __name__,
+)
+
+
+def ssp_paid_renewal_enabled():
+    """Return whether self-service paid-to-paid renewal handling is enabled."""
+    return FEATURE_SSP_PAID_RENEWAL.is_enabled()
