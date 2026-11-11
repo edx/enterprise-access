@@ -132,13 +132,19 @@ def assignment_course_run_ended_expiration_enabled():
 # .. toggle_name: enterprise_access.ssp_paid_renewal
 # .. toggle_implementation: WaffleSwitch
 # .. toggle_default: False
-# .. toggle_description: Gates self-service (Teams / Essentials) paid-to-paid renewal handling:
-#     year 2 provisioning, cancellation at period end, the renewal grace period and the renewal
-#     receipt. When off, the previous behaviour runs, so turning it off is the rollback.
+# .. toggle_description: Enables paid-to-paid renewal for self-service (Teams / Essentials)
+#     subscriptions, i.e. a paid plan rolling into its next paid year. When on, the Stripe webhook
+#     handlers and Celery tasks: provision the next year's plan in license-manager when the renewal
+#     invoice is paid; on cancellation, keep the plan active until the end of the paid period (then
+#     learners' enrollments move to Audit) instead of ending it immediately; keep access during the
+#     grace period after a failed renewal payment; and send the renewal receipt. When off, the existing
+#     behaviour runs. Turning it off only changes how renewal events are handled from then on; it
+#     does not undo work already done while it was on (plans provisioned in license-manager,
+#     cancellations scheduled in Stripe, receipts sent).
 # .. toggle_use_cases: temporary
 # .. toggle_creation_date: 2026-11-11
 # .. toggle_target_removal_date: 2027-06-30
-FEATURE_SSP_PAID_RENEWAL = WaffleSwitch(
+SSP_PAID_RENEWAL = WaffleSwitch(
     f'{ENTERPRISE_ACCESS_NAMESPACE}.ssp_paid_renewal',
     __name__,
 )
@@ -146,4 +152,4 @@ FEATURE_SSP_PAID_RENEWAL = WaffleSwitch(
 
 def ssp_paid_renewal_enabled():
     """Return whether self-service paid-to-paid renewal handling is enabled."""
-    return FEATURE_SSP_PAID_RENEWAL.is_enabled()
+    return SSP_PAID_RENEWAL.is_enabled()

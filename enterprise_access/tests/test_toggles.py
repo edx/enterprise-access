@@ -27,17 +27,18 @@ def test_enable_multi_license_entitlements_bff_disabled(monkeypatch):
 @pytest.mark.parametrize('switch', [
     toggles.LEARNER_PATHWAYS_SERVER_PIPELINE,
     toggles.LEARNER_PATHWAYS_DISABLE_CANDIDATE_RERANK,
+    toggles.SSP_PAID_RENEWAL,
 ])
-def test_the_pathway_toggles_are_switches_not_flags(switch):
+def test_toggles_are_switches_not_flags(switch):
     """
-    Both pathway toggles must stay ``WaffleSwitch``.
+    These toggles must stay ``WaffleSwitch``.
 
     This is a product requirement, not a style preference: a switch is a single global
     boolean an administrator sets in Django admin, and waffle honours ``?name=1``
-    query-string overrides for *flags* only. Swapping either of these for a ``WaffleFlag``
-    would make an unreleased, paid pipeline reachable by crafting a URL, and would also
-    break the offline callers -- the harness and management commands have no request to
-    evaluate a flag against.
+    query-string overrides for *flags* only. Swapping any of these for a ``WaffleFlag``
+    would make unreleased behaviour reachable by crafting a URL, and would also
+    break the offline callers -- the harness, management commands, Stripe webhook handlers
+    and Celery tasks have no request to evaluate a flag against.
     """
     assert isinstance(switch, WaffleSwitch)
 
@@ -73,11 +74,6 @@ def test_reranking_stops_when_the_kill_switch_is_on():
         assert toggles.learner_pathways_candidate_rerank_enabled() is False
 
 
-def test_ssp_paid_renewal_toggle_is_a_switch():
-    """It is read in webhook handlers and Celery tasks, where there is no request to evaluate a flag against."""
-    assert isinstance(toggles.FEATURE_SSP_PAID_RENEWAL, WaffleSwitch)
-
-
 @pytest.mark.django_db
 def test_ssp_paid_renewal_is_disabled_by_default():
     """A switch that has never been created reads as off, so existing behaviour runs until it is turned on."""
@@ -86,5 +82,5 @@ def test_ssp_paid_renewal_is_disabled_by_default():
 
 @pytest.mark.django_db
 def test_ssp_paid_renewal_can_be_enabled():
-    with override_waffle_switch(toggles.FEATURE_SSP_PAID_RENEWAL, True):
+    with override_waffle_switch(toggles.SSP_PAID_RENEWAL, True):
         assert toggles.ssp_paid_renewal_enabled() is True
