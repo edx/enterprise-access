@@ -71,3 +71,20 @@ def test_reranking_is_on_by_default_because_its_switch_is_a_kill_switch():
 def test_reranking_stops_when_the_kill_switch_is_on():
     with override_waffle_switch(toggles.LEARNER_PATHWAYS_DISABLE_CANDIDATE_RERANK, True):
         assert toggles.learner_pathways_candidate_rerank_enabled() is False
+
+
+def test_ssp_paid_renewal_toggle_is_a_switch():
+    """It is read in webhook handlers and Celery tasks, where there is no request to evaluate a flag against."""
+    assert isinstance(toggles.FEATURE_SSP_PAID_RENEWAL, WaffleSwitch)
+
+
+@pytest.mark.django_db
+def test_ssp_paid_renewal_is_disabled_by_default():
+    """A switch that has never been created reads as off, so existing behaviour runs until it is turned on."""
+    assert toggles.ssp_paid_renewal_enabled() is False
+
+
+@pytest.mark.django_db
+def test_ssp_paid_renewal_can_be_enabled():
+    with override_waffle_switch(toggles.FEATURE_SSP_PAID_RENEWAL, True):
+        assert toggles.ssp_paid_renewal_enabled() is True
