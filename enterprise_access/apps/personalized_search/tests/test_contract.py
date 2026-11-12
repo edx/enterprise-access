@@ -6,7 +6,7 @@ import jsonschema
 from django.test import TestCase
 from referencing import Registry, Resource
 
-from enterprise_access.apps.personalized_search.core.errors import ModelError
+from enterprise_access.apps.personalized_search.core.errors import ModelConfigurationError
 from enterprise_access.apps.personalized_search.core.orchestrator import ModelChoice, TurnContext, run_turn
 from enterprise_access.apps.personalized_search.tests.test_orchestrator import (
     COMPOSE,
@@ -50,7 +50,7 @@ class WireContractTests(TestCase):
             self.turn(fake_steps()),
             self.turn(fake_steps(compose_text=INSIGHT_AND_PLAN)),
             self.turn(fake_steps(intent_text='{"on_topic": false, "redirect_reason": "injection"}')),
-            self.turn(fake_steps(intent_error=ModelError('x'))),
+            self.turn(fake_steps(intent_error=ModelConfigurationError('x'))),
         ]
         types = set()
         for parts in turns:

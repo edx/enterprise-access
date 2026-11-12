@@ -170,6 +170,17 @@ def _says(pattern: re.Pattern, negated: re.Pattern, message: str | None) -> bool
     return bool(pattern.search(message or '')) and not negated.search(message or '')
 
 
+def fallback(prior_intent: dict | None) -> dict:
+    """
+    The parse result to use when the intent model can't be reached: on topic, with nothing new. ``merge`` then keeps
+    a follow-up's prior intent, or builds a first turn's query from the message. It skips the off-topic, unsafe and
+    injection checks, so the turn shows server-built results only (``compose.server_output``) and no model writes
+    text from the message.
+    """
+    return {'on_topic': True, 'redirect_reason': None, 'merge': 'refine' if prior_intent else 'replace',
+            'intent': _normalize_intent({}), 'fallback': True}
+
+
 def merge(prior: dict | None, new: dict, mode: str, *, message: str) -> dict:
     """
     Spec merge rule: with ``refine`` the new non-null fields overlay the prior intent; skills and

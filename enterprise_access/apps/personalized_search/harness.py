@@ -332,6 +332,10 @@ def _summarize_turn(parts: list[dict]) -> dict:
             out['debug'] = part['data'].get('debug') or {}
         elif kind == 'error':
             out['status'], out['error'] = 'error', part['errorText']
+    if out['debug'].get('degraded') and out['status'] == 'done':
+        # A model step failed twice and the server built the results: not the model's output, so comparisons
+        # must not count it as a model turn.
+        out['status'], out['error'] = 'degraded', f"model_failed:{out['debug']['degraded']}"
     # Every card on the page, the top pick and comparison included, as the multi-turn path counts them.
     items = page_items(out['blocks'])
     out['item_ids'], out['item_types'] = [i['item_id'] for i in items], [i['item_type'] for i in items]
