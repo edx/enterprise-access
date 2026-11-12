@@ -44,6 +44,30 @@ class WiringTests(TestCase):
         scope = wiring.catalog_scope(request=None, enterprise_customer_uuid='e-1', locale='es')
         self.assertEqual((scope.locale, scope.language_name), ('es', 'Spanish'))
 
+    @override_settings(PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED=True, PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE={
+        'filter': 'enterprise_customer_uuids:"2u"', 'label': '2U (prod catalog)', 'app_id': 'PROD',
+        'search_api_key': 'prod-key', 'index_name': 'prod_index'})
+    @mock.patch.object(wiring, 'get_and_cache_secured_algolia_search_keys', return_value={})
+    @mock.patch.object(wiring, 'secured_key_from_payload', return_value='secured-key')
+    def test_debug_turns_search_the_debug_catalog(self, *_):
+        scope = wiring.catalog_scope(request=None, enterprise_customer_uuid='e-1', locale='en', debug=True)
+        self.assertEqual((scope.filter, scope.label, scope.allow_unscoped, scope.is_debug, scope.secured_key),
+                         ('enterprise_customer_uuids:"2u"', '2U (prod catalog)', True, True, None))
+        self.assertEqual(scope.client_config,
+                         {'app_id': 'PROD', 'search_api_key': 'prod-key', 'index_name': 'prod_index'})
+        plain = wiring.catalog_scope(request=None, enterprise_customer_uuid='e-1', locale='en')
+        self.assertEqual((plain.filter, plain.secured_key, plain.is_debug),
+                         ('enterprise_customer_uuids:"e-1"', 'secured-key', False))
+        with override_settings(PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED=False):
+            self.assertFalse(wiring.catalog_scope(request=None, enterprise_customer_uuid='e-1', debug=True).is_debug)
+        with override_settings(PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE={'filter': 'dev', 'label': 'Dev'}):
+            dev = wiring.catalog_scope(request=None, enterprise_customer_uuid='e-1', debug=True)
+        self.assertEqual(dev.label, 'Dev')
+
+    @override_settings(PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE={'filter': 'x:"y"'})
+    def test_a_debug_catalog_without_credentials_uses_the_configured_app(self):
+        self.assertIsNone(wiring.debug_catalog_scope().client_config)
+
     def test_turn_context_uses_the_timeout_settings(self):
         intent, compose = wiring.default_models()
         with override_settings(PERSONALIZED_SEARCH_INTENT_TIMEOUT_S=4, PERSONALIZED_SEARCH_COMPOSE_READ_TIMEOUT_S=6):

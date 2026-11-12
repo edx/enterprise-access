@@ -61,7 +61,8 @@ for part in run_turn(ctx, steps):
 | `OPENAI_API_KEY`; `XPERT_API_BASE_URL`, `XPERT_API_CLIENT_ID` | empty | Backend credentials. Keys come only from settings. |
 | `PERSONALIZED_SEARCH_ANALYTICS_COHORT`, `PERSONALIZED_SEARCH_ENGINE_LABEL` | `internal_pilot`, `b2b_mvp_v1` | Tags on every Segment event (planned, KD-12). See [`personalized_search_events.md`](personalized_search_events.md). |
 | `PERSONALIZED_SEARCH_CONTENT_LANGUAGES` | `{'en': 'English', 'es': 'Spanish'}` | Portal locale → Algolia `language` name. A turn's `locale` (from the portal) picks `metadata_language` records and, for courses, the teaching language, and the model writes in that language. Unlisted locales use English. Mirrors the portal's `SUPPORTED_ALGOLIA_LANGUAGE_FILTERS` for Learner Pathways. |
-| `PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED` | `False` | Dev only. Allows per-turn model overrides and the debug read-out. |
+| `PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED` | `False` | Dev and stage only. Allows per-turn model overrides, the debug catalog and the debug read-out. |
+| `PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE` | `None` | Stage only. The catalog searched by turns that carry the `debug` flag (the portal's `?debug=true`), when `PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED` is on: `{'filter', 'label'}` plus optional `'app_id'`, `'search_api_key'`, `'index_name'` for another Algolia app or index, e.g. the 2U customer in the prod catalog. Uses that plain key with the filter, so it also needs `ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH`. Those turns' usage events have `is_debug: true`; other turns keep the learner's own catalog. |
 | `PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE` | `None` | Dev only. Uses the plain search key plus an explicit catalog filter instead of the learner's secured key. Also needs `ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH`. Never set it in a deployed environment. |
 
 ## Results update in place (KD-11)

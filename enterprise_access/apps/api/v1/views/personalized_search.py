@@ -137,7 +137,9 @@ class PersonalizedSearchTurnView(APIView):
             return _error('backend_unsupported', status.HTTP_503_SERVICE_UNAVAILABLE, 'No model backend is configured.')
 
         try:
-            scope = wiring.catalog_scope(request, enterprise_customer_uuid, data.get('locale'))
+            # A ``debug`` object, even an empty one, marks a ``?debug=true`` turn (debug catalog, if configured).
+            scope = wiring.catalog_scope(request, enterprise_customer_uuid, data.get('locale'),
+                                         debug=data.get('debug') is not None)
         except Exception:  # pylint: disable=broad-exception-caught  # enterprise-catalog failure or no secured key
             logger.exception('Personalized Search could not scope the catalog for %s.', enterprise_customer_uuid)
             return _error('catalog_unavailable', status.HTTP_503_SERVICE_UNAVAILABLE)
@@ -164,7 +166,8 @@ class PersonalizedSearchTurnView(APIView):
         try:
             ctx = wiring.turn_context(session=session, message=data['message'], intent_model=intent_choice,
                                       compose_model=compose_choice, scope=scope,
-                                      debug=wiring.debug_overrides_enabled(), debug_overrides=overridden,
+                                      debug=wiring.debug_overrides_enabled(),
+                                      debug_overrides=overridden or scope.is_debug,
                                       registry=registry)
             _record_pre_stream(ctx, enterprise_customer_uuid, started)
             if data.get('resumed_from_history') and session_uuid:  # only a past search can be resumed

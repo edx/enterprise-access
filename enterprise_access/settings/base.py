@@ -615,6 +615,13 @@ PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED = False
 # per-learner secured key with the plain search key plus this explicit catalog filter.
 # Requires ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH. Never set in a deployed environment.
 PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE = None
+# Stage only. The catalog a turn searches when its request carries the ``debug`` flag (the portal's
+# ``?debug=true``) and PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED is on, so stage can show results from a
+# real catalog: ``{'filter': '<algolia filter>', 'label': '<text>'}`` plus optional ``'app_id'``,
+# ``'search_api_key'`` and ``'index_name'`` for another Algolia app or index (e.g. the 2U customer in the
+# prod catalog). It uses that plain search key with the filter, so it also needs
+# ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH. Turns without the debug flag keep the learner's own catalog.
+PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE = None
 # Tags on every Personalized Search usage event (tech spec KD-12): the release cohort and the engine.
 PERSONALIZED_SEARCH_ANALYTICS_COHORT = 'internal_pilot'
 # Portal locale -> Algolia `language` facet name for Personalized Search content, as Learner Pathways'
