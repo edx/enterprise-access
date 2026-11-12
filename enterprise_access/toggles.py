@@ -132,12 +132,11 @@ def assignment_course_run_ended_expiration_enabled():
 # .. toggle_name: enterprise_access.ssp_paid_renewal
 # .. toggle_implementation: WaffleSwitch
 # .. toggle_default: False
-# .. toggle_description: Will gate the new paid-to-paid renewal handling for self-service
-#     (Teams / Essentials) subscriptions in the Stripe webhook handlers and Celery tasks:
-#     provisioning the next year's plan, keeping a cancelled plan active until the end of its paid
-#     period, and the grace period after a failed renewal payment. No code reads it yet; each of
-#     these is wired to it as it lands. When off, the current handling runs. Turning it off affects
-#     only events handled from then on and does not undo work done while it was on.
+# .. toggle_description: Enables the new paid-to-paid renewal flow for self-service (Teams /
+#     Essentials) subscriptions. When on, a renewal provisions the next year's plan, a cancelled plan
+#     stays active until its paid period ends, a failed renewal payment gets a grace period, and the
+#     renewal receipt is sent only after the next year's plan is provisioned. When off, the current
+#     renewal flow runs.
 # .. toggle_use_cases: temporary
 # .. toggle_creation_date: 2026-11-11
 # .. toggle_target_removal_date: 2027-06-30
