@@ -124,6 +124,42 @@ def _covered(chip: str, ideas: list[str]) -> bool:
     return any(pattern.search(idea.casefold()) for idea in ideas)
 
 
+TYPE_NAMES = {'course': 'course', 'executive_education': 'Executive Education', 'program': 'program'}
+
+
+def _best_for(card: dict) -> str:
+    """A compare label from the card's facts alone ("Introductory program"), for server-built results."""
+    level = (card.get('facts') or {}).get('level_type')
+    name = TYPE_NAMES.get(card.get('item_type'), 'option')
+    return f'{level} {name}' if level else name[:1].upper() + name[1:]
+
+
+def server_output(candidates: list[dict], excluded_ids=()) -> str:
+    """
+    Compose output written by the server from the ranked shortlist, for a turn whose model step can't be reached:
+    a fixed reply, the best-ranked candidate as the top pick, it and the next two to compare, and the rest in
+    sections by type. ``ComposeParser`` validates and places it like model output, and adds the follow-up.
+    """
+    excluded = set(excluded_ids)
+    cards = [c['card'] for c in candidates if c['card']['item_id'] not in excluded]
+    if not cards:
+        return constants.DEGRADED_NO_RESULTS_REPLY
+    lines = [constants.DEGRADED_REPLY, MARKER,
+             json.dumps({'block': 'page_header', 'title': constants.DEGRADED_TITLE, 'dek': constants.DEGRADED_DEK})]
+    top, rest = cards[0], cards[1:]
+    lines.append(json.dumps({'block': 'top_pick', 'item_id': top['item_id'], 'reason': constants.DEGRADED_REASON}))
+    compared = rest[:constants.MAX_COMPARE_OPTIONS - 1]
+    if compared:
+        lines.append(json.dumps({'block': 'compare', 'options': [
+            {'item_id': card['item_id'], 'best_for': _best_for(card)} for card in [top] + compared]}))
+    for item_type in ('program', 'course', 'executive_education'):
+        items = [c for c in rest[len(compared):] if c['item_type'] == item_type][:constants.MAX_ITEMS_PER_SECTION]
+        if items:
+            lines.append(json.dumps({'block': 'item_section', 'item_type': item_type, 'dek': '',
+                                     'items': [{'item_id': c['item_id']} for c in items]}))
+    return '\n'.join(lines) + '\n'
+
+
 def section_label(item_type: str, count: int) -> str:
     return f"{constants.SECTION_LABELS[item_type]} · {count} {'pick' if count == 1 else 'picks'}"
 

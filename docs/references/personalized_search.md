@@ -69,6 +69,16 @@ for part in run_turn(ctx, steps):
 
 Only items the learner marked "Not for me" are excluded from later turns. Items shown earlier can appear again in the refreshed results, and each card says whether it is new or updated since the previous turn. The redesign is additive within block catalog v1: older portals ignore the new block types.
 
+## When a model call fails
+
+The OpenAI client doesn't retry (`max_retries=0`), so the orchestrator does, once per step:
+
+- **Intent** is retried if at least 4 s of the turn deadline are left. If it fails again, the turn skips classification (the message is the query; a later turn refines the previous intent) and the server builds the results.
+- **Compose** is retried if no text has streamed yet and at least 6 s are left. If it fails again, the server builds the results from the shortlist: a fixed reply, the top match, a comparison of the top three, and up to three items per type. They pass through the same block validation as model output.
+- A configuration error (a bad key or model) is never retried and ends the turn with `model_failed`, as does a compose failure after text has streamed.
+
+The turn log records `model_failures`, `retries` and `degraded` (`intent`, `compose` or empty), and the debug read-out shows `retries` and `degraded`. Harness rows for server-built turns have status `degraded` so comparisons don't count them as model output.
+
 ## Removing the feature
 
 The three tables belong to this app alone, and nothing outside it has a foreign key to them. To remove the feature, run `./manage.py migrate personalized_search zero`, then remove the app from `PROJECT_APPS`.

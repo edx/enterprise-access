@@ -300,7 +300,10 @@ class HarnessConversationTests(TestCase):
         steps = fake_steps(**{f'{step}_error': error})
         conversation = harness.Conversation(id='c1', goal='lead', messages=('first',))
         record, = harness.run_conversations(conversation_list=[conversation], arms=ARMS[:1], scope=None, steps=steps)
-        self.assertEqual((record['status'], record['error']), ('error', 'model_failed'))
+        # Compose fails after its text has streamed, so the turn ends in an error; intent fails twice, so the
+        # server builds the results and the record says so instead of passing them off as model output.
+        expected = ('error', 'model_failed') if step == 'compose' else ('degraded', 'model_failed:intent')
+        self.assertEqual((record['status'], record['error']), expected)
         self.assertEqual(record['model_error'], f'{step}: OpenAI stream failed (APITimeoutError) for model x.')
         if step == 'compose':  # the stream got as far as its text before failing
             self.assertEqual(record['usage']['compose']['output_tokens'], 50)

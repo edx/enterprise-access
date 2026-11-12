@@ -10,6 +10,10 @@ RETRIEVAL_TIMEOUT_S = 2
 # PERSONALIZED_SEARCH_INTENT_TIMEOUT_S / _COMPOSE_READ_TIMEOUT_S; a slower backend can bring its own.
 DEFAULT_INTENT_TIMEOUT_S = 3
 DEFAULT_COMPOSE_READ_TIMEOUT_S = 5
+# A model step that fails (timeout, connection, 5xx) is tried once more when at least this much of the turn
+# deadline is left; otherwise, or when the retry fails too, the turn falls back to server-built results.
+INTENT_RETRY_MIN_S = 4
+COMPOSE_RETRY_MIN_S = 6
 SESSION_LOCK_S = 20
 SESSION_TTL_S = 24 * 60 * 60
 INTENT_MAX_TOKENS = 400
@@ -33,6 +37,12 @@ SECTION_LABELS = {'course': 'Courses', 'executive_education': 'Executive educati
 REDIRECT_REPLY = (
     "I can help you find learning in your organization's catalog. What would you like to learn?"
 )
+# Server-built results, when a model step can't be reached (``compose.server_output``): no model writes this text.
+DEGRADED_REPLY = "I couldn't write a reply just now, so here are the closest matches from your organization's catalog."
+DEGRADED_NO_RESULTS_REPLY = "I couldn't find matches just now. Try telling me again what you want to learn."
+DEGRADED_TITLE = 'Closest matches from your catalog'
+DEGRADED_DEK = 'Ranked by how closely they match what you asked for.'
+DEGRADED_REASON = 'One of the closest matches in your catalog to what you asked for.'
 OPENING_CHIPS = [
     'Prepare for a leadership role',
     'Learn AI for my job',
