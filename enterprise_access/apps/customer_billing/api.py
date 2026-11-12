@@ -649,20 +649,24 @@ def get_or_create_enterprise_stripe_customer(enterprise_customer_uuid: UUID | st
 
 def sync_enterprise_stripe_customer(enterprise_customer_uuid: UUID | str) -> None:
     """
-    Point the enterprise's EnterpriseStripeCustomer at the Stripe customer of its newest CheckoutIntent that has one.
+    Point the enterprise's EnterpriseStripeCustomer at the Stripe customer of its newest CheckoutIntent that has one,
+    when the mapping itself came from a CheckoutIntent.
 
     The billing endpoints read the mapping and the subscription endpoints read that CheckoutIntent, so both must name
     the same customer. An intent's customer can change after the mapping is recorded (customer.subscription.created
     overwrites it), and provisioning can link a newer intent to the enterprise, so signals.py calls this on those
     CheckoutIntent saves.
 
-    Does nothing when the enterprise has no mapping (readers then fall back to the CheckoutIntent) or no CheckoutIntent
-    with a Stripe customer. ``source`` keeps how the mapping was first recorded; its history shows the change.
+    A ``created_for_top_up`` mapping is never moved: its customer holds the enterprise's saved cards and is the one
+    its LearnerCreditTopUp records were charged to. Which customer should win when such an enterprise later gets a
+    CheckoutIntent is still undecided (ENT-12509, G-11). Also does nothing when the enterprise has no mapping (readers
+    then fall back to the CheckoutIntent) or no CheckoutIntent with a Stripe customer.
     """
     with transaction.atomic():
         # Lock the mapping before reading the intent, so a concurrent sync can't write back an older customer.
         mapping = EnterpriseStripeCustomer.objects.select_for_update().filter(
             enterprise_customer_uuid=enterprise_customer_uuid,
+            source=EnterpriseStripeCustomer.SourceChoices.CHECKOUT_INTENT_BACKFILL,
         ).first()
         if mapping is None:
             return

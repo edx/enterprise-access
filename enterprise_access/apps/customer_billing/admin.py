@@ -437,7 +437,7 @@ class SelfServiceSubscriptionRenewalAdmin(DjangoQLSearchMixin, admin.ModelAdmin)
 class EnterpriseStripeCustomerAdmin(DjangoQLSearchMixin, SimpleHistoryAdmin):
     """
     View-only: the Stripe customer billing management uses for each enterprise, which wins over the customer on its
-    CheckoutIntent. Rows come from migration 0043's backfill and get_or_create_enterprise_stripe_customer().
+    CheckoutIntent. Rows come from migration 0044's backfill and get_or_create_enterprise_stripe_customer().
     """
     list_display = ('enterprise_customer_uuid', 'stripe_customer_id', 'source', 'created', 'modified')
     list_filter = ('source',)

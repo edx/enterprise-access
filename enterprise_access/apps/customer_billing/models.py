@@ -1879,9 +1879,9 @@ class LearnerCreditTopUp(TimeStampedModel):
 class EnterpriseStripeCustomer(TimeStampedModel):
     """
     The one Stripe Customer of an enterprise, including enterprises with no CheckoutIntent (provisioned through
-    Salesforce). Read it with get_stripe_customer_id_for_enterprise() in ``customer_billing/api.py``. While the
-    enterprise has a CheckoutIntent with a Stripe customer, sync_enterprise_stripe_customer() keeps this row on the
-    newest one's customer, the one the subscription endpoints read.
+    Salesforce). Read it with get_stripe_customer_id_for_enterprise() in ``customer_billing/api.py``. A row that came
+    from a CheckoutIntent is kept on the newest intent's customer, the one the subscription endpoints read, by
+    sync_enterprise_stripe_customer(). A ``created_for_top_up`` row is never moved.
 
     ``stripe_customer_id`` is not unique: checkout reuses the Stripe customer that has the admin's email, so two
     enterprises with the same admin can share one.

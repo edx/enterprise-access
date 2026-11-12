@@ -1063,12 +1063,15 @@ class GetOrCreateEnterpriseStripeCustomerTests(TestCase):
     def setUp(self):
         super().setUp()
         self.enterprise_uuid = uuid.uuid4()
-        self.idempotency_key = f'enterprise-stripe-customer-{self.enterprise_uuid}'
+        self.expected_create_call = mock.call(
+            idempotency_key=f'enterprise-stripe-customer-{self.enterprise_uuid}',
+            metadata={'enterprise_customer_uuid': str(self.enterprise_uuid)},
+        )
 
     def test_creates_one_stripe_customer_then_returns_the_mapping(self, mock_create):
         """
-        The first call creates a customer keyed by the enterprise, however its UUID is spelled. Later calls return the
-        recorded mapping without calling Stripe.
+        The first call creates a customer keyed by and tagged with the enterprise, however its UUID is spelled. Later
+        calls return the recorded mapping without calling Stripe.
         """
         mock_create.return_value = {'id': 'cus_new', 'object': 'customer'}
 
@@ -1077,7 +1080,7 @@ class GetOrCreateEnterpriseStripeCustomerTests(TestCase):
         first = get_or_create_enterprise_stripe_customer(self.enterprise_uuid.hex)
         second = get_or_create_enterprise_stripe_customer(str(self.enterprise_uuid).upper())
 
-        mock_create.assert_called_once_with(idempotency_key=self.idempotency_key)
+        self.assertEqual(mock_create.call_args_list, [self.expected_create_call])
         self.assertEqual(first.pk, second.pk)
         self.assertEqual(
             (second.enterprise_customer_uuid, second.stripe_customer_id, second.source),
@@ -1116,7 +1119,7 @@ class GetOrCreateEnterpriseStripeCustomerTests(TestCase):
         mock_create.side_effect = None
         mock_create.return_value = {'id': 'cus_retry', 'object': 'customer'}
         self.assertEqual(get_or_create_enterprise_stripe_customer(self.enterprise_uuid).stripe_customer_id, 'cus_retry')
-        self.assertEqual(mock_create.call_args_list, [mock.call(idempotency_key=self.idempotency_key)] * 2)
+        self.assertEqual(mock_create.call_args_list, [self.expected_create_call] * 2)
 
     @ddt.data(
         # Stripe replayed the same customer for the shared idempotency key.
@@ -1205,6 +1208,28 @@ class SyncEnterpriseStripeCustomerTests(TestCase):
         self.assertFalse(EnterpriseStripeCustomer.objects.filter(enterprise_customer_uuid=unmapped).exists())
         learner_credit_only.refresh_from_db()
         self.assertEqual(learner_credit_only.stripe_customer_id, 'cus_top_up')
+
+    def test_top_up_mapping_is_not_moved_by_a_later_checkout_intent(self):
+        """
+        A Learner Credit-only enterprise keeps the customer its saved cards and top-ups belong to when a CheckoutIntent
+        with another customer is later saved for it.
+        """
+        learner_credit_only = EnterpriseStripeCustomerFactory(
+            stripe_customer_id='cus_top_up',
+            source=EnterpriseStripeCustomer.SourceChoices.CREATED_FOR_TOP_UP,
+        )
+
+        _create_checkout_intent(learner_credit_only.enterprise_customer_uuid, 'cus_admin_email', timezone.now())
+
+        learner_credit_only.refresh_from_db()
+        self.assertEqual(
+            (learner_credit_only.stripe_customer_id, learner_credit_only.source),
+            ('cus_top_up', EnterpriseStripeCustomer.SourceChoices.CREATED_FOR_TOP_UP),
+        )
+        self.assertEqual(list(learner_credit_only.history.values_list('history_type', flat=True)), ['+'])
+        self.assertEqual(
+            get_stripe_customer_id_for_enterprise(learner_credit_only.enterprise_customer_uuid), 'cus_top_up',
+        )
 
     @mock.patch('enterprise_access.apps.customer_billing.signals.sync_enterprise_stripe_customer')
     def test_only_saves_writing_the_customer_or_enterprise_sync(self, mock_sync):

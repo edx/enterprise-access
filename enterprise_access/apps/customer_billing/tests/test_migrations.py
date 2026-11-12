@@ -748,11 +748,11 @@ class TestSeedMarketingUrls(TransactionTestCase):
 
 class TestBackfillEnterpriseStripeCustomer(TransactionTestCase):
     """
-    Tests for migration 0043, which creates EnterpriseStripeCustomer and backfills it from CheckoutIntent (ENT-12509).
+    Tests for migration 0044, which backfills EnterpriseStripeCustomer from CheckoutIntent (ENT-12509).
     """
 
-    migrate_from = [('customer_billing', '0042_add_learner_credit_top_up')]
-    migrate_to = [('customer_billing', '0043_enterprisestripecustomer')]
+    migrate_from = [('customer_billing', '0043_enterprisestripecustomer')]
+    migrate_to = [('customer_billing', '0044_backfill_enterprise_stripe_customers')]
 
     def setUp(self):
         super().setUp()
@@ -818,8 +818,8 @@ class TestBackfillEnterpriseStripeCustomer(TransactionTestCase):
     def test_backfill_reruns_safely_with_constant_queries_and_reverse_keeps_checkout_intents(self):
         """
         Running the backfill again keeps existing mappings and maps only new enterprises, each with one initial history
-        record, in a number of queries that doesn't grow with the enterprises. Migrating back to 0042 leaves
-        CheckoutIntent untouched.
+        record, in a number of queries that doesn't grow with the enterprises. Reversing the backfill changes
+        nothing: CheckoutIntents and mappings stay as they were.
         """
         changed_enterprise = uuid4()
         self._create_checkout_intent(changed_enterprise, 'cus_checkout', days_ago=1)
@@ -829,7 +829,7 @@ class TestBackfillEnterpriseStripeCustomer(TransactionTestCase):
             stripe_customer_id='cus_top_up', source='created_for_top_up',
         )
         backfill = import_module(
-            'enterprise_access.apps.customer_billing.migrations.0043_enterprisestripecustomer'
+            'enterprise_access.apps.customer_billing.migrations.0044_backfill_enterprise_stripe_customers'
         ).backfill_enterprise_stripe_customers
 
         query_counts = []
@@ -857,10 +857,14 @@ class TestBackfillEnterpriseStripeCustomer(TransactionTestCase):
             ('cus_top_up', 'created_for_top_up'),
         )
 
-        CheckoutIntent = new_state.apps.get_model('customer_billing', 'CheckoutIntent')
-        intents_before = set(CheckoutIntent.objects.values_list('id', 'enterprise_uuid', 'stripe_customer_id'))
+        def snapshot(state):
+            CheckoutIntent = state.apps.get_model('customer_billing', 'CheckoutIntent')
+            EnterpriseStripeCustomer = state.apps.get_model('customer_billing', 'EnterpriseStripeCustomer')
+            return (
+                set(CheckoutIntent.objects.values_list('id', 'enterprise_uuid', 'stripe_customer_id')),
+                set(EnterpriseStripeCustomer.objects.values_list('id', 'stripe_customer_id', 'source')),
+            )
+
+        before_reverse = snapshot(new_state)
         reversed_state = self.migrator.apply_tested_migration(self.migrate_from)
-        CheckoutIntent = reversed_state.apps.get_model('customer_billing', 'CheckoutIntent')
-        self.assertEqual(
-            set(CheckoutIntent.objects.values_list('id', 'enterprise_uuid', 'stripe_customer_id')), intents_before,
-        )
+        self.assertEqual(snapshot(reversed_state), before_reverse)

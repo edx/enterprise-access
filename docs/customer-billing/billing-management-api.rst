@@ -227,10 +227,11 @@ All endpoints follow the same pattern for Stripe customer ID resolution:
 3. Return 404 if neither is found. The subscription endpoints need the ``CheckoutIntent`` itself and return 404
    without one.
 
-Saving a ``CheckoutIntent``'s ``stripe_customer_id`` or ``enterprise_uuid`` moves an existing ``EnterpriseStripeCustomer``
-to the customer of the enterprise's newest ``CheckoutIntent`` with one (for example when
-``customer.subscription.created`` replaces the customer), so the billing and subscription endpoints show the same
-Stripe customer.
+Saving a ``CheckoutIntent``'s ``stripe_customer_id`` or ``enterprise_uuid`` moves an ``EnterpriseStripeCustomer``
+recorded from a ``CheckoutIntent`` (source ``checkout_intent_backfill``) to the customer of the enterprise's newest
+``CheckoutIntent`` with one (for example when ``customer.subscription.created`` replaces the customer), so the billing
+and subscription endpoints show the same Stripe customer. A ``created_for_top_up`` mapping is never moved: its
+customer holds the enterprise's saved cards and top-ups.
 
 Error Handling
 ^^^^^^^^^^^^^^
