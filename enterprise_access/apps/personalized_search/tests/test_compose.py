@@ -446,3 +446,31 @@ class ComposeParserTests(TestCase):
         for text in (compose.SYSTEM_PROMPT, content):
             words = re.sub(r'page_header|"page"|"candidate"', '', text)
             self.assertNotRegex(words.lower(), r'\b(pages?|candidates?)\b')
+
+
+class ServerOutputTests(TestCase):
+    """``server_output`` writes valid compose output from the ranked shortlist alone."""
+
+    def parse(self, text, excluded=()):
+        parser = compose.ComposeParser(candidates=default_candidates(), excluded_ids=list(excluded),
+                                       followup_attribute='level')
+        return parser, parser.feed(text) + parser.finish()
+
+    def test_top_pick_compare_and_sections_in_shortlist_order(self):
+        parser, parts = self.parse(compose.server_output(default_candidates()))
+        blocks = {p['data']['type']: p['data']['props'] for p in parts if p['type'] == 'data-block'}
+        self.assertEqual(parser.reply, constants.DEGRADED_REPLY)
+        self.assertEqual(blocks['top_pick']['item']['item_id'], 'edX+C1')
+        self.assertEqual([o['item']['item_id'] for o in blocks['compare']['options']], ['edX+C1', 'edX+C2', 'edX+C3'])
+        self.assertTrue(all(o['best_for'] for o in blocks['compare']['options']))
+        self.assertEqual(parser.dropped_lines, 0)
+        self.assertEqual(len(parser.emitted_ids), len(set(parser.emitted_ids)))
+
+    def test_skips_items_the_learner_dismissed(self):
+        text = compose.server_output(default_candidates(), excluded_ids=['edX+C1'])
+        parser, _ = self.parse(text, excluded=['edX+C1'])
+        self.assertNotIn('edX+C1', parser.emitted_ids)
+        self.assertEqual(parser.top_pick_id, 'edX+C2')
+
+    def test_no_candidates_is_a_plain_reply(self):
+        self.assertEqual(compose.server_output([]), constants.DEGRADED_NO_RESULTS_REPLY)

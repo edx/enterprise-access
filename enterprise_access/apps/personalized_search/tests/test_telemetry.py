@@ -10,7 +10,7 @@ from enterprise_access.apps.personalized_search import wiring
 from enterprise_access.apps.personalized_search.adapters.segment_sink import segment_emit
 from enterprise_access.apps.personalized_search.constants import SegmentEvents
 from enterprise_access.apps.personalized_search.core import telemetry
-from enterprise_access.apps.personalized_search.core.errors import ModelError
+from enterprise_access.apps.personalized_search.core.errors import ModelConfigurationError, ModelError
 from enterprise_access.apps.personalized_search.core.orchestrator import ModelChoice, TurnContext, run_turn
 from enterprise_access.apps.personalized_search.core.retrieval import CatalogScope, RetrievalFailed
 from enterprise_access.apps.personalized_search.models import ChatTurn
@@ -139,7 +139,7 @@ class TurnEventTests(TestCase):
         self.assertEqual((props['outcome'], props['redirect_reason']), ('redirected', 'off_topic'))
 
     def test_failures_name_the_error_and_the_stage(self):
-        cases = [({'intent_error': ModelError('x')}, 'model_failed', 'intent'),
+        cases = [({'intent_error': ModelConfigurationError('x')}, 'model_failed', 'intent'),
                  ({'retrieve': mock.Mock(side_effect=RetrievalFailed('x'))}, 'retrieval_failed', 'search'),
                  ({'compose_error': ModelError('x')}, 'model_failed', 'compose')]
         for kwargs, error_type, stage in cases:
