@@ -42,12 +42,12 @@ class PersonalizedSearchDebugConfigView(APIView):
             raise NotFound()
         registry = wiring.model_registry()
         intent_default, compose_default = wiring.default_models()
-        dev_scope = wiring.dev_catalog_scope()
+        scope = wiring.dev_catalog_scope() or wiring.debug_catalog_scope()  # what a debug turn searches
         return Response({
             'models': [_menu_entry(registry, model) for model in registry.available_models()],
             'defaults': {
                 'intent_model': intent_default.model, 'intent_effort': intent_default.effort,
                 'compose_model': compose_default.model, 'compose_effort': compose_default.effort,
             },
-            'catalog': (dev_scope.label if dev_scope else None) or 'Learner\'s enterprise catalog (secured key)',
+            'catalog': (scope.label if scope else None) or 'Learner\'s enterprise catalog (secured key)',
         })
