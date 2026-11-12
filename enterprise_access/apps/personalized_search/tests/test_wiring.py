@@ -68,6 +68,20 @@ class WiringTests(TestCase):
     def test_a_debug_catalog_without_credentials_uses_the_configured_app(self):
         self.assertIsNone(wiring.debug_catalog_scope().client_config)
 
+    def test_debug_mode_needs_the_environment_switch_and_a_superuser_or_the_flag(self):
+        anonymous = mock.Mock(is_authenticated=False, is_superuser=True)
+        staff = mock.Mock(is_authenticated=True, is_superuser=False, is_staff=True)
+        superuser = mock.Mock(is_authenticated=True, is_superuser=True)
+        with override_settings(PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED=True):
+            with mock.patch.object(wiring, 'personalized_search_debug_enabled', return_value=False):
+                self.assertEqual([wiring.debug_allowed(u) for u in (anonymous, staff, superuser)], [False, False, True])
+            with mock.patch.object(wiring, 'personalized_search_debug_enabled', return_value=True):
+                self.assertTrue(wiring.debug_allowed(staff))
+                self.assertFalse(wiring.debug_allowed(anonymous))
+        with override_settings(PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED=False):
+            with mock.patch.object(wiring, 'personalized_search_debug_enabled', return_value=True):
+                self.assertFalse(wiring.debug_allowed(superuser))
+
     def test_turn_context_uses_the_timeout_settings(self):
         intent, compose = wiring.default_models()
         with override_settings(PERSONALIZED_SEARCH_INTENT_TIMEOUT_S=4, PERSONALIZED_SEARCH_COMPOSE_READ_TIMEOUT_S=6):
