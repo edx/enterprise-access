@@ -10,7 +10,7 @@ The learner portal's Personalized Search tab is a chat that recommends learning 
 | `GET sessions/`, `GET sessions/<uuid>/` | The learner's past searches, and one search's stored parts for replay. |
 | `GET/POST/DELETE item-feedback/` | Saved and not-interested items. Not-interested items are excluded from later turns. |
 | `POST sessions/<uuid>/turns/<sequence>/feedback/` | Thumbs up (1), down (-1) or cleared (null) on one of the learner's replies. |
-| `GET debug/` | The `?debug=true` model menu. 404 unless `PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED`, which is dev only. |
+| `GET debug/` | The `?debug=true` model menu. 404 unless the requesting user may use debug mode: `PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED` is on **and** the user is an enterprise-access superuser or on the `enterprise_access.personalized_search_debug` flag. |
 
 Every endpoint requires the enterprise-scoped learner permission (`personalized_search.has_learner_access`) and returns 404 while the `enterprise_access.personalized_search_enabled` WaffleFlag is off for the user. The portal shows the tab from a separate LMS flag, `enterprise.personalized_search_enabled`. Enable this app's flag first, for the same users, so a visible tab never gets a 404.
 
@@ -61,7 +61,7 @@ for part in run_turn(ctx, steps):
 | `OPENAI_API_KEY`; `XPERT_API_BASE_URL`, `XPERT_API_CLIENT_ID` | empty | Backend credentials. Keys come only from settings. |
 | `PERSONALIZED_SEARCH_ANALYTICS_COHORT`, `PERSONALIZED_SEARCH_ENGINE_LABEL` | `internal_pilot`, `b2b_mvp_v1` | Tags on every Segment event (planned, KD-12). See [`personalized_search_events.md`](personalized_search_events.md). |
 | `PERSONALIZED_SEARCH_CONTENT_LANGUAGES` | `{'en': 'English', 'es': 'Spanish'}` | Portal locale → Algolia `language` name. A turn's `locale` (from the portal) picks `metadata_language` records and, for courses, the teaching language, and the model writes in that language. Unlisted locales use English. Mirrors the portal's `SUPPORTED_ALGOLIA_LANGUAGE_FILTERS` for Learner Pathways. |
-| `PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED` | `False` | Dev and stage only. Allows per-turn model overrides, the debug catalog and the debug read-out. |
+| `PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED` | `False` | Turns debug mode on for the environment. Even then it applies only to enterprise-access superusers and users on the `enterprise_access.personalized_search_debug` WaffleFlag; everyone else's `debug` object is ignored. Debug mode covers per-turn model overrides, the debug catalog, the debug read-out and the debug menu. `is_superuser` is never set from the JWT (only `administrator` maps to `is_staff`), so superusers are granted in enterprise-access's Django admin. |
 | `PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE` | `None` | Stage only. The catalog searched by turns that carry the `debug` flag (the portal's `?debug=true`), when `PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED` is on: `{'filter', 'label'}` plus optional `'app_id'`, `'search_api_key'`, `'index_name'` for another Algolia app or index, e.g. the 2U customer in the prod catalog. Uses that plain key with the filter, so it also needs `ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH`. Those turns' usage events have `is_debug: true`; other turns keep the learner's own catalog. |
 | `PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE` | `None` | Dev only. Uses the plain search key plus an explicit catalog filter instead of the learner's secured key. Also needs `ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH`. Never set it in a deployed environment. |
 

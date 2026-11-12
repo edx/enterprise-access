@@ -39,7 +39,7 @@ EFFORTS = ('none', 'minimal', 'low', 'medium', 'high')
 
 
 class DebugOverridesSerializer(serializers.Serializer):  # pylint: disable=abstract-method
-    """Per-turn model overrides. Honoured only when PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED."""
+    """Per-turn model overrides. Honoured only for users allowed debug mode (``wiring.debug_allowed``)."""
 
     intent_model = serializers.CharField(required=False)
     intent_effort = serializers.ChoiceField(choices=EFFORTS, required=False, allow_null=True)
@@ -79,14 +79,14 @@ def _error(code: str, http_status: int, detail: str = '') -> JsonResponse:
     return JsonResponse({'code': code, 'detail': detail}, status=http_status)
 
 
-def _model_choices(overrides: dict) -> tuple[ModelChoice, ModelChoice, bool]:
+def _model_choices(overrides: dict, allowed: bool = False) -> tuple[ModelChoice, ModelChoice, bool]:
     """
-    The configured models, or the debug overrides when this environment allows them, and whether this
-    turn applied overrides (the usage events' ``is_debug``).
+    The configured models, or the debug overrides when this user may use debug mode (``allowed``), and whether
+    this turn applied overrides (the usage events' ``is_debug``).
     """
     intent_default, compose_default = wiring.default_models()
-    if overrides and not wiring.debug_overrides_enabled():
-        logger.info('Ignoring Personalized Search debug overrides: not enabled in this environment.')
+    if overrides and not allowed:
+        logger.info('Ignoring Personalized Search debug overrides: debug mode is not allowed for this user here.')
         overrides = {}
     return (ModelChoice(overrides.get('intent_model') or intent_default.model,
                         overrides.get('intent_effort', intent_default.effort)),
@@ -132,14 +132,16 @@ class PersonalizedSearchTurnView(APIView):
         enterprise_customer_uuid = str(data['enterprise_customer_uuid'])
 
         registry = wiring.model_registry()
-        intent_choice, compose_choice, overridden = _model_choices(data.get('debug') or {})
+        # Debug mode is checked against the user's role on the server; the portal's ?debug=true only asks for it.
+        debug_allowed = wiring.debug_allowed(request.user)
+        intent_choice, compose_choice, overridden = _model_choices(data.get('debug') or {}, debug_allowed)
         if not all(registry.is_configured(choice.model) for choice in (intent_choice, compose_choice)):
             return _error('backend_unsupported', status.HTTP_503_SERVICE_UNAVAILABLE, 'No model backend is configured.')
 
         try:
             # A ``debug`` object, even an empty one, marks a ``?debug=true`` turn (debug catalog, if configured).
             scope = wiring.catalog_scope(request, enterprise_customer_uuid, data.get('locale'),
-                                         debug=data.get('debug') is not None)
+                                         debug=debug_allowed and data.get('debug') is not None)
         except Exception:  # pylint: disable=broad-exception-caught  # enterprise-catalog failure or no secured key
             logger.exception('Personalized Search could not scope the catalog for %s.', enterprise_customer_uuid)
             return _error('catalog_unavailable', status.HTTP_503_SERVICE_UNAVAILABLE)
@@ -166,7 +168,7 @@ class PersonalizedSearchTurnView(APIView):
         try:
             ctx = wiring.turn_context(session=session, message=data['message'], intent_model=intent_choice,
                                       compose_model=compose_choice, scope=scope,
-                                      debug=wiring.debug_overrides_enabled(),
+                                      debug=debug_allowed,
                                       debug_overrides=overridden or scope.is_debug,
                                       registry=registry)
             _record_pre_stream(ctx, enterprise_customer_uuid, started)

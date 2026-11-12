@@ -13,7 +13,11 @@ from enterprise_access.apps.core.constants import SYSTEM_ENTERPRISE_LEARNER_ROLE
 from enterprise_access.apps.personalized_search import wiring
 from enterprise_access.apps.personalized_search.models import ChatSession
 from enterprise_access.apps.personalized_search.tests.test_orchestrator import fake_steps
-from enterprise_access.toggles import LEARNER_PATHWAYS_SERVER_PIPELINE, PERSONALIZED_SEARCH_ENABLED
+from enterprise_access.toggles import (
+    LEARNER_PATHWAYS_SERVER_PIPELINE,
+    PERSONALIZED_SEARCH_DEBUG,
+    PERSONALIZED_SEARCH_ENABLED
+)
 from test_utils import APITest
 
 ENTERPRISE = str(uuid.uuid4())
@@ -48,6 +52,19 @@ class PersonalizedSearchTurnViewTests(APITest):
     def post(self, **body):
         payload = {'enterprise_customer_uuid': ENTERPRISE, 'session_uuid': None, 'message': 'Lead a team', **body}
         return self.client.post(self.url, payload, format='json')
+
+    def set_user_flags(self, **flags):
+        """Set is_superuser / is_staff for this test only: the test user object is shared by the class."""
+        before = {name: getattr(self.user, name) for name in flags}
+        for name, value in flags.items():
+            setattr(self.user, name, value)
+        self.user.save()
+
+        def restore():
+            for name, value in before.items():
+                setattr(self.user, name, value)
+            self.user.save()
+        self.addCleanup(restore)
 
     @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=False)
     def test_flag_off_is_404(self):
@@ -166,6 +183,7 @@ class PersonalizedSearchTurnViewTests(APITest):
 
     @override_settings(PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED=True,
                        PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE=DEV_SCOPE, ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH=True)
+    @override_waffle_flag(PERSONALIZED_SEARCH_DEBUG, active=True)
     @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
     def test_debug_overrides_applied_when_enabled(self):
         parts = parse_sse(self.post(debug={'compose_model': 'gpt-4.1', 'compose_effort': None}))
@@ -179,6 +197,7 @@ class PersonalizedSearchTurnViewTests(APITest):
 
     @override_settings(PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED=True, ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH=True,
                        PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE={**DEV_SCOPE, 'label': '2U (prod catalog)'})
+    @override_waffle_flag(PERSONALIZED_SEARCH_DEBUG, active=True)
     @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
     def test_a_debug_turn_searches_the_debug_catalog(self):
         # The portal sends an empty debug object in ?debug=true mode when no model is overridden.
@@ -189,6 +208,39 @@ class PersonalizedSearchTurnViewTests(APITest):
         plain = parse_sse(self.post())
         self.assertEqual([p for p in plain if p['type'] == 'data-timing'][0]['data']['debug']['catalog'], None)
         self.assertFalse([p for p in plain if p['type'] == 'data-analytics'][0]['data']['is_debug'])
+
+    @override_settings(PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED=True, ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH=True,
+                       PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE=DEV_SCOPE,
+                       PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE={**DEV_SCOPE, 'label': '2U (prod catalog)'})
+    @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
+    def test_debug_mode_needs_the_debug_flag_or_a_superuser(self):
+        # Debug mode is on for the environment, but this learner is neither a superuser nor on the debug flag:
+        # the overrides, the debug catalog and the debug read-out are all refused.
+        parts = parse_sse(self.post(debug={'compose_model': 'gpt-4.1', 'compose_effort': None}))
+        timing = [p for p in parts if p['type'] == 'data-timing'][0]['data']
+        self.assertEqual(timing['model_compose'], 'gpt-6-luna')
+        self.assertNotIn('debug', timing)
+        self.assertFalse([p for p in parts if p['type'] == 'data-analytics'][0]['data']['is_debug'])
+
+    @override_settings(PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED=True,
+                       PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE=DEV_SCOPE, ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH=True)
+    @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
+    def test_a_superuser_has_debug_mode_without_the_flag(self):
+        self.set_user_flags(is_superuser=True)
+        parts = parse_sse(self.post(debug={'compose_model': 'gpt-4.1', 'compose_effort': None}))
+        timing = [p for p in parts if p['type'] == 'data-timing'][0]['data']
+        self.assertEqual(timing['model_compose'], 'gpt-4.1')
+        self.assertIn('debug', timing)
+
+    @override_settings(PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE=DEV_SCOPE, ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH=True)
+    @override_waffle_flag(PERSONALIZED_SEARCH_DEBUG, active=True)
+    @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
+    def test_debug_mode_needs_the_environment_switch_even_for_allowed_users(self):
+        self.set_user_flags(is_superuser=True)
+        parts = parse_sse(self.post(debug={'compose_model': 'gpt-4.1', 'compose_effort': None}))
+        timing = [p for p in parts if p['type'] == 'data-timing'][0]['data']
+        self.assertEqual(timing['model_compose'], 'gpt-6-luna')
+        self.assertNotIn('debug', timing)
 
     @override_settings(PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE={**DEV_SCOPE, 'label': '2U (prod catalog)'})
     @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)

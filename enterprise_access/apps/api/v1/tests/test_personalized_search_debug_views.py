@@ -5,7 +5,7 @@ from rest_framework.reverse import reverse
 
 from enterprise_access.apps.api.v1.tests.test_personalized_search_views import DEV_SCOPE, ENTERPRISE, MODELS
 from enterprise_access.apps.core.constants import SYSTEM_ENTERPRISE_LEARNER_ROLE
-from enterprise_access.toggles import PERSONALIZED_SEARCH_ENABLED
+from enterprise_access.toggles import PERSONALIZED_SEARCH_DEBUG, PERSONALIZED_SEARCH_ENABLED
 from test_utils import APITest
 
 
@@ -18,11 +18,43 @@ class PersonalizedSearchDebugConfigViewTests(APITest):
         self.url = reverse('api:v1:personalized-search-debug') + f'?enterprise_customer_uuid={ENTERPRISE}'
         self.set_jwt_cookie([{'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE, 'context': ENTERPRISE}])
 
+    def set_user_flags(self, **flags):
+        """Set is_superuser / is_staff for this test only: the test user object is shared by the class."""
+        before = {name: getattr(self.user, name) for name in flags}
+        for name, value in flags.items():
+            setattr(self.user, name, value)
+        self.user.save()
+
+        def restore():
+            for name, value in before.items():
+                setattr(self.user, name, value)
+            self.user.save()
+        self.addCleanup(restore)
+
     @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
     def test_404_unless_enabled(self):
         self.assertEqual(self.client.get(self.url).status_code, 404)
 
     @override_settings(PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED=True)
+    @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
+    def test_404_for_a_learner_without_the_debug_role(self):
+        self.assertEqual(self.client.get(self.url).status_code, 404)
+
+    @override_settings(PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED=True)
+    @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
+    def test_a_superuser_gets_the_menu_without_the_flag(self):
+        self.set_user_flags(is_superuser=True)
+        self.assertEqual(self.client.get(self.url).status_code, 200)
+
+    @override_settings(PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED=True)
+    @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
+    def test_staff_alone_is_not_enough(self):
+        # is_staff comes from the JWT's administrator claim; debug mode needs a superuser or the debug flag.
+        self.set_user_flags(is_staff=True, is_superuser=False)
+        self.assertEqual(self.client.get(self.url).status_code, 404)
+
+    @override_settings(PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED=True)
+    @override_waffle_flag(PERSONALIZED_SEARCH_DEBUG, active=True)
     @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
     def test_menu(self):
         body = self.client.get(self.url).json()
@@ -41,6 +73,7 @@ class PersonalizedSearchDebugConfigViewTests(APITest):
 
     @override_settings(PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED=True,
                        XPERT_API_BASE_URL='https://xpert.test', XPERT_API_CLIENT_ID='client-123')
+    @override_waffle_flag(PERSONALIZED_SEARCH_DEBUG, active=True)
     @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
     def test_menu_offers_xpert_when_configured(self):
         xpert_entry = [m for m in self.client.get(self.url).json()['models'] if m['id'] == 'xpert'][0]
