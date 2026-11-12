@@ -126,8 +126,7 @@ def assignment_course_run_ended_expiration_enabled():
     return ASSIGNMENT_COURSE_RUN_ENDED_EXPIRATION.is_enabled()
 
 
-# A switch because it is read off-request, in Stripe webhook handlers and Celery tasks; see the
-# note above LEARNER_PATHWAYS_SERVER_PIPELINE.
+# A switch because it is read off-request, in Stripe webhook handlers and Celery tasks.
 #
 # .. toggle_name: enterprise_access.ssp_paid_renewal
 # .. toggle_implementation: WaffleSwitch
@@ -136,7 +135,8 @@ def assignment_course_run_ended_expiration_enabled():
 #     Essentials) subscriptions. When on, a renewal provisions the next year's plan, a cancelled plan
 #     stays active until its paid period ends, a failed renewal payment gets a grace period, and the
 #     renewal receipt is sent only after the next year's plan is provisioned. When off, the current
-#     renewal flow runs.
+#     renewal flow runs. Turning it off affects only events handled from then on and does not undo
+#     work done while it was on.
 # .. toggle_use_cases: temporary
 # .. toggle_creation_date: 2026-11-11
 # .. toggle_target_removal_date: 2027-06-30
