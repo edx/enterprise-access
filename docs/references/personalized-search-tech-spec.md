@@ -820,7 +820,8 @@ Two dedicated flags and a customer allowlist (KD-8, amended 2026-11-04 and 2026-
 | `enterprise.personalized_search_enabled` (edx-enterprise WaffleFlag, per user, new) | OFF | Tab visibility (`enterpriseFeatures.enterprisePersonalizedSearchEnabled`), together with the customer allowlist | Remove users from the flag, or set Everyone to No |
 | `FEATURE_ENABLE_PERSONALIZED_SEARCH_FOR_ENTERPRISE_CUSTOMERS` (MFE config, list of enterprise customer UUIDs, new) | unset (no customer) | Which enterprise customers can see the tab; the nil UUID means all. Stage: all; prod: the internal pilot customer | Remove the customer (an edx-internal config change, slower than the flags) |
 | `PERSONALIZED_SEARCH_INTENT_TIMEOUT_S` / `_COMPOSE_READ_TIMEOUT_S` (settings, new) | 3 / 5 | Step timeouts (Deadline) | Change the setting |
-| `PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED` (setting, dev only) | False | `?debug=true` per-turn model overrides and the debug menu endpoint | Leave False outside dev |
+| `PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED` (setting, dev and stage) | False | `?debug=true` per-turn model overrides and the debug menu endpoint | Leave False in prod |
+| `PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE` (setting, stage only) | None | The catalog `?debug=true` turns search, e.g. the 2U customer in the prod catalog (filter, label, optional Algolia app, key and index); needs debug overrides and `ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH` | Unset it → debug turns use the learner's own catalog |
 | `PATHWAYS_MODEL_BACKEND` (setting) | `xpert` | Which LLM backend chat uses (KD-2) | Change the setting |
 | `PERSONALIZED_SEARCH_TRANSPORT` (MFE env, new, optional) | unset (SSE) | `fixture` or `buffered` override the SSE transport | Unset |
 

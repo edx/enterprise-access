@@ -177,6 +177,26 @@ class PersonalizedSearchTurnViewTests(APITest):
         plain = parse_sse(self.post())
         self.assertFalse([p for p in plain if p['type'] == 'data-analytics'][0]['data']['is_debug'])
 
+    @override_settings(PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED=True, ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH=True,
+                       PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE={**DEV_SCOPE, 'label': '2U (prod catalog)'})
+    @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
+    def test_a_debug_turn_searches_the_debug_catalog(self):
+        # The portal sends an empty debug object in ?debug=true mode when no model is overridden.
+        parts = parse_sse(self.post(debug={}))
+        timing = [p for p in parts if p['type'] == 'data-timing'][0]['data']
+        self.assertEqual(timing['debug']['catalog'], '2U (prod catalog)')
+        self.assertTrue([p for p in parts if p['type'] == 'data-analytics'][0]['data']['is_debug'])
+        plain = parse_sse(self.post())
+        self.assertEqual([p for p in plain if p['type'] == 'data-timing'][0]['data']['debug']['catalog'], None)
+        self.assertFalse([p for p in plain if p['type'] == 'data-analytics'][0]['data']['is_debug'])
+
+    @override_settings(PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE={**DEV_SCOPE, 'label': '2U (prod catalog)'})
+    @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
+    def test_the_debug_catalog_needs_debug_overrides_enabled(self):
+        # Prod leaves debug overrides off, so a debug flag there can't switch the catalog.
+        parts = parse_sse(self.post(debug={}))
+        self.assertFalse([p for p in parts if p['type'] == 'data-analytics'][0]['data']['is_debug'])
+
     @override_settings(PERSONALIZED_SEARCH_INTENT_MODEL='xpert', PERSONALIZED_SEARCH_COMPOSE_MODEL='xpert',
                        OPENAI_API_KEY='', XPERT_API_BASE_URL='https://xpert.test', XPERT_API_CLIENT_ID='client-123')
     @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
