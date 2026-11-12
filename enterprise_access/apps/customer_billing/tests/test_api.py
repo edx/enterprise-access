@@ -23,7 +23,8 @@ from enterprise_access.apps.customer_billing.api import (
     get_or_create_enterprise_stripe_customer,
     get_stripe_customer_id_for_enterprise,
     is_account_in_good_standing,
-    is_top_up_enabled
+    is_top_up_enabled,
+    sync_enterprise_stripe_customer
 )
 from enterprise_access.apps.customer_billing.constants import TOP_UP_MAX_SUBSIDY_FETCH_ATTEMPTS, CheckoutIntentState
 from enterprise_access.apps.customer_billing.models import (
@@ -1067,14 +1068,13 @@ class GetOrCreateEnterpriseStripeCustomerTests(TestCase):
     def test_creates_one_stripe_customer_then_returns_the_mapping(self, mock_create):
         """
         The first call creates a customer keyed by the enterprise, however its UUID is spelled. Later calls return the
-        recorded mapping without calling Stripe, even once a CheckoutIntent has another customer.
+        recorded mapping without calling Stripe.
         """
         mock_create.return_value = {'id': 'cus_new', 'object': 'customer'}
 
         with self.assertRaises(ValueError):
             get_or_create_enterprise_stripe_customer('not-a-uuid')
         first = get_or_create_enterprise_stripe_customer(self.enterprise_uuid.hex)
-        _create_checkout_intent(self.enterprise_uuid, 'cus_intent', timezone.now())
         second = get_or_create_enterprise_stripe_customer(str(self.enterprise_uuid).upper())
 
         mock_create.assert_called_once_with(idempotency_key=self.idempotency_key)
@@ -1150,3 +1150,69 @@ class GetOrCreateEnterpriseStripeCustomerTests(TestCase):
         with mock.patch.object(EnterpriseStripeCustomer.objects, 'create', side_effect=IntegrityError('other')):
             with self.assertRaises(IntegrityError):
                 get_or_create_enterprise_stripe_customer(self.enterprise_uuid)
+
+
+class SyncEnterpriseStripeCustomerTests(TestCase):
+    """
+    Tests for sync_enterprise_stripe_customer and the CheckoutIntent post_save receiver that calls it (ENT-12509). The
+    mapping the billing endpoints read follows the newest CheckoutIntent the subscription endpoints read.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.enterprise_uuid = uuid.uuid4()
+        now = timezone.now()
+        self.older_intent = _create_checkout_intent(self.enterprise_uuid, 'cus_backfilled', now - timedelta(days=2))
+        self.newest_intent = _create_checkout_intent(self.enterprise_uuid, 'cus_backfilled', now - timedelta(days=1))
+        self.newest_intent.refresh_from_db()
+        self.mapping = EnterpriseStripeCustomerFactory(
+            enterprise_customer_uuid=self.enterprise_uuid,
+            stripe_customer_id='cus_backfilled',
+            source=EnterpriseStripeCustomer.SourceChoices.CHECKOUT_INTENT_BACKFILL,
+        )
+
+    def test_mapping_follows_the_newest_intents_customer(self):
+        """
+        A new customer on an older intent changes nothing: the subscription endpoints read the newest one. A new
+        customer on the newest intent, as customer.subscription.created writes it, moves the mapping.
+        """
+        self.older_intent.update_stripe_identifiers(customer_id='cus_older_replaced')
+        self.mapping.refresh_from_db()
+        self.assertEqual(self.mapping.stripe_customer_id, 'cus_backfilled')
+
+        self.newest_intent.stripe_customer_id = 'cus_replaced'
+        self.newest_intent.save()
+
+        self.mapping.refresh_from_db()
+        self.assertEqual(
+            (self.mapping.stripe_customer_id, self.mapping.source),
+            ('cus_replaced', EnterpriseStripeCustomer.SourceChoices.CHECKOUT_INTENT_BACKFILL),
+        )
+        self.assertEqual(list(self.mapping.history.values_list('history_type', flat=True)), ['~', '+'])
+        self.assertEqual(get_stripe_customer_id_for_enterprise(self.enterprise_uuid), 'cus_replaced')
+
+    def test_enterprise_without_a_mapping_or_intent_customer_is_left_alone(self):
+        """
+        No mapping is created: the billing endpoints already fall back to the CheckoutIntent. A mapping whose
+        enterprise has no intent with a customer keeps its own.
+        """
+        unmapped = uuid.uuid4()
+        _create_checkout_intent(unmapped, 'cus_unmapped', timezone.now())
+        learner_credit_only = EnterpriseStripeCustomerFactory(stripe_customer_id='cus_top_up')
+
+        sync_enterprise_stripe_customer(learner_credit_only.enterprise_customer_uuid)
+
+        self.assertFalse(EnterpriseStripeCustomer.objects.filter(enterprise_customer_uuid=unmapped).exists())
+        learner_credit_only.refresh_from_db()
+        self.assertEqual(learner_credit_only.stripe_customer_id, 'cus_top_up')
+
+    @mock.patch('enterprise_access.apps.customer_billing.signals.sync_enterprise_stripe_customer')
+    def test_only_saves_writing_the_customer_or_enterprise_sync(self, mock_sync):
+        self.newest_intent.save(update_fields=['state', 'modified'])
+        CheckoutIntentFactory(enterprise_uuid=None)
+        mock_sync.assert_not_called()
+
+        self.newest_intent.save(update_fields=['stripe_customer_id', 'modified'])
+        # Provisioning's link_checkout_intent().
+        self.newest_intent.save(update_fields=['workflow', 'enterprise_uuid'])
+        self.assertEqual(mock_sync.call_args_list, [mock.call(self.enterprise_uuid)] * 2)

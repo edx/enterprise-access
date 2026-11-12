@@ -800,20 +800,26 @@ class TestBackfillEnterpriseStripeCustomer(TransactionTestCase):
         new_state = self.migrator.apply_tested_migration(self.migrate_to)
 
         EnterpriseStripeCustomer = new_state.apps.get_model('customer_billing', 'EnterpriseStripeCustomer')
+        HistoricalEnterpriseStripeCustomer = new_state.apps.get_model(
+            'customer_billing', 'HistoricalEnterpriseStripeCustomer',
+        )
+        expected_mappings = {
+            (newest_wins, 'cus_new', 'checkout_intent_backfill'),
+            (skips_missing_ids, 'cus_only_valid', 'checkout_intent_backfill'),
+        }
+        mapping_fields = ('enterprise_customer_uuid', 'stripe_customer_id', 'source')
+        self.assertEqual(set(EnterpriseStripeCustomer.objects.values_list(*mapping_fields)), expected_mappings)
+        # Each new mapping gets its initial history record.
         self.assertEqual(
-            set(EnterpriseStripeCustomer.objects.values_list(
-                'enterprise_customer_uuid', 'stripe_customer_id', 'source',
-            )),
-            {
-                (newest_wins, 'cus_new', 'checkout_intent_backfill'),
-                (skips_missing_ids, 'cus_only_valid', 'checkout_intent_backfill'),
-            },
+            set(HistoricalEnterpriseStripeCustomer.objects.values_list(*mapping_fields, 'history_type')),
+            {mapping + ('+',) for mapping in expected_mappings},
         )
 
     def test_backfill_reruns_safely_with_constant_queries_and_reverse_keeps_checkout_intents(self):
         """
-        Running the backfill again keeps existing mappings and maps only new enterprises, in a number of queries that
-        doesn't grow with the enterprises. Migrating back to 0042 leaves CheckoutIntent untouched.
+        Running the backfill again keeps existing mappings and maps only new enterprises, each with one initial history
+        record, in a number of queries that doesn't grow with the enterprises. Migrating back to 0042 leaves
+        CheckoutIntent untouched.
         """
         changed_enterprise = uuid4()
         self._create_checkout_intent(changed_enterprise, 'cus_checkout', days_ago=1)
@@ -836,6 +842,14 @@ class TestBackfillEnterpriseStripeCustomer(TransactionTestCase):
 
         self.assertEqual(query_counts[0], query_counts[1])
         self.assertEqual(EnterpriseStripeCustomer.objects.count(), 6)
+        HistoricalEnterpriseStripeCustomer = new_state.apps.get_model(
+            'customer_billing', 'HistoricalEnterpriseStripeCustomer',
+        )
+        # One '+' record per mapping: the rerun didn't repeat the first run's records.
+        self.assertEqual(
+            sorted(HistoricalEnterpriseStripeCustomer.objects.values_list('id', 'history_type')),
+            sorted((mapping_id, '+') for mapping_id in EnterpriseStripeCustomer.objects.values_list('id', flat=True)),
+        )
         self.assertEqual(
             EnterpriseStripeCustomer.objects.values_list('stripe_customer_id', 'source').get(
                 enterprise_customer_uuid=changed_enterprise,

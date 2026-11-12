@@ -647,6 +647,41 @@ def get_or_create_enterprise_stripe_customer(enterprise_customer_uuid: UUID | st
     return mapping
 
 
+def sync_enterprise_stripe_customer(enterprise_customer_uuid: UUID | str) -> None:
+    """
+    Point the enterprise's EnterpriseStripeCustomer at the Stripe customer of its newest CheckoutIntent that has one.
+
+    The billing endpoints read the mapping and the subscription endpoints read that CheckoutIntent, so both must name
+    the same customer. An intent's customer can change after the mapping is recorded (customer.subscription.created
+    overwrites it), and provisioning can link a newer intent to the enterprise, so signals.py calls this on those
+    CheckoutIntent saves.
+
+    Does nothing when the enterprise has no mapping (readers then fall back to the CheckoutIntent) or no CheckoutIntent
+    with a Stripe customer. ``source`` keeps how the mapping was first recorded; its history shows the change.
+    """
+    with transaction.atomic():
+        # Lock the mapping before reading the intent, so a concurrent sync can't write back an older customer.
+        mapping = EnterpriseStripeCustomer.objects.select_for_update().filter(
+            enterprise_customer_uuid=enterprise_customer_uuid,
+        ).first()
+        if mapping is None:
+            return
+        checkout_intent = CheckoutIntent.get_latest_for_customer(
+            customer_uuid=enterprise_customer_uuid,
+            require_stripe_customer=True,
+        )
+        if checkout_intent is None or checkout_intent.stripe_customer_id == mapping.stripe_customer_id:
+            return
+
+        logger.warning(
+            'Enterprise %s: moving its Stripe customer from %s to %s, the customer of its newest CheckoutIntent %s',
+            enterprise_customer_uuid, mapping.stripe_customer_id, checkout_intent.stripe_customer_id,
+            checkout_intent.uuid,
+        )
+        mapping.stripe_customer_id = checkout_intent.stripe_customer_id
+        mapping.save(update_fields=['stripe_customer_id', 'modified'])
+
+
 # Learner Credit top-up eligibility (ENT-12356). The single implementation of the eligibility rules: the eligibility
 # endpoint calls it today, and the quote (chunk 7) and pay (chunk 11) endpoints must call the same function so the
 # portal and the backend always agree.

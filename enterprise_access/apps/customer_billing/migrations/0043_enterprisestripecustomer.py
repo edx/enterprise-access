@@ -5,16 +5,21 @@ import django_extensions.db.fields
 import simple_history.models
 from django.conf import settings
 from django.db import migrations, models
+from django.utils import timezone
+
+BATCH_SIZE = 500
 
 
 def backfill_enterprise_stripe_customers(apps, schema_editor):
     """
     Map each enterprise to the Stripe customer on its newest CheckoutIntent (by ``created``) whose stripe_customer_id
-    is neither NULL nor empty, the customer billing management already used. Reads every candidate in one query.
-    Enterprises already mapped are skipped, so this can run again.
+    is neither NULL nor empty, the customer billing management already used, and give each new mapping its initial
+    history record. Runs a fixed number of queries. Enterprises already mapped are skipped, so this can run again
+    without duplicating mappings or history.
     """
     CheckoutIntent = apps.get_model('customer_billing', 'CheckoutIntent')
     EnterpriseStripeCustomer = apps.get_model('customer_billing', 'EnterpriseStripeCustomer')
+    HistoricalEnterpriseStripeCustomer = apps.get_model('customer_billing', 'HistoricalEnterpriseStripeCustomer')
 
     already_mapped = set(EnterpriseStripeCustomer.objects.values_list('enterprise_customer_uuid', flat=True))
     candidates = CheckoutIntent.objects.filter(
@@ -39,8 +44,25 @@ def backfill_enterprise_stripe_customers(apps, schema_editor):
             )
             for enterprise_uuid, stripe_customer_id in newest_customer_by_enterprise.items()
         ],
-        batch_size=500,
-        ignore_conflicts=True,
+        batch_size=BATCH_SIZE,
+    )
+
+    # bulk_create() skips simple-history's post_save hook, and the history manager's bulk helpers aren't available to
+    # migration models, so the '+' records are written here. MySQL doesn't return the new primary keys, so read the
+    # new rows back: every mapping except those that existed before this run.
+    history_date = timezone.now()
+    new_mappings = EnterpriseStripeCustomer.objects.exclude(enterprise_customer_uuid__in=already_mapped)
+    HistoricalEnterpriseStripeCustomer.objects.bulk_create(
+        [
+            HistoricalEnterpriseStripeCustomer(
+                history_date=history_date,
+                history_type='+',
+                history_change_reason='Backfilled from CheckoutIntent (ENT-12509)',
+                **{field.attname: getattr(mapping, field.attname) for field in mapping._meta.fields},
+            )
+            for mapping in new_mappings.iterator()
+        ],
+        batch_size=BATCH_SIZE,
     )
 
 

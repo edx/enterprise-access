@@ -8,6 +8,7 @@ from django.dispatch import receiver
 from edx_django_utils.monitoring import set_custom_attribute
 
 from enterprise_access.apps.api.serializers import CheckoutIntentReadOnlySerializer
+from enterprise_access.apps.customer_billing.api import sync_enterprise_stripe_customer
 from enterprise_access.apps.customer_billing.constants import (
     CHECKOUT_LIFECYCLE_IS_ERROR_MONITORING_KEY,
     CHECKOUT_LIFECYCLE_STATE_MONITORING_KEY,
@@ -54,6 +55,21 @@ def track_checkout_intent_changes(sender, instance, created, **kwargs):  # pylin
             event_name=CheckoutIntentSegmentEvents.LIFECYCLE_EVENT,
             properties=properties,
         )
+
+
+@receiver(post_save, sender=CheckoutIntent)
+def sync_enterprise_stripe_customer_on_checkout_intent_save(
+    sender, instance, update_fields=None, **kwargs,
+):  # pylint: disable=unused-argument
+    """
+    Keep the enterprise's EnterpriseStripeCustomer on its newest CheckoutIntent's Stripe customer whenever an intent's
+    customer or enterprise is written (ENT-12509).
+    """
+    if not instance.enterprise_uuid:
+        return
+    if update_fields is not None and not {'enterprise_uuid', 'stripe_customer_id'}.intersection(update_fields):
+        return
+    sync_enterprise_stripe_customer(instance.enterprise_uuid)
 
 
 @receiver(post_save, sender=StripeEventData)

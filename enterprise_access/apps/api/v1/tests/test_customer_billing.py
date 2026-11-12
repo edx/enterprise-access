@@ -4091,32 +4091,6 @@ class BillingManagementEnterpriseStripeCustomerTests(BillingManagementBaseTest):
         mock_customer_retrieve.assert_called_once_with(expected_customer_id)
         mock_payment_method_list.assert_called_once_with(customer=expected_customer_id, limit=100)
 
-    @mock.patch('stripe.Invoice.list')
-    @mock.patch('stripe.Customer.retrieve')
-    def test_learner_credit_only_enterprise_gets_address_and_transactions(
-        self, mock_customer_retrieve, mock_invoice_list,
-    ):
-        """
-        An enterprise with a mapping and no CheckoutIntent gets its mapped customer's address and invoices.
-        """
-        self._map_enterprise()
-        self.checkout_intent.delete()
-        mock_customer_retrieve.return_value = AttrDict.wrap({
-            'id': self.MAPPED_CUSTOMER_ID, 'name': 'Billing Contact', 'email': 'billing@example.com',
-            'phone': None, 'address': None,
-        })
-        mock_invoice_list.return_value = mock.Mock(data=[], has_more=False)
-        query = {'enterprise_customer_uuid': self.enterprise_uuid}
-
-        address_response = self.client.get(reverse('api:v1:billing-management-address'), query)
-        transactions_response = self.client.get(reverse('api:v1:billing-management-list-transactions'), query)
-
-        self.assertEqual(address_response.status_code, status.HTTP_200_OK)
-        self.assertEqual(address_response.json()['email'], 'billing@example.com')
-        mock_customer_retrieve.assert_called_once_with(self.MAPPED_CUSTOMER_ID)
-        self.assertEqual(transactions_response.status_code, status.HTTP_200_OK)
-        self.assertEqual(mock_invoice_list.call_args.kwargs['customer'], self.MAPPED_CUSTOMER_ID)
-
     @ddt.data(
         ('get', 'api:v1:billing-management-get-subscription', 'Checkout Intent not found for this enterprise'),
         ('post', 'api:v1:billing-management-cancel-subscription', 'Stripe customer not found for this enterprise'),
