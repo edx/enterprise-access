@@ -608,8 +608,10 @@ PERSONALIZED_SEARCH_OPENAI_MODELS = {
 }
 # The Xpert platform (model id 'xpert') is available once XPERT_API_BASE_URL and XPERT_API_CLIENT_ID are
 # set; its calls use XPERT_REQUEST_TIMEOUT instead of the step timeouts above.
-# Development only. When True, a turn request may carry a ``debug`` object that overrides the
-# per-step models and efforts, and the stream's timing part carries token and cost detail.
+# Turns debug mode on for this environment. Even then, only enterprise-access superusers and users on the
+# enterprise_access.personalized_search_debug flag get it: their turn requests may carry a ``debug`` object
+# that overrides the per-step models and efforts (and selects the debug catalog), and their stream's timing
+# part carries token and cost detail. Everyone else's ``debug`` object is ignored.
 PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED = False
 # Development only. ``{'filter': '<algolia filter>', 'label': '<text>'}`` replaces the
 # per-learner secured key with the plain search key plus this explicit catalog filter.
