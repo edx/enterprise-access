@@ -90,8 +90,8 @@ def turn_context(*, session: dict, message: str, intent_model: ModelChoice, comp
                  registry: ModelRegistry | None = None) -> TurnContext:
     """
     A ``TurnContext`` with the configured timeouts, shortlist size and the registry's platform names.
-    ``debug`` turns on the debug read-out; ``debug_overrides`` says this turn's models came from debug
-    overrides, which tags its usage events (``is_debug``).
+    ``debug`` turns on the debug read-out; ``debug_overrides`` says this turn used debug overrides (its models
+    or the debug catalog), which tags its usage events (``is_debug``).
     """
     registry = registry or model_registry()
     return TurnContext(
@@ -132,11 +132,33 @@ def dev_catalog_scope(locale: str | None = None) -> CatalogScope | None:
                         locale=code, language_name=name)
 
 
-def catalog_scope(request, enterprise_customer_uuid: str, locale: str | None = None) -> CatalogScope:
-    """The learner's secured key and enterprise filter (or the dev scope), in the learner's content language."""
+def debug_catalog_scope(locale: str | None = None) -> CatalogScope | None:
+    """
+    Stage only: the catalog debug turns search (``PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE``), such as the 2U
+    customer in the prod catalog. Its plain key needs ``ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH`` like the dev scope.
+    """
+    debug_scope = getattr(settings, 'PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE', None)
+    if not debug_scope:
+        return None
+    code, name = content_language(locale)
+    client_config = {key: debug_scope[key] for key in ('app_id', 'search_api_key', 'index_name')
+                     if debug_scope.get(key)}
+    return CatalogScope(filter=debug_scope['filter'], allow_unscoped=True, label=debug_scope.get('label'),
+                        client_config=client_config or None, is_debug=True, locale=code, language_name=name)
+
+
+def catalog_scope(request, enterprise_customer_uuid: str, locale: str | None = None,
+                  debug: bool = False) -> CatalogScope:
+    """
+    The learner's secured key and enterprise filter, in the learner's content language. The dev scope replaces
+    it everywhere it's set; the debug scope replaces it for ``debug`` turns where debug overrides are enabled.
+    """
     dev_scope = dev_catalog_scope(locale)
     if dev_scope:
         return dev_scope
+    debug_scope = debug_catalog_scope(locale) if debug and debug_overrides_enabled() else None
+    if debug_scope:
+        return debug_scope
     payload = get_and_cache_secured_algolia_search_keys(request, enterprise_customer_uuid)
     code, name = content_language(locale)
     return CatalogScope(

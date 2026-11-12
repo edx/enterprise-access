@@ -11,7 +11,7 @@ import html
 import logging
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from enterprise_access.apps.personalized_search.core import constants
 from enterprise_access.apps.personalized_search.core.errors import CatalogSearchError
@@ -27,7 +27,9 @@ class CatalogScope:
     """
     How to scope catalog reads. Normal: the learner's secured key plus the enterprise filter.
     Dev only: the plain key plus an explicit catalog filter (``PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE``).
-    ``secured_key`` is opaque here; only the catalog adapter reads it.
+    Debug turns in stage: the same, optionally against another Algolia app or index
+    (``PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE``), marked ``is_debug``.
+    ``secured_key`` and ``client_config`` are opaque here; only the catalog adapter reads them.
 
     The content language follows the learner's portal language, as Learner Pathways does: ``locale``
     picks the catalog records whose metadata (title, description) is in that language
@@ -39,6 +41,8 @@ class CatalogScope:
     secured_key: object | None = None
     allow_unscoped: bool = False
     label: str | None = None
+    client_config: dict | None = field(default=None, repr=False)  # may hold a search key; keep it out of logs
+    is_debug: bool = False
     locale: str = 'en'
     language_name: str = 'English'
 
