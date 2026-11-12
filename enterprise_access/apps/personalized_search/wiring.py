@@ -17,6 +17,7 @@ from enterprise_access.apps.personalized_search.core.errors import ModelConfigur
 from enterprise_access.apps.personalized_search.core.model_registry import ModelRegistry
 from enterprise_access.apps.personalized_search.core.orchestrator import ModelChoice, Steps, TurnContext
 from enterprise_access.apps.personalized_search.core.retrieval import CatalogScope
+from enterprise_access.toggles import personalized_search_debug_enabled
 
 
 def xpert_backend() -> XpertBackend:
@@ -151,7 +152,7 @@ def catalog_scope(request, enterprise_customer_uuid: str, locale: str | None = N
                   debug: bool = False) -> CatalogScope:
     """
     The learner's secured key and enterprise filter, in the learner's content language. The dev scope replaces
-    it everywhere it's set; the debug scope replaces it for ``debug`` turns where debug overrides are enabled.
+    it everywhere it's set; the debug scope replaces it for ``debug`` turns (the caller checks ``debug_allowed``).
     """
     dev_scope = dev_catalog_scope(locale)
     if dev_scope:
@@ -169,5 +170,16 @@ def catalog_scope(request, enterprise_customer_uuid: str, locale: str | None = N
 
 
 def debug_overrides_enabled() -> bool:
-    """Whether per-turn model overrides and the debug read-out are allowed in this environment."""
+    """Whether debug mode exists in this environment at all (PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED)."""
     return bool(getattr(settings, 'PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED', False))
+
+
+def debug_allowed(user) -> bool:
+    """
+    Whether this user may use debug mode: the environment allows it, and the user is an enterprise-access superuser
+    or is on the ``enterprise_access.personalized_search_debug`` flag. ``is_superuser`` is never set from the JWT
+    (only ``administrator`` maps to ``is_staff``), so it can only be granted in enterprise-access's Django admin.
+    """
+    if not debug_overrides_enabled() or not getattr(user, 'is_authenticated', False):
+        return False
+    return bool(getattr(user, 'is_superuser', False)) or personalized_search_debug_enabled()

@@ -2,7 +2,8 @@
 Personalized Search debug model menu (the portal's ``?debug=true`` panel).
 
 GET ``/api/v1/personalized-search/debug/`` lists the allowed models with prices, efforts, defaults and
-the catalog label. 404 unless PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED, so it doesn't exist outside dev.
+the catalog label. 404 unless the requesting user may use debug mode (``wiring.debug_allowed``: the environment
+switch is on and the user is a superuser or on the ``enterprise_access.personalized_search_debug`` flag).
 """
 from edx_rbac.decorators import permission_required
 from edx_rest_framework_extensions.auth.jwt.authentication import JwtAuthentication
@@ -38,7 +39,7 @@ class PersonalizedSearchDebugConfigView(APIView):
     @permission_required(PERSONALIZED_SEARCH_LEARNER_PERMISSION, fn=get_or_fetch_enterprise_uuid_for_bff_request)
     def get(self, request):
         """The allowed models, efforts and defaults for the debug panel."""
-        if not wiring.debug_overrides_enabled() or not personalized_search_enabled():
+        if not wiring.debug_allowed(request.user) or not personalized_search_enabled():
             raise NotFound()
         registry = wiring.model_registry()
         intent_default, compose_default = wiring.default_models()
