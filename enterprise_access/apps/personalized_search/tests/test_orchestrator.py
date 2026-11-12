@@ -10,7 +10,8 @@ from django.test import TestCase
 
 from enterprise_access.apps.personalized_search.adapters.django_store import DjangoSessionStore
 from enterprise_access.apps.personalized_search.adapters.memory_store import InMemorySessionStore
-from enterprise_access.apps.personalized_search.core.errors import ModelError
+from enterprise_access.apps.personalized_search.core import constants
+from enterprise_access.apps.personalized_search.core.errors import ModelConfigurationError, ModelError
 from enterprise_access.apps.personalized_search.core.orchestrator import ModelChoice, Steps, TurnContext, run_turn
 from enterprise_access.apps.personalized_search.core.ports import Usage
 from enterprise_access.apps.personalized_search.core.retrieval import RetrievalFailed, SearchResults
@@ -152,7 +153,7 @@ class RunTurnTests(TestCase):
     def test_errors_persist_nothing(self):
         cases = [
             (fake_steps(intent_text='not json'), 'intent_invalid'),
-            (fake_steps(intent_error=ModelError('x')), 'model_failed'),
+            (fake_steps(intent_error=ModelConfigurationError('x')), 'model_failed'),
             (fake_steps(retrieve=lambda *a, **kw: (_ for _ in ()).throw(RetrievalFailed('x'))), 'retrieval_failed'),
             (fake_steps(compose_error=ModelError('x')), 'model_failed'),
         ]
@@ -230,6 +231,115 @@ class RunTurnTests(TestCase):
                  for i in p['data']['props']['items']]
         self.assertTrue(items)
         self.assertTrue(all('status' not in i for i in items))
+
+
+class ModelResilienceTests(TestCase):
+    """A model step that can't be reached is retried once, then the turn shows server-built results."""
+
+    LOGGER = 'enterprise_access.apps.personalized_search.core.orchestrator'
+
+    def setUp(self):
+        super().setUp()
+        ticks = itertools.count()
+        self.session = new_locked_session('I want to lead a team')
+        self.ctx = TurnContext(session=self.session, message='I want to lead a team',
+                               intent_model=ModelChoice('gpt-4.1-mini', None),
+                               compose_model=ModelChoice('gpt-5.4-mini', 'low'), scope=None, debug=True,
+                               clock=lambda: next(ticks) * 0.1, platform=openai_platform)
+        self.calls = {'intent': 0, 'compose': 0}
+
+    def steps(self, *, intent_failures=0, compose_failures=0, intent_error=ModelError('timeout'),
+              compose_error=ModelError('timeout')):
+        """Steps whose intent and compose calls fail (before any text) the given number of times, then work."""
+        base = fake_steps()
+
+        def intent(**kwargs):
+            self.calls['intent'] += 1
+            if self.calls['intent'] <= intent_failures:
+                raise intent_error
+            return base.intent(**kwargs)
+
+        def compose(**kwargs):
+            self.calls['compose'] += 1
+            if self.calls['compose'] <= compose_failures:
+                raise compose_error
+            yield from base.compose(**kwargs)
+
+        return dataclasses.replace(base, intent=intent, compose=compose)
+
+    def run_logged(self, steps):
+        """The turn's parts and its one turn-log record."""
+        with self.assertLogs(self.LOGGER, level='INFO') as logs:
+            parts = list(run_turn(self.ctx, steps))
+        (record,) = [json.loads(r.getMessage().split(' ', 1)[1]) for r in logs.records
+                     if r.getMessage().startswith('personalized_search.turn ')]
+        return parts, record
+
+    @staticmethod
+    def reply(parts):
+        return ''.join(p['delta'] for p in parts if p['type'] == 'text-delta')
+
+    @staticmethod
+    def blocks(parts):
+        return [p['data']['type'] for p in parts if p['type'] == 'data-block']
+
+    def test_an_intent_timeout_is_retried_once(self):
+        parts, record = self.run_logged(self.steps(intent_failures=1))
+        self.assertEqual(parts[-1], {'type': 'finish'})
+        self.assertEqual(self.reply(parts), 'Your page.')  # the model's own reply
+        self.assertEqual(self.calls, {'intent': 2, 'compose': 1})
+        self.assertEqual((record['retries'], record['model_failures'], record['degraded']),
+                         ({'intent': 1, 'compose': 0}, {'intent': 1, 'compose': 0}, None))
+
+    def test_intent_that_fails_twice_shows_server_built_results_without_a_model_reply(self):
+        parts, record = self.run_logged(self.steps(intent_failures=2))
+        self.assertEqual(parts[-1], {'type': 'finish'})
+        self.assertEqual(self.reply(parts), constants.DEGRADED_REPLY)
+        self.assertIn('top_pick', self.blocks(parts))
+        self.assertIn('compare', self.blocks(parts))
+        # The message was never classified, so no model writes text from it: compose isn't called.
+        self.assertEqual(self.calls, {'intent': 2, 'compose': 0})
+        self.assertEqual((record['outcome'], record['degraded']), ('done', 'intent'))
+        self.assertEqual(ChatTurn.objects.get().intent['fallback'], True)
+
+    def test_a_configuration_error_is_not_retried(self):
+        error = ModelConfigurationError('no key')
+        cases = [({'intent_failures': 2, 'intent_error': error}, {'intent': 1, 'compose': 0}),
+                 ({'compose_failures': 2, 'compose_error': error}, {'intent': 1, 'compose': 1})]
+        for kwargs, calls in cases:
+            self.calls = {'intent': 0, 'compose': 0}
+            parts, record = self.run_logged(self.steps(**kwargs))
+            self.assertEqual(parts[-1], {'type': 'error', 'errorText': 'model_failed'})
+            self.assertEqual((self.calls, record['retries'], record['degraded']),
+                             (calls, {'intent': 0, 'compose': 0}, None))
+
+    def test_compose_that_fails_before_any_text_is_retried(self):
+        parts, record = self.run_logged(self.steps(compose_failures=1))
+        self.assertEqual(self.reply(parts), 'Your page.')
+        self.assertEqual(self.calls['compose'], 2)
+        self.assertEqual((record['retries']['compose'], record['degraded']), (1, None))
+
+    def test_compose_that_fails_twice_shows_server_built_results(self):
+        parts, record = self.run_logged(self.steps(compose_failures=2))
+        self.assertEqual(parts[-1], {'type': 'finish'})
+        self.assertEqual(self.reply(parts), constants.DEGRADED_REPLY)
+        self.assertEqual(self.blocks(parts)[:2], ['page_header', 'profile'])
+        self.assertIn('item_section', self.blocks(parts))
+        self.assertEqual(len([p for p in parts if p['type'] == 'data-followups']), 1)
+        self.assertEqual((record['outcome'], record['degraded'], record['model_failures']['compose']),
+                         ('done', 'compose', 2))
+        self.assertEqual(ChatTurn.objects.get().reply_text, constants.DEGRADED_REPLY)
+
+    def test_compose_is_not_retried_near_the_deadline(self):
+        self.ctx.t0 = -(constants.TURN_DEADLINE_S - constants.COMPOSE_RETRY_MIN_S + 1)  # less than the retry needs
+        parts, record = self.run_logged(self.steps(compose_failures=1))
+        self.assertEqual(self.reply(parts), constants.DEGRADED_REPLY)
+        self.assertEqual((self.calls['compose'], record['retries']['compose'], record['degraded']), (1, 0, 'compose'))
+
+    def test_compose_that_fails_after_text_has_streamed_still_ends_in_an_error(self):
+        parts = list(run_turn(self.ctx, fake_steps(compose_error=ModelError('reset'))))
+        self.assertEqual(parts[-1], {'type': 'error', 'errorText': 'model_failed'})
+        self.assertFalse(ChatTurn.objects.exists())
 
 
 class TurnObservabilityTests(TestCase):

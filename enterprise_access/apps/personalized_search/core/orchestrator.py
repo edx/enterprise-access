@@ -23,7 +23,8 @@ from enterprise_access.apps.personalized_search.core import telemetry
 from enterprise_access.apps.personalized_search.core.compose import SYSTEM_PROMPT as COMPOSE_SYSTEM
 from enterprise_access.apps.personalized_search.core.compose import ComposeParser
 from enterprise_access.apps.personalized_search.core.compose import build_user_content as compose_user
-from enterprise_access.apps.personalized_search.core.errors import ModelError
+from enterprise_access.apps.personalized_search.core.compose import server_output
+from enterprise_access.apps.personalized_search.core.errors import ModelConfigurationError, ModelError
 from enterprise_access.apps.personalized_search.core.ports import Usage
 from enterprise_access.apps.personalized_search.core.retrieval import (
     RetrievalFailed,
@@ -41,7 +42,7 @@ CARD_BLOCKS = ('top_pick', 'compare', 'item_section')
 TURN_LOG_FIELDS = (
     'session_uuid', 'sequence', 'turn_uuid', 'backend', 'model_intent', 'model_compose', 'outcome', 'error',
     'redirect_reason', 'timing', 'item_count', 'dropped_lines', 'fallback', 'candidate_ids', 'item_ids',
-    'total_ms',
+    'total_ms', 'model_failures', 'retries', 'degraded',
 )
 
 
@@ -132,6 +133,8 @@ def run_turn(ctx: TurnContext, steps: Steps) -> Iterator[dict]:
         'backend': platform_of(ctx), 'model_intent': ctx.intent_model.model,
         'model_compose': ctx.compose_model.model, 'outcome': 'aborted', 'error': None, 'timing': {},
         'item_count': 0, 'dropped_lines': 0, 'fallback': False, 'candidate_ids': [], 'item_ids': [],
+        # Failed model calls and retries per step, and the step whose failure made the turn use server-built results.
+        'model_failures': {'intent': 0, 'compose': 0}, 'retries': {'intent': 0, 'compose': 0}, 'degraded': None,
     }
     parts = _turn_parts(ctx, steps, record)
     emitted: list[dict] = []
@@ -221,23 +224,35 @@ def _turn_parts(ctx: TurnContext, steps: Steps, record: dict) -> Iterator[dict]:
     yield {'type': 'data-analytics', 'id': 'analytics', 'data': telemetry.join_keys(ctx, record)}
     yield {'type': 'data-status', 'data': {'step': 'understanding'}, 'transient': True}
 
-    # Step 1: intent
-    try:
-        text, usage = steps.intent(
-            system=intent_step.SYSTEM_PROMPT,
-            user=intent_step.build_user_content(message=ctx.message, prior_intent=session['merged_intent'],
-                                                history=session['history']),
-            model=ctx.intent_model.model, effort=ctx.intent_model.effort,
-            timeout_s=min(ctx.intent_timeout_s, remaining()),
-        )
-        usages['intent'] = usage
-        result = intent_step.parse(text)
-    except ModelError:
-        yield {'type': 'error', 'errorText': 'model_failed'}
-        return
-    except intent_step.IntentInvalid:
-        yield {'type': 'error', 'errorText': 'intent_invalid'}
-        return
+    # Step 1: intent. A call that can't be reached (timeout, connection, 5xx) is tried once more while the deadline
+    # allows; if that fails too, the turn continues on a fallback intent and shows server-built results.
+    result = None
+    for attempt in (1, 2):
+        try:
+            text, usage = steps.intent(
+                system=intent_step.SYSTEM_PROMPT,
+                user=intent_step.build_user_content(message=ctx.message, prior_intent=session['merged_intent'],
+                                                    history=session['history']),
+                model=ctx.intent_model.model, effort=ctx.intent_model.effort,
+                timeout_s=min(ctx.intent_timeout_s, remaining()),
+            )
+            usages['intent'] = usage
+            result = intent_step.parse(text)
+            break
+        except ModelConfigurationError:
+            yield {'type': 'error', 'errorText': 'model_failed'}
+            return
+        except ModelError:
+            record['model_failures']['intent'] += 1
+            if attempt == 2 or remaining() < constants.INTENT_RETRY_MIN_S:
+                break
+            record['retries']['intent'] += 1
+        except intent_step.IntentInvalid:
+            yield {'type': 'error', 'errorText': 'intent_invalid'}
+            return
+    if result is None:
+        record['degraded'] = 'intent'
+        result = intent_step.fallback(session['merged_intent'])
     timing['intent_ms'] = _ms(ctx, ctx.clock())
     debug['intent_result'] = {'on_topic': result['on_topic'], 'redirect_reason': result['redirect_reason'],
                               'merge': result['merge']}
@@ -292,14 +307,16 @@ def _turn_parts(ctx: TurnContext, steps: Steps, record: dict) -> Iterator[dict]:
     record['item_ids'] = parser.emitted_ids  # the parser's own list, so an aborted turn logs what it showed
     record.update(placements=parser.placements, dropped=parser.dropped)
     usages['compose'] = Usage(model=ctx.compose_model.model, effort=ctx.compose_model.effort)
-    stream = steps.compose(
-        system=COMPOSE_SYSTEM,
-        user=compose_user(merged_intent=merged, followup_attribute=attribute, asked=session['asked_attributes'],
-                          history=session['history'], message=ctx.message, candidates=candidates,
-                          language=getattr(ctx.scope, 'language_name', None) or 'English'),
-        model=ctx.compose_model.model, effort=ctx.compose_model.effort,
-        timeout_s=min(ctx.compose_timeout_s, remaining()), usage=usages['compose'],
-    )
+
+    def compose_stream():
+        return steps.compose(
+            system=COMPOSE_SYSTEM,
+            user=compose_user(merged_intent=merged, followup_attribute=attribute, asked=session['asked_attributes'],
+                              history=session['history'], message=ctx.message, candidates=candidates,
+                              language=getattr(ctx.scope, 'language_name', None) or 'English'),
+            model=ctx.compose_model.model, effort=ctx.compose_model.effort,
+            timeout_s=min(ctx.compose_timeout_s, remaining()), usage=usages['compose'],
+        )
 
     def emit(parts):
         for part in parts:
@@ -310,20 +327,42 @@ def _turn_parts(ctx: TurnContext, steps: Steps, record: dict) -> Iterator[dict]:
                 timing['first_section_ms'] = _ms(ctx, ctx.clock())
             yield part
 
+    # Compose: a call that fails before sending any text is tried once more while the deadline allows; if that fails
+    # too (or intent already fell back), the server writes the results from the shortlist (``server_output``).
+    # A failure after text has streamed can't be replaced, and a configuration error won't fix itself, so both still
+    # end the turn with an error.
+    stream = None if record['degraded'] else compose_stream()
+    received = False
     try:
-        for delta in stream:
-            yield from emit(parser.feed(delta))
-            if ctx.clock() - ctx.t0 > constants.TURN_DEADLINE_S:
-                yield {'type': 'error', 'errorText': 'deadline_exceeded'}
-                return
+        while stream is not None:
+            try:
+                for delta in stream:
+                    received = True
+                    yield from emit(parser.feed(delta))
+                    if ctx.clock() - ctx.t0 > constants.TURN_DEADLINE_S:
+                        yield {'type': 'error', 'errorText': 'deadline_exceeded'}
+                        return
+                break
+            except ModelError as exc:
+                record['model_failures']['compose'] += 1
+                stream.close()
+                stream = None
+                if received or isinstance(exc, ModelConfigurationError):
+                    yield {'type': 'error', 'errorText': 'model_failed'}
+                    return
+                if not record['retries']['compose'] and remaining() >= constants.COMPOSE_RETRY_MIN_S:
+                    record['retries']['compose'] += 1
+                    stream = compose_stream()
+                else:
+                    record['degraded'] = 'compose'
+        if record['degraded']:
+            yield from emit(parser.feed(server_output(candidates, _excluded_ids(session))))
         yield from emit(parser.finish())
-    except ModelError:
-        yield {'type': 'error', 'errorText': 'model_failed'}
-        return
     finally:
-        stream.close()
+        if stream is not None:
+            stream.close()
     timing['dropped_lines'] = parser.dropped_lines
-    debug['dropped'] = parser.dropped
+    debug.update(dropped=parser.dropped, retries=record['retries'], degraded=record['degraded'])
     debug['followup_switched_from'] = parser.followup_switched_from
     record.update(dropped_lines=parser.dropped_lines, fallback=parser.used_fallback)
 
