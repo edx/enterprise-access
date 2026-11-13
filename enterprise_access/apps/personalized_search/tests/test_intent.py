@@ -60,6 +60,7 @@ class IntentHoursTests(TestCase):
         self.assertEqual(merged['constraints']['max_hours_per_week'], 4)
 
 
+@ddt.ddt
 class IntentMergeTests(TestCase):
     """``intent.merge`` implements refine/replace."""
 
@@ -87,12 +88,26 @@ class IntentMergeTests(TestCase):
             merged = intent.merge(opted_out, {}, 'refine', message=message)  # no item_types: unchanged
             self.assertEqual(merged['item_types'], ['course', 'executive_education'], message)
         for message in ("I don't need a certificate, just teach me SQL", 'I don’t need a certificate',
-                        'a learning path, not a program'):
+                        'a learning path, not a program', 'a learning path, no programs please',
+                        "I don't want a pathway, just courses"):
             merged = intent.merge(None, {'skills': ['sql']}, 'replace', message=message)
             self.assertEqual(merged['item_types'], list(constants.ITEM_TYPES), message)
         # With no type chosen yet, a refinement into a journey still leads with programs.
         journey = intent.merge(self.prior, {}, 'refine', message='make it a learning path')
         self.assertEqual(journey['item_types'], ['program'])
+
+    @ddt.data(
+        # A negation only covers whole words in its own clause.
+        ('I have no programming experience, I want a learning path into data science', ['program'], None),
+        ('not a programmer, I want a learning path', ['program'], None),
+        ("I want a roadmap into data science; I'm not a programmer", ['program'], None),
+        ("I don't have much time, short courses please", list(constants.ITEM_TYPES), intent.QUICK_MAX_WEEKS),
+    )
+    @ddt.unpack
+    def test_a_negation_does_not_reach_past_its_clause_or_into_a_longer_word(self, message, item_types, max_weeks):
+        merged = intent.merge(None, {'skills': ['data']}, 'replace', message=message)
+        self.assertEqual((merged['item_types'], (merged.get('constraints') or {}).get('max_weeks')),
+                         (item_types, max_weeks))
 
     def test_short_or_quick_in_words_sets_a_four_week_limit(self):
         for message in ('Advanced level, and short.', 'Practical and quick, please', 'something brief',
