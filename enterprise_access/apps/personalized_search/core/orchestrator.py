@@ -10,6 +10,7 @@ Observability (chunk 21): every turn, whether it finishes, errors or is aborted,
 ``personalized_search.turn`` log record with ids, models, step timings and counts. It never includes
 the learner's message or the reply text.
 """
+import dataclasses
 import json
 import logging
 import time
@@ -30,7 +31,8 @@ from enterprise_access.apps.personalized_search.core.retrieval import (
     RetrievalFailed,
     SearchResults,
     choose_followup_attribute,
-    prefilter
+    prefilter,
+    without_completed
 )
 
 logger = logging.getLogger(__name__)
@@ -133,6 +135,22 @@ def _redirect_reply(reason: str, history: list[dict]) -> str:
     if reason != 'distress' and history and history[-1].get('reply') == reply:
         return constants.REDIRECT_REPEAT_REPLY
     return reply
+
+
+def _languages(ctx: TurnContext, result: dict, merged: dict) -> tuple[str, object]:
+    """
+    The reply language and the scope to search. Replies follow the language the learner wrote in when it's
+    supported, else the portal locale's. Courses are taught in the language the learner asked for, else (as
+    Learner Pathways does) the portal locale's.
+    """
+    scope = ctx.scope
+    portal = getattr(scope, 'language_name', None) or 'English'
+    wrote = result.get('message_language')
+    reply = wrote if wrote in (getattr(scope, 'reply_languages', None) or (portal,)) else portal
+    taught = (merged.get('constraints') or {}).get('course_language')
+    if taught and taught != portal and dataclasses.is_dataclass(scope):
+        scope = dataclasses.replace(scope, language_name=taught)
+    return reply, scope
 
 
 def platform_of(ctx: TurnContext) -> str:
@@ -275,7 +293,7 @@ def _turn_parts(ctx: TurnContext, steps: Steps, record: dict) -> Iterator[dict]:
         result = intent_step.fallback(session['merged_intent'])
     timing['intent_ms'] = _ms(ctx, ctx.clock())
     debug['intent_result'] = {'on_topic': result['on_topic'], 'redirect_reason': result['redirect_reason'],
-                              'merge': result['merge']}
+                              'merge': result['merge'], 'message_language': result.get('message_language')}
 
     if not result['on_topic']:
         # Redirect path (REQ-008): a server-written reply per reason, no retrieval or compose.
@@ -305,18 +323,22 @@ def _turn_parts(ctx: TurnContext, steps: Steps, record: dict) -> Iterator[dict]:
         return
 
     merged = intent_step.merge(session['merged_intent'], result['intent'], result['merge'], message=ctx.message)
-    debug['merged_intent'] = merged
+    reply_language, scope = _languages(ctx, result, merged)
+    debug.update(merged_intent=merged, reply_language=reply_language)
     record.update(merged_intent=merged, merge_mode=result['merge'], stage='search')
 
     # Steps 2-3: retrieval, prefilter, follow-up attribute
     yield {'type': 'data-status', 'data': {'step': 'searching'}, 'transient': True}
     retrieval_started = ctx.clock()
     try:
-        raw = steps.retrieve(merged, ctx.scope, _retrieval_excluded_ids(session),
+        raw = steps.retrieve(merged, scope, _retrieval_excluded_ids(session),
                              timeout_s=min(constants.RETRIEVAL_TIMEOUT_S, remaining()), shortlist=ctx.shortlist)
-        candidates = prefilter(raw, merged, ctx.shortlist)
         totals = getattr(raw, 'totals', {})  # a plain list (a test fake) carries no totals
         search_queries = getattr(raw, 'search_queries', {})
+        raw, completed_keys = without_completed(raw, merged)
+        if completed_keys:
+            merged['completed_keys'] = completed_keys
+        candidates = prefilter(raw, merged, ctx.shortlist)
     except RetrievalFailed:
         yield {'type': 'error', 'errorText': 'retrieval_failed'}
         return
@@ -340,7 +362,7 @@ def _turn_parts(ctx: TurnContext, steps: Steps, record: dict) -> Iterator[dict]:
             system=COMPOSE_SYSTEM,
             user=compose_user(merged_intent=merged, followup_attribute=attribute, asked=session['asked_attributes'],
                               history=session['history'], message=ctx.message, candidates=candidates,
-                              language=getattr(ctx.scope, 'language_name', None) or 'English'),
+                              language=reply_language),
             model=ctx.compose_model.model, effort=ctx.compose_model.effort,
             timeout_s=min(ctx.compose_timeout_s, remaining()), usage=usages['compose'],
         )

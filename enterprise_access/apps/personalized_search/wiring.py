@@ -120,6 +120,13 @@ def content_language(locale: str | None) -> tuple[str, str]:
     return 'en', supported.get('en', 'English')
 
 
+def _languages(locale: str | None) -> dict:
+    """The scope's language fields: the locale's content language, and the languages replies may be written in."""
+    code, name = content_language(locale)
+    supported = getattr(settings, 'PERSONALIZED_SEARCH_CONTENT_LANGUAGES', None) or {'en': 'English'}
+    return {'locale': code, 'language_name': name, 'reply_languages': tuple(supported.values())}
+
+
 def dev_catalog_scope(locale: str | None = None) -> CatalogScope | None:
     """
     Dev only: the plain key plus an explicit catalog filter (``PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE``).
@@ -128,9 +135,8 @@ def dev_catalog_scope(locale: str | None = None) -> CatalogScope | None:
     dev_scope = getattr(settings, 'PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE', None)
     if not dev_scope:
         return None
-    code, name = content_language(locale)
     return CatalogScope(filter=dev_scope['filter'], allow_unscoped=True, label=dev_scope.get('label'),
-                        locale=code, language_name=name)
+                        **_languages(locale))
 
 
 def debug_catalog_scope(locale: str | None = None) -> CatalogScope | None:
@@ -141,11 +147,10 @@ def debug_catalog_scope(locale: str | None = None) -> CatalogScope | None:
     debug_scope = getattr(settings, 'PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE', None)
     if not debug_scope:
         return None
-    code, name = content_language(locale)
     client_config = {key: debug_scope[key] for key in ('app_id', 'search_api_key', 'index_name')
                      if debug_scope.get(key)}
     return CatalogScope(filter=debug_scope['filter'], allow_unscoped=True, label=debug_scope.get('label'),
-                        client_config=client_config or None, is_debug=True, locale=code, language_name=name)
+                        client_config=client_config or None, is_debug=True, **_languages(locale))
 
 
 def catalog_scope(request, enterprise_customer_uuid: str, locale: str | None = None,
@@ -161,11 +166,9 @@ def catalog_scope(request, enterprise_customer_uuid: str, locale: str | None = N
     if debug_scope:
         return debug_scope
     payload = get_and_cache_secured_algolia_search_keys(request, enterprise_customer_uuid)
-    code, name = content_language(locale)
     return CatalogScope(
         filter=f'enterprise_customer_uuids:"{enterprise_customer_uuid}"',
-        secured_key=secured_key_from_payload(payload),
-        locale=code, language_name=name,
+        secured_key=secured_key_from_payload(payload), **_languages(locale),
     )
 
 

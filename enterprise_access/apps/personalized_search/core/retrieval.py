@@ -45,6 +45,8 @@ class CatalogScope:
     is_debug: bool = False
     locale: str = 'en'
     language_name: str = 'English'
+    # The languages replies may be written in (PERSONALIZED_SEARCH_CONTENT_LANGUAGES' names); others get the locale's.
+    reply_languages: tuple = ('English',)
 
     @property
     def course_language_filter(self) -> str:
@@ -138,6 +140,9 @@ def compose_view(candidate: dict) -> dict:
         'hours_per_week': [card['facts'].get('hours_per_week_min'), card['facts'].get('hours_per_week_max')],
         'short_description': _strip_html(description)[:300], 'skills': (hit.get('skill_names') or [])[:6],
     }
+    # The language it's taught in ("English"; a program lists each of its languages), so caveats can say so.
+    language = hit.get('language')
+    view['language'] = ', '.join(language) if isinstance(language, list) else language
     if card['item_type'] == 'program':
         # The credential ("Professional Certificate", "MicroMasters"): without it the model can't say a program
         # earns a certificate, and hedges when a learner asks for one.
@@ -300,6 +305,30 @@ def search(intent: dict, scope: CatalogScope, excluded_ids: list[str], *, catalo
             if isinstance(hit, dict) and item_id_of(hit):
                 out.append({'hit': hit, 'card': hydrate_card(hit), 'tier': req['tier'], 'rank': rank})
     return SearchResults(out, totals, search_queries)
+
+
+def _title_key(title) -> str:
+    return ' '.join(re.findall(r'\w+', title.casefold())) if isinstance(title, str) else ''
+
+
+def without_completed(raw: list[dict], intent: dict) -> tuple[list[dict], list[str]]:
+    """
+    The candidates minus the courses the learner said they finished (``intent['completed']``, matched by title, the
+    part before a colon also counting) and the programs that contain them (by ``course_keys``). Returns the kept
+    candidates and every finished course key known so far, so later turns exclude programs without a title match.
+    """
+    titles = {_title_key(t) for t in intent.get('completed') or []} - {''}
+    keys = set(intent.get('completed_keys') or [])
+    for cand in raw:
+        title = cand['hit'].get('title') or ''
+        if cand['card']['item_type'] != 'program' and titles & {_title_key(title), _title_key(title.split(':')[0])}:
+            keys.add(cand['card']['item_id'])
+
+    def finished(cand: dict) -> bool:
+        return cand['card']['item_id'] in keys or bool(keys & set(cand['hit'].get('course_keys') or []))
+
+    kept = [cand for cand in raw if not finished(cand)]
+    return kept, sorted(keys)
 
 
 def prefilter(raw: list[dict], intent: dict, shortlist: int = constants.MAX_CANDIDATES) -> list[dict]:

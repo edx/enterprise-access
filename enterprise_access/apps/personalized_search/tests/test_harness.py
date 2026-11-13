@@ -119,7 +119,7 @@ class HarnessRunTests(TestCase):
 
     def test_cases(self):
         demo = harness.demo_cases()
-        self.assertEqual(len(demo), 48)
+        self.assertEqual(len(demo), 52)
         refine = [c for c in demo if c.id == 'R1'][0]
         self.assertEqual(refine.history, ('I want to get better at leading a team',))
         personas = harness.persona_cases(load_personas)
@@ -382,6 +382,16 @@ class HarnessScoringTests(TestCase):
         debug['merged_intent']['constraints']['max_hours_per_week'] = 3
         self.assertTrue(harness_scoring.score_intent(expect, debug)['pass'])
 
+    def test_score_intent_checks_the_kept_topic_languages_and_finished_courses(self):
+        debug = {'intent_result': {'on_topic': True, 'redirect_reason': None, 'message_language': 'Spanish'},
+                 'merged_intent': {'query': 'PyTorch for deep learning', 'completed': ['Linear Algebra I'],
+                                   'constraints': {'course_language': 'English'}}}
+        expect = {'on_topic': True, 'query_contains': 'pytorch', 'course_language': 'English',
+                  'message_language': 'Spanish', 'completed_contains': 'linear algebra i'}
+        self.assertTrue(harness_scoring.score_intent(expect, debug)['pass'])
+        debug['merged_intent']['query'] = 'instructor-led courses'
+        self.assertEqual(harness_scoring.score_intent(expect, debug), {'pass': False, 'why': 'missed query'})
+
     def test_score_intent_flags_a_wrong_merge_mode(self):
         debug = {'intent_result': {'on_topic': True, 'redirect_reason': None, 'merge': 'replace'}}
         score = harness_scoring.score_intent({'on_topic': True, 'merge': 'refine'}, debug)
@@ -448,7 +458,7 @@ class HarnessCommandTests(TestCase):
                      stdout=out)
         plan = json.loads(out.getvalue())
         self.assertEqual(plan['arms'], ['openai-best-fit', 'xpert'])
-        self.assertEqual(plan['turns'], 96)
+        self.assertEqual(plan['turns'], 104)
 
     @override_settings(PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE=None)
     def test_requires_dev_scope(self):
