@@ -92,13 +92,19 @@ class SessionStore(Protocol):
         """The learner's session as a dict, or a new unsaved one. Raises ``SessionNotFound``."""
 
     def lock(self, session: dict) -> None:
-        """Take the turn lock (saving a new session). Raises ``TurnInProgress``."""
+        """
+        Take the turn lock (saving a new session), recording it in ``session['lock_token']``.
+        Raises ``TurnInProgress``.
+        """
 
-    def unlock(self, session_uuid: str) -> None:
-        """Release the turn lock."""
+    def unlock(self, session: dict) -> None:
+        """Release the turn lock, only if ``session['lock_token']`` still holds it."""
 
     def persist_turn(self, session: dict, turn: dict) -> None:
-        """Write a finished turn and the session's new state atomically."""
+        """
+        Write a finished turn and the session's new state atomically, releasing the lock. Raises
+        ``TurnInProgress`` (and writes nothing) when another turn has taken the lock over.
+        """
 
     def not_interested_ids(self, lms_user_id, enterprise_customer_uuid) -> list[str]:
         """Items this learner dismissed in this enterprise."""
