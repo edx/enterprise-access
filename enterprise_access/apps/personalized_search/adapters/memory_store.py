@@ -9,7 +9,7 @@ import uuid
 
 from enterprise_access.apps.personalized_search.core import constants
 from enterprise_access.apps.personalized_search.core.errors import SessionNotFound, TurnInProgress
-from enterprise_access.apps.personalized_search.core.stream import stored_parts
+from enterprise_access.apps.personalized_search.core.stream import screen_order, stored_parts
 
 
 class InMemorySessionStore:
@@ -37,6 +37,7 @@ class InMemorySessionStore:
             turns = self.turns.get(row['uuid'], [])[-constants.HISTORY_TURNS:]
             return dict(copy.deepcopy({k: v for k, v in row.items() if k != 'locked_at'}), is_new=False,
                         history=[{'user': t['user_message'], 'reply': t['reply_text']} for t in turns],
+                        previous_screen=next(filter(None, (screen_order(t['parts']) for t in reversed(turns))), []),
                         not_interested_ids=excluded)
         return {
             'uuid': str(uuid.uuid4()), 'is_new': True, 'lms_user_id': lms_user_id,
