@@ -112,6 +112,15 @@ class TestMultiSearchCatalogIndex(TestCase):
         self.assertFalse([r for r in logs.records if 'secret learner words' in r.getMessage()])
         self.mock_client.close.assert_called_once()
 
+    def test_the_raised_error_names_the_type_not_algolias_message(self):
+        # Algolia's message can echo the filters, which carry learner-derived values.
+        self.mock_client.multiple_queries.side_effect = AlgoliaException('Unexpected token skill_names:"Secret"')
+        with self.assertLogs('enterprise_access.apps.api_client.algolia_client', level='ERROR'), \
+                self.assertRaises(AlgoliaSearchError) as raised:
+            AlgoliaSearchClient().multi_search_catalog_index([{'query': 'a'}], secured_key=_live_secured_key())
+        self.assertIn('AlgoliaException', str(raised.exception))
+        self.assertNotIn('Secret', str(raised.exception))
+
 
 @override_settings(**ALGOLIA_SETTINGS)
 @ddt.ddt

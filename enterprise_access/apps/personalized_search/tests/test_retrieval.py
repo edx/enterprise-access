@@ -3,9 +3,9 @@ from unittest import TestCase, mock
 
 import ddt
 
+from enterprise_access.apps.api_client.algolia_client import AlgoliaSearchError
 from enterprise_access.apps.personalized_search.adapters.algolia import AlgoliaCatalog
 from enterprise_access.apps.personalized_search.core import retrieval
-from enterprise_access.apps.personalized_search.core.errors import CatalogSearchError
 from enterprise_access.apps.personalized_search.tests.helpers import candidate, course_hit, program_hit
 
 SCOPE = retrieval.CatalogScope(filter='enterprise_customer_uuids:"e-1"')
@@ -169,12 +169,17 @@ class SubRequestTests(TestCase):
         kwargs = client.multi_search_catalog_index.call_args.kwargs
         self.assertEqual((kwargs['allow_unscoped'], kwargs['secured_key'], kwargs['timeout_s']), (True, None, 1.5))
 
-    def test_a_catalog_failure_is_logged_and_fails_retrieval(self):
-        catalog = mock.Mock(**{'search.side_effect': CatalogSearchError('Algolia search failed: timeout')})
-        with self.assertLogs('enterprise_access.apps.personalized_search.core.retrieval', level='WARNING') as logs:
-            with self.assertRaises(retrieval.RetrievalFailed):
-                retrieval.search(INTENT, SCOPE, [], catalog=catalog)
-        self.assertIn('timeout', logs.output[0])
+    def test_a_catalog_failure_is_logged_and_fails_retrieval_without_the_filter_text(self):
+        # Algolia's filter-syntax errors repeat the failing token, which comes from the learner's skills.
+        error = AlgoliaSearchError('Algolia search failed: Unexpected token skill_names:"Secret Skill"')
+        client = mock.Mock(**{'multi_search_catalog_index.side_effect': error})
+        with self.assertLogs('enterprise_access.apps.personalized_search', level='DEBUG') as logs:
+            with self.assertRaises(retrieval.RetrievalFailed) as raised:
+                retrieval.search(INTENT, SCOPE, [], catalog=AlgoliaCatalog(client))
+        self.assertIn('catalog search failed (CatalogSearchError)', logs.output[0])
+        messages = [record.getMessage() for record in logs.records]
+        messages += [str(raised.exception), str(raised.exception.__cause__)]
+        self.assertFalse([m for m in messages if 'Secret Skill' in m or 'skill_names' in m], messages)
 
     def test_a_bug_in_the_catalog_adapter_is_not_hidden_as_a_retrieval_failure(self):
         catalog = mock.Mock(**{'search.side_effect': TypeError('bug')})
