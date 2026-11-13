@@ -70,7 +70,7 @@ class PortsTests(TestCase):
             def lock(self, session):
                 return None
 
-            def unlock(self, session_uuid):
+            def unlock(self, session):
                 return None
 
             def persist_turn(self, session, turn):

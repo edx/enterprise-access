@@ -163,7 +163,7 @@ class PersonalizedSearchTurnView(APIView):
             return _error('turn_in_progress', status.HTTP_409_CONFLICT)
 
         def release():
-            store.unlock(session['uuid'])
+            store.unlock(session)
 
         try:
             ctx = wiring.turn_context(session=session, message=data['message'], intent_model=intent_choice,

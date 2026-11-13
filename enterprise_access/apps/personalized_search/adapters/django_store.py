@@ -68,6 +68,8 @@ class DjangoSessionStore:
         """
         Take the session's turn lock (spec: 409 ``turn_in_progress`` while a turn under 20 s old holds it).
         A new session's row is created here, already locked, so it exists before the stream starts.
+        The lock's timestamp is kept in ``session['lock_token']``: only the turn holding that token can
+        release the lock, so a slow turn whose lock was taken over can't clear the newer turn's.
         """
         now = timezone.now()
         if session['is_new']:
@@ -76,7 +78,7 @@ class DjangoSessionStore:
                 enterprise_customer_uuid=session['enterprise_customer_uuid'],
                 first_prompt=session['first_prompt'], active_turn_started_at=now,
             )
-            session['is_new'] = False
+            session.update(is_new=False, lock_token=now)
             return
         stale = now - timedelta(seconds=constants.SESSION_LOCK_S)
         unlocked = Q(active_turn_started_at__isnull=True) | Q(active_turn_started_at__lt=stale)
@@ -87,20 +89,30 @@ class DjangoSessionStore:
         ).update(active_turn_started_at=now)
         if not taken:
             raise TurnInProgress()
+        session['lock_token'] = now
 
-    def unlock(self, session_uuid: str) -> None:
-        """Release the session's turn lock (every exit path; spec step 5)."""
-        ChatSession.objects.filter(uuid=session_uuid).update(active_turn_started_at=None)
+    def unlock(self, session: dict) -> None:
+        """Release the session's turn lock if this turn still holds it (every exit path; spec step 5)."""
+        ChatSession.objects.filter(
+            uuid=session['uuid'], active_turn_started_at=session.get('lock_token'),
+        ).update(active_turn_started_at=None)
 
     def persist_turn(self, session: dict, turn: dict) -> None:
-        """Write a finished turn and the session's new state in one transaction (spec step 5)."""
+        """
+        Write a finished turn and the session's new state in one transaction (spec step 5). A turn that
+        no longer holds the lock (another turn took it over) writes nothing: ``TurnInProgress``.
+        """
         with transaction.atomic():
-            ChatSession.objects.filter(uuid=session['uuid']).update(
+            updated = ChatSession.objects.filter(
+                uuid=session['uuid'], active_turn_started_at=session.get('lock_token'),
+            ).update(
                 title=session['title'], turn_count=session['turn_count'], merged_intent=session['merged_intent'],
                 shown_item_ids=session['shown_item_ids'], asked_attributes=session['asked_attributes'],
                 item_count=session.get('item_count', 0) + len(turn['item_ids']), last_message_at=timezone.now(),
                 active_turn_started_at=None,
             )
+            if not updated:
+                raise TurnInProgress()
             ChatTurn.objects.create(
                 uuid=turn['uuid'], session_id=session['uuid'], sequence=session['turn_count'],
                 user_message=turn['user_message'][:constants.MAX_MESSAGE_CHARS], reply_text=turn['reply_text'],

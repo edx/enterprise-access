@@ -47,7 +47,10 @@ class InMemorySessionStore:
         }
 
     def lock(self, session: dict) -> None:
-        """Take the turn lock (saving a new session); a lock younger than SESSION_LOCK_S blocks."""
+        """
+        Take the turn lock (saving a new session); a lock younger than SESSION_LOCK_S blocks. As in the
+        Django store, ``session['lock_token']`` is what lets only this turn release it.
+        """
         now = self._clock()
         if session['is_new']:
             self.sessions[session['uuid']] = {
@@ -56,22 +59,31 @@ class InMemorySessionStore:
                 'first_prompt': session['first_prompt'], 'turn_count': 0, 'item_count': 0, 'merged_intent': None,
                 'shown_item_ids': [], 'asked_attributes': [], 'locked_at': now,
             }
-            session['is_new'] = False
+            session.update(is_new=False, lock_token=now)
             return
         row = self.sessions[session['uuid']]
         if row['locked_at'] is not None and now - row['locked_at'] < constants.SESSION_LOCK_S:
             raise TurnInProgress()
         if row['turn_count'] != session['turn_count']:  # another turn finished since this one loaded the session
             raise TurnInProgress()
-        row['locked_at'] = now
+        row['locked_at'] = session['lock_token'] = now
 
-    def unlock(self, session_uuid: str) -> None:
-        """Release the turn lock."""
-        if session_uuid in self.sessions:
-            self.sessions[session_uuid]['locked_at'] = None
+    def _holds_lock(self, session: dict) -> bool:
+        row = self.sessions.get(session['uuid'])
+        return row is not None and row['locked_at'] == session.get('lock_token')
+
+    def unlock(self, session: dict) -> None:
+        """Release the turn lock if this turn still holds it."""
+        if self._holds_lock(session):
+            self.sessions[session['uuid']]['locked_at'] = None
 
     def persist_turn(self, session: dict, turn: dict) -> None:
-        """Save the session's new state and the turn with its stored parts, and release the lock."""
+        """
+        Save the session's new state and the turn with its stored parts, and release the lock. A turn that
+        no longer holds the lock writes nothing: ``TurnInProgress``.
+        """
+        if not self._holds_lock(session):
+            raise TurnInProgress()
         row = self.sessions[session['uuid']]
         row.update(title=session['title'], turn_count=session['turn_count'],
                    merged_intent=copy.deepcopy(session['merged_intent']),
