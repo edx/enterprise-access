@@ -2,7 +2,7 @@
 
 The event dictionary for Personalized Search (tech spec KD-12, REQ-017). Register each event in the Segment tracking plan with these typed properties before release.
 
-**Rule:** events carry raw facts and join keys. No event carries a count, rate, total, age or cost; the analytics warehouse derives those by joining events to each other and to existing tables. No event carries learner-written text or model prose.
+**Rule:** events carry raw facts and join keys. No event carries a count, rate, total, age or cost; the analytics warehouse derives those by joining events to each other and to existing tables. No event carries learner-written text or model prose. Intent skills and roles are model-normalised labels (cut to 40 characters), not learner text.
 
 ## Names
 
@@ -13,7 +13,7 @@ The event dictionary for Personalized Search (tech spec KD-12, REQ-017). Registe
 
 | Property | Type | Meaning |
 | --- | --- | --- |
-| `conversation_id` | uuid, nullable | The session (`ChatSession.uuid`). Null before a conversation exists |
+| `conversation_id` | uuid, nullable | The session (`ChatSession.uuid`). Null before a conversation exists. The same opaque id is in the portal's page URL (`?session=`) so a reload reopens the conversation; it is scoped to the learner on the server |
 | `turn_id` | string, nullable | The turn's message id. Null on events that aren't about one turn |
 | `turn_index` | int, nullable | The turn's sequence in the session, from 1. Null on events that aren't about one turn |
 | `enterprise_customer_uuid` | uuid | The enterprise the turn ran in |
@@ -34,7 +34,7 @@ Item events also carry `item_key` and `item_type`. Array properties hold primiti
 | `turn.failed` | A turn errors or hits the deadline | `error_type`, `stage` (`intent`, `search`, `compose`, `persist`), `elapsed_ms` |
 | `turn.stopped` | The learner stops a turn (the stream is closed early) | `stage`, `elapsed_ms` |
 | `turn.rated` | Thumbs up or down on a reply | `rating` (`1`, `-1`, or `null` to clear) |
-| `history.session-opened` | A past search is reopened | join keys only |
+| `history.session-opened` | A stored conversation is loaded: reopened from History, or restored from the page URL (`?session=`) on a reload or shared link. A History reopen follows a portal `history.history_opened` (the panel opening); a URL restore doesn't | join keys only |
 | `history.session-resumed` | A message is sent from a reopened search | join keys only |
 
 ## Portal events
@@ -47,7 +47,7 @@ Item events also carry `item_key` and `item_type`. Array properties hold primiti
 | `results.result_clicked` | A card is opened | `item_key`, `item_type`, `item_section`, `item_position` |
 | `results.item_save_toggled` | Save or unsave | `item_key`, `item_type`, `item_section`, `item_position`, `saved` |
 | `results.item_dismissed` | Not for me, Undo, or Include again on the Excluded tab (`item_section: excluded_tab`) | `item_key`, `item_type`, `item_section`, `item_position`, `dismissed`, `replaced_by_item_key` |
-| `results.explanation_opened` | Why this?, Why these? or the suggested order's info opens | `scope` (`tile`, `set`, `order`), `item_key` (tile only) |
+| `results.explanation_opened` | Why this?, Why these? or the suggested order's info opens, including on hover | `scope` (`tile`, `set`, `order`), `item_key` (tile only) |
 | `chat.new_chat_started` | New chat | join keys of the chat being left |
 | `results.saved_tab_opened` | The Saved tab opens | join keys only |
 | `results.excluded_tab_opened` | The Excluded tab opens | join keys only |
