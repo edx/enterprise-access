@@ -3,9 +3,11 @@ Tests for the ``enterprise_access.apps.customer_billing.utils`` module.
 """
 
 import datetime
+import time
 from unittest import mock
 from uuid import uuid4
 
+import ddt
 from django.conf import settings
 from django.test import TestCase, override_settings
 from django.utils import timezone
@@ -15,7 +17,10 @@ from enterprise_access.apps.customer_billing.utils import (
     datetime_from_timestamp,
     get_campaign_id,
     get_default_ssp_price_lookup_key,
-    get_product_type
+    get_product_type,
+    sanitize_attribution,
+    sanitize_referrer,
+    sanitize_utm_value
 )
 
 
@@ -222,3 +227,114 @@ class TestGetCampaignId(TestCase):
         """ValueError should be raised when the resolved campaign setting is empty."""
         with self.assertRaises(ValueError):
             get_campaign_id('billing_error', None)
+
+
+@ddt.ddt
+class TestAttributionSanitizers(TestCase):
+    """
+    Tests for ``sanitize_utm_value``, ``sanitize_referrer`` and ``sanitize_attribution``.
+    """
+
+    @ddt.data(
+        'google',
+        'paid_social',
+        'Q4 2026 - Teams launch',
+        'carousel-ad_v2',
+        'enterprise learning',
+        'brand|search|us',
+        'spring_sale_2026',
+        'formación',
+        'v1.2',
+        # Campaign labels that look like numbers or long identifiers are kept.
+        '20261110',
+        'launch-20261106',
+        'q4_2026_11_06',  # nine digits: fewer than a phone number
+        'springpromotion2026enterprise',
+        ('abcdefghi_' * 10)[:100],  # exactly the maximum length
+    )
+    def test_campaign_labels_are_kept(self, value):
+        self.assertEqual(sanitize_utm_value(value), value)
+
+    @ddt.data(
+        # (description, value)
+        ('email address', 'jane.doe@example.com'),
+        ('email address inside a label', 'utm content jane.doe@example.com spring'),
+        ('percent-encoded email address', 'jane.doe%40example.com'),
+        ('double-encoded email address', 'jane.doe%2540example.com'),
+        ('brand handle', '@edXOnline'),
+        ('URL', 'https://example.com/?email=jane'),
+        ('key=value pairs', 'email=jane&id=1'),
+        ('markup', '<b>hi</b>'),
+        ('phone number', '555-123-4567'),
+        ('international phone number', '+44 20 7946 0958'),
+        ('phone number inside a label', 'call_5551234567_now'),
+        ('longer than 100 characters', 'abcdefghi_' * 10 + 'x'),
+        ('empty', ''),
+    )
+    @ddt.unpack
+    def test_values_not_in_the_label_format_are_dropped(self, _description, value):
+        self.assertIsNone(sanitize_utm_value(value))
+
+    def test_a_huge_value_is_dropped_without_being_scanned(self):
+        """The length is checked before the pattern, so a client-supplied value can't tie up a web worker."""
+        started = time.monotonic()
+        self.assertIsNone(sanitize_attribution({'utm_campaign': 'a' * 1_000_000, 'referrer': 'a' * 1_000_000}))
+        self.assertLess(time.monotonic() - started, 1)
+
+    @ddt.data(
+        # (description, referrer, stored referrer)
+        ('query and fragment', 'https://www.google.com/search?email=foo@bar.com#frag', 'https://www.google.com/'),
+        ('username and password', 'https://jane:hunter2@partner.example.com/page', 'https://partner.example.com/'),
+        ('identifying path segments', 'https://community.example.com/u/jane-doe/profile/12345',
+         'https://community.example.com/'),
+        ('surrounding whitespace', '  https://example.com/page  ', 'https://example.com/'),
+        ('plain http', 'http://example.com/page', 'http://example.com/'),
+        ('port kept', 'http://localhost:8734/checkout', 'http://localhost:8734/'),
+        ('scheme and host normalized', 'HTTPS://WWW.Example.COM/Path', 'https://www.example.com/'),
+        ('IPv6 host', 'https://[2001:db8::1]:8080/x?y=z', 'https://[2001:db8::1]:8080/'),
+    )
+    @ddt.unpack
+    def test_sanitize_referrer_keeps_only_the_origin(self, _description, url, expected):
+        self.assertEqual(sanitize_referrer(url), expected)
+
+    @ddt.data(
+        'ftp://files.example.com/report.pdf',
+        'javascript:alert(document.cookie)',
+        'mailto:jane@example.com',
+        '//example.com/no-scheme',
+        'not a url',
+        'https://',
+        # urlsplit raises ValueError for these; the value is dropped instead of failing the request.
+        'http://[',
+        'https://[::1/path?email=foo@bar.com',
+        'https://example.com:notaport/',
+        f'https://{"a" * 95}.com/',  # an origin longer than 100 characters
+    )
+    def test_sanitize_referrer_drops_what_is_not_an_http_url(self, url):
+        self.assertIsNone(sanitize_referrer(url))
+
+    @ddt.data(None, 'utm_source=google', ['utm_source'])
+    def test_sanitize_attribution_never_raises_on_a_wrong_shape(self, value):
+        self.assertIsNone(sanitize_attribution(value))
+
+    def test_sanitize_attribution_drops_unsafe_values_and_logs_their_keys(self):
+        with self.assertLogs('enterprise_access.apps.customer_billing.utils', level='INFO') as logs:
+            result = sanitize_attribution({
+                'utm_source': ' google ',
+                'utm_medium': 42,
+                'utm_campaign': {'nested': 'value'},
+                'utm_content': 'jane@example.com',
+                'utm_term': '',
+                'referrer': 'https://jane:pw@example.com/u/jane?x=1',
+                'unknown': 'value',
+            })
+        self.assertEqual(result, {'utm_source': 'google', 'referrer': 'https://example.com/'})
+        output = '\n'.join(logs.output)
+        self.assertIn('utm_medium, utm_campaign, utm_content', output)
+        self.assertNotIn('utm_term', output)  # empty values are absent, not dropped
+        self.assertNotIn('jane', output)  # keys only, never values
+
+    def test_nothing_is_logged_when_nothing_is_dropped(self):
+        with mock.patch('enterprise_access.apps.customer_billing.utils.logger') as mock_logger:
+            self.assertEqual(sanitize_attribution({'utm_source': 'google'}), {'utm_source': 'google'})
+        mock_logger.info.assert_not_called()

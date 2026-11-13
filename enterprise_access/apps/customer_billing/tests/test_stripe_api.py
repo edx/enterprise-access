@@ -16,6 +16,7 @@ from enterprise_access.apps.customer_billing.stripe_api import (
     get_stripe_invoice,
     get_stripe_payment_intent,
     get_stripe_payment_method,
+    get_stripe_price,
     stripe_cache
 )
 from enterprise_access.apps.customer_billing.tests.utils import unsupported_stripe_params
@@ -397,6 +398,26 @@ class TestStripeInvoice(StripeApiFunctionsTests):
         # Call function and verify exception is raised
         with self.assertRaises(stripe.StripeError):
             get_stripe_invoice(self.invoice_id)
+
+
+class TestGetStripePrice(StripeApiFunctionsTests):
+    """Tests for get_stripe_price."""
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Price.retrieve')
+    def test_archived_price_is_returned_and_cached(self, mock_retrieve):
+        """Unlike pricing_api.get_stripe_price_data, an archived price is still served: paid orders refer to it."""
+        archived = {'id': 'price_123', 'active': False, 'recurring': {'interval': 'year'}}
+        mock_retrieve.return_value = archived
+
+        self.assertEqual(get_stripe_price('price_123'), archived)
+        self.assertEqual(get_stripe_price('price_123'), archived)
+        mock_retrieve.assert_called_once_with('price_123')
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_api.stripe.Price.retrieve')
+    def test_stripe_errors_propagate(self, mock_retrieve):
+        mock_retrieve.side_effect = stripe.APIConnectionError('Network error')
+        with self.assertRaises(stripe.APIConnectionError):
+            get_stripe_price('price_123')
 
 
 class TestStripePaymentMethod(StripeApiFunctionsTests):

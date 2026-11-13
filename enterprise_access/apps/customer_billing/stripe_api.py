@@ -283,6 +283,20 @@ def get_stripe_subscription(subscription_id) -> stripe.Subscription:
 
 
 @stripe_cache()
+def get_stripe_price(price_id) -> stripe.Price:
+    """
+    Retrieve a Stripe Price, including an archived (inactive) one.
+
+    ``pricing_api.get_stripe_price_data`` serves only prices that can be bought now. Archiving a price doesn't change
+    the subscriptions and invoices that use it, so code that describes an existing purchase reads the price here.
+    A price's billing interval can't change once it is created, so caching it is safe.
+
+    Docs: https://stripe.com/docs/api/prices/retrieve
+    """
+    return stripe.Price.retrieve(price_id)
+
+
+@stripe_cache()
 def get_stripe_trialing_subscription(
         stripe_customer_id: str, status: str = 'trialing'
 ) -> Optional[stripe.Subscription]:

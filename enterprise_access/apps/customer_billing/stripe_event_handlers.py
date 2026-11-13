@@ -7,12 +7,15 @@ from functools import wraps
 from uuid import UUID
 
 import stripe
+from django.conf import settings
 from django.utils import timezone
 from simple_history.utils import bulk_update_with_history
 
 from enterprise_access.apps.api_client.license_manager_client import LicenseManagerApiClient
 from enterprise_access.apps.customer_billing.constants import (
+    ORDER_COMPLETED_BILLING_REASON,
     SUBSCRIPTION_ITEM_TYPE,
+    CheckoutSegmentEvents,
     StripeSegmentEvents,
     StripeSubscriptionStatus
 )
@@ -25,6 +28,7 @@ from enterprise_access.apps.customer_billing.models import (
 from enterprise_access.apps.customer_billing.stripe_event_types import StripeEventType
 from enterprise_access.apps.customer_billing.tasks import (
     send_billing_error_email_task,
+    send_checkout_segment_event_task,
     send_finalized_cancelation_email_task,
     send_paid_cancellation_email_task,
     send_paid_reinstatement_email_task,
@@ -309,6 +313,33 @@ def _try_enable_pending_updates(stripe_subscription_id):
         logger.info('Successfully enabled pending updates for subscription %s', stripe_subscription_id)
     except stripe.StripeError as e:
         logger.error('Failed to enable pending updates for subscription %s: %s', stripe_subscription_id, e)
+
+
+def _queue_checkout_segment_event(event_name, checkout_intent, subscription_id, **task_kwargs):
+    """
+    Queue a server-side checkout Segment event, if FEATURE_SSP_CHECKOUT_SEGMENT_EVENTS_V2 is on.
+
+    A broker error is not caught: the webhook fails and Stripe redelivers it. The task sends each event at most once
+    per order, however often it is queued.
+    """
+    if not settings.FEATURE_SSP_CHECKOUT_SEGMENT_EVENTS_V2:
+        return
+    send_checkout_segment_event_task.delay(event_name, checkout_intent.id, subscription_id, **task_kwargs)
+
+
+def _queue_order_completed_segment_event(checkout_intent, invoice, subscription_details):
+    """
+    Queue ``order_completed`` if ``invoice`` is the subscription's first invoice, which Stripe issues and collects at
+    checkout ($0 during the free trial): its ``invoice.paid`` is when Stripe confirms the order.
+    """
+    if invoice.to_dict().get('billing_reason') != ORDER_COMPLETED_BILLING_REASON:
+        return
+    _queue_checkout_segment_event(
+        CheckoutSegmentEvents.ORDER_COMPLETED,
+        checkout_intent,
+        subscription_details.to_dict().get('subscription'),
+        invoice_id=invoice.id,
+    )
 
 
 def track_subscription_cancellation(checkout_intent: CheckoutIntent, cancellation_details: dict):
@@ -600,6 +631,9 @@ class StripeEventHandler:
 
         link_event_data_to_checkout_intent(event, checkout_intent)
         if invoice.total > 0:
+            # Queued before the emails below: if queuing fails, the webhook fails before any of them is queued, and
+            # Stripe's redelivery queues each of them once.
+            _queue_order_completed_segment_event(checkout_intent, invoice, subscription_details)
             # Attempt to send the receipt FIRST before triggering renewal.
             # Renewal might want to force a retry by raising, risking duplicate receipt emails. We'll
             # mitigate this by configuring the Braze campaign to avoid sending more than 1 in a 3
@@ -637,6 +671,9 @@ class StripeEventHandler:
                 'Could not mark checkout intent %s as paid via invoice %s, because %s',
                 checkout_intent.uuid, invoice.id, exc,
             )
+        # Queued after marking the intent paid, so a broker outage never holds up the checkout. If queuing fails, the
+        # redelivery marks the intent paid again, which changes nothing.
+        _queue_order_completed_segment_event(checkout_intent, invoice, subscription_details)
 
     @on_stripe_event('invoice.created')
     @staticmethod
@@ -906,6 +943,16 @@ class StripeEventHandler:
 
         logger.info(
             "Subscription %s status was deleted via event %s", subscription['id'], event.id,
+        )
+
+        # Queued before the cancellation work, emails and Segment event below, so if queuing fails the webhook fails
+        # before any of them, and Stripe's redelivery does each of them once. Every deletion cancels an order, trials
+        # included. The task gets the subscription's id and items, its final state, and nothing else from the payload.
+        _queue_checkout_segment_event(
+            CheckoutSegmentEvents.ORDER_CANCELLED,
+            checkout_intent,
+            subscription['id'],
+            subscription_data={'id': subscription['id'], 'items': subscription.get('items')},
         )
 
         cancellation_details = subscription.get('cancellation_details')

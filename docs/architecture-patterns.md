@@ -192,6 +192,19 @@ copy's other fields. For records where that can cost money (`LearnerCreditTopUp.
 The test database is SQLite, where `select_for_update()` does nothing: test with two copies of one row loaded
 before either writes, which proves the stored-state check but not the lock.
 
+### 25. Stripe webhook handlers: let a broker error fail the webhook, and place `.delay()` by what a redelivery repeats
+
+The Stripe webhook view re-raises handler errors on purpose, and Stripe redelivers a failed webhook for up to three
+days, so a handler needs no outbox of its own to survive a broker outage: let `.delay()` raise. Then place each
+`.delay()` by what the redelivery would do again:
+
+- before side effects that aren't idempotent, such as emails, or the redelivery sends them twice;
+- after state changes that a redelivery repeats harmlessly, if they shouldn't wait for the broker (e.g. queue
+  `order_completed` after `mark_as_paid` at checkout).
+
+Make the task idempotent itself, e.g. a unique row per event checked again under a row lock before sending, because
+every redelivery queues it again (`send_checkout_segment_event_task`).
+
 ### Key Takeaways for Implementation:
 - Check permissions early using `@permission_required` decorator
 - Use separate serializers for request/response

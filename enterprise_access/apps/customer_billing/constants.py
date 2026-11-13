@@ -133,6 +133,43 @@ class StripeSegmentEvents:
     SUBSCRIPTION_CANCELED = 'edx.server.enterprise-access.stripe.subscription.canceled'
 
 
+class CheckoutSegmentEvents:
+    """
+    Final checkout events sent to Segment from the server (setting: FEATURE_SSP_CHECKOUT_SEGMENT_EVENTS_V2).
+    """
+    ORDER_COMPLETED = 'edx.ui.enterprise.checkout.order_completed'
+    ORDER_CANCELLED = 'edx.ui.enterprise.checkout.order_cancelled'
+
+
+class SegmentEventEmissionStatus(StrEnum):
+    """
+    Status of a ``SegmentEventEmission``, the idempotency record of one checkout Segment event.
+
+    PENDING -> SENT or FAILED. A row stays PENDING while its send task is retrying.
+    """
+    PENDING = 'pending'  # Not sent yet.
+    SENT = 'sent'  # Segment accepted the event.
+    FAILED = 'failed'  # Will not be sent without a fix, e.g. a required property is missing.
+
+
+SEGMENT_EVENT_EMISSION_FINAL_STATUSES = (
+    SegmentEventEmissionStatus.SENT,
+    SegmentEventEmissionStatus.FAILED,
+)
+
+
+# The billing reason of a subscription's first invoice, which Stripe issues at checkout. Its ``invoice.paid`` is
+# when Stripe confirms the order, so it triggers order_completed. With the SSP free trial its total is $0.
+ORDER_COMPLETED_BILLING_REASON = 'subscription_create'
+
+
+# Keys of ``CheckoutIntent.attribution`` that are passed through to Segment.
+ATTRIBUTION_KEYS = ('utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'referrer')
+# Longer values are dropped, not truncated: a cut-off identifier still identifies. Analytics tools cap campaign
+# values at about this length too.
+ATTRIBUTION_VALUE_MAX_LENGTH = 100
+
+
 ALLOWED_CHECKOUT_INTENT_STATE_TRANSITIONS = {
     CheckoutIntentState.CREATED: [
         CheckoutIntentState.PAID,
