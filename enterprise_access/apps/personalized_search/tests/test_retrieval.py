@@ -265,6 +265,30 @@ class PrefilterTests(TestCase):
         self.assertEqual(kept[0]['card']['item_id'], 'Yale+E1')
 
 
+class PinnedItemTests(TestCase):
+    """Items the learner points at by position are fetched again and kept (test-plan P2-5)."""
+
+    def test_pinned_items_are_fetched_by_id_within_the_catalog_scope(self):
+        requests = retrieval.build_sub_requests(dict(INTENT, pinned=['edX+C1', 'p-1']), SCOPE, [])
+        pinned = [r for r in requests if r.get('pinned')]
+        self.assertEqual(len(pinned), 1)
+        self.assertTrue(pinned[0]['filters'].startswith(f'({SCOPE.filter}) AND (aggregation_key:"course:edX+C1"'))
+        self.assertIn('aggregation_key:"program:p-1"', pinned[0]['filters'])
+
+    def test_pinned_items_are_kept_ahead_of_higher_scores(self):
+        raw = [candidate(course_hit(f'edX+C{i}'), tier=2, rank=i) for i in range(12)]
+        raw += [dict(candidate(course_hit('edX+OLD', level='Advanced'), tier=1, rank=40), pinned=True)]
+        kept = [c['card']['item_id'] for c in retrieval.prefilter(raw, dict(INTENT, level='introductory'))]
+        self.assertIn('edX+OLD', kept)
+        self.assertEqual(len([i for i in kept if i.startswith('edX+')]), 10)
+
+    def test_compose_sees_the_start_date(self):
+        self.assertEqual(retrieval.compose_view(candidate(course_hit('edX+C1')))['start_date'], None)
+        hit = course_hit('edX+C1')
+        hit['advertised_course_run']['start'] = '2027-01-11T00:00:00Z'
+        self.assertEqual(retrieval.compose_view(candidate(hit))['start_date'], '2027-01-11')
+
+
 class CompletedCourseTests(TestCase):
     """Courses the learner finished, and programs that contain them, stay out for the session (test-plan P6-5)."""
 

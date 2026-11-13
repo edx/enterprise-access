@@ -210,6 +210,26 @@ class RunTurnTests(TestCase):
         saved = self.saved().merged_intent
         self.assertEqual((saved['completed'], saved['completed_keys']), (['Course edX+C1'], ['edX+C1']))
 
+    def test_the_previous_screen_reaches_both_steps_and_pointed_at_items_are_fetched_again(self):
+        self.session['previous_screen'] = [{'where': 'top pick', 'item_id': 'p-1', 'title': 'Program p-1'},
+                                           {'where': 'compare 2', 'item_id': 'edX+C3', 'title': 'Course edX+C3'}]
+        seen = {}
+        steps = fake_steps()
+        intent, compose = steps.intent, steps.compose
+        steps.intent = lambda **kw: seen.update(intent=kw['user']) or intent(**kw)
+        steps.retrieve = lambda merged, *a, **kw: seen.update(merged=merged) or default_candidates()
+        steps.compose = lambda **kw: seen.update(compose=kw['user']) or compose(**kw)
+        ctx = dataclasses.replace(self.ctx, message='Compare the first two')
+        parts = list(run_turn(ctx, steps))
+        line = '1. top pick: "Program p-1" (item_id p-1)'
+        self.assertIn(f'PREVIOUS SCREEN (in order):\n{line}', seen['intent'])
+        self.assertIn(line, seen['compose'])
+        self.assertEqual(seen['merged']['pinned'], ['p-1', 'edX+C3'])
+        # After the turn, the session holds this turn's screen for the next one.
+        self.assertEqual(self.session['previous_screen'][0], {'where': 'Courses 1', 'item_id': 'edX+C1',
+                                                              'title': 'Course edX+C1'})
+        self.assertTrue([p for p in parts if p['type'] == 'finish'])
+
     def test_an_unexpected_failure_ends_with_an_internal_error_and_persists_nothing(self):
         steps = fake_steps(retrieve=lambda *a, **k: (_ for _ in ()).throw(KeyError('bug')))
         with self.assertLogs('enterprise_access.apps.personalized_search.core.orchestrator', level='INFO') as logs:

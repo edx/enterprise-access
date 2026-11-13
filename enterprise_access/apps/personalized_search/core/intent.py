@@ -7,6 +7,7 @@ import math
 import re
 
 from enterprise_access.apps.personalized_search.core import constants
+from enterprise_access.apps.personalized_search.core.stream import describe_screen
 
 # The rules are an f-string, so the caps they state are the ones ``_normalize_intent`` and ``merge`` apply.
 # pylint: disable=line-too-long
@@ -23,6 +24,7 @@ SYSTEM_PROMPT = (
 - merge is "refine" when the message adjusts the previous search (narrower, shorter, a format, a level, a type, "different ones"); "replace" when it starts a new goal or there is no prior intent.
 - intent describes the search after this message. With "refine", return only what this message changes or adds; null means unchanged.
 - skills: at most {constants.CAPS['skills']}, always in English (the catalog's skill names are English), whatever language the learner writes in. roles: at most {constants.CAPS['roles']}. level: null | "introductory" | "intermediate" | "advanced". item_types: any of "course", "executive_education", "program" (a program is a multi-course certificate). pacing: null | "self_paced" | "instructor_paced". max_weeks: an integer or null. max_hours_per_week: the most hours a week the learner can give, an integer or null.
+- References by position ("compare the first two", "the second one", "the top pick"): PREVIOUS SCREEN lists what the learner saw, in order; such a message is "refine" and keeps the topic.
 - Constraint-only follow-ups: a message that only adds a constraint to the previous search ("Are any instructor-led?", "English courses only", "shorter ones", "with a start date soon") is "refine" with query null and no new skills: the topic stays, only constraints change.
 - message_language: the language the newest message is written in, as its English name ("Spanish"). course_language: the language courses must be taught in, as its English name, only when the learner says so ("English courses only", "cursos en español"); never inferred from the language they write in. On a refine, "English courses" is a teaching language, not a topic.
 - completed: titles of courses the learner says they have already finished or taken ("I've finished Linear Algebra I"), as they wrote them; [] otherwise.
@@ -33,6 +35,12 @@ SYSTEM_PROMPT = (
 # pylint: enable=line-too-long
 
 LEVELS = ('introductory', 'intermediate', 'advanced')
+# A message that points at results by position ("compare the first two", "the second one", "the top pick"): the
+# previous screen's items are fetched again so compose can use them.
+REFERS_TO_SCREEN = re.compile(
+    r"\b(?:first|second|third|fourth|1st|2nd|3rd|last|top pick|both|these two|those two|the other one)\b",
+    re.IGNORECASE,
+)
 # Journey language that points to programs (a bundle of courses as one path). Used when the model names no
 # type for such a message, so "a learning path into data science" still leads with programs. Wanting a
 # certificate or credential is left to the intent model: a course can earn one too.
@@ -76,14 +84,16 @@ class IntentInvalid(Exception):
     """The model's output isn't the intent JSON contract."""
 
 
-def build_user_content(*, message: str, prior_intent: dict | None, history: list[dict]) -> str:
+def build_user_content(*, message: str, prior_intent: dict | None, history: list[dict],
+                       screen: list[dict] | None = None) -> str:
     """
-    The intent step's user message: prior intent, the last 4 learner turns and the new message.
-    Learner text is JSON-encoded, so it can't imitate the framing around it.
+    The intent step's user message: prior intent, the last 4 learner turns, what the previous turn showed and the
+    new message. Learner text is JSON-encoded, so it can't imitate the framing around it.
     """
     turns = '\n'.join(f"Learner: {json.dumps(t['user'])}" for t in history[-constants.HISTORY_TURNS:]) or '(none)'
     prior = json.dumps(prior_intent) if prior_intent else 'null'
     return (f'PRIOR MERGED INTENT: {prior}\n\nRECENT TURNS (oldest first):\n{turns}\n\n'
+            f'PREVIOUS SCREEN (in order):\n{describe_screen(screen)}\n\n'
             f'NEWEST MESSAGE (a JSON string):\n{json.dumps(message)}')
 
 
@@ -234,6 +244,7 @@ def merge(prior: dict | None, new: dict, mode: str, *, message: str) -> dict:
     With ``replace`` (or no prior) the new intent stands alone.
     """
     base = empty_intent() if mode != 'refine' or not prior else json.loads(json.dumps(prior))
+    base.pop('pinned', None)
     # Finished courses hold for the rest of the session, whatever the merge mode.
     base['completed'] = list(dict.fromkeys((new.get('completed') or []) + ((prior or {}).get('completed') or [])))
     if (prior or {}).get('completed_keys'):
