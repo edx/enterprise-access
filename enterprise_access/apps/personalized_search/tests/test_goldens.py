@@ -65,6 +65,8 @@ CASES = {
     'normal_turn': ('I want to lead a team', steps()),
     'off_topic_turn': ('What is the weather today?',
                        steps(intent_text='{"on_topic": false, "redirect_reason": "off_topic"}')),
+    'distress_turn': ('I feel hopeless and want to give up on everything',
+                      steps(intent_text='{"on_topic": false, "redirect_reason": "distress"}')),
     'no_match_turn': ('Underwater basket weaving', steps(retrieve=lambda *a, **kw: [], compose_text=NO_MATCH)),
     'retrieval_failed_turn': ('I want to lead a team',
                               steps(retrieve=lambda *a, **kw: (_ for _ in ()).throw(RetrievalFailed('x')))),

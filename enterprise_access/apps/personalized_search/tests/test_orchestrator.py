@@ -130,6 +130,51 @@ class RunTurnTests(TestCase):
         self.assertEqual(ChatTurn.objects.get(session_id=self.session['uuid']).item_ids, [])
         self.assertIsNone(self.saved().merged_intent)
 
+    def redirect(self, reason, history=()):
+        """Run a turn (in a new session) the intent step redirects for ``reason``; return its parts and reply text."""
+        self.session = new_locked_session('x')
+        self.session['history'] = [{'user': 'x', 'reply': reply} for reply in history]
+        steps = fake_steps(intent_text=json.dumps({'on_topic': False, 'redirect_reason': reason}),
+                           retrieve=lambda *a, **kw: self.fail('no retrieval on redirect'))
+        parts = list(run_turn(dataclasses.replace(self.ctx, session=self.session), steps))
+        return parts, ''.join(p['delta'] for p in parts if p['type'] == 'text-delta')
+
+    def test_distress_gets_its_own_reply_and_nothing_that_pushes_courses(self):
+        parts, reply = self.redirect('distress', history=[constants.REDIRECT_REPLIES['distress']])
+        self.assertEqual(reply, constants.REDIRECT_REPLIES['distress'])  # never shortened
+        self.assertIn('someone you trust', reply)
+        self.assertFalse([p for p in parts if p['type'] in ('data-followups', 'data-block')])
+        self.assertEqual(parts[-1]['type'], 'finish')
+        turn = ChatTurn.objects.get(session_id=self.session['uuid'])
+        self.assertEqual((turn.reply_text, turn.follow_up_attribute), (reply, ''))
+
+    def test_each_redirect_reason_has_its_reply_and_a_heading_that_recommends_nothing(self):
+        for reason in ('off_topic', 'unsafe', 'injection', 'external_provider'):
+            parts, reply = self.redirect(reason)
+            self.assertEqual(reply, constants.REDIRECT_REPLIES[reason], reason)
+            followups = [p for p in parts if p['type'] == 'data-followups'][0]['data']
+            self.assertEqual((followups['question'], followups['suggestions']),
+                             (constants.REDIRECT_FOLLOWUP_QUESTION, constants.OPENING_CHIPS))
+        self.assertTrue(constants.REDIRECT_REPLIES['unsafe'].startswith("I can't help with that."))
+
+    def test_a_repeated_redirect_alternates_with_a_shorter_reply(self):
+        _, reply = self.redirect('off_topic', history=[constants.REDIRECT_REPLY])
+        self.assertEqual(reply, constants.REDIRECT_REPEAT_REPLY)
+        self.assertLess(len(reply), len(constants.REDIRECT_REPLY))
+        _, reply = self.redirect('off_topic', history=[constants.REDIRECT_REPLY, constants.REDIRECT_REPEAT_REPLY])
+        self.assertEqual(reply, constants.REDIRECT_REPLY)
+
+    def test_another_providers_courses_with_a_topic_search_it_and_say_only_this_catalog_is_searched(self):
+        steps = fake_steps(intent_text=json.dumps({
+            'on_topic': True, 'redirect_reason': 'external_provider', 'merge': 'replace',
+            'intent': {'query': 'Python', 'skills': ['Python']}}))
+        parts = list(run_turn(self.ctx, steps))
+        reply = ''.join(p['delta'] for p in parts if p['type'] == 'text-delta')
+        self.assertEqual(reply, f'{constants.EXTERNAL_PROVIDER_NOTE} Your page.')
+        self.assertEqual([p['type'] for p in parts].count('text-start'), 1)
+        self.assertTrue([p for p in parts if p['type'] == 'data-block' and p['data']['type'] == 'item_section'])
+        self.assertEqual(ChatTurn.objects.get(session_id=self.session['uuid']).reply_text, reply)
+
     def test_an_unexpected_failure_ends_with_an_internal_error_and_persists_nothing(self):
         steps = fake_steps(retrieve=lambda *a, **k: (_ for _ in ()).throw(KeyError('bug')))
         with self.assertLogs('enterprise_access.apps.personalized_search.core.orchestrator', level='INFO') as logs:

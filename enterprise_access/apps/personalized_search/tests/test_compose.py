@@ -293,6 +293,20 @@ class ComposeParserTests(TestCase):
         parser, _ = self.parse('Try this one first.\n@@BLOCKS@@\n' + line(top_pick))
         self.assertNotIn('reply_bold_not_top_pick', parser.dropped)
 
+    def test_a_turn_that_shows_nothing_asks_for_another_topic_not_what_else(self):
+        _, parts = self.parse('Nothing in your catalog fits.', attribute='open', candidates=[])
+        followups = [p for p in parts if p['type'] == 'data-followups'][0]['data']
+        self.assertEqual(followups['question'], constants.NO_RESULTS_FOLLOWUP_QUESTION)
+        model_question = {'block': 'followup', 'question': 'Try data skills?', 'ideas': ['Data skills']}
+        _, parts = self.parse('Nothing fits.\n@@BLOCKS@@\n' + line(model_question), attribute='open', candidates=[])
+        self.assertEqual([p for p in parts if p['type'] == 'data-followups'][0]['data']['question'], 'Try data skills?')
+
+    def test_preface_opens_the_reply_before_the_models_text(self):
+        parser = compose.ComposeParser(candidates=default_candidates(), excluded_ids=[], followup_attribute='open')
+        parts = parser.preface('Only this catalog.') + parser.feed('Here you go.\n@@BLOCKS@@\n') + parser.finish()
+        self.assertEqual([p['type'] for p in parts][:3], ['text-start', 'text-delta', 'text-delta'])
+        self.assertEqual(parser.reply, 'Only this catalog. Here you go.')
+
     def test_a_followup_about_something_the_results_shown_all_share_becomes_open(self):
         followup = {'block': 'followup', 'question': 'Self-paced or instructor-led?', 'ideas': ['More on coaching']}
         same_pacing = line(section('course', ['edX+C1', 'edX+C2']))  # both self-paced

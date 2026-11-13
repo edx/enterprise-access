@@ -1,0 +1,22 @@
+data: {"type":"start","messageId":"turn_00000000-0000-0000-0000-000000000b0b"}
+
+data: {"type":"data-session","id":"session","data":{"session_uuid":"00000000-0000-0000-0000-0000000a11ce","turn_sequence":1,"title":null}}
+
+data: {"type":"data-analytics","id":"analytics","data":{"conversation_id":"00000000-0000-0000-0000-0000000a11ce","turn_id":"00000000-0000-0000-0000-000000000b0b","turn_index":1,"enterprise_customer_uuid":"00000000-0000-0000-0000-000000000001","cohort":null,"engine":null,"is_debug":false}}
+
+data: {"type":"data-status","data":{"step":"understanding"},"transient":true}
+
+data: {"type":"text-start","id":"reply"}
+
+data: {"type":"text-delta","id":"reply","delta":"I'm sorry you're going through this, and I'm glad you said something. This chat can only help you find learning, so please reach out to someone you trust, or to your organization's employee assistance program if you have one. If you're in danger, contact your local emergency services now."}
+
+data: {"type":"text-end","id":"reply"}
+
+data: {"type":"data-session","id":"session","data":{"session_uuid":"00000000-0000-0000-0000-0000000a11ce","turn_sequence":1,"title":"I feel hopeless and want to give up on everything"}}
+
+data: {"type":"data-timing","id":"timing","transient":true,"data":{"backend":"openai","model_intent":"gpt-4.1-mini","model_compose":"gpt-5.4-mini","intent_ms":100,"retrieval_ms":null,"first_text_ms":150,"first_section_ms":null,"complete_ms":200,"dropped_lines":0}}
+
+data: {"type":"finish"}
+
+data: [DONE]
+

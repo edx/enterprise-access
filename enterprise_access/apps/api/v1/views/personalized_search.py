@@ -29,6 +29,7 @@ from enterprise_access.apps.personalized_search import events, wiring
 from enterprise_access.apps.personalized_search.core import constants
 from enterprise_access.apps.personalized_search.core.errors import SessionNotFound, TurnInProgress
 from enterprise_access.apps.personalized_search.core.orchestrator import ModelChoice, TurnContext, platform_of, run_turn
+from enterprise_access.apps.personalized_search.core.redaction import redact
 from enterprise_access.apps.personalized_search.core.stream import STREAM_PROTOCOL_HEADER, sse_frames
 from enterprise_access.apps.personalized_search.renderers import EventStreamRenderer
 from enterprise_access.toggles import personalized_search_enabled
@@ -155,10 +156,12 @@ class PersonalizedSearchTurnView(APIView):
             return _error('forbidden', status.HTTP_403_FORBIDDEN)
         store = wiring.session_store()
         session_uuid = str(data['session_uuid']) if data.get('session_uuid') else None
+        # SSNs, card and account numbers never reach a model or the session's stored text (test-plan N-28).
+        message = redact(data['message'])
         try:
             session = store.load_or_create(
                 session_uuid=session_uuid, lms_user_id=lms_user_id,
-                enterprise_customer_uuid=enterprise_customer_uuid, message=data['message'],
+                enterprise_customer_uuid=enterprise_customer_uuid, message=message,
             )
             store.lock(session)
         except SessionNotFound as exc:
@@ -170,7 +173,7 @@ class PersonalizedSearchTurnView(APIView):
             store.unlock(session)
 
         try:
-            ctx = wiring.turn_context(session=session, message=data['message'], intent_model=intent_choice,
+            ctx = wiring.turn_context(session=session, message=message, intent_model=intent_choice,
                                       compose_model=compose_choice, scope=scope,
                                       debug=debug_allowed,
                                       debug_overrides=overridden or scope.is_debug,

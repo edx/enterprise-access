@@ -28,6 +28,10 @@ class IntentParseTests(TestCase):
         ({'on_topic': False, 'redirect_reason': 'unsafe'}, 'unsafe'),
         ({'on_topic': False, 'redirect_reason': 'nonsense'}, 'off_topic'),
         ({'on_topic': True, 'redirect_reason': 'injection'}, 'injection'),
+        ({'on_topic': False, 'redirect_reason': 'distress'}, 'distress'),
+        ({'on_topic': False, 'redirect_reason': 'external_provider'}, 'external_provider'),
+        # Another provider with nothing to search for is a plain redirect, even if the model said on_topic.
+        ({'on_topic': True, 'redirect_reason': 'external_provider', 'intent': {'skills': []}}, 'external_provider'),
     )
     @ddt.unpack
     def test_redirects(self, raw, expected):
@@ -35,6 +39,18 @@ class IntentParseTests(TestCase):
         self.assertFalse(out['on_topic'])
         self.assertEqual(out['redirect_reason'], expected)
         self.assertIsNone(out['intent'])
+
+    def test_another_providers_courses_with_a_topic_still_search_the_topic(self):
+        out = intent.parse(json.dumps({'on_topic': True, 'redirect_reason': 'external_provider', 'merge': 'replace',
+                                       'intent': {'query': 'Python on Coursera', 'skills': ['Python']}}))
+        self.assertEqual((out['on_topic'], out['redirect_reason']), (True, 'external_provider'))
+        self.assertEqual(out['intent']['skills'], ['Python'])
+
+    def test_the_prompt_names_every_redirect_reason(self):
+        for reason in intent.REDIRECT_REASONS:
+            self.assertIn(f'"{reason}"', intent.SYSTEM_PROMPT)
+        self.assertIn('give up on everything', intent.SYSTEM_PROMPT)
+        self.assertIn('Python homework', intent.SYSTEM_PROMPT)
 
     @ddt.data('no json here', '{"redirect_reason": null}', '[1, 2]')
     def test_invalid(self, text):
