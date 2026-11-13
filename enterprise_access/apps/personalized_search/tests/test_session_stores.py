@@ -63,7 +63,7 @@ class StoreContract:  # pylint: disable=no-member  # mixed into TestCase subclas
                                           enterprise_customer_uuid=ENTERPRISE, message='y')
         with self.assertRaises(TurnInProgress):
             self.store.lock(again)
-        self.store.unlock(session['uuid'])
+        self.store.unlock(session)
         self.store.lock(again)
 
     def test_stale_lock_is_taken_over(self):
@@ -72,6 +72,25 @@ class StoreContract:  # pylint: disable=no-member  # mixed into TestCase subclas
         self.expire_lock(session['uuid'])
         self.store.lock(self.store.load_or_create(session_uuid=session['uuid'], lms_user_id=7,
                                                   enterprise_customer_uuid=ENTERPRISE, message='y'))
+
+    def test_a_turn_whose_lock_was_taken_over_cannot_release_it_or_persist(self):
+        slow = self.new_session()
+        self.store.lock(slow)
+        self.expire_lock(slow['uuid'])
+        newer = self.store.load_or_create(session_uuid=slow['uuid'], lms_user_id=7,
+                                          enterprise_customer_uuid=ENTERPRISE, message='b')
+        self.store.lock(newer)
+        self.store.unlock(slow)  # the slow turn's exit path must leave the newer turn's lock alone
+        with self.assertRaises(TurnInProgress):
+            self.store.lock(self.store.load_or_create(session_uuid=slow['uuid'], lms_user_id=7,
+                                                      enterprise_customer_uuid=ENTERPRISE, message='c'))
+        with self.assertRaises(TurnInProgress):
+            self.persist(slow, 'a')
+        self.persist(newer, 'b')
+        loaded = self.store.load_or_create(session_uuid=slow['uuid'], lms_user_id=7,
+                                           enterprise_customer_uuid=ENTERPRISE, message='c')
+        self.assertEqual((loaded['turn_count'], loaded['history']), (1, [{'user': 'b', 'reply': 'r'}]))
+        self.store.lock(loaded)  # the newer turn's persist released its lock
 
     def persist(self, session, message, reply='r'):
         session.update(turn_count=session['turn_count'] + 1, title='t')
