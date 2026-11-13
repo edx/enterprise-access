@@ -24,7 +24,8 @@ class AlgoliaCatalog:
             return client.multi_search_catalog_index(queries, secured_key=scope.secured_key,
                                                      allow_unscoped=scope.allow_unscoped, timeout_s=timeout_s, **extra)
         except AlgoliaClientError as exc:
-            raise CatalogSearchError(str(exc)) from exc
+            # The type only: the client's message can name the index, and Algolia's can echo the filters.
+            raise CatalogSearchError(type(exc).__name__) from exc
 
 
 def secured_key_from_payload(payload: dict) -> SecuredAlgoliaKey:

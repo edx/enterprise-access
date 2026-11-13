@@ -3,12 +3,13 @@ import json
 from pathlib import Path
 from unittest import mock
 
+import ddt
 import requests
 from django.test import TestCase
 
 from enterprise_access.apps.personalized_search.adapters import xpert_backend as xpert
 from enterprise_access.apps.personalized_search.adapters.openai_backend import OpenAIBackend
-from enterprise_access.apps.personalized_search.core.errors import ModelConfigurationError, ModelError
+from enterprise_access.apps.personalized_search.core.errors import ModelConfigurationError, ModelError, ModelRejected
 from enterprise_access.apps.personalized_search.core.model_registry import ModelRegistry
 from enterprise_access.apps.personalized_search.core.ports import Usage
 
@@ -56,10 +57,11 @@ def fake_response(*, body=None, chunks=(), status=200):
     response = mock.Mock(status_code=status)
     response.json.return_value = body
     response.iter_content.return_value = iter(chunks)
-    response.raise_for_status.side_effect = None if status < 400 else requests.HTTPError(str(status))
+    response.raise_for_status.side_effect = None if status < 400 else requests.HTTPError(str(status), response=response)
     return response
 
 
+@ddt.ddt
 class XpertRequestTests(TestCase):
     """Requests send the caller's prompts with a fresh conversation id."""
 
@@ -125,6 +127,24 @@ class XpertRequestTests(TestCase):
         self.session.post.return_value = fake_response(status=500)
         with self.assertRaises(ModelError):
             self._complete()
+
+    @ddt.data((401, ModelConfigurationError), (403, ModelConfigurationError), (404, ModelConfigurationError),
+              (400, ModelRejected), (422, ModelRejected),
+              (408, ModelError), (409, ModelError), (429, ModelError), (500, ModelError), (503, ModelError))
+    @ddt.unpack
+    def test_http_errors_are_classified_by_status(self, status, expected):
+        self.session.post.return_value = fake_response(status=status)
+        with self.assertRaises(ModelError) as raised:
+            self._complete()
+        with self.assertRaises(ModelError) as streamed:
+            list(self._stream())
+        self.assertEqual((type(raised.exception), type(streamed.exception)), (expected, expected))
+
+    def test_a_connection_error_stays_retryable(self):
+        self.session.post.side_effect = requests.ConnectionError('reset')
+        with self.assertRaises(ModelError) as raised:
+            self._complete()
+        self.assertIs(type(raised.exception), ModelError)
 
     def test_complete_json_unparseable_body_is_a_model_error(self):
         response = fake_response(body=None)

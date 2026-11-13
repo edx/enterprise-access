@@ -175,8 +175,8 @@ def fallback(prior_intent: dict | None) -> dict:
     """
     The parse result to use when the intent model can't be reached: on topic, with nothing new. ``merge`` then keeps
     a follow-up's prior intent, or builds a first turn's query from the message. It skips the off-topic, unsafe and
-    injection checks, so the turn shows server-built results only (``compose.server_output``) and no model writes
-    text from the message.
+    injection checks, so the turn shows server-built results only (``compose.server_output``), no model writes
+    text from the message, and the session keeps its prior merged intent (the merge serves this turn's search only).
     """
     return {'on_topic': True, 'redirect_reason': None, 'merge': 'refine' if prior_intent else 'replace',
             'intent': _normalize_intent({}), 'fallback': True}

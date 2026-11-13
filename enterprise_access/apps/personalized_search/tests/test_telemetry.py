@@ -55,7 +55,7 @@ class TurnEventTests(TestCase):
         self.assertEqual((props['conversation_id'], props['turn_id'], props['turn_index']),
                          (self.session['uuid'], TURN_UUID, 1))
         self.assertEqual((props['cohort'], props['engine'], props['is_debug']), ('internal_pilot', 'b2b_mvp_v1', False))
-        self.assertEqual(props['outcome'], 'done')
+        self.assertEqual((props['outcome'], props['degraded']), ('done', None))
         # The scripted course, then the related programs offered alongside it.
         self.assertEqual(props['shown_item_keys'], ['edX+C1', 'p-1', 'p-2'])
         self.assertEqual(props['shown_item_sections'], ['course', 'program', 'program'])
@@ -136,6 +136,11 @@ class TurnEventTests(TestCase):
         self.assertEqual(telemetry.block_digest(block), telemetry.block_digest(refreshed))
         self.assertNotEqual(telemetry.block_digest(block), telemetry.block_digest(reworded))
         self.assertNotEqual(telemetry.block_digest(block), telemetry.block_digest(dict(block, type='compare')))
+
+    def test_a_turn_with_server_built_results_names_the_step_whose_model_failed(self):
+        self.run_with(intent_error=ModelError('timeout'))  # fails on the retry too
+        name, props = self.sent[0][1], self.sent[0][2]
+        self.assertEqual((name, props['outcome'], props['degraded']), (telemetry.TURN_COMPLETED, 'done', 'intent'))
 
     def test_text_only_turn_is_completed_as_no_match(self):
         self.run_with(retrieve=lambda *a, **kw: [])

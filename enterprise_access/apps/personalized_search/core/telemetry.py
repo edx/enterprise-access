@@ -82,6 +82,8 @@ def _completed(ctx, record: dict) -> dict:
     props = {
         'outcome': 'redirected' if record.get('redirected') else ('done' if placements else 'no_match'),
         'redirect_reason': record.get('redirect_reason'),
+        # The step whose model failure made the turn show server-built results ('intent', 'compose'), or None.
+        'degraded': record.get('degraded'),
         'intent_merge_mode': record.get('merge_mode'),
         'intent_skills': _labels(merged.get('skills')), 'intent_roles': _labels(merged.get('roles')),
         'intent_level': merged.get('level'), 'intent_item_types': list(merged.get('item_types') or []),

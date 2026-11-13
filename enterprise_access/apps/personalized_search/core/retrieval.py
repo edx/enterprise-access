@@ -282,7 +282,8 @@ def search(intent: dict, scope: CatalogScope, excluded_ids: list[str], *, catalo
     try:
         results = catalog.search(queries, scope=scope, timeout_s=timeout_s)
     except CatalogSearchError as exc:  # anything else is a bug, logged with its traceback by the orchestrator
-        logger.warning('Personalized Search catalog search failed: %s', exc)
+        # The type only: Algolia's error text can echo the filters, which carry the learner's skills.
+        logger.warning('Personalized Search catalog search failed (%s).', type(exc).__name__)
         raise RetrievalFailed(f'Catalog search failed ({type(exc).__name__}).') from exc
     out, totals, search_queries = [], {}, {}
     for req, result in zip(requests, results):
