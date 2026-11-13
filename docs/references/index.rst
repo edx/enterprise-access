@@ -13,4 +13,5 @@ Reference notes on specific features. These are Markdown files, read on GitHub r
 - `Multi-license tie breaking <multi_license_tie_breaking.md>`_
 - `Personalized Search (chat) <personalized_search.md>`_
 - `Personalized Search Segment events <personalized_search_events.md>`_
+- `Personalized Search utf8mb4 migration runbook <personalized_search_utf8mb4_runbook.md>`_
 - `Stripe SDK upgrades <stripe_sdk_upgrades.md>`_
