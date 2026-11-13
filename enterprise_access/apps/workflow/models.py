@@ -55,6 +55,14 @@ class AbstractUnitOfWork(TimeStampedModel, SoftDeletableModel):
         null=True,
         default=None,
     )
+    # Stamped and saved by execute() *before* process_input() runs, so an attempt that
+    # crashed mid-call is distinguishable from one that never started. Set with neither
+    # succeeded_at nor failed_at means an external (possibly billed) call may already
+    # have been issued with its outcome unrecorded. See execute().
+    call_issued_at = models.DateTimeField(
+        null=True,
+        blank=True,
+    )
     succeeded_at = models.DateTimeField(
         null=True,
         blank=True,
@@ -100,6 +108,13 @@ class AbstractUnitOfWork(TimeStampedModel, SoftDeletableModel):
         On any exception, the exception time and message are stored,
         and a ``self.exception_class`` is raised from the responsible exception.
 
+        Before ``process_input()`` is called, ``call_issued_at`` is stamped and durably
+        saved on its own. ``process_input()`` is where an external -- and possibly billed
+        -- call is issued, and neither ``succeeded_at`` nor ``failed_at`` is persisted
+        until it returns, so a crash in that window would otherwise leave a record
+        indistinguishable from one that was never attempted. Writing the marker first
+        means the attempt survives the crash even though its outcome does not.
+
         Params:
           accumulated_output (obj): An optional accumulator object, which will be
             passed along to ``process_input()``, which should be implemented
@@ -112,6 +127,10 @@ class AbstractUnitOfWork(TimeStampedModel, SoftDeletableModel):
             'Executing %s (uuid=%s) with input_data=%s',
             self.__class__.__name__, self.uuid, self.input_data,
         )
+        self.call_issued_at = timezone.now()
+        # update_fields so this flushes only the marker, leaving any other in-progress
+        # mutation on ``self`` to be written by the save() in the finally block below.
+        self.save(update_fields=['call_issued_at'])
         try:
             result = self.process_input(
                 accumulated_output=accumulated_output,
@@ -163,11 +182,65 @@ class AbstractWorkflowStep(AbstractUnitOfWork):
 class AbstractWorkflow(AbstractUnitOfWork):
     """
     An abstract workflow model.
+
+    A step class may opt out of running on a given execution by defining::
+
+        @classmethod
+        def should_execute(cls, accumulated_output, workflow):
+            return ...
+
+    Returning ``False`` skips the step: **no step record is created**, so a skipped step
+    is distinguishable from one that ran and produced nothing. Subsequent steps still
+    execute and still receive the accumulated output of the steps that did run, with the
+    skipped step's output key left unset.
+
+    A step that does not define ``should_execute`` always executes, so a workflow whose
+    steps all omit it behaves exactly as it did before the hook existed.
+
+    A subclass whose steps issue costly or billed calls can override
+    ``handle_unresolved_call()`` to turn a re-run's unresolved-call warning into something
+    stronger -- the default is to log and proceed unchanged.
     """
     class Meta:
         abstract = True
 
     steps = []
+
+    @staticmethod
+    def step_should_execute(workflow_step_class, accumulated_output, workflow):
+        """
+        Whether ``workflow_step_class`` should run, defaulting to ``True``.
+
+        Kept as a separate method so the default-on behaviour is testable directly and so
+        a subclass can change the convention without reimplementing the loop.
+        """
+        should_execute = getattr(workflow_step_class, 'should_execute', None)
+        if should_execute is None:
+            return True
+        return bool(should_execute(accumulated_output, workflow))
+
+    def handle_unresolved_call(self, step_record, workflow_step_class):
+        """
+        Called when a *reused* step record shows an issued-but-unresolved call --
+        ``call_issued_at`` is set but neither ``succeeded_at`` nor ``failed_at`` is, meaning
+        a previous attempt may have already issued (and been billed for) an external call
+        whose outcome was never recorded.
+
+        Defaults to logging a warning and letting execution proceed exactly as it did
+        before this hook existed. A subclass whose steps make costly or billed calls can
+        override this to refuse re-execution instead (e.g. raising a dedicated exception
+        that requires a human to confirm it's safe to retry before clearing the marker).
+
+        Kept as a separate method, mirroring ``step_should_execute``, so the default
+        behaviour is testable directly and a subclass can change the convention without
+        reimplementing the loop.
+        """
+        logger.warning(
+            'Workflow %s (uuid=%s): step %s (step_uuid=%s) has an unresolved call issued at %s '
+            '-- re-executing may re-issue a call that already succeeded',
+            self.__class__.__name__, self.uuid, workflow_step_class.__name__,
+            step_record.uuid, step_record.call_issued_at,
+        )
 
     @cached_property
     def input_class(self):
@@ -205,9 +278,10 @@ class AbstractWorkflow(AbstractUnitOfWork):
     def process_input(self, accumulated_output=None, **kwargs):
         """
         Processes the input for an entire workflow, which consists of:
-        1. Get/creating a step record for each step of the workflow.
-        2. Calling ``execute()`` on each of these steps (unless they've already succeeded).
-        3. On success, accumulating the step output and
+        1. Skipping any step whose ``should_execute`` declines to run (see the class docstring).
+        2. Get/creating a step record for each remaining step of the workflow.
+        3. Calling ``execute()`` on each of these steps (unless they've already succeeded).
+        4. On success, accumulating the step output and
         passing it along to the next step's ``process_input()`` call.
 
         Returns:
@@ -231,6 +305,13 @@ class AbstractWorkflow(AbstractUnitOfWork):
 
         preceding_step_record = None
         for workflow_step_class in self.steps:
+            if not self.step_should_execute(workflow_step_class, accumulated_output, self):
+                logger.info(
+                    'Workflow %s (uuid=%s): step %s opted out, no step record created',
+                    self.__class__.__name__, self.uuid, workflow_step_class.__name__,
+                )
+                continue
+
             input_object = self.get_input_object_for_step_type(workflow_step_class)
             input_data = input_object.to_dict() if input_object else {}
             step_record_kwargs = {
@@ -249,6 +330,16 @@ class AbstractWorkflow(AbstractUnitOfWork):
                 'created' if created else 'reused', created, step_record.uuid,
             )
             preceding_step_record = step_record
+
+            unresolved_call = (
+                not created and
+                step_record.call_issued_at and
+                not step_record.succeeded_at and
+                not step_record.failed_at
+            )
+            if unresolved_call:
+                self.handle_unresolved_call(step_record, workflow_step_class)
+
             if step_record.succeeded_at:
                 logger.info(
                     'Workflow %s (uuid=%s): step %s (step_uuid=%s) already succeeded at %s, skipping',
