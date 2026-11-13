@@ -582,3 +582,37 @@ class PlanAndFactCheckTests(TestCase):
         # A longer text may mention another level, as long as it doesn't call the item one.
         self.assertIsNone(compose._contradiction(  # pylint: disable=protected-access
             'Builds on your intermediate Python into advanced work.', candidates[0]['card'], hit, short=False))
+
+
+class PageHeaderDekTests(TestCase):
+    """The page header always says what the results are for, also when the model left the dek out."""
+
+    def header(self, header, language='English'):
+        """Parse ``header`` and one course section; return the parser and the emitted page_header props."""
+        parser = compose.ComposeParser(candidates=default_candidates(), excluded_ids=[], followup_attribute='open',
+                                       intent={'query': 'team leadership'}, language=language)
+        parts = parser.feed('r\n@@BLOCKS@@\n' + line(header) + line(section('course', ['edX+C1']))) + parser.finish()
+        blocks = [p['data'] for p in parts if p['type'] == 'data-block']
+        headers = [b['props'] for b in blocks if b['type'] == 'page_header']
+        return parser, headers[0]
+
+    def test_the_models_dek_is_kept(self):
+        parser, props = self.header({'block': 'page_header', 'title': 'Lead', 'dek': 'Picks for new managers.'})
+        self.assertEqual(props['dek'], 'Picks for new managers.')
+        self.assertNotIn('dek_added_by_server', parser.dropped)
+
+    def test_an_empty_dek_is_written_by_the_server_on_an_english_reply(self):
+        missing = {'block': 'page_header', 'title': 'Lead'}
+        blank = dict(missing, dek=' ')
+        for header in (blank, missing):
+            parser, props = self.header(header)
+            self.assertEqual(props['dek'], constants.FALLBACK_DEK)  # plain: no learner text quoted back
+            self.assertIn('dek_added_by_server', parser.dropped)
+
+    def test_no_english_server_dek_on_a_reply_in_another_language(self):
+        parser, props = self.header({'block': 'page_header', 'title': 'Liderar', 'dek': ''}, language='Spanish')
+        self.assertEqual(props['dek'], '')
+        self.assertNotIn('dek_added_by_server', parser.dropped)
+
+    def test_the_prompt_says_the_caveat_does_not_replace_the_dek(self):
+        self.assertIn("Always write the dek, also when you write a caveat", compose.SYSTEM_PROMPT)

@@ -364,7 +364,7 @@ def _turn_parts(ctx: TurnContext, steps: Steps, record: dict) -> Iterator[dict]:
     parser = ComposeParser(candidates=candidates, excluded_ids=_excluded_ids(session), followup_attribute=attribute,
                            intent=merged, totals=totals, search_queries=search_queries,
                            seen_ids=session['shown_item_ids'], plan_wanted=bool(SEQUENCING.search(ctx.message)),
-                           plan_enabled=ctx.plan_enabled)
+                           plan_enabled=ctx.plan_enabled, language=reply_language)
     record['item_ids'] = parser.emitted_ids  # the parser's own list, so an aborted turn logs what it showed
     record.update(placements=parser.placements, dropped=parser.dropped)
     usages['compose'] = Usage(model=ctx.compose_model.model, effort=ctx.compose_model.effort)

@@ -71,6 +71,10 @@ DEGRADED_NO_RESULTS_REPLY = "I couldn't find matches just now. Try telling me ag
 FALLBACK_PLAN_WHY = 'Start with the closest match to your goal, then work down the list.'
 DEGRADED_TITLE = 'Closest matches from your catalog'
 DEGRADED_DEK = 'Ranked by how closely they match what you asked for.'
+# A page header dek the server writes when the model left it empty (it does so most often alongside a caveat), so
+# the results always say what they're for. English only: on a reply in another language the dek stays as written.
+FALLBACK_DEK = "The closest matches in your organization's catalog, picked for what you've told me so far."
+FALLBACK_DEK_LANGUAGE = 'English'
 DEGRADED_REASON = 'One of the closest matches in your catalog to what you asked for.'
 OPENING_CHIPS = [
     'Prepare for a leadership role',
