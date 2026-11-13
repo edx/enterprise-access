@@ -58,6 +58,20 @@ if settings.ENABLE_CUSTOMER_BILLING_API:
 
 # Other endpoints
 urlpatterns = [
+    path('personalized-search/turns/', views.PersonalizedSearchTurnView.as_view(), name='personalized-search-turns'),
+    path('personalized-search/sessions/', views.PersonalizedSearchSessionListView.as_view(),
+         name='personalized-search-sessions'),
+    path('personalized-search/sessions/<uuid:session_uuid>/', views.PersonalizedSearchSessionDetailView.as_view(),
+         name='personalized-search-session'),
+    path('personalized-search/sessions/<uuid:session_uuid>/turns/<int:sequence>/feedback/',
+         views.PersonalizedSearchTurnFeedbackView.as_view(), name='personalized-search-turn-feedback'),
+    path('personalized-search/item-feedback/', views.PersonalizedSearchItemFeedbackView.as_view(),
+         name='personalized-search-item-feedback'),
+    path(
+        'personalized-search/debug/',
+        views.PersonalizedSearchDebugConfigView.as_view(),
+        name='personalized-search-debug',
+    ),
     path(
         'subsidy-access-policies/<uuid>/group-members',
         views.SubsidyAccessPolicyGroupViewset.as_view({'get': 'get_group_member_data_with_aggregates'}),

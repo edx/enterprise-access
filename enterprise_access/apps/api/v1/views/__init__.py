@@ -25,6 +25,14 @@ from .customer_billing import (
     StripeEventSummaryViewSet
 )
 from .pathways import CareerDiscoveryViewSet, PathwayViewSet
+from .personalized_search import PersonalizedSearchTurnView
+from .personalized_search_debug import PersonalizedSearchDebugConfigView
+from .personalized_search_history import (
+    PersonalizedSearchItemFeedbackView,
+    PersonalizedSearchSessionDetailView,
+    PersonalizedSearchSessionListView,
+    PersonalizedSearchTurnFeedbackView
+)
 from .prompt import LearnerPathwaysViewSet
 from .provisioning import ProvisioningCreateView, SubscriptionPlanOLIUpdateView
 from .subsidy_access_policy import (

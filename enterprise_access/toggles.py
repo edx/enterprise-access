@@ -54,6 +54,50 @@ def personalized_search_enabled():
     return PERSONALIZED_SEARCH_ENABLED.is_enabled()
 
 
+# .. toggle_name: enterprise_access.personalized_search_debug
+# .. toggle_implementation: WaffleFlag
+# .. toggle_default: False
+# .. toggle_description: Lets the users it is enabled for use Personalized Search debug mode (the portal's
+#     ?debug=true): per-turn model overrides, the debug catalog, the debug read-out and the debug menu.
+#     enterprise-access superusers have debug mode without it. Debug mode also needs the environment switch
+#     PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED; with that off, nobody has it.
+# .. toggle_warning: Add specific users only. Don't set Everyone, a percentage or Staff: debug overrides pick
+#     costlier models and the read-out shows token and cost detail. Safe from URL overrides only while
+#     WAFFLE_OVERRIDE is off and the flag's "Testing" mode is never turned on in Django admin.
+# .. toggle_use_cases: open_edx
+# .. toggle_creation_date: 2026-11-12
+PERSONALIZED_SEARCH_DEBUG = WaffleFlag(
+    f'{ENTERPRISE_ACCESS_NAMESPACE}.personalized_search_debug',
+    __name__,
+    ENTERPRISE_ACCESS_LOG_PREFIX,
+)
+
+
+def personalized_search_debug_enabled():
+    """Return whether the current request's user is on the Personalized Search debug flag."""
+    return PERSONALIZED_SEARCH_DEBUG.is_enabled()
+
+
+# .. toggle_name: enterprise_access.personalized_search_suggested_order
+# .. toggle_implementation: WaffleSwitch
+# .. toggle_default: False
+# .. toggle_description: Shows the Personalized Search "suggested order" (the plan block) in the results. When off,
+#     the compose prompt doesn't ask for a plan, any plan the model writes is dropped, and the server doesn't add
+#     one when the learner asks what to take first. A switch, not a flag, so the turn view and the offline harness
+#     (which has no request) read the same value.
+# .. toggle_use_cases: open_edx
+# .. toggle_creation_date: 2026-11-13
+PERSONALIZED_SEARCH_SUGGESTED_ORDER = WaffleSwitch(
+    f'{ENTERPRISE_ACCESS_NAMESPACE}.personalized_search_suggested_order',
+    __name__,
+)
+
+
+def personalized_search_suggested_order_enabled():
+    """Return whether Personalized Search results include the suggested order (plan block)."""
+    return PERSONALIZED_SEARCH_SUGGESTED_ORDER.is_enabled()
+
+
 # A ``WaffleSwitch`` rather than a ``WaffleFlag``, deliberately. A switch is a single
 # global boolean an administrator sets in Django admin; it takes no request, so it cannot
 # be turned on per-user, by percentage, or by a ``?flag=1`` query string. Two consequences

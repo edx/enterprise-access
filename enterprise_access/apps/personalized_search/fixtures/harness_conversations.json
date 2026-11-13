@@ -1,0 +1,95 @@
+{
+ "_doc": "Three-turn conversations for the pathway_eval personas (run_personalized_search_harness --case-set conversations). Turn 1 is the persona's opening message, built from its intake as for --case-set personas. Turns 2 and 3 are scripted in the persona's voice and reveal its constraints, so every arm gets the same information at the same turn (the fixed style). In the adaptive style, turns 2 and 3 instead send the follow-up chip with the most keyword hits, and fall back to the scripted message when no chip matches. goal is what a relevant page serves, for reviewers.",
+ "conversations": [
+  {
+   "persona_id": "p001-insurance-to-financial-advisor",
+   "goal": "Move from insurance into financial advising; wants a recognized finance credential.",
+   "turns": [
+    "I'd like a certificate path I can do self-paced around my job.",
+    "Focus on financial planning and investments, not insurance."
+   ],
+   "keywords": ["certificate", "program", "self-paced", "finance", "financial", "investment", "planning"]
+  },
+  {
+   "persona_id": "p002-student-to-biomedical-engineer",
+   "goal": "Biochemistry undergrad aiming for biomedical engineering work in pharma.",
+   "turns": [
+    "I still have two years of school, so something I can do alongside classes.",
+    "Show me programs pharma employers would value, like biomedical devices or drug manufacturing."
+   ],
+   "keywords": ["biomedical", "pharma", "program", "certificate", "biology", "engineering", "self-paced", "introductory"]
+  },
+  {
+   "persona_id": "p003-advisor-to-ai-superuser",
+   "goal": "Stay in student success and apply AI at work: applied, practical AI, not a career change or theory.",
+   "turns": [
+    "I don't want to change careers. I want to stay in student success and just use AI better at work.",
+    "Practical and quick, please: things like chatbots and prompt writing, not theory."
+   ],
+   "keywords": ["practical", "quick", "prompt", "chatbot", "beginner", "introductory", "productivity", "education", "under 4 weeks"]
+  },
+  {
+   "persona_id": "p004-medical-assistant-to-nurse-practitioner",
+   "goal": "Medical assistant working toward nurse practitioner: clinical and health knowledge (no NP degree in the catalog).",
+   "turns": [
+    "I know I'll need a nursing degree eventually. For now I want courses that build clinical knowledge.",
+    "Something on pharmacology, patient assessment or public health would help."
+   ],
+   "keywords": ["clinical", "nursing", "health", "healthcare", "pharmacology", "patient", "medical", "public health", "introductory"]
+  },
+  {
+   "persona_id": "p005-developer-to-product-manager",
+   "goal": "Developer and certified Scrum Master moving into product management at their company.",
+   "turns": [
+    "I've done Scrum already, so skip agile basics. I need product strategy and roadmapping.",
+    "A certificate would help me make the case to my manager."
+   ],
+   "keywords": ["product", "strategy", "roadmap", "certificate", "program", "intermediate", "advanced"]
+  },
+  {
+   "persona_id": "p006-chatty-data-analyst",
+   "goal": "Data analyst who wants to get better with everyday tools (SQL, analytics, maybe Python) for a promotion or resume.",
+   "turns": [
+    "Mostly I want to get better at SQL and the analytics tools I use every day, and maybe learn Python too!",
+    "Intermediate is right, I already know mySQL pretty well. Self-paced is best for me."
+   ],
+   "keywords": ["sql", "python", "data", "analytics", "intermediate", "self-paced", "tools"]
+  },
+  {
+   "persona_id": "p007-brief-ml-engineer",
+   "goal": "Machine learning engineer required to take a course: short, advanced ML content.",
+   "turns": [
+    "ML engineer. Need something short.",
+    "Advanced. MLOps or deep learning."
+   ],
+   "keywords": ["advanced", "short", "quick", "under 4 weeks", "machine learning", "mlops", "deep learning"]
+  },
+  {
+   "persona_id": "p008-aimless-administrative-assistant",
+   "goal": "Frustrated administrative assistant who wants a better-paying job; career and job-search skills.",
+   "turns": [
+    "I don't know. Something that pays. Business stuff maybe?",
+    "fine, something to help me get hired fast: resume, interviews, that kind of thing"
+   ],
+   "keywords": ["career", "resume", "interview", "quick", "business", "introductory", "beginner", "under 4 weeks"]
+  },
+  {
+   "persona_id": "p009-ai-engineer-upskilling",
+   "goal": "Experienced AI engineer staying current on generative AI: advanced, recent material.",
+   "turns": [
+    "Generative AI specifically: LLMs, agents, how companies are deploying them.",
+    "Advanced level, and short. I keep up with a lot already."
+   ],
+   "keywords": ["generative", "agent", "llm", "advanced", "short", "quick"]
+  },
+  {
+   "persona_id": "p010-welder",
+   "goal": "Wants welding certification; the catalog has no welding content, so an honest caveat beats filler.",
+   "turns": [
+    "I want welding certification prep, hands-on if possible.",
+    "If there's nothing on welding, what about blueprint reading or construction safety?"
+   ],
+   "keywords": ["welding", "certification", "construction", "safety", "blueprint", "introductory", "hands-on"]
+  }
+ ]
+}

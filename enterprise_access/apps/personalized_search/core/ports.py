@@ -47,6 +47,7 @@ class Usage:
             'elapsed_ms': self.elapsed_ms,
             'first_token_ms': self.first_token_ms,
             'cost_usd': round(cost, 6) if cost is not None else None,
+            'finish_reason': self.extra.get('finish_reason'),
         }
 
 
@@ -79,7 +80,7 @@ class CatalogSearch(Protocol):
     """Runs several catalog sub-requests in one round trip; ``scope`` is the adapter's own key/filter."""
 
     def search(self, queries: list[dict], *, scope, timeout_s: float) -> list[dict]:
-        """One result dict (with ``hits``) per query, in order. Raises on failure."""
+        """One result dict (with ``hits``) per query, in order. Raises ``CatalogSearchError`` on failure."""
 
 
 @runtime_checkable
@@ -91,13 +92,19 @@ class SessionStore(Protocol):
         """The learner's session as a dict, or a new unsaved one. Raises ``SessionNotFound``."""
 
     def lock(self, session: dict) -> None:
-        """Take the turn lock (saving a new session). Raises ``TurnInProgress``."""
+        """
+        Take the turn lock (saving a new session), recording it in ``session['lock_token']``.
+        Raises ``TurnInProgress``.
+        """
 
-    def unlock(self, session_uuid: str) -> None:
-        """Release the turn lock."""
+    def unlock(self, session: dict) -> None:
+        """Release the turn lock, only if ``session['lock_token']`` still holds it."""
 
     def persist_turn(self, session: dict, turn: dict) -> None:
-        """Write a finished turn and the session's new state atomically."""
+        """
+        Write a finished turn and the session's new state atomically, releasing the lock. Raises
+        ``TurnInProgress`` (and writes nothing) when another turn has taken the lock over.
+        """
 
     def not_interested_ids(self, lms_user_id, enterprise_customer_uuid) -> list[str]:
-        """Items this learner dismissed in this enterprise."""
+        """Items this learner dismissed in this enterprise, newest first."""

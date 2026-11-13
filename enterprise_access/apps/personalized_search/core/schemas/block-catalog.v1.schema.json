@@ -5,12 +5,16 @@
   "description": "The data of a data-block stream part: one learning-page block. Item cards are hydrated by the server from catalog hits; the model only chooses ids and writes why/fit.",
   "type": "object",
   "required": ["v", "type", "props"],
-  "properties": {"v": {"const": 1}, "type": {"enum": ["page_header", "item_section", "insight", "plan"]}},
+  "properties": {"v": {"const": 1}, "type": {"enum": ["page_header", "item_section", "insight", "plan", "profile", "top_pick", "compare", "caveat"]}},
   "oneOf": [
     {"properties": {"type": {"const": "page_header"}, "props": {"$ref": "#/$defs/page_header"}}},
     {"properties": {"type": {"const": "item_section"}, "props": {"$ref": "#/$defs/item_section"}}},
     {"properties": {"type": {"const": "insight"}, "props": {"$ref": "#/$defs/insight"}}},
-    {"properties": {"type": {"const": "plan"}, "props": {"$ref": "#/$defs/plan"}}}
+    {"properties": {"type": {"const": "plan"}, "props": {"$ref": "#/$defs/plan"}}},
+    {"properties": {"type": {"const": "profile"}, "props": {"$ref": "#/$defs/profile"}}},
+    {"properties": {"type": {"const": "top_pick"}, "props": {"$ref": "#/$defs/top_pick"}}},
+    {"properties": {"type": {"const": "compare"}, "props": {"$ref": "#/$defs/compare"}}},
+    {"properties": {"type": {"const": "caveat"}, "props": {"$ref": "#/$defs/caveat"}}}
   ],
   "$defs": {
     "item_type": {"enum": ["course", "executive_education", "program"]},
@@ -36,14 +40,21 @@
         },
         "facts": {"type": "object"},
         "why": {"type": ["string", "null"], "maxLength": 400},
-        "fit": {"type": "array", "maxItems": 3, "items": {"type": "string", "maxLength": 24}}
+        "fit": {"type": "array", "maxItems": 3, "items": {"type": "string", "maxLength": 24}},
+        "status": {"enum": ["new"], "description": "New to the conversation since the previous turn (optional, v1 2026-11-09)"},
+        "section": {"type": "string", "description": "Where the card sits: top_pick, compare or its item type (optional, v1 2026-11-09)"},
+        "position": {"type": "integer", "minimum": 1, "description": "Its order among the turn's cards; reserve cards have none (optional, v1 2026-11-09)"}
       }
     },
     "item_section": {
       "type": "object", "additionalProperties": false, "required": ["item_type", "label", "dek", "fallback", "items"],
       "properties": {"item_type": {"$ref": "#/$defs/item_type"}, "label": {"type": "string"},
                      "dek": {"type": "string", "maxLength": 200}, "fallback": {"type": "boolean"},
-                     "items": {"type": "array", "minItems": 1, "maxItems": 3, "items": {"$ref": "#/$defs/item_card"}}}
+                     "items": {"type": "array", "minItems": 1, "maxItems": 3, "items": {"$ref": "#/$defs/item_card"}},
+                     "total": {"type": "integer", "minimum": 0, "description": "Catalog matches for this type (optional, v1 2026-11-09)"},
+                     "search_query": {"type": "string", "minLength": 1, "description": "The query whose catalog matches `total` counts, for the \"See all\" link; sent only with `total` (optional, v1 2026-11-12)"},
+                     "reserve": {"type": "array", "maxItems": 2, "items": {"$ref": "#/$defs/item_card"},
+                                 "description": "Next-best cards for this type: the portal pads the row to 3 cards from them at first render, and fills a card the learner removes (\"Not for me\") from what's left (optional, v1 2026-11-09)"}}
     },
     "insight": {
       "type": "object", "additionalProperties": false, "required": ["title", "body"],
@@ -52,9 +63,35 @@
     },
     "plan": {
       "type": "object", "additionalProperties": false, "required": ["steps"],
-      "properties": {"steps": {"type": "array", "minItems": 2, "maxItems": 4, "items": {
+      "properties": {"why": {"type": "string", "maxLength": 160, "description": "Why this order. Added in v1, 2026-11-09."},
+                     "steps": {"type": "array", "minItems": 2, "maxItems": 4, "items": {
         "type": "object", "additionalProperties": false, "required": ["item_id", "note"],
         "properties": {"item_id": {"type": "string"}, "note": {"type": "string", "maxLength": 80}}}}}
+    },
+    "profile": {
+      "description": "What the AI knows about the learner, from the merged intent (no model call). Added in v1, 2026-11-09.",
+      "type": "object", "additionalProperties": false, "required": ["summary", "chips"],
+      "properties": {"summary": {"type": "string", "minLength": 1, "maxLength": 200},
+                     "chips": {"type": "array", "minItems": 0, "maxItems": 6, "items": {"type": "string", "minLength": 1, "maxLength": 40}}}
+    },
+    "top_pick": {
+      "description": "The one item to start with. Added in v1, 2026-11-09.",
+      "type": "object", "additionalProperties": false, "required": ["item", "reason", "checks"],
+      "properties": {"item": {"$ref": "#/$defs/item_card"}, "reason": {"type": "string", "minLength": 1, "maxLength": 160},
+                     "checks": {"type": "array", "maxItems": 3, "items": {"type": "string", "minLength": 1, "maxLength": 40}}}
+    },
+    "compare": {
+      "description": "2-3 options with what each is best for. Added in v1, 2026-11-09.",
+      "type": "object", "additionalProperties": false, "required": ["options"],
+      "properties": {"options": {"type": "array", "minItems": 2, "maxItems": 3, "items": {
+        "type": "object", "additionalProperties": false, "required": ["best_for", "item"],
+        "properties": {"best_for": {"type": "string", "minLength": 1, "maxLength": 60}, "item": {"$ref": "#/$defs/item_card"}}}}}
+    },
+    "caveat": {
+      "description": "A warning that the results can't meet a goal the learner stated. Added in v1, 2026-11-09.",
+      "type": "object", "additionalProperties": false, "required": ["title", "body"],
+      "properties": {"title": {"type": "string", "minLength": 1, "maxLength": 60},
+                     "body": {"type": "string", "minLength": 1, "maxLength": 300}}
     }
   }
 }

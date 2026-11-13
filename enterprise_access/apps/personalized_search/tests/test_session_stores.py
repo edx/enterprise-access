@@ -63,7 +63,7 @@ class StoreContract:  # pylint: disable=no-member  # mixed into TestCase subclas
                                           enterprise_customer_uuid=ENTERPRISE, message='y')
         with self.assertRaises(TurnInProgress):
             self.store.lock(again)
-        self.store.unlock(session['uuid'])
+        self.store.unlock(session)
         self.store.lock(again)
 
     def test_stale_lock_is_taken_over(self):
@@ -72,6 +72,25 @@ class StoreContract:  # pylint: disable=no-member  # mixed into TestCase subclas
         self.expire_lock(session['uuid'])
         self.store.lock(self.store.load_or_create(session_uuid=session['uuid'], lms_user_id=7,
                                                   enterprise_customer_uuid=ENTERPRISE, message='y'))
+
+    def test_a_turn_whose_lock_was_taken_over_cannot_release_it_or_persist(self):
+        slow = self.new_session()
+        self.store.lock(slow)
+        self.expire_lock(slow['uuid'])
+        newer = self.store.load_or_create(session_uuid=slow['uuid'], lms_user_id=7,
+                                          enterprise_customer_uuid=ENTERPRISE, message='b')
+        self.store.lock(newer)
+        self.store.unlock(slow)  # the slow turn's exit path must leave the newer turn's lock alone
+        with self.assertRaises(TurnInProgress):
+            self.store.lock(self.store.load_or_create(session_uuid=slow['uuid'], lms_user_id=7,
+                                                      enterprise_customer_uuid=ENTERPRISE, message='c'))
+        with self.assertRaises(TurnInProgress):
+            self.persist(slow, 'a')
+        self.persist(newer, 'b')
+        loaded = self.store.load_or_create(session_uuid=slow['uuid'], lms_user_id=7,
+                                           enterprise_customer_uuid=ENTERPRISE, message='c')
+        self.assertEqual((loaded['turn_count'], loaded['history']), (1, [{'user': 'b', 'reply': 'r'}]))
+        self.store.lock(loaded)  # the newer turn's persist released its lock
 
     def persist(self, session, message, reply='r'):
         session.update(turn_count=session['turn_count'] + 1, title='t')
@@ -126,13 +145,47 @@ class StoreContract:  # pylint: disable=no-member  # mixed into TestCase subclas
         self.assertEqual(loaded['history'], [{'user': 'Lead a team', 'reply': 'Hello'}])
         self.assertEqual((loaded['turn_count'], loaded['item_count'], loaded['title']), (1, 1, 'Leading'))
         self.assertEqual((loaded['merged_intent'], loaded['shown_item_ids']), ({'query': 'q'}, ['a']))
+        self.assertEqual(loaded['previous_screen'], [])  # the turn showed no cards
         self.store.lock(loaded)  # persist_turn released the lock
+
+    def test_the_latest_turns_screen_is_loaded_in_order(self):
+        session = self.new_session()
+        self.store.lock(session)
+
+        def card(item_id):
+            return {'item_id': item_id, 'title': f'Title {item_id}'}
+
+        blocks = [{'type': 'top_pick', 'props': {'item': card('a')}},
+                  {'type': 'compare', 'props': {'options': [{'item': card('a')}, {'item': card('b')}]}}]
+        session['turn_count'] = 1
+        self.store.persist_turn(session, {'uuid': str(uuid.uuid4()), 'user_message': 'm', 'reply_text': 'r',
+                                          'item_ids': ['a', 'b'], 'parts': PARTS + [
+                                              {'type': 'data-block', 'id': f'blk_{i}', 'data': dict(b, v=1)}
+                                              for i, b in enumerate(blocks)]})
+        expected = [{'where': 'top pick', 'item_id': 'a', 'title': 'Title a'},
+                    {'where': 'compare 2', 'item_id': 'b', 'title': 'Title b'}]
+        loaded = self.store.load_or_create(session_uuid=session['uuid'], lms_user_id=7,
+                                           enterprise_customer_uuid=ENTERPRISE, message='what is the weather')
+        self.assertEqual(loaded['previous_screen'], expected)
+        # A redirect turn shows no cards and keeps the page before it.
+        self.store.lock(loaded)
+        loaded['turn_count'] = 2
+        self.store.persist_turn(loaded, {'uuid': str(uuid.uuid4()), 'user_message': 'm', 'reply_text': 'r',
+                                         'item_ids': [], 'parts': PARTS})
+        loaded = self.store.load_or_create(session_uuid=session['uuid'], lms_user_id=7,
+                                           enterprise_customer_uuid=ENTERPRISE, message='compare the first two')
+        self.assertEqual(loaded['previous_screen'], expected)
 
     def test_not_interested_ids_are_scoped(self):
         self.dismiss(7, ENTERPRISE, 'a')
         self.dismiss(7, ENTERPRISE, 'b', saved=True)
         self.dismiss(8, ENTERPRISE, 'c')
         self.assertEqual(self.new_session()['not_interested_ids'], ['a'])
+
+    def test_not_interested_ids_are_newest_first(self):
+        for item_id in ('a', 'b', 'c'):
+            self.dismiss(7, ENTERPRISE, item_id)
+        self.assertEqual(self.store.not_interested_ids(7, ENTERPRISE), ['c', 'b', 'a'])
 
 
 class DjangoSessionStoreTests(StoreContract, TestCase):

@@ -3,11 +3,12 @@ from types import SimpleNamespace
 from unittest import mock
 
 import ddt
+import openai
 from django.test import TestCase
 
 from enterprise_access.apps.personalized_search.adapters import openai_backend
 from enterprise_access.apps.personalized_search.adapters.openai_backend import OpenAIBackend
-from enterprise_access.apps.personalized_search.core.errors import ModelConfigurationError, ModelError
+from enterprise_access.apps.personalized_search.core.errors import ModelConfigurationError, ModelError, ModelRejected
 from enterprise_access.apps.personalized_search.core.model_registry import ModelRegistry
 from enterprise_access.apps.personalized_search.core.ports import Usage
 
@@ -34,6 +35,12 @@ class RequestParamsTests(TestCase):
         ('gpt-5.4-mini', 'minimal', 'none', 400),
         ('gpt-5.4-mini', 'low', 'low', 400 + openai_backend.REASONING_HEADROOM_TOKENS),
         ('gpt-5.6-terra', 'medium', 'medium', 400 + openai_backend.REASONING_HEADROOM_TOKENS),
+        ('gpt-5.6-luna', 'minimal', 'none', 400),
+        ('gpt-6-luna', None, 'none', 400),
+        ('gpt-6.1-terra', 'xhigh', 'xhigh', 400 + openai_backend.REASONING_HEADROOM_TOKENS),
+        # sol and astra start at low, which reasons, so it gets the headroom too.
+        ('gpt-6.1-sol', None, 'low', 400 + openai_backend.REASONING_HEADROOM_TOKENS),
+        ('gpt-6-astra', 'none', 'low', 400 + openai_backend.REASONING_HEADROOM_TOKENS),
     )
     @ddt.unpack
     def test_params(self, model, effort, expected_effort, expected_max):
@@ -41,6 +48,12 @@ class RequestParamsTests(TestCase):
         self.assertEqual(params.get('reasoning_effort'), expected_effort)
         self.assertEqual(params['max_completion_tokens'], expected_max)
         self.assertNotIn('max_tokens', params)
+
+    @ddt.data(('gpt-6-luna', 'max'), ('gpt-6.1-sol', 'max'), ('gpt-6.1-terra', 'extreme'))
+    @ddt.unpack
+    def test_tiered_family_refuses_an_effort_it_does_not_take(self, model, effort):
+        with self.assertRaises(ModelConfigurationError):
+            openai_backend.resolve_effort(model, effort)
 
     def test_cost(self):
         usage = Usage(model='gpt-4.1-mini', effort=None, input_tokens=1000, cached_input_tokens=500,
@@ -73,6 +86,7 @@ class RequestParamsTests(TestCase):
                                    timeout_s=1)
 
 
+@ddt.ddt
 class OpenAICallTests(TestCase):
     """Calls go through the injected client factory with the family's parameters, and fill ``Usage``."""
 
@@ -111,12 +125,53 @@ class OpenAICallTests(TestCase):
         self.assertEqual(usage.prices, MODELS['gpt-5.4-mini'])
         stream.close.assert_called_once()
 
+    def test_stream_text_records_the_effort_actually_sent(self):
+        stream = mock.MagicMock()
+        stream.__iter__.return_value = iter([chunk('Hi')])
+        self.client.chat.completions.create.return_value = stream
+        usage = Usage(model='gpt-6.1-sol', effort=None)
+        ''.join(self.backend.stream_text(model='gpt-6.1-sol', effort=None, system='S', user='U', max_tokens=10,
+                                         timeout_s=5, usage=usage))
+        self.assertEqual(usage.effort, 'low')
+        self.assertEqual(self.client.chat.completions.create.call_args.kwargs['reasoning_effort'], 'low')
+
     def test_sdk_errors_become_model_errors_without_the_message(self):
         self.client.chat.completions.create.side_effect = RuntimeError('learner text echoed here')
         with self.assertRaises(ModelError) as ctx:
             self.backend.complete_json(model='gpt-4.1-mini', effort=None, system='S', user='U', max_tokens=10,
                                        timeout_s=1)
         self.assertNotIn('learner text', str(ctx.exception))
+
+    @ddt.data(
+        (openai.AuthenticationError, 401, ModelConfigurationError),  # a revoked key won't work on a retry
+        (openai.PermissionDeniedError, 403, ModelConfigurationError),
+        (openai.NotFoundError, 404, ModelConfigurationError),
+        (openai.BadRequestError, 400, ModelRejected),
+        (openai.UnprocessableEntityError, 422, ModelRejected),
+        (openai.ConflictError, 409, ModelError),  # these may pass on a retry
+        (openai.RateLimitError, 429, ModelError),
+        (openai.InternalServerError, 503, ModelError),
+    )
+    @ddt.unpack
+    def test_sdk_status_errors_are_classified_by_status(self, error_class, status, expected):
+        error = error_class('learner text echoed here', response=mock.Mock(status_code=status, headers={}), body=None)
+        self.client.chat.completions.create.side_effect = error
+        with self.assertRaises(ModelError) as raised:
+            self.backend.complete_json(model='gpt-4.1-mini', effort=None, system='S', user='U', max_tokens=10,
+                                       timeout_s=1)
+        with self.assertRaises(ModelError) as streamed:
+            list(self.backend.stream_text(model='gpt-5.4-mini', effort=None, system='S', user='U', max_tokens=10,
+                                          timeout_s=5, usage=Usage(model='gpt-5.4-mini', effort=None)))
+        self.assertEqual((type(raised.exception), type(streamed.exception)), (expected, expected))
+        self.assertNotIn('learner text', str(raised.exception))
+
+    @ddt.data(openai.APITimeoutError(request=mock.Mock()), openai.APIConnectionError(request=mock.Mock()))
+    def test_timeouts_and_connection_errors_stay_retryable(self, error):
+        self.client.chat.completions.create.side_effect = error
+        with self.assertRaises(ModelError) as raised:
+            self.backend.complete_json(model='gpt-4.1-mini', effort=None, system='S', user='U', max_tokens=10,
+                                       timeout_s=1)
+        self.assertIs(type(raised.exception), ModelError)
 
     def test_stopping_early_closes_the_stream(self):
         stream = mock.MagicMock()

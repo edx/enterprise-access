@@ -1,8 +1,10 @@
 """
 Tests for the search-only Algolia client.
 """
+import json
 from datetime import datetime, timedelta, timezone
 from unittest import mock
+from urllib.parse import parse_qsl
 
 import ddt
 from algoliasearch.exceptions import AlgoliaException, AlgoliaUnreachableHostException, RequestException
@@ -63,9 +65,11 @@ class TestMultiSearchCatalogIndex(TestCase):
         self.mock_search_client.create.assert_called_once_with(APP_ID, 'secured-key-value')
         queries, options = self.mock_client.multiple_queries.call_args.args
         self.assertEqual([q['indexName'] for q in queries], [CATALOG_INDEX, CATALOG_INDEX])
-        self.assertIn('query=leadership', queries[0]['params'])
-        self.assertIn('distinct=true', queries[0]['params'])
-        self.assertIn('attributesToRetrieve=%5B%22key%22%2C+%22title%22%5D', queries[1]['params'])
+        # Decoded, so the test checks the values sent rather than how the SDK encodes them.
+        first, second = (dict(parse_qsl(q['params'])) for q in queries)
+        self.assertEqual((first['query'], json.loads(first['hitsPerPage']), first['filters'],
+                          json.loads(first['distinct'])), ('leadership', 30, 'content_type:course', True))
+        self.assertEqual((second['query'], json.loads(second['attributesToRetrieve'])), ('teams', ['key', 'title']))
         self.assertEqual(options, {'readTimeout': 1.5})
         self.mock_client.close.assert_called_once()
 
@@ -107,6 +111,15 @@ class TestMultiSearchCatalogIndex(TestCase):
                                                              secured_key=_live_secured_key())
         self.assertFalse([r for r in logs.records if 'secret learner words' in r.getMessage()])
         self.mock_client.close.assert_called_once()
+
+    def test_the_raised_error_names_the_type_not_algolias_message(self):
+        # Algolia's message can echo the filters, which carry learner-derived values.
+        self.mock_client.multiple_queries.side_effect = AlgoliaException('Unexpected token skill_names:"Secret"')
+        with self.assertLogs('enterprise_access.apps.api_client.algolia_client', level='ERROR'), \
+                self.assertRaises(AlgoliaSearchError) as raised:
+            AlgoliaSearchClient().multi_search_catalog_index([{'query': 'a'}], secured_key=_live_secured_key())
+        self.assertIn('AlgoliaException', str(raised.exception))
+        self.assertNotIn('Secret', str(raised.exception))
 
 
 @override_settings(**ALGOLIA_SETTINGS)
@@ -303,8 +316,12 @@ class TestAlgoliaSearchClient(TestCase):
         self._patched_search_client()
         self.mock_index.search.side_effect = raised_exception
 
-        with self.assertRaises(AlgoliaSearchError):
-            AlgoliaSearchClient().search_jobs_index('data analyst')
+        with self.assertLogs('enterprise_access.apps.api_client.algolia_client', level='ERROR') as logs, \
+                self.assertRaises(AlgoliaSearchError):
+            AlgoliaSearchClient().search_jobs_index('secret learner words')
+        self.assertEqual(len(logs.records), 1)
+        self.assertIn(type(raised_exception).__name__, logs.records[0].getMessage())
+        self.assertNotIn('secret learner words', logs.output[0])
 
     def test_client_is_closed_even_when_the_search_fails(self):
         mock_search_client = self._patched_search_client()

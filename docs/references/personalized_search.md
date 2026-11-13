@@ -1,17 +1,25 @@
 # Personalized Search (chat)
 
-The learner portal's Personalized Search tab is a chat that composes a learning page from the learner's enterprise catalog. This app serves it. The design is in [`personalized-search-tech-spec.md`](personalized-search-tech-spec.md).
+The learner portal's Personalized Search tab is a chat that recommends learning from the learner's enterprise catalog, with results beside the chat that update as the learner refines. This app serves it. The design is in [`personalized-search-tech-spec.md`](personalized-search-tech-spec.md).
 
 ## Endpoints (`/api/v1/personalized-search/`)
 
 | Endpoint | Purpose |
 | --- | --- |
-| `POST turns/` | Streams one turn as AI SDK UI Message Stream v1 over SSE, with the header `x-vercel-ai-ui-message-stream: v1`. `?mode=buffered` returns the parts as JSON instead. |
+| `POST turns/` | Streams one turn as AI SDK UI Message Stream v1 over SSE, with the header `x-vercel-ai-ui-message-stream: v1`. `?mode=buffered` returns the parts as JSON instead. The body takes an optional `locale` (the portal's language, e.g. `es`). |
 | `GET sessions/`, `GET sessions/<uuid>/` | The learner's past searches, and one search's stored parts for replay. |
 | `GET/POST/DELETE item-feedback/` | Saved and not-interested items. Not-interested items are excluded from later turns. |
-| `GET debug/` | The `?debug=true` model menu. 404 unless `PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED`, which is dev only. |
+| `POST sessions/<uuid>/turns/<sequence>/feedback/` | Thumbs up (1), down (-1) or cleared (null) on one of the learner's replies. |
+| `GET debug/` | The `?debug=true` model menu. 404 unless the requesting user may use debug mode: `PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED` is on **and** the user is an enterprise-access superuser or on the `enterprise_access.personalized_search_debug` flag. |
 
 Every endpoint requires the enterprise-scoped learner permission (`personalized_search.has_learner_access`) and returns 404 while the `enterprise_access.personalized_search_enabled` WaffleFlag is off for the user. The portal shows the tab from a separate LMS flag, `enterprise.personalized_search_enabled`. Enable this app's flag first, for the same users, so a visible tab never gets a 404.
+
+The suggested order (the `plan` block) is behind the `enterprise_access.personalized_search_suggested_order` WaffleSwitch, which is **off** by default. While it's off:
+- the compose prompt doesn't ask for a plan;
+- any plan the model writes is dropped (`plan_disabled` in the debug read-out);
+- the server doesn't add one when the learner asks what to take first.
+
+It's a switch rather than a flag, so the turn view and the offline harness read the same value. Turn it on in Django admin (Waffle → Switches). Sessions saved while it was on still replay their plans from History.
 
 ## Layout: a portable core behind ports
 
@@ -52,13 +60,35 @@ for part in run_turn(ctx, steps):
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `PERSONALIZED_SEARCH_INTENT_MODEL`, `_EFFORT` | `gpt-4.1-mini`, `None` | Intent step model |
-| `PERSONALIZED_SEARCH_COMPOSE_MODEL`, `_EFFORT` | `gpt-5.4-mini`, `low` | Compose step model |
+| `PERSONALIZED_SEARCH_INTENT_MODEL`, `_EFFORT` | `gpt-6-luna`, `None` | Intent step model |
+| `PERSONALIZED_SEARCH_COMPOSE_MODEL`, `_EFFORT` | `gpt-6-luna`, `None` | Compose step model |
+| `PERSONALIZED_SEARCH_SHORTLIST_SIZE`, `_SIZES` | `20`, `{'gpt-6.1-terra': 40}` | Candidates compose chooses from: the default, and per compose model |
 | `PERSONALIZED_SEARCH_OPENAI_MODELS` | allowlist with prices | The OpenAI models a turn may use. Prices are used only in the debug cost read-out. |
 | `PERSONALIZED_SEARCH_INTENT_TIMEOUT_S`, `_COMPOSE_READ_TIMEOUT_S` | 3, 5 | Step timeouts, each also capped by the 20 s turn deadline. The Xpert platform uses `XPERT_REQUEST_TIMEOUT`. |
 | `OPENAI_API_KEY`; `XPERT_API_BASE_URL`, `XPERT_API_CLIENT_ID` | empty | Backend credentials. Keys come only from settings. |
-| `PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED` | `False` | Dev only. Allows per-turn model overrides and the debug read-out. |
+| `PERSONALIZED_SEARCH_ANALYTICS_COHORT`, `PERSONALIZED_SEARCH_ENGINE_LABEL` | `internal_pilot`, `b2b_mvp_v1` | Tags on every Segment event (planned, KD-12). See [`personalized_search_events.md`](personalized_search_events.md). |
+| `PERSONALIZED_SEARCH_CONTENT_LANGUAGES` | `{'en': 'English', 'es': 'Spanish'}` | Portal locale → Algolia `language` name. A turn's `locale` (from the portal) picks `metadata_language` records and, for courses, the teaching language, and the model writes in that language. Unlisted locales use English. Mirrors the portal's `SUPPORTED_ALGOLIA_LANGUAGE_FILTERS` for Learner Pathways. |
+| `PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED` | `False` | Turns debug mode on for the environment. Even then it applies only to enterprise-access superusers and users on the `enterprise_access.personalized_search_debug` WaffleFlag; everyone else's `debug` object is ignored. Debug mode covers per-turn model overrides, the debug catalog, the debug read-out and the debug menu. `is_superuser` is never set from the JWT (only `administrator` maps to `is_staff`), so superusers are granted in enterprise-access's Django admin. |
+| `PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE` | `None` | Stage only. The catalog searched by turns that carry the `debug` flag (the portal's `?debug=true`), when `PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED` is on: `{'filter', 'label'}` plus optional `'app_id'`, `'search_api_key'`, `'index_name'` for another Algolia app or index, e.g. the 2U customer in the prod catalog. Uses that plain key with the filter, so it also needs `ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH`. Those turns' usage events have `is_debug: true`; other turns keep the learner's own catalog. |
 | `PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE` | `None` | Dev only. Uses the plain search key plus an explicit catalog filter instead of the learner's secured key. Also needs `ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH`. Never set it in a deployed environment. |
+
+## Results update in place (KD-11)
+
+Only items the learner marked "Not for me" are excluded from later turns. Items shown earlier can appear again in the refreshed results, and each card says whether it is new or updated since the previous turn. The redesign is additive within block catalog v1: older portals ignore the new block types.
+
+## When a model call fails
+
+The OpenAI client doesn't retry (`max_retries=0`), so the orchestrator does, once per step:
+
+- **Intent** is retried if at least 4 s of the turn deadline are left. If it fails again, the turn skips classification and the server builds the results. The message is this turn's search query only: the session keeps its previous merged intent (none on a first turn), so the unclassified message doesn't shape later turns.
+- **Compose** is retried if no text has streamed yet and at least 6 s are left. If it fails again, the server builds the results from the shortlist: a fixed reply, the top match, a comparison of the top three, and up to three items per type. They pass through the same block validation as model output.
+- Retried: timeouts, connection errors and HTTP 408, 409, 429 and 5xx. Not retried, and the turn ends with `model_failed`: a configuration error (no key, a model off the allowlist, or HTTP 401, 403 or 404 for a revoked key or unknown model) and a rejected request (HTTP 400 or 422, `ModelRejected`). A compose failure after text has streamed also ends the turn with `model_failed`.
+
+The turn log records `model_failures`, `retries` and `degraded` (`intent`, `compose` or empty), the Segment `turn.completed` event carries `degraded`, and the debug read-out shows `retries` and `degraded`. Harness rows for server-built turns have status `degraded` so comparisons don't count them as model output.
+
+## Character set (migration 0003)
+
+Migration `0003_utf8mb4_tables` converts the three tables to `utf8mb4` on MySQL so emoji can be stored. Pre-deploy checks, failure handling, rollback and what to do if the emoji error returns: [utf8mb4 migration runbook](personalized_search_utf8mb4_runbook.md).
 
 ## Removing the feature
 

@@ -1,0 +1,236 @@
+"""
+Personalized Search history and item feedback (tech spec "API Contracts"; chunks 28 and 30, MVP).
+
+- ``GET sessions/?enterprise_customer_uuid=&page=``: the learner's sessions in this enterprise that have
+  at least one turn, newest first, 20 per page.
+- ``GET sessions/{uuid}/?enterprise_customer_uuid=``: one session with its turns' stored parts, for replay.
+  ``upstream_conversation_id`` is never returned. Another learner's or enterprise's session is 404.
+- ``POST sessions/{uuid}/turns/{sequence}/feedback/`` with ``{enterprise_customer_uuid, rating}``: thumbs up
+  (1), down (-1) or cleared (null) on one of the learner's replies. Another learner's turn is 404.
+- ``GET item-feedback/?enterprise_customer_uuid=&kind=saved``, ``POST item-feedback/`` (idempotent:
+  201, then 200 for the same item and kind) and ``DELETE item-feedback/?enterprise_customer_uuid=&item_id=&kind=``.
+
+Every query filters on the requesting learner's ``lms_user_id`` and the enterprise, on top of the
+enterprise-scoped learner permission. All endpoints 404 while the feature flag is off. Reads and
+writes go through the history and feedback stores (``personalized_search.adapters.django_store``).
+"""
+import json
+from urllib.parse import urlsplit
+
+from edx_rbac.decorators import permission_required
+from edx_rest_framework_extensions.auth.jwt.authentication import JwtAuthentication
+from rest_framework import permissions, serializers, status
+from rest_framework.exceptions import NotFound, PermissionDenied
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+from enterprise_access.apps.api.utils import get_or_fetch_enterprise_uuid_for_bff_request
+from enterprise_access.apps.api.v1.views.personalized_search import body_enterprise_uuid
+from enterprise_access.apps.core.constants import PERSONALIZED_SEARCH_LEARNER_PERMISSION
+from enterprise_access.apps.personalized_search import events
+from enterprise_access.apps.personalized_search.adapters.django_store import DjangoFeedbackStore, DjangoHistoryStore
+from enterprise_access.apps.personalized_search.core import constants
+from enterprise_access.apps.personalized_search.core.errors import SessionNotFound
+from enterprise_access.toggles import personalized_search_enabled
+
+FEEDBACK_KINDS = DjangoFeedbackStore.kinds
+# What the Saved view needs to draw a card without the original turn: the ItemCard fields (Block catalog v1).
+CARD_SNAPSHOT_FIELDS = ('item_id', 'item_type', 'title', 'image_url', 'partner_name', 'partner_logo_url', 'link',
+                        'facts', 'why', 'fit')
+MAX_SNAPSHOT_BYTES = 8 * 1024
+# Snapshot fields the Saved view loads as images: kept only as https URLs or site paths.
+SNAPSHOT_URL_FIELDS = ('image_url', 'partner_logo_url')
+
+
+def _safe_url(value) -> bool:
+    """An https URL or a site-relative path; never ``javascript:``, ``data:``, plain http or a ``//host`` URL."""
+    if not isinstance(value, str) or any(c.isspace() or ord(c) < 32 for c in value):
+        return False
+    if value.startswith('/'):
+        return not value.startswith(('//', '/\\'))
+    parts = urlsplit(value)
+    return parts.scheme.lower() == 'https' and bool(parts.netloc)
+
+
+def enterprise_uuid_for_request(request, *args, **kwargs):
+    """``get_or_fetch_enterprise_uuid_for_bff_request`` for views whose URL has its own kwargs (``session_uuid``)."""
+    return get_or_fetch_enterprise_uuid_for_bff_request(request)
+
+
+def learner_id(request) -> int:
+    """
+    The requesting learner's LMS user id (the key every session and feedback row is scoped by).
+    No LMS id means no access: the Django pk is a different id space and must never stand in for it.
+    """
+    lms_user_id = getattr(request.user, 'lms_user_id', None)
+    if not lms_user_id:
+        raise PermissionDenied()
+    return lms_user_id
+
+
+class _LearnerView(APIView):
+    """Shared auth: cookie JWT, authenticated, flag on."""
+
+    authentication_classes = (JwtAuthentication,)
+    permission_classes = (permissions.IsAuthenticated,)
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        if not personalized_search_enabled():
+            raise NotFound()
+
+
+class EnterpriseQuerySerializer(serializers.Serializer):  # pylint: disable=abstract-method
+    enterprise_customer_uuid = serializers.UUIDField()
+
+
+class SessionListQuerySerializer(EnterpriseQuerySerializer):  # pylint: disable=abstract-method
+    page = serializers.IntegerField(min_value=1, required=False, default=1)
+
+
+def _validated(serializer_class, data):
+    serializer = serializer_class(data=data)
+    serializer.is_valid(raise_exception=True)
+    return serializer.validated_data
+
+
+class PersonalizedSearchSessionListView(_LearnerView):
+    """The learner's sessions in this enterprise, newest first."""
+
+    @permission_required(PERSONALIZED_SEARCH_LEARNER_PERMISSION, fn=enterprise_uuid_for_request)
+    def get(self, request):
+        """List sessions with at least one turn, 20 per page."""
+        query = _validated(SessionListQuerySerializer, request.query_params)
+        enterprise = query['enterprise_customer_uuid']
+        page = DjangoHistoryStore().list_sessions(lms_user_id=learner_id(request), enterprise_customer_uuid=enterprise,
+                                                  page=query['page'])
+        if page is None:
+            raise NotFound()
+        base = request.build_absolute_uri(request.path)
+
+        def link(number):
+            return f'{base}?enterprise_customer_uuid={enterprise}&page={number}' if number else None
+
+        return Response({'count': page['count'], 'next': link(page['next_page']),
+                         'previous': link(page['previous_page']), 'results': page['results']})
+
+
+class PersonalizedSearchSessionDetailView(_LearnerView):
+    """One of the learner's sessions with its stored turns."""
+
+    @permission_required(PERSONALIZED_SEARCH_LEARNER_PERMISSION, fn=enterprise_uuid_for_request)
+    def get(self, request, session_uuid):
+        """The session and its turns' stored parts, in sequence order."""
+        query = _validated(EnterpriseQuerySerializer, request.query_params)
+        lms_user_id = learner_id(request)
+        try:
+            session = DjangoHistoryStore().get_session(
+                session_uuid=session_uuid, lms_user_id=lms_user_id,
+                enterprise_customer_uuid=query['enterprise_customer_uuid'],
+            )
+        except SessionNotFound as exc:
+            raise NotFound() from exc
+        events.send(lms_user_id, events.SESSION_OPENED, conversation_id=session_uuid,
+                    enterprise_customer_uuid=query['enterprise_customer_uuid'])
+        return Response(session)
+
+
+class ItemFeedbackWriteSerializer(EnterpriseQuerySerializer):  # pylint: disable=abstract-method
+    """POST body for item feedback."""
+
+    item_id = serializers.CharField(max_length=255)
+    item_type = serializers.ChoiceField(choices=constants.ITEM_TYPES)
+    kind = serializers.ChoiceField(choices=list(FEEDBACK_KINDS))
+    session_uuid = serializers.UUIDField(required=False, allow_null=True)
+    card_snapshot = serializers.JSONField(required=False, allow_null=True)
+
+    def validate_card_snapshot(self, value):
+        """
+        An object of the item card's own fields, at most ``MAX_SNAPSHOT_BYTES`` serialized; others are dropped.
+        An image URL that isn't https or a site path, or a ``link`` that isn't the card's link object, is stored as
+        null, so the save still lands but the Saved view never renders a ``javascript:`` or ``data:`` URL.
+        """
+        if value is None:
+            return None
+        if not isinstance(value, dict):
+            raise serializers.ValidationError('Must be an object.')
+        kept = {key: value[key] for key in CARD_SNAPSHOT_FIELDS if key in value}
+        for key in SNAPSHOT_URL_FIELDS:
+            if kept.get(key) is not None and not _safe_url(kept[key]):
+                kept[key] = None
+        link = kept.get('link')
+        if link is not None and not (isinstance(link, dict) and link.get('kind') in ('course', 'program')):
+            kept['link'] = None  # ItemCard.link is {kind, course_key | program_uuid}, never a URL
+        if len(json.dumps(kept)) > MAX_SNAPSHOT_BYTES:
+            raise serializers.ValidationError('Too large.')
+        return kept
+
+
+class ItemFeedbackListQuerySerializer(EnterpriseQuerySerializer):  # pylint: disable=abstract-method
+    kind = serializers.ChoiceField(choices=list(FEEDBACK_KINDS), default=FEEDBACK_KINDS[0])
+
+
+class ItemFeedbackDeleteQuerySerializer(EnterpriseQuerySerializer):  # pylint: disable=abstract-method
+    item_id = serializers.CharField(max_length=255)
+    kind = serializers.ChoiceField(choices=list(FEEDBACK_KINDS))
+
+
+class PersonalizedSearchItemFeedbackView(_LearnerView):
+    """Save / not-interested items, and undo (REQ-009)."""
+
+    @permission_required(PERSONALIZED_SEARCH_LEARNER_PERMISSION, fn=enterprise_uuid_for_request)
+    def get(self, request):
+        """The learner's feedback of one kind in this enterprise, newest first."""
+        query = _validated(ItemFeedbackListQuerySerializer, request.query_params)
+        return Response({'results': DjangoFeedbackStore().list(
+            lms_user_id=learner_id(request), enterprise_customer_uuid=query['enterprise_customer_uuid'],
+            kind=query['kind'],
+        )})
+
+    @permission_required(PERSONALIZED_SEARCH_LEARNER_PERMISSION, fn=body_enterprise_uuid)
+    def post(self, request):
+        """Record feedback; an existing row for the same item and kind is returned as-is (200)."""
+        data = _validated(ItemFeedbackWriteSerializer, request.data)
+        row, created = DjangoFeedbackStore().add(
+            lms_user_id=learner_id(request), enterprise_customer_uuid=data['enterprise_customer_uuid'],
+            item_id=data['item_id'], item_type=data['item_type'], kind=data['kind'],
+            session_uuid=data.get('session_uuid'), card_snapshot=data.get('card_snapshot'),
+        )
+        return Response(row, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+    @permission_required(PERSONALIZED_SEARCH_LEARNER_PERMISSION, fn=enterprise_uuid_for_request)
+    def delete(self, request):
+        """Undo: remove the learner's feedback row for this item and kind (204 even if it was already gone)."""
+        query = _validated(ItemFeedbackDeleteQuerySerializer, request.query_params)
+        DjangoFeedbackStore().remove(
+            lms_user_id=learner_id(request), enterprise_customer_uuid=query['enterprise_customer_uuid'],
+            item_id=query['item_id'], kind=query['kind'],
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class TurnRatingSerializer(EnterpriseQuerySerializer):  # pylint: disable=abstract-method
+    """POST body for a reply's thumbs."""
+
+    rating = serializers.ChoiceField(choices=[1, -1], allow_null=True)
+
+
+class PersonalizedSearchTurnFeedbackView(_LearnerView):
+    """``POST sessions/{uuid}/turns/{sequence}/feedback/``: thumbs on one of the learner's replies."""
+
+    @permission_required(PERSONALIZED_SEARCH_LEARNER_PERMISSION, fn=body_enterprise_uuid)
+    def post(self, request, session_uuid, sequence):
+        """Set (1 or -1) or clear (null) the rating; 404 for a turn that isn't the learner's."""
+        body = _validated(TurnRatingSerializer, request.data)
+        lms_user_id = learner_id(request)
+        try:
+            row = DjangoHistoryStore().rate_turn(
+                session_uuid=session_uuid, sequence=sequence, lms_user_id=lms_user_id,
+                enterprise_customer_uuid=body['enterprise_customer_uuid'], rating=body['rating'],
+            )
+        except SessionNotFound as exc:
+            raise NotFound() from exc
+        events.send(lms_user_id, events.TURN_RATED, conversation_id=session_uuid,
+                    enterprise_customer_uuid=body['enterprise_customer_uuid'], turn_id=row['turn_id'],
+                    turn_index=sequence, rating=body['rating'])
+        return Response({'sequence': row['sequence'], 'rating': row['rating']})
