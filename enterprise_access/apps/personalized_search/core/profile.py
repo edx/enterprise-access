@@ -1,16 +1,19 @@
 """
 The ``profile`` block (tech spec KD-11): what the AI knows about the learner, for the "Why these?" popover.
 
-Built from the merged intent with no model call, so it can only restate what the learner said. Built after
-the results are chosen: a preference stays only while the shown results reflect it, so the popover never
-explains the results with something that no longer drives them.
+Built from the merged intent with no model call. That intent is the intent model's reading of the conversation,
+so a chip can be inferred rather than said, and the summary says what the AI understood, not what the learner
+told it. Built after the results are chosen: a preference stays only while the shown results reflect it, so the
+popover never explains the results with something that no longer drives them.
 """
 import re
 
 from enterprise_access.apps.personalized_search.core import constants
 
-SUMMARY = ("I picked these from your organization's catalog using what you told me: your goal, how you like "
-           'to learn and the time you have.')
+SUMMARY = "Here's what I understood you're looking for."
+# What each kind of chip is about, in summary order: the summary names only the kinds its chips show.
+SUMMARY_TOPICS = (('goal', 'your goal'), ('level', 'your level'), ('format', 'how you like to learn'),
+                  ('time', 'the time you have'))
 MAX_CHIPS = 6
 CHIP_CAP = 40
 PACING_LABELS = {'self_paced': 'Self-paced', 'instructor_paced': 'Instructor-led'}
@@ -79,30 +82,43 @@ def profile_props(merged_intent: dict | None, shown: list[dict] | None = None) -
     chips = []
     roles = intent.get('roles') or []
     if roles:
-        chips.append(roles[0])
-    chips += [skill for skill in (intent.get('skills') or [])[:2]
+        chips.append((roles[0], 'goal'))
+    chips += [(skill, 'goal') for skill in (intent.get('skills') or [])[:2]
               if isinstance(skill, str) and _reflected(shown, lambda c: _hit(c).get('skill_names'), _has_skill(skill))]
     level = intent.get('level')
     if level and _reflected(shown, lambda c: _hit(c).get('level_type'),
                             lambda value: str(value).casefold() == str(level).casefold()):
-        chips.append(str(level).capitalize())
+        chips.append((str(level).capitalize(), 'level'))
     pacing = constraints.get('pacing')
     if pacing in PACING_LABELS and _reflected(shown, lambda c: _facts(c).get('pacing_type'),
                                               lambda value: value == pacing):
-        chips.append(PACING_LABELS[pacing])
+        chips.append((PACING_LABELS[pacing], 'format'))
     max_hours = constraints.get('max_hours_per_week')
     if max_hours and _reflected(shown, _hours, lambda value: value <= max_hours):
-        chips.append(f'Up to {max_hours} hrs/week')
+        chips.append((f'Up to {max_hours} hrs/week', 'time'))
     max_weeks = constraints.get('max_weeks')
     if max_weeks and _reflected(shown, lambda c: _facts(c).get('weeks_to_complete'),
                                 lambda value: value <= max_weeks):
-        chips.append(f'Up to {max_weeks} weeks')
+        chips.append((f'Up to {max_weeks} weeks', 'time'))
     # Distinct known types, labelled as their sections are: a repeated type neither doubles nor hides the chip.
     types = [t for t in dict.fromkeys(intent.get('item_types') or []) if t in constants.SECTION_LABELS]
     if types and len(types) < len(constants.ITEM_TYPES) and _reflected(
             shown, lambda c: _card(c).get('item_type'), lambda value: value in types):
-        chips.append(' and '.join(constants.SECTION_LABELS[t] for t in types))
-    chips = list(dict.fromkeys(_chip(c) for c in chips if isinstance(c, str) and c.strip()))[:MAX_CHIPS]
-    if not chips:
+        chips.append((' and '.join(constants.SECTION_LABELS[t] for t in types), 'format'))
+    kept = {}
+    for chip, kind in chips:
+        if isinstance(chip, str) and chip.strip():
+            kept.setdefault(_chip(chip), kind)
+    kept = dict(list(kept.items())[:MAX_CHIPS])
+    if not kept:
         return None
-    return {'summary': SUMMARY, 'chips': chips}
+    return {'summary': summary(set(kept.values())), 'chips': list(kept)}
+
+
+def summary(kinds: set[str]) -> str:
+    """What the AI understood, naming only the kinds of chip shown (``SUMMARY_TOPICS``); ``SUMMARY`` for none."""
+    topics = [topic for kind, topic in SUMMARY_TOPICS if kind in kinds]
+    if not topics:
+        return SUMMARY
+    named = topics[0] if len(topics) == 1 else f"{', '.join(topics[:-1])} and {topics[-1]}"
+    return f"Here's what I understood about {named}."

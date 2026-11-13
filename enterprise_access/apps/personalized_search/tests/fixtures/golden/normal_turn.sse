@@ -30,7 +30,7 @@ data: {"type":"text-end","id":"reply"}
 
 data: {"type":"data-block","id":"blk_1","data":{"v":1,"type":"page_header","props":{"title":"Lead with confidence","dek":"Short, practical picks.","label":"Your results"}}}
 
-data: {"type":"data-block","id":"blk_profile","data":{"v":1,"type":"profile","props":{"summary":"I picked these from your organization's catalog using what you told me: your goal, how you like to learn and the time you have.","chips":["Leadership","Introductory"]}}}
+data: {"type":"data-block","id":"blk_profile","data":{"v":1,"type":"profile","props":{"summary":"Here's what I understood about your goal and your level.","chips":["Leadership","Introductory"]}}}
 
 data: {"type":"data-block","id":"blk_2","data":{"v":1,"type":"top_pick","props":{"item":{"item_id":"p-1","item_type":"program","title":"Program p-1","image_url":"https://img/p-1.png","partner_name":"MITx","partner_logo_url":"https://logo/mit.png","link":{"kind":"program","program_uuid":"p-1"},"facts":{"level_type":"Intermediate","program_type":"Professional Certificate","course_count":3},"why":"Because you want to lead a team and earn a credential.","fit":[],"section":"top_pick","position":1},"reason":"Because you want to lead a team and earn a credential.","checks":["Introductory","Certificate"]}}}
 
@@ -44,7 +44,7 @@ data: {"type":"data-block","id":"blk_6","data":{"v":1,"type":"insight","props":{
 
 data: {"type":"data-block","id":"blk_7","data":{"v":1,"type":"plan","props":{"steps":[{"item_id":"edX+C1","note":"Start"},{"item_id":"p-1","note":"Then"}],"why":"Start with the basics, then build to the full certificate."}}}
 
-data: {"type":"data-block","id":"blk_profile","data":{"v":1,"type":"profile","props":{"summary":"I picked these from your organization's catalog using what you told me: your goal, how you like to learn and the time you have.","chips":["Leadership","Introductory"]}}}
+data: {"type":"data-block","id":"blk_profile","data":{"v":1,"type":"profile","props":{"summary":"Here's what I understood about your goal and your level.","chips":["Leadership","Introductory"]}}}
 
 data: {"type":"data-followups","id":"followups","data":{"question":"Do you want courses, executive education or a program?","attribute":"type","suggestions":["Courses","Executive education","Programs"],"ideas":["Giving feedback to my team","Leading remote teams"]}}
 
