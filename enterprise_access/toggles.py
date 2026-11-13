@@ -78,6 +78,26 @@ def personalized_search_debug_enabled():
     return PERSONALIZED_SEARCH_DEBUG.is_enabled()
 
 
+# .. toggle_name: enterprise_access.personalized_search_suggested_order
+# .. toggle_implementation: WaffleSwitch
+# .. toggle_default: False
+# .. toggle_description: Shows the Personalized Search "suggested order" (the plan block) in the results. When off,
+#     the compose prompt doesn't ask for a plan, any plan the model writes is dropped, and the server doesn't add
+#     one when the learner asks what to take first. A switch, not a flag, so the turn view and the offline harness
+#     (which has no request) read the same value.
+# .. toggle_use_cases: open_edx
+# .. toggle_creation_date: 2026-11-13
+PERSONALIZED_SEARCH_SUGGESTED_ORDER = WaffleSwitch(
+    f'{ENTERPRISE_ACCESS_NAMESPACE}.personalized_search_suggested_order',
+    __name__,
+)
+
+
+def personalized_search_suggested_order_enabled():
+    """Return whether Personalized Search results include the suggested order (plan block)."""
+    return PERSONALIZED_SEARCH_SUGGESTED_ORDER.is_enabled()
+
+
 # A ``WaffleSwitch`` rather than a ``WaffleFlag``, deliberately. A switch is a single
 # global boolean an administrator sets in Django admin; it takes no request, so it cannot
 # be turned on per-user, by percentage, or by a ``?flag=1`` query string. Two consequences

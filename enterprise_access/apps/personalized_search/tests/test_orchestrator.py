@@ -12,6 +12,7 @@ from django.test import TestCase
 from enterprise_access.apps.personalized_search.adapters.django_store import DjangoSessionStore
 from enterprise_access.apps.personalized_search.adapters.memory_store import InMemorySessionStore
 from enterprise_access.apps.personalized_search.core import constants
+from enterprise_access.apps.personalized_search.core.compose import SYSTEM_PROMPT_NO_PLAN
 from enterprise_access.apps.personalized_search.core.errors import ModelConfigurationError, ModelError, ModelRejected
 from enterprise_access.apps.personalized_search.core.orchestrator import ModelChoice, Steps, TurnContext, run_turn
 from enterprise_access.apps.personalized_search.core.ports import Usage
@@ -118,6 +119,21 @@ class RunTurnTests(TestCase):
         self.assertNotIn('data-status', stored)
         self.assertNotIn('finish', stored)
         self.assertEqual(stored.count('text-delta'), 1)  # coalesced for replay
+
+    def test_the_suggested_order_switch_off_drops_the_plan_from_the_prompt_and_the_results(self):
+        systems = []
+        steps = fake_steps()
+        model_compose = steps.compose
+
+        def compose(**kwargs):
+            systems.append(kwargs['system'])
+            return model_compose(**kwargs)
+
+        ctx = dataclasses.replace(self.ctx, message='What should I take next?', plan_enabled=False)
+        parts = list(run_turn(ctx, dataclasses.replace(steps, compose=compose)))
+        self.assertEqual(systems, [SYSTEM_PROMPT_NO_PLAN])
+        self.assertFalse([p for p in parts if p['type'] == 'data-block' and p['data']['type'] == 'plan'])
+        self.assertEqual(parts[-1]['type'], 'finish')
 
     def test_redirect_persists_a_turn_without_items(self):
         steps = fake_steps(intent_text='{"on_topic": false, "redirect_reason": "off_topic"}',

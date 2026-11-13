@@ -108,3 +108,12 @@ def test_ssp_paid_renewal_is_disabled_by_default():
 def test_ssp_paid_renewal_can_be_enabled():
     with override_waffle_switch(toggles.SSP_PAID_RENEWAL, True):
         assert toggles.ssp_paid_renewal_enabled() is True
+
+
+@pytest.mark.django_db
+def test_personalized_search_suggested_order_is_off_by_default_and_can_be_enabled():
+    """A switch, read by the turn view and the offline harness alike."""
+    assert isinstance(toggles.PERSONALIZED_SEARCH_SUGGESTED_ORDER, WaffleSwitch)
+    assert toggles.personalized_search_suggested_order_enabled() is False
+    with override_waffle_switch(toggles.PERSONALIZED_SEARCH_SUGGESTED_ORDER, True):
+        assert toggles.personalized_search_suggested_order_enabled() is True
