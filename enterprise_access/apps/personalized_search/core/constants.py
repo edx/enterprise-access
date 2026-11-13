@@ -43,6 +43,27 @@ SECTION_LABELS = {'course': 'Courses', 'executive_education': 'Executive educati
 REDIRECT_REPLY = (
     "I can help you find learning in your organization's catalog. What would you like to learn?"
 )
+# The server's reply per redirect reason (REQ-008); no model writes them.
+REDIRECT_REPLIES = {
+    'off_topic': REDIRECT_REPLY,
+    'injection': REDIRECT_REPLY,
+    'unsafe': "I can't help with that. I can help you find learning in your organization's catalog.",
+    'external_provider': ("I can only search your organization's catalog, not other course sites. "
+                          "What would you like to learn?"),
+    # NEEDS PRODUCT AND LEGAL REVIEW before the feature flag widens beyond stage: wording and the resources named.
+    # Kept neutral and non-clinical; the turn shows no cards, chips or follow-up question with it.
+    'distress': ("I'm sorry you're going through this, and I'm glad you said something. This chat can only help "
+                 "you find learning, so please reach out to someone you trust, or to your organization's employee "
+                 "assistance program if you have one. If you're in danger, contact your local emergency services "
+                 "now."),
+}
+# A redirect right after the same one: shorter, so the chat never repeats a sentence word for word.
+REDIRECT_REPEAT_REPLY = 'I can only help with learning here. What skill would you like to build?'
+# Said before the results when the learner asked for another provider's courses and named a topic to learn.
+EXTERNAL_PROVIDER_NOTE = "I can only search your organization's catalog, so here's what it has."
+# The follow-up heading under a redirect, and under a turn that found nothing: neither recommended anything.
+REDIRECT_FOLLOWUP_QUESTION = 'Want a starting point?'
+NO_RESULTS_FOLLOWUP_QUESTION = "Is there another topic you'd like to try?"
 # Server-built results, when a model step can't be reached (``compose.server_output``): no model writes this text.
 DEGRADED_REPLY = "I couldn't write a reply just now, so here are the closest matches from your organization's catalog."
 DEGRADED_NO_RESULTS_REPLY = "I couldn't find matches just now. Try telling me again what you want to learn."

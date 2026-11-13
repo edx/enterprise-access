@@ -119,7 +119,7 @@ class HarnessRunTests(TestCase):
 
     def test_cases(self):
         demo = harness.demo_cases()
-        self.assertEqual(len(demo), 43)
+        self.assertEqual(len(demo), 48)
         refine = [c for c in demo if c.id == 'R1'][0]
         self.assertEqual(refine.history, ('I want to get better at leading a team',))
         personas = harness.persona_cases(load_personas)
@@ -365,6 +365,13 @@ class HarnessScoringTests(TestCase):
         other = {'redirect_reason': 'injection_or_off_topic'}
         self.assertTrue(harness_scoring.score_intent(other, seen(False, 'off_topic'))['pass'])
         self.assertFalse(harness_scoring.score_intent(other, seen(True, None))['pass'])
+        distress = {'redirect_reason': 'distress'}
+        self.assertTrue(harness_scoring.score_intent(distress, seen(False, 'distress'))['pass'])
+        self.assertFalse(harness_scoring.score_intent(distress, seen(False, 'off_topic'))['pass'])
+        # Another provider plus a topic searches it: the reason counts, on_topic or not.
+        provider = {'redirect_reason': 'external_provider'}
+        self.assertTrue(harness_scoring.score_intent(provider, seen(True, 'external_provider'))['pass'])
+        self.assertTrue(harness_scoring.score_intent(provider, seen(False, 'external_provider'))['pass'])
 
     def test_score_intent_checks_a_weekly_hours_limit(self):
         debug = {'intent_result': {'on_topic': True, 'redirect_reason': None},
@@ -441,7 +448,7 @@ class HarnessCommandTests(TestCase):
                      stdout=out)
         plan = json.loads(out.getvalue())
         self.assertEqual(plan['arms'], ['openai-best-fit', 'xpert'])
-        self.assertEqual(plan['turns'], 86)
+        self.assertEqual(plan['turns'], 96)
 
     @override_settings(PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE=None)
     def test_requires_dev_scope(self):

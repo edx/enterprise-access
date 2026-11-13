@@ -301,7 +301,9 @@ Drawn with the KD-10 boundaries, so which dependencies stay out of the core is v
 
 **Redirect path (REQ-008):**
 - No retrieval and no compose.
-- Emits a fixed redirect reply ("I can help you find learning in your organization's catalog. What would you like to learn?") as text parts, then `data-followups` with the **opening chips** (below) and `attribute: "open"`.
+- Emits a fixed, server-written reply per reason (`constants.REDIRECT_REPLIES`; off-topic and injection: "I can help you find learning in your organization's catalog. What would you like to learn?") as text parts, then `data-followups` with the **opening chips** (below), `attribute: "open"` and the question "Want a starting point?". The same redirect twice in a row alternates with a shorter reply.
+- **Distress (2026-11-12, test-plan N-30):** a supportive reply that points to people and services that can help (copy pending product and legal review), and **no** `data-followups`, chips or blocks.
+- **Another provider** (`external_provider`): without a topic, a redirect saying only the organization's catalog is searched; with a topic, the turn searches it and the reply opens with that sentence.
 - Persists a turn with no items (one model call in total). The page pane keeps the previous page.
 
 **Model failures (2026-11-12): retry once, then server-built results.** There is no kill-switch mode with no model calls (dropped 2026-11-12, Eng Lead); this is the only degraded behaviour.
@@ -342,7 +344,7 @@ Drawn with the KD-10 boundaries, so which dependencies stay out of the core is v
 }
 ```
 
-- `redirect_reason` ∈ `null | off_topic | unsafe | injection`.
+- `redirect_reason` ∈ `null | off_topic | unsafe | injection | distress | external_provider`. Only `external_provider` may come with `on_topic: true` (a topic to search). A message that also names something learnable ("help with my Python homework") is on topic.
 - `merge` ∈ `refine | replace`. With `refine`, the server overlays the non-null fields onto the prior intent: `skills` and `roles` are unioned (then capped), while `item_types`, `level` and `constraints` are replaced when non-null, so a refinement can narrow the item types. A redirect turn leaves `merged_intent` unchanged. With `replace`, the new intent is used as is. A refinement can't clear `level`, `pacing` or a time limit (null means unchanged), so "any level is fine" leaves the old value as a soft prefilter boost; accepted for the MVP (2026-11-12), with an explicit "any" value only if pilot feedback needs it.
 - Caps: `skills` ≤ 8, `roles` ≤ 3. `level` ∈ `null | introductory | intermediate | advanced`. `pacing` ∈ `null | self_paced | instructor_paced`.
 - **Career advancement (R-09)** is handled in the prompt: when the learner states a career-advancement goal, the model must add adjacent leadership roles and skills to `roles` and `skills`. There's no separate flag.
@@ -420,6 +422,7 @@ Drawn with the KD-10 boundaries, so which dependencies stay out of the core is v
 - Files:
   - `normal_turn.sse`: start, session, 3× status, text, header, course + program sections, followups, insight, plan, session, finish.
   - `off_topic_turn.sse`
+  - `distress_turn.sse`: text only; no `data-followups` and no blocks.
   - `no_match_turn.sse`: text-only plus a clarifying follow-up.
   - `error_turn.sse`: text, `page_header`, one `item_section`, then `error:model_failed` as the last part before `[DONE]` (blocks included so the client's discard-on-error path is exercised).
 
@@ -923,4 +926,5 @@ The full changelog is maintained with the team. Highlights:
 | 2026-11-10 | Model comparison follow-ups: `gpt-6-luna` defaults; server-added sections only from skill-matched candidates (no keyword-match, refill or best-of-type fallback items); programs filtered by teaching language as well as metadata language; compose sees a program's credential (`program_type`); "short" or "quick" sets a 4-week limit; the follow-up is sent after the results and asks what to explore next when the results shown don't vary on the planned attribute; a bolded reply title other than the top pick is recorded; shortlist size per compose model; REQ-012 first text 2 s → 3 s |
 | 2026-11-12 | Self-review decisions (Eng Lead): no kill-switch degraded mode, the model-failure fallback instead; step 5 describes the conditional-update lock and its owner token; `run_turn(ctx, steps)`; refinements can't clear a field (accepted); Executive Education is never server-added; up to three cards per type padded from reserve, and "See all" links to the counted query; intent labels in events are model-normalised; the Welcome heading is hidden on the tab |
 | 2026-11-12 | KD-8 amended (Eng Lead): the tab also needs the learner's enterprise customer on `FEATURE_ENABLE_PERSONALIZED_SEARCH_FOR_ENTERPRISE_CUSTOMERS`, gated like the Pathways allowlist; REQ-014, the tab gate and Feature Flags updated |
+| 2026-11-12 | Test-plan fixes (safety): `distress` and `external_provider` redirect reasons, a reply per reason, a shorter reply for a repeated redirect, no follow-ups on distress; mixed messages with a learnable topic search it; identifiers (SSN, card, account numbers) redacted before models and storage |
 | 2026-11-13 | Review follow-ups: a refused key, model or request (HTTP 400, 401, 403, 404, 422) ends the turn with `model_failed` instead of being retried; an intent fallback's query is used for that turn only (HIL-1 of #391); `degraded` on `turn.completed` |
