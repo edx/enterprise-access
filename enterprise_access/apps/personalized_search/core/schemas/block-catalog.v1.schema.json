@@ -52,8 +52,9 @@
                      "dek": {"type": "string", "maxLength": 200}, "fallback": {"type": "boolean"},
                      "items": {"type": "array", "minItems": 1, "maxItems": 3, "items": {"$ref": "#/$defs/item_card"}},
                      "total": {"type": "integer", "minimum": 0, "description": "Catalog matches for this type (optional, v1 2026-11-09)"},
+                     "search_query": {"type": "string", "minLength": 1, "description": "The query whose catalog matches `total` counts, for the \"See all\" link; sent only with `total` (optional, v1 2026-11-12)"},
                      "reserve": {"type": "array", "maxItems": 2, "items": {"$ref": "#/$defs/item_card"},
-                                 "description": "Next-best cards to fill one the learner removes (optional, v1 2026-11-09)"}}
+                                 "description": "Next-best cards for this type: the portal pads the row to 3 cards from them at first render, and fills a card the learner removes (\"Not for me\") from what's left (optional, v1 2026-11-09)"}}
     },
     "insight": {
       "type": "object", "additionalProperties": false, "required": ["title", "body"],

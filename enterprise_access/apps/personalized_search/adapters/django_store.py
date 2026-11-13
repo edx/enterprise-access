@@ -28,11 +28,11 @@ class DjangoSessionStore:
     """Sessions and turns in ``ChatSession``/``ChatTurn``; dismissed items from ``ItemFeedback``."""
 
     def not_interested_ids(self, lms_user_id, enterprise_customer_uuid) -> list[str]:
-        """This learner's dismissed items in this enterprise; every turn excludes them (REQ-009)."""
+        """This learner's dismissed items in this enterprise, newest first; every turn excludes them (REQ-009)."""
         return list(ItemFeedback.objects.filter(
             lms_user_id=lms_user_id, enterprise_customer_uuid=enterprise_customer_uuid,
             kind=ItemFeedback.KIND_NOT_INTERESTED,
-        ).values_list('item_id', flat=True))
+        ).order_by('-created', '-pk').values_list('item_id', flat=True))
 
     def load_or_create(self, *, session_uuid: str | None, lms_user_id, enterprise_customer_uuid: str,
                        message: str) -> dict:

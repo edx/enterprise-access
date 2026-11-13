@@ -8,6 +8,8 @@ from referencing import Registry, Resource
 
 from enterprise_access.apps.personalized_search.core.errors import ModelConfigurationError
 from enterprise_access.apps.personalized_search.core.orchestrator import ModelChoice, TurnContext, run_turn
+from enterprise_access.apps.personalized_search.core.retrieval import SearchResults
+from enterprise_access.apps.personalized_search.tests.helpers import default_candidates
 from enterprise_access.apps.personalized_search.tests.test_orchestrator import (
     COMPOSE,
     fake_steps,
@@ -48,7 +50,9 @@ class WireContractTests(TestCase):
         check = validator()
         turns = [
             self.turn(fake_steps()),
-            self.turn(fake_steps(compose_text=INSIGHT_AND_PLAN)),
+            # With catalog totals: sections carry total, search_query and reserve.
+            self.turn(fake_steps(compose_text=INSIGHT_AND_PLAN, retrieve=lambda *a, **kw: SearchResults(
+                default_candidates(), {'course': 37, 'program': 4}, {'course': 'team leadership', 'program': 'x'}))),
             self.turn(fake_steps(intent_text='{"on_topic": false, "redirect_reason": "injection"}')),
             self.turn(fake_steps(intent_error=ModelConfigurationError('x'))),
         ]
@@ -57,7 +61,10 @@ class WireContractTests(TestCase):
             for part in parts:
                 check.validate(part)
                 types.add(part['data']['type'] if part['type'] == 'data-block' else part['type'])
-        self.assertLessEqual({'page_header', 'item_section', 'insight', 'plan', 'error', 'finish'}, types)
+                if part['type'] == 'data-block' and 'search_query' in part['data']['props']:
+                    types.add('search_query')
+        self.assertLessEqual({'page_header', 'item_section', 'insight', 'plan', 'error', 'finish', 'search_query'},
+                             types)
 
     def test_schema_rejects_an_unhydrated_item(self):
         bad = {'type': 'data-block', 'id': 'b', 'data': {'v': 1, 'type': 'item_section', 'props': {
