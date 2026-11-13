@@ -24,7 +24,7 @@ from typing import Iterator
 
 import requests
 
-from enterprise_access.apps.personalized_search.core.errors import ModelError
+from enterprise_access.apps.personalized_search.core.errors import ModelError, model_error_for_status
 from enterprise_access.apps.personalized_search.core.ports import Usage
 
 XPERT_MODEL = 'xpert'
@@ -36,6 +36,13 @@ def _message_content(unit) -> str | None:
     message = unit[0] if isinstance(unit, list) and unit else unit
     content = message.get('content') if isinstance(message, dict) else None
     return content if isinstance(content, str) else None
+
+
+def _request_error(exc: Exception, what: str) -> ModelError:
+    """The port error for a failed request, by the HTTP status of its response (none for timeouts or connections)."""
+    status = getattr(getattr(exc, 'response', None), 'status_code', None)
+    return model_error_for_status(status if isinstance(status, int) else None,
+                                  f'Xpert {what} failed ({type(exc).__name__}).')
 
 
 class XpertStreamDecoder:
@@ -121,7 +128,7 @@ class XpertBackend:
             response.raise_for_status()
             content = _message_content(response.json())
         except (requests.RequestException, ValueError) as exc:
-            raise ModelError(f'Xpert request failed ({type(exc).__name__}).') from exc
+            raise _request_error(exc, 'request') from exc
         finally:
             usage.elapsed_ms = round((time.monotonic() - started) * 1000)
         if content is None:
@@ -138,7 +145,7 @@ class XpertBackend:
                                           stream=True, timeout=(CONNECT_TIMEOUT_S, timeout_s))
             response.raise_for_status()
         except requests.RequestException as exc:
-            raise ModelError(f'Xpert request failed ({type(exc).__name__}).') from exc
+            raise _request_error(exc, 'request') from exc
         decoder = XpertStreamDecoder()
         try:
             for chunk in response.iter_content(chunk_size=None):
@@ -147,7 +154,7 @@ class XpertBackend:
                         usage.first_token_ms = round((time.monotonic() - started) * 1000)
                     yield delta
         except requests.RequestException as exc:
-            raise ModelError(f'Xpert stream failed ({type(exc).__name__}).') from exc
+            raise _request_error(exc, 'stream') from exc
         finally:
             usage.elapsed_ms = round((time.monotonic() - started) * 1000)
             usage.extra['xpert_units'] = decoder.units

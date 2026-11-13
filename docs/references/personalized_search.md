@@ -73,11 +73,11 @@ Only items the learner marked "Not for me" are excluded from later turns. Items 
 
 The OpenAI client doesn't retry (`max_retries=0`), so the orchestrator does, once per step:
 
-- **Intent** is retried if at least 4 s of the turn deadline are left. If it fails again, the turn skips classification (the message is the query; a later turn refines the previous intent) and the server builds the results.
+- **Intent** is retried if at least 4 s of the turn deadline are left. If it fails again, the turn skips classification and the server builds the results. The message is this turn's search query only: the session keeps its previous merged intent (none on a first turn), so the unclassified message doesn't shape later turns.
 - **Compose** is retried if no text has streamed yet and at least 6 s are left. If it fails again, the server builds the results from the shortlist: a fixed reply, the top match, a comparison of the top three, and up to three items per type. They pass through the same block validation as model output.
-- A configuration error (a bad key or model) is never retried and ends the turn with `model_failed`, as does a compose failure after text has streamed.
+- Retried: timeouts, connection errors and HTTP 408, 409, 429 and 5xx. Not retried, and the turn ends with `model_failed`: a configuration error (no key, a model off the allowlist, or HTTP 401, 403 or 404 for a revoked key or unknown model) and a rejected request (HTTP 400 or 422, `ModelRejected`). A compose failure after text has streamed also ends the turn with `model_failed`.
 
-The turn log records `model_failures`, `retries` and `degraded` (`intent`, `compose` or empty), and the debug read-out shows `retries` and `degraded`. Harness rows for server-built turns have status `degraded` so comparisons don't count them as model output.
+The turn log records `model_failures`, `retries` and `degraded` (`intent`, `compose` or empty), the Segment `turn.completed` event carries `degraded`, and the debug read-out shows `retries` and `degraded`. Harness rows for server-built turns have status `degraded` so comparisons don't count them as model output.
 
 ## Removing the feature
 

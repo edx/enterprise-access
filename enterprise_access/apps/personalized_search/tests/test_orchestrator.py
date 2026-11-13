@@ -6,12 +6,13 @@ import uuid
 from unittest import TestCase as PlainTestCase
 from unittest import mock
 
+import ddt
 from django.test import TestCase
 
 from enterprise_access.apps.personalized_search.adapters.django_store import DjangoSessionStore
 from enterprise_access.apps.personalized_search.adapters.memory_store import InMemorySessionStore
 from enterprise_access.apps.personalized_search.core import constants
-from enterprise_access.apps.personalized_search.core.errors import ModelConfigurationError, ModelError
+from enterprise_access.apps.personalized_search.core.errors import ModelConfigurationError, ModelError, ModelRejected
 from enterprise_access.apps.personalized_search.core.orchestrator import ModelChoice, Steps, TurnContext, run_turn
 from enterprise_access.apps.personalized_search.core.ports import Usage
 from enterprise_access.apps.personalized_search.core.retrieval import RetrievalFailed, SearchResults
@@ -264,6 +265,7 @@ class RunTurnTests(TestCase):
         self.assertTrue(all('status' not in i for i in items))
 
 
+@ddt.ddt
 class ModelResilienceTests(TestCase):
     """A model step that can't be reached is retried once, then the turn shows server-built results."""
 
@@ -333,8 +335,23 @@ class ModelResilienceTests(TestCase):
         self.assertEqual((record['outcome'], record['degraded']), ('done', 'intent'))
         self.assertEqual(ChatTurn.objects.get().intent['fallback'], True)
 
-    def test_a_configuration_error_is_not_retried(self):
-        error = ModelConfigurationError('no key')
+    @ddt.data(None, {'query': 'team leadership', 'skills': ['Leadership'], 'roles': [], 'level': None,
+                     'item_types': ['course'], 'constraints': {'max_weeks': None, 'pacing': None}})
+    def test_an_intent_fallback_searches_with_the_message_but_keeps_the_sessions_intent(self, prior):
+        self.session['merged_intent'] = prior
+        self.ctx.message = 'quick ones please'  # would add a 4-week limit to the merged intent
+        searched = []
+        steps = dataclasses.replace(self.steps(intent_failures=2),
+                                    retrieve=lambda intent, *a, **kw: searched.append(intent) or default_candidates())
+        parts = list(run_turn(self.ctx, steps))
+        self.assertEqual(parts[-1], {'type': 'finish'})
+        # This turn's search uses the unclassified message; the session doesn't carry it to later turns.
+        self.assertEqual(searched[0]['constraints']['max_weeks'], 4)
+        self.assertEqual(self.session['merged_intent'], prior)
+        self.assertEqual(ChatSession.objects.get(uuid=self.session['uuid']).merged_intent, prior)
+
+    @ddt.data(ModelConfigurationError('no key'), ModelRejected('bad request'))
+    def test_a_configuration_error_or_a_rejected_request_is_not_retried(self, error):
         cases = [({'intent_failures': 2, 'intent_error': error}, {'intent': 1, 'compose': 0}),
                  ({'compose_failures': 2, 'compose_error': error}, {'intent': 1, 'compose': 1})]
         for kwargs, calls in cases:

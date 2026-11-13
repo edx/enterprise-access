@@ -24,7 +24,7 @@ from enterprise_access.apps.personalized_search.core.compose import SYSTEM_PROMP
 from enterprise_access.apps.personalized_search.core.compose import ComposeParser
 from enterprise_access.apps.personalized_search.core.compose import build_user_content as compose_user
 from enterprise_access.apps.personalized_search.core.compose import server_output
-from enterprise_access.apps.personalized_search.core.errors import ModelConfigurationError, ModelError
+from enterprise_access.apps.personalized_search.core.errors import ModelConfigurationError, ModelError, ModelRejected
 from enterprise_access.apps.personalized_search.core.ports import Usage
 from enterprise_access.apps.personalized_search.core.retrieval import (
     RetrievalFailed,
@@ -233,7 +233,8 @@ def _turn_parts(ctx: TurnContext, steps: Steps, record: dict) -> Iterator[dict]:
     yield {'type': 'data-status', 'data': {'step': 'understanding'}, 'transient': True}
 
     # Step 1: intent. A call that can't be reached (timeout, connection, 5xx) is tried once more while the deadline
-    # allows; if that fails too, the turn continues on a fallback intent and shows server-built results.
+    # allows; if that fails too, the turn continues on a fallback intent and shows server-built results. A key, model
+    # or request the API refuses won't pass on a retry, so it ends the turn.
     result = None
     for attempt in (1, 2):
         try:
@@ -247,7 +248,7 @@ def _turn_parts(ctx: TurnContext, steps: Steps, record: dict) -> Iterator[dict]:
             usages['intent'] = usage
             result = intent_step.parse(text)
             break
-        except ModelConfigurationError:
+        except (ModelConfigurationError, ModelRejected):
             yield {'type': 'error', 'errorText': 'model_failed'}
             return
         except ModelError:
@@ -339,8 +340,9 @@ def _turn_parts(ctx: TurnContext, steps: Steps, record: dict) -> Iterator[dict]:
 
     # Compose: a call that fails before sending any text is tried once more while the deadline allows; if that fails
     # too (or intent already fell back), the server writes the results from the shortlist (``server_output``).
-    # A failure after text has streamed can't be replaced, and a configuration error won't fix itself, so both still
-    # end the turn with an error. A turn that ends early keeps the model's follow-up chips (``held_followups``).
+    # A failure after text has streamed can't be replaced, and a configuration error or a refused request won't fix
+    # itself, so each still ends the turn with an error. A turn that ends early keeps the model's follow-up chips
+    # (``held_followups``).
     stream = None if record['degraded'] else compose_stream()
     received = False
     try:
@@ -358,7 +360,7 @@ def _turn_parts(ctx: TurnContext, steps: Steps, record: dict) -> Iterator[dict]:
                 record['model_failures']['compose'] += 1
                 stream.close()
                 stream = None
-                if received or isinstance(exc, ModelConfigurationError):
+                if received or isinstance(exc, (ModelConfigurationError, ModelRejected)):
                     yield from emit(parser.held_followups())
                     yield {'type': 'error', 'errorText': 'model_failed'}
                     return
@@ -379,7 +381,10 @@ def _turn_parts(ctx: TurnContext, steps: Steps, record: dict) -> Iterator[dict]:
     record.update(dropped_lines=parser.dropped_lines, fallback=parser.used_fallback)
 
     # Step 5: persist, final session title, timing; step 6: finish
-    session['merged_intent'] = merged
+    if record['degraded'] != 'intent':
+        # A fallback intent is unclassified (no off-topic, unsafe or injection check), so its query serves this
+        # turn's search only; the session keeps the intent it had.
+        session['merged_intent'] = merged
     session['history'].append({'user': ctx.message, 'reply': parser.reply.strip()})
     session['shown_item_ids'] = list(dict.fromkeys(session['shown_item_ids'] + parser.emitted_ids))
     attribute = parser.attribute  # 'open' when the results shown don't differ on the planned attribute
