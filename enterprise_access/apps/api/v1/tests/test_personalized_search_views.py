@@ -69,6 +69,8 @@ class PersonalizedSearchTurnViewTests(APITest):
     @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=False)
     def test_flag_off_is_404(self):
         self.assertEqual(self.post().status_code, 404)
+        # Before the permission check too: a learner without the role in this enterprise doesn't learn it exists.
+        self.assertEqual(self.post(enterprise_customer_uuid=OTHER_ENTERPRISE).status_code, 404)
 
     @override_waffle_switch(LEARNER_PATHWAYS_SERVER_PIPELINE, active=False)
     @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)

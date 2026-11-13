@@ -191,7 +191,11 @@ class DjangoFeedbackStore:
 
     def add(self, *, lms_user_id, enterprise_customer_uuid, item_id: str, item_type: str, kind: str,
             session_uuid=None, card_snapshot=None) -> tuple[dict, bool]:
-        """Record feedback; an existing row for the same item and kind is returned as is. Returns (row, created)."""
+        """
+        Record feedback; an existing row for the same item and kind is returned as is. Returns (row, created).
+        Past ``MAX_ITEM_FEEDBACK_PER_KIND`` rows of this kind, the oldest go, so the learner's latest action
+        always lands (the Saved view and the next turn's exclusions show it) rather than failing.
+        """
         session = None
         if session_uuid:
             session = ChatSession.objects.filter(
@@ -201,6 +205,13 @@ class DjangoFeedbackStore:
             lms_user_id=lms_user_id, enterprise_customer_uuid=enterprise_customer_uuid, item_id=item_id, kind=kind,
             defaults={'item_type': item_type, 'session': session, 'card_snapshot': card_snapshot},
         )
+        if created:
+            mine = ItemFeedback.objects.filter(
+                lms_user_id=lms_user_id, enterprise_customer_uuid=enterprise_customer_uuid, kind=kind,
+            )
+            oldest = mine.order_by('-created', '-pk').values_list('pk', flat=True)[
+                constants.MAX_ITEM_FEEDBACK_PER_KIND:]
+            ItemFeedback.objects.filter(pk__in=list(oldest)).delete()
         return self._row(row), created
 
     def remove(self, *, lms_user_id, enterprise_customer_uuid, item_id: str, kind: str) -> None:
