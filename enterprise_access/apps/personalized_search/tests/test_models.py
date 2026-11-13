@@ -1,4 +1,8 @@
 """The Personalized Search tables can be dropped and recreated cleanly (they belong to this app alone)."""
+import importlib
+from types import SimpleNamespace
+from unittest import TestCase as PlainTestCase
+from unittest import mock
 from uuid import uuid4
 
 from django.apps import apps
@@ -89,3 +93,34 @@ class ModelBehaviourTests(TestCase):
         self.assertFalse(ChatSession.objects.filter(pk=self.session.pk).exists())
         self.assertTrue(ChatSession.all_objects.get(pk=self.session.pk).is_removed)
         self.assertEqual(ChatTurn.objects.count(), 1)
+
+
+class Utf8mb4MigrationTests(PlainTestCase):
+    """``0003_utf8mb4_tables`` converts only MySQL tables that aren't utf8mb4 yet, with foreign key checks paused."""
+
+    migration = importlib.import_module('enterprise_access.apps.personalized_search.migrations.0003_utf8mb4_tables')
+
+    def run_on(self, vendor, pending=()):
+        """Run the migration on a fake connection whose tables ``pending`` aren't utf8mb4; return the SQL it ran."""
+        cursor = mock.MagicMock()
+        cursor.fetchall.return_value = [(table,) for table in pending]
+        fake = mock.MagicMock(vendor=vendor)
+        fake.cursor.return_value.__enter__.return_value = cursor
+        self.migration.to_utf8mb4(None, SimpleNamespace(connection=fake))
+        return [c.args[0] for c in cursor.execute.call_args_list]
+
+    def test_other_engines_are_untouched(self):
+        self.assertEqual(self.run_on('sqlite', pending=TABLES), [])
+
+    def test_tables_already_utf8mb4_are_left_alone(self):
+        statements = self.run_on('mysql')
+        self.assertEqual(len(statements), 1)
+        self.assertIn('information_schema.TABLES', statements[0])
+
+    def test_tables_still_utf8mb3_are_converted(self):
+        statements = self.run_on('mysql', pending=['personalized_search_chatturn'])
+        self.assertEqual(statements[1:], [
+            'SET FOREIGN_KEY_CHECKS = 0',
+            'ALTER TABLE `personalized_search_chatturn` CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+            'SET FOREIGN_KEY_CHECKS = 1',
+        ])
