@@ -554,7 +554,7 @@ All new code lives under `src/components/dashboard/main-content/personalized-sea
 
 Transport selection: `getConfig().PERSONALIZED_SEARCH_TRANSPORT` is `fixture` (local development and demos without a backend), `buffered` (KD-4 fallback), or unset for SSE. It's a new optional env var.
 
-**Tab registration** in `useDashboardTabs.jsx`: add the key `personalized-search` to `dashboard/data/constants.js:13-23` and `tabState` (`:77-100`). The entry in `allTabs` (`:172-255`) follows the programs entry shape (`:191-204`), visible and available when `isLearnerPathwaysEnabled` (`:64-68`) (KD-8). Title: "Personalized Search" with a "Beta" badge, the same as the Pathways title (`:217-225`).
+**Tab registration** in `useDashboardTabs.jsx`: add the key `personalized-search` to `dashboard/data/constants.js:13-23` and `tabState` (`:77-100`). The entry in `allTabs` (`:172-255`) follows the programs entry shape (`:191-204`), visible and available per the Tab gate below (KD-8). Title: "Personalized Search" with a "Beta" badge, the same as the Pathways title (`:217-225`).
 
 **Tab gate (amended 2026-11-04 and 2026-11-12, KD-8):** the Personalized Search tab is visible and available when `enterpriseFeatures.enterprisePersonalizedSearchEnabled` is true **and** `isPersonalizedSearchEnabledForEnterpriseCustomer(enterpriseCustomer.uuid, getConfig().FEATURE_ENABLE_PERSONALIZED_SEARCH_FOR_ENTERPRISE_CUSTOMERS)` (same rules as the Pathways allowlist); the Pathways tab keeps `isLearnerPathwaysEnabled`.
 

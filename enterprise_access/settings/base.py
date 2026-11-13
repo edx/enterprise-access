@@ -541,9 +541,14 @@ ALGOLIA_APP_ID = ''
 ALGOLIA_SEARCH_API_KEY = ''
 ALGOLIA_CATALOG_INDEX_NAME = ''
 ALGOLIA_JOBS_INDEX_NAME = ''
-# Escape hatch for the offline retrieval diagnostic, which has no request and therefore
-# no per-user secured key to vend. Enables searching the catalog index *unscoped* with the
-# plain search key. Must stay False anywhere a learner response could be built from it.
+# Escape hatch for searches with no per-user secured key: the offline retrieval diagnostic, and
+# Personalized Search's dev catalog (devstack, harness) and debug catalog scopes. Enables searching
+# the catalog index *unscoped* with a plain key, only for a caller whose scope asks for it
+# (``allow_unscoped``, set from settings, never from a request). Stage turns it on deliberately for
+# the debug catalog (PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE), which only debug-allowed users can
+# reach (PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED plus a superuser or the
+# personalized_search_debug flag). That is not a precedent for prod: keep it False there and
+# anywhere else an ordinary learner's response could be built from it.
 ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH = False
 
 # The server-side learner pathways pipeline (apps/pathways) is gated by a waffle switch,

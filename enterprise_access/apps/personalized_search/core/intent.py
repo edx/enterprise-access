@@ -52,14 +52,18 @@ QUICK_MAX_WEEKS = 4
 
 
 def _negated(words: str) -> re.Pattern:
-    """``words`` within three words after a negation ("I don't need a certificate", "nothing too short")."""
+    """
+    One of ``words`` (whole words) within three words after a negation, in the same clause ("not a program",
+    "nothing too short"); so "no programming experience" or "I don't have much time, short courses please" negate
+    nothing.
+    """
     return re.compile(rf"\b(?:no|not|nothing|never|without|don['’]?t|doesn['’]t|isn['’]t)\b"
-                      rf"\W+(?:\w+\W+){{0,3}}?(?:{words})",
+                      rf"(?:[^\w.,;!?]+\w+){{0,3}}?[^\w.,;!?]+(?:{words})\b",
                       re.IGNORECASE)
 
 
-NEGATED_JOURNEY = _negated('certificate|credential|program|path')
-NEGATED_QUICK = _negated('short|quick|brief')
+NEGATED_JOURNEY = _negated('programs?|path(?:s| ?ways?)?')
+NEGATED_QUICK = _negated('(?:short|quick|brief)(?:er|est)?')
 PACINGS = ('self_paced', 'instructor_paced')
 REDIRECT_REASONS = ('off_topic', 'unsafe', 'injection')
 

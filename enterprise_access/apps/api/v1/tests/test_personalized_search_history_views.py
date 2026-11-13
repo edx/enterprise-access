@@ -3,6 +3,7 @@ import uuid
 from types import SimpleNamespace
 from unittest import mock
 
+import ddt
 from django.test import TestCase, override_settings
 from edx_toggles.toggles.testutils import override_waffle_flag
 from rest_framework.exceptions import PermissionDenied
@@ -141,6 +142,7 @@ class LearnerIdTests(TestCase):
                 learner_id(SimpleNamespace(user=SimpleNamespace(lms_user_id=lms_user_id, id=5)))
 
 
+@ddt.ddt
 @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
 class ItemFeedbackAccessTests(APITest):
     """Feedback is written under the enterprise that was permission-checked, and its snapshot is bounded."""
@@ -167,6 +169,27 @@ class ItemFeedbackAccessTests(APITest):
         ok = self.client.post(self.url, self.body(card_snapshot={'title': 'T', 'secret': 'drop me'}), format='json')
         self.assertEqual(ok.status_code, 201)
         self.assertEqual(ok.json()['card_snapshot'], {'title': 'T'})
+
+    @ddt.data(
+        ('https://cdn.test/a.png', 'https://cdn.test/a.png'), ('/static/a.png', '/static/a.png'),
+        ('javascript:alert(1)', None), ('JavaScript:alert(1)', None), ('data:image/svg+xml,<svg/>', None),
+        ('http://cdn.test/a.png', None), ('//evil.test/a.png', None), ('/\\evil.test/a.png', None),
+        (' javascript:alert(1)', None), ('/\t/evil.test', None), (['https://cdn.test/a.png'], None),
+    )
+    @ddt.unpack
+    def test_snapshot_image_urls_are_kept_only_as_https_or_site_paths(self, url, stored):
+        snapshot = {'title': 'T', 'image_url': url, 'partner_logo_url': url}
+        response = self.client.post(self.url, self.body(card_snapshot=snapshot), format='json')
+        self.assertEqual(response.status_code, 201)  # the save still lands; only the unsafe value is dropped
+        self.assertEqual(response.json()['card_snapshot'], {'title': 'T', 'image_url': stored,
+                                                            'partner_logo_url': stored})
+
+    @ddt.data(({'kind': 'course', 'course_key': 'edX+C1'}, True), ('javascript:alert(1)', False),
+              ({'kind': 'url', 'href': 'javascript:alert(1)'}, False))
+    @ddt.unpack
+    def test_snapshot_link_is_kept_only_as_the_cards_link_object(self, link, kept):
+        response = self.client.post(self.url, self.body(card_snapshot={'link': link}), format='json')
+        self.assertEqual(response.json()['card_snapshot'], {'link': link if kept else None})
 
     def test_a_null_snapshot_is_stored_as_none(self):
         response = self.client.post(self.url, self.body(card_snapshot=None), format='json')
@@ -243,6 +266,11 @@ class TurnFeedbackTests(APITest):
         self.assertEqual(self.post(1, session=other.uuid).status_code, 404)
         self.assertEqual(self.post(1, sequence=9).status_code, 404)
         self.assertIsNone(ChatTurn.objects.get(session=other).rating)
+
+    def test_a_turn_in_a_removed_session_is_404(self):
+        ChatSession.objects.filter(pk=self.session.pk).update(is_removed=True)  # soft-deleted
+        self.assertEqual(self.post(1).status_code, 404)
+        self.assertIsNone(ChatTurn.objects.get(session_id=self.session.pk).rating)
 
     def test_other_enterprise_is_403(self):
         response = self.client.post(self.url(), {'enterprise_customer_uuid': OTHER_ENTERPRISE, 'rating': 1},

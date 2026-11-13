@@ -15,6 +15,7 @@ enterprise-scoped learner permission. All endpoints 404 while the feature flag i
 writes go through the history and feedback stores (``personalized_search.adapters.django_store``).
 """
 import json
+from urllib.parse import urlsplit
 
 from edx_rbac.decorators import permission_required
 from edx_rest_framework_extensions.auth.jwt.authentication import JwtAuthentication
@@ -37,6 +38,18 @@ FEEDBACK_KINDS = DjangoFeedbackStore.kinds
 CARD_SNAPSHOT_FIELDS = ('item_id', 'item_type', 'title', 'image_url', 'partner_name', 'partner_logo_url', 'link',
                         'facts', 'why', 'fit')
 MAX_SNAPSHOT_BYTES = 8 * 1024
+# Snapshot fields the Saved view loads as images: kept only as https URLs or site paths.
+SNAPSHOT_URL_FIELDS = ('image_url', 'partner_logo_url')
+
+
+def _safe_url(value) -> bool:
+    """An https URL or a site-relative path; never ``javascript:``, ``data:``, plain http or a ``//host`` URL."""
+    if not isinstance(value, str) or any(c.isspace() or ord(c) < 32 for c in value):
+        return False
+    if value.startswith('/'):
+        return not value.startswith(('//', '/\\'))
+    parts = urlsplit(value)
+    return parts.scheme.lower() == 'https' and bool(parts.netloc)
 
 
 def enterprise_uuid_for_request(request, *args, **kwargs):
@@ -132,12 +145,22 @@ class ItemFeedbackWriteSerializer(EnterpriseQuerySerializer):  # pylint: disable
     card_snapshot = serializers.JSONField(required=False, allow_null=True)
 
     def validate_card_snapshot(self, value):
-        """An object of the item card's own fields, at most ``MAX_SNAPSHOT_BYTES`` serialized; others are dropped."""
+        """
+        An object of the item card's own fields, at most ``MAX_SNAPSHOT_BYTES`` serialized; others are dropped.
+        An image URL that isn't https or a site path, or a ``link`` that isn't the card's link object, is stored as
+        null, so the save still lands but the Saved view never renders a ``javascript:`` or ``data:`` URL.
+        """
         if value is None:
             return None
         if not isinstance(value, dict):
             raise serializers.ValidationError('Must be an object.')
         kept = {key: value[key] for key in CARD_SNAPSHOT_FIELDS if key in value}
+        for key in SNAPSHOT_URL_FIELDS:
+            if kept.get(key) is not None and not _safe_url(kept[key]):
+                kept[key] = None
+        link = kept.get('link')
+        if link is not None and not (isinstance(link, dict) and link.get('kind') in ('course', 'program')):
+            kept['link'] = None  # ItemCard.link is {kind, course_key | program_uuid}, never a URL
         if len(json.dumps(kept)) > MAX_SNAPSHOT_BYTES:
             raise serializers.ValidationError('Too large.')
         return kept

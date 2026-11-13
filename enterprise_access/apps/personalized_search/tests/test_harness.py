@@ -408,15 +408,26 @@ class HarnessScoringTests(TestCase):
              'candidate_recall': None, 'judge': {'overall': 4, 'relevance': 4, 'why_quality': 4, 'editorial': 4,
                                                  'followup': 4}},
             {'arm': 'b', 'case_id': 'A1', 'models': ['xpert', 'xpert'], 'status': 'error', 'error': 'model_failed',
-             'redirected': False, 'timing': None, 'item_ids': [], 'intent_score': {'pass': False}, 'cost_usd': None},
+             'redirected': False, 'timing': None, 'item_ids': [], 'intent_score': {'pass': True}, 'cost_usd': None},
+            {'arm': 'b', 'case_id': 'A2', 'status': 'done', 'redirected': True, 'timing': None, 'item_ids': [],
+             'intent_score': {'pass': False}, 'cost_usd': None},
+            # Server-built results after a failed intent call: not the arm's output, so not scored.
+            {'arm': 'b', 'case_id': 'A3', 'status': 'degraded', 'error': 'model_failed:intent', 'redirected': False,
+             'timing': {'complete_ms': 900}, 'item_ids': ['z'], 'intent_score': {'pass': True}, 'cost_usd': None,
+             'page_recall': 1.0, 'judge': {'overall': 5, 'relevance': 5, 'why_quality': 5, 'editorial': 5,
+                                           'followup': 5}},
         ]
         summary = harness_scoring.summarize(rows)
         self.assertEqual(summary['a']['latency_p50']['first_section_ms'], 4000)
         self.assertEqual(summary['a']['turns_with_dropped_lines'], 1)
-        self.assertEqual(summary['b']['errors'], {'model_failed': 1})
-        self.assertEqual(summary['b']['adversarial_pass'], '0/1')
+        self.assertEqual((summary['b']['errors'], summary['b']['degraded']),
+                         ({'model_failed': 1}, {'model_failed:intent': 1}))
+        self.assertEqual((summary['b']['intent_pass'], summary['b']['adversarial_pass']), ('0/1', '0/1'))
+        self.assertEqual((summary['b']['judge'], summary['b']['persona_page_recall']), (None, None))
+        self.assertIsNone(summary['b']['latency_p50']['complete_ms'])
         table = harness_scoring.report_markdown(summary)
         self.assertIn('| Metric | a | b |', table)
+        self.assertIn('| Turns (errors, degraded) | 1 (0, 0) | 3 (1, 1) |', table)
         self.assertIn('unknown', table)  # xpert cost
 
 

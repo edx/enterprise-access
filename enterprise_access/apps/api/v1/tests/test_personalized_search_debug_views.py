@@ -1,4 +1,6 @@
 """Tests for the Personalized Search debug model menu."""
+import uuid
+
 from django.test import override_settings
 from edx_toggles.toggles.testutils import override_waffle_flag
 from rest_framework.reverse import reverse
@@ -34,6 +36,14 @@ class PersonalizedSearchDebugConfigViewTests(APITest):
     @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
     def test_404_unless_enabled(self):
         self.assertEqual(self.client.get(self.url).status_code, 404)
+
+    @override_settings(PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED=True)
+    def test_the_feature_flag_comes_before_the_learner_permission(self):
+        self.set_jwt_cookie([{'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE, 'context': str(uuid.uuid4())}])
+        with override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=False):
+            self.assertEqual(self.client.get(self.url).status_code, 404)  # off: 404 for everyone, as the other views
+        with override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True):
+            self.assertEqual(self.client.get(self.url).status_code, 403)  # on: a learner of another enterprise
 
     @override_settings(PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED=True)
     @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
