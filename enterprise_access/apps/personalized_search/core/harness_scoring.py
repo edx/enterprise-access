@@ -89,7 +89,10 @@ def _mean(values, digits=2):
 
 
 def summarize(records: list[dict]) -> dict:
-    """Per-arm summary of harness records (one dict per turn)."""
+    """
+    Per-arm summary of harness records (one dict per turn). Quality scores (intent, recall, judge) and latency come
+    from ``done`` turns only: a degraded turn's page is server-built, not the arm's output, so it is counted apart.
+    """
     arms: dict[str, list[dict]] = {}
     for record in records:
         arms.setdefault(record['arm'], []).append(record)
@@ -97,14 +100,18 @@ def summarize(records: list[dict]) -> dict:
     for arm, rows in arms.items():
         done = [r for r in rows if r.get('status') == 'done']
         on_topic = [r for r in done if not r.get('redirected')]
-        intents = [r['intent_score'] for r in rows if r.get('intent_score')]
-        adversarial = [r['intent_score'] for r in rows if r.get('intent_score') and r['case_id'].startswith('A')]
-        judged = [r['judge'] for r in rows if isinstance(r.get('judge'), dict) and 'overall' in r['judge']]
+        intents = [r['intent_score'] for r in done if r.get('intent_score')]
+        adversarial = [r['intent_score'] for r in done if r.get('intent_score') and r['case_id'].startswith('A')]
+        judged = [r['judge'] for r in done if isinstance(r.get('judge'), dict) and 'overall' in r['judge']]
+        degraded = [r for r in rows if r.get('status') == 'degraded']
         summary[arm] = {
             'models': rows[0].get('models'),
             'turns': len(rows),
             'errors': {code: sum(1 for r in rows if r.get('error') == code)
-                       for code in {r.get('error') for r in rows} if code},
+                       for code in {r.get('error') for r in rows if r.get('status') == 'error'} if code},
+            # Turns whose model step failed, so the server built the results (``model_failed:<step>``).
+            'degraded': {code: sum(1 for r in degraded if r.get('error') == code)
+                         for code in {r.get('error') for r in degraded} if code},
             'intent_pass': f"{sum(s['pass'] for s in intents)}/{len(intents)}" if intents else None,
             'adversarial_pass': f"{sum(s['pass'] for s in adversarial)}/{len(adversarial)}" if adversarial else None,
             'latency_p50': {f: _pct(_timings(on_topic, f), 50) for f in LATENCY_FIELDS},
@@ -112,8 +119,8 @@ def summarize(records: list[dict]) -> dict:
             'avg_items': _mean([len(r.get('item_ids') or []) for r in on_topic]),
             'turns_with_dropped_lines': sum(1 for r in on_topic if (r.get('timing') or {}).get('dropped_lines')),
             'fallback_sections': sum(1 for r in on_topic if r.get('fallback')),
-            'persona_page_recall': _mean([r.get('page_recall') for r in rows]),
-            'persona_candidate_recall': _mean([r.get('candidate_recall') for r in rows]),
+            'persona_page_recall': _mean([r.get('page_recall') for r in done]),
+            'persona_candidate_recall': _mean([r.get('candidate_recall') for r in done]),
             'avg_cost_usd': _mean([r.get('cost_usd') for r in rows], 5),
             'judge': {d: _mean([j[d] for j in judged if isinstance(j.get(d), (int, float))]) for d in JUDGE_DIMENSIONS}
             if judged else None,
@@ -126,7 +133,8 @@ def report_markdown(summary: dict) -> str:
     arms = list(summary)
     rows = [
         ('Models (intent / compose)', lambda s: ' / '.join(s['models'] or [])),
-        ('Turns (errors)', lambda s: f"{s['turns']} ({sum(s['errors'].values())})"),
+        ('Turns (errors, degraded)',
+         lambda s: f"{s['turns']} ({sum(s['errors'].values())}, {sum(s['degraded'].values())})"),
         ('Intent pass', lambda s: s['intent_pass'] or '–'),
         ('Adversarial pass', lambda s: s['adversarial_pass'] or '–'),
         *[(f'{label} p50 / p90 (ms)', lambda s, f=f: f"{s['latency_p50'][f]} / {s['latency_p90'][f]}")
