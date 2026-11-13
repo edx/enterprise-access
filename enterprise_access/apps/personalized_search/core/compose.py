@@ -6,7 +6,7 @@ import json
 import re
 
 from enterprise_access.apps.personalized_search.core import constants
-from enterprise_access.apps.personalized_search.core.profile import SUMMARY, profile_props
+from enterprise_access.apps.personalized_search.core.profile import basis_props, profile_props, search_topic
 from enterprise_access.apps.personalized_search.core.retrieval import (
     attribute_value,
     compose_view,
@@ -69,7 +69,7 @@ Rules:
 - Sections hold the other good options, never items already in top_pick or compare (those are rejected): up to 3 per section and at most 12 items in total, best first, only items that genuinely fit the learner's cumulative goal. Fewer or zero is fine; never pad with weak matches. Reject options whose main subject isn't the learner's topic or career goal, even if they match the level or format.
 - why: 1-2 sentences to the learner ("you") connecting the item to their goal, level and constraints; name concrete skills they will practice. Plain, specific, no hype. Max 400 characters.
 - fit: 2-3 short tags of 1-3 words (max 24 characters each).
-- page_header: title is an editorial headline specific to this learner (max 80 characters); dek is 2-3 sentences on what they're looking for and how the picks fit together (max 400 characters).
+- page_header: title is an editorial headline specific to this learner (max 80 characters); dek is 2-3 sentences on what they're looking for and how the picks fit together (max 400 characters). Always write the dek, also when you write a caveat: the caveat doesn't replace it.
 - item_section dek: one sentence on what this group offers this learner (max 200 characters).
 - followup: exactly one question (max 200 characters) about the given follow-up attribute that would most narrow the next results; never ask about an attribute already asked. When the attribute is "open", ask what the learner wants to explore next. ideas: 2-3 short first-person messages (max 48 characters each) the learner could send next, specific to this conversation and these results, such as a related skill, a more practical or more advanced angle, or a next step toward their goal. An idea may answer the question in the learner's own words ("I'm a beginner"); never restate a preference the learner already gave. session_title: max 60 characters summarising the cumulative goal.
 - plan: 2-4 steps in a suggested order, each referencing an item already in your results, note max 80 characters. Order them so the learner starts with the best fit for their goal and each step builds on the one before: foundations before advanced, shorter before longer. why: one sentence to the learner on why this order (max 160 characters); when the top pick isn't the first step, say how the earlier steps lead to it.
@@ -355,17 +355,15 @@ class ComposeParser:
     def _profile(self) -> list[dict]:
         """
         The final profile block, once per turn after the results, and only when there are results to
-        explain: a preference the shown results don't reflect is left out. If none is left, an early
-        profile is replaced by one with no chips, which hides "Why these?".
+        explain: a preference the shown results don't reflect is left out. If none is left, the search
+        topic explains them (``basis_props``), so "Why these?" is there whenever results are.
         """
         if self.profile_emitted or not self.emitted_ids:
             return []
         self.profile_emitted = True
         by_id = {c['card']['item_id']: c for c in self.candidates}
         props = profile_props(self.intent, shown=[by_id[i] for i in self.emitted_ids if i in by_id])
-        if props:
-            return [self._profile_part(props)]
-        return [self._profile_part({'summary': SUMMARY, 'chips': []})] if self.profile_sent else []
+        return [self._profile_part(props or basis_props(self.intent))]
 
     def _card(self, card: dict, *, why: str | None = None, fit: list | None = None) -> dict:
         """A hydrated card for this turn. After the first turn, cards new to the conversation get ``status: new``."""
@@ -416,9 +414,14 @@ class ComposeParser:
         if not title:
             return self._drop('page_header_no_title')
         self.header_emitted = True
-        header = self._block('page_header', {
-            'title': title, 'dek': _text(obj.get('dek'), constants.CAPS['dek']), 'label': constants.PAGE_HEADER_LABEL,
-        })
+        dek = _text(obj.get('dek'), constants.CAPS['dek'])
+        if not dek:
+            # The model left the dek out (most often next to a caveat): say what the results are for.
+            topic = search_topic(self.intent)
+            dek = (constants.FALLBACK_DEK_TOPIC.format(topic=topic) if topic else constants.FALLBACK_DEK)
+            dek = dek[:constants.CAPS['dek']]
+            self.dropped.append('dek_added_by_server')
+        header = self._block('page_header', {'title': title, 'dek': dek, 'label': constants.PAGE_HEADER_LABEL})
         # "Why these?" comes with the headline: a first profile from what the learner said, replaced (same
         # block id) once the results are known by the preferences they reflect (``_profile``).
         early = profile_props(self.intent)

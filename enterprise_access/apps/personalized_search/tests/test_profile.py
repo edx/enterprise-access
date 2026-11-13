@@ -146,7 +146,7 @@ class ProfileEmissionTests(TestCase):
         self.assertEqual(early['chips'], ['Leadership', 'Instructor-led'])  # what the learner said
         self.assertEqual(final['chips'], ['Leadership'])  # what the results reflect
 
-    def test_an_early_profile_with_nothing_reflected_ends_with_no_chips(self):
+    def test_an_early_profile_with_nothing_reflected_ends_with_the_search_basis(self):
         parser = ComposeParser(candidates=default_candidates(), excluded_ids=[], followup_attribute='level',
                                intent=dict(empty_intent(), constraints={'pacing': 'instructor_paced'}))
         header = {'block': 'page_header', 'title': 'Lead', 'dek': 'd'}
@@ -155,12 +155,22 @@ class ProfileEmissionTests(TestCase):
         parts = parser.feed('Hi.\n@@BLOCKS@@\n' + json.dumps(header) + '\n' + json.dumps(section) + '\n')
         parts += parser.finish()
         profiles = [p['data']['props'] for p in parts if p['type'] == 'data-block' and p['data']['type'] == 'profile']
+        # No preference is reflected and the intent has no query: the catalog summary still explains the results.
         self.assertEqual([p['chips'] for p in profiles], [['Instructor-led'], []])
+        self.assertEqual(profiles[-1]['summary'], profile.CATALOG_SUMMARY)
 
-    def test_not_emitted_when_nothing_the_learner_said_is_reflected(self):
+    def test_the_search_topic_explains_the_results_when_nothing_the_learner_said_is_reflected(self):
         parser = ComposeParser(candidates=default_candidates(), excluded_ids=[], followup_attribute='level',
-                               intent=dict(empty_intent(), constraints={'pacing': 'instructor_paced'}))
+                               intent=dict(empty_intent(), query='team leadership',
+                                           constraints={'pacing': 'instructor_paced'}))
         section = {'block': 'item_section', 'item_type': 'course', 'dek': 'd',
                    'items': [{'item_id': 'edX+C1', 'why': 'w'}]}
         parts = parser.feed('Hi.\n@@BLOCKS@@\n' + json.dumps(section) + '\n') + parser.finish()
-        self.assertNotIn('profile', [p['data']['type'] for p in parts if p['type'] == 'data-block'])
+        profiles = [p['data']['props'] for p in parts if p['type'] == 'data-block' and p['data']['type'] == 'profile']
+        self.assertEqual(profiles, [{'summary': profile.TOPIC_SUMMARY, 'chips': ['team leadership']}])
+
+    def test_basis_props(self):
+        self.assertEqual(profile.basis_props(dict(empty_intent(), query='  data analysis ')),
+                         {'summary': profile.TOPIC_SUMMARY, 'chips': ['data analysis']})
+        self.assertEqual(profile.basis_props(empty_intent()), {'summary': profile.CATALOG_SUMMARY, 'chips': []})
+        self.assertEqual(profile.basis_props(None), {'summary': profile.CATALOG_SUMMARY, 'chips': []})

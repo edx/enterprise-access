@@ -11,6 +11,9 @@ import re
 from enterprise_access.apps.personalized_search.core import constants
 
 SUMMARY = "Here's what I understood you're looking for."
+# "Why these?" when no preference is left that the shown results reflect: the search itself shaped them.
+TOPIC_SUMMARY = 'These are the closest matches to what you searched for.'
+CATALOG_SUMMARY = "These are the closest matches in your organization's catalog for what you've asked so far."
 # What each kind of chip is about, in summary order: the summary names only the kinds its chips show.
 SUMMARY_TOPICS = (('goal', 'your goal'), ('level', 'your level'), ('format', 'how you like to learn'),
                   ('time', 'the time you have'))
@@ -122,3 +125,20 @@ def summary(kinds: set[str]) -> str:
         return SUMMARY
     named = topics[0] if len(topics) == 1 else f"{', '.join(topics[:-1])} and {topics[-1]}"
     return f"Here's what I understood about {named}."
+
+
+def search_topic(merged_intent: dict | None) -> str:
+    """The merged intent's search query, trimmed and capped as a chip; '' when there is none."""
+    query = (merged_intent or {}).get('query')
+    return _chip(query) if isinstance(query, str) else ''
+
+
+def basis_props(merged_intent: dict | None) -> dict:
+    """
+    ``{summary, chips}`` for "Why these?" when no preference the learner gave is reflected by the shown results:
+    the search topic, which always shaped them, or a plain catalog summary when there is no topic.
+    """
+    topic = search_topic(merged_intent)
+    if topic:
+        return {'summary': TOPIC_SUMMARY, 'chips': [topic]}
+    return {'summary': CATALOG_SUMMARY, 'chips': []}
