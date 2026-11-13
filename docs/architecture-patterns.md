@@ -192,6 +192,15 @@ copy's other fields. For records where that can cost money (`LearnerCreditTopUp.
 The test database is SQLite, where `select_for_update()` does nothing: test with two copies of one row loaded
 before either writes, which proves the stored-state check but not the lock.
 
+### 25. Portable features: a pure core behind ports, one composition root
+
+When a feature should be reusable outside this service (another backend, a notebook, an offline harness), keep its
+logic in a `core/` package that imports only the standard library, and reach Django, HTTP clients and model SDKs
+through `typing.Protocol` ports implemented in `adapters/` (one outside dependency each). One `wiring.py` reads
+settings and builds the adapters; views and management commands call it. Pass request-bound things in as callables
+(the `pathways/catalog_access.py` pattern) rather than reaching for `crum`. Guard the boundary with a test that parses
+the core's imports (`personalized_search/tests/test_core.py`). Example: `apps/personalized_search`.
+
 ### Key Takeaways for Implementation:
 - Check permissions early using `@permission_required` decorator
 - Use separate serializers for request/response
