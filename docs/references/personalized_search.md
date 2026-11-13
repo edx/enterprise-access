@@ -14,6 +14,13 @@ The learner portal's Personalized Search tab is a chat that recommends learning 
 
 Every endpoint requires the enterprise-scoped learner permission (`personalized_search.has_learner_access`) and returns 404 while the `enterprise_access.personalized_search_enabled` WaffleFlag is off for the user. The portal shows the tab from a separate LMS flag, `enterprise.personalized_search_enabled`. Enable this app's flag first, for the same users, so a visible tab never gets a 404.
 
+The suggested order (the `plan` block) is behind the `enterprise_access.personalized_search_suggested_order` WaffleSwitch, which is **off** by default. While it's off:
+- the compose prompt doesn't ask for a plan;
+- any plan the model writes is dropped (`plan_disabled` in the debug read-out);
+- the server doesn't add one when the learner asks what to take first.
+
+It's a switch rather than a flag, so the turn view and the offline harness read the same value. Turn it on in Django admin (Waffle → Switches). Sessions saved while it was on still replay their plans from History.
+
 ## Layout: a portable core behind ports
 
 ```
