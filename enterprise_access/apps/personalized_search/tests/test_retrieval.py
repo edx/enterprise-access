@@ -265,6 +265,29 @@ class PrefilterTests(TestCase):
         self.assertEqual(kept[0]['card']['item_id'], 'Yale+E1')
 
 
+class CompletedCourseTests(TestCase):
+    """Courses the learner finished, and programs that contain them, stay out for the session (test-plan P6-5)."""
+
+    def test_finished_courses_and_their_programs_are_excluded(self):
+        algebra_one = dict(course_hit('GTx+LINALGxI'), title='Linear Algebra I: Vectors')
+        algebra_two = dict(course_hit('GTx+LINALGxII'), title='Linear Algebra II')
+        program = dict(program_hit('p-la'), course_keys=['GTx+LINALGxI', 'GTx+LINALGxII'])
+        raw = [candidate(algebra_one), candidate(algebra_two), candidate(program), candidate(program_hit('p-1'))]
+        kept, keys = retrieval.without_completed(raw, {'completed': ['linear algebra i']})
+        self.assertEqual([c['card']['item_id'] for c in kept], ['GTx+LINALGxII', 'p-1'])
+        self.assertEqual(keys, ['GTx+LINALGxI'])
+        # A later turn whose results don't include the course still drops the program, by the key kept.
+        kept, _ = retrieval.without_completed([candidate(program)], {'completed_keys': keys})
+        self.assertEqual(kept, [])
+        self.assertEqual(retrieval.without_completed(raw, {})[0], raw)
+
+    def test_compose_sees_the_teaching_language(self):
+        course = dict(course_hit('edX+C1'), language='English')
+        program = dict(program_hit('p-1'), language=['English', 'Spanish'])
+        self.assertEqual(retrieval.compose_view(candidate(course))['language'], 'English')
+        self.assertEqual(retrieval.compose_view(candidate(program))['language'], 'English, Spanish')
+
+
 class FilterHelperTests(TestCase):
     """Quoting, the no-skills sub-requests and the weeks buckets."""
 

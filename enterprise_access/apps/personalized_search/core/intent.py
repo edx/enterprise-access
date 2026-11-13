@@ -12,7 +12,7 @@ from enterprise_access.apps.personalized_search.core import constants
 # pylint: disable=line-too-long
 SYSTEM_PROMPT = (
     """You are the intent step of an enterprise learning-search assistant. Read the learner's newest message and return ONLY a JSON object with this shape:
-{"on_topic": true, "redirect_reason": null, "merge": "refine", "intent": {"query": "", "skills": [], "roles": [], "level": null, "item_types": ["course", "executive_education", "program"], "constraints": {"max_weeks": null, "max_hours_per_week": null, "pacing": null}}}
+{"on_topic": true, "redirect_reason": null, "merge": "refine", "message_language": "English", "intent": {"query": "", "skills": [], "roles": [], "level": null, "item_types": ["course", "executive_education", "program"], "constraints": {"max_weeks": null, "max_hours_per_week": null, "pacing": null, "course_language": null}, "completed": []}}
 
 """  # noqa: E501
     f"""Rules:
@@ -23,6 +23,9 @@ SYSTEM_PROMPT = (
 - merge is "refine" when the message adjusts the previous search (narrower, shorter, a format, a level, a type, "different ones"); "replace" when it starts a new goal or there is no prior intent.
 - intent describes the search after this message. With "refine", return only what this message changes or adds; null means unchanged.
 - skills: at most {constants.CAPS['skills']}, always in English (the catalog's skill names are English), whatever language the learner writes in. roles: at most {constants.CAPS['roles']}. level: null | "introductory" | "intermediate" | "advanced". item_types: any of "course", "executive_education", "program" (a program is a multi-course certificate). pacing: null | "self_paced" | "instructor_paced". max_weeks: an integer or null. max_hours_per_week: the most hours a week the learner can give, an integer or null.
+- Constraint-only follow-ups: a message that only adds a constraint to the previous search ("Are any instructor-led?", "English courses only", "shorter ones", "with a start date soon") is "refine" with query null and no new skills: the topic stays, only constraints change.
+- message_language: the language the newest message is written in, as its English name ("Spanish"). course_language: the language courses must be taught in, as its English name, only when the learner says so ("English courses only", "cursos en español"); never inferred from the language they write in. On a refine, "English courses" is a teaching language, not a topic.
+- completed: titles of courses the learner says they have already finished or taken ("I've finished Linear Algebra I"), as they wrote them; [] otherwise.
 - Learning journeys: when the learner describes a learning journey, a path or pathway, a roadmap, a curriculum, a series of courses, or wants a certificate or credential, set item_types to ["program"] (programs bundle courses into one path) unless the message names another type.
 - Not programs: when the learner says they don't want a program, certificate or multi-course path, set item_types to ["course", "executive_education"].
 - Career advancement: when the learner states a goal to move into or prepare for a role, put the target role and adjacent leadership roles in roles and add the leadership and management skills that role needs to skills."""  # noqa: E501
@@ -106,6 +109,7 @@ def _normalize_intent(raw) -> dict:
     item_types = [t for t in (raw.get('item_types') or []) if t in constants.ITEM_TYPES] if isinstance(
         raw.get('item_types'), list) else None
     return {
+        'completed': _str_list(raw.get('completed'), constants.CAPS['completed']) or [],
         'query': query.strip()[:constants.CAPS['intent_query']] if isinstance(query, str) and query.strip() else None,
         'skills': _str_list(raw.get('skills'), constants.CAPS['skills']),
         'roles': _str_list(raw.get('roles'), constants.CAPS['roles']),
@@ -115,8 +119,16 @@ def _normalize_intent(raw) -> dict:
             'max_weeks': max_weeks,
             'max_hours_per_week': _weeks(constraints.get('max_hours_per_week')),
             'pacing': constraints.get('pacing') if constraints.get('pacing') in PACINGS else None,
+            'course_language': language_name(constraints.get('course_language')),
         },
     }
+
+
+def language_name(value) -> str | None:
+    """A language's English name as the catalog's ``language`` facet spells it ("Spanish"), or None."""
+    if not isinstance(value, str) or not re.fullmatch(r'[A-Za-z][A-Za-z ]{1,29}', value.strip()):
+        return None
+    return value.strip().title()
 
 
 def _weeks(value) -> int | None:
@@ -164,6 +176,7 @@ def parse(text: str) -> dict:
         redirect = 'off_topic'
     return {
         'on_topic': on_topic,
+        'message_language': language_name(raw.get('message_language')),
         'redirect_reason': redirect if provider_search or not on_topic else None,
         'merge': raw.get('merge') if raw.get('merge') in ('refine', 'replace') else 'replace',
         'intent': _normalize_intent(raw.get('intent')) if on_topic else None,
@@ -175,7 +188,8 @@ def empty_intent() -> dict:
     return {
         'query': None, 'skills': [], 'roles': [], 'level': None,
         'item_types': list(constants.ITEM_TYPES),
-        'constraints': {'max_weeks': None, 'max_hours_per_week': None, 'pacing': None},
+        'constraints': {'max_weeks': None, 'max_hours_per_week': None, 'pacing': None, 'course_language': None},
+        'completed': [],
     }
 
 
@@ -195,6 +209,24 @@ def fallback(prior_intent: dict | None) -> dict:
             'intent': _normalize_intent({}), 'fallback': True}
 
 
+# Words a constraint-only follow-up is made of: format, pacing, time, level, teaching language and filler.
+CONSTRAINT_WORDS = frozenset('''
+    a an the any some only just all of in on with without for and or but are is there do does you have has show me
+    please can could which these those them that ones one options option course courses program programs class
+    classes something instead also too more less than under over at most up to max maximum per about around
+    instructor led instructor-led self paced self-paced live cohort scheduled online start starts starting date dates
+    soon next upcoming short shorter shortest quick quicker long longer week weeks hour hours month months day days
+    beginner beginners introductory intermediate advanced level basic basics certificate certificates free taught
+    english spanish french german portuguese italian chinese mandarin arabic hindi japanese korean language
+'''.split())
+
+
+def constraint_only(text: str | None) -> bool:
+    """Whether ``text`` only states constraints (every word is a format, pacing, time, level or language word)."""
+    words = re.findall(r"[a-z]+(?:-[a-z]+)?", (text or '').casefold())
+    return bool(words) and all(w in CONSTRAINT_WORDS for w in words)
+
+
 def merge(prior: dict | None, new: dict, mode: str, *, message: str) -> dict:
     """
     Spec merge rule: with ``refine`` the new non-null fields overlay the prior intent; skills and
@@ -202,6 +234,14 @@ def merge(prior: dict | None, new: dict, mode: str, *, message: str) -> dict:
     With ``replace`` (or no prior) the new intent stands alone.
     """
     base = empty_intent() if mode != 'refine' or not prior else json.loads(json.dumps(prior))
+    # Finished courses hold for the rest of the session, whatever the merge mode.
+    base['completed'] = list(dict.fromkeys((new.get('completed') or []) + ((prior or {}).get('completed') or [])))
+    if (prior or {}).get('completed_keys'):
+        base['completed_keys'] = list(prior['completed_keys'])
+    if mode == 'refine' and prior and constraint_only(new.get('query') or message):
+        # "Are any instructor-led?" or "English courses only": the topic stays and only the constraints change,
+        # whatever query or skills the model read into the message.
+        new = dict(new, query=None, skills=[], roles=[])
     if mode == 'refine' and prior:
         # New entries first, so a refinement still takes effect once the session is at the caps.
         skills = list(dict.fromkeys((new.get('skills') or []) + (prior.get('skills') or [])))

@@ -43,6 +43,7 @@ class WiringTests(TestCase):
     def test_the_catalog_scope_carries_the_content_language(self):
         scope = wiring.catalog_scope(request=None, enterprise_customer_uuid='e-1', locale='es')
         self.assertEqual((scope.locale, scope.language_name), ('es', 'Spanish'))
+        self.assertEqual(scope.reply_languages, ('English', 'Spanish'))  # replies may follow the learner's language
 
     @override_settings(PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED=True, PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE={
         'filter': 'enterprise_customer_uuids:"2u"', 'label': '2U (prod catalog)', 'app_id': 'PROD',

@@ -52,6 +52,15 @@ def score_intent(expect: dict | None, debug: dict) -> dict | None:
             checks.append(('level', merged.get('level') in expect['level_in']))
         if 'item_types' in expect:
             checks.append(('item_types', sorted(merged.get('item_types') or []) == sorted(expect['item_types'])))
+        if 'query_contains' in expect:  # a constraint-only follow-up keeps the topic
+            checks.append(('query', expect['query_contains'] in (merged.get('query') or '').lower()))
+        if 'course_language' in expect:
+            checks.append(('course_language', constraints.get('course_language') == expect['course_language']))
+        if 'message_language' in expect:
+            checks.append(('message_language', seen.get('message_language') == expect['message_language']))
+        if 'completed_contains' in expect:
+            completed = [c.lower() for c in merged.get('completed') or []]
+            checks.append(('completed', any(expect['completed_contains'] in c for c in completed)))
         if 'skills_contain' in expect:
             checks.append(('skills', any(expect['skills_contain'] in s.lower() for s in merged.get('skills') or [])))
         if expect.get('career'):
