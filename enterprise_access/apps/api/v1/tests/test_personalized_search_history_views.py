@@ -185,6 +185,20 @@ class ItemFeedbackAccessTests(APITest):
         self.client.post(self.url, self.body(kind='not_interested'), format='json')
         self.assertEqual(ItemFeedback.objects.count(), 2)
 
+    @mock.patch('enterprise_access.apps.personalized_search.core.constants.MAX_ITEM_FEEDBACK_PER_KIND', 2)
+    def test_rows_past_the_cap_drop_the_oldest_of_that_kind(self):
+        ItemFeedback.objects.create(lms_user_id=self.user.lms_user_id + 1000, enterprise_customer_uuid=ENTERPRISE,
+                                    item_id='theirs', item_type='course', kind='saved')
+        self.client.post(self.url, self.body(item_id='dismissed', kind='not_interested'), format='json')
+        for item_id in ('a', 'b', 'c'):
+            self.assertEqual(self.client.post(self.url, self.body(item_id=item_id), format='json').status_code, 201)
+        self.assertEqual(self.client.post(self.url, self.body(item_id='b'), format='json').status_code, 200)
+        saved = self.client.get(self.url, {'enterprise_customer_uuid': ENTERPRISE, 'kind': 'saved'}).json()['results']
+        self.assertEqual([r['item_id'] for r in saved], ['c', 'b'])
+        # Other kinds and other learners keep their rows.
+        self.assertEqual(sorted(ItemFeedback.objects.exclude(kind='saved', lms_user_id=self.user.lms_user_id)
+                                .values_list('item_id', flat=True)), ['dismissed', 'theirs'])
+
     @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=False)
     def test_flag_off_is_404(self):
         self.assertEqual(self.client.get(f'{self.url}?enterprise_customer_uuid={ENTERPRISE}').status_code, 404)

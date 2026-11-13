@@ -119,12 +119,16 @@ class PersonalizedSearchTurnView(APIView):
     throttle_scope = 'personalized_search_turn'
     renderer_classes = (JSONRenderer, EventStreamRenderer)
 
+    def initial(self, request, *args, **kwargs):
+        # The flag comes before the learner permission (as in the history views): flag off is 404 for everyone.
+        super().initial(request, *args, **kwargs)
+        if not personalized_search_enabled():
+            raise NotFound()
+
     @permission_required(PERSONALIZED_SEARCH_LEARNER_PERMISSION, fn=body_enterprise_uuid)
     def post(self, request):
         """Validate, lock the session, then stream the turn (or return it buffered)."""
         started = time.monotonic()
-        if not personalized_search_enabled():
-            raise NotFound()
         body = TurnRequestSerializer(data=request.data)
         if not body.is_valid():
             return Response({'code': 'invalid_request', 'errors': body.errors}, status=status.HTTP_400_BAD_REQUEST)
