@@ -121,8 +121,11 @@ def is_malformed_compound(name: str) -> bool:
 
 
 def _quote_facet_value(value: str) -> str:
-    """Quote and escape a value for interpolation into an Algolia filter expression."""
-    escaped = value.replace('"', '\\"')
+    """
+    Quote and escape a value for interpolation into an Algolia filter expression: backslashes first, then
+    double quotes, so a value ending in a backslash can't escape the closing quote.
+    """
+    escaped = value.replace('\\', '\\\\').replace('"', '\\"')
     return f'"{escaped}"'
 
 
