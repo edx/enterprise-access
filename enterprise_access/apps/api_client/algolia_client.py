@@ -184,7 +184,7 @@ class AlgoliaSearchClient:
             # echo the filters); the API key is never logged.
             logger.error('Algolia search failed for index=%r (query of %d chars): %s',
                          index_name, len(query or ''), type(exc).__name__)
-            raise AlgoliaSearchError(f'Algolia search failed for index {index_name!r}: {exc}') from exc
+            raise AlgoliaSearchError(f'Algolia search failed for index {index_name!r} ({type(exc).__name__}).') from exc
         finally:
             client.close()
 
@@ -262,7 +262,9 @@ class AlgoliaSearchClient:
         except (AlgoliaException, AlgoliaUnreachableHostException, RequestException) as exc:
             logger.error('Algolia multiple_queries failed for index=%r (%d requests): %s',
                          resolved_index_name, len(requests), type(exc).__name__)
-            raise AlgoliaSearchError(f'Algolia search failed for index {resolved_index_name!r}: {exc}') from exc
+            raise AlgoliaSearchError(
+                f'Algolia search failed for index {resolved_index_name!r} ({type(exc).__name__}).'
+            ) from exc
         finally:
             client.close()
         results = response.get('results') if isinstance(response, dict) else None

@@ -17,7 +17,11 @@ import re
 import time
 from typing import Callable, Iterator
 
-from enterprise_access.apps.personalized_search.core.errors import ModelConfigurationError, ModelError
+from enterprise_access.apps.personalized_search.core.errors import (
+    ModelConfigurationError,
+    ModelError,
+    model_error_for_status
+)
 from enterprise_access.apps.personalized_search.core.ports import Usage
 
 REASONING_HEADROOM_TOKENS = 3000
@@ -62,6 +66,16 @@ def request_params(model: str, effort: str | None, max_tokens: int) -> dict:
         if resolved not in ('none', 'minimal'):
             params['max_completion_tokens'] = max_tokens + REASONING_HEADROOM_TOKENS
     return params
+
+
+def _sdk_error(exc: Exception, what: str, model: str) -> ModelError:
+    """
+    The port error for an SDK exception, by its HTTP status (``openai.APIStatusError.status_code``; timeouts and
+    connection errors have none). Only the exception type is kept: the SDK's message can echo the learner's text.
+    """
+    status = getattr(exc, 'status_code', None)
+    return model_error_for_status(status if isinstance(status, int) else None,
+                                  f'OpenAI {what} failed ({type(exc).__name__}) for model {model!r}.')
 
 
 def _fill_usage(usage: Usage, raw) -> None:
@@ -124,8 +138,8 @@ class OpenAIBackend:
                 messages=[{'role': 'system', 'content': system}, {'role': 'user', 'content': user}],
                 **request_params(model, effort, max_tokens),
             )
-        except Exception as exc:  # noqa: BLE001  # the SDK's message can echo the learner's text
-            raise ModelError(f'OpenAI request failed ({type(exc).__name__}) for model {model!r}.') from exc
+        except Exception as exc:  # noqa: BLE001
+            raise _sdk_error(exc, 'request', model) from exc
         usage.elapsed_ms = round((time.monotonic() - started) * 1000)
         _fill_usage(usage, response.usage)
         usage.extra['resolved_model'] = getattr(response, 'model', None)
@@ -152,7 +166,7 @@ class OpenAIBackend:
                 **request_params(model, effort, max_tokens),
             )
         except Exception as exc:  # noqa: BLE001
-            raise ModelError(f'OpenAI request failed ({type(exc).__name__}) for model {model!r}.') from exc
+            raise _sdk_error(exc, 'request', model) from exc
         try:
             for chunk in stream:
                 if getattr(chunk, 'usage', None):
@@ -168,7 +182,7 @@ class OpenAIBackend:
                         usage.first_token_ms = round((time.monotonic() - started) * 1000)
                     yield delta
         except Exception as exc:  # noqa: BLE001
-            raise ModelError(f'OpenAI stream failed ({type(exc).__name__}) for model {model!r}.') from exc
+            raise _sdk_error(exc, 'stream', model) from exc
         finally:
             usage.elapsed_ms = round((time.monotonic() - started) * 1000)
             stream.close()
