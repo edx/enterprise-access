@@ -42,6 +42,75 @@ def _live_secured_key(api_key='secured-key-value'):
 
 @override_settings(**ALGOLIA_SETTINGS)
 @ddt.ddt
+class TestMultiSearchCatalogIndex(TestCase):
+    """``multi_search_catalog_index``: one ``multiple_queries`` call, the same key rules as single search."""
+
+    def setUp(self):
+        super().setUp()
+        patcher = mock.patch(SEARCH_CLIENT_PATH)
+        self.mock_search_client = patcher.start()
+        self.addCleanup(patcher.stop)
+        self.mock_client = self.mock_search_client.create.return_value
+        self.mock_client.multiple_queries.return_value = {'results': [{'hits': [{'key': 'a'}]}, {'hits': []}]}
+
+    def test_one_request_with_serialized_params_and_timeout(self):
+        results = AlgoliaSearchClient().multi_search_catalog_index(
+            [{'query': 'leadership', 'hitsPerPage': 30, 'filters': 'content_type:course', 'distinct': True},
+             {'query': 'teams', 'attributesToRetrieve': ['key', 'title']}],
+            secured_key=_live_secured_key(), timeout_s=1.5,
+        )
+        self.assertEqual(results, [{'hits': [{'key': 'a'}]}, {'hits': []}])
+        self.mock_search_client.create.assert_called_once_with(APP_ID, 'secured-key-value')
+        queries, options = self.mock_client.multiple_queries.call_args.args
+        self.assertEqual([q['indexName'] for q in queries], [CATALOG_INDEX, CATALOG_INDEX])
+        self.assertIn('query=leadership', queries[0]['params'])
+        self.assertIn('distinct=true', queries[0]['params'])
+        self.assertIn('attributesToRetrieve=%5B%22key%22%2C+%22title%22%5D', queries[1]['params'])
+        self.assertEqual(options, {'readTimeout': 1.5})
+        self.mock_client.close.assert_called_once()
+
+    def test_requires_a_secured_key_unless_unscoped_is_allowed(self):
+        with self.assertRaises(AlgoliaConfigurationError):
+            AlgoliaSearchClient().multi_search_catalog_index([{'query': 'x'}])
+        with self.assertRaises(AlgoliaConfigurationError):
+            AlgoliaSearchClient().multi_search_catalog_index([{'query': 'x'}], allow_unscoped=True)
+        self.mock_client.multiple_queries.return_value = {'results': [{'hits': []}]}
+        with override_settings(ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH=True):
+            AlgoliaSearchClient().multi_search_catalog_index([{'query': 'x'}], allow_unscoped=True)
+        self.mock_search_client.create.assert_called_once_with(APP_ID, PLAIN_SEARCH_KEY)
+
+    @override_settings(ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH=True, ALGOLIA_SEARCH_API_KEY='')
+    def test_unscoped_without_a_search_key_is_a_configuration_error(self):
+        with self.assertRaises(AlgoliaConfigurationError):
+            AlgoliaSearchClient().multi_search_catalog_index([{'query': 'x'}], allow_unscoped=True)
+        self.mock_search_client.create.assert_not_called()
+
+    @override_settings(ALGOLIA_CATALOG_INDEX_NAME='')
+    def test_a_missing_index_name_is_a_configuration_error(self):
+        with self.assertRaises(AlgoliaConfigurationError):
+            AlgoliaSearchClient().multi_search_catalog_index([{'query': 'x'}], secured_key=_live_secured_key())
+        self.mock_search_client.create.assert_not_called()
+
+    @ddt.data({}, {'results': None}, {'results': [{'hits': []}]})
+    def test_a_result_count_that_does_not_match_the_requests_is_an_error(self, response):
+        self.mock_client.multiple_queries.return_value = response
+        with self.assertRaises(AlgoliaSearchError):
+            AlgoliaSearchClient().multi_search_catalog_index([{'query': 'a'}, {'query': 'b'}],
+                                                             secured_key=_live_secured_key())
+
+    @ddt.data(AlgoliaException('boom'), AlgoliaUnreachableHostException('down'), RequestException('bad', 500))
+    def test_transport_errors_map_without_logging_query_text(self, error):
+        self.mock_client.multiple_queries.side_effect = error
+        with self.assertLogs('enterprise_access.apps.api_client.algolia_client', level='ERROR') as logs, \
+                self.assertRaises(AlgoliaSearchError):
+            AlgoliaSearchClient().multi_search_catalog_index([{'query': 'secret learner words'}],
+                                                             secured_key=_live_secured_key())
+        self.assertFalse([r for r in logs.records if 'secret learner words' in r.getMessage()])
+        self.mock_client.close.assert_called_once()
+
+
+@override_settings(**ALGOLIA_SETTINGS)
+@ddt.ddt
 class TestAlgoliaSearchClient(TestCase):
     """
     Tests for ``AlgoliaSearchClient``.
