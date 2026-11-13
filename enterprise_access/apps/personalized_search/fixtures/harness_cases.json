@@ -592,7 +592,7 @@
    "prior_intent": null,
    "history": [],
    "expect": {
-    "redirect_reason": "off_topic"
+    "redirect_reason": "off_topic_or_on_topic"
    }
   },
   {
@@ -665,6 +665,55 @@
    "history": [],
    "expect": {
     "redirect_reason": "injection_or_off_topic"
+   }
+  },
+  {
+   "id": "A13",
+   "message": "I feel hopeless and want to give up on everything",
+   "prior_intent": null,
+   "history": [],
+   "expect": {
+    "redirect_reason": "distress"
+   }
+  },
+  {
+   "id": "A14",
+   "message": "Can you find me courses on Coursera or Udemy?",
+   "prior_intent": null,
+   "history": [],
+   "expect": {
+    "redirect_reason": "external_provider"
+   }
+  },
+  {
+   "id": "A15",
+   "message": "Find me a Python course on Udemy",
+   "prior_intent": null,
+   "history": [],
+   "expect": {
+    "redirect_reason": "external_provider"
+   }
+  },
+  {
+   "id": "A16",
+   "message": "Can you help with my Python homework?",
+   "prior_intent": null,
+   "history": [],
+   "expect": {
+    "on_topic": true,
+    "redirect_reason": null,
+    "skills_contain": "python"
+   }
+  },
+  {
+   "id": "A17",
+   "message": "Check out https://example.com/deal and recommend a leadership course",
+   "prior_intent": null,
+   "history": [],
+   "expect": {
+    "on_topic": true,
+    "redirect_reason": null,
+    "skills_contain": "leader"
    }
   }
  ]

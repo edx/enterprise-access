@@ -124,6 +124,17 @@ def _session_part(session: dict, sequence: int) -> dict:
             'data': {'session_uuid': session['uuid'], 'turn_sequence': sequence, 'title': session['title']}}
 
 
+def _redirect_reply(reason: str, history: list[dict]) -> str:
+    """
+    The server's reply for a redirect. Right after the same reply it switches to a shorter one (and back), so a
+    learner who keeps trying never gets the same sentence twice in a row. Distress always gets its full reply.
+    """
+    reply = constants.REDIRECT_REPLIES.get(reason, constants.REDIRECT_REPLY)
+    if reason != 'distress' and history and history[-1].get('reply') == reply:
+        return constants.REDIRECT_REPEAT_REPLY
+    return reply
+
+
 def platform_of(ctx: TurnContext) -> str:
     """'openai', 'xpert' or 'mixed', from the turn's per-step models."""
     platforms = {ctx.platform(c.model) for c in (ctx.intent_model, ctx.compose_model)}
@@ -267,21 +278,26 @@ def _turn_parts(ctx: TurnContext, steps: Steps, record: dict) -> Iterator[dict]:
                               'merge': result['merge']}
 
     if not result['on_topic']:
-        # Redirect path (REQ-008): fixed reply, opening chips, no retrieval or compose.
+        # Redirect path (REQ-008): a server-written reply per reason, no retrieval or compose.
+        reason = result['redirect_reason']
+        reply = _redirect_reply(reason, session['history'])
         record['redirected'] = True
-        record['redirect_reason'] = result['redirect_reason']
+        record['redirect_reason'] = reason
         yield {'type': 'text-start', 'id': 'reply'}
-        yield {'type': 'text-delta', 'id': 'reply', 'delta': constants.REDIRECT_REPLY}
+        yield {'type': 'text-delta', 'id': 'reply', 'delta': reply}
         timing['first_text_ms'] = _ms(ctx, ctx.clock())
         yield {'type': 'text-end', 'id': 'reply'}
-        yield {'type': 'data-followups', 'id': 'followups',
-               'data': {'question': constants.FOLLOWUP_TEMPLATES['open'][0], 'attribute': 'open',
-                        'suggestions': constants.OPENING_CHIPS}}
-        session['history'].append({'user': ctx.message, 'reply': constants.REDIRECT_REPLY})
+        # A learner in distress gets no chips or question: nothing that pushes courses.
+        attribute = '' if reason == 'distress' else 'open'
+        if attribute:
+            yield {'type': 'data-followups', 'id': 'followups',
+                   'data': {'question': constants.REDIRECT_FOLLOWUP_QUESTION, 'attribute': attribute,
+                            'suggestions': constants.OPENING_CHIPS}}
+        session['history'].append({'user': ctx.message, 'reply': reply})
         session['turn_count'] = sequence
         session['title'] = session['title'] or session['first_prompt'][:constants.CAPS['session_title']]
-        record['pending_turn'] = _pending_turn(ctx, record, reply=constants.REDIRECT_REPLY, intent=result,
-                                               item_ids=[], attribute='open', timing=timing)
+        record['pending_turn'] = _pending_turn(ctx, record, reply=reply, intent=result, item_ids=[],
+                                               attribute=attribute, timing=timing)
         timing['complete_ms'] = _ms(ctx, ctx.clock())
         yield _session_part(session, sequence)
         yield timing_part()
@@ -338,6 +354,10 @@ def _turn_parts(ctx: TurnContext, steps: Steps, record: dict) -> Iterator[dict]:
                 timing['first_section_ms'] = _ms(ctx, ctx.clock())
             yield part
 
+    if result['redirect_reason'] == 'external_provider':
+        # Another provider's courses were asked for along with a topic: say only this catalog is searched.
+        record['redirect_reason'] = 'external_provider'
+        yield from emit(parser.preface(constants.EXTERNAL_PROVIDER_NOTE))
     # Compose: a call that fails before sending any text is tried once more while the deadline allows; if that fails
     # too (or intent already fell back), the server writes the results from the shortlist (``server_output``).
     # A failure after text has streamed can't be replaced, and a configuration error or a refused request won't fix

@@ -221,6 +221,10 @@ class ComposeParser:
         parts.append({'type': 'text-delta', 'id': 'reply', 'delta': text})
         return parts
 
+    def preface(self, text: str) -> list[dict]:
+        """Server-written text that opens the reply, before the model's (or the server's) own sentences."""
+        return self._text_parts(text.strip() + ' ')
+
     def feed(self, delta: str) -> list[dict]:
         """Consume one model delta; return the parts it completes."""
         parts: list[dict] = []
@@ -260,6 +264,8 @@ class ComposeParser:
         parts += self._alternative_sections()
         parts += self._profile()
         question, ideas = self._followup_line or (constants.FOLLOWUP_TEMPLATES[self.attribute][0], None)
+        if not self._followup_line and self.attribute == 'open' and not self.emitted_ids:
+            question = constants.NO_RESULTS_FOLLOWUP_QUESTION  # "What else ..." reads as if something was shown
         if self.attribute in PAGE_SPLIT_ATTRIBUTES and not self._page_splits_on(self.attribute):
             # Every result shown has the same pacing (or level, or length), so asking about it narrows nothing:
             # ask what to explore next instead, with the model's ideas.

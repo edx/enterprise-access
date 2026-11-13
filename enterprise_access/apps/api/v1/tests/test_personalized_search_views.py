@@ -147,6 +147,20 @@ class PersonalizedSearchTurnViewTests(APITest):
         self.assertEqual(response.json()['parts'][-1]['type'], 'finish')
 
     @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
+    def test_identifiers_are_redacted_before_the_models_and_storage_see_the_message(self):
+        seen = []
+        steps = fake_steps()
+        intent_step = steps.intent
+        steps.intent = lambda **kwargs: seen.append(kwargs['user']) or intent_step(**kwargs)
+        with mock.patch('enterprise_access.apps.personalized_search.wiring.steps', return_value=steps):
+            parts = parse_sse(self.post(message='My SSN is 123-45-6789, help me lead a team'))
+        session = ChatSession.objects.get(uuid=parts[1]['data']['session_uuid'])
+        expected = 'My SSN is [redacted], help me lead a team'
+        self.assertEqual((session.first_prompt, session.turns.get().user_message), (expected, expected))
+        self.assertNotIn('6789', seen[0])
+        self.assertNotIn('6789', json.dumps(parts))
+
+    @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
     def test_other_enterprise_is_403(self):
         self.assertEqual(self.post(enterprise_customer_uuid=OTHER_ENTERPRISE).status_code, 403)
 
