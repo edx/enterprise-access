@@ -307,8 +307,12 @@ class TestAlgoliaSearchClient(TestCase):
         self._patched_search_client()
         self.mock_index.search.side_effect = raised_exception
 
-        with self.assertRaises(AlgoliaSearchError):
-            AlgoliaSearchClient().search_jobs_index('data analyst')
+        with self.assertLogs('enterprise_access.apps.api_client.algolia_client', level='ERROR') as logs, \
+                self.assertRaises(AlgoliaSearchError):
+            AlgoliaSearchClient().search_jobs_index('secret learner words')
+        self.assertEqual(len(logs.records), 1)
+        self.assertIn(type(raised_exception).__name__, logs.records[0].getMessage())
+        self.assertNotIn('secret learner words', logs.output[0])
 
     def test_client_is_closed_even_when_the_search_fails(self):
         mock_search_client = self._patched_search_client()

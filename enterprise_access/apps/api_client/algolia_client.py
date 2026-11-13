@@ -180,12 +180,10 @@ class AlgoliaSearchClient:
         try:
             return client.init_index(index_name).search(query, search_params)
         except (AlgoliaException, AlgoliaUnreachableHostException, RequestException) as exc:
-            # The query text is safe to log (it is derived from learner intent, not
-            # credentials); the API key is never logged.
-            logger.exception(
-                'Algolia search failed for index=%r, query=%r.',
-                index_name, query,
-            )
+            # No query text (it is derived from what the learner wrote) and no exception message (Algolia's can
+            # echo the filters); the API key is never logged.
+            logger.error('Algolia search failed for index=%r (query of %d chars): %s',
+                         index_name, len(query or ''), type(exc).__name__)
             raise AlgoliaSearchError(f'Algolia search failed for index {index_name!r}: {exc}') from exc
         finally:
             client.close()

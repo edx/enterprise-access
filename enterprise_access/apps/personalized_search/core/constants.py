@@ -16,6 +16,8 @@ INTENT_RETRY_MIN_S = 4
 COMPOSE_RETRY_MIN_S = 6
 SESSION_LOCK_S = 20
 SESSION_TTL_S = 24 * 60 * 60
+# Saved and not-interested rows kept per learner, enterprise and kind; adding one more drops the oldest.
+MAX_ITEM_FEEDBACK_PER_KIND = 500
 INTENT_MAX_TOKENS = 400
 COMPOSE_MAX_TOKENS = 1800  # room for the top pick and the comparison (KD-11)
 
