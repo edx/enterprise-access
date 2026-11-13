@@ -149,3 +149,28 @@ ASSIGNMENT_COURSE_RUN_ENDED_EXPIRATION = WaffleSwitch(
 def assignment_course_run_ended_expiration_enabled():
     """Return whether assignments expire (and have PII cleared) when their course runs have ended."""
     return ASSIGNMENT_COURSE_RUN_ENDED_EXPIRATION.is_enabled()
+
+
+# A switch because it is read off-request, in Stripe webhook handlers and Celery tasks.
+#
+# .. toggle_name: enterprise_access.ssp_paid_renewal
+# .. toggle_implementation: WaffleSwitch
+# .. toggle_default: False
+# .. toggle_description: Enables the new paid-to-paid renewal flow for self-service (Teams /
+#     Essentials) subscriptions. When on, a renewal provisions the next year's plan, a cancelled plan
+#     stays active until its paid period ends, a failed renewal payment gets a grace period, and the
+#     renewal receipt is sent only after the next year's plan is provisioned. When off, the current
+#     renewal flow runs. Turning it off affects only events handled from then on and does not undo
+#     work done while it was on.
+# .. toggle_use_cases: temporary
+# .. toggle_creation_date: 2026-11-11
+# .. toggle_target_removal_date: 2027-06-30
+SSP_PAID_RENEWAL = WaffleSwitch(
+    f'{ENTERPRISE_ACCESS_NAMESPACE}.ssp_paid_renewal',
+    __name__,
+)
+
+
+def ssp_paid_renewal_enabled():
+    """Return whether self-service paid-to-paid renewal handling is enabled."""
+    return SSP_PAID_RENEWAL.is_enabled()
