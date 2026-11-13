@@ -36,10 +36,16 @@ class PersonalizedSearchDebugConfigView(APIView):
     authentication_classes = (JwtAuthentication,)
     permission_classes = (permissions.IsAuthenticated,)
 
+    def initial(self, request, *args, **kwargs):
+        # The flag comes before the learner permission (as in the other views): flag off is 404 for everyone.
+        super().initial(request, *args, **kwargs)
+        if not personalized_search_enabled():
+            raise NotFound()
+
     @permission_required(PERSONALIZED_SEARCH_LEARNER_PERMISSION, fn=get_or_fetch_enterprise_uuid_for_bff_request)
     def get(self, request):
         """The allowed models, efforts and defaults for the debug panel."""
-        if not wiring.debug_allowed(request.user) or not personalized_search_enabled():
+        if not wiring.debug_allowed(request.user):
             raise NotFound()
         registry = wiring.model_registry()
         intent_default, compose_default = wiring.default_models()

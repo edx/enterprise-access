@@ -164,6 +164,7 @@ class DjangoHistoryStore:
         turn = ChatTurn.objects.filter(
             session__uuid=session_uuid, session__lms_user_id=lms_user_id,
             session__enterprise_customer_uuid=enterprise_customer_uuid, sequence=sequence,
+            session__is_removed=False,  # the join skips ChatSession.objects, which hides soft-deleted sessions
         ).first()
         if not turn:
             raise SessionNotFound()
