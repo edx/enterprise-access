@@ -91,3 +91,20 @@ def test_personalized_search_is_off_by_default_and_can_be_enabled():
     assert toggles.personalized_search_enabled() is False
     with override_waffle_flag(toggles.PERSONALIZED_SEARCH_ENABLED, active=True):
         assert toggles.personalized_search_enabled() is True
+
+
+def test_ssp_paid_renewal_toggle_is_a_switch():
+    """It is read in webhook handlers and Celery tasks, where there is no request to evaluate a flag against."""
+    assert isinstance(toggles.SSP_PAID_RENEWAL, WaffleSwitch)
+
+
+@pytest.mark.django_db
+def test_ssp_paid_renewal_is_disabled_by_default():
+    """A switch that has never been created reads as off, so existing behaviour runs until it is turned on."""
+    assert toggles.ssp_paid_renewal_enabled() is False
+
+
+@pytest.mark.django_db
+def test_ssp_paid_renewal_can_be_enabled():
+    with override_waffle_switch(toggles.SSP_PAID_RENEWAL, True):
+        assert toggles.ssp_paid_renewal_enabled() is True
