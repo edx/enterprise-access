@@ -19,7 +19,8 @@ from edx_enterprise_subsidy_client import EnterpriseSubsidyAPIClient
 from edx_rbac.decorators import permission_required
 from edx_rbac.mixins import PermissionRequiredMixin
 from edx_rest_framework_extensions.auth.jwt.authentication import JwtAuthentication
-from requests.exceptions import HTTPError, RequestException
+from requests.exceptions import ConnectionError as RequestsConnectionError
+from requests.exceptions import HTTPError, RequestException, Timeout
 from rest_framework import authentication, mixins, permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import APIException, NotFound
@@ -649,15 +650,22 @@ class SubsidyAccessPolicyRedeemViewset(UserDetailsFromJwtMixin, PermissionRequir
         enterprise_customer_uuid = serializer.data['enterprise_customer_uuid']
         lms_user_id = serializer.data['lms_user_id']
 
-        policies_with_credit_available = self.policies_with_credit_available(enterprise_customer_uuid, lms_user_id)
-
-        response_data = serializers.SubsidyAccessPolicyCreditsAvailableResponseSerializer(
-            policies_with_credit_available,
-            many=True,
-            context={
-                'lms_user_id': lms_user_id,
-            },
-        ).data
+        try:
+            policies_with_credit_available = self.policies_with_credit_available(enterprise_customer_uuid, lms_user_id)
+            response_data = serializers.SubsidyAccessPolicyCreditsAvailableResponseSerializer(
+                policies_with_credit_available,
+                many=True,
+                context={
+                    'lms_user_id': lms_user_id,
+                },
+            ).data
+        except (RequestsConnectionError, Timeout) as exc:
+            # Mostly the Subsidy API, whose connection failures were already retried (see
+            # get_versioned_subsidy_client()), but the LMS and catalog are called here too. The traceback names
+            # the host.
+            logger.exception('Could not reach an upstream service for credits-available for customer %s',
+                             enterprise_customer_uuid)
+            raise SubsidyAPIUnavailableException() from exc
 
         return Response(
             response_data,

@@ -1,12 +1,22 @@
 """
 Tests for subsidy_access_policy utils.
 """
+import io
+import ssl
+import threading
 import uuid
 from datetime import datetime, timedelta
 from unittest.mock import patch
 
 import ddt
+import requests
 from django.test import TestCase
+from edx_rest_api_client.client import OAuthAPIClient
+from urllib3.connectionpool import HTTPConnectionPool
+from urllib3.exceptions import ConnectTimeoutError, ProtocolError, ReadTimeoutError
+from urllib3.exceptions import SSLError as Urllib3SSLError
+from urllib3.response import HTTPResponse
+from urllib3.util.retry import Retry
 
 from enterprise_access.apps.subsidy_access_policy.models import SubsidyAccessPolicy
 from enterprise_access.apps.subsidy_access_policy.tests.factories import (
@@ -15,7 +25,10 @@ from enterprise_access.apps.subsidy_access_policy.tests.factories import (
     PerLearnerSpendCapLearnerCreditAccessPolicyFactory
 )
 from enterprise_access.apps.subsidy_access_policy.utils import (
+    SUBSIDY_CLIENT_MAX_AGE_SECONDS,
+    SUBSIDY_CLIENT_RETRY,
     create_idempotency_key_for_transaction,
+    get_versioned_subsidy_client,
     sort_subsidy_access_policies_for_redemption
 )
 
@@ -233,3 +246,124 @@ class SubsidyAccessPolicyUtilsTests(TestCase):
         ])
         sorted_policies = sort_subsidy_access_policies_for_redemption(queryset=queryset)
         assert sorted_policies[0] == self.policy_one
+
+
+# What ``HTTPConnectionPool._make_request`` raises or returns for each outcome of one attempt.
+def _dropped_tls_handshake():
+    return Urllib3SSLError(ssl.SSLEOFError(8, 'EOF occurred in violation of protocol'))
+
+
+def _connect_timeout():
+    return ConnectTimeoutError('Connection to enterprise-subsidy timed out.')
+
+
+def _connection_reset():
+    return ProtocolError('Connection aborted.', ConnectionResetError(104, 'Connection reset by peer'))
+
+
+def _read_timeout():
+    return ReadTimeoutError(None, '/api/', 'Read timed out. (read timeout=120)')
+
+
+def _response(status=200, headers=None):
+    return HTTPResponse(
+        body=io.BytesIO(b'{}'),
+        status=status,
+        headers={'Content-Type': 'application/json', **(headers or {})},
+        preload_content=False,
+    )
+
+
+def _unavailable_with_retry_after():
+    return _response(status=503, headers={'Retry-After': '1'})
+
+
+@ddt.ddt
+class GetVersionedSubsidyClientTests(TestCase):
+    """
+    Tests for ``get_versioned_subsidy_client()``: client reuse and retries.
+    """
+
+    def setUp(self):
+        super().setUp()
+        # Skip the OAuth token fetch, so requests go straight to the (mocked) connection pool.
+        auth_patcher = patch.object(OAuthAPIClient, '_ensure_authentication')
+        auth_patcher.start()
+        self.addCleanup(auth_patcher.stop)
+
+        # Don't wait out the backoff between retries.
+        sleep_patcher = patch.object(Retry, 'sleep')
+        sleep_patcher.start()
+        self.addCleanup(sleep_patcher.stop)
+
+    @ddt.data(1, 2)
+    def test_reuses_client_within_a_thread(self, version):
+        client = get_versioned_subsidy_client(version=version)
+
+        assert get_versioned_subsidy_client(version=version) is client
+
+    def test_separate_client_per_version(self):
+        assert get_versioned_subsidy_client(version=1) is not get_versioned_subsidy_client(version=2)
+
+    def test_separate_client_per_thread(self):
+        client = get_versioned_subsidy_client()
+        other_thread_clients = []
+        thread = threading.Thread(target=lambda: other_thread_clients.append(get_versioned_subsidy_client()))
+        thread.start()
+        thread.join()
+
+        assert other_thread_clients[0] is not client
+
+    @patch('enterprise_access.apps.subsidy_access_policy.utils.time.monotonic')
+    def test_replaces_client_after_max_age(self, mock_monotonic):
+        mock_monotonic.return_value = 1000
+        client = get_versioned_subsidy_client()
+        mock_monotonic.return_value = 1000 + SUBSIDY_CLIENT_MAX_AGE_SECONDS - 1
+        assert get_versioned_subsidy_client() is client
+
+        mock_monotonic.return_value = 1000 + SUBSIDY_CLIENT_MAX_AGE_SECONDS
+        with patch.object(client.client, 'close') as mock_close:
+            replacement = get_versioned_subsidy_client()
+
+        assert replacement is not client
+        mock_close.assert_called_once_with()
+
+    @ddt.data('http://enterprise-subsidy.example.com/', 'https://enterprise-subsidy.edx.org/')
+    def test_retries_mounted_for_http_and_https(self, url):
+        client = get_versioned_subsidy_client()
+
+        assert client.client.get_adapter(url).max_retries is SUBSIDY_CLIENT_RETRY
+
+    @ddt.data(
+        # The production failure: the TLS handshake was dropped, so a GET is retried...
+        ('GET', [_dropped_tls_handshake, _response], 200, 2),
+        # ...at most twice, then the error is raised.
+        ('GET', [_dropped_tls_handshake] * 3, requests.exceptions.SSLError, 3),
+        # An SSL error can also come after a request was sent, so a POST is never resent after one.
+        ('POST', [_dropped_tls_handshake, _response], requests.exceptions.SSLError, 1),
+        # A connection that couldn't be opened never carried the request, so even a POST is retried.
+        ('POST', [_connect_timeout, _response], 200, 2),
+        # A connection that broke after the request was sent: a GET is retried once, a POST never.
+        ('GET', [_connection_reset, _response], 200, 2),
+        ('GET', [_connection_reset, _connection_reset, _response], requests.exceptions.ConnectionError, 2),
+        ('POST', [_connection_reset, _response], requests.exceptions.ConnectionError, 1),
+        # A timed-out request may still be running on the server (e.g. a transactions export), so it's never resent.
+        ('GET', [_read_timeout, _response], requests.exceptions.ReadTimeout, 1),
+        # HTTP error responses go back to the caller untouched, even one with a Retry-After header.
+        ('GET', [_unavailable_with_retry_after], 503, 1),
+    )
+    @ddt.unpack
+    def test_retries(self, method, attempt_outcomes, expected_result, expected_attempts):
+        client = get_versioned_subsidy_client()
+
+        with patch.object(
+            HTTPConnectionPool, '_make_request', side_effect=[outcome() for outcome in attempt_outcomes],
+        ) as mock_make_request:
+            if isinstance(expected_result, int):
+                response = client.client.request(method, client.API_BASE_URL)
+                assert response.status_code == expected_result
+            else:
+                with self.assertRaises(expected_result):
+                    client.client.request(method, client.API_BASE_URL)
+
+        assert mock_make_request.call_count == expected_attempts
