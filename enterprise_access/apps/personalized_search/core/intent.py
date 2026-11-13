@@ -30,10 +30,11 @@ SYSTEM_PROMPT = (
 
 LEVELS = ('introductory', 'intermediate', 'advanced')
 # Journey language that points to programs (a bundle of courses as one path). Used when the model names no
-# type for such a message, so "a learning path into data science" still leads with programs.
+# type for such a message, so "a learning path into data science" still leads with programs. Wanting a
+# certificate or credential is left to the intent model: a course can earn one too.
 JOURNEY_PATTERN = re.compile(
     r"\b(learning (journey|path|track)|journey|path ?ways?|career path|roadmap|curriculum|series of courses"
-    r"|step[- ]by[- ]step|certificates?|credentials?)\b",
+    r"|step[- ]by[- ]step)\b",
     re.IGNORECASE,
 )
 # A short time limit said in words: newer intent models leave max_weeks empty for these, so the merge sets it.
@@ -200,7 +201,7 @@ def merge(prior: dict | None, new: dict, mode: str, *, message: str) -> dict:
             base[key] = new[key]
     no_type_chosen = set(base.get('item_types') or constants.ITEM_TYPES) == set(constants.ITEM_TYPES)
     if not new.get('item_types') and no_type_chosen and _says(JOURNEY_PATTERN, NEGATED_JOURNEY, message):
-        # A learning journey or credential points to programs; they lead, other types stay as alternatives. Only
+        # A learning journey points to programs; they lead, other types stay as alternatives. Only
         # while no type is chosen: on a refine, no item_types means "unchanged", so an earlier choice (such as
         # "no programs") stands.
         base['item_types'] = ['program']

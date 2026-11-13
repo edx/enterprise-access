@@ -21,9 +21,25 @@ class ProfilePropsTests(TestCase):
                       level='intermediate', item_types=['course', 'program'],
                       constraints={'pacing': 'self_paced', 'max_hours_per_week': 5, 'max_weeks': 12})
         props = profile.profile_props(merged)
-        self.assertEqual(props['summary'], profile.SUMMARY)
         self.assertEqual(props['chips'], ['Sr. Product Manager', 'Leadership', 'Strategy', 'Intermediate',
                                           'Self-paced', 'Up to 5 hrs/week'])
+        self.assertEqual(props['summary'], "Here's what I understood about your goal, your level, how you like "
+                                           'to learn and the time you have.')
+
+    def test_the_summary_names_only_what_its_chips_show(self):
+        cases = (
+            ({'roles': ['Team lead']}, "Here's what I understood about your goal."),
+            ({'skills': ['SQL'], 'constraints': {'max_weeks': 4}},
+             "Here's what I understood about your goal and the time you have."),
+            ({'item_types': ['program']}, "Here's what I understood about how you like to learn."),
+            # Six chips before the type: its chip is cut, so the summary doesn't mention how they like to learn.
+            ({'roles': ['A'], 'skills': ['B', 'C'], 'level': 'advanced', 'item_types': ['course'],
+              'constraints': {'max_hours_per_week': 3, 'max_weeks': 4}},
+             "Here's what I understood about your goal, your level and the time you have."),
+        )
+        for fields, expected in cases:
+            self.assertEqual(profile.profile_props(dict(empty_intent(), **fields))['summary'], expected, fields)
+        self.assertEqual(profile.summary(set()), profile.SUMMARY)
 
     def test_all_types_add_no_chip_and_some_types_do(self):
         merged = dict(empty_intent(), item_types=['executive_education'])
