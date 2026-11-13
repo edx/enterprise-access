@@ -50,7 +50,7 @@ JUDGE_RUBRIC = """You are grading one AI-generated learning page for an enterpri
 Return ONLY JSON: {"relevance": 1-5, "why_quality": 1-5, "editorial": 1-5, "followup": 1-5, "overall": 1-5, "notes": "one sentence"}
 - relevance: are the picks the best-fitting candidates for the learner's goal and constraints, with off-topic candidates rejected and no padding?
 - why_quality: are the reasons specific to this learner and concrete about skills practised, plain and free of hype?
-- editorial: is the header specific and well written, and is the chat reply accurate about what the page shows?
+- editorial: is the header specific and well written, and is the chat reply a short reply that reacts to the learner and points to what is worth a look among the results? It need not describe every result or option, but what it says about them must be accurate.
 - followup: does the follow-up question narrow the next results, with natural suggestions?
 - overall: would you show this page to the learner as is?"""  # noqa: E501
 # pylint: enable=line-too-long

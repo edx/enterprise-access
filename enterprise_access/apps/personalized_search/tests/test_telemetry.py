@@ -77,6 +77,15 @@ class TurnEventTests(TestCase):
         props = self.sent[0][2]
         self.assertEqual((props['intent_max_hours_per_week'], props['content_locale']), (5, 'es'))
 
+    def test_intent_skills_and_roles_are_cut_to_the_label_length(self):
+        long_skill, long_role = 'S' * 80, 'R' * 60
+        intent = json.dumps({'on_topic': True, 'redirect_reason': None, 'merge': 'replace',
+                             'intent': {'query': 'q', 'skills': [long_skill, 'SQL'], 'roles': [long_role]}})
+        self.run_with(intent_text=intent)
+        props = self.sent[0][2]
+        self.assertEqual((props['intent_skills'], props['intent_roles']),
+                         (['S' * telemetry.INTENT_LABEL_CHARS, 'SQL'], ['R' * telemetry.INTENT_LABEL_CHARS]))
+
     def test_is_debug_is_whether_this_turn_used_debug_overrides(self):
         self.ctx.debug = True  # the environment allows overrides (and shows the debug read-out)
         self.run_with(persist=None)
