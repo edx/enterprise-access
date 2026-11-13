@@ -79,6 +79,10 @@ The OpenAI client doesn't retry (`max_retries=0`), so the orchestrator does, onc
 
 The turn log records `model_failures`, `retries` and `degraded` (`intent`, `compose` or empty), the Segment `turn.completed` event carries `degraded`, and the debug read-out shows `retries` and `degraded`. Harness rows for server-built turns have status `degraded` so comparisons don't count them as model output.
 
+## Character set (migration 0003)
+
+Migration `0003_utf8mb4_tables` converts the three tables to `utf8mb4` on MySQL so emoji can be stored. Pre-deploy checks, failure handling, rollback and what to do if the emoji error returns: [utf8mb4 migration runbook](personalized_search_utf8mb4_runbook.md).
+
 ## Removing the feature
 
 The three tables belong to this app alone, and nothing outside it has a foreign key to them. To remove the feature, run `./manage.py migrate personalized_search zero`, then remove the app from `PROJECT_APPS`.

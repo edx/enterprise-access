@@ -607,7 +607,7 @@ All three models are in `apps/personalized_search`, built on `model_utils` `Time
 | Migration | Description | Risk (table size, locks) | Rollback Strategy |
 | --- | --- | --- | --- |
 | `personalized_search/0001_initial` | Creates the 3 new tables | None (new, empty tables) | Turn the switch off. Tables are left in place; a later `migrate personalized_search zero` drops them (run it **before** reverting the code, or Django can't unapply a missing migration file) |
-| `personalized_search/0003_utf8mb4_tables` | On MySQL only, converts any of the 3 tables that isn't `utf8mb4` yet (`CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`, foreign key checks off during it), so 4-byte characters (emoji) can be stored. No-op elsewhere or when already `utf8mb4` | A table copy per converted table; the tables are small (stage only) | Reverse is a no-op (going back would fail on stored emoji) |
+| `personalized_search/0003_utf8mb4_tables` | On MySQL only, converts any of the 3 tables that isn't `utf8mb4` yet (`CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`, foreign key checks off during it), so 4-byte characters (emoji) can be stored. No-op elsewhere or when already `utf8mb4` | A table copy per converted table; the tables are small (stage only) | Reverse is a no-op (going back would fail on stored emoji); rollback and regression steps in `personalized_search_utf8mb4_runbook.md` |
 | `prompts/0004_…_prompt_type` | Adds the two `PromptType` choices (choices-only alter) | None (no schema change on MySQL) | Reverse migration |
 | `prompts/0005_seed_personalized_search_prompts` | `get_or_create` the intent and compose rows | Two rows in an existing table; existing rows untouched | Reverse deletes only those two rows |
 
