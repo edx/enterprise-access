@@ -2,9 +2,11 @@
 from unittest import mock
 
 from django.test import TestCase, override_settings
+from edx_toggles.toggles.testutils import override_waffle_switch
 
 from enterprise_access.apps.personalized_search import wiring
 from enterprise_access.apps.personalized_search.core import constants
+from enterprise_access.toggles import PERSONALIZED_SEARCH_SUGGESTED_ORDER
 
 MODELS = {'gpt-4.1-mini': (0.4, 0.1, 1.6)}
 
@@ -89,6 +91,16 @@ class WiringTests(TestCase):
             ctx = wiring.turn_context(session={}, message='m', intent_model=intent, compose_model=compose, scope=None)
         self.assertEqual((ctx.intent_timeout_s, ctx.compose_timeout_s), (4, 6))
         self.assertEqual(ctx.platform('gpt-4.1-mini'), 'openai')
+
+    def test_turn_context_follows_the_suggested_order_switch(self):
+        intent, compose = wiring.default_models()
+
+        def plan_enabled():
+            return wiring.turn_context(session={}, message='m', intent_model=intent, compose_model=compose,
+                                       scope=None).plan_enabled
+        self.assertFalse(plan_enabled())  # off by default
+        with override_waffle_switch(PERSONALIZED_SEARCH_SUGGESTED_ORDER, True):
+            self.assertTrue(plan_enabled())
 
     @override_settings(PERSONALIZED_SEARCH_SHORTLIST_SIZE=20, PERSONALIZED_SEARCH_SHORTLIST_SIZES={'gpt-6.1-terra': 40})
     def test_the_shortlist_size_follows_the_compose_model(self):

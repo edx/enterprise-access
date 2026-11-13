@@ -17,7 +17,7 @@ from enterprise_access.apps.personalized_search.core.errors import ModelConfigur
 from enterprise_access.apps.personalized_search.core.model_registry import ModelRegistry
 from enterprise_access.apps.personalized_search.core.orchestrator import ModelChoice, Steps, TurnContext
 from enterprise_access.apps.personalized_search.core.retrieval import CatalogScope
-from enterprise_access.toggles import personalized_search_debug_enabled
+from enterprise_access.toggles import personalized_search_debug_enabled, personalized_search_suggested_order_enabled
 
 
 def xpert_backend() -> XpertBackend:
@@ -104,6 +104,7 @@ def turn_context(*, session: dict, message: str, intent_model: ModelChoice, comp
         compose_timeout_s=_step_timeout(registry, compose_model.model,
                                         settings.PERSONALIZED_SEARCH_COMPOSE_READ_TIMEOUT_S),
         shortlist=shortlist_size(compose_model.model),
+        plan_enabled=personalized_search_suggested_order_enabled(),
     )
 
 

@@ -21,11 +21,10 @@ from typing import Callable, Iterator
 from enterprise_access.apps.personalized_search.core import constants
 from enterprise_access.apps.personalized_search.core import intent as intent_step
 from enterprise_access.apps.personalized_search.core import telemetry
-from enterprise_access.apps.personalized_search.core.compose import SEQUENCING
-from enterprise_access.apps.personalized_search.core.compose import SYSTEM_PROMPT as COMPOSE_SYSTEM
-from enterprise_access.apps.personalized_search.core.compose import ComposeParser
+from enterprise_access.apps.personalized_search.core.compose import SEQUENCING, ComposeParser
 from enterprise_access.apps.personalized_search.core.compose import build_user_content as compose_user
 from enterprise_access.apps.personalized_search.core.compose import server_output
+from enterprise_access.apps.personalized_search.core.compose import system_prompt as compose_system
 from enterprise_access.apps.personalized_search.core.errors import ModelConfigurationError, ModelError, ModelRejected
 from enterprise_access.apps.personalized_search.core.ports import Usage
 from enterprise_access.apps.personalized_search.core.retrieval import (
@@ -78,6 +77,8 @@ class TurnContext:
     t0: float = field(default=0.0)
     # Event tags from the host (KD-12): ``cohort``, ``engine`` and ``is_debug`` (the turn used debug overrides).
     analytics: dict = field(default_factory=dict)
+    # Whether results may include the suggested order (plan block); the host's switch.
+    plan_enabled: bool = True
 
 
 @dataclass
@@ -363,14 +364,14 @@ def _turn_parts(ctx: TurnContext, steps: Steps, record: dict) -> Iterator[dict]:
     parser = ComposeParser(candidates=candidates, excluded_ids=_excluded_ids(session), followup_attribute=attribute,
                            intent=merged, totals=totals, search_queries=search_queries,
                            seen_ids=session['shown_item_ids'], plan_wanted=bool(SEQUENCING.search(ctx.message)),
-                           language=reply_language)
+                           plan_enabled=ctx.plan_enabled, language=reply_language)
     record['item_ids'] = parser.emitted_ids  # the parser's own list, so an aborted turn logs what it showed
     record.update(placements=parser.placements, dropped=parser.dropped)
     usages['compose'] = Usage(model=ctx.compose_model.model, effort=ctx.compose_model.effort)
 
     def compose_stream():
         return steps.compose(
-            system=COMPOSE_SYSTEM,
+            system=compose_system(ctx.plan_enabled),
             user=compose_user(merged_intent=merged, followup_attribute=attribute, asked=session['asked_attributes'],
                               history=session['history'], message=ctx.message, candidates=candidates,
                               language=reply_language, screen=session.get('previous_screen')),

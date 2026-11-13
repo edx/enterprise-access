@@ -494,6 +494,30 @@ class ServerOutputTests(TestCase):
         self.assertEqual(compose.server_output([]), constants.DEGRADED_NO_RESULTS_REPLY)
 
 
+class SuggestedOrderSwitchTests(TestCase):
+    """With the ``personalized_search_suggested_order`` switch off, no plan (suggested order) is asked for or shown."""
+
+    def test_the_prompt_without_the_plan(self):
+        prompt = compose.system_prompt(plan_enabled=False)
+        self.assertIs(compose.system_prompt(plan_enabled=True), compose.SYSTEM_PROMPT)
+        self.assertIs(prompt, compose.SYSTEM_PROMPT_NO_PLAN)
+        for text in ('"block":"plan"', '- plan:', 'plan notes', ', plan.'):
+            self.assertIn(text, compose.SYSTEM_PROMPT)
+            self.assertNotIn(text, prompt)
+        self.assertIn('followup, insight.', prompt)
+        self.assertIn('ideas, session_title', prompt)
+
+    def test_no_plan_is_shown_when_switched_off(self):
+        plan = {'block': 'plan', 'steps': [{'item_id': 'edX+C2', 'note': 'a'}, {'item_id': 'edX+C1', 'note': 'b'}]}
+        body = line(section('course', ['edX+C1', 'edX+C2', 'edX+C3'])) + line(plan)
+        parser = compose.ComposeParser(candidates=default_candidates(), excluded_ids=[], followup_attribute='open',
+                                       plan_wanted=True, plan_enabled=False)
+        parts = parser.feed('r\n@@BLOCKS@@\n' + body) + parser.finish()
+        self.assertFalse([p for p in parts if p['type'] == 'data-block' and p['data']['type'] == 'plan'])
+        self.assertIn('plan_disabled', parser.dropped)
+        self.assertNotIn('plan_added_by_server', parser.dropped)  # nor one written by the server for "what next?"
+
+
 @ddt.ddt
 class PlanAndFactCheckTests(TestCase):
     """A plan when the learner asks about order (finding 5), and claims checked against metadata (finding 6)."""
