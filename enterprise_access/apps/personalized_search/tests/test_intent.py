@@ -22,7 +22,8 @@ class IntentParseTests(TestCase):
         self.assertEqual(len(out['intent']['skills']), 8)
         self.assertIsNone(out['intent']['level'])
         self.assertEqual(out['intent']['item_types'], ['course'])
-        self.assertEqual(out['intent']['constraints'], {'max_weeks': 4, 'max_hours_per_week': None, 'pacing': None})
+        self.assertEqual(out['intent']['constraints'],
+                         {'max_weeks': 4, 'max_hours_per_week': None, 'pacing': None, 'course_language': None})
 
     @ddt.data(
         ({'on_topic': False, 'redirect_reason': 'unsafe'}, 'unsafe'),
@@ -51,6 +52,17 @@ class IntentParseTests(TestCase):
             self.assertIn(f'"{reason}"', intent.SYSTEM_PROMPT)
         self.assertIn('give up on everything', intent.SYSTEM_PROMPT)
         self.assertIn('Python homework', intent.SYSTEM_PROMPT)
+
+    def test_languages_and_finished_courses_are_read(self):
+        out = intent.parse(json.dumps({
+            'on_topic': True, 'redirect_reason': None, 'message_language': 'spanish',
+            'intent': {'query': 'customer service', 'constraints': {'course_language': ' english '},
+                       'completed': ['Linear Algebra I', '', 'Linear Algebra I']}}))
+        self.assertEqual((out['message_language'], out['intent']['constraints']['course_language']),
+                         ('Spanish', 'English'))
+        self.assertEqual(out['intent']['completed'], ['Linear Algebra I'])
+        for bad in ('es<script>', 7, '', 'x' * 40):
+            self.assertIsNone(intent.language_name(bad), bad)
 
     @ddt.data('no json here', '{"redirect_reason": null}', '[1, 2]')
     def test_invalid(self, text):
@@ -157,6 +169,36 @@ class IntentMergeTests(TestCase):
         self.assertEqual(merged['roles'], ['manager'])
         self.assertEqual(merged['item_types'], ['program'])
         self.assertEqual(merged['constraints'], {'max_weeks': 4, 'pacing': None})
+
+    @ddt.data(('Are any instructor-led?', True), ('English courses only', True),
+              ('instructor-led courses with a start date', True), ('Only self-paced, under 4 weeks', True),
+              ('Focus on AWS specifically', False), ('Python courses only', False), ('', False))
+    @ddt.unpack
+    def test_constraint_only(self, text, expected):
+        self.assertEqual(intent.constraint_only(text), expected)
+
+    def test_a_constraint_only_follow_up_keeps_the_topic(self):
+        prior = dict(self.prior, query='PyTorch deep learning', skills=['PyTorch'])
+        # P3-5: the model replaced the query with the constraint; P5-3: it read the language as a topic.
+        merged = intent.merge(prior, {'query': 'instructor-led courses with a start date',
+                                      'constraints': {'pacing': 'instructor_paced'}}, 'refine',
+                              message='Are any instructor-led? With start dates?')
+        self.assertEqual((merged['query'], merged['skills']), ('PyTorch deep learning', ['PyTorch']))
+        self.assertEqual(merged['constraints']['pacing'], 'instructor_paced')
+        merged = intent.merge(prior, {'query': None, 'skills': ['English'],
+                                      'constraints': {'course_language': 'English'}}, 'refine',
+                              message='show me English courses only')
+        self.assertEqual((merged['query'], merged['skills']), ('PyTorch deep learning', ['PyTorch']))
+        self.assertEqual(merged['constraints']['course_language'], 'English')
+        new_topic = intent.merge(prior, {'query': 'AWS', 'skills': ['AWS']}, 'refine', message='Focus on AWS')
+        self.assertEqual((new_topic['query'], new_topic['skills']), ('AWS', ['AWS', 'PyTorch']))
+
+    def test_finished_courses_hold_for_the_rest_of_the_session(self):
+        first = intent.merge(None, {'completed': ['Linear Algebra I']}, 'replace', message='x')
+        first['completed_keys'] = ['GTx+LINALGxI']
+        later = intent.merge(first, {'query': 'statistics', 'completed': ['Calculus 1']}, 'replace', message='x')
+        self.assertEqual(later['completed'], ['Calculus 1', 'Linear Algebra I'])
+        self.assertEqual(later['completed_keys'], ['GTx+LINALGxI'])
 
     def test_replace_starts_over(self):
         merged = intent.merge(self.prior, {'query': 'python', 'skills': ['python']}, 'replace', message='x')

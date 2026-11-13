@@ -715,6 +715,110 @@
     "redirect_reason": null,
     "skills_contain": "leader"
    }
+  },
+  {
+   "id": "R12",
+   "message": "Are any of these instructor-led?",
+   "prior_intent": {
+    "query": "PyTorch for deep learning",
+    "skills": [
+     "PyTorch",
+     "deep learning"
+    ],
+    "roles": [],
+    "level": null,
+    "item_types": [
+     "course",
+     "executive_education",
+     "program"
+    ],
+    "constraints": {
+     "max_weeks": null,
+     "pacing": null
+    }
+   },
+   "history": [
+    "I want to learn PyTorch"
+   ],
+   "expect": {
+    "on_topic": true,
+    "redirect_reason": null,
+    "merge": "refine",
+    "pacing": "instructor_paced",
+    "query_contains": "pytorch"
+   }
+  },
+  {
+   "id": "R13",
+   "message": "Show me English courses only",
+   "prior_intent": {
+    "query": "customer service skills",
+    "skills": [
+     "customer service",
+     "communication"
+    ],
+    "roles": [],
+    "level": null,
+    "item_types": [
+     "course",
+     "executive_education",
+     "program"
+    ],
+    "constraints": {
+     "max_weeks": null,
+     "pacing": null
+    }
+   },
+   "history": [
+    "Quiero mejorar mi atención al cliente"
+   ],
+   "expect": {
+    "on_topic": true,
+    "redirect_reason": null,
+    "merge": "refine",
+    "course_language": "English",
+    "query_contains": "customer"
+   }
+  },
+  {
+   "id": "R14",
+   "message": "I've finished Linear Algebra I. What should I take next?",
+   "prior_intent": {
+    "query": "linear algebra",
+    "skills": [
+     "linear algebra"
+    ],
+    "roles": [],
+    "level": null,
+    "item_types": [
+     "course",
+     "executive_education",
+     "program"
+    ],
+    "constraints": {
+     "max_weeks": null,
+     "pacing": null
+    }
+   },
+   "history": [
+    "I want to learn linear algebra"
+   ],
+   "expect": {
+    "on_topic": true,
+    "redirect_reason": null,
+    "completed_contains": "linear algebra i"
+   }
+  },
+  {
+   "id": "L1",
+   "message": "Quiero mejorar la atención al cliente de mi equipo",
+   "prior_intent": null,
+   "history": [],
+   "expect": {
+    "on_topic": true,
+    "redirect_reason": null,
+    "message_language": "Spanish"
+   }
   }
  ]
 }

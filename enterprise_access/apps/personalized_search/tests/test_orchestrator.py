@@ -15,9 +15,9 @@ from enterprise_access.apps.personalized_search.core import constants
 from enterprise_access.apps.personalized_search.core.errors import ModelConfigurationError, ModelError, ModelRejected
 from enterprise_access.apps.personalized_search.core.orchestrator import ModelChoice, Steps, TurnContext, run_turn
 from enterprise_access.apps.personalized_search.core.ports import Usage
-from enterprise_access.apps.personalized_search.core.retrieval import RetrievalFailed, SearchResults
+from enterprise_access.apps.personalized_search.core.retrieval import CatalogScope, RetrievalFailed, SearchResults
 from enterprise_access.apps.personalized_search.models import ChatSession, ChatTurn, ItemFeedback
-from enterprise_access.apps.personalized_search.tests.helpers import default_candidates
+from enterprise_access.apps.personalized_search.tests.helpers import candidate, default_candidates, program_hit
 
 ON_TOPIC = json.dumps({'on_topic': True, 'redirect_reason': None, 'merge': 'replace',
                        'intent': {'query': 'team leadership', 'skills': ['Leadership']}})
@@ -174,6 +174,41 @@ class RunTurnTests(TestCase):
         self.assertEqual([p['type'] for p in parts].count('text-start'), 1)
         self.assertTrue([p for p in parts if p['type'] == 'data-block' and p['data']['type'] == 'item_section'])
         self.assertEqual(ChatTurn.objects.get(session_id=self.session['uuid']).reply_text, reply)
+
+    def run_with(self, intent_json, scope):
+        """Run a turn with ``scope``; return what retrieval and compose were given."""
+        seen = {}
+        steps = fake_steps(intent_text=json.dumps(intent_json))
+        retrieve, compose = steps.retrieve, steps.compose
+        steps.retrieve = lambda merged, sc, *a, **kw: seen.update(scope=sc, merged=merged) or retrieve(merged, sc)
+        steps.compose = lambda **kw: seen.update(user=kw['user']) or compose(**kw)
+        list(run_turn(dataclasses.replace(self.ctx, scope=scope), steps))
+        return seen
+
+    def test_replies_follow_the_learners_language_and_courses_the_language_asked_for(self):
+        scope = CatalogScope(filter='f', reply_languages=('English', 'Spanish'))
+        wrote_spanish = {'on_topic': True, 'redirect_reason': None, 'merge': 'replace', 'message_language': 'Spanish',
+                         'intent': {'query': 'servicio al cliente', 'skills': ['Customer Service']}}
+        seen = self.run_with(wrote_spanish, scope)
+        self.assertTrue(seen['user'].startswith('RESPONSE LANGUAGE: Spanish\n'))
+        self.assertEqual(seen['scope'].language_name, 'English')  # taught in the portal's language by default
+        asked = dict(wrote_spanish, intent=dict(wrote_spanish['intent'], constraints={'course_language': 'Spanish'}))
+        self.assertEqual(self.run_with(asked, scope)['scope'].language_name, 'Spanish')
+        unsupported = dict(wrote_spanish, message_language='Japanese')
+        self.assertTrue(self.run_with(unsupported, scope)['user'].startswith('RESPONSE LANGUAGE: English\n'))
+
+    def test_a_finished_course_and_its_programs_leave_the_results_and_stay_out(self):
+        finished = {'on_topic': True, 'redirect_reason': None, 'merge': 'replace',
+                    'intent': {'query': 'leadership', 'skills': ['Leadership'], 'completed': ['Course edX+C1']}}
+        steps = fake_steps(intent_text=json.dumps(finished), retrieve=lambda *a, **kw: default_candidates() + [
+            candidate(dict(program_hit('p-with-c1'), course_keys=['edX+C1']))])
+        parts = list(run_turn(self.ctx, steps))
+        shown = [i['item_id'] for p in parts if p['type'] == 'data-block' and p['data']['type'] == 'item_section'
+                 for i in p['data']['props']['items']]
+        self.assertNotIn('edX+C1', shown)
+        self.assertNotIn('p-with-c1', shown)
+        saved = self.saved().merged_intent
+        self.assertEqual((saved['completed'], saved['completed_keys']), (['Course edX+C1'], ['edX+C1']))
 
     def test_an_unexpected_failure_ends_with_an_internal_error_and_persists_nothing(self):
         steps = fake_steps(retrieve=lambda *a, **k: (_ for _ in ()).throw(KeyError('bug')))
