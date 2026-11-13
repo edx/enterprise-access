@@ -14,6 +14,9 @@ TURN_COMPLETED = 'turn.completed'
 TURN_FAILED = 'turn.failed'
 TURN_STOPPED = 'turn.stopped'
 
+# ``intent_skills`` and ``intent_roles`` entries are cut to this length. They are the intent model's normalised
+# labels ("Data Analysis", "Product Manager"), not learner text: a turn whose intent fell back has none.
+INTENT_LABEL_CHARS = 40
 _USAGE_FIELDS = (('input_tokens', 'input_tokens'), ('cached_tokens', 'cached_input_tokens'),
                  ('output_tokens', 'output_tokens'), ('reasoning_tokens', 'reasoning_tokens'))
 
@@ -56,6 +59,11 @@ def join_keys(ctx, record: dict) -> dict:
     }
 
 
+def _labels(values) -> list[str]:
+    """Intent skills or roles for an event, each cut to ``INTENT_LABEL_CHARS``."""
+    return [str(value)[:INTENT_LABEL_CHARS] for value in values or []]
+
+
 def _reason_code(reason: str) -> str:
     """
     A dropped line's reason without model-written text: the code, plus its item type when the suffix is one
@@ -75,7 +83,7 @@ def _completed(ctx, record: dict) -> dict:
         'outcome': 'redirected' if record.get('redirected') else ('done' if placements else 'no_match'),
         'redirect_reason': record.get('redirect_reason'),
         'intent_merge_mode': record.get('merge_mode'),
-        'intent_skills': list(merged.get('skills') or []), 'intent_roles': list(merged.get('roles') or []),
+        'intent_skills': _labels(merged.get('skills')), 'intent_roles': _labels(merged.get('roles')),
         'intent_level': merged.get('level'), 'intent_item_types': list(merged.get('item_types') or []),
         'intent_max_weeks': constraints.get('max_weeks'),
         'intent_max_hours_per_week': constraints.get('max_hours_per_week'), 'intent_pacing': constraints.get('pacing'),

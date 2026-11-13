@@ -69,14 +69,16 @@ class IntentMergeTests(TestCase):
 
     def test_learning_journey_language_prefers_programs_when_no_type_is_named(self):
         for message in ('I want a learning path into data science', 'Give me a roadmap to become a PM',
-                        'a step-by-step pathway for cloud skills', 'I want a certificate in finance'):
+                        'a step-by-step pathway for cloud skills'):
             merged = intent.merge(None, {'skills': ['data']}, 'replace', message=message)
             self.assertEqual(merged['item_types'], ['program'], message)
         # A type the learner names wins, and other messages keep every type.
         named = intent.merge(None, {'item_types': ['course']}, 'replace', message='a learning path, courses only')
         self.assertEqual(named['item_types'], ['course'])
-        plain = intent.merge(None, {'skills': ['sql']}, 'replace', message='I want to learn SQL')
-        self.assertEqual(plain['item_types'], list(constants.ITEM_TYPES))
+        # Wanting a certificate or credential is the intent model's call (a course can earn one), not the regex's.
+        for message in ('I want to learn SQL', 'I want a certificate in finance', 'a credential in data analysis'):
+            plain = intent.merge(None, {'skills': ['sql']}, 'replace', message=message)
+            self.assertEqual(plain['item_types'], list(constants.ITEM_TYPES), message)
 
     def test_journey_language_never_overrides_a_chosen_type_or_a_negation(self):
         opted_out = dict(self.prior, item_types=['course', 'executive_education'])  # "no programs, please"
