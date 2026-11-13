@@ -162,6 +162,10 @@ class SubRequestTests(TestCase):
         self.assertEqual(len(queries), 10)
         self.assertTrue(all(q['distinct'] and not {'tier', 'count_for', 'preferred'} & set(q) for q in queries))
         self.assertEqual(out.totals, {'course': 42, 'executive_education': 9, 'program': 0})
+        # The query each total counts: the intent query (skills count) or the skills and roles (keyword count).
+        keywords = 'Leadership Coaching Manager'
+        self.assertEqual(out.search_queries,
+                         {'course': 'team leadership', 'executive_education': keywords, 'program': keywords})
         kwargs = client.multi_search_catalog_index.call_args.kwargs
         self.assertEqual((kwargs['allow_unscoped'], kwargs['secured_key'], kwargs['timeout_s']), (True, None, 1.5))
 

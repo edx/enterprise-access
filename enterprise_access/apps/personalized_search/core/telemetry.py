@@ -20,7 +20,7 @@ _USAGE_FIELDS = (('input_tokens', 'input_tokens'), ('cached_tokens', 'cached_inp
 
 # Server-set card fields that change between turns without the model rewriting anything.
 # Set per turn by the server, not written by the model: a repeated block must digest the same across turns.
-_VOLATILE_CARD_FIELDS = frozenset({'status', 'section', 'position', 'total', 'reserve'})
+_VOLATILE_CARD_FIELDS = frozenset({'status', 'section', 'position', 'total', 'search_query', 'reserve'})
 
 
 def _without_volatile(value):

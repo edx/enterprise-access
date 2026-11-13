@@ -153,6 +153,11 @@ class StoreContract:  # pylint: disable=no-member  # mixed into TestCase subclas
         self.dismiss(8, ENTERPRISE, 'c')
         self.assertEqual(self.new_session()['not_interested_ids'], ['a'])
 
+    def test_not_interested_ids_are_newest_first(self):
+        for item_id in ('a', 'b', 'c'):
+            self.dismiss(7, ENTERPRISE, item_id)
+        self.assertEqual(self.store.not_interested_ids(7, ENTERPRISE), ['c', 'b', 'a'])
+
 
 class DjangoSessionStoreTests(StoreContract, TestCase):
     """The ORM store, plus what only it guarantees (rows, the transaction)."""

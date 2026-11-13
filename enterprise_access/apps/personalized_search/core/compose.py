@@ -172,7 +172,7 @@ class ComposeParser:
 
     def __init__(self, *, candidates: list[dict], excluded_ids: list[str], followup_attribute: str,
                  id_prefix: str = 'blk', intent: dict | None = None, totals: dict | None = None,
-                 seen_ids: list[str] | None = None):
+                 search_queries: dict | None = None, seen_ids: list[str] | None = None):
         self.cards = {c['card']['item_id']: c['card'] for c in candidates}
         self.candidates = candidates
         self.excluded = set(excluded_ids)  # what the learner dismissed ("Not for me"); never shown
@@ -197,6 +197,7 @@ class ComposeParser:
         self.profile_emitted = False
         self.profile_sent = False      # an early profile went out with the header
         self.totals = totals or {}     # catalog matches per item type, for "See all (n)"
+        self.search_queries = search_queries or {}  # per item type, the query that total counts
         self.seen = set(seen_ids or [])  # items shown in earlier turns; the rest are flagged new
         self.reserved: set[str] = set()  # sections' reserve cards, kept out of a later top pick or compare
         self.placements: list[dict] = []  # every card shown, in order, with where it sits (for usage events)
@@ -266,6 +267,16 @@ class ComposeParser:
             question = constants.FOLLOWUP_TEMPLATES['open'][0]
         parts.append(self._followups(question, ideas))
         return parts
+
+    def held_followups(self) -> list[dict]:
+        """
+        For a turn that ends early (deadline or a model failure after text): the model's followup line as
+        data-followups, as written (not switched to "open", since the page isn't complete), so its chips aren't
+        lost. Nothing when the model wrote no followup line or the follow-up already went out.
+        """
+        if not self._followup_line or self.followups_emitted:
+            return []
+        return [self._followups(*self._followup_line)]
 
     def _page_splits_on(self, attribute: str) -> bool:
         """Whether the results shown this turn take two or more values of ``attribute`` (no results: yes)."""
@@ -364,7 +375,8 @@ class ComposeParser:
     def _option(self, item_id) -> dict | None:
         """
         The hydrated card for a valid option id the learner hasn't dismissed, within the per-turn cap. A
-        section's reserve card is refused too: it could fill a removed card and show the item twice.
+        section's reserve card is refused too: the portal can show it in its section (padding the row or filling a
+        removed card), which would show the item twice.
         """
         card = self.cards.get(item_id) if isinstance(item_id, str) else None
         if not card or item_id in self.excluded or item_id in self.reserved:
@@ -461,11 +473,15 @@ class ComposeParser:
 
     def _section_extras(self, item_type: str, props: dict) -> dict:
         """
-        Optional ``total`` (catalog matches) and ``reserve`` (next-best cards to fill a dismissed one). A
-        reserve card carries its ``section`` but no ``position``: it isn't on the page until it fills a card.
+        Optional ``total`` (catalog matches), ``search_query`` (the query that total counts, for "See all")
+        and ``reserve`` (next-best cards: the portal pads the row to three cards from them at first render,
+        and fills a card the learner removes with "Not for me"). A reserve card carries its ``section`` but no
+        ``position``: the portal places it.
         """
         if isinstance(self.totals.get(item_type), int):
             props['total'] = self.totals[item_type]
+            if self.search_queries.get(item_type):
+                props['search_query'] = self.search_queries[item_type]
         taken = set(self.emitted_ids) | self.excluded
         reserve = [dict(self._card(c['card']), section=item_type) for c in self.candidates
                    if c['card']['item_type'] == item_type and c['card']['item_id'] not in taken]

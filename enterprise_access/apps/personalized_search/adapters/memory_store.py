@@ -22,8 +22,8 @@ class InMemorySessionStore:
         self.dismissed: dict[tuple, list[str]] = {}
 
     def not_interested_ids(self, lms_user_id, enterprise_customer_uuid) -> list[str]:
-        """Items this learner dismissed in this enterprise."""
-        return list(self.dismissed.get((lms_user_id, str(enterprise_customer_uuid)), []))
+        """Items this learner dismissed in this enterprise, newest first (``dismissed`` lists them oldest first)."""
+        return list(reversed(self.dismissed.get((lms_user_id, str(enterprise_customer_uuid)), [])))
 
     def load_or_create(self, *, session_uuid: str | None, lms_user_id, enterprise_customer_uuid: str,
                        message: str) -> dict:
