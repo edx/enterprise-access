@@ -67,6 +67,8 @@ NO_RESULTS_FOLLOWUP_QUESTION = "Is there another topic you'd like to try?"
 # Server-built results, when a model step can't be reached (``compose.server_output``): no model writes this text.
 DEGRADED_REPLY = "I couldn't write a reply just now, so here are the closest matches from your organization's catalog."
 DEGRADED_NO_RESULTS_REPLY = "I couldn't find matches just now. Try telling me again what you want to learn."
+# A plan the server adds when the learner asked about order and the model wrote none.
+FALLBACK_PLAN_WHY = 'Start with the closest match to your goal, then work down the list.'
 DEGRADED_TITLE = 'Closest matches from your catalog'
 DEGRADED_DEK = 'Ranked by how closely they match what you asked for.'
 DEGRADED_REASON = 'One of the closest matches in your catalog to what you asked for.'

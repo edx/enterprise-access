@@ -21,6 +21,7 @@ from typing import Callable, Iterator
 from enterprise_access.apps.personalized_search.core import constants
 from enterprise_access.apps.personalized_search.core import intent as intent_step
 from enterprise_access.apps.personalized_search.core import telemetry
+from enterprise_access.apps.personalized_search.core.compose import SEQUENCING
 from enterprise_access.apps.personalized_search.core.compose import SYSTEM_PROMPT as COMPOSE_SYSTEM
 from enterprise_access.apps.personalized_search.core.compose import ComposeParser
 from enterprise_access.apps.personalized_search.core.compose import build_user_content as compose_user
@@ -34,6 +35,7 @@ from enterprise_access.apps.personalized_search.core.retrieval import (
     prefilter,
     without_completed
 )
+from enterprise_access.apps.personalized_search.core.stream import screen_order
 
 logger = logging.getLogger(__name__)
 TURN_LOG_EVENT = 'personalized_search.turn'
@@ -192,6 +194,8 @@ def run_turn(ctx: TurnContext, steps: Steps) -> Iterator[dict]:
                         yield {'type': 'error', 'errorText': 'internal'}
                         return
                 record['outcome'] = 'redirect' if record.get('redirected') else 'done'
+                # The cards now on screen; a redirect shows none and keeps the page before it.
+                ctx.session['previous_screen'] = screen_order(emitted) or ctx.session.get('previous_screen') or []
                 # One block per id, where it first appeared: a block sent again under its id (the final profile)
                 # replaces the earlier one, as clients apply it.
                 blocks: dict[str, dict] = {}
@@ -270,7 +274,8 @@ def _turn_parts(ctx: TurnContext, steps: Steps, record: dict) -> Iterator[dict]:
             text, usage = steps.intent(
                 system=intent_step.SYSTEM_PROMPT,
                 user=intent_step.build_user_content(message=ctx.message, prior_intent=session['merged_intent'],
-                                                    history=session['history']),
+                                                    history=session['history'],
+                                                    screen=session.get('previous_screen')),
                 model=ctx.intent_model.model, effort=ctx.intent_model.effort,
                 timeout_s=min(ctx.intent_timeout_s, remaining()),
             )
@@ -324,6 +329,11 @@ def _turn_parts(ctx: TurnContext, steps: Steps, record: dict) -> Iterator[dict]:
 
     merged = intent_step.merge(session['merged_intent'], result['intent'], result['merge'], message=ctx.message)
     reply_language, scope = _languages(ctx, result, merged)
+    if session.get('previous_screen') and intent_step.REFERS_TO_SCREEN.search(ctx.message):
+        # "Compare the first two": fetch the previous screen's items again so compose can use them.
+        excluded = set(_excluded_ids(session))
+        merged['pinned'] = [e['item_id'] for e in session['previous_screen']
+                            if e['item_id'] not in excluded][:constants.MAX_ITEMS_PER_TURN]
     debug.update(merged_intent=merged, reply_language=reply_language)
     record.update(merged_intent=merged, merge_mode=result['merge'], stage='search')
 
@@ -352,7 +362,7 @@ def _turn_parts(ctx: TurnContext, steps: Steps, record: dict) -> Iterator[dict]:
     yield {'type': 'data-status', 'data': {'step': 'writing'}, 'transient': True}
     parser = ComposeParser(candidates=candidates, excluded_ids=_excluded_ids(session), followup_attribute=attribute,
                            intent=merged, totals=totals, search_queries=search_queries,
-                           seen_ids=session['shown_item_ids'])
+                           seen_ids=session['shown_item_ids'], plan_wanted=bool(SEQUENCING.search(ctx.message)))
     record['item_ids'] = parser.emitted_ids  # the parser's own list, so an aborted turn logs what it showed
     record.update(placements=parser.placements, dropped=parser.dropped)
     usages['compose'] = Usage(model=ctx.compose_model.model, effort=ctx.compose_model.effort)
@@ -362,7 +372,7 @@ def _turn_parts(ctx: TurnContext, steps: Steps, record: dict) -> Iterator[dict]:
             system=COMPOSE_SYSTEM,
             user=compose_user(merged_intent=merged, followup_attribute=attribute, asked=session['asked_attributes'],
                               history=session['history'], message=ctx.message, candidates=candidates,
-                              language=reply_language),
+                              language=reply_language, screen=session.get('previous_screen')),
             model=ctx.compose_model.model, effort=ctx.compose_model.effort,
             timeout_s=min(ctx.compose_timeout_s, remaining()), usage=usages['compose'],
         )

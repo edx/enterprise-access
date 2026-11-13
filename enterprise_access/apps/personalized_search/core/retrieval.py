@@ -139,6 +139,8 @@ def compose_view(candidate: dict) -> dict:
         'pacing': card['facts'].get('pacing_type'), 'weeks': card['facts'].get('weeks_to_complete'),
         'hours_per_week': [card['facts'].get('hours_per_week_min'), card['facts'].get('hours_per_week_max')],
         'short_description': _strip_html(description)[:300], 'skills': (hit.get('skill_names') or [])[:6],
+        # The advertised run's start (it may already have started): compose must not say there's none.
+        'start_date': str((hit.get('advertised_course_run') or {}).get('start') or '')[:10] or None,
     }
     # The language it's taught in ("English"; a program lists each of its languages), so caveats can say so.
     language = hit.get('language')
@@ -262,6 +264,12 @@ def build_sub_requests(intent: dict, scope: CatalogScope, excluded_ids: list[str
         requests += [dict(req, preferred=True)
                      for req in _hit_requests(intent, scope, excluded_ids, preferred, shortlist)
                      if (req['query'], req['filters']) not in seen]
+    if intent.get('pinned'):
+        # Items the learner points at by position ("compare the first two"), fetched by id within the catalog scope.
+        ids = ' OR '.join(f'aggregation_key:{_quote(kind + ":" + i)}' for i in intent['pinned']
+                          for kind in ('course', 'program'))
+        requests.append({'tier': 2, 'query': '', 'filters': f'({scope.filter}) AND ({ids})', 'pinned': True,
+                         'hitsPerPage': len(intent['pinned'])})
     return requests + _count_requests(intent, scope)
 
 
@@ -284,7 +292,8 @@ def search(intent: dict, scope: CatalogScope, excluded_ids: list[str], *, catalo
     catalog totals per type. Raises ``RetrievalFailed`` when the catalog port reports a failure.
     """
     requests = build_sub_requests(intent, scope, excluded_ids, shortlist)
-    queries = [{k: v for k, v in req.items() if k not in ('tier', 'count_for', 'preferred')} for req in requests]
+    queries = [{k: v for k, v in req.items() if k not in ('tier', 'count_for', 'preferred', 'pinned')}
+               for req in requests]
     for query in queries:
         query.update(distinct=True, attributesToRetrieve=constants.ATTRIBUTES_TO_RETRIEVE)
     try:
@@ -303,7 +312,8 @@ def search(intent: dict, scope: CatalogScope, excluded_ids: list[str], *, catalo
             continue
         for rank, hit in enumerate(result.get('hits') or []):
             if isinstance(hit, dict) and item_id_of(hit):
-                out.append({'hit': hit, 'card': hydrate_card(hit), 'tier': req['tier'], 'rank': rank})
+                out.append({'hit': hit, 'card': hydrate_card(hit), 'tier': req['tier'], 'rank': rank,
+                            'pinned': bool(req.get('pinned'))})
     return SearchResults(out, totals, search_queries)
 
 
@@ -334,7 +344,7 @@ def without_completed(raw: list[dict], intent: dict) -> tuple[list[dict], list[s
 def prefilter(raw: list[dict], intent: dict, shortlist: int = constants.MAX_CANDIDATES) -> list[dict]:
     """
     Spec "Prefilter (deterministic)": dedupe, score, keep the top ``shortlist`` (20 by default) with type
-    caps that scale with it.
+    caps that scale with it. Items the learner pointed at by position (``pinned``) are kept first.
     """
     scale = shortlist / constants.MAX_CANDIDATES
     best: dict[str, dict] = {}
@@ -359,8 +369,10 @@ def prefilter(raw: list[dict], intent: dict, shortlist: int = constants.MAX_CAND
             score += 2  # the learner's preferred type leads; the others stay as alternatives
         elif not preferred and card['item_type'] == 'program':
             score += constants.PROGRAM_LEAD_BOOST  # with no type asked for, related programs lead
+        was_pinned = bool(cand.get('pinned') or best.get(card['item_id'], {}).get('pinned'))
         if card['item_id'] not in best or score > best[card['item_id']]['score']:
             best[card['item_id']] = dict(cand, score=score)
+        best[card['item_id']]['pinned'] = was_pinned  # whichever request found it best
     counts = {t: 0 for t in constants.ITEM_TYPES}
     caps = {t: math.ceil((max(cap, constants.PREFERRED_TYPE_CAP) if t in preferred else cap) * scale)
             for t, cap in constants.CANDIDATE_CAPS.items()}
@@ -370,8 +382,10 @@ def prefilter(raw: list[dict], intent: dict, shortlist: int = constants.MAX_CAND
     # type for its "More options" section, then fill the rest by score within the caps.
     floors = {t: min(constants.MAX_ITEMS_PER_SECTION, caps[t]) for t in constants.ITEM_TYPES
               if preferred and t not in preferred}
-    for limits in (floors, caps):
-        for cand in ranked:
+    # Items the learner pointed at by position go in first, so compose can use them.
+    pinned = [cand for cand in ranked if cand['pinned']]
+    for pool, limits in ((pinned, caps), (ranked, floors), (ranked, caps)):
+        for cand in pool:
             item_type, item_id = cand['card']['item_type'], cand['card']['item_id']
             if len(taken) == shortlist:
                 break

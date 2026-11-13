@@ -3,6 +3,7 @@ import json
 import re
 from unittest import mock
 
+import ddt
 from django.test import TestCase
 
 from enterprise_access.apps.personalized_search.core import compose, constants
@@ -491,3 +492,69 @@ class ServerOutputTests(TestCase):
 
     def test_no_candidates_is_a_plain_reply(self):
         self.assertEqual(compose.server_output([]), constants.DEGRADED_NO_RESULTS_REPLY)
+
+
+@ddt.ddt
+class PlanAndFactCheckTests(TestCase):
+    """A plan when the learner asks about order (finding 5), and claims checked against metadata (finding 6)."""
+
+    def parse(self, body, *, message='', candidates=None):
+        """Parse ``body`` for a turn whose message is ``message``; return the parser and its blocks."""
+        parser = compose.ComposeParser(candidates=candidates or default_candidates(), excluded_ids=[],
+                                       followup_attribute='open', plan_wanted=bool(compose.SEQUENCING.search(message)))
+        parts = parser.feed('r\n@@BLOCKS@@\n' + body) + parser.finish()
+        return parser, [p['data'] for p in parts if p['type'] == 'data-block']
+
+    @ddt.data(("I've finished it, what's next?", True), ('In what order should I take these?', True),
+              ('Where should I start?', True), ('Give me a roadmap', True), ('I want to learn SQL', False),
+              ('Next week I start a new job', False))
+    @ddt.unpack
+    def test_sequencing_questions(self, message, expected):
+        self.assertEqual(bool(compose.SEQUENCING.search(message)), expected)
+
+    def test_a_sequencing_question_gets_a_plan_in_rank_order_when_the_model_wrote_none(self):
+        body = line(section('course', ['edX+C2', 'edX+C1']))
+        parser, blocks = self.parse(body, message='What should I take next?')
+        plan = [b for b in blocks if b['type'] == 'plan'][0]['props']
+        self.assertEqual([s['item_id'] for s in plan['steps']], ['edX+C1', 'edX+C2'])  # rank order, not shown order
+        self.assertEqual(plan['steps'][0]['note'], 'Introductory · 4 weeks')
+        self.assertEqual(plan['why'], constants.FALLBACK_PLAN_WHY)
+        self.assertIn('plan_added_by_server', parser.dropped)
+        _, blocks = self.parse(body, message='I want to learn SQL')
+        self.assertFalse([b for b in blocks if b['type'] == 'plan'])
+
+    def test_the_models_plan_is_kept(self):
+        plan = {'block': 'plan', 'steps': [{'item_id': 'edX+C2', 'note': 'a'}, {'item_id': 'edX+C1', 'note': 'b'}]}
+        body = line(section('course', ['edX+C1', 'edX+C2', 'edX+C3'])) + line(plan)
+        _, blocks = self.parse(body, message='next steps?')
+        plans = [b for b in blocks if b['type'] == 'plan']
+        self.assertEqual([s['note'] for s in plans[0]['props']['steps']], ['a', 'b'])
+        self.assertEqual(len(plans), 1)
+
+    def test_text_that_contradicts_the_level_or_start_date_is_dropped(self):
+        hit = course_hit('edX+ADV', level='Advanced')
+        hit['advertised_course_run']['start'] = '2027-01-11T00:00:00Z'
+        candidates = [candidate(hit), candidate(course_hit('edX+C1')), candidate(course_hit('edX+C2'))]
+        body = (line({'block': 'top_pick', 'item_id': 'edX+ADV', 'reason': 'An introductory course to start with.',
+                      'checks': ['Beginner friendly', 'Self-paced', 'Advanced']}) +
+                line({'block': 'compare', 'options': [{'item_id': 'edX+ADV', 'best_for': 'a beginner start'},
+                                                      {'item_id': 'edX+C1', 'best_for': 'a quick start'}]}) +
+                line({'block': 'item_section', 'item_type': 'course', 'dek': 'd', 'items': [
+                    {'item_id': 'edX+C2', 'why': 'No start date is listed, but it covers the basics.',
+                     'fit': ['Advanced', 'Short']}]}))
+        parser, blocks = self.parse(body, candidates=candidates)
+        top = [b for b in blocks if b['type'] == 'top_pick'][0]['props']
+        self.assertEqual((top['reason'], top['checks']), (constants.DEGRADED_REASON, ['Self-paced', 'Advanced']))
+        compare = [b for b in blocks if b['type'] == 'compare'][0]['props']['options']
+        self.assertEqual([o['best_for'] for o in compare], ['Advanced course', 'a quick start'])
+        item = [b for b in blocks if b['type'] == 'item_section'][0]['props']['items'][0]
+        self.assertEqual((item['why'], item['fit']), ('No start date is listed, but it covers the basics.', ['Short']))
+        self.assertEqual(parser.dropped.count('claim_level'), 4)
+        # The same claim about an item that has a start date is dropped.
+        why = {'item_id': 'edX+ADV', 'why': 'There is no start date listed for this advanced course.'}
+        _, blocks = self.parse(line({'block': 'item_section', 'item_type': 'course', 'dek': 'd', 'items': [why]}),
+                               candidates=candidates)
+        self.assertIsNone([b for b in blocks if b['type'] == 'item_section'][0]['props']['items'][0]['why'])
+        # A longer text may mention another level, as long as it doesn't call the item one.
+        self.assertIsNone(compose._contradiction(  # pylint: disable=protected-access
+            'Builds on your intermediate Python into advanced work.', candidates[0]['card'], hit, short=False))

@@ -145,7 +145,36 @@ class StoreContract:  # pylint: disable=no-member  # mixed into TestCase subclas
         self.assertEqual(loaded['history'], [{'user': 'Lead a team', 'reply': 'Hello'}])
         self.assertEqual((loaded['turn_count'], loaded['item_count'], loaded['title']), (1, 1, 'Leading'))
         self.assertEqual((loaded['merged_intent'], loaded['shown_item_ids']), ({'query': 'q'}, ['a']))
+        self.assertEqual(loaded['previous_screen'], [])  # the turn showed no cards
         self.store.lock(loaded)  # persist_turn released the lock
+
+    def test_the_latest_turns_screen_is_loaded_in_order(self):
+        session = self.new_session()
+        self.store.lock(session)
+
+        def card(item_id):
+            return {'item_id': item_id, 'title': f'Title {item_id}'}
+
+        blocks = [{'type': 'top_pick', 'props': {'item': card('a')}},
+                  {'type': 'compare', 'props': {'options': [{'item': card('a')}, {'item': card('b')}]}}]
+        session['turn_count'] = 1
+        self.store.persist_turn(session, {'uuid': str(uuid.uuid4()), 'user_message': 'm', 'reply_text': 'r',
+                                          'item_ids': ['a', 'b'], 'parts': PARTS + [
+                                              {'type': 'data-block', 'id': f'blk_{i}', 'data': dict(b, v=1)}
+                                              for i, b in enumerate(blocks)]})
+        expected = [{'where': 'top pick', 'item_id': 'a', 'title': 'Title a'},
+                    {'where': 'compare 2', 'item_id': 'b', 'title': 'Title b'}]
+        loaded = self.store.load_or_create(session_uuid=session['uuid'], lms_user_id=7,
+                                           enterprise_customer_uuid=ENTERPRISE, message='what is the weather')
+        self.assertEqual(loaded['previous_screen'], expected)
+        # A redirect turn shows no cards and keeps the page before it.
+        self.store.lock(loaded)
+        loaded['turn_count'] = 2
+        self.store.persist_turn(loaded, {'uuid': str(uuid.uuid4()), 'user_message': 'm', 'reply_text': 'r',
+                                         'item_ids': [], 'parts': PARTS})
+        loaded = self.store.load_or_create(session_uuid=session['uuid'], lms_user_id=7,
+                                           enterprise_customer_uuid=ENTERPRISE, message='compare the first two')
+        self.assertEqual(loaded['previous_screen'], expected)
 
     def test_not_interested_ids_are_scoped(self):
         self.dismiss(7, ENTERPRISE, 'a')

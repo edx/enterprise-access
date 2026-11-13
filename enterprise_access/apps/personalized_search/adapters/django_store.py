@@ -15,13 +15,25 @@ from django.utils import timezone
 
 from enterprise_access.apps.personalized_search.core import constants
 from enterprise_access.apps.personalized_search.core.errors import SessionNotFound, TurnInProgress
-from enterprise_access.apps.personalized_search.core.stream import stored_parts
+from enterprise_access.apps.personalized_search.core.stream import screen_order, stored_parts
 from enterprise_access.apps.personalized_search.models import ChatSession, ChatTurn, ItemFeedback
 
 
 def _history(session: ChatSession) -> list[dict]:
     turns = session.turns.order_by('-sequence')[:constants.HISTORY_TURNS]
     return [{'user': t.user_message, 'reply': t.reply_text} for t in reversed(turns)]
+
+
+def _previous_screen(session: ChatSession) -> list[dict]:
+    """
+    The cards on screen, in order, so "the first two" can be resolved: the latest turn's that showed any (a redirect
+    shows none and keeps the page before it).
+    """
+    for turn in session.turns.order_by('-sequence').only('parts')[:constants.HISTORY_TURNS]:
+        screen = screen_order(turn.parts)
+        if screen:
+            return screen
+    return []
 
 
 class DjangoSessionStore:
@@ -52,6 +64,7 @@ class DjangoSessionStore:
                 'enterprise_customer_uuid': str(row.enterprise_customer_uuid), 'title': row.title,
                 'first_prompt': row.first_prompt, 'turn_count': row.turn_count, 'item_count': row.item_count,
                 'merged_intent': row.merged_intent, 'history': _history(row),
+                'previous_screen': _previous_screen(row),
                 'shown_item_ids': list(row.shown_item_ids or []),
                 'asked_attributes': list(row.asked_attributes or []),
                 'not_interested_ids': excluded,

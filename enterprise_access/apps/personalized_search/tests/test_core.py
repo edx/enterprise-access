@@ -71,3 +71,27 @@ class StreamTests(TestCase):
                  {'type': 'data-timing', 'id': 'timing', 'data': {}}, {'type': 'finish'}]
         self.assertEqual(stream.stored_parts(parts), [{'type': 'start', 'messageId': 'm'},
                                                       {'type': 'text-delta', 'id': 'reply', 'delta': 'ab'}])
+
+
+class ScreenOrderTests(TestCase):
+    """``screen_order`` reads a turn's cards in on-screen order, so "the first two" can be resolved next turn."""
+
+    def test_top_pick_then_compare_then_rows_padded_from_the_reserve_once_per_item(self):
+        def card(item_id):
+            return {'item_id': item_id, 'title': f'T{item_id}'}
+
+        def block(block_type, props):
+            return {'type': 'data-block', 'id': block_type, 'data': {'v': 1, 'type': block_type, 'props': props}}
+
+        parts = [{'type': 'data-session', 'data': {'title': 'x'}},
+                 block('top_pick', {'item': card('p')}),
+                 block('compare', {'options': [{'item': card('p')}, {'item': card('c1')}]}),
+                 block('item_section', {'item_type': 'course', 'items': [card('c2')],
+                                        'reserve': [card('c3'), card('c4'), card('c5')]}),
+                 block('plan', {'steps': []})]
+        screen = stream.screen_order(parts)
+        self.assertEqual([(e['where'], e['item_id']) for e in screen],
+                         [('top pick', 'p'), ('compare 2', 'c1'), ('Courses 1', 'c2'), ('Courses 2', 'c3'),
+                          ('Courses 3', 'c4')])
+        self.assertEqual(stream.describe_screen(screen[:1]), '1. top pick: "Tp" (item_id p)')
+        self.assertEqual(stream.describe_screen([]), '(none)')
