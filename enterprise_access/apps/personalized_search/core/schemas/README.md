@@ -32,8 +32,10 @@ Each entry is optional for consumers; older clients ignore it.
 | 2026-11-09 | `item_section.total` (catalog matches for the type) and `item_section.reserve` (up to 2 next-best cards), both optional |
 | 2026-11-09 | Optional `item_card.status` (`new`): the card is new to the conversation since the previous turn. Results update in place, so earlier items may repeat |
 | 2026-11-09 | New stored part `data-analytics` (join keys for usage events); optional `item_card.section` and `item_card.position` |
-| 2026-11-10 | `item_section.reserve` cards carry `section` but no `position`: a reserve card isn't on the page until it fills a removed card |
+| 2026-11-10 | `item_section.reserve` cards carry `section` but no `position`: the portal places a reserve card (see 2026-11-12) |
 | 2026-11-09 | Optional `plan.why` (≤ 160): one sentence on why the steps are in this order |
 | 2026-11-09 | `profile` goes out twice under one block id: early (with the header, from the merged intent) and final (after the results), which replaces it in place. `chips` may be empty (nothing the results reflect: hide "Why these?") |
 | 2026-11-09 | `profile` is now emitted after the results, and keeps only the preferences at least half the shown results meet (server-side) |
 | 2026-11-09 | Optional `data-followups.ideas` (up to 3 model-written chips). `suggestions` are now always the fixed chips for the attribute, empty for `open` when there are ideas |
+| 2026-11-12 | Optional `item_section.search_query`: the query whose matches `total` counts (the larger of the keyword and skills counts), so "See all (n)" can search for it. Sent only with `total` |
+| 2026-11-12 | `item_section.reserve` (description only): the portal pads each row to 3 cards from it at first render, and refills a card removed with "Not for me" from what's left |

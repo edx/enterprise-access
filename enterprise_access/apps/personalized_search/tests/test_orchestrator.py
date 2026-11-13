@@ -150,6 +150,23 @@ class RunTurnTests(TestCase):
         self.assertEqual(parts[-1], {'type': 'error', 'errorText': 'deadline_exceeded'})
         self.assertFalse(ChatTurn.objects.exists())
 
+    def test_a_turn_past_its_deadline_keeps_the_follow_up_the_model_wrote(self):
+        now = [0.0]
+
+        def compose(**_):
+            yield COMPOSE
+            now[0] = constants.TURN_DEADLINE_S + 1  # the deadline passes after the followup line arrived
+            yield '{"block":"insight","title":"T","body":"B"}\n'
+
+        ctx = TurnContext(session=self.session, message='I want to lead a team',
+                          intent_model=ModelChoice('gpt-4.1-mini', None),
+                          compose_model=ModelChoice('gpt-5.4-mini', 'low'), scope=None,
+                          clock=lambda: now[0], id_factory=lambda: TURN_UUID, platform=openai_platform)
+        parts = list(run_turn(ctx, dataclasses.replace(fake_steps(), compose=compose)))
+        self.assertEqual(parts[-1], {'type': 'error', 'errorText': 'deadline_exceeded'})
+        self.assertEqual((parts[-2]['type'], parts[-2]['data']['question']), ('data-followups', 'Level?'))
+        self.assertEqual([p['type'] for p in parts].count('data-followups'), 1)
+
     def test_errors_persist_nothing(self):
         cases = [
             (fake_steps(intent_text='not json'), 'intent_invalid'),
@@ -203,12 +220,26 @@ class RunTurnTests(TestCase):
                          {'edX+C1': None, 'edX+C2': 'new'})
         self.assertEqual(ChatTurn.objects.filter(session_id=self.session['uuid']).count(), 2)
 
+    def test_only_the_most_recent_dismissals_reach_the_search_but_compose_drops_them_all(self):
+        recent = [f'x-{i}' for i in range(constants.MAX_RETRIEVAL_EXCLUDED_IDS)]
+        self.session['not_interested_ids'] = recent + ['edX+C1']  # newest first, as the store lists them
+        seen = []
+        parts = list(run_turn(self.ctx, fake_steps(retrieve=lambda intent, scope, excluded, **kw: (
+            seen.append(excluded) or default_candidates()))))
+        self.assertEqual(seen, [recent])
+        shown = [i['item_id'] for p in parts if p['type'] == 'data-block' and p['data']['type'] == 'item_section'
+                 for i in p['data']['props']['items']]
+        self.assertTrue(shown)
+        self.assertNotIn('edX+C1', shown)  # returned by the search, but still dismissed
+
     def test_catalog_totals_reach_the_section(self):
-        steps = fake_steps(retrieve=lambda *a, **kw: SearchResults(default_candidates(), {'course': 37}))
+        steps = fake_steps(retrieve=lambda *a, **kw: SearchResults(default_candidates(), {'course': 37},
+                                                                   {'course': 'team leadership'}))
         sections = {p['data']['props']['item_type']: p['data']['props'] for p in run_turn(self.ctx, steps)
                     if p['type'] == 'data-block' and p['data']['type'] == 'item_section'}
-        self.assertEqual(sections['course']['total'], 37)  # "See all (37)"
-        self.assertNotIn('total', sections['program'])
+        self.assertEqual((sections['course']['total'], sections['course']['search_query']),
+                         (37, 'team leadership'))  # "See all (37)", linking to the query counted
+        self.assertFalse({'total', 'search_query'} & set(sections['program']))
 
     def test_first_tiles_are_timed_from_the_first_block_with_cards(self):
         reads, ticks = [], itertools.count()
@@ -339,6 +370,8 @@ class ModelResilienceTests(TestCase):
     def test_compose_that_fails_after_text_has_streamed_still_ends_in_an_error(self):
         parts = list(run_turn(self.ctx, fake_steps(compose_error=ModelError('reset'))))
         self.assertEqual(parts[-1], {'type': 'error', 'errorText': 'model_failed'})
+        # The follow-up the model wrote before failing still goes out, so its chips aren't lost.
+        self.assertEqual((parts[-2]['type'], parts[-2]['data']['question']), ('data-followups', 'Level?'))
         self.assertFalse(ChatTurn.objects.exists())
 
 

@@ -258,11 +258,15 @@ def build_sub_requests(intent: dict, scope: CatalogScope, excluded_ids: list[str
 
 
 class SearchResults(list):
-    """Candidates, plus the catalog's total matches per item type (for "See all (n)")."""
+    """
+    Candidates, plus the catalog's total matches per item type (for "See all (n)") and, per type, the query
+    whose count that total is (``search_queries``), so "See all" can search for the same thing.
+    """
 
-    def __init__(self, candidates=(), totals: dict | None = None):
+    def __init__(self, candidates=(), totals: dict | None = None, search_queries: dict | None = None):
         super().__init__(candidates)
         self.totals = totals or {}
+        self.search_queries = search_queries or {}
 
 
 def search(intent: dict, scope: CatalogScope, excluded_ids: list[str], *, catalog: CatalogSearch,
@@ -280,16 +284,18 @@ def search(intent: dict, scope: CatalogScope, excluded_ids: list[str], *, catalo
     except CatalogSearchError as exc:  # anything else is a bug, logged with its traceback by the orchestrator
         logger.warning('Personalized Search catalog search failed: %s', exc)
         raise RetrievalFailed(f'Catalog search failed ({type(exc).__name__}).') from exc
-    out, totals = [], {}
+    out, totals, search_queries = [], {}, {}
     for req, result in zip(requests, results):
         if req.get('count_for'):
-            if isinstance(result.get('nbHits'), int):
-                totals[req['count_for']] = max(totals.get(req['count_for'], 0), result['nbHits'])
+            item_type = req['count_for']
+            # The larger count wins; on a tie the keyword count (made first) stays, as it needs no skills filter.
+            if isinstance(result.get('nbHits'), int) and result['nbHits'] > totals.get(item_type, -1):
+                totals[item_type], search_queries[item_type] = result['nbHits'], req['query']
             continue
         for rank, hit in enumerate(result.get('hits') or []):
             if isinstance(hit, dict) and item_id_of(hit):
                 out.append({'hit': hit, 'card': hydrate_card(hit), 'tier': req['tier'], 'rank': rank})
-    return SearchResults(out, totals)
+    return SearchResults(out, totals, search_queries)
 
 
 def prefilter(raw: list[dict], intent: dict, shortlist: int = constants.MAX_CANDIDATES) -> list[dict]:

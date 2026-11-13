@@ -18,6 +18,8 @@ SESSION_LOCK_S = 20
 SESSION_TTL_S = 24 * 60 * 60
 # Saved and not-interested rows kept per learner, enterprise and kind; adding one more drops the oldest.
 MAX_ITEM_FEEDBACK_PER_KIND = 500
+# Dismissed items sent to the catalog search as NOT filters (the most recent ones); compose still drops them all.
+MAX_RETRIEVAL_EXCLUDED_IDS = 50
 INTENT_MAX_TOKENS = 400
 COMPOSE_MAX_TOKENS = 1800  # room for the top pick and the comparison (KD-11)
 
@@ -31,7 +33,9 @@ PROGRAM_LEAD_BOOST = 0.5  # less than a tier, so it reorders within a tier and n
 MAX_ITEMS_PER_SECTION = 3
 MAX_ITEMS_PER_TURN = 12  # top pick + up to 3 compared + sections (KD-11)
 MAX_COMPARE_OPTIONS = 3
-RESERVE_PER_SECTION = 2  # next-best cards per section, to fill one the learner removes
+# Next-best cards per section: the portal pads a row to MAX_ITEMS_PER_SECTION cards from them at first render,
+# and fills a card the learner removes ("Not for me") from what's left.
+RESERVE_PER_SECTION = 2
 
 PAGE_HEADER_LABEL = 'Your results'
 SECTION_LABELS = {'course': 'Courses', 'executive_education': 'Executive education', 'program': 'Programs'}

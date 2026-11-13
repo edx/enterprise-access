@@ -104,6 +104,14 @@ def _excluded_ids(session: dict) -> list[str]:
     return list(dict.fromkeys(session.get('not_interested_ids', [])))
 
 
+def _retrieval_excluded_ids(session: dict) -> list[str]:
+    """
+    The excluded ids sent to the catalog search: only the most recent ones (the store lists them newest first),
+    so the filter stays short. ``ComposeParser`` gets them all and drops any older one the search returns.
+    """
+    return _excluded_ids(session)[:constants.MAX_RETRIEVAL_EXCLUDED_IDS]
+
+
 def _pending_turn(ctx: TurnContext, record: dict, *, reply: str, intent: dict, item_ids: list, attribute: str,
                   timing: dict) -> dict:
     """What ``Steps.persist`` writes once the stream finishes (parts are added by ``run_turn``)."""
@@ -287,10 +295,11 @@ def _turn_parts(ctx: TurnContext, steps: Steps, record: dict) -> Iterator[dict]:
     yield {'type': 'data-status', 'data': {'step': 'searching'}, 'transient': True}
     retrieval_started = ctx.clock()
     try:
-        raw = steps.retrieve(merged, ctx.scope, _excluded_ids(session),
+        raw = steps.retrieve(merged, ctx.scope, _retrieval_excluded_ids(session),
                              timeout_s=min(constants.RETRIEVAL_TIMEOUT_S, remaining()), shortlist=ctx.shortlist)
         candidates = prefilter(raw, merged, ctx.shortlist)
         totals = getattr(raw, 'totals', {})  # a plain list (a test fake) carries no totals
+        search_queries = getattr(raw, 'search_queries', {})
     except RetrievalFailed:
         yield {'type': 'error', 'errorText': 'retrieval_failed'}
         return
@@ -303,7 +312,8 @@ def _turn_parts(ctx: TurnContext, steps: Steps, record: dict) -> Iterator[dict]:
     # Step 4: compose
     yield {'type': 'data-status', 'data': {'step': 'writing'}, 'transient': True}
     parser = ComposeParser(candidates=candidates, excluded_ids=_excluded_ids(session), followup_attribute=attribute,
-                           intent=merged, totals=totals, seen_ids=session['shown_item_ids'])
+                           intent=merged, totals=totals, search_queries=search_queries,
+                           seen_ids=session['shown_item_ids'])
     record['item_ids'] = parser.emitted_ids  # the parser's own list, so an aborted turn logs what it showed
     record.update(placements=parser.placements, dropped=parser.dropped)
     usages['compose'] = Usage(model=ctx.compose_model.model, effort=ctx.compose_model.effort)
@@ -330,7 +340,7 @@ def _turn_parts(ctx: TurnContext, steps: Steps, record: dict) -> Iterator[dict]:
     # Compose: a call that fails before sending any text is tried once more while the deadline allows; if that fails
     # too (or intent already fell back), the server writes the results from the shortlist (``server_output``).
     # A failure after text has streamed can't be replaced, and a configuration error won't fix itself, so both still
-    # end the turn with an error.
+    # end the turn with an error. A turn that ends early keeps the model's follow-up chips (``held_followups``).
     stream = None if record['degraded'] else compose_stream()
     received = False
     try:
@@ -340,6 +350,7 @@ def _turn_parts(ctx: TurnContext, steps: Steps, record: dict) -> Iterator[dict]:
                     received = True
                     yield from emit(parser.feed(delta))
                     if ctx.clock() - ctx.t0 > constants.TURN_DEADLINE_S:
+                        yield from emit(parser.held_followups())
                         yield {'type': 'error', 'errorText': 'deadline_exceeded'}
                         return
                 break
@@ -348,6 +359,7 @@ def _turn_parts(ctx: TurnContext, steps: Steps, record: dict) -> Iterator[dict]:
                 stream.close()
                 stream = None
                 if received or isinstance(exc, ModelConfigurationError):
+                    yield from emit(parser.held_followups())
                     yield {'type': 'error', 'errorText': 'model_failed'}
                     return
                 if not record['retries']['compose'] and remaining() >= constants.COMPOSE_RETRY_MIN_S:
