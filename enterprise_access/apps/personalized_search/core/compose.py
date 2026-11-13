@@ -6,7 +6,7 @@ import json
 import re
 
 from enterprise_access.apps.personalized_search.core import constants
-from enterprise_access.apps.personalized_search.core.profile import basis_props, profile_props, search_topic
+from enterprise_access.apps.personalized_search.core.profile import basis_props, profile_props
 from enterprise_access.apps.personalized_search.core.retrieval import (
     attribute_value,
     compose_view,
@@ -215,8 +215,10 @@ class ComposeParser:
 
     def __init__(self, *, candidates: list[dict], excluded_ids: list[str], followup_attribute: str,
                  id_prefix: str = 'blk', intent: dict | None = None, totals: dict | None = None,
-                 search_queries: dict | None = None, seen_ids: list[str] | None = None, plan_wanted: bool = False):
+                 search_queries: dict | None = None, seen_ids: list[str] | None = None, plan_wanted: bool = False,
+                 language: str = 'English'):
         self.cards = {c['card']['item_id']: c['card'] for c in candidates}
+        self.language = language  # the reply language: server-written copy only goes on English replies
         self.hits = {c['card']['item_id']: c.get('hit') or {} for c in candidates}
         self.plan_wanted = plan_wanted  # the learner asked about order: a plan is shown even if the model wrote none
         self.plan_emitted = False
@@ -415,11 +417,9 @@ class ComposeParser:
             return self._drop('page_header_no_title')
         self.header_emitted = True
         dek = _text(obj.get('dek'), constants.CAPS['dek'])
-        if not dek:
+        if not dek and self.language == constants.FALLBACK_DEK_LANGUAGE:
             # The model left the dek out (most often next to a caveat): say what the results are for.
-            topic = search_topic(self.intent)
-            dek = (constants.FALLBACK_DEK_TOPIC.format(topic=topic) if topic else constants.FALLBACK_DEK)
-            dek = dek[:constants.CAPS['dek']]
+            dek = constants.FALLBACK_DEK
             self.dropped.append('dek_added_by_server')
         header = self._block('page_header', {'title': title, 'dek': dek, 'label': constants.PAGE_HEADER_LABEL})
         # "Why these?" comes with the headline: a first profile from what the learner said, replaced (same

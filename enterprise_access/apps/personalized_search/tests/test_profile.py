@@ -174,3 +174,9 @@ class ProfileEmissionTests(TestCase):
                          {'summary': profile.TOPIC_SUMMARY, 'chips': ['data analysis']})
         self.assertEqual(profile.basis_props(empty_intent()), {'summary': profile.CATALOG_SUMMARY, 'chips': []})
         self.assertEqual(profile.basis_props(None), {'summary': profile.CATALOG_SUMMARY, 'chips': []})
+
+    def test_a_long_or_raw_message_query_is_not_used_as_the_topic(self):
+        for query in ('Hi! I am a nurse and I want to move into', 'quiero aprender liderazgo para mi equipo ahora',
+                      'x' * 41, '   ', None):
+            self.assertEqual(profile.basis_props(dict(empty_intent(), query=query)),
+                             {'summary': profile.CATALOG_SUMMARY, 'chips': []}, query)

@@ -127,10 +127,20 @@ def summary(kinds: set[str]) -> str:
     return f"Here's what I understood about {named}."
 
 
+TOPIC_MAX_WORDS = 5
+
+
 def search_topic(merged_intent: dict | None) -> str:
-    """The merged intent's search query, trimmed and capped as a chip; '' when there is none."""
+    """
+    The merged intent's search query as a short topic, or '' when there is none or it isn't one. A query longer
+    than a chip or than ``TOPIC_MAX_WORDS`` words is usually the learner's own message (the intent fallback uses
+    its first words), which would read badly quoted back, so it isn't used.
+    """
     query = (merged_intent or {}).get('query')
-    return _chip(query) if isinstance(query, str) else ''
+    query = query.strip() if isinstance(query, str) else ''
+    if not query or len(query) > CHIP_CAP or len(query.split()) > TOPIC_MAX_WORDS:
+        return ''
+    return query
 
 
 def basis_props(merged_intent: dict | None) -> dict:
