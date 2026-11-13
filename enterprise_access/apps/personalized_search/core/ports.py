@@ -107,4 +107,4 @@ class SessionStore(Protocol):
         """
 
     def not_interested_ids(self, lms_user_id, enterprise_customer_uuid) -> list[str]:
-        """Items this learner dismissed in this enterprise."""
+        """Items this learner dismissed in this enterprise, newest first."""
