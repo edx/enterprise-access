@@ -104,7 +104,8 @@ def hydrate_card(hit: dict) -> dict:
     run = hit.get('advertised_course_run') or {}
     if item_type == 'program':
         org = (hit.get('authoring_organizations') or [{}])[0] or {}
-        partner_name, partner_logo = org.get('key'), org.get('logo_image_url')
+        # The organization's display name ("The Georgia Institute of Technology"), not its key ("GTx").
+        partner_name, partner_logo = org.get('name') or org.get('key'), org.get('logo_image_url')
         image = hit.get('card_image_url') or hit.get('banner_image_url')
         link = {'kind': 'program', 'program_uuid': item_id}
         facts = {'level_type': hit.get('level_type'), 'program_type': hit.get('type'),
@@ -193,7 +194,9 @@ def _hit_requests(intent: dict, scope: CatalogScope, excluded_ids: list[str], ty
     broad_query = ' '.join(skills + (intent.get('roles') or [])) or intent.get('query') or ''
     requests = []
     if types & {'course', 'executive_education'}:
-        course_filter = _course_filter(scope, types) + ''.join(f' AND NOT key:{_quote(i)}' for i in excluded_ids)
+        # By aggregation_key, as for programs: ``key`` isn't filterable in the index, so ``NOT key:`` excluded nothing.
+        course_filter = _course_filter(scope, types) + ''.join(
+            f' AND NOT aggregation_key:{_quote("course:" + i)}' for i in excluded_ids)
         if skills_clause:
             requests.append({'tier': 2, 'query': intent.get('query') or '',
                              'filters': f'{course_filter} AND ({skills_clause})', 'hitsPerPage': course_hits})

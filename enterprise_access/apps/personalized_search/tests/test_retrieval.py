@@ -45,8 +45,11 @@ class HydrationTests(TestCase):
         card = retrieval.hydrate_card(program_hit('p-1'))
         self.assertEqual(card['item_id'], 'p-1')
         self.assertEqual(card['link'], {'kind': 'program', 'program_uuid': 'p-1'})
-        self.assertEqual(card['partner_name'], 'MITx')
+        self.assertEqual(card['partner_name'], 'MITx')  # no display name in the record: the key
         self.assertEqual(card['facts']['course_count'], 3)
+        named = dict(program_hit('p-2'), authoring_organizations=[
+            {'key': 'GTx', 'name': 'The Georgia Institute of Technology', 'logo_image_url': 'https://logo/gt.png'}])
+        self.assertEqual(retrieval.hydrate_card(named)['partner_name'], 'The Georgia Institute of Technology')
         self.assertEqual(card['facts']['program_type'], 'Professional Certificate')
 
     def test_compose_view_strips_html(self):
@@ -66,7 +69,7 @@ class SubRequestTests(TestCase):
                          ['course', 'course', 'executive_education', 'executive_education', 'program', 'program'])
         self.assertTrue(all(r['hitsPerPage'] == 0 for r in reqs if r['tier'] == 0))
         self.assertIn('(skill_names:"Leadership" OR skill_names:"Coaching")', reqs[0]['filters'])
-        self.assertIn('NOT key:"edX+OLD"', reqs[1]['filters'])
+        self.assertIn('NOT aggregation_key:"course:edX+OLD"', reqs[1]['filters'])  # ``key`` isn't filterable
         self.assertIn('NOT aggregation_key:"program:edX+OLD"', reqs[3]['filters'])
         self.assertFalse(any(r.get('preferred') for r in reqs))
         self.assertTrue(all('(enterprise_customer_uuids:"e-1")' in r['filters'] for r in reqs))

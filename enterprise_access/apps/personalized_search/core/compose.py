@@ -473,13 +473,14 @@ class ComposeParser:
         self.first_section_emitted = True
         self._place(items, item_type)
         return [self._block('item_section', self._section_extras(item_type, {
-            'item_type': item_type, 'label': section_label(item_type, len(items)),
-            'dek': _text(obj.get('dek'), constants.CAPS['section_dek']), 'fallback': False, 'items': items,
+            'item_type': item_type, 'dek': _text(obj.get('dek'), constants.CAPS['section_dek']), 'fallback': False,
+            'items': items,
         }))]
 
     def _section_extras(self, item_type: str, props: dict) -> dict:
         """
-        Optional ``total`` (catalog matches), ``search_query`` (the query that total counts, for "See all")
+        The ``label`` (its count includes the reserve cards the portal pads the row with), and optional
+        ``total`` (catalog matches), ``search_query`` (the query that total counts, for "See all")
         and ``reserve`` (next-best cards: the portal pads the row to three cards from them at first render,
         and fills a card the learner removes with "Not for me"). A reserve card carries its ``section`` but no
         ``position``: the portal places it.
@@ -495,7 +496,9 @@ class ComposeParser:
         self.reserved.update(card['item_id'] for card in reserve)
         if reserve:
             props['reserve'] = reserve
-        return props
+        # The portal pads the row to MAX_ITEMS_PER_SECTION cards from the reserve, so the label counts what it shows.
+        shown = min(constants.MAX_ITEMS_PER_SECTION, len(props['items']) + len(reserve))
+        return {'item_type': item_type, 'label': section_label(item_type, shown), **props}
 
     def _followups(self, question: str, ideas=None) -> dict:
         """
@@ -594,8 +597,7 @@ class ComposeParser:
         self.first_section_emitted = True
         self._place(items, item_type)
         return [self._block('item_section', self._section_extras(item_type, {
-            'item_type': item_type, 'label': section_label(item_type, len(items)), 'dek': dek,
-            'fallback': True, 'items': items,
+            'item_type': item_type, 'dek': dek, 'fallback': True, 'items': items,
         }))]
 
     def _fallback_section(self) -> list[dict]:

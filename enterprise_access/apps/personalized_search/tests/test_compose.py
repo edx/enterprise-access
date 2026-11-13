@@ -60,9 +60,12 @@ class ComposeParserTests(TestCase):
         self.assertIn({'type': 'text-end', 'id': 'reply'}, parts)
         header, course, exec_ed = self.blocks(parts)[:3]
         self.assertEqual(header['props']['label'], 'Your results')
-        self.assertEqual(course['props']['label'], 'Courses · 2 picks')
+        # The label counts what the portal shows: the model's items padded to 3 from the reserve.
+        self.assertEqual((len(course['props']['items']), len(course['props']['reserve'])), (2, 2))
+        self.assertEqual(course['props']['label'], 'Courses · 3 picks')
         self.assertEqual(course['props']['items'][0]['link']['course_key'], 'edX+C1')
-        self.assertEqual(exec_ed['props']['label'], 'Executive education · 1 pick')
+        self.assertEqual((len(exec_ed['props']['items']), len(exec_ed['props']['reserve'])), (1, 1))
+        self.assertEqual(exec_ed['props']['label'], 'Executive education · 2 picks')
         followups = [p for p in parts if p['type'] == 'data-followups'][0]['data']
         self.assertEqual(followups['attribute'], 'level')
         # An idea that covers a fixed chip wins: "introductory" replaces the fixed Introductory chip.
