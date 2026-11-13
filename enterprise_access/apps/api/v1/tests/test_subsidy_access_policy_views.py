@@ -34,9 +34,12 @@ from enterprise_access.apps.subsidy_access_policy.constants import (
     REASON_CONTENT_NOT_IN_CATALOG,
     REASON_LEARNER_ASSIGNMENT_CANCELLED,
     REASON_LEARNER_ASSIGNMENT_FAILED,
+    REASON_LEARNER_MAX_SPEND_REACHED,
     REASON_LEARNER_NOT_ASSIGNED_CONTENT,
     REASON_LEARNER_NOT_IN_ENTERPRISE_GROUP,
     REASON_NOT_ENOUGH_VALUE_IN_SUBSIDY,
+    REASON_POLICY_EXPIRED,
+    REASON_POLICY_SPEND_LIMIT_REACHED,
     REASON_SUBSIDY_EXPIRED,
     AccessMethods,
     MissingSubsidyAccessReasonUserMessages,
@@ -2828,6 +2831,99 @@ class TestSubsidyAccessPolicyCanRedeemView(BaseCanRedeemTestMixin, APITestWithMo
         response_list = response.json()
         assert response_list[0]["reasons"] == [reason]
         assert response_list[0]["display_reason"] == reason
+
+    @ddt.data(
+        # An expired policy sorts first, but a live policy's reason for blocking the learner is displayed.
+        {
+            'ordered_reasons': [REASON_SUBSIDY_EXPIRED, REASON_LEARNER_MAX_SPEND_REACHED],
+            'expected_display_reason': REASON_LEARNER_MAX_SPEND_REACHED,
+            'expected_user_message': MissingSubsidyAccessReasonUserMessages.LEARNER_LIMITS_REACHED,
+        },
+        {
+            'ordered_reasons': [REASON_POLICY_EXPIRED, REASON_POLICY_SPEND_LIMIT_REACHED],
+            'expected_display_reason': REASON_POLICY_SPEND_LIMIT_REACHED,
+            'expected_user_message': MissingSubsidyAccessReasonUserMessages.ORGANIZATION_NO_FUNDS,
+        },
+        # Assigned policies sort before browse-and-enroll ones, but an assigned policy that doesn't apply to the
+        # content doesn't mask the browse-and-enroll policy's per-learner limit.
+        {
+            'ordered_reasons': [
+                REASON_SUBSIDY_EXPIRED, REASON_LEARNER_NOT_ASSIGNED_CONTENT, REASON_LEARNER_MAX_SPEND_REACHED,
+            ],
+            'expected_display_reason': REASON_LEARNER_MAX_SPEND_REACHED,
+            'expected_user_message': MissingSubsidyAccessReasonUserMessages.LEARNER_LIMITS_REACHED,
+        },
+        {
+            'ordered_reasons': [REASON_CONTENT_NOT_IN_CATALOG, REASON_LEARNER_MAX_SPEND_REACHED],
+            'expected_display_reason': REASON_LEARNER_MAX_SPEND_REACHED,
+            'expected_user_message': MissingSubsidyAccessReasonUserMessages.LEARNER_LIMITS_REACHED,
+        },
+        # A policy that doesn't apply still explains more than an expired one.
+        {
+            'ordered_reasons': [REASON_SUBSIDY_EXPIRED, REASON_LEARNER_NOT_ASSIGNED_CONTENT],
+            'expected_display_reason': REASON_LEARNER_NOT_ASSIGNED_CONTENT,
+            'expected_user_message': MissingSubsidyAccessReasonUserMessages.LEARNER_NOT_ASSIGNED_CONTENT,
+        },
+        # Within the same rank, the first reason is displayed.
+        {
+            'ordered_reasons': [REASON_LEARNER_MAX_SPEND_REACHED, REASON_POLICY_SPEND_LIMIT_REACHED],
+            'expected_display_reason': REASON_LEARNER_MAX_SPEND_REACHED,
+            'expected_user_message': MissingSubsidyAccessReasonUserMessages.LEARNER_LIMITS_REACHED,
+        },
+        {
+            'ordered_reasons': [REASON_SUBSIDY_EXPIRED, REASON_POLICY_EXPIRED],
+            'expected_display_reason': REASON_SUBSIDY_EXPIRED,
+            'expected_user_message': MissingSubsidyAccessReasonUserMessages.ORGANIZATION_EXPIRED_FUNDS,
+        },
+    )
+    @ddt.unpack
+    @mock.patch('enterprise_access.apps.api.v1.views.subsidy_access_policy.LmsApiClient')
+    @mock.patch('enterprise_access.apps.subsidy_access_policy.subsidy_api.get_and_cache_transactions_for_learner')
+    def test_can_redeem_display_reason_prefers_blocking_reason(
+        self,
+        mock_transactions_cache_for_learner,
+        mock_lms_client,
+        ordered_reasons,
+        expected_display_reason,
+        expected_user_message,
+    ):
+        """
+        Test that display_reason prefers a reason from a policy that applies but blocks the learner over a reason
+        from a policy that doesn't apply or has expired, while the full list of reasons keeps its original order.
+        """
+        mock_transactions_cache_for_learner.return_value = {
+            'transactions': [],
+            'aggregates': {'total_quantity': 0},
+        }
+        mock_lms_client.return_value.get_enterprise_customer_data.return_value = {
+            'slug': 'sluggy',
+            'admin_users': [{'email': 'edx@example.org'}],
+        }
+        self.mock_catalog_get_and_cache_content_metadata.return_value = {
+            'normalized_metadata': {'content_price': 12.34},
+            'normalized_metadata_by_run': {},
+        }
+        non_redeemable_policies = {
+            reason: [PerLearnerSpendCapLearnerCreditAccessPolicyFactory(enterprise_customer_uuid=self.enterprise_uuid)]
+            for reason in ordered_reasons
+        }
+
+        with mock.patch(
+            'enterprise_access.apps.api.v1.views.subsidy_access_policy.'
+            'SubsidyAccessPolicyRedeemViewset.evaluate_policies',
+            return_value=([], non_redeemable_policies),
+        ):
+            response = self.client.get(
+                self.subsidy_access_policy_can_redeem_endpoint,
+                {'content_key': 'course-v1:demox+1234+2T2023'},
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        response_list = response.json()
+        assert response_list[0]['can_redeem'] is False
+        assert [reason['reason'] for reason in response_list[0]['reasons']] == ordered_reasons
+        assert response_list[0]['display_reason']['reason'] == expected_display_reason
+        assert response_list[0]['display_reason']['user_message'] == expected_user_message
 
     @ddt.data(
         {'status_code': status.HTTP_503_SERVICE_UNAVAILABLE, 'detail': 'foobar'},
