@@ -118,7 +118,7 @@ confluent-kafka[avro,schema-registry]==2.6.1
     # via
     #   -c requirements/constraints.txt
     #   -r requirements/base.txt
-coverage[toml]==7.17.2
+coverage[toml]==7.17.3
     # via
     #   -r requirements/test.in
     #   pytest-cov
@@ -262,7 +262,7 @@ edx-celeryutils==2.1.0
     # via -r requirements/base.txt
 edx-django-release-util==1.5.0
     # via -r requirements/base.txt
-edx-django-utils==8.1.0
+edx-django-utils==8.2.0
     # via
     #   -r requirements/base.txt
     #   edx-auth-backends
@@ -277,7 +277,7 @@ edx-drf-extensions==10.11.0
     #   edx-rbac
 edx-event-bus-kafka==6.2.0
     # via -r requirements/base.txt
-edx-lint==6.2.0
+edx-lint==6.3.0
     # via -r requirements/test.in
 edx-opaque-keys[django]==4.0.1
     # via
@@ -291,7 +291,7 @@ edx-rest-api-client==7.1.2
     # via
     #   -r requirements/base.txt
     #   2u-enterprise-subsidy-client
-edx-toggles==6.0.0
+edx-toggles==6.1.0
     # via
     #   -r requirements/base.txt
     #   edx-auth-backends
@@ -391,7 +391,7 @@ oauthlib==4.0.1
     #   -r requirements/base.txt
     #   requests-oauthlib
     #   social-auth-core
-openai==3.49.0
+openai==3.51.0
     # via -r requirements/base.txt
 openedx-atlas==0.7.2
     # via -r requirements/base.txt
@@ -478,7 +478,7 @@ pylint-plugin-utils==0.9.0
     #   pylint-django
 pymemcache==4.0.0
     # via -r requirements/base.txt
-pymongo==4.19.0
+pymongo==4.20.0
     # via
     #   -r requirements/base.txt
     #   edx-opaque-keys
@@ -596,13 +596,13 @@ sqlparse==0.6.1
     # via
     #   -r requirements/base.txt
     #   django
-stevedore==5.9.1
+stevedore==5.10.0
     # via
     #   -r requirements/base.txt
     #   code-annotations
     #   edx-django-utils
     #   edx-opaque-keys
-stripe==16.1.0
+stripe==17.0.0
     # via -r requirements/base.txt
 swagger-spec-validator==3.0.4
     # via
