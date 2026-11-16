@@ -153,7 +153,7 @@ confluent-kafka[avro,schema-registry]==2.6.1
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
-coverage[toml]==7.17.2
+coverage[toml]==7.17.3
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -363,7 +363,7 @@ edx-django-release-util==1.5.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
-edx-django-utils==8.1.0
+edx-django-utils==8.2.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -382,7 +382,7 @@ edx-event-bus-kafka==6.2.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
-edx-lint==6.2.0
+edx-lint==6.3.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -402,7 +402,7 @@ edx-rest-api-client==7.1.2
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
     #   2u-enterprise-subsidy-client
-edx-toggles==6.0.0
+edx-toggles==6.1.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -586,7 +586,7 @@ oauthlib==4.0.1
     #   -r requirements/test.txt
     #   requests-oauthlib
     #   social-auth-core
-openai==3.49.0
+openai==3.51.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -712,7 +712,7 @@ pymemcache==4.0.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
-pymongo==4.19.0
+pymongo==4.20.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
@@ -888,14 +888,14 @@ sqlparse==0.6.1
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
     #   django
-stevedore==5.9.1
+stevedore==5.10.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
     #   code-annotations
     #   edx-django-utils
     #   edx-opaque-keys
-stripe==16.1.0
+stripe==17.0.0
     # via
     #   -r requirements/quality.txt
     #   -r requirements/test.txt
