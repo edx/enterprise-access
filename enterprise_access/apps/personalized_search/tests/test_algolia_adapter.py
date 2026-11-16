@@ -5,7 +5,11 @@ from unittest import mock
 from django.test import TestCase
 
 from enterprise_access.apps.api_client.algolia_client import AlgoliaConfigurationError, AlgoliaSearchError
-from enterprise_access.apps.personalized_search.adapters.algolia import AlgoliaCatalog, secured_key_from_payload
+from enterprise_access.apps.personalized_search.adapters.algolia import (
+    AlgoliaCatalog,
+    catalog_filter_from_payload,
+    secured_key_from_payload
+)
 from enterprise_access.apps.personalized_search.core.errors import CatalogSearchError
 from enterprise_access.apps.personalized_search.core.ports import CatalogSearch
 
@@ -56,3 +60,13 @@ class AlgoliaCatalogTests(TestCase):
         key = secured_key_from_payload({'algolia': {'secured_api_key': 'k', 'valid_until': '2030-01-01T00:00:00Z'}})
         self.assertEqual(key.api_key, 'k')
         self.assertFalse(key.is_expired())
+
+    def test_the_catalog_filter_is_the_customers_catalog_queries(self):
+        payload = {'catalog_uuids_to_catalog_query_uuids': {'c-1': 'q-2', 'c-2': 'q-1', 'c-3': 'q-1', 'c-4': None}}
+        self.assertEqual(catalog_filter_from_payload(payload),
+                         'enterprise_catalog_query_uuids:"q-1" OR enterprise_catalog_query_uuids:"q-2"')
+
+    def test_a_response_without_catalog_queries_has_no_filter(self):
+        for payload in ({}, None, {'catalog_uuids_to_catalog_query_uuids': {'c-1': None}}):
+            with self.assertRaises(AlgoliaConfigurationError):
+                catalog_filter_from_payload(payload)

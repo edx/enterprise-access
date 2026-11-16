@@ -1,7 +1,12 @@
 """``CatalogSearch`` over enterprise-access's Algolia client (one ``multiple_queries`` round trip)."""
 import logging
 
-from enterprise_access.apps.api_client.algolia_client import AlgoliaClientError, AlgoliaSearchClient, SecuredAlgoliaKey
+from enterprise_access.apps.api_client.algolia_client import (
+    AlgoliaClientError,
+    AlgoliaConfigurationError,
+    AlgoliaSearchClient,
+    SecuredAlgoliaKey
+)
 from enterprise_access.apps.personalized_search.core.errors import CatalogSearchError
 
 logger = logging.getLogger(__name__)
@@ -41,3 +46,16 @@ class AlgoliaCatalog:
 def secured_key_from_payload(payload: dict) -> SecuredAlgoliaKey:
     """The ``SecuredAlgoliaKey`` from enterprise-catalog's key-vending response."""
     return SecuredAlgoliaKey.from_response_payload(payload)
+
+
+def catalog_filter_from_payload(payload: dict) -> str:
+    """
+    The filter for a search with that response's secured key: the customer's catalog queries, as the learner
+    portal filters. Under a secured key, a filter on an unretrievable attribute such as
+    ``enterprise_customer_uuids`` matches nothing, so the scope can't filter by customer.
+    """
+    mapping = (payload or {}).get('catalog_uuids_to_catalog_query_uuids') or {}
+    query_uuids = sorted({str(uuid) for uuid in mapping.values() if uuid})
+    if not query_uuids:
+        raise AlgoliaConfigurationError('The secured key response names no catalog queries.')
+    return ' OR '.join(f'enterprise_catalog_query_uuids:"{uuid}"' for uuid in query_uuids)

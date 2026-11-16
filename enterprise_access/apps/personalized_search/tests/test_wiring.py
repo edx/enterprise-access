@@ -9,6 +9,9 @@ from enterprise_access.apps.personalized_search.core import constants
 from enterprise_access.toggles import PERSONALIZED_SEARCH_SUGGESTED_ORDER
 
 MODELS = {'gpt-4.1-mini': (0.4, 0.1, 1.6)}
+# enterprise-catalog's key-vending response (the key itself is patched as 'secured-key').
+KEY_PAYLOAD = {'catalog_uuids_to_catalog_query_uuids': {'c-1': 'q-1', 'c-2': 'q-2', 'c-3': None}}
+CATALOG_FILTER = 'enterprise_catalog_query_uuids:"q-1" OR enterprise_catalog_query_uuids:"q-2"'
 
 
 @override_settings(OPENAI_API_KEY='k', PERSONALIZED_SEARCH_OPENAI_MODELS=MODELS)
@@ -41,7 +44,7 @@ class WiringTests(TestCase):
             self.assertEqual(wiring.content_language(locale), expected, locale)
 
     @override_settings(PERSONALIZED_SEARCH_CONTENT_LANGUAGES={'en': 'English', 'es': 'Spanish'})
-    @mock.patch.object(wiring, 'get_and_cache_secured_algolia_search_keys', return_value={})
+    @mock.patch.object(wiring, 'get_and_cache_secured_algolia_search_keys', return_value=KEY_PAYLOAD)
     @mock.patch.object(wiring, 'secured_key_from_payload', return_value='secured-key')
     def test_the_catalog_scope_carries_the_content_language(self, *_):
         scope = wiring.catalog_scope(request=None, enterprise_customer_uuid='e-1', locale='es')
@@ -51,7 +54,7 @@ class WiringTests(TestCase):
     @override_settings(PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED=True, PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE={
         'filter': 'enterprise_customer_uuids:"2u"', 'label': '2U (prod catalog)', 'app_id': 'PROD',
         'search_api_key': 'prod-key', 'index_name': 'prod_index'})
-    @mock.patch.object(wiring, 'get_and_cache_secured_algolia_search_keys', return_value={})
+    @mock.patch.object(wiring, 'get_and_cache_secured_algolia_search_keys', return_value=KEY_PAYLOAD)
     @mock.patch.object(wiring, 'secured_key_from_payload', return_value='secured-key')
     def test_debug_turns_search_the_debug_catalog(self, *_):
         scope = wiring.catalog_scope(request=None, enterprise_customer_uuid='e-1', locale='en', debug=True)
@@ -61,18 +64,20 @@ class WiringTests(TestCase):
                          {'app_id': 'PROD', 'search_api_key': 'prod-key', 'index_name': 'prod_index'})
         plain = wiring.catalog_scope(request=None, enterprise_customer_uuid='e-1', locale='en')
         self.assertEqual((plain.filter, plain.secured_key, plain.is_debug),
-                         ('enterprise_customer_uuids:"e-1"', 'secured-key', False))
+                         (CATALOG_FILTER, 'secured-key', False))
         with override_settings(PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED=False):
             self.assertFalse(wiring.catalog_scope(request=None, enterprise_customer_uuid='e-1', debug=True).is_debug)
 
     @override_settings(PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED=True,
                        PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE={'filter': 'debug', 'label': 'Debug'})
-    @mock.patch.object(wiring, 'get_and_cache_secured_algolia_search_keys', return_value={})
+    @mock.patch.object(wiring, 'get_and_cache_secured_algolia_search_keys', return_value=KEY_PAYLOAD)
     @mock.patch.object(wiring, 'secured_key_from_payload', return_value='secured-key')
     def test_turns_that_are_not_debug_turns_always_use_the_secured_key(self, *_):
         plain = wiring.catalog_scope(request=None, enterprise_customer_uuid='e-1')
+        # The customer's catalog queries, not enterprise_customer_uuids: under a secured key a filter on that
+        # unretrievable attribute matches nothing.
         self.assertEqual((plain.filter, plain.secured_key, plain.allow_unscoped, plain.is_debug),
-                         ('enterprise_customer_uuids:"e-1"', 'secured-key', False, False))
+                         (CATALOG_FILTER, 'secured-key', False, False))
         with override_settings(PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED=False):
             off = wiring.catalog_scope(request=None, enterprise_customer_uuid='e-1', debug=True)
         self.assertEqual((off.secured_key, off.allow_unscoped), ('secured-key', False))
@@ -80,7 +85,7 @@ class WiringTests(TestCase):
         with override_settings(PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE=None):
             no_catalog = wiring.catalog_scope(request=None, enterprise_customer_uuid='e-1', debug=True)
         self.assertEqual((no_catalog.filter, no_catalog.secured_key, no_catalog.allow_unscoped),
-                         ('enterprise_customer_uuids:"e-1"', 'secured-key', False))
+                         (CATALOG_FILTER, 'secured-key', False))
 
     @override_settings(PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE={'filter': 'x:"y"'})
     def test_a_debug_catalog_without_credentials_uses_the_configured_app(self):

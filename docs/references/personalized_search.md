@@ -72,6 +72,12 @@ for part in run_turn(ctx, steps):
 | `PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED` | `False` | Turns debug mode on for the environment. Even then it applies only to enterprise-access superusers and users on the `enterprise_access.personalized_search_debug` WaffleFlag; everyone else's `debug` object is ignored. Debug mode covers per-turn model overrides, the debug catalog, the debug read-out and the debug menu. `is_superuser` is never set from the JWT (only `administrator` maps to `is_staff`), so superusers are granted in enterprise-access's Django admin. |
 | `PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE` | `None` | The catalog searched by turns that carry the `debug` flag (the portal's `?debug=true`), when `PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED` is on: `{'filter', 'label'}` plus optional `'app_id'`, `'search_api_key'`, `'index_name'` for another Algolia app or index, e.g. the 2U customer in the prod catalog. Uses that plain key with the filter, so it also needs `ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH`. Those turns' usage events have `is_debug: true`. Every other turn searches with the learner's secured key, and the catalog adapter refuses an unscoped search from a scope that isn't a debug scope. |
 
+## Catalog scope
+
+A learner's turn searches with the secured Algolia key enterprise-catalog vends for the learner's enterprise. The key itself restricts results to the customer's catalog queries. The turn's filter names the same catalog queries (`enterprise_catalog_query_uuids`, from the response's `catalog_uuids_to_catalog_query_uuids`), as the learner portal's search does.
+
+Don't filter a secured-key search on `enterprise_customer_uuids` or `enterprise_catalog_uuids`. The catalog index marks them unretrievable, and under a secured key a filter on an unretrievable attribute matches nothing, so every turn would find no results. A plain key (the debug catalog) can filter on them.
+
 ## Results update in place (KD-11)
 
 Only items the learner marked "Not for me" are excluded from later turns. Items shown earlier can appear again in the refreshed results, and each card says whether it is new or updated since the previous turn. The redesign is additive within block catalog v1: older portals ignore the new block types.
