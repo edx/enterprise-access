@@ -27,7 +27,7 @@ class CatalogScope:
     """
     How to scope catalog reads. Normal: the learner's secured key plus the enterprise filter.
     Dev only: the plain key plus an explicit catalog filter (``PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE``).
-    Debug turns in stage: the same, optionally against another Algolia app or index
+    Debug turns: the same, optionally against another Algolia app or index
     (``PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE``), marked ``is_debug``.
     ``secured_key`` and ``client_config`` are opaque here; only the catalog adapter reads them.
 

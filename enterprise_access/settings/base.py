@@ -544,11 +544,11 @@ ALGOLIA_JOBS_INDEX_NAME = ''
 # Escape hatch for searches with no per-user secured key: the offline retrieval diagnostic, and
 # Personalized Search's dev catalog (devstack, harness) and debug catalog scopes. Enables searching
 # the catalog index *unscoped* with a plain key, only for a caller whose scope asks for it
-# (``allow_unscoped``, set from settings, never from a request). Stage turns it on deliberately for
-# the debug catalog (PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE), which only debug-allowed users can
-# reach (PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED plus a superuser or the
-# personalized_search_debug flag). That is not a precedent for prod: keep it False there and
-# anywhere else an ordinary learner's response could be built from it.
+# (``allow_unscoped``, set from settings, never from a request). An environment turns it on for the
+# debug catalog (PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE), which only debug turns by debug-allowed
+# users reach (PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED plus a superuser or the
+# personalized_search_debug flag); Personalized Search's catalog adapter refuses it for every other
+# turn. Leave it False wherever nothing needs it.
 ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH = False
 
 # The server-side learner pathways pipeline (apps/pathways) is gated by a waffle switch,
@@ -623,11 +623,11 @@ PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED = False
 # turns only (as PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE, which it takes precedence over), and the
 # offline harness. Requires ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH. Never set in a deployed environment.
 PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE = None
-# Stage only. The catalog a turn searches when its request carries the ``debug`` flag (the portal's
-# ``?debug=true``) and PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED is on, so stage can show results from a
-# real catalog: ``{'filter': '<algolia filter>', 'label': '<text>'}`` plus optional ``'app_id'``,
-# ``'search_api_key'`` and ``'index_name'`` for another Algolia app or index (e.g. the 2U customer in the
-# prod catalog). It uses that plain search key with the filter, so it also needs
+# The catalog a turn searches when its request carries the ``debug`` flag (the portal's ``?debug=true``)
+# and PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED is on, so debug users can see results from a chosen
+# catalog in any environment that enables debug mode: ``{'filter': '<algolia filter>', 'label': '<text>'}``
+# plus optional ``'app_id'``, ``'search_api_key'`` and ``'index_name'`` for another Algolia app or index
+# (e.g. the 2U customer in the prod catalog). It uses that plain search key with the filter, so it also needs
 # ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH. Turns without the debug flag always search with the learner's
 # secured key, and the catalog adapter refuses an unscoped search for them.
 PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE = None

@@ -827,7 +827,7 @@ Two dedicated flags and a customer allowlist (KD-8, amended 2026-11-04 and 2026-
 | `PERSONALIZED_SEARCH_INTENT_TIMEOUT_S` / `_COMPOSE_READ_TIMEOUT_S` (settings, new) | 3 / 5 | Step timeouts (Deadline) | Change the setting |
 | `PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED` (setting, environment switch) | False | Debug mode (`?debug=true` model overrides, debug catalog, debug read-out and menu) for enterprise-access superusers and users on `enterprise_access.personalized_search_debug`; ignored for everyone else | Set False → nobody has debug mode |
 | `enterprise_access.personalized_search_debug` (WaffleFlag, per user, new) | OFF | Which non-superusers may use debug mode | Remove the user; never set Everyone, a percentage or Staff |
-| `PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE` (setting, stage only) | None | The catalog `?debug=true` turns search, e.g. the 2U customer in the prod catalog (filter, label, optional Algolia app, key and index); needs debug overrides and `ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH` | Unset it → debug turns use the learner's own catalog |
+| `PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE` (setting) | None | The catalog `?debug=true` turns search, e.g. the 2U customer in the prod catalog (filter, label, optional Algolia app, key and index); needs debug overrides and `ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH` | Unset it → debug turns use the learner's own catalog |
 | `PATHWAYS_MODEL_BACKEND` (setting) | `xpert` | Which LLM backend chat uses (KD-2) | Change the setting |
 | `PERSONALIZED_SEARCH_TRANSPORT` (MFE env, new, optional) | unset (SSE) | `fixture` or `buffered` override the SSE transport | Unset |
 

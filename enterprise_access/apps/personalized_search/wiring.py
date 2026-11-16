@@ -142,7 +142,7 @@ def dev_catalog_scope(locale: str | None = None) -> CatalogScope | None:
 
 def debug_catalog_scope(locale: str | None = None) -> CatalogScope | None:
     """
-    Stage only: the catalog debug turns search (``PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE``), such as the 2U
+    The catalog debug turns search (``PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE``), such as the 2U
     customer in the prod catalog. Its plain key needs ``ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH`` like the dev scope.
     """
     debug_scope = getattr(settings, 'PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE', None)
