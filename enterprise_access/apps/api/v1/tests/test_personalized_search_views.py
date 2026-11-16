@@ -24,7 +24,7 @@ ENTERPRISE = str(uuid.uuid4())
 OTHER_ENTERPRISE = str(uuid.uuid4())
 MODELS = {'gpt-6-luna': (0.1, 0.01, 0.5), 'gpt-6.1-terra': (1.0, 0.05, 5.0), 'gpt-6.1-sol': (2.0, 0.1, 10.0),
           'gpt-4.1-mini': (0.4, 0.1, 1.6), 'gpt-5.4-mini': (0.75, 0.075, 4.5), 'gpt-4.1': (2.0, 0.5, 8.0)}
-DEV_SCOPE = {'filter': 'enterprise_catalog_query_uuids:"q"', 'label': 'Test catalog'}
+CATALOG_SCOPE = {'filter': 'enterprise_catalog_query_uuids:"q"', 'label': 'Test catalog'}
 
 
 def parse_sse(response):
@@ -200,7 +200,8 @@ class PersonalizedSearchTurnViewTests(APITest):
         self.assertFalse([p for p in parts if p['type'] == 'data-analytics'][0]['data']['is_debug'])
 
     @override_settings(PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED=True,
-                       PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE=DEV_SCOPE, ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH=True)
+                       PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE=CATALOG_SCOPE,
+                       ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH=True)
     @override_waffle_flag(PERSONALIZED_SEARCH_DEBUG, active=True)
     @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
     def test_debug_overrides_applied_when_enabled(self):
@@ -212,11 +213,11 @@ class PersonalizedSearchTurnViewTests(APITest):
         self.assertTrue([p for p in parts if p['type'] == 'data-analytics'][0]['data']['is_debug'])
         plain = parse_sse(self.post())
         self.assertFalse([p for p in plain if p['type'] == 'data-analytics'][0]['data']['is_debug'])
-        # A turn without ?debug=true searches with the learner's secured key, even with the dev scope set.
+        # A turn without ?debug=true searches with the learner's secured key, even with the debug catalog set.
         self.assertIsNone([p for p in plain if p['type'] == 'data-timing'][0]['data']['debug']['catalog'])
 
     @override_settings(PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED=True, ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH=True,
-                       PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE={**DEV_SCOPE, 'label': '2U (prod catalog)'})
+                       PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE={**CATALOG_SCOPE, 'label': '2U (prod catalog)'})
     @override_waffle_flag(PERSONALIZED_SEARCH_DEBUG, active=True)
     @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
     def test_a_debug_turn_searches_the_debug_catalog(self):
@@ -230,8 +231,7 @@ class PersonalizedSearchTurnViewTests(APITest):
         self.assertFalse([p for p in plain if p['type'] == 'data-analytics'][0]['data']['is_debug'])
 
     @override_settings(PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED=True, ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH=True,
-                       PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE=DEV_SCOPE,
-                       PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE={**DEV_SCOPE, 'label': '2U (prod catalog)'})
+                       PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE={**CATALOG_SCOPE, 'label': '2U (prod catalog)'})
     @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
     def test_debug_mode_needs_the_debug_flag_or_a_superuser(self):
         # Debug mode is on for the environment, but this learner is neither a superuser nor on the debug flag:
@@ -243,7 +243,8 @@ class PersonalizedSearchTurnViewTests(APITest):
         self.assertFalse([p for p in parts if p['type'] == 'data-analytics'][0]['data']['is_debug'])
 
     @override_settings(PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED=True,
-                       PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE=DEV_SCOPE, ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH=True)
+                       PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE=CATALOG_SCOPE,
+                       ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH=True)
     @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
     def test_a_superuser_has_debug_mode_without_the_flag(self):
         self.set_user_flags(is_superuser=True)
@@ -252,7 +253,8 @@ class PersonalizedSearchTurnViewTests(APITest):
         self.assertEqual(timing['model_compose'], 'gpt-4.1')
         self.assertIn('debug', timing)
 
-    @override_settings(PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE=DEV_SCOPE, ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH=True)
+    @override_settings(PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE=CATALOG_SCOPE,
+                       ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH=True)
     @override_waffle_flag(PERSONALIZED_SEARCH_DEBUG, active=True)
     @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
     def test_debug_mode_needs_the_environment_switch_even_for_allowed_users(self):
@@ -262,7 +264,7 @@ class PersonalizedSearchTurnViewTests(APITest):
         self.assertEqual(timing['model_compose'], 'gpt-6-luna')
         self.assertNotIn('debug', timing)
 
-    @override_settings(PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE={**DEV_SCOPE, 'label': '2U (prod catalog)'})
+    @override_settings(PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE={**CATALOG_SCOPE, 'label': '2U (prod catalog)'})
     @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
     def test_the_debug_catalog_needs_debug_overrides_enabled(self):
         # Prod leaves debug overrides off, so a debug flag there can't switch the catalog.

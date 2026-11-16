@@ -5,13 +5,13 @@ from django.test import override_settings
 from edx_toggles.toggles.testutils import override_waffle_flag
 from rest_framework.reverse import reverse
 
-from enterprise_access.apps.api.v1.tests.test_personalized_search_views import DEV_SCOPE, ENTERPRISE, MODELS
+from enterprise_access.apps.api.v1.tests.test_personalized_search_views import CATALOG_SCOPE, ENTERPRISE, MODELS
 from enterprise_access.apps.core.constants import SYSTEM_ENTERPRISE_LEARNER_ROLE
 from enterprise_access.toggles import PERSONALIZED_SEARCH_DEBUG, PERSONALIZED_SEARCH_ENABLED
 from test_utils import APITest
 
 
-@override_settings(PERSONALIZED_SEARCH_OPENAI_MODELS=MODELS, PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE=DEV_SCOPE)
+@override_settings(PERSONALIZED_SEARCH_OPENAI_MODELS=MODELS, PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE=CATALOG_SCOPE)
 class PersonalizedSearchDebugConfigViewTests(APITest):
     """GET /api/v1/personalized-search/debug/"""
 

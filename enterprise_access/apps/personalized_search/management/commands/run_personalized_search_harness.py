@@ -15,7 +15,7 @@ Three-turn persona conversations, with arm options (first-turn effort, shortlist
         --output /tmp/ps-conversations.jsonl
 
 Catalog reads have no request to vend a secured key from, so this needs
-PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE (a dev-only explicit catalog filter) and
+PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE (an explicit catalog filter) and
 ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH, like the pathway harness's --unscoped.
 """
 import json
@@ -124,9 +124,9 @@ class Command(BaseCommand):
         if options['dry_run']:
             return
 
-        scope = wiring.dev_catalog_scope()
+        scope = wiring.debug_catalog_scope()
         if not scope:
-            raise CommandError('Set PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE: there is no request to vend a secured key.')
+            raise CommandError('Set PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE: no request to vend a secured key from.')
 
         # pylint: disable=consider-using-with
         out = open(options['output'], 'w', encoding='utf-8') if options['output'] else self.stdout
@@ -154,9 +154,9 @@ class Command(BaseCommand):
         self.stdout.write(json.dumps(harness.plan_conversations(conversation_list, arms, options['runs'])))
         if options['dry_run']:
             return
-        scope = wiring.dev_catalog_scope()
+        scope = wiring.debug_catalog_scope()
         if not scope:
-            raise CommandError('Set PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE: there is no request to vend a secured key.')
+            raise CommandError('Set PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE: no request to vend a secured key from.')
         # pylint: disable=consider-using-with
         out = open(options['output'], 'w', encoding='utf-8') if options['output'] else self.stdout
         count = 0

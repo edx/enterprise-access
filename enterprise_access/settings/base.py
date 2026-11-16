@@ -542,7 +542,7 @@ ALGOLIA_SEARCH_API_KEY = ''
 ALGOLIA_CATALOG_INDEX_NAME = ''
 ALGOLIA_JOBS_INDEX_NAME = ''
 # Escape hatch for searches with no per-user secured key: the offline retrieval diagnostic, and
-# Personalized Search's dev catalog (devstack, harness) and debug catalog scopes. Enables searching
+# Personalized Search's debug catalog scope (debug turns and its offline harness). Enables searching
 # the catalog index *unscoped* with a plain key, only for a caller whose scope asks for it
 # (``allow_unscoped``, set from settings, never from a request). An environment turns it on for the
 # debug catalog (PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE), which only debug turns by debug-allowed
@@ -618,11 +618,6 @@ PERSONALIZED_SEARCH_OPENAI_MODELS = {
 # that overrides the per-step models and efforts (and selects the debug catalog), and their stream's timing
 # part carries token and cost detail. Everyone else's ``debug`` object is ignored.
 PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED = False
-# Development only. ``{'filter': '<algolia filter>', 'label': '<text>'}`` replaces the
-# per-learner secured key with the plain search key plus this explicit catalog filter, on debug
-# turns only (as PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE, which it takes precedence over), and the
-# offline harness. Requires ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH. Never set in a deployed environment.
-PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE = None
 # The catalog a turn searches when its request carries the ``debug`` flag (the portal's ``?debug=true``)
 # and PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED is on, so debug users can see results from a chosen
 # catalog in any environment that enables debug mode: ``{'filter': '<algolia filter>', 'label': '<text>'}``

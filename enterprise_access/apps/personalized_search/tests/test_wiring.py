@@ -64,12 +64,8 @@ class WiringTests(TestCase):
                          ('enterprise_customer_uuids:"e-1"', 'secured-key', False))
         with override_settings(PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED=False):
             self.assertFalse(wiring.catalog_scope(request=None, enterprise_customer_uuid='e-1', debug=True).is_debug)
-        with override_settings(PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE={'filter': 'dev', 'label': 'Dev'}):
-            dev = wiring.catalog_scope(request=None, enterprise_customer_uuid='e-1', debug=True)
-        self.assertEqual((dev.label, dev.allow_unscoped, dev.is_debug), ('Dev', True, True))
 
     @override_settings(PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED=True,
-                       PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE={'filter': 'dev', 'label': 'Dev'},
                        PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE={'filter': 'debug', 'label': 'Debug'})
     @mock.patch.object(wiring, 'get_and_cache_secured_algolia_search_keys', return_value={})
     @mock.patch.object(wiring, 'secured_key_from_payload', return_value='secured-key')
