@@ -53,6 +53,7 @@ Item events also carry `item_key` and `item_type`. Array properties hold primiti
 | `results.saved_tab_opened` | The Saved tab opens | join keys only |
 | `results.excluded_tab_opened` | The Excluded tab opens | join keys only |
 | `history.history_opened` | The History panel opens | join keys only |
+| `history.history_session_deleted` | The learner confirms deleting a conversation from History, and the delete succeeds (or the conversation was already gone) | `conversation_id`: the deleted conversation; no turn keys. The server sends `history.session-deleted` too |
 
 `item_section` and `item_position` come from the card as the server sent it, so the portal computes nothing. A reserve card that fills a removed one carries its `item_section` and a null `item_position`.
 
