@@ -98,30 +98,29 @@ def personalized_search_suggested_order_enabled():
     return PERSONALIZED_SEARCH_SUGGESTED_ORDER.is_enabled()
 
 
-# A kill switch, so the purge runs without anyone having to create a switch: ``False`` (the default, and what a
-# missing row reads as) leaves it on. That makes it a deliberate exception to architecture pattern 20 (irreversible
-# behavior ships off by default): the Eng Lead chose retention on by default (2026-11-16).
+# Off by default, like other irreversible behavior (architecture pattern 20): the cron job runs nightly but deletes
+# nothing until someone turns this on.
 #
-# .. toggle_name: enterprise_access.personalized_search_disable_retention_purge
+# .. toggle_name: enterprise_access.personalized_search_retention_purge
 # .. toggle_implementation: WaffleSwitch
 # .. toggle_default: False
-# .. toggle_description: Kill switch for the Personalized Search 30-day retention purge
-#     (``purge_personalized_search_sessions``, run daily by a cron job). Default False: the purge deletes every
-#     conversation 30 days after its last message, keeping learners' saved items. Turn it ON to pause the purge;
-#     a ``--dry-run`` still reports what would go. A learner's own delete from History is not affected.
-# .. toggle_warning: Deletes are permanent. Turning the switch on only stops later runs; turning it off again lets
-#     the next run delete everything already past 30 days.
+# .. toggle_description: Lets the Personalized Search 30-day retention purge (``purge_personalized_search_sessions``,
+#     run daily by a cron job) delete. When on, each run deletes every conversation 30 days after its last message,
+#     keeping learners' saved items. When off (the default), the run logs how many it would delete and deletes
+#     nothing; ``--dry-run`` reports the same either way. A learner's own delete from History is not affected.
+# .. toggle_warning: Deletes are permanent. The first run after turning it on deletes everything already past 30
+#     days, so check a ``--dry-run`` first. Turning it off again only stops later runs.
 # .. toggle_use_cases: open_edx
 # .. toggle_creation_date: 2026-11-16
-PERSONALIZED_SEARCH_DISABLE_RETENTION_PURGE = WaffleSwitch(
-    f'{ENTERPRISE_ACCESS_NAMESPACE}.personalized_search_disable_retention_purge',
+PERSONALIZED_SEARCH_RETENTION_PURGE = WaffleSwitch(
+    f'{ENTERPRISE_ACCESS_NAMESPACE}.personalized_search_retention_purge',
     __name__,
 )
 
 
 def personalized_search_retention_purge_enabled():
-    """Return whether the Personalized Search retention purge may delete (its kill switch is off)."""
-    return not PERSONALIZED_SEARCH_DISABLE_RETENTION_PURGE.is_enabled()
+    """Return whether the Personalized Search retention purge may delete (its switch is on)."""
+    return PERSONALIZED_SEARCH_RETENTION_PURGE.is_enabled()
 
 
 # A ``WaffleSwitch`` rather than a ``WaffleFlag``, deliberately. A switch is a single
