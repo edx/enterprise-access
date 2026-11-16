@@ -8,7 +8,12 @@ from enterprise_access.apps.personalized_search.adapters.segment_sink import seg
 
 SESSION_OPENED = 'history.session-opened'
 SESSION_RESUMED = 'history.session-resumed'
+SESSION_DELETED = 'history.session-deleted'
 TURN_RATED = 'turn.rated'
+
+# Why a session was deleted (``SESSION_DELETED``'s ``reason``): the learner's X, or the retention purge.
+DELETED_BY_LEARNER = 'learner'
+DELETED_FOR_RETENTION = 'retention'
 
 
 def send(lms_user_id, event: str, *, conversation_id, enterprise_customer_uuid, **properties) -> None:

@@ -13,6 +13,7 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 
+from enterprise_access.apps.personalized_search import events
 from enterprise_access.apps.personalized_search.core import constants
 from enterprise_access.apps.personalized_search.core.errors import SessionNotFound, TurnInProgress
 from enterprise_access.apps.personalized_search.core.stream import screen_order, stored_parts
@@ -135,6 +136,28 @@ class DjangoSessionStore:
             )
 
 
+def delete_conversation(session: ChatSession, *, reason: str) -> None:
+    """
+    Permanently delete one session and its turns, then send ``history.session-deleted``. The learner's X and the
+    retention purge both delete through here. Saved and not-interested items stay: their ``session`` is set to
+    null and each keeps its own ``card_snapshot``. A turn still streaming on this session writes nothing
+    (``persist_turn`` matches no row).
+    """
+    session_uuid, lms_user_id, enterprise = session.uuid, session.lms_user_id, session.enterprise_customer_uuid
+    with transaction.atomic():
+        session.delete(soft=False)  # a plain delete() would only set is_removed
+    events.send(lms_user_id, events.SESSION_DELETED, conversation_id=session_uuid,
+                enterprise_customer_uuid=enterprise, reason=reason)
+
+
+def sessions_inactive_since(cutoff) -> list:
+    """Uuids of every session, soft-deleted ones included, with no message since ``cutoff``, oldest first."""
+    stale = ChatSession.all_objects.filter(
+        Q(last_message_at__lt=cutoff) | Q(last_message_at__isnull=True, created__lt=cutoff),
+    )
+    return list(stale.order_by('last_message_at').values_list('uuid', flat=True))
+
+
 class DjangoHistoryStore:
     """The learner's past sessions and their stored turns (history panel, REQ-010)."""
 
@@ -171,6 +194,15 @@ class DjangoHistoryStore:
             'turns': [{'sequence': t.sequence, 'user_message': t.user_message, 'parts': t.parts,
                        'rating': t.rating, 'created': t.created} for t in session.turns.order_by('sequence')],
         }
+
+    def delete_session(self, *, session_uuid, lms_user_id, enterprise_customer_uuid) -> None:
+        """Permanently delete one of the learner's sessions (``delete_conversation``). Raises ``SessionNotFound``."""
+        try:
+            session = ChatSession.objects.get(uuid=session_uuid, lms_user_id=lms_user_id,
+                                              enterprise_customer_uuid=enterprise_customer_uuid)
+        except ChatSession.DoesNotExist as exc:
+            raise SessionNotFound() from exc
+        delete_conversation(session, reason=events.DELETED_BY_LEARNER)
 
     def rate_turn(self, *, session_uuid, sequence: int, lms_user_id, enterprise_customer_uuid, rating) -> dict:
         """Set or clear the learner's thumbs on one of their replies. Raises ``SessionNotFound``."""

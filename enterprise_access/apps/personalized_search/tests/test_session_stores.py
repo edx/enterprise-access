@@ -10,7 +10,7 @@ from django.db import IntegrityError
 from django.test import TestCase
 from django.utils import timezone
 
-from enterprise_access.apps.personalized_search.adapters.django_store import DjangoSessionStore
+from enterprise_access.apps.personalized_search.adapters.django_store import DjangoSessionStore, delete_conversation
 from enterprise_access.apps.personalized_search.adapters.memory_store import InMemorySessionStore
 from enterprise_access.apps.personalized_search.core import constants
 from enterprise_access.apps.personalized_search.core.errors import SessionNotFound, TurnInProgress
@@ -229,6 +229,17 @@ class DjangoSessionStoreTests(StoreContract, TestCase):
         row = ChatSession.objects.get(uuid=session['uuid'])
         self.assertEqual(row.turn_count, 0)
         self.assertIsNotNone(row.active_turn_started_at)
+
+    def test_a_turn_finishing_after_its_session_was_deleted_writes_nothing(self):
+        session = self.new_session()
+        self.store.lock(session)
+        delete_conversation(ChatSession.objects.get(uuid=session['uuid']), reason='learner')
+        session.update(turn_count=1, title='t')
+        with self.assertRaises(TurnInProgress):
+            self.store.persist_turn(session, {'uuid': str(uuid.uuid4()), 'user_message': 'a', 'reply_text': 'r',
+                                              'item_ids': [], 'parts': []})
+        self.assertFalse(ChatSession.all_objects.exists())
+        self.assertFalse(ChatTurn.objects.exists())
 
 
 class InMemorySessionStoreTests(StoreContract, TestCase):

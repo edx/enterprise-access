@@ -48,6 +48,7 @@ class RequestParamsTests(TestCase):
         self.assertEqual(params.get('reasoning_effort'), expected_effort)
         self.assertEqual(params['max_completion_tokens'], expected_max)
         self.assertNotIn('max_tokens', params)
+        self.assertIs(params['store'], False)  # OpenAI keeps no stored completion of a learner's turn
 
     @ddt.data(('gpt-6-luna', 'max'), ('gpt-6.1-sol', 'max'), ('gpt-6.1-terra', 'extreme'))
     @ddt.unpack

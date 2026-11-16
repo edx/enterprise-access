@@ -54,7 +54,7 @@ This POC is an **internal demo**. It shows that a streaming chat, beside an edit
 | Org Ontology and org-goal alignment | R-29–R-32, UX-07, K-09 | Already V2 in the PRD |
 | Retiring the Pathways tab, quiz and banner, and the redirect | R-02, RK-06 | POC runs beside Pathways. **Amended 2026-11-04:** it has its own flags (KD-8), so the two tabs roll out independently |
 | Single-column inline trays, scroll pills, sticky slim bar, tile pop animation | R-16 layout, R-19, R-20, R-22, UX-01, UX-05 | Superseded by the dual pane (KD-1) |
-| Search inside history, rename, delete, clear all, 90-day purge job, time grouping | R-34 (search), R-37, R-38 (purge) | Demo needs reopen and continue only |
+| Search inside history, rename, clear all, time grouping (delete and a 30-day purge were added 2026-11-16, see Data Model) | R-34 (search), R-37, R-38 (purge) | Demo needs reopen and continue only |
 | Segment instrumentation, KPI dashboards, thumbs feedback | R-39, R-40, K-01–K-09 | Internal demo; no success metrics reported |
 | Production security and privacy review, prompt retention policy, no-training terms | NFR-02 (partial) | Internal demo on stage data. Auth and per-enterprise scoping stay in scope |
 | Formal WCAG 2.1 AA audit and screen-reader testing | NFR-03 (partial) | Paragon defaults + keyboard basics only |
@@ -608,10 +608,11 @@ All three models are in `apps/personalized_search`, built on `model_utils` `Time
 | --- | --- | --- | --- |
 | `personalized_search/0001_initial` | Creates the 3 new tables | None (new, empty tables) | Turn the switch off. Tables are left in place; a later `migrate personalized_search zero` drops them (run it **before** reverting the code, or Django can't unapply a missing migration file) |
 | `personalized_search/0003_utf8mb4_tables` | On MySQL only, converts any of the 3 tables that isn't `utf8mb4` yet (`CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`, foreign key checks off during it), so 4-byte characters (emoji) can be stored. No-op elsewhere or when already `utf8mb4` | A table copy per converted table; the tables are small (stage only) | Reverse is a no-op (going back would fail on stored emoji); rollback and regression steps in `personalized_search_utf8mb4_runbook.md` |
+| `personalized_search/0004_chatsession_last_message_index` | Adds an index on `ChatSession.last_message_at` for the 30-day purge | Builds an index on a small table (stage only) | Reverse migration drops the index |
 | `prompts/0004_…_prompt_type` | Adds the two `PromptType` choices (choices-only alter) | None (no schema change on MySQL) | Reverse migration |
 | `prompts/0005_seed_personalized_search_prompts` | `get_or_create` the intent and compose rows | Two rows in an existing table; existing rows untouched | Reverse deletes only those two rows |
 
-Retention and purge are deferred (Out of scope). The POC stores data only in stage.
+**Retention (added 2026-11-16).** A learner can delete a conversation from History (`DELETE sessions/{uuid}/`), and `purge_personalized_search_sessions` deletes every conversation 30 days after its last message, daily from a Kubernetes cron job. Both go through `django_store.delete_conversation`: a hard delete of the session and its turns that keeps the learner's saved and not-interested items. Migration `0004` indexes `last_message_at` for the purge.
 
 ### API Contracts
 
@@ -901,7 +902,7 @@ Closed by the Eng Lead from the review queue; each follows existing repository c
 | Prompts | Intent and compose prompts stay in code (`core/intent.py`, `core/compose.py`), versioned with the code. No seeded `PromptType` rows. The seed-migration rows described under "Xpert specifics" are not built. |
 | Xpert backend (optional adapter) | Off unless `XPERT_API_BASE_URL` and `XPERT_API_CLIENT_ID` are set. Do not set them where the Personalized Search flags are on until retention of conversation content by that service is confirmed (OQ-5). The default backend is OpenAI. |
 | OpenAI backend | Sending learner text to OpenAI needs security, privacy and vendor approval before the flags are enabled outside stage. This gates enablement, not merging, because both flags default to off. |
-| PII retirement | The three tables keep learner-written text and use `pii_retirement: retained` with the reason stated in each model. Retirement is deferred with retention. Do not enable either flag outside stage until a retirement path (a hard delete by `lms_user_id`) ships. A session soft-deletes by default, so any purge must use `delete(soft=False)`. |
+| PII retirement | The three tables keep learner-written text and use `pii_retirement: retained` with the reason stated in each model. Conversations are now deleted 30 days after their last message, and on request. Retirement of a learner (a hard delete by `lms_user_id`, including saved items) is still deferred: do not enable either flag outside stage until it ships. A session soft-deletes by default, so every delete goes through `delete_conversation`, which uses `delete(soft=False)`. |
 | Flag overrides and schema versions | WaffleFlag override safety (keep `WAFFLE_OVERRIDE` off, never use the flag's Testing mode) is part of the runbook. Schemas are `v1`; a breaking change bumps the version. |
 
 ## Changelog
@@ -937,3 +938,4 @@ The full changelog is maintained with the team. Highlights:
 | 2026-11-13 | Review follow-ups: a refused key, model or request (HTTP 400, 401, 403, 404, 422) ends the turn with `model_failed` instead of being retried; an intent fallback's query is used for that turn only (HIL-1 of #391); `degraded` on `turn.completed` |
 | 2026-11-13 | Suggested order (plan block) put behind the `enterprise_access.personalized_search_suggested_order` WaffleSwitch, off by default: the compose prompt omits the plan, a model-written plan is dropped and no server plan is added |
 | 2026-11-13 | The page header always carries a dek: the prompt says a caveat doesn't replace it, and on an English reply the server writes a plain one when the model leaves it empty (`dek_added_by_server`; other languages keep the model's). "Why these?" is there whenever results are: when no preference the learner gave is reflected, the profile falls back to the search topic when it is a short phrase (or a catalog summary) instead of an empty profile |
+| 2026-11-16 | Conversation delete and retention: the learner's X in History (`DELETE sessions/{uuid}/`) and a daily purge of conversations 30 days after their last message, through one shared delete that keeps saved items; `history.session-deleted`; OpenAI requests send `store: false` |

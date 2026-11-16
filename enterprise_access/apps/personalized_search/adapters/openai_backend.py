@@ -60,7 +60,8 @@ def resolve_effort(model: str, effort: str | None) -> str | None:
 def request_params(model: str, effort: str | None, max_tokens: int) -> dict:
     """Chat Completions parameters for a model family (see module docstring)."""
     resolved = resolve_effort(model, effort)
-    params = {'model': model, 'max_completion_tokens': max_tokens}
+    # store=False: OpenAI never keeps these completions for later retrieval (our own copy is purged at 30 days).
+    params = {'model': model, 'max_completion_tokens': max_tokens, 'store': False}
     if resolved is not None:
         params['reasoning_effort'] = resolved
         if resolved not in ('none', 'minimal'):
