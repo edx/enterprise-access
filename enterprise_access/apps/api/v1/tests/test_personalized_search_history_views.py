@@ -83,7 +83,9 @@ class SessionEndpointsTests(LearnerSessionsMixin, APITest):
     def test_retrieve_someone_elses_session_is_404(self):
         theirs = self.session(lms_user_id=999)
         url = reverse('api:v1:personalized-search-session', args=[theirs.uuid])
-        self.assertEqual(self.client.get(url, {'enterprise_customer_uuid': ENTERPRISE}).status_code, 404)
+        response = self.client.get(url, {'enterprise_customer_uuid': ENTERPRISE})
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json(), {'code': 'session_not_found'})
 
     def test_other_enterprise_is_403(self):
         response = self.client.get(reverse('api:v1:personalized-search-sessions'),
@@ -124,7 +126,8 @@ class SessionDeleteTests(LearnerSessionsMixin, APITest):
         row = self.session()
         self.delete(row.uuid)
         detail = reverse('api:v1:personalized-search-session', args=[row.uuid])
-        self.assertEqual(self.client.get(detail, {'enterprise_customer_uuid': ENTERPRISE}).status_code, 404)
+        reopened = self.client.get(detail, {'enterprise_customer_uuid': ENTERPRISE})
+        self.assertEqual((reopened.status_code, reopened.json()), (404, {'code': 'session_not_found'}))
         self.assertEqual(self.delete(row.uuid).status_code, 404)
 
     def test_someone_elses_session_is_404_and_kept(self):

@@ -4,7 +4,8 @@ Personalized Search history and item feedback (tech spec "API Contracts"; chunks
 - ``GET sessions/?enterprise_customer_uuid=&page=``: the learner's sessions in this enterprise that have
   at least one turn, newest first, 20 per page.
 - ``GET sessions/{uuid}/?enterprise_customer_uuid=``: one session with its turns' stored parts, for replay.
-  ``upstream_conversation_id`` is never returned. Another learner's or enterprise's session is 404.
+  ``upstream_conversation_id`` is never returned. A missing, deleted, or another learner's or enterprise's session
+  is 404 with ``{"code": "session_not_found"}`` (the flag being off is a plain 404).
 - ``DELETE sessions/{uuid}/?enterprise_customer_uuid=``: permanently delete one of the learner's sessions and
   its turns (204). Saved and not-interested items are kept. Unknown, already deleted or someone else's: 404.
 - ``POST sessions/{uuid}/turns/{sequence}/feedback/`` with ``{enterprise_customer_uuid, rating}``: thumbs up
@@ -90,6 +91,11 @@ class SessionListQuerySerializer(EnterpriseQuerySerializer):  # pylint: disable=
     page = serializers.IntegerField(min_value=1, required=False, default=1)
 
 
+# A missing, deleted or someone else's session: 404 with this code, so the portal can tell it from the feature
+# being off (a bare 404) and say the conversation is gone.
+SESSION_NOT_FOUND = {'code': 'session_not_found'}
+
+
 def _validated(serializer_class, data):
     serializer = serializer_class(data=data)
     serializer.is_valid(raise_exception=True)
@@ -130,8 +136,8 @@ class PersonalizedSearchSessionDetailView(_LearnerView):
                 session_uuid=session_uuid, lms_user_id=lms_user_id,
                 enterprise_customer_uuid=query['enterprise_customer_uuid'],
             )
-        except SessionNotFound as exc:
-            raise NotFound() from exc
+        except SessionNotFound:
+            return Response(SESSION_NOT_FOUND, status=status.HTTP_404_NOT_FOUND)
         events.send(lms_user_id, events.SESSION_OPENED, conversation_id=session_uuid,
                     enterprise_customer_uuid=query['enterprise_customer_uuid'])
         return Response(session)
@@ -143,8 +149,8 @@ class PersonalizedSearchSessionDetailView(_LearnerView):
         try:
             DjangoHistoryStore().delete_session(session_uuid=session_uuid, lms_user_id=learner_id(request),
                                                 enterprise_customer_uuid=query['enterprise_customer_uuid'])
-        except SessionNotFound as exc:
-            raise NotFound() from exc
+        except SessionNotFound:
+            return Response(SESSION_NOT_FOUND, status=status.HTTP_404_NOT_FOUND)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
