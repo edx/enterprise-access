@@ -164,8 +164,9 @@ class PersonalizedSearchTurnView(APIView):
                 enterprise_customer_uuid=enterprise_customer_uuid, message=message,
             )
             store.lock(session)
-        except SessionNotFound as exc:
-            raise NotFound() from exc
+        except SessionNotFound:
+            # Its own code, so the portal can tell a deleted conversation from the feature being off (a bare 404).
+            return _error('session_not_found', status.HTTP_404_NOT_FOUND)
         except TurnInProgress:
             return _error('turn_in_progress', status.HTTP_409_CONFLICT)
 

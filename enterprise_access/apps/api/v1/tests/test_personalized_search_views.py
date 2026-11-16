@@ -171,8 +171,10 @@ class PersonalizedSearchTurnViewTests(APITest):
         self.assertEqual(response.json()['code'], 'invalid_request')
 
     @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
-    def test_unknown_session_is_404(self):
-        self.assertEqual(self.post(session_uuid=str(uuid.uuid4())).status_code, 404)
+    def test_unknown_session_is_404_session_not_found(self):
+        response = self.post(session_uuid=str(uuid.uuid4()))
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()['code'], 'session_not_found')  # not the flag-off 404
 
     @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
     def test_locked_session_is_409(self):

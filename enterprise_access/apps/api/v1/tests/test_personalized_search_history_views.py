@@ -19,9 +19,8 @@ ENTERPRISE = str(uuid.uuid4())
 OTHER_ENTERPRISE = str(uuid.uuid4())
 
 
-@override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
-class SessionEndpointsTests(APITest):
-    """GET sessions/ and sessions/{uuid}/"""
+class LearnerSessionsMixin:
+    """A learner with access to ENTERPRISE, and a helper that stores sessions for them or someone else."""
 
     def setUp(self):
         super().setUp()
@@ -36,6 +35,11 @@ class SessionEndpointsTests(APITest):
             ChatTurn.objects.create(session=row, sequence=sequence, user_message=f'm{sequence}',
                                     parts=[{'type': 'start', 'messageId': f'turn_{sequence}'}])
         return row
+
+
+@override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
+class SessionEndpointsTests(LearnerSessionsMixin, APITest):
+    """GET sessions/ and sessions/{uuid}/"""
 
     def test_list_is_mine_only_with_turns_newest_first(self):
         older, newer = self.session(title='older'), self.session(title='newer')
@@ -79,7 +83,9 @@ class SessionEndpointsTests(APITest):
     def test_retrieve_someone_elses_session_is_404(self):
         theirs = self.session(lms_user_id=999)
         url = reverse('api:v1:personalized-search-session', args=[theirs.uuid])
-        self.assertEqual(self.client.get(url, {'enterprise_customer_uuid': ENTERPRISE}).status_code, 404)
+        response = self.client.get(url, {'enterprise_customer_uuid': ENTERPRISE})
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json(), {'code': 'session_not_found'})
 
     def test_other_enterprise_is_403(self):
         response = self.client.get(reverse('api:v1:personalized-search-sessions'),
@@ -91,6 +97,62 @@ class SessionEndpointsTests(APITest):
         response = self.client.get(reverse('api:v1:personalized-search-sessions'),
                                    {'enterprise_customer_uuid': ENTERPRISE})
         self.assertEqual(response.status_code, 404)
+
+
+@override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
+class SessionDeleteTests(LearnerSessionsMixin, APITest):
+    """DELETE sessions/{uuid}/: a permanent delete of the learner's own session that keeps their saved items."""
+
+    def delete(self, row_uuid, enterprise=ENTERPRISE):
+        url = reverse('api:v1:personalized-search-session', args=[row_uuid])
+        return self.client.delete(f'{url}?enterprise_customer_uuid={enterprise}')
+
+    def test_deletes_the_session_and_its_turns_for_good_and_keeps_saved_items(self):
+        row = self.session(turns=2)
+        saved = ItemFeedback.objects.create(lms_user_id=self.me, enterprise_customer_uuid=ENTERPRISE, item_id='c1',
+                                            item_type='course', kind=ItemFeedback.KIND_SAVED, session=row,
+                                            card_snapshot={'item_id': 'c1', 'title': 'Leading teams'})
+        self.assertEqual(self.delete(row.uuid).status_code, 204)
+        self.assertFalse(ChatSession.all_objects.filter(uuid=row.uuid).exists())  # not just soft-deleted
+        self.assertFalse(ChatTurn.objects.filter(session_id=row.uuid).exists())
+        saved.refresh_from_db()
+        self.assertIsNone(saved.session)
+        self.assertEqual(saved.card_snapshot['title'], 'Leading teams')
+        listed = self.client.get(reverse('api:v1:personalized-search-item-feedback'),
+                                 {'enterprise_customer_uuid': ENTERPRISE, 'kind': 'saved'}).json()['results']
+        self.assertEqual([(r['item_id'], r['card_snapshot']['title']) for r in listed], [('c1', 'Leading teams')])
+
+    def test_a_deleted_session_is_gone_from_history_and_a_second_delete_is_404(self):
+        row = self.session()
+        self.delete(row.uuid)
+        detail = reverse('api:v1:personalized-search-session', args=[row.uuid])
+        reopened = self.client.get(detail, {'enterprise_customer_uuid': ENTERPRISE})
+        self.assertEqual((reopened.status_code, reopened.json()), (404, {'code': 'session_not_found'}))
+        self.assertEqual(self.delete(row.uuid).status_code, 404)
+
+    def test_someone_elses_session_is_404_and_kept(self):
+        theirs = self.session(lms_user_id=999)
+        self.assertEqual(self.delete(theirs.uuid).status_code, 404)
+        self.assertTrue(ChatSession.objects.filter(uuid=theirs.uuid).exists())
+
+    def test_a_session_in_another_enterprise_is_404_with_this_enterprise(self):
+        elsewhere = self.session(enterprise=OTHER_ENTERPRISE)
+        self.assertEqual(self.delete(elsewhere.uuid).status_code, 404)
+        self.assertTrue(ChatSession.objects.filter(uuid=elsewhere.uuid).exists())
+
+    def test_an_enterprise_without_access_is_403(self):
+        self.assertEqual(self.delete(self.session().uuid, enterprise=OTHER_ENTERPRISE).status_code, 403)
+
+    def test_a_soft_deleted_session_is_404(self):
+        row = self.session()
+        row.delete()
+        self.assertEqual(self.delete(row.uuid).status_code, 404)
+
+    @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=False)
+    def test_flag_off_is_404(self):
+        row = self.session()
+        self.assertEqual(self.delete(row.uuid).status_code, 404)
+        self.assertTrue(ChatSession.objects.filter(uuid=row.uuid).exists())
 
 
 @override_waffle_flag(PERSONALIZED_SEARCH_ENABLED, active=True)
@@ -320,6 +382,15 @@ class HistoryEventTests(APITest):
         self.client.get(reverse('api:v1:personalized-search-session', kwargs={'session_uuid': uuid.uuid4()}),
                         {'enterprise_customer_uuid': ENTERPRISE})
         emit.assert_not_called()
+
+    @mock.patch(EMIT)
+    def test_deleting_a_search_sends_session_deleted_by_the_learner(self, emit):
+        url = reverse('api:v1:personalized-search-session', kwargs={'session_uuid': self.session.uuid})
+        self.client.delete(f'{url}?enterprise_customer_uuid={ENTERPRISE}')
+        emit.assert_called_once_with(self.user.lms_user_id, 'history.session-deleted', {
+            'conversation_id': str(self.session.uuid), 'enterprise_customer_uuid': ENTERPRISE,
+            'cohort': 'internal_pilot', 'engine': 'b2b_mvp_v1', 'reason': 'learner',
+        })
 
     @mock.patch(EMIT)
     def test_rating_a_reply_sends_turn_rated(self, emit):

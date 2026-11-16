@@ -22,7 +22,7 @@ The event dictionary for Personalized Search (tech spec KD-12, REQ-017). Registe
 | `is_debug` | bool | The turn used debug model overrides (not merely an environment that allows them) |
 | `viewport` | string | Portal events only: the Paragon breakpoint name |
 
-The turn-scoped keys are null on tab and history events and on the first `chat.prompt_submitted` of a conversation, which fire before any conversation or turn exists: register them as nullable. Server session events (`history.session-opened`, `history.session-resumed`) carry no `turn_id`, and `history.session-opened` no `turn_index`.
+The turn-scoped keys are null on tab and history events and on the first `chat.prompt_submitted` of a conversation, which fire before any conversation or turn exists: register them as nullable. Server session events (`history.session-opened`, `history.session-resumed`, `history.session-deleted`) carry no `turn_id`, and `history.session-opened` no `turn_index`.
 
 Item events also carry `item_key` and `item_type`. Array properties hold primitives only. Parallel arrays (for example `shown_item_keys` and `shown_item_positions`) line up by index.
 
@@ -36,6 +36,7 @@ Item events also carry `item_key` and `item_type`. Array properties hold primiti
 | `turn.rated` | Thumbs up or down on a reply | `rating` (`1`, `-1`, or `null` to clear) |
 | `history.session-opened` | A stored conversation is loaded: reopened from History, or restored from the page URL (`?session=`) on a reload or shared link. A History reopen follows a portal `history.history_opened` (the panel opening); a URL restore doesn't | join keys only |
 | `history.session-resumed` | A message is sent from a reopened search | join keys only |
+| `history.session-deleted` | A conversation is permanently deleted: by the learner from History, or by the 30-day retention purge | `reason` (`learner`, `retention`). No `turn_id` or `turn_index` |
 
 ## Portal events
 
@@ -52,6 +53,7 @@ Item events also carry `item_key` and `item_type`. Array properties hold primiti
 | `results.saved_tab_opened` | The Saved tab opens | join keys only |
 | `results.excluded_tab_opened` | The Excluded tab opens | join keys only |
 | `history.history_opened` | The History panel opens | join keys only |
+| `history.history_session_deleted` | The learner confirms deleting a conversation from History, and the delete succeeds (or the conversation was already gone) | `conversation_id`: the deleted conversation; no turn keys. The server sends `history.session-deleted` too |
 
 `item_section` and `item_position` come from the card as the server sent it, so the portal computes nothing. A reserve card that fills a removed one carries its `item_section` and a null `item_position`.
 

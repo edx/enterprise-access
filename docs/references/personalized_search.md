@@ -8,11 +8,12 @@ The learner portal's Personalized Search tab is a chat that recommends learning 
 | --- | --- |
 | `POST turns/` | Streams one turn as AI SDK UI Message Stream v1 over SSE, with the header `x-vercel-ai-ui-message-stream: v1`. `?mode=buffered` returns the parts as JSON instead. The body takes an optional `locale` (the portal's language, e.g. `es`). |
 | `GET sessions/`, `GET sessions/<uuid>/` | The learner's past searches, and one search's stored parts for replay. |
+| `DELETE sessions/<uuid>/?enterprise_customer_uuid=` | Permanently deletes one of the learner's searches and its turns (204). The learner's saved and not-interested items are kept. Unknown, already deleted, or someone else's: 404. See [Deleting conversations](#deleting-conversations-and-the-30-day-purge). |
 | `GET/POST/DELETE item-feedback/` | Saved and not-interested items. Not-interested items are excluded from later turns. |
 | `POST sessions/<uuid>/turns/<sequence>/feedback/` | Thumbs up (1), down (-1) or cleared (null) on one of the learner's replies. |
 | `GET debug/` | The `?debug=true` model menu. 404 unless the requesting user may use debug mode: `PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED` is on **and** the user is an enterprise-access superuser or on the `enterprise_access.personalized_search_debug` flag. |
 
-Every endpoint requires the enterprise-scoped learner permission (`personalized_search.has_learner_access`) and returns 404 while the `enterprise_access.personalized_search_enabled` WaffleFlag is off for the user. The portal shows the tab from a separate LMS flag, `enterprise.personalized_search_enabled`. Enable this app's flag first, for the same users, so a visible tab never gets a 404.
+Every endpoint requires the enterprise-scoped learner permission (`personalized_search.has_learner_access`) and returns 404 while the `enterprise_access.personalized_search_enabled` WaffleFlag is off for the user. A session that is missing, deleted, or not the learner's is also 404, but with the body `{"code": "session_not_found"}`, on `POST turns/`, `GET sessions/<uuid>/` and `DELETE sessions/<uuid>/`. The portal uses that to say a conversation is gone instead of treating the whole feature as unavailable. The portal shows the tab from a separate LMS flag, `enterprise.personalized_search_enabled`. Enable this app's flag first, for the same users, so a visible tab never gets a 404.
 
 The suggested order (the `plan` block) is behind the `enterprise_access.personalized_search_suggested_order` WaffleSwitch, which is **off** by default. While it's off:
 - the compose prompt doesn't ask for a plan;
@@ -89,6 +90,29 @@ The turn log records `model_failures`, `retries` and `degraded` (`intent`, `comp
 ## Character set (migration 0003)
 
 Migration `0003_utf8mb4_tables` converts the three tables to `utf8mb4` on MySQL so emoji can be stored. Pre-deploy checks, failure handling, rollback and what to do if the emoji error returns: [utf8mb4 migration runbook](personalized_search_utf8mb4_runbook.md).
+
+## Deleting conversations and the 30-day purge
+
+A conversation is deleted in one place, `adapters/django_store.delete_conversation`, for both callers:
+- **The learner** deletes from the History panel's X (`DELETE sessions/<uuid>/`).
+- **The retention purge** is `./manage.py purge_personalized_search_sessions`. It deletes every session with no message for 30 days (`--days`), soft-deleted ones included. Run it with `--dry-run` to log the count without deleting.
+
+The purge runs daily as a Kubernetes cron job in the enterprise-access stage and prod config (edx-internal, `edx-enterprise-access-purge-ps-conversations`, 03:00 UTC). Migration `0004` indexes `last_message_at` for it.
+
+**Pausing it:** the purge is on by default. The WaffleSwitch `enterprise_access.personalized_search_disable_retention_purge` is a kill switch: turn it **on** to pause the purge, and off (the default) to let it run.
+- **In Django admin:** Waffle → Switches.
+- **From the command line:** `./manage.py waffle_switch enterprise_access.personalized_search_disable_retention_purge on --create`.
+
+While it's paused, `--dry-run` still reports the count. Defaulting on is the Eng Lead's deliberate exception (2026-11-16) to [architecture pattern 20](../architecture-patterns.md), which ships irreversible behavior off by default.
+
+Each delete:
+- is permanent: `delete(soft=False)`, so the session row and its turns, ratings included, are gone;
+- sends `history.session-deleted` with `reason` `learner` or `retention`;
+- keeps the learner's saved and not-interested items. Their `session` link is set to null, and each keeps its own `card_snapshot`. That snapshot's `why` and `fit` lines are model-written text about the learner's request, kept with the saved item by design.
+
+A turn still streaming on a deleted session writes nothing, because `persist_turn` finds no row.
+
+OpenAI requests send `store: false`, so OpenAI keeps no stored completion of a learner's turn. OpenAI's own abuse-monitoring logs follow the organization's data-retention terms and aren't affected by this purge.
 
 ## Removing the feature
 

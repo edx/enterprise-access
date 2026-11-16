@@ -117,3 +117,12 @@ def test_personalized_search_suggested_order_is_off_by_default_and_can_be_enable
     assert toggles.personalized_search_suggested_order_enabled() is False
     with override_waffle_switch(toggles.PERSONALIZED_SEARCH_SUGGESTED_ORDER, True):
         assert toggles.personalized_search_suggested_order_enabled() is True
+
+
+@pytest.mark.django_db
+def test_personalized_search_retention_purge_runs_by_default_and_the_kill_switch_pauses_it():
+    """A kill switch: no row (or off) means the 30-day purge runs."""
+    assert isinstance(toggles.PERSONALIZED_SEARCH_DISABLE_RETENTION_PURGE, WaffleSwitch)
+    assert toggles.personalized_search_retention_purge_enabled() is True
+    with override_waffle_switch(toggles.PERSONALIZED_SEARCH_DISABLE_RETENTION_PURGE, True):
+        assert toggles.personalized_search_retention_purge_enabled() is False

@@ -22,8 +22,9 @@ class ChatSession(TimeStampedModel, SoftDeletableModel):
     One learner's conversation in one enterprise (tech spec "Data Model").
 
     A session is soft-deleted by default (``SoftDeletableModel``): ``delete()`` only sets ``is_removed``, so the
-    cascade to ``ChatTurn`` and the ``SET_NULL`` on ``ItemFeedback`` do not run. Any purge must use
-    ``delete(soft=False)`` or ``ChatSession.all_objects``.
+    cascade to ``ChatTurn`` and the ``SET_NULL`` on ``ItemFeedback`` do not run. Learner deletes and the 30-day
+    purge (``purge_personalized_search_sessions``) both go through ``django_store.delete_conversation``, which
+    uses ``delete(soft=False)``.
 
     .. pii: first_prompt and title hold learner-written text; lms_user_id links the row to the learner;
        merged_intent and asked_attributes are derived from what the learner wrote. Retirement is deferred
@@ -52,6 +53,7 @@ class ChatSession(TimeStampedModel, SoftDeletableModel):
         indexes = [
             models.Index(fields=['lms_user_id', 'enterprise_customer_uuid', '-last_message_at'],
                          name='ps_session_learner_recent'),
+            models.Index(fields=['last_message_at'], name='ps_session_last_message'),  # the retention purge
         ]
 
     def __str__(self):

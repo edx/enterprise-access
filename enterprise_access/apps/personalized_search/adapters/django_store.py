@@ -13,10 +13,17 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 
+from enterprise_access.apps.personalized_search import events
 from enterprise_access.apps.personalized_search.core import constants
 from enterprise_access.apps.personalized_search.core.errors import SessionNotFound, TurnInProgress
 from enterprise_access.apps.personalized_search.core.stream import screen_order, stored_parts
 from enterprise_access.apps.personalized_search.models import ChatSession, ChatTurn, ItemFeedback
+
+
+def _unlocked(now) -> Q:
+    """Sessions no turn holds: never locked, or the lock is older than ``SESSION_LOCK_S`` (a turn that died)."""
+    stale = now - timedelta(seconds=constants.SESSION_LOCK_S)
+    return Q(active_turn_started_at__isnull=True) | Q(active_turn_started_at__lt=stale)
 
 
 def _history(session: ChatSession) -> list[dict]:
@@ -93,8 +100,7 @@ class DjangoSessionStore:
             )
             session.update(is_new=False, lock_token=now)
             return
-        stale = now - timedelta(seconds=constants.SESSION_LOCK_S)
-        unlocked = Q(active_turn_started_at__isnull=True) | Q(active_turn_started_at__lt=stale)
+        unlocked = _unlocked(now)
         # turn_count must still be what this turn loaded: another turn that finished since then changed the
         # session, and running on the stale snapshot would repeat its sequence number and lose its state.
         taken = ChatSession.objects.filter(
@@ -135,6 +141,29 @@ class DjangoSessionStore:
             )
 
 
+def delete_conversation(session: ChatSession, *, reason: str) -> None:
+    """
+    Permanently delete one session and its turns, then send ``history.session-deleted``. The learner's X and the
+    retention purge both delete through here. Saved and not-interested items stay: their ``session`` is set to
+    null and each keeps its own ``card_snapshot``. A turn still streaming on this session writes nothing
+    (``persist_turn`` matches no row).
+    """
+    session_uuid, lms_user_id, enterprise = session.uuid, session.lms_user_id, session.enterprise_customer_uuid
+    with transaction.atomic():
+        session.delete(soft=False)  # a plain delete() would only set is_removed
+    events.send(lms_user_id, events.SESSION_DELETED, conversation_id=session_uuid,
+                enterprise_customer_uuid=enterprise, reason=reason)
+
+
+def sessions_inactive_since(cutoff):
+    """
+    Every session, soft-deleted ones included, with no message since ``cutoff`` and no turn running on it now.
+    A queryset, so the purge applies it again to each batch as it deletes: a conversation the learner resumes
+    while the purge runs is locked, then has a new ``last_message_at``, and either way drops out.
+    """
+    return ChatSession.all_objects.filter(_unlocked(timezone.now()), last_message_at__lt=cutoff)
+
+
 class DjangoHistoryStore:
     """The learner's past sessions and their stored turns (history panel, REQ-010)."""
 
@@ -171,6 +200,15 @@ class DjangoHistoryStore:
             'turns': [{'sequence': t.sequence, 'user_message': t.user_message, 'parts': t.parts,
                        'rating': t.rating, 'created': t.created} for t in session.turns.order_by('sequence')],
         }
+
+    def delete_session(self, *, session_uuid, lms_user_id, enterprise_customer_uuid) -> None:
+        """Permanently delete one of the learner's sessions (``delete_conversation``). Raises ``SessionNotFound``."""
+        try:
+            session = ChatSession.objects.get(uuid=session_uuid, lms_user_id=lms_user_id,
+                                              enterprise_customer_uuid=enterprise_customer_uuid)
+        except ChatSession.DoesNotExist as exc:
+            raise SessionNotFound() from exc
+        delete_conversation(session, reason=events.DELETED_BY_LEARNER)
 
     def rate_turn(self, *, session_uuid, sequence: int, lms_user_id, enterprise_customer_uuid, rating) -> dict:
         """Set or clear the learner's thumbs on one of their replies. Raises ``SessionNotFound``."""
