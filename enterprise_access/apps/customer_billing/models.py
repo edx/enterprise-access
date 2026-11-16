@@ -352,6 +352,13 @@ class CheckoutIntent(TimeStampedModel):
         blank=True,
         help_text="Metadata relating to the terms and conditions accepted by the user.",
     )
+    in_renewal_grace_period = models.BooleanField(
+        default=False,
+        help_text=(
+            "True while an annual renewal charge has failed and the current paid plan is kept active for the "
+            "one-week grace period. Cleared when the renewal is paid or the subscription is canceled."
+        ),
+    )
 
     history = HistoricalRecords()
 
