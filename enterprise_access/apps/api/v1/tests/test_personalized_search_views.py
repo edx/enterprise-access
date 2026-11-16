@@ -212,6 +212,8 @@ class PersonalizedSearchTurnViewTests(APITest):
         self.assertTrue([p for p in parts if p['type'] == 'data-analytics'][0]['data']['is_debug'])
         plain = parse_sse(self.post())
         self.assertFalse([p for p in plain if p['type'] == 'data-analytics'][0]['data']['is_debug'])
+        # A turn without ?debug=true searches with the learner's secured key, even with the dev scope set.
+        self.assertIsNone([p for p in plain if p['type'] == 'data-timing'][0]['data']['debug']['catalog'])
 
     @override_settings(PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED=True, ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH=True,
                        PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE={**DEV_SCOPE, 'label': '2U (prod catalog)'})

@@ -29,12 +29,19 @@ class AlgoliaCatalogTests(TestCase):
     @mock.patch('enterprise_access.apps.personalized_search.adapters.algolia.AlgoliaSearchClient')
     def test_a_client_config_searches_that_app_and_index(self, client_class):
         client_class.return_value.multi_search_catalog_index.return_value = [{'hits': []}]
-        scope = SimpleNamespace(filter='f', secured_key=None, allow_unscoped=True,
+        scope = SimpleNamespace(filter='f', secured_key=None, allow_unscoped=True, is_debug=True,
                                 client_config={'app_id': 'PROD', 'search_api_key': 'k', 'index_name': 'prod_index'})
         AlgoliaCatalog().search([{'query': 'q'}], scope=scope, timeout_s=1.5)
         client_class.assert_called_once_with(app_id='PROD', search_api_key='k')
         self.assertEqual(client_class.return_value.multi_search_catalog_index.call_args.kwargs['index_name'],
                          'prod_index')
+
+    def test_only_a_debug_scope_may_search_unscoped(self):
+        client = mock.Mock()
+        scope = SimpleNamespace(filter='f', secured_key=None, allow_unscoped=True, is_debug=False)
+        with self.assertRaises(CatalogSearchError):
+            AlgoliaCatalog(client).search([{'query': 'q'}], scope=scope, timeout_s=1.5)
+        client.multi_search_catalog_index.assert_not_called()
 
     def test_client_errors_become_the_ports_error(self):
         scope = SimpleNamespace(filter='f', secured_key='KEY', allow_unscoped=False)

@@ -40,9 +40,10 @@ class WiringTests(TestCase):
         for locale, expected in cases.items():
             self.assertEqual(wiring.content_language(locale), expected, locale)
 
-    @override_settings(PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE={'filter': 'x:"y"'},
-                       PERSONALIZED_SEARCH_CONTENT_LANGUAGES={'en': 'English', 'es': 'Spanish'})
-    def test_the_catalog_scope_carries_the_content_language(self):
+    @override_settings(PERSONALIZED_SEARCH_CONTENT_LANGUAGES={'en': 'English', 'es': 'Spanish'})
+    @mock.patch.object(wiring, 'get_and_cache_secured_algolia_search_keys', return_value={})
+    @mock.patch.object(wiring, 'secured_key_from_payload', return_value='secured-key')
+    def test_the_catalog_scope_carries_the_content_language(self, *_):
         scope = wiring.catalog_scope(request=None, enterprise_customer_uuid='e-1', locale='es')
         self.assertEqual((scope.locale, scope.language_name), ('es', 'Spanish'))
         self.assertEqual(scope.reply_languages, ('English', 'Spanish'))  # replies may follow the learner's language
@@ -65,7 +66,20 @@ class WiringTests(TestCase):
             self.assertFalse(wiring.catalog_scope(request=None, enterprise_customer_uuid='e-1', debug=True).is_debug)
         with override_settings(PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE={'filter': 'dev', 'label': 'Dev'}):
             dev = wiring.catalog_scope(request=None, enterprise_customer_uuid='e-1', debug=True)
-        self.assertEqual(dev.label, 'Dev')
+        self.assertEqual((dev.label, dev.allow_unscoped, dev.is_debug), ('Dev', True, True))
+
+    @override_settings(PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED=True,
+                       PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE={'filter': 'dev', 'label': 'Dev'},
+                       PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE={'filter': 'debug', 'label': 'Debug'})
+    @mock.patch.object(wiring, 'get_and_cache_secured_algolia_search_keys', return_value={})
+    @mock.patch.object(wiring, 'secured_key_from_payload', return_value='secured-key')
+    def test_turns_that_are_not_debug_turns_always_use_the_secured_key(self, *_):
+        plain = wiring.catalog_scope(request=None, enterprise_customer_uuid='e-1')
+        self.assertEqual((plain.filter, plain.secured_key, plain.allow_unscoped, plain.is_debug),
+                         ('enterprise_customer_uuids:"e-1"', 'secured-key', False, False))
+        with override_settings(PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED=False):
+            off = wiring.catalog_scope(request=None, enterprise_customer_uuid='e-1', debug=True)
+        self.assertEqual((off.secured_key, off.allow_unscoped), ('secured-key', False))
 
     @override_settings(PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE={'filter': 'x:"y"'})
     def test_a_debug_catalog_without_credentials_uses_the_configured_app(self):

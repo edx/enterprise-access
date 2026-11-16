@@ -158,7 +158,7 @@ class SubRequestTests(TestCase):
             {'hits': [], 'nbHits': 1}, {'hits': [], 'nbHits': 42}, {'hits': [], 'nbHits': 9}, {'hits': [], 'nbHits': 3},
             {'hits': [], 'nbHits': 0}, {'hits': []},
         ]
-        scope = retrieval.CatalogScope(filter='x:"y"', allow_unscoped=True)
+        scope = retrieval.CatalogScope(filter='x:"y"', secured_key='KEY')
         out = retrieval.search(INTENT, scope, [], catalog=AlgoliaCatalog(client), timeout_s=1.5)
         self.assertEqual([(c['card']['item_id'], c['tier']) for c in out], [('edX+C1', 2), ('edX+C2', 1)])
         queries = client.multi_search_catalog_index.call_args.args[0]
@@ -170,7 +170,7 @@ class SubRequestTests(TestCase):
         self.assertEqual(out.search_queries,
                          {'course': 'team leadership', 'executive_education': keywords, 'program': keywords})
         kwargs = client.multi_search_catalog_index.call_args.kwargs
-        self.assertEqual((kwargs['allow_unscoped'], kwargs['secured_key'], kwargs['timeout_s']), (True, None, 1.5))
+        self.assertEqual((kwargs['allow_unscoped'], kwargs['secured_key'], kwargs['timeout_s']), (False, 'KEY', 1.5))
 
     def test_a_catalog_failure_is_logged_and_fails_retrieval_without_the_filter_text(self):
         # Algolia's filter-syntax errors repeat the failing token, which comes from the learner's skills.
