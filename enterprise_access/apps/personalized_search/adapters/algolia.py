@@ -1,14 +1,19 @@
 """``CatalogSearch`` over enterprise-access's Algolia client (one ``multiple_queries`` round trip)."""
+import logging
+
 from enterprise_access.apps.api_client.algolia_client import AlgoliaClientError, AlgoliaSearchClient, SecuredAlgoliaKey
 from enterprise_access.apps.personalized_search.core.errors import CatalogSearchError
+
+logger = logging.getLogger(__name__)
 
 
 class AlgoliaCatalog:
     """
     Runs the core's sub-requests through ``AlgoliaSearchClient.multi_search_catalog_index``. The scope's
     ``secured_key`` is a ``SecuredAlgoliaKey``; the client refuses an unscoped search unless both the
-    scope and ``ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH`` allow it. A scope's ``client_config`` (the debug
-    catalog) names another Algolia app, key or index to search instead of the configured ones.
+    scope and ``ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH`` allow it, and this adapter refuses it for any scope
+    that isn't a debug scope. A scope's ``client_config`` (the debug catalog) names another Algolia app, key or
+    index to search instead of the configured ones.
     """
 
     def __init__(self, client: AlgoliaSearchClient | None = None):
@@ -16,6 +21,11 @@ class AlgoliaCatalog:
 
     def search(self, queries: list[dict], *, scope, timeout_s: float) -> list[dict]:
         """The client's results; its search and configuration errors become the port's ``CatalogSearchError``."""
+        if scope.allow_unscoped and not getattr(scope, 'is_debug', False):
+            # Learner turns always search with their secured key; only debug turns may use the plain key.
+            # Logged here because retrieval logs only the error type.
+            logger.error('Refused an unscoped Personalized Search catalog search: the scope is not a debug scope.')
+            raise CatalogSearchError('UnscopedSearchNotAllowed')
         try:
             config = getattr(scope, 'client_config', None) or {}
             client = self._client or AlgoliaSearchClient(app_id=config.get('app_id'),

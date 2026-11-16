@@ -128,22 +128,11 @@ def _languages(locale: str | None) -> dict:
     return {'locale': code, 'language_name': name, 'reply_languages': tuple(supported.values())}
 
 
-def dev_catalog_scope(locale: str | None = None) -> CatalogScope | None:
-    """
-    Dev only: the plain key plus an explicit catalog filter (``PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE``).
-    The Algolia client still refuses it unless ``ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH`` is on.
-    """
-    dev_scope = getattr(settings, 'PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE', None)
-    if not dev_scope:
-        return None
-    return CatalogScope(filter=dev_scope['filter'], allow_unscoped=True, label=dev_scope.get('label'),
-                        **_languages(locale))
-
-
 def debug_catalog_scope(locale: str | None = None) -> CatalogScope | None:
     """
-    Stage only: the catalog debug turns search (``PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE``), such as the 2U
-    customer in the prod catalog. Its plain key needs ``ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH`` like the dev scope.
+    The catalog debug turns search (``PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE``), such as the 2U
+    customer in the prod catalog, and the catalog the offline harness searches. Its plain key needs
+    ``ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH``.
     """
     debug_scope = getattr(settings, 'PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE', None)
     if not debug_scope:
@@ -157,15 +146,14 @@ def debug_catalog_scope(locale: str | None = None) -> CatalogScope | None:
 def catalog_scope(request, enterprise_customer_uuid: str, locale: str | None = None,
                   debug: bool = False) -> CatalogScope:
     """
-    The learner's secured key and enterprise filter, in the learner's content language. The dev scope replaces
-    it everywhere it's set; the debug scope replaces it for ``debug`` turns (the caller checks ``debug_allowed``).
+    The learner's secured key and enterprise filter, in the learner's content language. Only a ``debug`` turn (the
+    caller checks ``debug_allowed``) in an environment with debug overrides may use the debug scope instead, the
+    only scope that searches with a plain, unscoped key.
     """
-    dev_scope = dev_catalog_scope(locale)
-    if dev_scope:
-        return dev_scope
-    debug_scope = debug_catalog_scope(locale) if debug and debug_overrides_enabled() else None
-    if debug_scope:
-        return debug_scope
+    if debug and debug_overrides_enabled():
+        override = debug_catalog_scope(locale)
+        if override:
+            return override
     payload = get_and_cache_secured_algolia_search_keys(request, enterprise_customer_uuid)
     return CatalogScope(
         filter=f'enterprise_customer_uuids:"{enterprise_customer_uuid}"',

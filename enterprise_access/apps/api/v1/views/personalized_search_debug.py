@@ -49,7 +49,7 @@ class PersonalizedSearchDebugConfigView(APIView):
             raise NotFound()
         registry = wiring.model_registry()
         intent_default, compose_default = wiring.default_models()
-        scope = wiring.dev_catalog_scope() or wiring.debug_catalog_scope()  # what a debug turn searches
+        scope = wiring.debug_catalog_scope()  # what a debug turn searches
         return Response({
             'models': [_menu_entry(registry, model) for model in registry.available_models()],
             'defaults': {

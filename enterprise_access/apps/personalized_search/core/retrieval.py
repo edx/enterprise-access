@@ -26,9 +26,8 @@ EXEC_ED_COURSE_TYPE = 'executive-education-2u'
 class CatalogScope:
     """
     How to scope catalog reads. Normal: the learner's secured key plus the enterprise filter.
-    Dev only: the plain key plus an explicit catalog filter (``PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE``).
-    Debug turns in stage: the same, optionally against another Algolia app or index
-    (``PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE``), marked ``is_debug``.
+    Debug turns and the offline harness: the plain key plus an explicit catalog filter, optionally against
+    another Algolia app or index (``PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE``), marked ``is_debug``.
     ``secured_key`` and ``client_config`` are opaque here; only the catalog adapter reads them.
 
     The content language follows the learner's portal language, as Learner Pathways does: ``locale``

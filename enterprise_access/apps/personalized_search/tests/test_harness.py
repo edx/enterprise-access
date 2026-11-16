@@ -460,9 +460,9 @@ class HarnessCommandTests(TestCase):
         self.assertEqual(plan['arms'], ['openai-best-fit', 'xpert'])
         self.assertEqual(plan['turns'], 104)
 
-    @override_settings(PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE=None)
-    def test_requires_dev_scope(self):
-        with self.assertRaises(CommandError):
+    @override_settings(PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE=None)
+    def test_requires_the_debug_catalog_scope(self):
+        with self.assertRaisesRegex(CommandError, 'PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE'):
             call_command('run_personalized_search_harness', '--case-id', 'O1', '--max-calls', '2',
                          stdout=StringIO())
 
@@ -482,7 +482,7 @@ class HarnessCommandTests(TestCase):
             call_command('run_personalized_search_harness', '--case-id', 'nope', '--max-calls', '2',
                          stdout=StringIO())
 
-    @override_settings(OPENAI_API_KEY='k', PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE={'filter': 'f', 'label': 'l'})
+    @override_settings(OPENAI_API_KEY='k', PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE={'filter': 'f', 'label': 'l'})
     def test_a_run_writes_one_row_per_turn_to_the_output_file(self):
         with NamedTemporaryFile(suffix='.jsonl', delete=False) as handle:
             path = handle.name
@@ -497,7 +497,7 @@ class HarnessCommandTests(TestCase):
         self.assertEqual([r['case_id'] for r in rows], ['O1'])
         self.assertIn('Wrote 1 turns.', err.getvalue())
 
-    @override_settings(OPENAI_API_KEY='k', PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE={'filter': 'f', 'label': 'l'})
+    @override_settings(OPENAI_API_KEY='k', PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE={'filter': 'f', 'label': 'l'})
     def test_a_run_without_an_output_file_prints_the_rows(self):
         out = StringIO()
         with mock.patch('enterprise_access.apps.personalized_search.wiring.steps', return_value=fake_steps()):
@@ -512,7 +512,7 @@ class HarnessCommandTests(TestCase):
         plan = json.loads(out.getvalue())
         self.assertEqual((plan['conversations'], plan['turns']), (10, 60))
 
-    @override_settings(OPENAI_API_KEY='k', PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE={'filter': 'f', 'label': 'l'})
+    @override_settings(OPENAI_API_KEY='k', PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE={'filter': 'f', 'label': 'l'})
     def test_harness_timeouts_override_the_settings(self):
         seen = []
         steps = fake_steps()
@@ -540,13 +540,13 @@ class HarnessCommandTests(TestCase):
             call_command('run_personalized_search_harness', '--case-set', 'conversations', '--case-id', 'nope',
                          '--max-calls', '10', stdout=StringIO())
 
-    @override_settings(PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE=None)
-    def test_conversations_require_dev_scope(self):
-        with self.assertRaises(CommandError):
+    @override_settings(PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE=None)
+    def test_conversations_require_the_debug_catalog_scope(self):
+        with self.assertRaisesRegex(CommandError, 'PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE'):
             call_command('run_personalized_search_harness', '--case-set', 'conversations', '--max-calls', '10',
                          stdout=StringIO())
 
-    @override_settings(OPENAI_API_KEY='k', PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE={'filter': 'f', 'label': 'l'})
+    @override_settings(OPENAI_API_KEY='k', PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE={'filter': 'f', 'label': 'l'})
     def test_a_conversation_run_writes_one_row_per_turn(self):
         out, err = StringIO(), StringIO()
         with mock.patch('enterprise_access.apps.personalized_search.wiring.steps', return_value=fake_steps()):
@@ -558,7 +558,7 @@ class HarnessCommandTests(TestCase):
                          [('p010-welder', i, 'adaptive') for i in range(3)])
         self.assertIn('Wrote 3 turns.', err.getvalue())
 
-    @override_settings(OPENAI_API_KEY='k', PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE={'filter': 'f', 'label': 'l'})
+    @override_settings(OPENAI_API_KEY='k', PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE={'filter': 'f', 'label': 'l'})
     def test_a_conversation_run_can_write_a_file(self):
         with NamedTemporaryFile(suffix='.jsonl', delete=False) as handle:
             path = handle.name
