@@ -1292,24 +1292,40 @@ class TestStripeEventHandler(TestCase):
     @override_settings(FEATURE_SSP_CHECKOUT_SEGMENT_EVENTS_V2=True)
     @mock.patch(SEGMENT_TASK)
     @mock.patch("enterprise_access.apps.customer_billing.stripe_event_handlers._update_renewal_cancellation_state")
-    def test_redelivered_webhook_queues_the_event_until_one_delivery_is_handled(
-        self, mock_update_renewal, mock_segment_task,
-    ):
+    def test_order_cancelled_is_queued_once_across_redeliveries(self, mock_update_renewal, mock_segment_task):
         """
-        A delivery whose handler failed is not marked handled, so Stripe's redelivery queues the event again
-        (its fixed messageId lets Segment drop the repeat); once one delivery is handled, redeliveries queue nothing.
+        A delivery whose handler fails queues nothing (Stripe redelivers for days, longer than Segment de-duplicates a
+        messageId); the delivery that succeeds queues the event, and redeliveries after it queue nothing.
         """
         self._create_existing_event_data_records('sub_redelivered', subscription_status=StripeSubscriptionStatus.ACTIVE)
         event = self._subscription_deletion_event('sub_redelivered')
-        mock_update_renewal.side_effect = [Exception('failed after queuing'), None, None]
+        mock_update_renewal.side_effect = [Exception('cancellation work failed'), None, None]
 
         with self.assertRaises(Exception):
             StripeEventHandler.dispatch(event)
+        mock_segment_task.delay.assert_not_called()
+
         StripeEventHandler.dispatch(event)
         StripeEventHandler.dispatch(event)
 
-        self.assertEqual(mock_segment_task.delay.call_count, 2)
+        mock_segment_task.delay.assert_called_once()
         self.assertIsNotNone(StripeEventData.objects.get(event_id=event.id).handled_at)
+
+    @override_settings(FEATURE_SSP_CHECKOUT_SEGMENT_EVENTS_V2=True)
+    @mock.patch("enterprise_access.apps.customer_billing.stripe_event_handlers._handle_invoice_paid_status_updated")
+    @mock.patch("enterprise_access.apps.customer_billing.stripe_event_handlers.send_payment_receipt_email")
+    @mock.patch(SEGMENT_TASK)
+    def test_paid_invoice_whose_handler_fails_queues_no_order_completed(
+        self, mock_segment_task, _mock_receipt, mock_status_updated,
+    ):
+        """The paid-path status update raises to make Stripe retry; that delivery must not queue order_completed."""
+        mock_status_updated.side_effect = Exception('No SelfServiceSubscriptionRenewal found')
+        event = self._paid_invoice_event(5000, 'subscription_create')
+
+        with self.assertRaises(Exception):
+            StripeEventHandler.dispatch(stripe.Event.construct_from(event.to_dict(), stripe.api_key))
+
+        mock_segment_task.delay.assert_not_called()
 
     @mock.patch(SEGMENT_TASK)
     @mock.patch("enterprise_access.apps.customer_billing.stripe_event_handlers.cancel_all_future_plans")

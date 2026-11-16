@@ -141,9 +141,15 @@ class CheckoutSegmentEvents:
     ORDER_CANCELLED = 'edx.ui.enterprise.checkout.order_cancelled'
 
 
-# The billing reason of a subscription's first invoice, which Stripe issues at checkout. Its ``invoice.paid`` is
-# when Stripe confirms the order, so it triggers order_completed. With the SSP free trial its total is $0.
-ORDER_COMPLETED_BILLING_REASON = 'subscription_create'
+class StripeInvoiceBillingReason:
+    """
+    Values of a Stripe invoice's ``billing_reason`` that the webhook handlers act on.
+    """
+    # A subscription's first invoice, issued at checkout. Its ``invoice.paid`` is when Stripe confirms the order,
+    # so it triggers order_completed. With the SSP free trial its total is $0.
+    SUBSCRIPTION_CREATE = 'subscription_create'
+    # Each later billing period's invoice, including the first paid one at the end of the trial.
+    SUBSCRIPTION_CYCLE = 'subscription_cycle'
 
 
 ALLOWED_CHECKOUT_INTENT_STATE_TRANSITIONS = {

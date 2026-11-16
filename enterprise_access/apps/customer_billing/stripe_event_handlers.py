@@ -13,9 +13,9 @@ from simple_history.utils import bulk_update_with_history
 
 from enterprise_access.apps.api_client.license_manager_client import LicenseManagerApiClient
 from enterprise_access.apps.customer_billing.constants import (
-    ORDER_COMPLETED_BILLING_REASON,
     SUBSCRIPTION_ITEM_TYPE,
     CheckoutSegmentEvents,
+    StripeInvoiceBillingReason,
     StripeSegmentEvents,
     StripeSubscriptionStatus
 )
@@ -320,9 +320,10 @@ def _queue_checkout_segment_event(event, event_name, checkout_intent, subscripti
     Queue a server-side checkout Segment event, if FEATURE_SSP_CHECKOUT_SEGMENT_EVENTS_V2 is on.
 
     Each order has one such Stripe event, so the event is queued once per Stripe event: a redelivery of an event that
-    was already handled queues nothing. A delivery whose handler failed is not marked handled, so its redelivery
-    queues the event again, and the task's fixed messageId lets Segment drop the repeat. A broker error is not
-    caught, so the webhook fails and Stripe redelivers it.
+    was already handled queues nothing. Call it as the handler's last step, after any work that can raise: a
+    delivery whose handler failed is not marked handled and Stripe redelivers it for days, longer than Segment
+    de-duplicates a messageId. A broker error is not caught, so the webhook fails and Stripe redelivers it; the
+    task's fixed messageId lets Segment drop the rare repeat.
     """
     if not settings.FEATURE_SSP_CHECKOUT_SEGMENT_EVENTS_V2:
         return
@@ -334,7 +335,7 @@ def _queue_checkout_segment_event(event, event_name, checkout_intent, subscripti
 
 def _queue_order_completed_segment_event(event, checkout_intent, invoice, subscription_details):
     """Queue ``order_completed`` if ``invoice`` is the subscription's first one, paid at checkout ($0 for a trial)."""
-    if invoice.to_dict().get('billing_reason') != ORDER_COMPLETED_BILLING_REASON:
+    if invoice.to_dict().get('billing_reason') != StripeInvoiceBillingReason.SUBSCRIPTION_CREATE:
         return
     _queue_checkout_segment_event(
         event,
@@ -427,7 +428,7 @@ def _is_annual_renewal_invoice(invoice, subscription_details) -> bool:
     the trial ends, so the reason alone is not enough. The subscription must also have been paid by an
     earlier invoice, otherwise the trial→paid transition (or its retry) would be skipped.
     """
-    if invoice.to_dict().get('billing_reason') != 'subscription_cycle':
+    if invoice.to_dict().get('billing_reason') != StripeInvoiceBillingReason.SUBSCRIPTION_CYCLE:
         return False
     return StripeEventSummary.objects.filter(
         stripe_subscription_id=subscription_details.to_dict().get('subscription'),
@@ -634,8 +635,6 @@ class StripeEventHandler:
 
         link_event_data_to_checkout_intent(event, checkout_intent)
         if invoice.total > 0:
-            # Before the emails, so a broker error fails the webhook before any email is sent.
-            _queue_order_completed_segment_event(event, checkout_intent, invoice, subscription_details)
             # Attempt to send the receipt FIRST before triggering renewal.
             # Renewal might want to force a retry by raising, risking duplicate receipt emails. We'll
             # mitigate this by configuring the Braze campaign to avoid sending more than 1 in a 3
@@ -660,6 +659,8 @@ class StripeEventHandler:
                 return
             # only update status for non-trial invoice.paid events
             _handle_invoice_paid_status_updated(event, checkout_intent)
+            # Last, after the status update that raises to make Stripe retry, so a failed delivery queues nothing.
+            _queue_order_completed_segment_event(event, checkout_intent, invoice, subscription_details)
             return
 
         try:
@@ -673,7 +674,7 @@ class StripeEventHandler:
                 'Could not mark checkout intent %s as paid via invoice %s, because %s',
                 checkout_intent.uuid, invoice.id, exc,
             )
-        # After mark_as_paid, so a broker outage never holds up the checkout; redelivery repeats it harmlessly.
+        # Last, after mark_as_paid, so a broker outage never holds up the checkout; redelivery repeats it harmlessly.
         _queue_order_completed_segment_event(event, checkout_intent, invoice, subscription_details)
 
     @on_stripe_event('invoice.created')
@@ -946,16 +947,6 @@ class StripeEventHandler:
             "Subscription %s status was deleted via event %s", subscription['id'], event.id,
         )
 
-        # Before the cancellation work and emails, so a broker error fails the webhook before any of them. Only the
-        # subscription's id and final items are passed on from the payload.
-        _queue_checkout_segment_event(
-            event,
-            CheckoutSegmentEvents.ORDER_CANCELLED,
-            checkout_intent,
-            subscription['id'],
-            subscription_data={'id': subscription['id'], 'items': subscription.get('items')},
-        )
-
         cancellation_details = subscription.get('cancellation_details')
         # Track cancellation event if cancellation details are present
         if cancellation_details:
@@ -1006,6 +997,16 @@ class StripeEventHandler:
                 send_trial_ended_cancellation_email_task.delay(
                     checkout_intent_id=checkout_intent.id,
                 )
+
+        # Last, after the license-manager call and renewal updates that can raise, so a failed delivery queues
+        # nothing. Only the subscription's id and final items are passed on from the payload.
+        _queue_checkout_segment_event(
+            event,
+            CheckoutSegmentEvents.ORDER_CANCELLED,
+            checkout_intent,
+            subscription['id'],
+            subscription_data={'id': subscription['id'], 'items': subscription.get('items')},
+        )
 
 
 def _process_trial_to_paid_renewal(

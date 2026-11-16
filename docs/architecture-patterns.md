@@ -192,20 +192,20 @@ copy's other fields. For records where that can cost money (`LearnerCreditTopUp.
 The test database is SQLite, where `select_for_update()` does nothing: test with two copies of one row loaded
 before either writes, which proves the stored-state check but not the lock.
 
-### 25. Stripe webhook handlers: let a broker error fail the webhook, and place `.delay()` by what a redelivery repeats
+### 25. Stripe webhook handlers: let a broker error fail the webhook, and queue once-per-event tasks last
 
 The Stripe webhook view re-raises handler errors on purpose, and Stripe redelivers a failed webhook for up to three
-days, so a handler needs no outbox of its own to survive a broker outage: let `.delay()` raise. Then place each
-`.delay()` by what the redelivery would do again:
+days, so a handler needs no outbox of its own to survive a broker outage: let `.delay()` raise.
 
-- before side effects that aren't idempotent, such as emails, or the redelivery sends them twice;
-- after state changes that a redelivery repeats harmlessly, if they shouldn't wait for the broker (e.g. queue
-  `order_completed` after `mark_as_paid` at checkout).
+Every redelivery runs the handler again, so for a task that must run once per Stripe event:
 
-Every redelivery runs the handler again, so if the task must run once per Stripe event, skip queuing it when the
-event's `StripeEventData.handled_at` is set: a failed delivery is not marked handled, so its redelivery still queues
-it (`_queue_checkout_segment_event`). Make the task tolerate the rare second run, e.g. with a fixed Segment
-`messageId`.
+- skip queuing it when the event's `StripeEventData.handled_at` is set (`_queue_checkout_segment_event`);
+- queue it as the handler's **last** step, after any work that can raise (license-manager calls, a missing renewal
+  raised on purpose to make Stripe retry). A handler that keeps failing is never marked handled, so a task queued
+  before that work would be queued on every redelivery, for longer than e.g. Segment de-duplicates a `messageId`.
+  A broker outage fails the handler's earlier `.delay()` calls first, so queuing last doesn't add duplicate emails;
+- make the task tolerate the rare second run (a broker error after the earlier work), e.g. with a fixed Segment
+  `messageId`.
 
 ### Key Takeaways for Implementation:
 - Check permissions early using `@permission_required` decorator
