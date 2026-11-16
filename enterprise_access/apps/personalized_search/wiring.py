@@ -7,7 +7,11 @@ Views and management commands call these functions; another host would write its
 from django.conf import settings
 
 from enterprise_access.apps.bffs.api import get_and_cache_secured_algolia_search_keys
-from enterprise_access.apps.personalized_search.adapters.algolia import AlgoliaCatalog, secured_key_from_payload
+from enterprise_access.apps.personalized_search.adapters.algolia import (
+    AlgoliaCatalog,
+    catalog_filter_from_payload,
+    secured_key_from_payload
+)
 from enterprise_access.apps.personalized_search.adapters.django_store import DjangoSessionStore
 from enterprise_access.apps.personalized_search.adapters.openai_backend import OpenAIBackend
 from enterprise_access.apps.personalized_search.adapters.segment_sink import segment_emit
@@ -146,9 +150,9 @@ def debug_catalog_scope(locale: str | None = None) -> CatalogScope | None:
 def catalog_scope(request, enterprise_customer_uuid: str, locale: str | None = None,
                   debug: bool = False) -> CatalogScope:
     """
-    The learner's secured key and enterprise filter, in the learner's content language. Only a ``debug`` turn (the
-    caller checks ``debug_allowed``) in an environment with debug overrides may use the debug scope instead, the
-    only scope that searches with a plain, unscoped key.
+    The learner's secured key and the customer's catalog queries, in the learner's content language. Only a
+    ``debug`` turn (the caller checks ``debug_allowed``) in an environment with debug overrides may use the debug
+    scope instead, the only scope that searches with a plain, unscoped key.
     """
     if debug and debug_overrides_enabled():
         override = debug_catalog_scope(locale)
@@ -156,7 +160,7 @@ def catalog_scope(request, enterprise_customer_uuid: str, locale: str | None = N
             return override
     payload = get_and_cache_secured_algolia_search_keys(request, enterprise_customer_uuid)
     return CatalogScope(
-        filter=f'enterprise_customer_uuids:"{enterprise_customer_uuid}"',
+        filter=catalog_filter_from_payload(payload),
         secured_key=secured_key_from_payload(payload), **_languages(locale),
     )
 

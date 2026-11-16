@@ -22,6 +22,7 @@ from test_utils import APITest
 
 ENTERPRISE = str(uuid.uuid4())
 OTHER_ENTERPRISE = str(uuid.uuid4())
+KEY_PAYLOAD = {'catalog_uuids_to_catalog_query_uuids': {'c-1': 'q-1'}}
 MODELS = {'gpt-6-luna': (0.1, 0.01, 0.5), 'gpt-6.1-terra': (1.0, 0.05, 5.0), 'gpt-6.1-sol': (2.0, 0.1, 10.0),
           'gpt-4.1-mini': (0.4, 0.1, 1.6), 'gpt-5.4-mini': (0.75, 0.075, 4.5), 'gpt-4.1': (2.0, 0.5, 8.0)}
 CATALOG_SCOPE = {'filter': 'enterprise_catalog_query_uuids:"q"', 'label': 'Test catalog'}
@@ -43,7 +44,7 @@ class PersonalizedSearchTurnViewTests(APITest):
         self.addCleanup(cache.clear)
         self.url = reverse('api:v1:personalized-search-turns')
         self.set_jwt_cookie([{'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE, 'context': ENTERPRISE}])
-        for target, value in (('steps', fake_steps()), ('get_and_cache_secured_algolia_search_keys', {}),
+        for target, value in (('steps', fake_steps()), ('get_and_cache_secured_algolia_search_keys', KEY_PAYLOAD),
                               ('secured_key_from_payload', 'secured-key')):
             patcher = mock.patch(f'enterprise_access.apps.personalized_search.wiring.{target}', return_value=value)
             patcher.start()
@@ -312,7 +313,7 @@ class PersonalizedSearchTurnAccessTests(APITest):
         self.addCleanup(cache.clear)
         self.url = reverse('api:v1:personalized-search-turns')
         self.set_jwt_cookie([{'system_wide_role': SYSTEM_ENTERPRISE_LEARNER_ROLE, 'context': ENTERPRISE}])
-        for target, value in (('steps', fake_steps()), ('get_and_cache_secured_algolia_search_keys', {}),
+        for target, value in (('steps', fake_steps()), ('get_and_cache_secured_algolia_search_keys', KEY_PAYLOAD),
                               ('secured_key_from_payload', 'secured-key')):
             patcher = mock.patch(f'enterprise_access.apps.personalized_search.wiring.{target}', return_value=value)
             patcher.start()
