@@ -39,9 +39,11 @@ class AlgoliaCatalogTests(TestCase):
     def test_only_a_debug_scope_may_search_unscoped(self):
         client = mock.Mock()
         scope = SimpleNamespace(filter='f', secured_key=None, allow_unscoped=True, is_debug=False)
-        with self.assertRaises(CatalogSearchError):
+        with self.assertRaises(CatalogSearchError), \
+                self.assertLogs('enterprise_access.apps.personalized_search.adapters.algolia', 'ERROR') as logs:
             AlgoliaCatalog(client).search([{'query': 'q'}], scope=scope, timeout_s=1.5)
         client.multi_search_catalog_index.assert_not_called()
+        self.assertIn('the scope is not a debug scope', logs.output[0])
 
     def test_client_errors_become_the_ports_error(self):
         scope = SimpleNamespace(filter='f', secured_key='KEY', allow_unscoped=False)

@@ -76,6 +76,11 @@ class WiringTests(TestCase):
         with override_settings(PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED=False):
             off = wiring.catalog_scope(request=None, enterprise_customer_uuid='e-1', debug=True)
         self.assertEqual((off.secured_key, off.allow_unscoped), ('secured-key', False))
+        # Debug mode without a debug catalog (e.g. comparing models): the turn keeps the learner's secured key.
+        with override_settings(PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE=None):
+            no_catalog = wiring.catalog_scope(request=None, enterprise_customer_uuid='e-1', debug=True)
+        self.assertEqual((no_catalog.filter, no_catalog.secured_key, no_catalog.allow_unscoped),
+                         ('enterprise_customer_uuids:"e-1"', 'secured-key', False))
 
     @override_settings(PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE={'filter': 'x:"y"'})
     def test_a_debug_catalog_without_credentials_uses_the_configured_app(self):

@@ -548,7 +548,8 @@ ALGOLIA_JOBS_INDEX_NAME = ''
 # debug catalog (PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE), which only debug turns by debug-allowed
 # users reach (PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED plus a superuser or the
 # personalized_search_debug flag); Personalized Search's catalog adapter refuses it for every other
-# turn. Leave it False wherever nothing needs it.
+# turn. The gate is service-wide: turning it on also lets the offline Pathways commands search
+# unscoped with --unscoped. Leave it False wherever nothing needs it.
 ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH = False
 
 # The server-side learner pathways pipeline (apps/pathways) is gated by a waffle switch,

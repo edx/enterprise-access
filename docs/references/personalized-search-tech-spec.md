@@ -686,7 +686,7 @@ sequenceDiagram
 
 | External System | Protocol (REST / gRPC / Event) | Contract | Failure Mode (Timeout / 5xx / Queue full) | Fallback |
 | --- | --- | --- | --- | --- |
-| enterprise-catalog | REST | `get_secured_algolia_api_key` (`enterprise_catalog_client.py:273-294`) | 5xx or timeout, before the stream | 503 JSON before the stream starts; no unscoped fallback (`ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH=False`, `ea/settings/base.py:545`) |
+| enterprise-catalog | REST | `get_secured_algolia_api_key` (`enterprise_catalog_client.py:273-294`) | 5xx or timeout, before the stream | 503 JSON before the stream starts; no unscoped fallback (`ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH=False`, `ea/settings/base.py:552`) |
 | Algolia | REST (`multiple_queries`) | Retrieval | timeout (2 s) or 5xx | `error: retrieval_failed` |
 | Anthropic | HTTPS streaming | `messages.stream` | timeout (intent 3 s; compose 5 s per read, total bounded by the turn deadline), 5xx | `error: model_failed`; no retry inside the deadline |
 | Xpert | HTTPS (cumulative-JSON stream) | `/v1/message` `stream:true` | timeout or malformed chunk | `error: model_failed` |

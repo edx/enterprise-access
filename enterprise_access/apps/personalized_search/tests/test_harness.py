@@ -461,8 +461,8 @@ class HarnessCommandTests(TestCase):
         self.assertEqual(plan['turns'], 104)
 
     @override_settings(PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE=None)
-    def test_requires_dev_scope(self):
-        with self.assertRaises(CommandError):
+    def test_requires_the_debug_catalog_scope(self):
+        with self.assertRaisesRegex(CommandError, 'PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE'):
             call_command('run_personalized_search_harness', '--case-id', 'O1', '--max-calls', '2',
                          stdout=StringIO())
 
@@ -541,8 +541,8 @@ class HarnessCommandTests(TestCase):
                          '--max-calls', '10', stdout=StringIO())
 
     @override_settings(PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE=None)
-    def test_conversations_require_dev_scope(self):
-        with self.assertRaises(CommandError):
+    def test_conversations_require_the_debug_catalog_scope(self):
+        with self.assertRaisesRegex(CommandError, 'PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE'):
             call_command('run_personalized_search_harness', '--case-set', 'conversations', '--max-calls', '10',
                          stdout=StringIO())
 
