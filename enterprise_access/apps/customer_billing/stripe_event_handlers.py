@@ -266,7 +266,9 @@ def cancel_all_future_plans(checkout_intent, include_processed=True):
 
     By default this includes processed renewals, whose renewed plan is the one currently in effect, which is
     what a canceled subscription needs. Pass ``include_processed=False`` to only deactivate plans that have not
-    started yet, keeping the current paid plan active (e.g. through an annual renewal's grace period).
+    started yet, keeping the current paid plan active (e.g. through an annual renewal's grace period, or until
+    period end when Stripe deletes a subscription early, ENT-11534). Plans kept active end on their expiration
+    date, when License Manager's daily expiry job moves enrollments to Audit.
     Renewals without a renewed plan yet are skipped.
     """
     renewals = checkout_intent.renewals.filter(renewed_subscription_plan_uuid__isnull=False)
@@ -289,6 +291,36 @@ def cancel_all_future_plans(checkout_intent, include_processed=True):
         logger.info('Future plan %s de-activated for Checkout Intent %s', deactivated_plan_uuid, checkout_intent.uuid)
 
     return deactivated
+
+
+def _get_current_period_end(subscription: dict):
+    """
+    Return the subscription's current period end as an aware datetime, or None.
+
+    Stripe reports the billing period on the subscription item, not the subscription.
+    """
+    items = (subscription.get('items') or {}).get('data') or []
+    period_end = items[0].get('current_period_end') if items else None
+    return datetime_from_timestamp(period_end) if period_end else None
+
+
+def _get_paid_access_end_after_early_deletion(subscription: dict, previous_summary):
+    """
+    Return when paid access ends for a subscription Stripe deleted before its period end, or None.
+
+    Only applies with the ``ssp_paid_renewal`` switch on (it is what keeps the current plan active,
+    see ``cancel_all_future_plans()``), and only to a subscription that was ``active`` (a paid term)
+    before the deletion. Not to a trial, and not to a lapsed grace period (``past_due``), where
+    Stripe has already moved ``current_period_end`` to the unpaid next term.
+    """
+    if not ssp_paid_renewal_enabled():
+        return None
+    if not previous_summary or previous_summary.subscription_status != StripeSubscriptionStatus.ACTIVE:
+        return None
+    current_period_end = _get_current_period_end(subscription)
+    if current_period_end and current_period_end > timezone.now():
+        return current_period_end
+    return None
 
 
 def _update_renewal_cancellation_state(
@@ -722,7 +754,8 @@ def _process_annual_renewal(
         _log_renewal(logging.INFO, 'already_processed', checkout_intent, stripe_invoice_id, f'renewal_id={renewal.id}')
         return
     if _subscription_is_canceled(checkout_intent, invoice):
-        # customer.subscription.deleted already ended the subscription and deactivated its plans. Don't renew
+        # customer.subscription.deleted already ended the subscription (the current plan runs out on its
+        # expiration date, or was deactivated with the ssp_paid_renewal switch off). Don't renew
         # it, and don't fail the webhook: retries can't change this. The customer may have paid, so CS has to
         # refund or reinstate by hand.
         _log_renewal(
@@ -1366,6 +1399,15 @@ class StripeEventHandler:
             "Subscription %s status was deleted via event %s", subscription['id'], event.id,
         )
 
+        previous_summary = checkout_intent.previous_summary(event, stripe_object_type='subscription')
+        access_ends_at = _get_paid_access_end_after_early_deletion(subscription, previous_summary)
+        if access_ends_at:
+            logger.info(
+                "Subscription %s was deleted before its current period end (CheckoutIntent %s). "
+                "The current paid plan stays active until %s; after that, enrollments move to Audit.",
+                subscription['id'], checkout_intent.uuid, access_ends_at,
+            )
+
         cancellation_details = subscription.get('cancellation_details')
         # Track cancellation event if cancellation details are present
         if cancellation_details:
@@ -1373,7 +1415,13 @@ class StripeEventHandler:
 
         enterprise_uuid = checkout_intent.enterprise_uuid
         if enterprise_uuid:
-            cancel_all_future_plans(checkout_intent)
+            if ssp_paid_renewal_enabled():
+                # Keep the paid plan in effect: it stays active until its expiration date (the period end,
+                # or the grace end after a failed renewal charge), then License Manager moves enrollments
+                # to Audit. Only plans that have not started yet are deactivated (ENT-11534).
+                cancel_all_future_plans(checkout_intent, include_processed=False)
+            else:
+                cancel_all_future_plans(checkout_intent)
         else:
             logger.error(
                 (
@@ -1383,14 +1431,19 @@ class StripeEventHandler:
                 subscription['id'],
                 checkout_intent.id,
             )
-        _update_renewal_cancellation_state(checkout_intent, is_canceled=True, subscription_cancel_at=None)
+        # After an early deletion, keep the date access ends, so the admin portal shows the plan as
+        # pending cancellation until then rather than as active with no end date.
+        _update_renewal_cancellation_state(checkout_intent, is_canceled=True, subscription_cancel_at=access_ends_at)
         _set_renewal_grace_period(checkout_intent, None, False)
 
-        previous_summary = checkout_intent.previous_summary(event, stripe_object_type='subscription')
         if previous_summary:
             if previous_summary.subscription_status == StripeSubscriptionStatus.ACTIVE:
                 # https://docs.stripe.com/api/subscriptions/object#subscription_object-ended_at
-                ended_at = subscription.get("ended_at") or timezone.now().timestamp()
+                # After an early deletion the emails give the date access actually ends.
+                ended_at = (
+                    access_ends_at.timestamp() if access_ends_at
+                    else subscription.get("ended_at") or timezone.now().timestamp()
+                )
                 logger.info(
                     "Queuing cancelation finalization email for checkout_intent uuid=%s",
                     checkout_intent.uuid,
