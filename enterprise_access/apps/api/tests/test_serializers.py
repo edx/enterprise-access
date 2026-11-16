@@ -10,7 +10,9 @@ import ddt
 from django.conf import settings
 from django.test import TestCase
 from freezegun import freeze_time
+from rest_framework.exceptions import ValidationError
 
+from enterprise_access.apps.api.serializers.customer_billing import CheckoutIntentCreateRequestSerializer
 from enterprise_access.apps.api.serializers.subsidy_access_policy import (
     SubsidyAccessPolicyAggregatesSerializer,
     SubsidyAccessPolicyCreditsAvailableResponseSerializer,
@@ -574,3 +576,84 @@ class TestLearnerCreditRequestBulkCancelSerializer(TestCase):
         serializer = LearnerCreditRequestBulkCancelSerializer(data=data)
         self.assertFalse(serializer.is_valid())
         self.assertIn('learner_credit_request_uuids', serializer.errors)
+
+
+@ddt.ddt
+class CheckoutIntentAttributionValidationTests(TestCase):
+    """
+    Tests for CheckoutIntentCreateRequestSerializer.validate_attribution: a wrong shape is rejected, and string values
+    that could carry personal data are dropped before anything is stored or sent to Segment.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.serializer = CheckoutIntentCreateRequestSerializer()
+
+    @ddt.data(
+        {},
+        {'unknown_key': 'x'},
+        {'utm_source': '', 'utm_medium': None},
+        {'utm_source': '   '},
+    )
+    def test_returns_none_when_no_known_keys_present(self, value):
+        self.assertIsNone(self.serializer.validate_attribution(value))
+
+    def test_keeps_only_known_keys(self):
+        result = self.serializer.validate_attribution({'utm_source': 'google', 'unknown_key': 'x'})
+        self.assertEqual(result, {'utm_source': 'google'})
+
+    def test_valid_utm_values_are_preserved(self):
+        value = {
+            'utm_source': 'linkedin',
+            'utm_medium': 'paid_social',
+            'utm_campaign': 'Q4 2026 - Teams launch',
+            'utm_content': 'carousel-ad_v2',
+            'utm_term': 'enterprise learning',
+        }
+        self.assertEqual(self.serializer.validate_attribution(value), value)
+
+    @ddt.data(
+        # (description, attribution)
+        ('nested object', {'utm_content': {'customer_email': 'test@example.com'}}),
+        ('nested object in the referrer', {'referrer': {'email': 'alice@example.com'}}),
+        ('list', {'utm_source': ['google', 'bing']}),
+        ('list of objects', {'utm_term': [{'email': 'test@example.com'}]}),
+        ('number', {'utm_campaign': 123}),
+        ('boolean', {'utm_medium': True}),
+        ('float', {'utm_content': 1.5}),
+        ('non-string value under an unknown key', {'utm_source': 'google', 'gclid': {'id': 'x'}}),
+    )
+    @ddt.unpack
+    def test_non_string_values_are_rejected(self, _description, value):
+        """Stringifying them would store and forward whatever they contain."""
+        with self.assertRaises(ValidationError) as ctx:
+            self.serializer.validate_attribution(value)
+        self.assertNotIn('example.com', str(ctx.exception.detail))  # the error names keys, never values
+
+    def test_nested_attribution_is_rejected_by_the_create_api_serializer(self):
+        serializer = CheckoutIntentCreateRequestSerializer(data={
+            'enterprise_slug': 'acme', 'enterprise_name': 'Acme', 'quantity': 10,
+            'attribution': {'utm_content': {'customer_email': 'test@example.com'}},
+        })
+        self.assertFalse(serializer.is_valid())
+        self.assertIn('attribution', serializer.errors)
+
+    def test_string_values_are_sanitized_not_rejected(self):
+        """
+        A string value that is not in the accepted format is dropped, not rejected: it comes from the link the customer
+        followed. The rules themselves are tested with ``sanitize_attribution``.
+        """
+        result = self.serializer.validate_attribution({
+            'utm_source': 'newsletter',
+            'utm_content': 'jane.doe@example.com',
+            'referrer': 'https://www.google.com/search?q=x',
+        })
+        self.assertEqual(result, {'utm_source': 'newsletter', 'referrer': 'https://www.google.com/'})
+
+    def test_none_is_allowed(self):
+        self.assertIsNone(self.serializer.validate_attribution(None))
+
+    @ddt.data(['utm_source'], 'utm_source=google', 123)
+    def test_rejects_non_dict(self, value):
+        with self.assertRaises(ValidationError):
+            self.serializer.validate_attribution(value)

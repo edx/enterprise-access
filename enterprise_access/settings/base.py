@@ -752,6 +752,20 @@ STRIPE_PRICE_DATA_CACHE_TIMEOUT = 300
 
 ENABLE_STRIPE_EVENT_SUMMARIES = False
 
+# Segment server-side write key; set per environment (None disables server-side tracking)
+SEGMENT_KEY = None
+
+# .. toggle_name: FEATURE_SSP_CHECKOUT_SEGMENT_EVENTS_V2
+# .. toggle_implementation: DjangoSetting
+# .. toggle_default: False
+# .. toggle_description: Sends the checkout order_completed and order_cancelled Segment events from the server, from the
+#     Stripe webhooks. Same name as the frontend-app-enterprise-checkout flag that gates the browser-side checkout
+#     events (ENT-12328). Off: no event is queued or sent.
+# .. toggle_use_cases: temporary
+# .. toggle_creation_date: 2026-10-09
+# .. toggle_target_removal_date: 2027-03-31
+FEATURE_SSP_CHECKOUT_SEGMENT_EVENTS_V2 = False
+
 # Allows us to do per-environment exception raising vs. returning in our event handlers
 STRIPE_GRACEFUL_EXCEPTION_MODE = False
 

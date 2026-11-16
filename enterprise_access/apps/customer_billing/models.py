@@ -32,8 +32,10 @@ from .constants import (
     LEARNER_CREDIT_TOP_UP_MAX_AMOUNT_CENTS,
     LEARNER_CREDIT_TOP_UP_MIN_AMOUNT_CENTS,
     LEARNER_CREDIT_TOP_UP_QUOTE_MINUTES,
+    SEGMENT_EVENT_EMISSION_FINAL_STATUSES,
     CheckoutIntentState,
-    LearnerCreditTopUpState
+    LearnerCreditTopUpState,
+    SegmentEventEmissionStatus
 )
 from .utils import datetime_from_timestamp
 
@@ -223,6 +225,9 @@ class CheckoutIntent(TimeStampedModel):
     4. Mark as fulfilled after provisioning
     intent.mark_as_fulfilled(workflow)
 
+    ``attribution`` holds only campaign labels and a referrer's origin: ``utils.sanitize_attribution`` drops email
+    addresses, URLs, phone numbers and referrer paths before anything is stored.
+
     .. no_pii: This model has no PII
     """
     class Meta:
@@ -351,6 +356,14 @@ class CheckoutIntent(TimeStampedModel):
         null=True,
         blank=True,
         help_text="Metadata relating to the terms and conditions accepted by the user.",
+    )
+    attribution = models.JSONField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Marketing attribution for the checkout session: utm_source, utm_medium, "
+            "utm_campaign, utm_content, utm_term, referrer."
+        ),
     )
 
     history = HistoricalRecords()
@@ -762,6 +775,7 @@ class CheckoutIntent(TimeStampedModel):
         country: str | None = None,
         terms_metadata: dict | None = None,
         ssp_product: 'SspProduct | None' = None,
+        attribution: dict | None = None,
     ) -> Self:
         """
         Create or update a checkout intent for a user with the given enterprise details.
@@ -874,6 +888,10 @@ class CheckoutIntent(TimeStampedModel):
                 existing_intent.terms_metadata = (existing_intent.terms_metadata or {}) | (terms_metadata or {})
                 if ssp_product is not None:
                     existing_intent.ssp_product = ssp_product
+                # Replaced whole, never merged: the checkout MFE sends what it holds, which a later link with UTM
+                # values replaces, so the newest campaign is the one that led to the purchase.
+                if attribution:
+                    existing_intent.attribution = attribution
                 existing_intent.save()
                 logger.info(
                     'create_intent for user %s: updated existing intent %s with slug=%s, name=%s, quantity=%s',
@@ -890,6 +908,7 @@ class CheckoutIntent(TimeStampedModel):
                 'expires_at': expires_at,
                 'country': country,
                 'terms_metadata': terms_metadata,
+                'attribution': attribution,
             }
             if ssp_product is not None:
                 create_kwargs['ssp_product'] = ssp_product
@@ -1436,6 +1455,85 @@ class StripeEventSummary(TimeStampedModel):
             stripe_subscription_id=subscription_id,
             event_type='customer.subscription.created',
         ).order_by('-stripe_event_created_at').first()
+
+
+class SegmentEventEmission(TimeStampedModel):
+    """
+    Idempotency record for one server-side checkout Segment event.
+
+    The send task creates the row and sends the event at most once per (event_name, order_id), so a redelivered
+    webhook (and so a second task) finds the same row. ``order_id`` is the Stripe Checkout Session ID of the purchase;
+    ``order_cancelled`` reuses the order_id of its subscription's ``order_completed`` row. Status moves are
+    conditional updates, so a stale copy never moves a finished row back.
+
+    .. no_pii: This model has no PII
+    """
+    event_name = models.CharField(max_length=255)
+    order_id = models.CharField(
+        max_length=255,
+        help_text='Segment order_id: the Stripe Checkout Session ID of the purchase (CheckoutIntent).',
+    )
+    checkout_intent = models.ForeignKey(
+        CheckoutIntent,
+        null=True,
+        on_delete=models.SET_NULL,
+        related_name='segment_event_emissions',
+        help_text='The purchase this event is about.',
+    )
+    stripe_subscription_id = models.CharField(
+        max_length=255,
+        db_index=True,
+        help_text='Stripe subscription created by the purchase.',
+    )
+    stripe_invoice_id = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        help_text=(
+            "The order's first invoice (billing reason subscription_create), which supplies revenue. Set from the "
+            "webhook for order_completed, and found by the send task for order_cancelled."
+        ),
+    )
+    status = models.CharField(
+        max_length=32,
+        choices=[(status.value, status.value) for status in SegmentEventEmissionStatus],
+        default=SegmentEventEmissionStatus.PENDING.value,
+        db_index=True,
+    )
+    emitted_at = models.DateTimeField(null=True, blank=True, help_text='When Segment accepted the event.')
+    last_error = models.TextField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['event_name', 'order_id'], name='unique_segment_event_per_order'),
+        ]
+
+    def __str__(self):
+        return f'{self.event_name} {self.order_id} ({self.status})'
+
+    @property
+    def is_final(self) -> bool:
+        """True once the event was sent or failed; nothing else may change the row's status."""
+        return self.status in SEGMENT_EVENT_EMISSION_FINAL_STATUSES
+
+    def finish(self, status: SegmentEventEmissionStatus, error: str | None = None) -> bool:
+        """
+        Move a row that is not final yet to the final ``status``. Returns False, changing nothing, if the row is
+        already final (e.g. another worker sent it). Updates the row and this instance.
+        """
+        now = timezone.now()
+        values = {'status': status, 'last_error': error[:1000] if error else None, 'modified': now}
+        if status == SegmentEventEmissionStatus.SENT:
+            values['emitted_at'] = now
+        updated = SegmentEventEmission.objects.filter(
+            pk=self.pk,
+        ).exclude(
+            status__in=SEGMENT_EVENT_EMISSION_FINAL_STATUSES,
+        ).update(**values)
+        if updated:
+            for field, value in values.items():
+                setattr(self, field, value)
+        return bool(updated)
 
 
 class InvalidLearnerCreditTopUpTransition(Exception):
