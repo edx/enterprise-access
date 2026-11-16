@@ -133,6 +133,19 @@ class StripeSegmentEvents:
     SUBSCRIPTION_CANCELED = 'edx.server.enterprise-access.stripe.subscription.canceled'
 
 
+class CheckoutSegmentEvents:
+    """
+    Final checkout events sent to Segment from the server (setting: FEATURE_SSP_CHECKOUT_SEGMENT_EVENTS_V2).
+    """
+    ORDER_COMPLETED = 'edx.ui.enterprise.checkout.order_completed'
+    ORDER_CANCELLED = 'edx.ui.enterprise.checkout.order_cancelled'
+
+
+# The billing reason of a subscription's first invoice, which Stripe issues at checkout. Its ``invoice.paid`` is
+# when Stripe confirms the order, so it triggers order_completed. With the SSP free trial its total is $0.
+ORDER_COMPLETED_BILLING_REASON = 'subscription_create'
+
+
 ALLOWED_CHECKOUT_INTENT_STATE_TRANSITIONS = {
     CheckoutIntentState.CREATED: [
         CheckoutIntentState.PAID,
