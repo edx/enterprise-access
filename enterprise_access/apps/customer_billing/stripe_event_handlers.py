@@ -429,23 +429,28 @@ def _is_annual_renewal_invoice(invoice, subscription_details) -> bool:
     """
     if invoice.to_dict().get('billing_reason') != 'subscription_cycle':
         return False
-    if not isinstance(subscription_details, dict):
-        subscription_details = subscription_details.to_dict()
     return StripeEventSummary.objects.filter(
-        stripe_subscription_id=subscription_details.get('subscription'),
+        stripe_subscription_id=subscription_details.to_dict().get('subscription'),
         event_type='invoice.paid',
         invoice_amount_paid__gt=0,
     ).exclude(stripe_invoice_id=invoice['id']).exists()
 
 
-def _renewal_invoice_line(invoice_dict: dict) -> dict:
+def _subscription_item_lines(invoice_dict: dict) -> list[dict]:
     """
-    Return the invoice line that bills the renewed subscription term (the first non-proration line).
+    Return the invoice lines that bill a subscription item. One-off invoice items (e.g. adjustments) are left out.
     """
     lines = (invoice_dict.get('lines') or {}).get('data') or []
-    for line in lines:
-        item_details = (line.get('parent') or {}).get('subscription_item_details') or {}
-        if not item_details.get('proration'):
+    return [line for line in lines if (line.get('parent') or {}).get('type') == SUBSCRIPTION_ITEM_TYPE]
+
+
+def _renewal_invoice_line(invoice_dict: dict) -> dict:
+    """
+    Return the invoice line that bills the renewed subscription term: the first subscription item line that is
+    not a proration.
+    """
+    for line in _subscription_item_lines(invoice_dict):
+        if not line['parent'].get('subscription_item_details', {}).get('proration'):
             return line
     raise AnnualRenewalError(f'Invoice {invoice_dict.get("id")} has no subscription term line')
 
@@ -457,10 +462,7 @@ def _invoice_line_price_id(line: dict) -> str | None:
     Since Stripe API 2025-03-31.basil, invoice lines carry the price ID under ``pricing.price_details.price``
     instead of an expanded ``price`` object, so Price metadata has to be fetched separately.
     """
-    price = ((line.get('pricing') or {}).get('price_details') or {}).get('price') or line.get('price')
-    if isinstance(price, dict):
-        return price.get('id')
-    return price
+    return ((line.get('pricing') or {}).get('price_details') or {}).get('price')
 
 
 def _ssp_product_slugs_for_price(price_id: str) -> set[str]:
@@ -550,7 +552,7 @@ def resolve_renewal_product(checkout_intent: CheckoutIntent, invoice) -> SspProd
 
     price_ids = {
         price_id
-        for line in (invoice_dict.get('lines') or {}).get('data') or []
+        for line in _subscription_item_lines(invoice_dict)
         if (price_id := _invoice_line_price_id(line))
     }
     if not price_ids:
@@ -692,6 +694,15 @@ def _process_annual_renewal(
     if renewal and renewal.processed_at:
         _log_renewal(logging.INFO, 'already_processed', checkout_intent, stripe_invoice_id, f'renewal_id={renewal.id}')
         return False
+    if checkout_intent.renewals.filter(is_canceled=True).exists():
+        # customer.subscription.deleted already ended the subscription and deactivated its plans. Don't renew
+        # it, and don't fail the webhook: retries can't change this. The customer may have paid, so CS has to
+        # refund or reinstate by hand.
+        _log_renewal(
+            logging.ERROR, 'halted', checkout_intent, stripe_invoice_id,
+            "reason='the subscription is canceled, so the paid renewal invoice was not processed'",
+        )
+        return False
 
     product = resolve_renewal_product(checkout_intent, invoice)
     line = _renewal_invoice_line(invoice_dict)
@@ -750,14 +761,15 @@ def _process_annual_renewal(
     renewal.renewed_subscription_plan_uuid = renewed_plan_uuid
     renewal.save(update_fields=['renewed_subscription_plan_uuid', 'modified'])
     client.update_subscription_plan(str(renewed_plan_uuid), is_active=True)
-    if renewal.prior_subscription_plan_uuid and renewal.effective_date:
-        # Undo any grace period extension, so year 1 ends exactly where year 2 starts.
-        client.update_subscription_plan(
-            str(renewal.prior_subscription_plan_uuid),
-            expiration_date=renewal.effective_date.isoformat(),
-        )
-    renewal.mark_as_processed()
+    # Undo any grace period extension, so year 1 ends exactly where year 2 starts.
+    client.update_subscription_plan(
+        str(renewal.prior_subscription_plan_uuid),
+        expiration_date=renewal.effective_date.isoformat(),
+    )
+    # Before the processed checkpoint, so a failure in between is retried: a replay of a processed renewal
+    # does nothing.
     _set_renewal_grace_period(checkout_intent, stripe_invoice_id, False)
+    renewal.mark_as_processed()
     _log_renewal(
         logging.INFO, 'processed', checkout_intent, stripe_invoice_id,
         f'renewal_id={renewal.id} prior_plan_uuid={renewal.prior_subscription_plan_uuid} '
@@ -1090,7 +1102,7 @@ class StripeEventHandler:
 
         link_event_data_to_checkout_intent(event, checkout_intent)
 
-        if ssp_paid_renewal_enabled() and _is_annual_renewal_invoice(invoice, subscription_details):
+        if ssp_paid_renewal_enabled() and _is_annual_renewal_invoice(invoice, invoice.parent.subscription_details):
             # Year 1 ends at this invoice's period start, before the invoice can be paid. Cover the gap.
             try:
                 keep_current_plan_active_for_renewal(checkout_intent, invoice)

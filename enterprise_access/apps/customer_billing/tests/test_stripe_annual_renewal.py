@@ -197,13 +197,15 @@ class TestAnnualRenewal(TestCase):
         quantity=25,
         billing_reason='subscription_cycle',
         invoice_id=RENEWAL_INVOICE_ID,
+        lines=None,
+        unknown_checkout_intent=False,
     ):
         """
         Build a renewal invoice event shaped like Stripe API 2025-03-31.basil and later, where invoice lines
-        only carry the Price ID under ``pricing.price_details``.
+        only carry the Price ID under ``pricing.price_details``. ``lines`` replaces the default invoice lines.
         """
         period_start = int(self.period_start.timestamp())
-        lines = [
+        default_lines = [
             {
                 'object': 'line_item',
                 'parent': {
@@ -224,13 +226,14 @@ class TestAnnualRenewal(TestCase):
             for price_id in price_ids
         ]
         if not price_ids:
-            lines = [{
+            default_lines = [{
                 'object': 'line_item',
                 'parent': {'type': SUBSCRIPTION_ITEM_TYPE},
                 'quantity': quantity,
                 'pricing': {'unit_amount_decimal': '20000'},
                 'period': {'start': period_start, 'end': period_start + 1},
             }]
+        lines = default_lines if lines is None else lines
         amount = 0 if event_type == 'invoice.payment_failed' else 500000
         invoice_data = {
             'id': invoice_id,
@@ -244,8 +247,10 @@ class TestAnnualRenewal(TestCase):
                 'subscription_details': {
                     'subscription': STRIPE_SUBSCRIPTION_ID,
                     'metadata': {
-                        'checkout_intent_id': str(self.checkout_intent.id),
-                        'checkout_intent_uuid': str(self.checkout_intent.uuid),
+                        'checkout_intent_id': '999999' if unknown_checkout_intent else str(self.checkout_intent.id),
+                        'checkout_intent_uuid': (
+                            str(uuid.uuid4()) if unknown_checkout_intent else str(self.checkout_intent.uuid)
+                        ),
                         'enterprise_customer_slug': self.checkout_intent.enterprise_slug,
                     },
                 },
@@ -259,6 +264,22 @@ class TestAnnualRenewal(TestCase):
         event.data = stripe.StripeObject()
         event.data.object = AttrDict.wrap(invoice_data)
         return event
+
+    def _invoice_line(self, price_id, quantity, start, proration=False, parent_type=SUBSCRIPTION_ITEM_TYPE):
+        """An invoice line billing ``price_id``. ``parent_type`` 'invoice_item_details' is a one-off item."""
+        parent = {'type': parent_type}
+        if parent_type == SUBSCRIPTION_ITEM_TYPE:
+            parent['subscription_item_details'] = {'proration': proration, 'subscription': STRIPE_SUBSCRIPTION_ID}
+        else:
+            parent['invoice_item_details'] = {'invoice_item': 'ii_test_adjustment'}
+        start_ts = int(start.timestamp())
+        return {
+            'object': 'line_item',
+            'parent': parent,
+            'quantity': quantity,
+            'pricing': {'type': 'price_details', 'price_details': {'price': price_id, 'product': 'prod_test'}},
+            'period': {'start': start_ts, 'end': start_ts + 3600},
+        }
 
     def _assert_nothing_created(self):
         """Assert that no renewal was created or processed, locally or in License Manager."""
@@ -447,6 +468,146 @@ class TestAnnualRenewal(TestCase):
         self.assertEqual(renewal.renewed_subscription_plan_uuid, self.year_two_plan_uuid)
         self.mock_receipt_email.delay.assert_called_once()
         self.mock_renewal_email.delay.assert_called_once()
+
+    def test_renewal_term_comes_from_the_subscription_item_line(self):
+        """
+        Prorations and one-off invoice items (adjustments) on the renewal invoice don't set the renewed seats,
+        dates or product: only the regular subscription item line does.
+        """
+        self._set_up_paid_subscriber()
+        lines = [
+            self._invoice_line(TEAMS_PRICE_ID, 5, self.period_start - timedelta(days=30), proration=True),
+            # Not a Price we sell: it would halt the renewal if it were read as the renewed product.
+            self._invoice_line('price_adjustment', 99, self.period_start - timedelta(days=60),
+                               parent_type='invoice_item_details'),
+            self._invoice_line(TEAMS_PRICE_ID, 25, self.period_start),
+        ]
+
+        StripeEventHandler.dispatch(self._renewal_invoice_event(lines=lines))
+
+        kwargs = self.mock_lm_client.create_subscription_plan_renewal.call_args.kwargs
+        self.assertEqual(kwargs['number_of_licenses'], 25)
+        self.assertEqual(kwargs['effective_date'], self.period_start.isoformat())
+
+    def test_grace_extension_fails_without_a_subscription_term_line(self):
+        """A renewal invoice with only prorations and one-off items is an error, logged as outcome=failed."""
+        self._set_up_paid_subscriber()
+        lines = [
+            self._invoice_line(TEAMS_PRICE_ID, 5, self.period_start, proration=True),
+            self._invoice_line(TEAMS_PRICE_ID, 25, self.period_start, parent_type='invoice_item_details'),
+        ]
+
+        with self.assertLogs(HANDLERS_MODULE, level='ERROR') as logs, self.assertRaises(AnnualRenewalError):
+            StripeEventHandler.dispatch(self._renewal_invoice_event(event_type='invoice.payment_failed', lines=lines))
+
+        self.assertTrue(any('outcome=failed' in line and 'step=grace_extension' in line for line in logs.output))
+        self.mock_lm_client.update_subscription_plan.assert_not_called()
+
+    def test_paid_invoice_after_subscription_deleted_is_not_renewed(self):
+        """
+        A renewal invoice paid (or delivered) after customer.subscription.deleted doesn't bring the canceled
+        subscription back. It is audit logged as halted for CS, and the webhook succeeds because a retry
+        can't change the outcome.
+        """
+        self._set_up_paid_subscriber()
+        self.checkout_intent.renewals.update(is_canceled=True)
+
+        with self.assertLogs(HANDLERS_MODULE, level='ERROR') as logs:
+            StripeEventHandler.dispatch(self._renewal_invoice_event())
+
+        self._assert_nothing_created()
+        halted = [line for line in logs.output if 'outcome=halted' in line]
+        self.assertEqual(len(halted), 1)
+        self.assertIn('the subscription is canceled', halted[0])
+
+    def test_invoice_paid_halts_when_license_manager_returns_no_renewed_plan(self):
+        """A processed renewal without a renewed plan is a halt: nothing is activated and no emails are sent."""
+        self._set_up_paid_subscriber()
+        self.mock_lm_client.process_subscription_plan_renewal.return_value = {'id': 777}
+
+        with self.assertRaises(AnnualRenewalError):
+            StripeEventHandler.dispatch(self._renewal_invoice_event())
+
+        renewal = SelfServiceSubscriptionRenewal.objects.get(stripe_invoice_id=RENEWAL_INVOICE_ID)
+        self.assertIsNone(renewal.processed_at)
+        self.mock_lm_client.update_subscription_plan.assert_not_called()
+        self.mock_receipt_email.delay.assert_not_called()
+        self.mock_renewal_email.delay.assert_not_called()
+
+    @ddt.data(
+        # License Manager processed the renewal, then activating year 2 failed.
+        {'failing_call_index': 0},
+        # Year 2 was activated, then moving year 1's end date back failed.
+        {'failing_call_index': 1},
+    )
+    @ddt.unpack
+    def test_retry_completes_a_renewal_license_manager_already_processed(self, failing_call_index):
+        """
+        If a step fails after License Manager processed the renewal, Stripe's retry finishes it on the same
+        year 2 plan: License Manager returns an already processed renewal unchanged, and no second renewal is
+        created. The grace flag is cleared and the emails are sent once.
+        """
+        self._set_up_paid_subscriber()
+        self.checkout_intent.in_renewal_grace_period = True
+        self.checkout_intent.save(update_fields=['in_renewal_grace_period'])
+        calls = {'count': 0}
+
+        def update_plan(*_args, **_kwargs):
+            calls['count'] += 1
+            if calls['count'] - 1 == failing_call_index:
+                raise Exception('License Manager is down')
+
+        self.mock_lm_client.update_subscription_plan.side_effect = update_plan
+        with self.assertRaises(Exception):
+            StripeEventHandler.dispatch(self._renewal_invoice_event())
+        renewal = SelfServiceSubscriptionRenewal.objects.get(stripe_invoice_id=RENEWAL_INVOICE_ID)
+        self.assertIsNone(renewal.processed_at)
+        self.checkout_intent.refresh_from_db()
+        self.assertTrue(self.checkout_intent.in_renewal_grace_period)
+        self.mock_receipt_email.delay.assert_not_called()
+
+        self.mock_lm_client.reset_mock()
+        self.mock_lm_client.update_subscription_plan.side_effect = None
+        StripeEventHandler.dispatch(self._renewal_invoice_event())
+
+        self.mock_lm_client.create_subscription_plan_renewal.assert_not_called()
+        self.mock_lm_client.process_subscription_plan_renewal.assert_called_once_with(777)
+        self.mock_lm_client.update_subscription_plan.assert_has_calls([
+            mock.call(str(self.year_two_plan_uuid), is_active=True),
+            mock.call(str(self.year_one_plan_uuid), expiration_date=self.period_start.isoformat()),
+        ])
+        renewal.refresh_from_db()
+        self.assertIsNotNone(renewal.processed_at)
+        self.assertEqual(renewal.renewed_subscription_plan_uuid, self.year_two_plan_uuid)
+        self.checkout_intent.refresh_from_db()
+        self.assertFalse(self.checkout_intent.in_renewal_grace_period)
+        self.mock_receipt_email.delay.assert_called_once()
+        self.mock_renewal_email.delay.assert_called_once()
+
+    def test_payment_failed_for_unknown_checkout_intent_is_logged(self):
+        """A failed invoice whose checkout intent can't be found is logged and ignored."""
+        self._set_up_paid_subscriber()
+
+        with self.assertLogs(HANDLERS_MODULE, level='ERROR') as logs:
+            StripeEventHandler.dispatch(self._renewal_invoice_event(
+                event_type='invoice.payment_failed', unknown_checkout_intent=True,
+            ))
+
+        self.assertTrue(any('could not find Checkout Intent' in line for line in logs.output))
+        self.mock_lm_client.update_subscription_plan.assert_not_called()
+
+    def test_invoice_created_without_paid_plan_does_not_fail(self):
+        """
+        invoice.created for a renewal with no paid plan to keep active is audit logged as halted, but doesn't
+        fail: invoice.paid halts on the same problem.
+        """
+        self._set_up_paid_subscriber(with_paid_plan=False)
+
+        with self.assertLogs(HANDLERS_MODULE, level='ERROR') as logs:
+            StripeEventHandler.dispatch(self._renewal_invoice_event(event_type='invoice.created'))
+
+        self.assertTrue(any('outcome=halted' in line for line in logs.output))
+        self.mock_lm_client.update_subscription_plan.assert_not_called()
 
     @ddt.data(
         {'product_slug': TEAMS_SLUG, 'price_id': TEAMS_PRICE_ID, 'product_name': 'Teams'},

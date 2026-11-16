@@ -47,6 +47,13 @@ grace week, still on year 1. `invoice.created` alone (the normal short gap befor
 4. Only then does it send the payment receipt and the renewal notice. A failed attempt raises before the
    emails, so Stripe's retry sends them once, and a replay of a processed renewal sends nothing.
 
+If `customer.subscription.deleted` has already canceled the subscription (its renewals are `is_canceled`), a
+renewal invoice paid or delivered afterwards is not processed: it logs `outcome=halted` and the webhook succeeds,
+since a retry can't change it. The customer may have paid, so CS refunds or reinstates by hand.
+
+Only subscription item lines are read (`parent.type == 'subscription_item_details'`). The term line is the first
+one that isn't a proration; one-off invoice items such as adjustments never set the seats, dates or product.
+
 Idempotency is keyed on `stripe_invoice_id`. A processed renewal is skipped. An unprocessed one resumes at
 the processing step without creating another License Manager renewal. The resume first sets the current
 title on that License Manager renewal, so a renewal License Manager rejected over its title can
