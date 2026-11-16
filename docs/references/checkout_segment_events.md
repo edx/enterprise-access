@@ -24,12 +24,14 @@ No table of its own: it relies on `StripeEventData` / `StripeEventSummary`, whic
 * The webhook handlers queue `send_checkout_segment_event_task`. A broker error fails the webhook, and Stripe
   redelivers it (pattern 25 in `docs/architecture-patterns.md`).
 * Each order has exactly one triggering Stripe event, so the handlers queue the task once per Stripe event: a
-  redelivery of an event whose `StripeEventData.handled_at` is set queues nothing. A delivery whose handler failed is
-  not marked handled, so its redelivery queues the task again, and the Segment `messageId` `<event>:<order_id>` lets
-  Segment drop the repeat (Segment de-duplicates a messageId over a limited window, about a day).
-* Retried with backoff: Stripe network errors, 429 and 5xx, and DB `OperationalError`. Logged as an error and not
-  sent: a missing required property, any other Stripe error, a user without `lms_user_id`, or an order that can't be
-  identified.
+  redelivery of an event whose `StripeEventData.handled_at` is set queues nothing. The task is queued as the
+  handler's last step, so a delivery whose handler fails queues nothing: Stripe redelivers it for up to three days,
+  longer than Segment de-duplicates a `messageId` (about a day). The `messageId` `<event>:<order_id>` covers the rare
+  repeat when only the queuing itself fails.
+* Retried with backoff: Stripe network errors, 429 and 5xx, DB `OperationalError`, and an order invoice's
+  `invoice.paid` `StripeEventSummary` that isn't readable yet (its signal logs and swallows its own errors). Logged
+  as an error and not sent: a missing required property, any other Stripe error, a user without `lms_user_id`, or an
+  order that can't be identified.
 
 ## Payload
 No PII: payloads are built only from the fields below, and a test lists every allowed key.
@@ -48,6 +50,7 @@ Attribution (`utm_*`, `referrer`) is not sent yet: a follow-up, together with th
 ## Gotchas
 * The CheckoutIntent's Checkout Session ID is overwritten if the customer starts another checkout after paying, so
   an `order_cancelled` sent after that reports the newer session's ID. Rare; accepted to avoid a table.
-* `order_cancelled` finds the order's first invoice as the subscription's earliest `invoice.paid` summary.
-* stripe-python 16 returns `unit_amount_decimal` as a `Decimal`; kombu's JSON serializer round-trips it to the task.
+* `order_cancelled` finds the order's first invoice as the subscription's earliest `invoice.paid` summary
+  (`StripeEventSummary.get_first_invoice_paid`).
+* stripe-python 17 returns `unit_amount_decimal` as a `Decimal`; kombu's JSON serializer round-trips it to the task.
 * Before turning the setting on, check one stage trial checkout and cancellation in the Segment debugger.

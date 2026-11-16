@@ -1117,6 +1117,13 @@ class CheckoutSegmentEventError(Exception):
     """The event cannot be sent and retrying won't change that, e.g. the CheckoutIntent's user has no LMS user ID."""
 
 
+class OrderInvoiceSummaryNotFoundError(Exception):
+    """
+    The order's ``invoice.paid`` StripeEventSummary is not readable yet. Retried: the StripeEventData signal that
+    creates it logs and swallows its own errors, and the webhook's write may not be visible to the worker yet.
+    """
+
+
 def _order_invoice_summary(event_name, subscription_id, invoice_id) -> StripeEventSummary:
     """
     The ``invoice.paid`` StripeEventSummary of the order's first invoice, which the webhook persisted: for
@@ -1125,12 +1132,9 @@ def _order_invoice_summary(event_name, subscription_id, invoice_id) -> StripeEve
     if event_name == CheckoutSegmentEvents.ORDER_COMPLETED:
         summary = StripeEventSummary.get_latest_invoice_paid(invoice_id)
     else:
-        summary = StripeEventSummary.objects.filter(
-            event_type='invoice.paid',
-            stripe_subscription_id=subscription_id,
-        ).order_by('stripe_event_created_at').first()
+        summary = StripeEventSummary.get_first_invoice_paid(subscription_id)
     if summary is None:
-        raise CheckoutSegmentEventError(
+        raise OrderInvoiceSummaryNotFoundError(
             f'Found no invoice.paid summary for invoice {invoice_id} of subscription {subscription_id}'
         )
     return summary
@@ -1156,7 +1160,7 @@ def _build_properties(event_name, checkout_intent, subscription_id, invoice_id, 
 # autoretry_for replaces the base class's list, so the DB OperationalError it retries is listed again.
 @shared_task(
     base=LoggedTaskWithRetry,
-    autoretry_for=(*TRANSIENT_STRIPE_ERRORS, OperationalError),
+    autoretry_for=(*TRANSIENT_STRIPE_ERRORS, OperationalError, OrderInvoiceSummaryNotFoundError),
 )
 def send_checkout_segment_event_task(
     event_name, checkout_intent_id, subscription_id, invoice_id=None, subscription_data=None,
@@ -1167,7 +1171,8 @@ def send_checkout_segment_event_task(
 
     The webhook handlers queue it once per handled Stripe event, and each order has one such event, so it is not
     deduplicated here; the ``messageId`` is deterministic, so Segment drops a resend after a redelivered webhook.
-    Transient Stripe errors and DB errors are retried. An event that can't be built is logged and never sent.
+    Transient Stripe errors, DB errors and a not-yet-readable invoice summary are retried. An event that can't be
+    built is logged and never sent.
     """
     if not settings.FEATURE_SSP_CHECKOUT_SEGMENT_EVENTS_V2:
         logger.info('Checkout Segment events are disabled; not sending %s for CheckoutIntent %s',

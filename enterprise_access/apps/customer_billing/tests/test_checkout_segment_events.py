@@ -307,14 +307,32 @@ class TestSendCheckoutSegmentEventTask(CheckoutSegmentTestCase):
         self.mocks['track'].assert_not_called()
 
     @ddt.data(
+        # (event, task kwargs)
+        (ORDER_COMPLETED, {'invoice_id': 'in_unknown'}),
+        (ORDER_CANCELLED, {'subscription_id': 'sub_unknown'}),
+    )
+    @ddt.unpack
+    def test_missing_invoice_summary_is_retried(self, event_name, task_kwargs):
+        """
+        The summary may not be readable yet (its signal swallows errors, or the webhook's write isn't visible to the
+        worker yet), so the event is retried rather than dropped.
+        """
+        subscription_id = task_kwargs.pop('subscription_id', 'sub_123')
+        args, kwargs = self.task_args(event_name, **task_kwargs)
+        args = (*args[:2], subscription_id)
+        with mock.patch.object(send_checkout_segment_event_task, 'retry', side_effect=Retry('retry')) as mock_retry:
+            with self.assertRaises(Retry):
+                send_checkout_segment_event_task.apply(args=args, kwargs=kwargs, throw=True).get()
+        mock_retry.assert_called_once()
+        self.mocks['track'].assert_not_called()
+
+    @ddt.data(
         # (event, what is wrong, task kwargs)
         (ORDER_COMPLETED, 'Stripe rejects the subscription request', {}),
         (ORDER_COMPLETED, 'invalid Stripe key', {}),
-        (ORDER_COMPLETED, 'no invoice.paid summary for the invoice', {'invoice_id': 'in_unknown'}),
         (ORDER_COMPLETED, 'user without an lms_user_id', {}),
         (ORDER_COMPLETED, 'CheckoutIntent deleted since', {}),
         (ORDER_CANCELLED, 'no Checkout Session ID to use as the order_id', {}),
-        (ORDER_CANCELLED, 'no invoice.paid summary for the subscription', {}),
         (ORDER_CANCELLED, 'queued without the cancelled subscription', {'subscription_data': None}),
     )
     @ddt.unpack
@@ -329,8 +347,6 @@ class TestSendCheckoutSegmentEventTask(CheckoutSegmentTestCase):
             CheckoutIntent.objects.filter(id=self.intent.id).delete()
         elif problem == 'no Checkout Session ID to use as the order_id':
             CheckoutIntent.objects.filter(id=self.intent.id).update(stripe_checkout_session_id=None)
-        elif problem == 'no invoice.paid summary for the subscription':
-            self.first_invoice_summary.delete()
 
         self.run_task(event_name, **task_kwargs)
 
