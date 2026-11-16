@@ -26,7 +26,7 @@ the trial->paid path.
 | `invoice.payment_failed` (renewal) | The same extension. It is an absolute date, so Stripe's retries don't keep pushing it out. Sets `CheckoutIntent.in_renewal_grace_period = True`. |
 | `customer.subscription.updated` -> `past_due` | Only renewals that haven't been processed get their plans deactivated (`cancel_all_future_plans(include_processed=False)`). Year 1 stays active for the grace period. |
 | `invoice.paid` (renewal) | `_process_annual_renewal()` runs (see below). Once year 2 exists, `in_renewal_grace_period` is cleared. |
-| `customer.subscription.deleted` | Clears `in_renewal_grace_period` (Stripe cancels the subscription after its retries of a failed renewal charge run out). |
+| `customer.subscription.deleted` | Clears `in_renewal_grace_period` (Stripe cancels the subscription after its retries of a failed renewal charge run out). Like `past_due`, only unprocessed renewals' plans are deactivated: year 1 stays active until its expiration date (the grace end here), then License Manager moves enrollments to Audit (ENT-11534). |
 
 `CheckoutIntent.in_renewal_grace_period` marks the rare case of a failed renewal charge: the customer is in the
 grace week, still on year 1. `invoice.created` alone (the normal short gap before payment) doesn't set it.
