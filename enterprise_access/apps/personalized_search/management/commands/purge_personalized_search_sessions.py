@@ -3,7 +3,9 @@ Permanently delete Personalized Search sessions with no message in the last ``--
 
 Scheduled daily (a Kubernetes cron job in the enterprise-access stage and prod config). Each session goes through
 ``delete_conversation``, the same delete as the learner's X: its turns go, and the learner's saved and
-not-interested items stay. Soft-deleted sessions are purged too. See ``docs/references/personalized_search.md``.
+not-interested items stay. Soft-deleted sessions are purged too. The kill switch
+``enterprise_access.personalized_search_disable_retention_purge`` pauses it; it's off by default, so the purge
+runs. See ``docs/references/personalized_search.md``.
 """
 import logging
 from datetime import timedelta
@@ -16,6 +18,7 @@ from enterprise_access.apps.personalized_search.adapters.django_store import (
     delete_conversation,
     sessions_inactive_since
 )
+from enterprise_access.toggles import personalized_search_retention_purge_enabled
 
 logger = logging.getLogger(__name__)
 LOG_PREFIX = '[PURGE_PERSONALIZED_SEARCH_SESSIONS]'
@@ -44,6 +47,10 @@ class Command(BaseCommand):
         logger.info('%s dry_run=%s days=%s cutoff=%s sessions=%s', LOG_PREFIX, dry_run, days, cutoff.isoformat(),
                     len(uuids))
         if dry_run:
+            return
+        if not personalized_search_retention_purge_enabled():
+            logger.info('%s paused: the enterprise_access.personalized_search_disable_retention_purge switch is on; '
+                        'nothing deleted', LOG_PREFIX)
             return
 
         deleted, failed = 0, []

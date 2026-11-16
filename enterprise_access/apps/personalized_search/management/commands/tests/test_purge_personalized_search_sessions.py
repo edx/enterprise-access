@@ -6,9 +6,11 @@ from unittest import mock
 from django.core.management import CommandError, call_command
 from django.test import TestCase
 from django.utils import timezone
+from edx_toggles.toggles.testutils import override_waffle_switch
 
 from enterprise_access.apps.personalized_search.adapters.django_store import delete_conversation
 from enterprise_access.apps.personalized_search.models import ChatSession, ChatTurn, ItemFeedback
+from enterprise_access.toggles import PERSONALIZED_SEARCH_DISABLE_RETENTION_PURGE
 
 ENTERPRISE = uuid.uuid4()
 COMMAND = 'purge_personalized_search_sessions'
@@ -99,6 +101,18 @@ class PurgePersonalizedSearchSessionsTests(TestCase):
             call_command(COMMAND, '--batch-size=1')
         self.assertFalse(self.exists(older))
         self.assertTrue(self.exists(resumed))
+
+    @mock.patch(EMIT)
+    def test_the_kill_switch_pauses_it_and_dry_run_still_reports(self, emit):
+        old = self.session(31)
+        with override_waffle_switch(PERSONALIZED_SEARCH_DISABLE_RETENTION_PURGE, active=True):
+            with self.assertLogs(level='INFO') as logs:
+                call_command(COMMAND)
+                call_command(COMMAND, '--dry-run')
+        self.assertTrue(self.exists(old))
+        emit.assert_not_called()
+        self.assertTrue(any('paused' in line for line in logs.output))
+        self.assertTrue(any('dry_run=True' in line and 'sessions=1' in line for line in logs.output))
 
     def test_rejects_a_window_under_one_day(self):
         with self.assertRaises(CommandError):

@@ -99,6 +99,12 @@ A conversation is deleted in one place, `adapters/django_store.delete_conversati
 
 The purge runs daily as a Kubernetes cron job in the enterprise-access stage and prod config (edx-internal, `edx-enterprise-access-purge-ps-conversations`, 03:00 UTC). Migration `0004` indexes `last_message_at` for it.
 
+**Pausing it:** the purge is on by default. The WaffleSwitch `enterprise_access.personalized_search_disable_retention_purge` is a kill switch: turn it **on** to pause the purge, and off (the default) to let it run.
+- **In Django admin:** Waffle → Switches.
+- **From the command line:** `./manage.py waffle_switch enterprise_access.personalized_search_disable_retention_purge on --create`.
+
+While it's paused, `--dry-run` still reports the count. Defaulting on is the Eng Lead's deliberate exception (2026-11-16) to [architecture pattern 20](../architecture-patterns.md), which ships irreversible behavior off by default.
+
 Each delete:
 - is permanent: `delete(soft=False)`, so the session row and its turns, ratings included, are gone;
 - sends `history.session-deleted` with `reason` `learner` or `retention`;
