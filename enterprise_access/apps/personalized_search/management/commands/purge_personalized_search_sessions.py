@@ -16,7 +16,6 @@ from enterprise_access.apps.personalized_search.adapters.django_store import (
     delete_conversation,
     sessions_inactive_since
 )
-from enterprise_access.apps.personalized_search.models import ChatSession
 
 logger = logging.getLogger(__name__)
 LOG_PREFIX = '[PURGE_PERSONALIZED_SEARCH_SESSIONS]'
@@ -41,7 +40,7 @@ class Command(BaseCommand):
             raise CommandError('--days and --batch-size must be at least 1.')
         cutoff = timezone.now() - timedelta(days=days)
         # Frozen up front: the deletes below shrink the set, so it must not be paged with offsets.
-        uuids = sessions_inactive_since(cutoff)
+        uuids = list(sessions_inactive_since(cutoff).order_by('last_message_at').values_list('uuid', flat=True))
         logger.info('%s dry_run=%s days=%s cutoff=%s sessions=%s', LOG_PREFIX, dry_run, days, cutoff.isoformat(),
                     len(uuids))
         if dry_run:
@@ -49,7 +48,8 @@ class Command(BaseCommand):
 
         deleted, failed = 0, []
         for start in range(0, len(uuids), batch_size):
-            for session in ChatSession.all_objects.filter(uuid__in=uuids[start:start + batch_size]):
+            # Checked again per batch: a session resumed since the list was made is skipped.
+            for session in sessions_inactive_since(cutoff).filter(uuid__in=uuids[start:start + batch_size]):
                 try:
                     delete_conversation(session, reason=events.DELETED_FOR_RETENTION)
                     deleted += 1

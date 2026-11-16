@@ -7,11 +7,14 @@ from django.core.management import CommandError, call_command
 from django.test import TestCase
 from django.utils import timezone
 
+from enterprise_access.apps.personalized_search.adapters.django_store import delete_conversation
 from enterprise_access.apps.personalized_search.models import ChatSession, ChatTurn, ItemFeedback
 
 ENTERPRISE = uuid.uuid4()
 COMMAND = 'purge_personalized_search_sessions'
 EMIT = 'enterprise_access.apps.personalized_search.events.segment_emit'
+DELETE = ('enterprise_access.apps.personalized_search.management.commands.purge_personalized_search_sessions'
+          '.delete_conversation')
 
 
 class PurgePersonalizedSearchSessionsTests(TestCase):
@@ -76,6 +79,26 @@ class PurgePersonalizedSearchSessionsTests(TestCase):
         call_command(COMMAND, '--days=7', '--batch-size=2')
         self.assertFalse(any(self.exists(r) for r in rows))
         self.assertTrue(self.exists(kept))
+
+    @mock.patch(EMIT)
+    def test_skips_a_session_with_a_turn_running(self, _emit):
+        busy = self.session(40)
+        ChatSession.all_objects.filter(uuid=busy.uuid).update(active_turn_started_at=timezone.now())
+        call_command(COMMAND)
+        self.assertTrue(self.exists(busy))
+
+    @mock.patch(EMIT)
+    def test_keeps_a_session_the_learner_resumes_while_the_purge_runs(self, _emit):
+        older, resumed = self.session(50), self.session(40)
+
+        def resume_the_other(session, **kwargs):
+            delete_conversation(session, **kwargs)
+            ChatSession.all_objects.filter(uuid=resumed.uuid).update(last_message_at=timezone.now())
+
+        with mock.patch(DELETE, side_effect=resume_the_other):
+            call_command(COMMAND, '--batch-size=1')
+        self.assertFalse(self.exists(older))
+        self.assertTrue(self.exists(resumed))
 
     def test_rejects_a_window_under_one_day(self):
         with self.assertRaises(CommandError):

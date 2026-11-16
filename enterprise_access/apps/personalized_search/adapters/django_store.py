@@ -20,6 +20,12 @@ from enterprise_access.apps.personalized_search.core.stream import screen_order,
 from enterprise_access.apps.personalized_search.models import ChatSession, ChatTurn, ItemFeedback
 
 
+def _unlocked(now) -> Q:
+    """Sessions no turn holds: never locked, or the lock is older than ``SESSION_LOCK_S`` (a turn that died)."""
+    stale = now - timedelta(seconds=constants.SESSION_LOCK_S)
+    return Q(active_turn_started_at__isnull=True) | Q(active_turn_started_at__lt=stale)
+
+
 def _history(session: ChatSession) -> list[dict]:
     turns = session.turns.order_by('-sequence')[:constants.HISTORY_TURNS]
     return [{'user': t.user_message, 'reply': t.reply_text} for t in reversed(turns)]
@@ -94,8 +100,7 @@ class DjangoSessionStore:
             )
             session.update(is_new=False, lock_token=now)
             return
-        stale = now - timedelta(seconds=constants.SESSION_LOCK_S)
-        unlocked = Q(active_turn_started_at__isnull=True) | Q(active_turn_started_at__lt=stale)
+        unlocked = _unlocked(now)
         # turn_count must still be what this turn loaded: another turn that finished since then changed the
         # session, and running on the stale snapshot would repeat its sequence number and lose its state.
         taken = ChatSession.objects.filter(
@@ -150,12 +155,13 @@ def delete_conversation(session: ChatSession, *, reason: str) -> None:
                 enterprise_customer_uuid=enterprise, reason=reason)
 
 
-def sessions_inactive_since(cutoff) -> list:
-    """Uuids of every session, soft-deleted ones included, with no message since ``cutoff``, oldest first."""
-    stale = ChatSession.all_objects.filter(
-        Q(last_message_at__lt=cutoff) | Q(last_message_at__isnull=True, created__lt=cutoff),
-    )
-    return list(stale.order_by('last_message_at').values_list('uuid', flat=True))
+def sessions_inactive_since(cutoff):
+    """
+    Every session, soft-deleted ones included, with no message since ``cutoff`` and no turn running on it now.
+    A queryset, so the purge applies it again to each batch as it deletes: a conversation the learner resumes
+    while the purge runs is locked, then has a new ``last_message_at``, and either way drops out.
+    """
+    return ChatSession.all_objects.filter(_unlocked(timezone.now()), last_message_at__lt=cutoff)
 
 
 class DjangoHistoryStore:
