@@ -5,6 +5,8 @@ the parts kept for replay. The JSON Schemas for the parts and blocks are in ``sc
 import json
 from typing import Callable, Iterable, Iterator
 
+from enterprise_access.apps.personalized_search.core import constants
+
 DONE_FRAME = 'data: [DONE]\n\n'
 # Response header the AI SDK UI Message Stream protocol defines; clients use it to pick the parser.
 STREAM_PROTOCOL_HEADER = ('x-vercel-ai-ui-message-stream', 'v1')
@@ -47,3 +49,36 @@ def stored_parts(parts: list[dict]) -> list[dict]:
             continue
         out.append(part)
     return out
+
+
+def screen_order(parts: list[dict]) -> list[dict]:
+    """
+    What a turn showed, in on-screen order and once per item: the top pick, the comparison, then each section's row
+    (its cards padded to three from the reserve, as the portal fills it). Each entry is ``{'where', 'item_id',
+    'title'}``; the next turn reads it to resolve "the first two" or "the second one".
+    """
+    screen: list[dict] = []
+    for part in parts:
+        block = (part.get('data') or {}) if part.get('type') == 'data-block' else {}
+        props = block.get('props') or {}
+        if block.get('type') == 'top_pick':
+            cards = [('top pick', props.get('item'))]
+        elif block.get('type') == 'compare':
+            cards = [(f'compare {i}', o.get('item')) for i, o in enumerate(props.get('options') or [], 1)]
+        elif block.get('type') == 'item_section':
+            row = ((props.get('items') or []) + (props.get('reserve') or []))[:constants.MAX_ITEMS_PER_SECTION]
+            label = constants.SECTION_LABELS.get(props.get('item_type'), 'results')
+            cards = [(f'{label} {i}', card) for i, card in enumerate(row, 1)]
+        else:
+            continue
+        shown = {entry['item_id'] for entry in screen}
+        screen += [{'where': where, 'item_id': card['item_id'], 'title': card.get('title') or ''}
+                   for where, card in cards if isinstance(card, dict) and card.get('item_id') not in shown]
+    return screen
+
+
+def describe_screen(screen: list[dict] | None) -> str:
+    """The previous screen for a model prompt: one numbered line per card, titles JSON-encoded; '(none)' if empty."""
+    lines = [f"{i}. {entry['where']}: {json.dumps(entry['title'])} (item_id {entry['item_id']})"
+             for i, entry in enumerate(screen or [], 1)]
+    return '\n'.join(lines) or '(none)'

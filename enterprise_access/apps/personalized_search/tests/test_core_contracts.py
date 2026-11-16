@@ -32,6 +32,7 @@ class UsageTests(TestCase):
         self.assertEqual(priced.as_dict(), {
             'model': 'm', 'effort': 'low', 'input_tokens': 10, 'cached_input_tokens': None, 'output_tokens': 5,
             'reasoning_tokens': None, 'elapsed_ms': 12, 'first_token_ms': 3, 'cost_usd': 0.000015,
+            'finish_reason': None,
         })
         self.assertIsNone(Usage(model='m', effort=None).as_dict()['cost_usd'])
 
@@ -69,7 +70,7 @@ class PortsTests(TestCase):
             def lock(self, session):
                 return None
 
-            def unlock(self, session_uuid):
+            def unlock(self, session):
                 return None
 
             def persist_turn(self, session, turn):

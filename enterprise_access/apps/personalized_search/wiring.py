@@ -1,0 +1,189 @@
+"""
+Composition root for Personalized Search in enterprise-access: the only module that reads Django
+settings and builds the adapters the portable core runs on (``core/ports.py``).
+
+Views and management commands call these functions; another host would write its own wiring.
+"""
+from django.conf import settings
+
+from enterprise_access.apps.bffs.api import get_and_cache_secured_algolia_search_keys
+from enterprise_access.apps.personalized_search.adapters.algolia import AlgoliaCatalog, secured_key_from_payload
+from enterprise_access.apps.personalized_search.adapters.django_store import DjangoSessionStore
+from enterprise_access.apps.personalized_search.adapters.openai_backend import OpenAIBackend
+from enterprise_access.apps.personalized_search.adapters.segment_sink import segment_emit
+from enterprise_access.apps.personalized_search.adapters.xpert_backend import XpertBackend
+from enterprise_access.apps.personalized_search.core import constants, retrieval
+from enterprise_access.apps.personalized_search.core.errors import ModelConfigurationError
+from enterprise_access.apps.personalized_search.core.model_registry import ModelRegistry
+from enterprise_access.apps.personalized_search.core.orchestrator import ModelChoice, Steps, TurnContext
+from enterprise_access.apps.personalized_search.core.retrieval import CatalogScope
+from enterprise_access.toggles import personalized_search_debug_enabled, personalized_search_suggested_order_enabled
+
+
+def xpert_backend() -> XpertBackend:
+    """The Xpert platform backend, from ``XPERT_API_*`` (unconfigured, it lists no models)."""
+    return XpertBackend(base_url=getattr(settings, 'XPERT_API_BASE_URL', ''),
+                        client_id=getattr(settings, 'XPERT_API_CLIENT_ID', ''),
+                        request_timeout_s=float(getattr(settings, 'XPERT_REQUEST_TIMEOUT', 45)))
+
+
+def model_registry() -> ModelRegistry:
+    """OpenAI (the ``PERSONALIZED_SEARCH_OPENAI_MODELS`` allowlist), then Xpert when configured."""
+    return ModelRegistry([
+        OpenAIBackend(api_key=getattr(settings, 'OPENAI_API_KEY', '') or '',
+                      models=settings.PERSONALIZED_SEARCH_OPENAI_MODELS),
+        xpert_backend(),
+    ])
+
+
+def session_store() -> DjangoSessionStore:
+    return DjangoSessionStore()
+
+
+def default_models() -> tuple[ModelChoice, ModelChoice]:
+    """The configured (intent, compose) models and efforts (OQ-8)."""
+    return (ModelChoice(settings.PERSONALIZED_SEARCH_INTENT_MODEL, settings.PERSONALIZED_SEARCH_INTENT_EFFORT),
+            ModelChoice(settings.PERSONALIZED_SEARCH_COMPOSE_MODEL, settings.PERSONALIZED_SEARCH_COMPOSE_EFFORT))
+
+
+def steps(*, registry: ModelRegistry | None = None, catalog=None, store=None, persist: bool = True) -> Steps:
+    """Model calls through the registry, catalog reads through Algolia, persistence through the store."""
+    registry = registry or model_registry()
+    catalog = catalog or AlgoliaCatalog()
+    store = store or session_store()
+
+    def intent(*, system, user, model, effort, timeout_s):
+        return registry.complete_json(model=model, effort=effort, system=system, user=user,
+                                      max_tokens=constants.INTENT_MAX_TOKENS, timeout_s=timeout_s)
+
+    def compose(*, system, user, model, effort, timeout_s, usage):
+        return registry.stream_text(model=model, effort=effort, system=system, user=user,
+                                    max_tokens=constants.COMPOSE_MAX_TOKENS, timeout_s=timeout_s, usage=usage)
+
+    def retrieve(merged, scope, excluded, timeout_s=constants.RETRIEVAL_TIMEOUT_S, shortlist=constants.MAX_CANDIDATES):
+        return retrieval.search(merged, scope, excluded, catalog=catalog, timeout_s=timeout_s, shortlist=shortlist)
+
+    return Steps(intent=intent, retrieve=retrieve, compose=compose, persist=store.persist_turn if persist else None,
+                 emit=segment_emit if persist else None)
+
+
+def _step_timeout(registry: ModelRegistry, model: str, default_s: float) -> float:
+    """A backend that brings its own request timeout (Xpert) uses it; others use the setting."""
+    try:
+        own = getattr(registry.backend_for(model), 'request_timeout_s', None)
+    except ModelConfigurationError:  # unknown model: the turn refuses it
+        own = None
+    return own or default_s
+
+
+def shortlist_size(compose_model: str) -> int:
+    """
+    How many candidates compose chooses from: ``PERSONALIZED_SEARCH_SHORTLIST_SIZES`` for the compose model,
+    else ``PERSONALIZED_SEARCH_SHORTLIST_SIZE``. Larger models make better use of a longer list.
+    """
+    sizes = getattr(settings, 'PERSONALIZED_SEARCH_SHORTLIST_SIZES', None) or {}
+    default = getattr(settings, 'PERSONALIZED_SEARCH_SHORTLIST_SIZE', None) or constants.MAX_CANDIDATES
+    return int(sizes.get(compose_model) or default)
+
+
+def turn_context(*, session: dict, message: str, intent_model: ModelChoice, compose_model: ModelChoice,
+                 scope: CatalogScope, debug: bool = False, debug_overrides: bool = False,
+                 registry: ModelRegistry | None = None) -> TurnContext:
+    """
+    A ``TurnContext`` with the configured timeouts, shortlist size and the registry's platform names.
+    ``debug`` turns on the debug read-out; ``debug_overrides`` says this turn used debug overrides (its models
+    or the debug catalog), which tags its usage events (``is_debug``).
+    """
+    registry = registry or model_registry()
+    return TurnContext(
+        session=session, message=message, intent_model=intent_model, compose_model=compose_model, scope=scope,
+        debug=debug, platform=registry.platform_of,
+        analytics={'cohort': settings.PERSONALIZED_SEARCH_ANALYTICS_COHORT,
+                   'engine': settings.PERSONALIZED_SEARCH_ENGINE_LABEL, 'is_debug': debug_overrides},
+        intent_timeout_s=_step_timeout(registry, intent_model.model, settings.PERSONALIZED_SEARCH_INTENT_TIMEOUT_S),
+        compose_timeout_s=_step_timeout(registry, compose_model.model,
+                                        settings.PERSONALIZED_SEARCH_COMPOSE_READ_TIMEOUT_S),
+        shortlist=shortlist_size(compose_model.model),
+        plan_enabled=personalized_search_suggested_order_enabled(),
+    )
+
+
+def content_language(locale: str | None) -> tuple[str, str]:
+    """
+    ``(locale, Algolia language name)`` for the learner's portal locale, as Learner Pathways resolves it:
+    the base language (``es-419`` -> ``es``) when ``PERSONALIZED_SEARCH_CONTENT_LANGUAGES`` supports it,
+    otherwise English.
+    """
+    supported = getattr(settings, 'PERSONALIZED_SEARCH_CONTENT_LANGUAGES', None) or {'en': 'English'}
+    base = (locale or '').split('-')[0].split('_')[0].lower()
+    if base in supported:
+        return base, supported[base]
+    return 'en', supported.get('en', 'English')
+
+
+def _languages(locale: str | None) -> dict:
+    """The scope's language fields: the locale's content language, and the languages replies may be written in."""
+    code, name = content_language(locale)
+    supported = getattr(settings, 'PERSONALIZED_SEARCH_CONTENT_LANGUAGES', None) or {'en': 'English'}
+    return {'locale': code, 'language_name': name, 'reply_languages': tuple(supported.values())}
+
+
+def dev_catalog_scope(locale: str | None = None) -> CatalogScope | None:
+    """
+    Dev only: the plain key plus an explicit catalog filter (``PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE``).
+    The Algolia client still refuses it unless ``ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH`` is on.
+    """
+    dev_scope = getattr(settings, 'PERSONALIZED_SEARCH_DEV_CATALOG_SCOPE', None)
+    if not dev_scope:
+        return None
+    return CatalogScope(filter=dev_scope['filter'], allow_unscoped=True, label=dev_scope.get('label'),
+                        **_languages(locale))
+
+
+def debug_catalog_scope(locale: str | None = None) -> CatalogScope | None:
+    """
+    Stage only: the catalog debug turns search (``PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE``), such as the 2U
+    customer in the prod catalog. Its plain key needs ``ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH`` like the dev scope.
+    """
+    debug_scope = getattr(settings, 'PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE', None)
+    if not debug_scope:
+        return None
+    client_config = {key: debug_scope[key] for key in ('app_id', 'search_api_key', 'index_name')
+                     if debug_scope.get(key)}
+    return CatalogScope(filter=debug_scope['filter'], allow_unscoped=True, label=debug_scope.get('label'),
+                        client_config=client_config or None, is_debug=True, **_languages(locale))
+
+
+def catalog_scope(request, enterprise_customer_uuid: str, locale: str | None = None,
+                  debug: bool = False) -> CatalogScope:
+    """
+    The learner's secured key and enterprise filter, in the learner's content language. The dev scope replaces
+    it everywhere it's set; the debug scope replaces it for ``debug`` turns (the caller checks ``debug_allowed``).
+    """
+    dev_scope = dev_catalog_scope(locale)
+    if dev_scope:
+        return dev_scope
+    debug_scope = debug_catalog_scope(locale) if debug and debug_overrides_enabled() else None
+    if debug_scope:
+        return debug_scope
+    payload = get_and_cache_secured_algolia_search_keys(request, enterprise_customer_uuid)
+    return CatalogScope(
+        filter=f'enterprise_customer_uuids:"{enterprise_customer_uuid}"',
+        secured_key=secured_key_from_payload(payload), **_languages(locale),
+    )
+
+
+def debug_overrides_enabled() -> bool:
+    """Whether debug mode exists in this environment at all (PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED)."""
+    return bool(getattr(settings, 'PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED', False))
+
+
+def debug_allowed(user) -> bool:
+    """
+    Whether this user may use debug mode: the environment allows it, and the user is an enterprise-access superuser
+    or is on the ``enterprise_access.personalized_search_debug`` flag. ``is_superuser`` is never set from the JWT
+    (only ``administrator`` maps to ``is_staff``), so it can only be granted in enterprise-access's Django admin.
+    """
+    if not debug_overrides_enabled() or not getattr(user, 'is_authenticated', False):
+        return False
+    return bool(getattr(user, 'is_superuser', False)) or personalized_search_debug_enabled()
