@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "personalized-search/block-catalog.v1.schema.json",
+  "title": "Personalized Search block catalog v1",
+  "description": "The data of a data-block stream part: one learning-page block. Item cards are hydrated by the server from catalog hits; the model only chooses ids and writes why/fit.",
+  "type": "object",
+  "required": ["v", "type", "props"],
+  "properties": {"v": {"const": 1}, "type": {"enum": ["page_header", "item_section", "insight", "plan"]}},
+  "oneOf": [
+    {"properties": {"type": {"const": "page_header"}, "props": {"$ref": "#/$defs/page_header"}}},
+    {"properties": {"type": {"const": "item_section"}, "props": {"$ref": "#/$defs/item_section"}}},
+    {"properties": {"type": {"const": "insight"}, "props": {"$ref": "#/$defs/insight"}}},
+    {"properties": {"type": {"const": "plan"}, "props": {"$ref": "#/$defs/plan"}}}
+  ],
+  "$defs": {
+    "item_type": {"enum": ["course", "executive_education", "program"]},
+    "page_header": {
+      "type": "object", "additionalProperties": false, "required": ["title", "dek", "label"],
+      "properties": {"title": {"type": "string", "minLength": 1, "maxLength": 80},
+                     "dek": {"type": "string", "maxLength": 400}, "label": {"type": "string"}}
+    },
+    "item_card": {
+      "type": "object", "additionalProperties": false,
+      "required": ["item_id", "item_type", "title", "image_url", "partner_name", "partner_logo_url", "link", "facts", "why", "fit"],
+      "properties": {
+        "item_id": {"type": "string", "minLength": 1},
+        "item_type": {"$ref": "#/$defs/item_type"},
+        "title": {"type": "string"},
+        "image_url": {"type": ["string", "null"]},
+        "partner_name": {"type": ["string", "null"]},
+        "partner_logo_url": {"type": ["string", "null"]},
+        "link": {
+          "type": "object", "required": ["kind"],
+          "properties": {"kind": {"enum": ["course", "program"]}, "course_key": {"type": ["string", "null"]},
+                         "course_type": {"type": ["string", "null"]}, "program_uuid": {"type": ["string", "null"]}}
+        },
+        "facts": {"type": "object"},
+        "why": {"type": ["string", "null"], "maxLength": 400},
+        "fit": {"type": "array", "maxItems": 3, "items": {"type": "string", "maxLength": 24}}
+      }
+    },
+    "item_section": {
+      "type": "object", "additionalProperties": false, "required": ["item_type", "label", "dek", "fallback", "items"],
+      "properties": {"item_type": {"$ref": "#/$defs/item_type"}, "label": {"type": "string"},
+                     "dek": {"type": "string", "maxLength": 200}, "fallback": {"type": "boolean"},
+                     "items": {"type": "array", "minItems": 1, "maxItems": 3, "items": {"$ref": "#/$defs/item_card"}}}
+    },
+    "insight": {
+      "type": "object", "additionalProperties": false, "required": ["title", "body"],
+      "properties": {"title": {"type": "string", "minLength": 1, "maxLength": 60},
+                     "body": {"type": "string", "minLength": 1, "maxLength": 600}}
+    },
+    "plan": {
+      "type": "object", "additionalProperties": false, "required": ["steps"],
+      "properties": {"steps": {"type": "array", "minItems": 2, "maxItems": 4, "items": {
+        "type": "object", "additionalProperties": false, "required": ["item_id", "note"],
+        "properties": {"item_id": {"type": "string"}, "note": {"type": "string", "maxLength": 80}}}}}
+    }
+  }
+}

@@ -27,6 +27,31 @@ def enable_multi_license_entitlements_bff():
     return ENABLE_MULTI_LICENSE_ENTITLEMENTS_BFF.is_enabled()
 
 
+# .. toggle_name: enterprise_access.personalized_search_enabled
+# .. toggle_implementation: WaffleFlag
+# .. toggle_default: False
+# .. toggle_description: Turns on the Personalized Search (chat) endpoints under
+#     /api/v1/personalized-search/ for the users it is enabled for; everyone else gets 404.
+#     A WaffleFlag, so it rolls out per user, group or percentage. The learner portal shows the
+#     tab from the LMS flag enterprise.personalized_search_enabled; enable this one first, for the
+#     same users, so a visible tab never meets a 404.
+# .. toggle_warning: Unlike the pathway switches, this is a flag so it can roll out per user. It is
+#     safe from URL overrides only while WAFFLE_OVERRIDE is off (the django-waffle default; asserted
+#     in tests) and the flag's own "Testing" mode is never turned on in Django admin.
+# .. toggle_use_cases: open_edx
+# .. toggle_creation_date: 2026-11-03
+PERSONALIZED_SEARCH_ENABLED = WaffleFlag(
+    f'{ENTERPRISE_ACCESS_NAMESPACE}.personalized_search_enabled',
+    __name__,
+    ENTERPRISE_ACCESS_LOG_PREFIX,
+)
+
+
+def personalized_search_enabled():
+    """Return whether the Personalized Search endpoints are on for the current request's user."""
+    return PERSONALIZED_SEARCH_ENABLED.is_enabled()
+
+
 # A ``WaffleSwitch`` rather than a ``WaffleFlag``, deliberately. A switch is a single
 # global boolean an administrator sets in Django admin; it takes no request, so it cannot
 # be turned on per-user, by percentage, or by a ``?flag=1`` query string. Two consequences

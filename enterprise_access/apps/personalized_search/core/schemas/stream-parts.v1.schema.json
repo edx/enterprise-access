@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "personalized-search/stream-parts.v1.schema.json",
+  "title": "Personalized Search stream part (AI SDK UI Message Stream v1 subset)",
+  "description": "One JSON object per SSE data: frame; the stream ends with data: [DONE]. A turn is start, data-session, then text and data parts, and ends with finish or error.",
+  "type": "object",
+  "required": ["type"],
+  "oneOf": [
+    {"properties": {"type": {"const": "start"}, "messageId": {"type": "string"}}, "required": ["messageId"]},
+    {"properties": {"type": {"const": "finish"}}},
+    {"properties": {"type": {"const": "error"}, "errorText": {"enum": ["intent_invalid", "model_failed", "retrieval_failed", "deadline_exceeded", "internal"]}}, "required": ["errorText"]},
+    {"properties": {"type": {"const": "text-start"}, "id": {"type": "string"}}, "required": ["id"]},
+    {"properties": {"type": {"const": "text-delta"}, "id": {"type": "string"}, "delta": {"type": "string"}}, "required": ["id", "delta"]},
+    {"properties": {"type": {"const": "text-end"}, "id": {"type": "string"}}, "required": ["id"]},
+    {"properties": {"type": {"const": "data-session"}, "data": {
+      "type": "object", "required": ["session_uuid", "turn_sequence", "title"],
+      "properties": {"session_uuid": {"type": "string"}, "turn_sequence": {"type": "integer", "minimum": 1},
+                     "title": {"type": ["string", "null"]}}}}, "required": ["data"]},
+    {"properties": {"type": {"const": "data-status"}, "transient": {"const": true}, "data": {
+      "type": "object", "required": ["step"], "properties": {"step": {"enum": ["understanding", "searching", "writing"]}}}},
+     "required": ["data", "transient"]},
+    {"properties": {"type": {"const": "data-block"}, "id": {"type": "string"},
+                    "data": {"$ref": "block-catalog.v1.schema.json"}}, "required": ["id", "data"]},
+    {"properties": {"type": {"const": "data-followups"}, "data": {
+      "type": "object", "required": ["question", "attribute", "suggestions"],
+      "properties": {"question": {"type": "string", "maxLength": 200},
+                     "attribute": {"enum": ["level", "time", "pacing", "type", "open"]},
+                     "suggestions": {"type": "array", "items": {"type": "string"}}}}}, "required": ["data"]},
+    {"properties": {"type": {"const": "data-timing"}, "transient": {"const": true}, "data": {
+      "type": "object", "required": ["backend", "model_intent", "model_compose"]}}, "required": ["data", "transient"]}
+  ]
+}
