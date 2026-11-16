@@ -3,9 +3,9 @@ Permanently delete Personalized Search sessions with no message in the last ``--
 
 Scheduled daily (a Kubernetes cron job in the enterprise-access stage and prod config). Each session goes through
 ``delete_conversation``, the same delete as the learner's X: its turns go, and the learner's saved and
-not-interested items stay. Soft-deleted sessions are purged too. The kill switch
-``enterprise_access.personalized_search_disable_retention_purge`` pauses it; it's off by default, so the purge
-runs. See ``docs/references/personalized_search.md``.
+not-interested items stay. Soft-deleted sessions are purged too. It deletes only while the WaffleSwitch
+``enterprise_access.personalized_search_retention_purge`` is on (off by default); otherwise it reports the count.
+See ``docs/references/personalized_search.md``.
 """
 import logging
 from datetime import timedelta
@@ -49,7 +49,7 @@ class Command(BaseCommand):
         if dry_run:
             return
         if not personalized_search_retention_purge_enabled():
-            logger.info('%s paused: the enterprise_access.personalized_search_disable_retention_purge switch is on; '
+            logger.info('%s off: the enterprise_access.personalized_search_retention_purge switch is off; '
                         'nothing deleted', LOG_PREFIX)
             return
 

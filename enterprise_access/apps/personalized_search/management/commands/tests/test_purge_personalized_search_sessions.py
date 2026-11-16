@@ -10,7 +10,7 @@ from edx_toggles.toggles.testutils import override_waffle_switch
 
 from enterprise_access.apps.personalized_search.adapters.django_store import delete_conversation
 from enterprise_access.apps.personalized_search.models import ChatSession, ChatTurn, ItemFeedback
-from enterprise_access.toggles import PERSONALIZED_SEARCH_DISABLE_RETENTION_PURGE
+from enterprise_access.toggles import PERSONALIZED_SEARCH_RETENTION_PURGE
 
 ENTERPRISE = uuid.uuid4()
 COMMAND = 'purge_personalized_search_sessions'
@@ -19,6 +19,7 @@ DELETE = ('enterprise_access.apps.personalized_search.management.commands.purge_
           '.delete_conversation')
 
 
+@override_waffle_switch(PERSONALIZED_SEARCH_RETENTION_PURGE, active=True)
 class PurgePersonalizedSearchSessionsTests(TestCase):
     """Sessions with no message in the last 30 days are deleted for good, the same way as the learner's X."""
 
@@ -103,15 +104,15 @@ class PurgePersonalizedSearchSessionsTests(TestCase):
         self.assertTrue(self.exists(resumed))
 
     @mock.patch(EMIT)
-    def test_the_kill_switch_pauses_it_and_dry_run_still_reports(self, emit):
+    def test_deletes_nothing_while_its_switch_is_off_and_dry_run_still_reports(self, emit):
         old = self.session(31)
-        with override_waffle_switch(PERSONALIZED_SEARCH_DISABLE_RETENTION_PURGE, active=True):
+        with override_waffle_switch(PERSONALIZED_SEARCH_RETENTION_PURGE, active=False):
             with self.assertLogs(level='INFO') as logs:
                 call_command(COMMAND)
                 call_command(COMMAND, '--dry-run')
         self.assertTrue(self.exists(old))
         emit.assert_not_called()
-        self.assertTrue(any('paused' in line for line in logs.output))
+        self.assertTrue(any('switch is off; nothing deleted' in line for line in logs.output))
         self.assertTrue(any('dry_run=True' in line and 'sessions=1' in line for line in logs.output))
 
     def test_rejects_a_window_under_one_day(self):
