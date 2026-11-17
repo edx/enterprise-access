@@ -552,3 +552,28 @@ def decline_learner_credit_requests(
         )
 
     return {'declined': declined_requests, 'non_declinable': non_declinable_requests}
+
+
+def expire_unreviewed_learner_credit_request(learner_credit_request_uuid):
+    """
+    Moves a learner credit request that is still awaiting review to EXPIRED and records the action. For a request
+    whose budget has ended, so that nobody can approve it any more.
+
+    Returns:
+        bool: False, having written nothing, if the request is no longer awaiting review once its row is locked
+        (for example an admin declined it after the caller selected it); True otherwise.
+    """
+    with transaction.atomic():
+        learner_credit_request = LearnerCreditRequest.objects.select_for_update().get(
+            uuid=learner_credit_request_uuid,
+        )
+        if learner_credit_request.state not in APPROVABLE_STATES:
+            return False
+        learner_credit_request.state = SubsidyRequestStates.EXPIRED
+        learner_credit_request.save()
+        LearnerCreditRequestActions.create_action(
+            learner_credit_request=learner_credit_request,
+            recent_action=get_action_choice(SubsidyRequestStates.EXPIRED),
+            status=get_user_message_choice(SubsidyRequestStates.EXPIRED),
+        )
+    return True
