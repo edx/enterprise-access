@@ -1,0 +1,456 @@
+"""
+Turn orchestrator (tech spec "Turn pipeline", steps 0-6): yields protocol-neutral part dicts.
+
+Everything outside the pipeline is injected: the model, catalog and persistence calls (``Steps``),
+the clock, ids, timeouts and how a model id maps to a platform name (``TurnContext``). The generator
+never touches a request or a database. Closing it (client Stop) closes the model stream and skips
+persistence.
+
+Observability (chunk 21): every turn, whether it finishes, errors or is aborted, writes exactly one
+``personalized_search.turn`` log record with ids, models, step timings and counts. It never includes
+the learner's message or the reply text.
+"""
+import dataclasses
+import json
+import logging
+import time
+import uuid
+from dataclasses import dataclass, field
+from typing import Callable, Iterator
+
+from enterprise_access.apps.personalized_search.core import constants
+from enterprise_access.apps.personalized_search.core import intent as intent_step
+from enterprise_access.apps.personalized_search.core import telemetry
+from enterprise_access.apps.personalized_search.core.compose import SEQUENCING, ComposeParser
+from enterprise_access.apps.personalized_search.core.compose import build_user_content as compose_user
+from enterprise_access.apps.personalized_search.core.compose import server_output
+from enterprise_access.apps.personalized_search.core.compose import system_prompt as compose_system
+from enterprise_access.apps.personalized_search.core.errors import ModelConfigurationError, ModelError, ModelRejected
+from enterprise_access.apps.personalized_search.core.ports import Usage
+from enterprise_access.apps.personalized_search.core.retrieval import (
+    RetrievalFailed,
+    SearchResults,
+    choose_followup_attribute,
+    prefilter,
+    without_completed
+)
+from enterprise_access.apps.personalized_search.core.stream import screen_order
+
+logger = logging.getLogger(__name__)
+TURN_LOG_EVENT = 'personalized_search.turn'
+# The only fields the turn log may carry: ids, models, timings and counts, never learner text
+# (``pending_turn`` holds the message and reply until they're persisted, so it's excluded).
+# Blocks that carry cards: the first one starts the "first tiles" timing (``first_section_ms``).
+CARD_BLOCKS = ('top_pick', 'compare', 'item_section')
+TURN_LOG_FIELDS = (
+    'session_uuid', 'sequence', 'turn_uuid', 'backend', 'model_intent', 'model_compose', 'outcome', 'error',
+    'redirect_reason', 'timing', 'item_count', 'dropped_lines', 'fallback', 'candidate_ids', 'item_ids',
+    'total_ms', 'model_failures', 'retries', 'degraded',
+)
+
+
+@dataclass(frozen=True)
+class ModelChoice:
+    model: str
+    effort: str | None
+
+
+@dataclass
+class TurnContext:
+    """Everything the generator needs, loaded before the response starts (spec step 6)."""
+
+    session: dict
+    message: str
+    intent_model: ModelChoice
+    compose_model: ModelChoice
+    scope: object
+    debug: bool = False
+    # Per-step timeouts (each is also capped by the time left before the turn deadline).
+    intent_timeout_s: float = constants.DEFAULT_INTENT_TIMEOUT_S
+    compose_timeout_s: float = constants.DEFAULT_COMPOSE_READ_TIMEOUT_S
+    # How many candidates the compose step chooses from (the prefilter's shortlist).
+    shortlist: int = constants.MAX_CANDIDATES
+    # Model id -> platform name for logs and timing ('openai', 'xpert'); the model registry's platform_of.
+    platform: Callable[[str], str] = lambda model: 'unknown'
+    clock: Callable[[], float] = time.monotonic
+    id_factory: Callable[[], str] = lambda: str(uuid.uuid4())
+    t0: float = field(default=0.0)
+    # Event tags from the host (KD-12): ``cohort``, ``engine`` and ``is_debug`` (the turn used debug overrides).
+    analytics: dict = field(default_factory=dict)
+    # Whether results may include the suggested order (plan block); the host's switch.
+    plan_enabled: bool = True
+
+
+@dataclass
+class Steps:
+    """Injectable step functions (built by ``wiring.steps`` in enterprise-access, fakes in tests)."""
+
+    # (system, user, model, effort, timeout_s) -> (text, Usage)
+    intent: Callable[..., tuple[str, Usage]]
+    # (intent, scope, excluded_ids, timeout_s=, shortlist=) -> raw candidates and the catalog totals per type
+    retrieve: Callable[..., SearchResults]
+    # (system, user, model, effort, timeout_s, usage) -> Iterator[str]
+    compose: Callable[..., Iterator[str]]
+    # (session, turn) -> None: write a finished turn (``SessionStore.persist_turn``). None: don't persist.
+    persist: Callable[[dict, dict], None] | None = None
+    # (lms_user_id, event, properties) -> None: send a usage event (KD-12). None: send nothing.
+    emit: Callable[[object, str, dict], None] | None = None
+
+
+def _ms(ctx: TurnContext, at: float | None) -> int | None:
+    return round((at - ctx.t0) * 1000) if at is not None else None
+
+
+def _excluded_ids(session: dict) -> list[str]:
+    """
+    Items this turn must not show: those the learner dismissed. Results update in place (KD-11), so
+    items shown in earlier turns may appear again; cards new to the conversation are flagged instead.
+    """
+    return list(dict.fromkeys(session.get('not_interested_ids', [])))
+
+
+def _retrieval_excluded_ids(session: dict) -> list[str]:
+    """
+    The excluded ids sent to the catalog search: only the most recent ones (the store lists them newest first),
+    so the filter stays short. ``ComposeParser`` gets them all and drops any older one the search returns.
+    """
+    return _excluded_ids(session)[:constants.MAX_RETRIEVAL_EXCLUDED_IDS]
+
+
+def _pending_turn(ctx: TurnContext, record: dict, *, reply: str, intent: dict, item_ids: list, attribute: str,
+                  timing: dict) -> dict:
+    """What ``Steps.persist`` writes once the stream finishes (parts are added by ``run_turn``)."""
+    return {'uuid': record['turn_uuid'], 'user_message': ctx.message, 'reply_text': reply, 'intent': intent,
+            'item_ids': item_ids, 'follow_up_attribute': attribute, 'backend': record['backend'], 'timing': timing}
+
+
+def _session_part(session: dict, sequence: int) -> dict:
+    return {'type': 'data-session', 'id': 'session',
+            'data': {'session_uuid': session['uuid'], 'turn_sequence': sequence, 'title': session['title']}}
+
+
+def _redirect_reply(reason: str, history: list[dict]) -> str:
+    """
+    The server's reply for a redirect. Right after the same reply it switches to a shorter one (and back), so a
+    learner who keeps trying never gets the same sentence twice in a row. Distress always gets its full reply.
+    """
+    reply = constants.REDIRECT_REPLIES.get(reason, constants.REDIRECT_REPLY)
+    if reason != 'distress' and history and history[-1].get('reply') == reply:
+        return constants.REDIRECT_REPEAT_REPLY
+    return reply
+
+
+def _languages(ctx: TurnContext, result: dict, merged: dict) -> tuple[str, object]:
+    """
+    The reply language and the scope to search. Replies follow the language the learner wrote in when it's
+    supported, else the portal locale's. Courses are taught in the language the learner asked for, else (as
+    Learner Pathways does) the portal locale's.
+    """
+    scope = ctx.scope
+    portal = getattr(scope, 'language_name', None) or 'English'
+    wrote = result.get('message_language')
+    reply = wrote if wrote in (getattr(scope, 'reply_languages', None) or (portal,)) else portal
+    taught = (merged.get('constraints') or {}).get('course_language')
+    if taught and taught != portal and dataclasses.is_dataclass(scope):
+        scope = dataclasses.replace(scope, language_name=taught)
+    return reply, scope
+
+
+def platform_of(ctx: TurnContext) -> str:
+    """'openai', 'xpert' or 'mixed', from the turn's per-step models."""
+    platforms = {ctx.platform(c.model) for c in (ctx.intent_model, ctx.compose_model)}
+    return platforms.pop() if len(platforms) == 1 else 'mixed'
+
+
+def run_turn(ctx: TurnContext, steps: Steps) -> Iterator[dict]:
+    """
+    Run one turn and log it once. The outcome is ``done``, ``redirect``, ``error`` (with its code) or
+    ``aborted`` (the client stopped; nothing is persisted).
+    """
+    ctx.t0 = ctx.t0 or ctx.clock()
+    record = {
+        'session_uuid': ctx.session['uuid'], 'sequence': ctx.session['turn_count'] + 1,
+        'backend': platform_of(ctx), 'model_intent': ctx.intent_model.model,
+        'model_compose': ctx.compose_model.model, 'outcome': 'aborted', 'error': None, 'timing': {},
+        'item_count': 0, 'dropped_lines': 0, 'fallback': False, 'candidate_ids': [], 'item_ids': [],
+        # Failed model calls and retries per step, and the step whose failure made the turn use server-built results.
+        'model_failures': {'intent': 0, 'compose': 0}, 'retries': {'intent': 0, 'compose': 0}, 'degraded': None,
+    }
+    parts = _turn_parts(ctx, steps, record)
+    emitted: list[dict] = []
+    try:
+        for part in parts:
+            if part['type'] == 'error':
+                record['outcome'], record['error'] = 'error', part['errorText']
+            elif part['type'] == 'finish':
+                # Spec step 5-6: persist before finish; if that fails, the turn ends in an error instead.
+                if steps.persist and record.get('pending_turn'):
+                    record['stage'] = 'persist'  # a storage failure is reported as such, not as compose
+                    try:
+                        steps.persist(ctx.session, dict(record['pending_turn'], parts=emitted))
+                    except Exception:  # pylint: disable=broad-exception-caught
+                        logger.exception('Personalized Search could not persist turn %s of session %s.',
+                                         record['sequence'], record['session_uuid'])
+                        record['outcome'], record['error'] = 'error', 'internal'
+                        yield {'type': 'error', 'errorText': 'internal'}
+                        return
+                record['outcome'] = 'redirect' if record.get('redirected') else 'done'
+                # The cards now on screen; a redirect shows none and keeps the page before it.
+                ctx.session['previous_screen'] = screen_order(emitted) or ctx.session.get('previous_screen') or []
+                # One block per id, where it first appeared: a block sent again under its id (the final profile)
+                # replaces the earlier one, as clients apply it.
+                blocks: dict[str, dict] = {}
+                for p in emitted:
+                    if p['type'] == 'data-block':
+                        blocks[p['id']] = p['data']
+                record['blocks'] = list(blocks.values())
+            emitted.append(part)
+            yield part
+    except Exception:  # pylint: disable=broad-exception-caught
+        # A bug or an unexpected failure in any step: end the turn with an error the client can show,
+        # and log it as an error rather than an abort.
+        logger.exception('Personalized Search turn %s of session %s failed unexpectedly.',
+                         record['sequence'], record['session_uuid'])
+        record['outcome'], record['error'] = 'error', 'internal'
+        yield {'type': 'error', 'errorText': 'internal'}
+    finally:
+        parts.close()
+        record['item_count'] = len(record['item_ids'])
+        record['total_ms'] = _ms(ctx, ctx.clock())
+        logged = {key: record[key] for key in TURN_LOG_FIELDS if key in record}
+        logger.info('%s %s', TURN_LOG_EVENT, json.dumps(logged, sort_keys=True))
+        _send_event(ctx, steps, record)
+
+
+def _send_event(ctx: TurnContext, steps: Steps, record: dict) -> None:
+    """Send the turn's usage event. Never blocks the turn's outcome or raises (KD-12)."""
+    if not steps.emit:
+        return
+    try:
+        name, properties = telemetry.turn_event(ctx, record)
+        steps.emit(ctx.session.get('lms_user_id'), name, properties)
+    except Exception:  # pylint: disable=broad-exception-caught
+        logger.exception('Personalized Search could not send the usage event for turn %s.', record['sequence'])
+
+
+def _turn_parts(ctx: TurnContext, steps: Steps, record: dict) -> Iterator[dict]:
+    """The turn itself; fills ``record`` (ids, timings, counts) as it goes."""
+    # pylint: disable=too-many-locals,too-many-statements
+    session = ctx.session
+    sequence = session['turn_count'] + 1
+    timing = {'intent_ms': None, 'retrieval_ms': None, 'first_text_ms': None, 'first_section_ms': None,
+              'complete_ms': None, 'dropped_lines': 0}
+    record['timing'] = timing
+    debug: dict = {'candidates': 0, 'followup_attribute': None, 'catalog': getattr(ctx.scope, 'label', None)}
+    usages: dict[str, Usage] = {}
+
+    def remaining() -> float:
+        return max(0.5, constants.TURN_DEADLINE_S - (ctx.clock() - ctx.t0))
+
+    def timing_part() -> dict:
+        data = {'backend': platform_of(ctx), 'model_intent': ctx.intent_model.model,
+                'model_compose': ctx.compose_model.model,
+                **timing}
+        if ctx.debug:
+            costs = [u.cost_usd() for u in usages.values() if u.cost_usd() is not None]
+            data['debug'] = dict(debug, intent=usages['intent'].as_dict() if 'intent' in usages else None,
+                                 compose=usages['compose'].as_dict() if 'compose' in usages else None,
+                                 cost_usd=round(sum(costs), 6) if costs else None)
+        return {'type': 'data-timing', 'id': 'timing', 'transient': True, 'data': data}
+
+    record.update(stage='intent', usages=usages, excluded_ids=_excluded_ids(session))
+    record['turn_uuid'] = ctx.id_factory()
+    yield {'type': 'start', 'messageId': f"turn_{record['turn_uuid']}"}
+    yield _session_part(session, sequence)
+    # Join keys for the portal's interaction events (KD-12); stored, so a reopened search keeps them.
+    yield {'type': 'data-analytics', 'id': 'analytics', 'data': telemetry.join_keys(ctx, record)}
+    yield {'type': 'data-status', 'data': {'step': 'understanding'}, 'transient': True}
+
+    # Step 1: intent. A call that can't be reached (timeout, connection, 5xx) is tried once more while the deadline
+    # allows; if that fails too, the turn continues on a fallback intent and shows server-built results. A key, model
+    # or request the API refuses won't pass on a retry, so it ends the turn.
+    result = None
+    for attempt in (1, 2):
+        try:
+            text, usage = steps.intent(
+                system=intent_step.SYSTEM_PROMPT,
+                user=intent_step.build_user_content(message=ctx.message, prior_intent=session['merged_intent'],
+                                                    history=session['history'],
+                                                    screen=session.get('previous_screen')),
+                model=ctx.intent_model.model, effort=ctx.intent_model.effort,
+                timeout_s=min(ctx.intent_timeout_s, remaining()),
+            )
+            usages['intent'] = usage
+            result = intent_step.parse(text)
+            break
+        except (ModelConfigurationError, ModelRejected):
+            yield {'type': 'error', 'errorText': 'model_failed'}
+            return
+        except ModelError:
+            record['model_failures']['intent'] += 1
+            if attempt == 2 or remaining() < constants.INTENT_RETRY_MIN_S:
+                break
+            record['retries']['intent'] += 1
+        except intent_step.IntentInvalid:
+            yield {'type': 'error', 'errorText': 'intent_invalid'}
+            return
+    if result is None:
+        record['degraded'] = 'intent'
+        result = intent_step.fallback(session['merged_intent'])
+    timing['intent_ms'] = _ms(ctx, ctx.clock())
+    debug['intent_result'] = {'on_topic': result['on_topic'], 'redirect_reason': result['redirect_reason'],
+                              'merge': result['merge'], 'message_language': result.get('message_language')}
+
+    if not result['on_topic']:
+        # Redirect path (REQ-008): a server-written reply per reason, no retrieval or compose.
+        reason = result['redirect_reason']
+        reply = _redirect_reply(reason, session['history'])
+        record['redirected'] = True
+        record['redirect_reason'] = reason
+        yield {'type': 'text-start', 'id': 'reply'}
+        yield {'type': 'text-delta', 'id': 'reply', 'delta': reply}
+        timing['first_text_ms'] = _ms(ctx, ctx.clock())
+        yield {'type': 'text-end', 'id': 'reply'}
+        # A learner in distress gets no chips or question: nothing that pushes courses.
+        attribute = '' if reason == 'distress' else 'open'
+        if attribute:
+            yield {'type': 'data-followups', 'id': 'followups',
+                   'data': {'question': constants.REDIRECT_FOLLOWUP_QUESTION, 'attribute': attribute,
+                            'suggestions': constants.OPENING_CHIPS}}
+        session['history'].append({'user': ctx.message, 'reply': reply})
+        session['turn_count'] = sequence
+        session['title'] = session['title'] or session['first_prompt'][:constants.CAPS['session_title']]
+        record['pending_turn'] = _pending_turn(ctx, record, reply=reply, intent=result, item_ids=[],
+                                               attribute=attribute, timing=timing)
+        timing['complete_ms'] = _ms(ctx, ctx.clock())
+        yield _session_part(session, sequence)
+        yield timing_part()
+        yield {'type': 'finish'}
+        return
+
+    merged = intent_step.merge(session['merged_intent'], result['intent'], result['merge'], message=ctx.message)
+    reply_language, scope = _languages(ctx, result, merged)
+    if session.get('previous_screen') and intent_step.REFERS_TO_SCREEN.search(ctx.message):
+        # "Compare the first two": fetch the previous screen's items again so compose can use them.
+        excluded = set(_excluded_ids(session))
+        merged['pinned'] = [e['item_id'] for e in session['previous_screen']
+                            if e['item_id'] not in excluded][:constants.MAX_ITEMS_PER_TURN]
+    debug.update(merged_intent=merged, reply_language=reply_language)
+    record.update(merged_intent=merged, merge_mode=result['merge'], stage='search')
+
+    # Steps 2-3: retrieval, prefilter, follow-up attribute
+    yield {'type': 'data-status', 'data': {'step': 'searching'}, 'transient': True}
+    retrieval_started = ctx.clock()
+    try:
+        raw = steps.retrieve(merged, scope, _retrieval_excluded_ids(session),
+                             timeout_s=min(constants.RETRIEVAL_TIMEOUT_S, remaining()), shortlist=ctx.shortlist)
+        totals = getattr(raw, 'totals', {})  # a plain list (a test fake) carries no totals
+        search_queries = getattr(raw, 'search_queries', {})
+        raw, completed_keys = without_completed(raw, merged)
+        if completed_keys:
+            merged['completed_keys'] = completed_keys
+        candidates = prefilter(raw, merged, ctx.shortlist)
+    except RetrievalFailed:
+        yield {'type': 'error', 'errorText': 'retrieval_failed'}
+        return
+    timing['retrieval_ms'] = round((ctx.clock() - retrieval_started) * 1000)
+    record['candidate_ids'] = [c['card']['item_id'] for c in candidates]
+    attribute = choose_followup_attribute(candidates, merged, session['asked_attributes'])
+    debug.update(candidates=len(candidates), followup_attribute=attribute)
+    record.update(followup_attribute=attribute, stage='compose')
+
+    # Step 4: compose
+    yield {'type': 'data-status', 'data': {'step': 'writing'}, 'transient': True}
+    parser = ComposeParser(candidates=candidates, excluded_ids=_excluded_ids(session), followup_attribute=attribute,
+                           intent=merged, totals=totals, search_queries=search_queries,
+                           seen_ids=session['shown_item_ids'], plan_wanted=bool(SEQUENCING.search(ctx.message)),
+                           plan_enabled=ctx.plan_enabled, language=reply_language)
+    record['item_ids'] = parser.emitted_ids  # the parser's own list, so an aborted turn logs what it showed
+    record.update(placements=parser.placements, dropped=parser.dropped)
+    usages['compose'] = Usage(model=ctx.compose_model.model, effort=ctx.compose_model.effort)
+
+    def compose_stream():
+        return steps.compose(
+            system=compose_system(ctx.plan_enabled),
+            user=compose_user(merged_intent=merged, followup_attribute=attribute, asked=session['asked_attributes'],
+                              history=session['history'], message=ctx.message, candidates=candidates,
+                              language=reply_language, screen=session.get('previous_screen')),
+            model=ctx.compose_model.model, effort=ctx.compose_model.effort,
+            timeout_s=min(ctx.compose_timeout_s, remaining()), usage=usages['compose'],
+        )
+
+    def emit(parts):
+        for part in parts:
+            if part['type'] == 'text-delta' and timing['first_text_ms'] is None:
+                timing['first_text_ms'] = _ms(ctx, ctx.clock())
+            has_cards = part['type'] == 'data-block' and part['data']['type'] in CARD_BLOCKS
+            if has_cards and timing['first_section_ms'] is None:
+                timing['first_section_ms'] = _ms(ctx, ctx.clock())
+            yield part
+
+    if result['redirect_reason'] == 'external_provider':
+        # Another provider's courses were asked for along with a topic: say only this catalog is searched.
+        record['redirect_reason'] = 'external_provider'
+        yield from emit(parser.preface(constants.EXTERNAL_PROVIDER_NOTE))
+    # Compose: a call that fails before sending any text is tried once more while the deadline allows; if that fails
+    # too (or intent already fell back), the server writes the results from the shortlist (``server_output``).
+    # A failure after text has streamed can't be replaced, and a configuration error or a refused request won't fix
+    # itself, so each still ends the turn with an error. A turn that ends early keeps the model's follow-up chips
+    # (``held_followups``).
+    stream = None if record['degraded'] else compose_stream()
+    received = False
+    try:
+        while stream is not None:
+            try:
+                for delta in stream:
+                    received = True
+                    yield from emit(parser.feed(delta))
+                    if ctx.clock() - ctx.t0 > constants.TURN_DEADLINE_S:
+                        yield from emit(parser.held_followups())
+                        yield {'type': 'error', 'errorText': 'deadline_exceeded'}
+                        return
+                break
+            except ModelError as exc:
+                record['model_failures']['compose'] += 1
+                stream.close()
+                stream = None
+                if received or isinstance(exc, (ModelConfigurationError, ModelRejected)):
+                    yield from emit(parser.held_followups())
+                    yield {'type': 'error', 'errorText': 'model_failed'}
+                    return
+                if not record['retries']['compose'] and remaining() >= constants.COMPOSE_RETRY_MIN_S:
+                    record['retries']['compose'] += 1
+                    stream = compose_stream()
+                else:
+                    record['degraded'] = 'compose'
+        if record['degraded']:
+            yield from emit(parser.feed(server_output(candidates, _excluded_ids(session))))
+        yield from emit(parser.finish())
+    finally:
+        if stream is not None:
+            stream.close()
+    timing['dropped_lines'] = parser.dropped_lines
+    debug.update(dropped=parser.dropped, retries=record['retries'], degraded=record['degraded'])
+    debug['followup_switched_from'] = parser.followup_switched_from
+    record.update(dropped_lines=parser.dropped_lines, fallback=parser.used_fallback)
+
+    # Step 5: persist, final session title, timing; step 6: finish
+    if record['degraded'] != 'intent':
+        # A fallback intent is unclassified (no off-topic, unsafe or injection check), so its query serves this
+        # turn's search only; the session keeps the intent it had.
+        session['merged_intent'] = merged
+    session['history'].append({'user': ctx.message, 'reply': parser.reply.strip()})
+    session['shown_item_ids'] = list(dict.fromkeys(session['shown_item_ids'] + parser.emitted_ids))
+    attribute = parser.attribute  # 'open' when the results shown don't differ on the planned attribute
+    record['followup_attribute'] = attribute  # the event reports the follow-up the learner was asked
+    if attribute != 'open' and attribute not in session['asked_attributes']:
+        session['asked_attributes'].append(attribute)
+    session['turn_count'] = sequence
+    fallback_title = session['first_prompt'][:constants.CAPS['session_title']]
+    session['title'] = session['title'] or parser.session_title or fallback_title
+    record['pending_turn'] = _pending_turn(ctx, record, reply=parser.reply.strip(), intent=result,
+                                           item_ids=list(parser.emitted_ids), attribute=attribute, timing=timing)
+    timing['complete_ms'] = _ms(ctx, ctx.clock())
+    yield _session_part(session, sequence)
+    yield timing_part()
+    yield {'type': 'finish'}
