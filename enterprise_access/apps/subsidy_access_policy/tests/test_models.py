@@ -180,6 +180,46 @@ class SubsidyAccessPolicyTests(MockPolicyDependenciesMixin, TestCase):
             policy.refresh_from_db()
         self.assertIsNone(policy.assignment_configuration)
 
+    @ddt.data(
+        # A live budget with Browse & Request turned on can take requests.
+        {'expected': True},
+        # Browse & Request is still turned on, but the budget has ended.
+        {'subsidy_is_active': False, 'expected': False},
+        {'retired': True, 'expected': False},
+        {'active': False, 'expected': False},
+        # Browse & Request is turned off.
+        {'config_active': False, 'expected': False},
+        # The subsidy can't be checked, so fall back to what the database says.
+        {'subsidy_error': requests.exceptions.HTTPError, 'expected': True},
+        {'subsidy_error': requests.exceptions.ConnectionError, 'expected': True},
+    )
+    @ddt.unpack
+    def test_has_bnr_enabled_policy_for_enterprise(
+        self, expected, subsidy_is_active=True, subsidy_error=None, active=True, retired=False, config_active=True,
+    ):
+        """
+        Test that a customer only counts as having Browse & Request while a budget can still take new requests.
+        """
+        enterprise_customer_uuid = uuid4()
+        PerLearnerSpendCapLearnerCreditAccessPolicyFactory(
+            enterprise_customer_uuid=enterprise_customer_uuid,
+            active=active,
+            retired=retired,
+            learner_credit_request_config=LearnerCreditRequestConfigurationFactory(active=config_active),
+            assignment_configuration=AssignmentConfigurationFactory(enterprise_customer_uuid=enterprise_customer_uuid),
+        )
+        # Start the lookup under test with nothing cached or recorded from creating the policy.
+        request_cache(namespace=REQUEST_CACHE_NAMESPACE).clear()
+        self.mock_subsidy_client.retrieve_subsidy.reset_mock()
+        if subsidy_error:
+            self.mock_subsidy_client.retrieve_subsidy.side_effect = subsidy_error
+        else:
+            self.mock_subsidy_client.retrieve_subsidy.return_value = {'is_active': subsidy_is_active}
+
+        self.assertEqual(SubsidyAccessPolicy.has_bnr_enabled_policy_for_enterprise(enterprise_customer_uuid), expected)
+        # The subsidy is only fetched for a budget the database says could take requests.
+        self.assertEqual(self.mock_subsidy_client.retrieve_subsidy.called, active and not retired and config_active)
+
     def test_can_not_create_parent_model_object(self, *args):
         """
         Verify that correct exception raised when we try to create object of SubsidyAccessPolicy

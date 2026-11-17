@@ -125,6 +125,10 @@ REASON_LEARNER_ASSIGNMENT_FAILED = "reason_learner_assignment_failed"
 REASON_LEARNER_ASSIGNMENT_EXPIRED = "reason_learner_assignment_expired"
 REASON_LEARNER_ASSIGNMENT_REVERSED = "reason_learner_assignment_reversed"
 
+# Reasons that only say a budget has ended. They are reported after every other reason, so that a budget which can
+# no longer serve the learner doesn't hide what a live budget has to say.
+ENDED_BUDGET_REASONS = frozenset({REASON_POLICY_EXPIRED, REASON_SUBSIDY_EXPIRED})
+
 # Redeem metadata keyword that
 # forces enrollment to take place, regardless of course state.
 FORCE_ENROLLMENT_KEYWORD = 'allow_late_enrollment'

@@ -91,6 +91,7 @@ from .subsidy_api import (
     CACHE_MISS,
     SUBSIDY_API_HTTP_ERROR_MESSAGE,
     get_and_cache_transactions_for_learner,
+    get_policies_accepting_requests,
     get_tiered_cache_subsidy_record,
     set_tiered_cache_subsidy_record
 )
@@ -430,20 +431,35 @@ class SubsidyAccessPolicy(TimeStampedModel):
     @classmethod
     def has_bnr_enabled_policy_for_enterprise(cls, enterprise_customer_uuid):
         """
-        Check if any active SubsidyAccessPolicy for the given enterprise_customer_uuid has bnr_enabled.
+        Check if any SubsidyAccessPolicy for the given enterprise_customer_uuid can take new Browse & Request
+        learner credit requests. ``bnr_enabled`` alone doesn't answer this, because it stays True after a budget
+        is retired or its subsidy expires.
+
+        This backs a learner-facing page, so if the subsidy service can't be reached it falls back to the
+        policies' own fields rather than failing.
 
         Args:
             enterprise_customer_uuid (UUID): The UUID of the enterprise customer.
 
         Returns:
-            bool: True if bnr_enabled is True for any active policy, otherwise False.
+            bool: True if any policy accepts new requests, otherwise False.
         """
-        return cls.objects.filter(
+        bnr_policies = cls.policies_with_redemption_enabled().filter(
             enterprise_customer_uuid=enterprise_customer_uuid,
-            active=True,
             learner_credit_request_config__isnull=False,
             learner_credit_request_config__active=True
-        ).exists()
+        )
+        if not bnr_policies:
+            return False
+        try:
+            return bool(get_policies_accepting_requests(bnr_policies))
+        except requests.exceptions.RequestException:
+            logger.warning(
+                'Could not verify the subsidies of the Browse & Request policies for customer %s',
+                enterprise_customer_uuid,
+                exc_info=True,
+            )
+            return True
 
     def clean_spend_limit(self):
         if self.active and (self.is_active_updated or self.is_spend_limit_updated):

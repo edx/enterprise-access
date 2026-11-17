@@ -46,6 +46,7 @@ from enterprise_access.apps.core.constants import (
 from enterprise_access.apps.events.signals import SUBSIDY_REDEEMED
 from enterprise_access.apps.events.utils import send_subsidy_redemption_event_to_event_bus
 from enterprise_access.apps.subsidy_access_policy.constants import (
+    ENDED_BUDGET_REASONS,
     GROUP_MEMBERS_WITH_AGGREGATES_DEFAULT_PAGE_SIZE,
     REASON_BEYOND_ENROLLMENT_DEADLINE,
     REASON_CONTENT_NOT_IN_CATALOG,
@@ -199,6 +200,10 @@ def _get_reasons_for_no_redeemable_policies(enterprise_customer_uuid, non_redeem
             },
             "policy_uuids": [policy.uuid for policy in policies],
         })
+
+    # Policies are evaluated soonest-expiring first, so a budget that has ended comes before a live one. Report
+    # its reason last (the sort is stable), or a learner who still has a live budget is told their funds expired.
+    reasons.sort(key=lambda reason: reason['reason'] in ENDED_BUDGET_REASONS)
 
     # Validate a reason exist before picking the most relevant reason already assumed to
     # be the first item in the list of non-redeemable policies sorted by the most salient policy
