@@ -8,3 +8,4 @@ sphinx-book-theme         # Common theme for all Open edX projects
 readme_renderer           # Validates README.rst for usage on PyPI
 Sphinx                    # Documentation builder
 sphinxcontrib-mermaid     # Renders the mermaid diagrams in docs/decisions/
+myst-parser               # Builds Markdown docs, so ADRs written in Markdown (for GitHub's mermaid rendering) stay in the Sphinx docs
