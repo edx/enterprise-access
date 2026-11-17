@@ -7,11 +7,14 @@ import stripe
 from django.contrib import admin
 from django.contrib.messages.storage.fallback import FallbackStorage
 from django.test import RequestFactory, TestCase
+from django.urls import reverse
 
+from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.customer_billing.admin import CheckoutIntentAdmin, SspProductAdmin
-from enterprise_access.apps.customer_billing.models import CheckoutIntent, SspProduct
+from enterprise_access.apps.customer_billing.models import CheckoutIntent, EnterpriseStripeCustomer, SspProduct
 from enterprise_access.apps.customer_billing.tests.factories import (
     CheckoutIntentFactory,
+    EnterpriseStripeCustomerFactory,
     SelfServiceSubscriptionRenewalFactory
 )
 
@@ -37,6 +40,39 @@ class TestSspProductAdmin(TestCase):
     def test_ssp_product_admin_list_display_includes_marketing_url(self):
         """marketing_url is displayed in the SspProduct list view."""
         self.assertIn('marketing_url', SspProductAdmin.list_display)
+
+
+class TestEnterpriseStripeCustomerAdmin(TestCase):
+    """
+    The EnterpriseStripeCustomer admin shows and searches mappings but can't add, change or delete them (ENT-12509).
+    """
+
+    def test_mappings_can_be_viewed_and_searched_but_not_edited(self):
+        self.client.force_login(UserFactory(is_staff=True, is_superuser=True))
+        mapping = EnterpriseStripeCustomerFactory(stripe_customer_id='cus_mapped')
+        EnterpriseStripeCustomerFactory(stripe_customer_id='cus_other')
+        changelist_url = reverse('admin:customer_billing_enterprisestripecustomer_changelist')
+        change_url = reverse('admin:customer_billing_enterprisestripecustomer_change', args=[mapping.pk])
+
+        search_response = self.client.get(changelist_url, {'q': str(mapping.enterprise_customer_uuid)})
+        detail_response = self.client.get(change_url)
+        save_response = self.client.post(change_url, {'stripe_customer_id': 'cus_changed'})
+
+        self.assertEqual(list(search_response.context['cl'].result_list), [mapping])
+        self.assertContains(detail_response, 'cus_mapped')
+        self.assertNotContains(detail_response, 'name="_save"')
+        history_url = reverse('admin:customer_billing_enterprisestripecustomer_history', args=[mapping.pk])
+        self.assertContains(self.client.get(history_url), 'cus_mapped')
+        self.assertEqual(save_response.status_code, 403)
+        self.assertEqual(
+            self.client.get(reverse('admin:customer_billing_enterprisestripecustomer_add')).status_code, 403,
+        )
+        self.assertEqual(
+            self.client.get(reverse('admin:customer_billing_enterprisestripecustomer_delete', args=[mapping.pk]))
+            .status_code,
+            403,
+        )
+        self.assertEqual(EnterpriseStripeCustomer.objects.get(pk=mapping.pk).stripe_customer_id, 'cus_mapped')
 
 
 class TestBackfillSspProductSlug(TestCase):

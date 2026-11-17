@@ -11,8 +11,9 @@ from unittest import skip
 from uuid import uuid4
 
 import ddt
-from django.db import connections
+from django.db import connection, connections
 from django.test import TransactionTestCase
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone as django_tz
 from django_test_migrations.migrator import Migrator
 
@@ -743,3 +744,127 @@ class TestSeedMarketingUrls(TransactionTestCase):
             SspProduct.objects.get(slug='teams-yearly').marketing_url,
             'https://example.com/custom',
         )
+
+
+class TestBackfillEnterpriseStripeCustomer(TransactionTestCase):
+    """
+    Tests for migration 0044, which backfills EnterpriseStripeCustomer from CheckoutIntent (ENT-12509).
+    """
+
+    migrate_from = [('customer_billing', '0043_enterprisestripecustomer')]
+    migrate_to = [('customer_billing', '0044_backfill_enterprise_stripe_customers')]
+
+    def setUp(self):
+        super().setUp()
+        self.migrator = Migrator(database='default')
+        self.old_state = self.migrator.apply_initial_migration(self.migrate_from)
+
+    def tearDown(self):
+        connections['default'].close()
+        self.migrator.reset()
+        super().tearDown()
+
+    def _create_checkout_intent(self, enterprise_uuid, stripe_customer_id, days_ago):
+        """
+        Create a CheckoutIntent created ``days_ago`` days ago, with the historical model.
+        """
+        User = self.old_state.apps.get_model('core', 'User')
+        CheckoutIntent = self.old_state.apps.get_model('customer_billing', 'CheckoutIntent')
+        intent = CheckoutIntent.objects.create(
+            user=User.objects.create(username=f'user_{uuid4().hex[:8]}', email=f'{uuid4().hex}@example.com'),
+            enterprise_uuid=enterprise_uuid,
+            stripe_customer_id=stripe_customer_id,
+            quantity=5,
+            expires_at=django_tz.now() + timedelta(hours=1),
+            country='US',
+        )
+        # ``created`` is set on insert, so it can only be backdated afterwards.
+        CheckoutIntent.objects.filter(pk=intent.pk).update(created=django_tz.now() - timedelta(days=days_ago))
+        return intent
+
+    def test_backfill_maps_each_enterprise_to_its_newest_checkout_intent_customer(self):
+        """
+        The newest CheckoutIntent with a Stripe customer wins; NULL and empty customer IDs and intents with no
+        enterprise are skipped.
+        """
+        newest_wins, skips_missing_ids, no_customer = uuid4(), uuid4(), uuid4()
+        self._create_checkout_intent(newest_wins, 'cus_old', days_ago=3)
+        self._create_checkout_intent(newest_wins, 'cus_new', days_ago=1)
+        self._create_checkout_intent(skips_missing_ids, 'cus_only_valid', days_ago=5)
+        self._create_checkout_intent(skips_missing_ids, None, days_ago=2)
+        self._create_checkout_intent(skips_missing_ids, '', days_ago=1)
+        self._create_checkout_intent(no_customer, None, days_ago=1)
+        self._create_checkout_intent(no_customer, '', days_ago=2)
+        self._create_checkout_intent(None, 'cus_unprovisioned', days_ago=1)
+
+        new_state = self.migrator.apply_tested_migration(self.migrate_to)
+
+        EnterpriseStripeCustomer = new_state.apps.get_model('customer_billing', 'EnterpriseStripeCustomer')
+        HistoricalEnterpriseStripeCustomer = new_state.apps.get_model(
+            'customer_billing', 'HistoricalEnterpriseStripeCustomer',
+        )
+        expected_mappings = {
+            (newest_wins, 'cus_new', 'checkout_intent_backfill'),
+            (skips_missing_ids, 'cus_only_valid', 'checkout_intent_backfill'),
+        }
+        mapping_fields = ('enterprise_customer_uuid', 'stripe_customer_id', 'source')
+        self.assertEqual(set(EnterpriseStripeCustomer.objects.values_list(*mapping_fields)), expected_mappings)
+        # Each new mapping gets its initial history record.
+        self.assertEqual(
+            set(HistoricalEnterpriseStripeCustomer.objects.values_list(*mapping_fields, 'history_type')),
+            {mapping + ('+',) for mapping in expected_mappings},
+        )
+
+    def test_backfill_reruns_safely_with_constant_queries_and_reverse_keeps_checkout_intents(self):
+        """
+        Running the backfill again keeps existing mappings and maps only new enterprises, each with one initial history
+        record, in a number of queries that doesn't grow with the enterprises. Reversing the backfill changes
+        nothing: CheckoutIntents and mappings stay as they were.
+        """
+        changed_enterprise = uuid4()
+        self._create_checkout_intent(changed_enterprise, 'cus_checkout', days_ago=1)
+        new_state = self.migrator.apply_tested_migration(self.migrate_to)
+        EnterpriseStripeCustomer = new_state.apps.get_model('customer_billing', 'EnterpriseStripeCustomer')
+        EnterpriseStripeCustomer.objects.filter(enterprise_customer_uuid=changed_enterprise).update(
+            stripe_customer_id='cus_top_up', source='created_for_top_up',
+        )
+        backfill = import_module(
+            'enterprise_access.apps.customer_billing.migrations.0044_backfill_enterprise_stripe_customers'
+        ).backfill_enterprise_stripe_customers
+
+        query_counts = []
+        for new_enterprises in (1, 4):
+            for _ in range(new_enterprises):
+                self._create_checkout_intent(uuid4(), f'cus_{uuid4().hex[:8]}', days_ago=1)
+            with CaptureQueriesContext(connection) as queries:
+                backfill(new_state.apps, None)
+            query_counts.append(len(queries))
+
+        self.assertEqual(query_counts[0], query_counts[1])
+        self.assertEqual(EnterpriseStripeCustomer.objects.count(), 6)
+        HistoricalEnterpriseStripeCustomer = new_state.apps.get_model(
+            'customer_billing', 'HistoricalEnterpriseStripeCustomer',
+        )
+        # One '+' record per mapping: the rerun didn't repeat the first run's records.
+        self.assertEqual(
+            sorted(HistoricalEnterpriseStripeCustomer.objects.values_list('id', 'history_type')),
+            sorted((mapping_id, '+') for mapping_id in EnterpriseStripeCustomer.objects.values_list('id', flat=True)),
+        )
+        self.assertEqual(
+            EnterpriseStripeCustomer.objects.values_list('stripe_customer_id', 'source').get(
+                enterprise_customer_uuid=changed_enterprise,
+            ),
+            ('cus_top_up', 'created_for_top_up'),
+        )
+
+        def snapshot(state):
+            CheckoutIntent = state.apps.get_model('customer_billing', 'CheckoutIntent')
+            EnterpriseStripeCustomer = state.apps.get_model('customer_billing', 'EnterpriseStripeCustomer')
+            return (
+                set(CheckoutIntent.objects.values_list('id', 'enterprise_uuid', 'stripe_customer_id')),
+                set(EnterpriseStripeCustomer.objects.values_list('id', 'stripe_customer_id', 'source')),
+            )
+
+        before_reverse = snapshot(new_state)
+        reversed_state = self.migrator.apply_tested_migration(self.migrate_from)
+        self.assertEqual(snapshot(reversed_state), before_reverse)

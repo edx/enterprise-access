@@ -1,7 +1,7 @@
 """Tests for the enterprise-access feature toggles."""
 import pytest
-from edx_toggles.toggles import WaffleSwitch
-from edx_toggles.toggles.testutils import override_waffle_switch
+from edx_toggles.toggles import WaffleFlag, WaffleSwitch
+from edx_toggles.toggles.testutils import override_waffle_flag, override_waffle_switch
 
 from enterprise_access import toggles
 
@@ -71,3 +71,58 @@ def test_reranking_is_on_by_default_because_its_switch_is_a_kill_switch():
 def test_reranking_stops_when_the_kill_switch_is_on():
     with override_waffle_switch(toggles.LEARNER_PATHWAYS_DISABLE_CANDIDATE_RERANK, True):
         assert toggles.learner_pathways_candidate_rerank_enabled() is False
+
+
+def test_personalized_search_is_a_per_user_flag():
+    """Personalized Search rolls out per user, so it's a ``WaffleFlag`` (unlike the pathway switches)."""
+    assert isinstance(toggles.PERSONALIZED_SEARCH_ENABLED, WaffleFlag)
+
+
+def test_flags_cannot_be_overridden_from_the_url(settings):
+    """
+    ``?enterprise_access.personalized_search_enabled=1`` must not turn the endpoints on. django-waffle
+    only honours such overrides when WAFFLE_OVERRIDE is set, so keep it unset.
+    """
+    assert not getattr(settings, 'WAFFLE_OVERRIDE', False)
+
+
+@pytest.mark.django_db
+def test_personalized_search_is_off_by_default_and_can_be_enabled():
+    assert toggles.personalized_search_enabled() is False
+    with override_waffle_flag(toggles.PERSONALIZED_SEARCH_ENABLED, active=True):
+        assert toggles.personalized_search_enabled() is True
+
+
+def test_ssp_paid_renewal_toggle_is_a_switch():
+    """It is read in webhook handlers and Celery tasks, where there is no request to evaluate a flag against."""
+    assert isinstance(toggles.SSP_PAID_RENEWAL, WaffleSwitch)
+
+
+@pytest.mark.django_db
+def test_ssp_paid_renewal_is_disabled_by_default():
+    """A switch that has never been created reads as off, so existing behaviour runs until it is turned on."""
+    assert toggles.ssp_paid_renewal_enabled() is False
+
+
+@pytest.mark.django_db
+def test_ssp_paid_renewal_can_be_enabled():
+    with override_waffle_switch(toggles.SSP_PAID_RENEWAL, True):
+        assert toggles.ssp_paid_renewal_enabled() is True
+
+
+@pytest.mark.django_db
+def test_personalized_search_suggested_order_is_off_by_default_and_can_be_enabled():
+    """A switch, read by the turn view and the offline harness alike."""
+    assert isinstance(toggles.PERSONALIZED_SEARCH_SUGGESTED_ORDER, WaffleSwitch)
+    assert toggles.personalized_search_suggested_order_enabled() is False
+    with override_waffle_switch(toggles.PERSONALIZED_SEARCH_SUGGESTED_ORDER, True):
+        assert toggles.personalized_search_suggested_order_enabled() is True
+
+
+@pytest.mark.django_db
+def test_personalized_search_retention_purge_is_off_by_default_and_can_be_enabled():
+    """Irreversible, so off until someone turns it on (architecture pattern 20)."""
+    assert isinstance(toggles.PERSONALIZED_SEARCH_RETENTION_PURGE, WaffleSwitch)
+    assert toggles.personalized_search_retention_purge_enabled() is False
+    with override_waffle_switch(toggles.PERSONALIZED_SEARCH_RETENTION_PURGE, True):
+        assert toggles.personalized_search_retention_purge_enabled() is True

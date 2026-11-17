@@ -14,7 +14,14 @@ from djangoql.admin import DjangoQLSearchMixin
 from simple_history.admin import SimpleHistoryAdmin
 
 from .constants import CheckoutIntentState
-from .models import CheckoutIntent, SelfServiceSubscriptionRenewal, SspProduct, StripeEventData, StripeEventSummary
+from .models import (
+    CheckoutIntent,
+    EnterpriseStripeCustomer,
+    SelfServiceSubscriptionRenewal,
+    SspProduct,
+    StripeEventData,
+    StripeEventSummary
+)
 from .stripe_event_handlers import StripeEventHandler
 
 logger = logging.getLogger(__name__)
@@ -424,3 +431,24 @@ class SelfServiceSubscriptionRenewalAdmin(DjangoQLSearchMixin, admin.ModelAdmin)
     def get_queryset(self, request):
         """Optimize queries by selecting related checkout_intent."""
         return super().get_queryset(request).select_related('checkout_intent')
+
+
+@admin.register(EnterpriseStripeCustomer)
+class EnterpriseStripeCustomerAdmin(DjangoQLSearchMixin, SimpleHistoryAdmin):
+    """
+    View-only: the Stripe customer billing management uses for each enterprise, which wins over the customer on its
+    CheckoutIntent. Rows come from migration 0044's backfill and get_or_create_enterprise_stripe_customer().
+    """
+    list_display = ('enterprise_customer_uuid', 'stripe_customer_id', 'source', 'created', 'modified')
+    list_filter = ('source',)
+    search_fields = ('enterprise_customer_uuid', 'stripe_customer_id')
+    ordering = ('-created',)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
