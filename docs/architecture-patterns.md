@@ -204,16 +204,20 @@ Cloudflare, and a TLS handshake is occasionally dropped (`SSLError ... UNEXPECTE
   the NAT gateway silently drops connections idle for 350s, and a POST sent on one can't safely be retried. It's
   per thread rather than per request because nothing clears `RequestCache` between Celery tasks.
 - **Retries happen in urllib3, not in `@backoff` around a client method**, because only urllib3 knows whether the
-  request was sent. A failure to connect, including a dropped handshake, is retried for any method; a connection
-  that broke after a GET was sent is retried once. `SubsidyClientRetry` stops two resends urllib3 would otherwise
-  make: a request that timed out waiting for a response (urllib3 counts that as a read error, so it would rerun a
-  slow transactions export), and a POST after an `SSLError` raised while reading the response. HTTP responses are
-  never retried: `respect_retry_after_header=False` matters, because otherwise a 503 with `Retry-After` comes back
-  as a `RetryError` instead of an `HTTPError`, and skips every `except HTTPError` handler.
+  request was sent. A failure to connect (refused, DNS, connect timeout) is retried for any method. A dropped
+  handshake is retried only for a GET: urllib3 raises the same `SSLError` for it as for a response cut off after the
+  request was sent, so a POST (a redeem, say) is never resent after one. A connection that broke after a GET was
+  sent is retried once. `SubsidyClientRetry` stops two resends urllib3 would otherwise make: a request that timed
+  out waiting for a response (urllib3 counts that as a read error, so it would rerun a slow transactions export),
+  and a POST after any `SSLError` (urllib3 retries those for every method). HTTP responses are never retried:
+  `respect_retry_after_header=False` matters, because otherwise a 503 with `Retry-After` comes back as a
+  `RetryError` instead of an `HTTPError`, and skips every `except HTTPError` handler.
 - **Connection errors aren't `HTTPError`s.** `SSLError`, `ConnectionError` and `Timeout` get past the
   `except HTTPError` handlers in `subsidy_record()`, `credit_available()` and `LmsApiClient.get_enterprise_user()`.
   A view that calls the Subsidy API should turn them into `SubsidyAPIUnavailableException` (503), as
-  `credits_available` does; such a handler also catches LMS and catalog failures, so don't name the Subsidy API in
+  `credits_available` does. It should catch `HTTPError` there too: a 5xx (a Cloudflare 525, a 502) isn't retried,
+  and `aggregates_for_policy()` doesn't catch it. Inner handlers that mean to handle an `HTTPError` (a soft-deleted
+  subsidy's 404) run first. Such a handler also catches LMS and catalog failures, so don't name the Subsidy API in
   its log message.
 - **To test retries end to end**, patch `urllib3.connectionpool.HTTPConnectionPool._make_request` with one outcome
   per attempt (see `GetVersionedSubsidyClientTests`). Patching higher, e.g. `HTTPAdapter.send`, skips the retry

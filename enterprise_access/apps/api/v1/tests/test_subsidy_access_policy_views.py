@@ -1665,11 +1665,15 @@ class TestSubsidyAccessPolicyRedeemViewset(APITestWithMocks):
         ('list_subsidy_transactions', ConnectTimeout()),
         ('list_subsidy_transactions', ReadTimeout()),
         ('retrieve_subsidy', RequestsConnectionError()),
+        # HTTP responses aren't retried, so a 5xx from the aggregates lookup reaches the view as an HTTPError.
+        ('list_subsidy_transactions', HTTPError(response=MockResponse({}, 525))),
+        ('list_subsidy_transactions', HTTPError(response=MockResponse({}, status.HTTP_502_BAD_GATEWAY))),
     )
     @ddt.unpack
     def test_credits_available_endpoint_subsidy_api_unreachable(self, failing_client_method, error):
         """
-        Verify that credits_available returns a 503, not a 500, when the Subsidy API can't be reached.
+        Verify that credits_available returns a 503, not a 500, when the Subsidy API can't be reached or answers
+        with a 5xx.
         """
         self.subsidy_client.retrieve_subsidy.return_value = {'is_active': True, 'current_balance': 5000}
         getattr(self.subsidy_client, failing_client_method).side_effect = error

@@ -659,11 +659,12 @@ class SubsidyAccessPolicyRedeemViewset(UserDetailsFromJwtMixin, PermissionRequir
                     'lms_user_id': lms_user_id,
                 },
             ).data
-        except (RequestsConnectionError, Timeout) as exc:
+        except (RequestsConnectionError, HTTPError, Timeout) as exc:
             # Mostly the Subsidy API, whose connection failures were already retried (see
             # get_versioned_subsidy_client()), but the LMS and catalog are called here too. The traceback names
-            # the host.
-            logger.exception('Could not reach an upstream service for credits-available for customer %s',
+            # the host. HTTPError covers 5xx responses (a Cloudflare 525, a 502), which aren't retried; an
+            # HTTPError a policy check handles itself (a soft-deleted subsidy's 404) never gets here.
+            logger.exception('An upstream service failed during credits-available for customer %s',
                              enterprise_customer_uuid)
             raise SubsidyAPIUnavailableException() from exc
 

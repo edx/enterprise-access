@@ -50,9 +50,11 @@ class SubsidyClientRetry(Retry):
         return super().increment(method, url, response, error, _pool, _stacktrace)
 
 
-# At most 3 attempts. A failure to connect (including a dropped TLS handshake) is retried for any method,
-# since the request was never sent. A connection that broke after a GET was sent is retried once, unless it timed
-# out. HTTP responses, even a 503 with Retry-After, are never retried: they go back to the caller as they are.
+# At most 3 attempts. A failure to connect (refused, DNS, connect timeout) is retried for any method, since the
+# request was never sent. A dropped TLS handshake is retried only for a GET: it raises the same SSLError as a
+# response cut off after the request was sent, so a POST is never resent after one. A connection that broke after a
+# GET was sent is retried once, unless it timed out. HTTP responses, even a 503 with Retry-After, are never retried:
+# they go back to the caller as they are.
 SUBSIDY_CLIENT_RETRY = SubsidyClientRetry(
     total=2,
     read=1,
