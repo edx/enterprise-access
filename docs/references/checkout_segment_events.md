@@ -22,7 +22,7 @@ enterprise-access Segment source, not the checkout MFE's; join them to the MFE's
 ## How it is sent
 No table of its own: it relies on `StripeEventData` / `StripeEventSummary`, which every webhook already persists.
 * The webhook handlers queue `send_checkout_segment_event_task`. A broker error fails the webhook, and Stripe
-  redelivers it (pattern 25 in `docs/architecture-patterns.md`).
+  redelivers it (pattern 26 in `docs/architecture-patterns.md`).
 * Each order has exactly one triggering Stripe event, so the handlers queue the task once per Stripe event: a
   redelivery of an event whose `StripeEventData.handled_at` is set queues nothing. The task is queued as the
   handler's last step, so a delivery whose handler fails queues nothing: Stripe redelivers it for up to three days,
