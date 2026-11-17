@@ -19,8 +19,8 @@ The event dictionary for Personalized Search (tech spec KD-12, REQ-017). Registe
 | `enterprise_customer_uuid` | uuid | The enterprise the turn ran in |
 | `cohort` | string | `PERSONALIZED_SEARCH_ANALYTICS_COHORT`, e.g. `internal_pilot` or `public` |
 | `engine` | string | `PERSONALIZED_SEARCH_ENGINE_LABEL`, e.g. `b2b_mvp_v1` |
-| `is_debug` | bool | The turn used debug model overrides (not merely an environment that allows them) |
-| `viewport` | string | Portal events only: the Paragon breakpoint name |
+| `is_debug` | bool | The turn used debug mode: debug model overrides or the debug catalog (not merely an environment that allows them) |
+| `viewport` | string | Portal events only: `desktop` or `mobile` |
 
 The turn-scoped keys are null on tab and history events and on the first `chat.prompt_submitted` of a conversation, which fire before any conversation or turn exists: register them as nullable. Server session events (`history.session-opened`, `history.session-resumed`, `history.session-deleted`) carry no `turn_id`, and `history.session-opened` no `turn_index`.
 
@@ -79,7 +79,7 @@ Item events also carry `item_key` and `item_type`. Array properties hold primiti
 ## Not sent yet
 
 - `profile_updated`: there is no preference editor.
-- `history_session_renamed` and `history_session_deleted`: there are no rename or delete endpoints.
+- `history_session_renamed`: there is no rename endpoint. (Deletes are sent: `history.session-deleted` and the portal's `history.history_session_deleted`.)
 - `learning_page_viewed`: results update in place; reopening is `history.session-opened`.
 - `ontology_signals_used` and `opening_source`: there is no ontology or opening set.
 - `subsidy_covered` and `enrollable_count`: there is no coverage source. Picks come from the learner's entitled catalog scope by construction.
