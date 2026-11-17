@@ -117,9 +117,16 @@ class TestQueryConstruction(TestCase):
     def test_hard_filters(self, industries, job_sources, expected):
         assert pathways_api.build_career_filters(industries=industries, job_sources=job_sources) == expected
 
-    def test_filter_values_are_quote_escaped(self):
-        built = pathways_api.build_career_filters(industries=['Say "Yes"'], job_sources=[])
-        assert built == 'metadata_language:en AND (industry_names:"Say \\"Yes\\"")'
+    @ddt.data(
+        ('Say "Yes"', 'industry_names:"Say \\"Yes\\""'),
+        # A trailing backslash would otherwise escape the closing quote and break the whole filter.
+        ('C\\', 'industry_names:"C\\\\"'),
+        ('a\\"b', 'industry_names:"a\\\\\\"b"'),
+    )
+    @ddt.unpack
+    def test_filter_values_are_escaped(self, value, expected_clause):
+        built = pathways_api.build_career_filters(industries=[value], job_sources=[])
+        assert built == f'metadata_language:en AND ({expected_clause})'
 
     def test_required_skills_are_unscored_and_preferred_are_scored(self):
         optional_filters = pathways_api.build_optional_skill_filters(

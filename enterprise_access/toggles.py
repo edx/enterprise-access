@@ -27,6 +27,102 @@ def enable_multi_license_entitlements_bff():
     return ENABLE_MULTI_LICENSE_ENTITLEMENTS_BFF.is_enabled()
 
 
+# .. toggle_name: enterprise_access.personalized_search_enabled
+# .. toggle_implementation: WaffleFlag
+# .. toggle_default: False
+# .. toggle_description: Turns on the Personalized Search (chat) endpoints under
+#     /api/v1/personalized-search/ for the users it is enabled for; everyone else gets 404.
+#     A WaffleFlag, so it rolls out per user, group or percentage. The learner portal shows the
+#     tab from the LMS flag enterprise.personalized_search_enabled; enable this one first, for the
+#     same users, so a visible tab never meets a 404.
+# .. toggle_warning: Do not enable this outside stage until learner-data retirement ships: the chat tables
+#     keep learner-written text and the PII retirement path is deferred (see apps/personalized_search/models.py).
+#     Unlike the pathway switches, this is a flag so it can roll out per user. It is
+#     safe from URL overrides only while WAFFLE_OVERRIDE is off (the django-waffle default; asserted
+#     in tests) and the flag's own "Testing" mode is never turned on in Django admin.
+# .. toggle_use_cases: open_edx
+# .. toggle_creation_date: 2026-11-03
+PERSONALIZED_SEARCH_ENABLED = WaffleFlag(
+    f'{ENTERPRISE_ACCESS_NAMESPACE}.personalized_search_enabled',
+    __name__,
+    ENTERPRISE_ACCESS_LOG_PREFIX,
+)
+
+
+def personalized_search_enabled():
+    """Return whether the Personalized Search endpoints are on for the current request's user."""
+    return PERSONALIZED_SEARCH_ENABLED.is_enabled()
+
+
+# .. toggle_name: enterprise_access.personalized_search_debug
+# .. toggle_implementation: WaffleFlag
+# .. toggle_default: False
+# .. toggle_description: Lets the users it is enabled for use Personalized Search debug mode (the portal's
+#     ?debug=true): per-turn model overrides, the debug catalog, the debug read-out and the debug menu.
+#     enterprise-access superusers have debug mode without it. Debug mode also needs the environment switch
+#     PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED; with that off, nobody has it.
+# .. toggle_warning: Add specific users only. Don't set Everyone, a percentage or Staff: debug overrides pick
+#     costlier models and the read-out shows token and cost detail. Safe from URL overrides only while
+#     WAFFLE_OVERRIDE is off and the flag's "Testing" mode is never turned on in Django admin.
+# .. toggle_use_cases: open_edx
+# .. toggle_creation_date: 2026-11-12
+PERSONALIZED_SEARCH_DEBUG = WaffleFlag(
+    f'{ENTERPRISE_ACCESS_NAMESPACE}.personalized_search_debug',
+    __name__,
+    ENTERPRISE_ACCESS_LOG_PREFIX,
+)
+
+
+def personalized_search_debug_enabled():
+    """Return whether the current request's user is on the Personalized Search debug flag."""
+    return PERSONALIZED_SEARCH_DEBUG.is_enabled()
+
+
+# .. toggle_name: enterprise_access.personalized_search_suggested_order
+# .. toggle_implementation: WaffleSwitch
+# .. toggle_default: False
+# .. toggle_description: Shows the Personalized Search "suggested order" (the plan block) in the results. When off,
+#     the compose prompt doesn't ask for a plan, any plan the model writes is dropped, and the server doesn't add
+#     one when the learner asks what to take first. A switch, not a flag, so the turn view and the offline harness
+#     (which has no request) read the same value.
+# .. toggle_use_cases: open_edx
+# .. toggle_creation_date: 2026-11-13
+PERSONALIZED_SEARCH_SUGGESTED_ORDER = WaffleSwitch(
+    f'{ENTERPRISE_ACCESS_NAMESPACE}.personalized_search_suggested_order',
+    __name__,
+)
+
+
+def personalized_search_suggested_order_enabled():
+    """Return whether Personalized Search results include the suggested order (plan block)."""
+    return PERSONALIZED_SEARCH_SUGGESTED_ORDER.is_enabled()
+
+
+# Off by default, like other irreversible behavior (architecture pattern 20): the cron job runs nightly but deletes
+# nothing until someone turns this on.
+#
+# .. toggle_name: enterprise_access.personalized_search_retention_purge
+# .. toggle_implementation: WaffleSwitch
+# .. toggle_default: False
+# .. toggle_description: Lets the Personalized Search 30-day retention purge (``purge_personalized_search_sessions``,
+#     run daily by a cron job) delete. When on, each run deletes every conversation 30 days after its last message,
+#     keeping learners' saved items. When off (the default), the run logs how many it would delete and deletes
+#     nothing; ``--dry-run`` reports the same either way. A learner's own delete from History is not affected.
+# .. toggle_warning: Deletes are permanent. The first run after turning it on deletes everything already past 30
+#     days, so check a ``--dry-run`` first. Turning it off again only stops later runs.
+# .. toggle_use_cases: open_edx
+# .. toggle_creation_date: 2026-11-16
+PERSONALIZED_SEARCH_RETENTION_PURGE = WaffleSwitch(
+    f'{ENTERPRISE_ACCESS_NAMESPACE}.personalized_search_retention_purge',
+    __name__,
+)
+
+
+def personalized_search_retention_purge_enabled():
+    """Return whether the Personalized Search retention purge may delete (its switch is on)."""
+    return PERSONALIZED_SEARCH_RETENTION_PURGE.is_enabled()
+
+
 # A ``WaffleSwitch`` rather than a ``WaffleFlag``, deliberately. A switch is a single
 # global boolean an administrator sets in Django admin; it takes no request, so it cannot
 # be turned on per-user, by percentage, or by a ``?flag=1`` query string. Two consequences

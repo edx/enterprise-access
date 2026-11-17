@@ -94,6 +94,7 @@ PROJECT_APPS = (
     'enterprise_access.apps.prompts',
     'enterprise_access.apps.pathway_eval',
     'enterprise_access.apps.pathways',
+    'enterprise_access.apps.personalized_search',
 )
 
 INSTALLED_APPS += THIRD_PARTY_APPS
@@ -193,6 +194,7 @@ REST_FRAMEWORK = {
         # with several Algolia searches and, when the re-rank backend is enabled, a paid
         # model call. The cost per request is an order of magnitude above the others here.
         'learner_pathways_pathway': '30/hour',
+        'personalized_search_turn': '20/min',
         # Low on purpose: each export holds one of the 2 sync gunicorn workers for the whole download.
         'learner_credit_transactions_export': '12/hour',
     },
@@ -539,9 +541,15 @@ ALGOLIA_APP_ID = ''
 ALGOLIA_SEARCH_API_KEY = ''
 ALGOLIA_CATALOG_INDEX_NAME = ''
 ALGOLIA_JOBS_INDEX_NAME = ''
-# Escape hatch for the offline retrieval diagnostic, which has no request and therefore
-# no per-user secured key to vend. Enables searching the catalog index *unscoped* with the
-# plain search key. Must stay False anywhere a learner response could be built from it.
+# Escape hatch for searches with no per-user secured key: the offline retrieval diagnostic, and
+# Personalized Search's debug catalog scope (debug turns and its offline harness). Enables searching
+# the catalog index *unscoped* with a plain key, only for a caller whose scope asks for it
+# (``allow_unscoped``, set from settings, never from a request). An environment turns it on for the
+# debug catalog (PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE), which only debug turns by debug-allowed
+# users reach (PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED plus a superuser or the
+# personalized_search_debug flag); Personalized Search's catalog adapter refuses it for every other
+# turn. The gate is service-wide: turning it on also lets the offline Pathways commands search
+# unscoped with --unscoped. Leave it False wherever nothing needs it.
 ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH = False
 
 # The server-side learner pathways pipeline (apps/pathways) is gated by a waffle switch,
@@ -564,6 +572,67 @@ ANTHROPIC_API_KEY = ''
 PATHWAYS_CLAUDE_MODEL = 'claude-sonnet-5'
 OPENAI_API_KEY = ''
 PATHWAYS_OPENAI_MODEL = 'gpt-4o'
+
+# Personalized Search (Chat). Spec step timeouts in seconds: intent 3, compose 5 per read; each is also
+# capped by the time left before the 20 s turn deadline.
+PERSONALIZED_SEARCH_INTENT_TIMEOUT_S = 3
+PERSONALIZED_SEARCH_COMPOSE_READ_TIMEOUT_S = 5
+# Per-step models (KD-2 amended; OQ-8 re-decided 2026-11-10 by the November model spike: gpt-6-luna for both
+# steps; gpt-4.1-mini, the previous intent model, shuts down 2027-01-14): any PERSONALIZED_SEARCH_OPENAI_MODELS
+# entry. Effort is the reasoning_effort sent to GPT-5 and later models; None means the family's lowest setting.
+PERSONALIZED_SEARCH_INTENT_MODEL = 'gpt-6-luna'
+PERSONALIZED_SEARCH_INTENT_EFFORT = None
+PERSONALIZED_SEARCH_COMPOSE_MODEL = 'gpt-6-luna'
+PERSONALIZED_SEARCH_COMPOSE_EFFORT = None
+# How many candidates the compose step chooses from, by compose model (else the default). In the November 2026
+# comparison a 40-candidate list lifted gpt-6.1-terra's quality, while gpt-6-luna gained nothing significant.
+PERSONALIZED_SEARCH_SHORTLIST_SIZE = 20
+PERSONALIZED_SEARCH_SHORTLIST_SIZES = {'gpt-6.1-terra': 40}
+# The OpenAI models a turn may use (the allowlist), with standard-tier USD prices per 1M tokens
+# (input, cached input, output) used only for the debug cost read-out.
+PERSONALIZED_SEARCH_OPENAI_MODELS = {
+    'gpt-4o': (2.50, 1.25, 10.00),
+    'gpt-4o-mini': (0.15, 0.075, 0.60),
+    'gpt-4.1': (2.00, 0.50, 8.00),
+    'gpt-4.1-mini': (0.40, 0.10, 1.60),
+    'gpt-5': (1.25, 0.125, 10.00),
+    'gpt-5-mini': (0.25, 0.025, 2.00),
+    'gpt-5-nano': (0.05, 0.005, 0.40),
+    'gpt-5.1': (1.25, 0.125, 10.00),
+    'gpt-5.2': (1.75, 0.175, 14.00),
+    'gpt-5.4': (2.50, 0.25, 15.00),
+    'gpt-5.4-mini': (0.75, 0.075, 4.50),
+    'gpt-5.4-nano': (0.20, 0.02, 1.25),
+    'gpt-5.5': (5.00, 0.50, 30.00),
+    'gpt-5.6-luna': (0.20, 0.02, 1.20),
+    'gpt-5.6-terra': (2.00, 0.20, 12.00),
+    'gpt-5.6-sol': (4.00, 0.40, 20.00),
+    'gpt-6-luna': (0.10, 0.01, 0.50),
+    'gpt-6.1-terra': (1.00, 0.05, 5.00),
+    'gpt-6.1-sol': (2.00, 0.10, 10.00),
+    'gpt-6-astra': (10.00, 1.00, 50.00),
+}
+# The Xpert platform (model id 'xpert') is available once XPERT_API_BASE_URL and XPERT_API_CLIENT_ID are
+# set; its calls use XPERT_REQUEST_TIMEOUT instead of the step timeouts above.
+# Turns debug mode on for this environment. Even then, only enterprise-access superusers and users on the
+# enterprise_access.personalized_search_debug flag get it: their turn requests may carry a ``debug`` object
+# that overrides the per-step models and efforts (and selects the debug catalog), and their stream's timing
+# part carries token and cost detail. Everyone else's ``debug`` object is ignored.
+PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED = False
+# The catalog a turn searches when its request carries the ``debug`` flag (the portal's ``?debug=true``)
+# and PERSONALIZED_SEARCH_DEBUG_OVERRIDES_ENABLED is on, so debug users can see results from a chosen
+# catalog in any environment that enables debug mode: ``{'filter': '<algolia filter>', 'label': '<text>'}``
+# plus optional ``'app_id'``, ``'search_api_key'`` and ``'index_name'`` for another Algolia app or index
+# (e.g. the 2U customer in the prod catalog). It uses that plain search key with the filter, so it also needs
+# ALGOLIA_ALLOW_UNSCOPED_CATALOG_SEARCH. Turns without the debug flag always search with the learner's
+# secured key, and the catalog adapter refuses an unscoped search for them.
+PERSONALIZED_SEARCH_DEBUG_CATALOG_SCOPE = None
+# Tags on every Personalized Search usage event (tech spec KD-12): the release cohort and the engine.
+PERSONALIZED_SEARCH_ANALYTICS_COHORT = 'internal_pilot'
+# Portal locale -> Algolia `language` facet name for Personalized Search content, as Learner Pathways'
+# SUPPORTED_ALGOLIA_LANGUAGE_FILTERS. The catalog has `metadata_language` records for these; others use English.
+PERSONALIZED_SEARCH_CONTENT_LANGUAGES = {'en': 'English', 'es': 'Spanish'}
+PERSONALIZED_SEARCH_ENGINE_LABEL = 'b2b_mvp_v1'
 
 # The enterprise customer the evaluation harness scopes to (Open Decision 1). Production
 # requests take the customer from the request; this is only for offline runs, which have
