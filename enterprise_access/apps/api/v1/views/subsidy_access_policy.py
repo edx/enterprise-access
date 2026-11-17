@@ -55,6 +55,7 @@ from enterprise_access.apps.subsidy_access_policy.constants import (
     REASON_LEARNER_MAX_SPEND_REACHED,
     REASON_LEARNER_NOT_ASSIGNED_CONTENT,
     REASON_LEARNER_NOT_IN_ENTERPRISE,
+    REASON_LEARNER_NOT_IN_ENTERPRISE_GROUP,
     REASON_NOT_ENOUGH_VALUE_IN_SUBSIDY,
     REASON_POLICY_EXPIRED,
     REASON_POLICY_SPEND_LIMIT_REACHED,
@@ -168,6 +169,28 @@ def policy_permission_detail_fn(request, *args, uuid=None, **kwargs):
     return utils.get_policy_customer_uuid(uuid)
 
 
+# Reasons from a policy that doesn't apply to this learner or content at all.
+NOT_APPLICABLE_POLICY_REASONS = {
+    REASON_CONTENT_NOT_IN_CATALOG,
+    REASON_LEARNER_NOT_ASSIGNED_CONTENT,
+    REASON_LEARNER_NOT_IN_ENTERPRISE_GROUP,
+}
+EXPIRED_POLICY_REASONS = {REASON_POLICY_EXPIRED, REASON_SUBSIDY_EXPIRED}
+
+
+def _display_reason_rank(reason_slug):
+    """
+    Rank a non-redeemable reason by how useful it is to show the learner, lowest first. A policy that applies but
+    blocks the learner (e.g. a per-learner spend limit) explains more than a policy that doesn't apply, which in turn
+    explains more than a policy that has expired.
+    """
+    if reason_slug in EXPIRED_POLICY_REASONS:
+        return 2
+    if reason_slug in NOT_APPLICABLE_POLICY_REASONS:
+        return 1
+    return 0
+
+
 def _get_reasons_for_no_redeemable_policies(enterprise_customer_uuid, non_redeemable_policies_by_reason):
     """
     Serialize a reason for non-redeemability, and fetch enterprise admin user that learner can contact,
@@ -180,8 +203,10 @@ def _get_reasons_for_no_redeemable_policies(enterprise_customer_uuid, non_redeem
         to lists of policy records for which that reason holds.
 
     Returns:
-      A list of dictionaries, one per reason, that contains the reason constant, a user-facing
-      message, and a list of policy UUIDs for which that reason holds.
+      A tuple of (reasons, display_reason). ``reasons`` is a list of dictionaries, one per reason, that contains
+      the reason constant, a user-facing message, and a list of policy UUIDs for which that reason holds.
+      ``display_reason`` is the reason to show the learner: the first reason with the lowest
+      ``_display_reason_rank``.
     """
     reasons = []
     display_reason = None
@@ -200,10 +225,11 @@ def _get_reasons_for_no_redeemable_policies(enterprise_customer_uuid, non_redeem
             "policy_uuids": [policy.uuid for policy in policies],
         })
 
-    # Validate a reason exist before picking the most relevant reason already assumed to
-    # be the first item in the list of non-redeemable policies sorted by the most salient policy
+    # Reasons are ordered by policy (type priority, then soonest expiration), so the first reason can come from an
+    # expired policy or one that doesn't apply, and mask the reason that actually blocks the learner. min() keeps
+    # that order within a rank.
     if len(reasons) > 0:
-        display_reason = reasons[0]
+        display_reason = min(reasons, key=lambda reason: _display_reason_rank(reason['reason']))
 
     return reasons, display_reason
 
