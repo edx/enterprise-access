@@ -53,6 +53,7 @@ from enterprise_access.apps.customer_billing.pricing_api import (
 from enterprise_access.apps.customer_billing.stripe_api import get_stripe_customer
 from enterprise_access.apps.customer_billing.stripe_event_handlers import StripeEventHandler
 from enterprise_access.apps.subsidy_access_policy.models import SubsidyAccessPolicy
+from enterprise_access.toggles import ssp_paid_renewal_enabled
 
 from .constants import CHECKOUT_INTENT_EXAMPLES, ERROR_RESPONSES, PATCH_REQUEST_EXAMPLES
 from .subsidy_access_policy import SubsidyAPIUnavailableException
@@ -646,9 +647,34 @@ def stripe_event_summary_permission_detail_fn(request, *args, **kwargs):
     ).select_related(
         'checkout_intent',
     ).first()
-    if not (summary and summary.checkout_intent):
+    if summary and summary.checkout_intent:
+        return summary.checkout_intent.enterprise_uuid
+
+    # Event summaries carry the trial plan's uuid only, so the first paid plan is found through its renewal.
+    # Behind the ssp_paid_renewal switch, so admins see no change until the new cancellation flow launches.
+    if not ssp_paid_renewal_enabled():
         return None
-    return summary.checkout_intent.enterprise_uuid
+    renewal = _get_first_renewal_for_subscription_plan(subs_plan_uuid)
+    return renewal.checkout_intent.enterprise_uuid if renewal else None
+
+
+def _get_first_renewal_for_subscription_plan(subscription_plan_uuid):
+    """
+    Return the earliest self-service renewal whose prior or renewed plan is this plan, or None.
+
+    The trial->paid renewal links the trial plan and the first paid plan, so both plans find the same record.
+    """
+    # TODO: Once paid->paid renewals are generated, filter only on prior_subscription_plan_uuid
+    # and drop the renewed_subscription_plan_uuid condition. Today we need both sides of the OR
+    # so that both the trial plan and the first paid plan can locate the same renewal record.
+    # Once paid->paid renewals exist, a paid plan could match two renewals (the one where it is
+    # the renewed plan, and a future one where it is the prior plan), making it ambiguous which
+    # to use, and it would be odd to key off an already-completed renewal for information about
+    # a future cancellation.
+    return SelfServiceSubscriptionRenewal.objects.filter(
+        Q(prior_subscription_plan_uuid=subscription_plan_uuid) |
+        Q(renewed_subscription_plan_uuid=subscription_plan_uuid)
+    ).select_related('checkout_intent').order_by('created').first()
 
 
 class StripeEventSummaryViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
@@ -741,21 +767,14 @@ class StripeEventSummaryViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
         is_canceled = False
         renewed_subscription_plan_uuid = None
 
-        # TODO: Once paid->paid renewals are generated, filter only on prior_subscription_plan_uuid
-        # and drop the renewed_subscription_plan_uuid condition. Today we need both sides of the OR
-        # so that both the trial plan and the first paid plan can locate the same renewal record.
-        # Once paid->paid renewals exist, a paid plan could match two renewals (the one where it is
-        # the renewed plan, and a future one where it is the prior plan), making it ambiguous which
-        # to use, and it would be odd to key off an already-completed renewal for information about
-        # a future cancellation.
-        first_related_renewal = SelfServiceSubscriptionRenewal.objects.filter(
-            Q(prior_subscription_plan_uuid=subscription_plan_uuid) |
-            Q(renewed_subscription_plan_uuid=subscription_plan_uuid)
-        ).select_related('checkout_intent').order_by('created').first()
+        first_related_renewal = _get_first_renewal_for_subscription_plan(subscription_plan_uuid)
         if first_related_renewal:
             checkout_intent_uuid = first_related_renewal.checkout_intent.uuid
             is_canceled = first_related_renewal.is_canceled
-            renewed_subscription_plan_uuid = first_related_renewal.renewed_subscription_plan_uuid
+            # Only the plan being renewed points at its renewed plan. The renewed plan itself must not point at
+            # itself, or the admin portal hides it as a renewal that hasn't started yet.
+            if str(first_related_renewal.renewed_subscription_plan_uuid) != str(subscription_plan_uuid).lower():
+                renewed_subscription_plan_uuid = first_related_renewal.renewed_subscription_plan_uuid
             canceled_date = first_related_renewal.subscription_cancel_at
 
         if updated_event_summary:
@@ -786,7 +805,10 @@ class StripeEventSummaryViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
         )
         if not subscription_plan_uuid:
             raise exceptions.NotFound("No associated subscription plan uuid was found")
-        if not (updated_event_summary or created_event_summary):
+        # The first paid plan has no event summaries of its own (they carry the trial plan's uuid), but its
+        # renewal holds the cancellation the admin portal shows, e.g. Pending Cancellation (ENT-11534).
+        # Only reachable for the first paid plan with the ssp_paid_renewal switch on (see the permission fn above).
+        if not (first_related_renewal or updated_event_summary or created_event_summary):
             raise exceptions.NotFound("No Stripe subscription data found for this plan")
         response_serializer.is_valid(raise_exception=True)
         return Response(response_serializer.data, status=status.HTTP_200_OK)

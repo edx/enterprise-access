@@ -8,6 +8,7 @@ from urllib.parse import urlencode
 
 from django.urls import reverse
 from django.utils import timezone
+from edx_toggles.toggles.testutils import override_waffle_switch
 from rest_framework.exceptions import ErrorDetail
 
 from enterprise_access.apps.core.constants import SYSTEM_ENTERPRISE_ADMIN_ROLE, SYSTEM_ENTERPRISE_OPERATOR_ROLE
@@ -19,6 +20,7 @@ from enterprise_access.apps.customer_billing.models import (
     StripeEventData,
     StripeEventSummary
 )
+from enterprise_access.toggles import SSP_PAID_RENEWAL
 from test_utils import APITest
 
 
@@ -456,6 +458,89 @@ class StripeSubscriptionPlanInfoTests(APITest):
         # Renewal's cancel_at (2022-03-01) should take precedence over the event summary's (2021-09-15)
         assert response.data['canceled_date'] == '2022-03-01T00:00:00Z'
         assert response.data['is_canceled'] is False
+
+    @override_waffle_switch(SSP_PAID_RENEWAL, True)
+    def test_get_stripe_subscription_plan_info_first_paid_plan(self):
+        """
+        The first paid plan has no event summaries of its own (they carry the trial plan's uuid), so its
+        enterprise and cancellation come from the trial->paid renewal. Its admin portal card shows
+        Pending Cancellation from this response (ENT-11534).
+        """
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': self.enterprise_uuid,
+        }])
+        self.self_service_renewal.subscription_cancel_at = datetime(2022, 3, 1, 0, 0, 0, tzinfo=tz.utc)
+        self.self_service_renewal.save(update_fields=['subscription_cancel_at'])
+
+        query_params = {'subscription_plan_uuid': self.renewed_subscription_plan_uuid}
+        url = reverse('api:v1:stripe-event-summary-get-stripe-subscription-plan-info')
+        url += f"?{urlencode(query_params)}"
+        response = self.client.get(url)
+
+        assert response.status_code == 200
+        assert response.data == {
+            'canceled_date': '2022-03-01T00:00:00Z',
+            'currency': None,
+            'upcoming_invoice_amount_due': None,
+            'checkout_intent_uuid': str(self.checkout_intent.uuid),
+            'is_canceled': False,
+            # Not the plan itself: the admin portal hides a plan that another plan renews into.
+            'renewed_subscription_plan_uuid': None,
+        }
+
+    @override_waffle_switch(SSP_PAID_RENEWAL, True)
+    def test_get_stripe_subscription_plan_info_first_paid_plan_other_enterprise_admin(self):
+        """
+        Access to the first paid plan is checked against the renewal's enterprise.
+        """
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': str(uuid.uuid4()),
+        }])
+        query_params = {'subscription_plan_uuid': self.renewed_subscription_plan_uuid}
+        url = reverse('api:v1:stripe-event-summary-get-stripe-subscription-plan-info')
+        url += f"?{urlencode(query_params)}"
+        response = self.client.get(url)
+
+        assert response.status_code == 403
+
+    @override_waffle_switch(SSP_PAID_RENEWAL, False)
+    def test_get_stripe_subscription_plan_info_first_paid_plan_switch_off(self):
+        """
+        With the ssp_paid_renewal switch off, the first paid plan is not found through its renewal, so its
+        admin portal card keeps its pre-ENT-11534 behaviour (no cancellation date).
+        """
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+            'context': self.enterprise_uuid,
+        }])
+        self.self_service_renewal.subscription_cancel_at = datetime(2022, 3, 1, 0, 0, 0, tzinfo=tz.utc)
+        self.self_service_renewal.save(update_fields=['subscription_cancel_at'])
+
+        query_params = {'subscription_plan_uuid': self.renewed_subscription_plan_uuid}
+        url = reverse('api:v1:stripe-event-summary-get-stripe-subscription-plan-info')
+        url += f"?{urlencode(query_params)}"
+        response = self.client.get(url)
+
+        assert response.status_code == 403
+
+    @override_waffle_switch(SSP_PAID_RENEWAL, False)
+    def test_get_stripe_subscription_plan_info_first_paid_plan_switch_off_operator(self):
+        """
+        With the ssp_paid_renewal switch off, even an operator gets a 403 for the first paid plan, as before
+        ENT-11534: no enterprise is found for the plan.
+        """
+        self.set_jwt_cookie([{
+            'system_wide_role': SYSTEM_ENTERPRISE_OPERATOR_ROLE,
+            'context': self.enterprise_uuid,
+        }])
+        query_params = {'subscription_plan_uuid': self.renewed_subscription_plan_uuid}
+        url = reverse('api:v1:stripe-event-summary-get-stripe-subscription-plan-info')
+        url += f"?{urlencode(query_params)}"
+        response = self.client.get(url)
+
+        assert response.status_code == 403
 
     def test_get_stripe_subscription_plan_info_operator_role(self):
         """
