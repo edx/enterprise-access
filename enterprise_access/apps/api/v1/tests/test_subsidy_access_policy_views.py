@@ -12,11 +12,16 @@ import ddt
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.test import SimpleTestCase
-from requests.exceptions import HTTPError
+from requests.exceptions import ConnectionError as RequestsConnectionError
+from requests.exceptions import ConnectTimeout, HTTPError, ReadTimeout, SSLError
 from rest_framework import status
 from rest_framework.reverse import reverse
 
-from enterprise_access.apps.api.v1.views.subsidy_access_policy import _get_reasons_for_no_redeemable_policies
+from enterprise_access.apps.api.serializers import SubsidyAccessPolicyCreditsAvailableResponseSerializer
+from enterprise_access.apps.api.v1.views.subsidy_access_policy import (
+    SubsidyAPIUnavailableException,
+    _get_reasons_for_no_redeemable_policies
+)
 from enterprise_access.apps.api_client.tests.test_utils import MockResponse
 from enterprise_access.apps.content_assignments.constants import (
     AssignmentAutomaticExpiredReason,
@@ -1658,6 +1663,56 @@ class TestSubsidyAccessPolicyRedeemViewset(APITestWithMocks):
         else:
             assert policies_by_uuid[str(spend_cap_policy.uuid)]['remaining_balance_per_user'] == \
                 expected_remaining_balance_per_user
+
+    @ddt.data(
+        # The production failure: the TLS handshake was dropped while fetching the policy's spend aggregates.
+        ('list_subsidy_transactions', SSLError('EOF occurred in violation of protocol')),
+        ('list_subsidy_transactions', ConnectTimeout()),
+        ('list_subsidy_transactions', ReadTimeout()),
+        ('retrieve_subsidy', RequestsConnectionError()),
+        # HTTP responses aren't retried, so a 5xx from the aggregates lookup reaches the view as an HTTPError.
+        ('list_subsidy_transactions', HTTPError(response=MockResponse({}, 525))),
+        ('list_subsidy_transactions', HTTPError(response=MockResponse({}, status.HTTP_502_BAD_GATEWAY))),
+    )
+    @ddt.unpack
+    def test_credits_available_endpoint_subsidy_api_unreachable(self, failing_client_method, error):
+        """
+        Verify that credits_available returns a 503, not a 500, when the Subsidy API can't be reached or answers
+        with a 5xx.
+        """
+        self.subsidy_client.retrieve_subsidy.return_value = {'is_active': True, 'current_balance': 5000}
+        getattr(self.subsidy_client, failing_client_method).side_effect = error
+
+        response = self.client.get(
+            self.subsidy_access_policy_credits_available_endpoint,
+            {'enterprise_customer_uuid': str(self.enterprise_uuid), 'lms_user_id': 1234},
+        )
+
+        assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+        assert response.json() == {'detail': SubsidyAPIUnavailableException.default_detail}
+
+    @mock.patch.object(
+        SubsidyAccessPolicyCreditsAvailableResponseSerializer, 'get_remaining_balance',
+        side_effect=SSLError('EOF occurred in violation of protocol'),
+    )
+    @mock.patch('enterprise_access.apps.subsidy_access_policy.models.get_and_cache_transactions_for_learner')
+    def test_credits_available_endpoint_subsidy_api_unreachable_while_serializing(
+        self, mock_transactions_cache_for_learner, _,
+    ):
+        """
+        Verify that credits_available also returns a 503 when the Subsidy API can't be reached while serializing
+        policies that do have credit available.
+        """
+        self.subsidy_client.retrieve_subsidy.return_value = {'is_active': True, 'current_balance': 5000}
+        mock_transactions_cache_for_learner.return_value = {'transactions': [], 'aggregates': {}}
+
+        response = self.client.get(
+            self.subsidy_access_policy_credits_available_endpoint,
+            {'enterprise_customer_uuid': str(self.enterprise_uuid), 'lms_user_id': 1234},
+        )
+
+        assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+        assert response.json() == {'detail': SubsidyAPIUnavailableException.default_detail}
 
     @mock.patch('enterprise_access.apps.subsidy_access_policy.models.get_and_cache_transactions_for_learner')
     @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_record')
