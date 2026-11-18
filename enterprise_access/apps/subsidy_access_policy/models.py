@@ -528,12 +528,11 @@ class SubsidyAccessPolicy(TimeStampedModel):
 
         By default an ``HTTPError`` is swallowed and ``{}`` returned. Pass ``raise_on_error=True`` to get a
         ``SubsidyAPIHTTPError`` instead, for callers that must tell a failed lookup from an inactive subsidy.
+
+        The record is cached for the rest of the request, and a cached record is returned even with
+        ``raise_on_error=True``. Call ``clear_cached_subsidy_record()`` first to fetch a fresh one.
         """
-        cache_key = versioned_cache_key(
-            'get_subsidy_record',
-            self.enterprise_customer_uuid,
-            self.subsidy_uuid,
-        )
+        cache_key = self._subsidy_record_cache_key()
         cached_response = request_cache(namespace=REQUEST_CACHE_NAMESPACE).get_cached_response(cache_key)
         # A cached ``{}`` is an earlier failed lookup, so retry it when the caller wants failures raised.
         if cached_response.is_found and (cached_response.value or not raise_on_error):
@@ -550,6 +549,26 @@ class SubsidyAccessPolicy(TimeStampedModel):
         request_cache(namespace=REQUEST_CACHE_NAMESPACE).set(cache_key, result)
 
         return result
+
+    def _subsidy_record_cache_key(self):
+        """
+        The request cache key of this policy's subsidy record. Shared by every policy of the same subsidy.
+        """
+        return versioned_cache_key(
+            'get_subsidy_record',
+            self.enterprise_customer_uuid,
+            self.subsidy_uuid,
+        )
+
+    def clear_cached_subsidy_record(self):
+        """
+        Forget the subsidy record cached by ``subsidy_record()``, so its next call fetches the record again.
+
+        The cache is keyed by the enterprise and the subsidy, so this also clears it for every other
+        policy of the same subsidy. The TieredCache copy read by ``subsidy_record_from_tiered_cache()``
+        is not cleared.
+        """
+        request_cache(namespace=REQUEST_CACHE_NAMESPACE).delete(self._subsidy_record_cache_key())
 
     def subsidy_record_from_tiered_cache(self, *cache_key_args):
         """

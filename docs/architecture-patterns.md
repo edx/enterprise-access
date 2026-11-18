@@ -201,6 +201,23 @@ settings and builds the adapters; views and management commands call it. Pass re
 (the `pathways/catalog_access.py` pattern) rather than reaching for `crum`. Guard the boundary with a test that parses
 the core's imports (`personalized_search/tests/test_core.py`). Example: `apps/personalized_search`.
 
+### 26. Read remote data before taking row locks; validation inside the lock reads the cache
+
+When a write under `select_for_update()` is validated against data from another service (e.g. `SubsidyAccessPolicy.save()`
+runs `clean_spend_limit()`, which reads the subsidy's `total_deposits` through `subsidy_record()`), fetch that data
+before `transaction.atomic()` opens, so the lock is never held across a network call:
+
+- **Clear the cache, then read.** `subsidy_record()` is request-cached and returns a cached record even with
+  `raise_on_error=True`, so call `policy.clear_cached_subsidy_record()` first. A record cached earlier in the request,
+  or by an earlier Celery task in the same worker, may predate the change you are about to rely on.
+- **Inside the block, validation reads the warm cache** and makes no network call. A failed read happens before any
+  write, so it is safe to retry; a validation failure with fresh data is not.
+- **Lock rows in one fixed order** (e.g. the policy, then the top-up) and re-check the state under the lock, since the
+  record may have moved while you were reading.
+- **Testing:** under `TestCase`, `connection.in_atomic_block` is always `True`; use a `TransactionTestCase` and record
+  `connection.in_atomic_block` from the mocked client to prove the call happened outside the block. Example:
+  `customer_billing/top_up_fulfillment.py`, `docs/references/learner_credit_top_ups.md`.
+
 ### Key Takeaways for Implementation:
 - Check permissions early using `@permission_required` decorator
 - Use separate serializers for request/response
