@@ -22,10 +22,9 @@ from enterprise_access.apps.subsidy_request.tests.factories import (
 )
 
 COMMAND = 'expire_requests_for_ended_budgets'
-SWITCH_IS_ENABLED = (
-    'enterprise_access.apps.subsidy_request.management.commands.expire_requests_for_ended_budgets'
-    '.expire_requests_for_ended_budgets_enabled'
-)
+COMMAND_MODULE = f'enterprise_access.apps.subsidy_request.management.commands.{COMMAND}'
+SWITCH_IS_ENABLED = f'{COMMAND_MODULE}.expire_requests_for_ended_budgets_enabled'
+EXPIRE_REQUEST = f'{COMMAND_MODULE}.expire_unreviewed_learner_credit_request'
 EXPIRED_SUBSIDY = {'is_active': False, 'expiration_datetime': '2020-01-01T00:00:00Z'}
 LIVE_SUBSIDY = {'is_active': True, 'expiration_datetime': '2099-01-01T00:00:00Z'}
 # Inactive because it hasn't started, which isn't the same as having ended.
@@ -99,6 +98,8 @@ class TestExpireRequestsForEndedBudgets(TestCase):
     @ddt.data(
         {'subsidy_response': LIVE_SUBSIDY},
         {'subsidy_response': FUTURE_SUBSIDY},
+        # A subsidy with no expiration date never ends on its own.
+        {'subsidy_response': {'is_active': True, 'expiration_datetime': None}},
         # Requests that were reviewed are left alone, even on an ended budget.
         {'state': SubsidyRequestStates.APPROVED},
         {'state': SubsidyRequestStates.ACCEPTED},
@@ -169,6 +170,29 @@ class TestExpireRequestsForEndedBudgets(TestCase):
         ended_budget_request.refresh_from_db()
         self.assertEqual(unverified_request.state, SubsidyRequestStates.REQUESTED)
         self.assertEqual(ended_budget_request.state, SubsidyRequestStates.EXPIRED)
+
+    def test_request_that_fails_to_expire_fails_the_run_once_the_rest_are_processed(self):
+        failing_request = self._create_request()
+        other_request = self._create_request()
+
+        def expire_all_but_one(request_uuid):
+            if request_uuid == failing_request.uuid:
+                raise ValueError('this request cannot be saved')
+            return expire_unreviewed_learner_credit_request(request_uuid)
+
+        with mock.patch(EXPIRE_REQUEST, side_effect=expire_all_but_one), self.assertRaises(CommandError):
+            call_command(COMMAND)
+
+        other_request.refresh_from_db()
+        self.assertEqual(other_request.state, SubsidyRequestStates.EXPIRED)
+
+    def test_request_reviewed_while_the_command_runs_is_not_counted_as_expired(self):
+        self._create_request()
+
+        with mock.patch(EXPIRE_REQUEST, return_value=False), self.assertLogs(COMMAND_MODULE, level='INFO') as logs:
+            call_command(COMMAND)
+
+        self.assertIn('Expired 0 requests', logs.output[-1])
 
     def test_request_reviewed_after_it_was_selected_is_not_expired(self):
         """
