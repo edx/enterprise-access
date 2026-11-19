@@ -221,6 +221,10 @@ On subscription deletion:
 * Future License Manager subscription plans are deactivated via ``cancel_all_future_plans()`` (see
   **Payment Errors** above for what counts as future with the ``ssp_paid_renewal`` switch on or off)
 * ``SelfServiceSubscriptionRenewal`` records are updated: ``is_canceled=True``, ``subscription_cancel_at=None``
+  (switch off). With the ``ssp_paid_renewal`` switch on, a subscription that was ``active`` keeps a cancel date
+  instead: Stripe's ``ended_at`` for a deletion at the period end, or the period end for an early deletion (below).
+  The admin portal card reads it as ``canceled_date`` and shows the expired paid plan as *Canceled*; clearing it
+  would show *Ended*, as if the plan had never been cancelled.
 * Cancellation reason/feedback is tracked to Segment analytics
 
 **Early deletion** (ENT-11534; switch on only). Stripe can delete a subscription before its
