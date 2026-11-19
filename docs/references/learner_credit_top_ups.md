@@ -126,8 +126,9 @@ Changing it needs a config change and a deploy, so turning it off again is not i
 Introduced for **ENT-12355** (impl-plan chunk 5), in `customer_billing/models.py`. One row per top-up, from quote to
 fulfillment: the audit record of every self-service deposit (who started it, how much, when, which payment, what
 discount). Rows must never be deleted (S-01): nothing enforces that beyond `PROTECT` on the policy, so don't add code
-that deletes them. `history` (simple-history) keeps every change. Nothing creates or moves a top-up yet: the quote,
-pay, webhook, deposit, spend-limit and ops chunks do that.
+that deletes them. `history` (simple-history) keeps every change. Only the spend-limit step (see
+[below](#spend-limit-step-deposited--fulfilled)) moves a top-up so far, and nothing calls it yet: the quote, pay,
+webhook, deposit and ops chunks create and move the rest.
 
 - **`uuid`** is the primary key and the source of both idempotency keys (`lc-top-up-<uuid>`, for the PaymentIntent
   and the deposit) and of the transaction ID shown to the admin.
@@ -244,3 +245,47 @@ The only way `state` changes (see Saving).
   ops re-run goes back to `paid`. The deposit (chunk 8) and ops re-run (chunk 10) steps must check it.
 - On SQLite, used by the tests, `select_for_update()` does nothing. The tests prove the stored-state checks, not the
   lock.
+
+## Spend-limit step (`deposited → fulfilled`)
+
+Introduced for **ENT-12512** (impl-plan chunk 9) as `fulfill_spend_limit_step(top_up)` in
+`customer_billing/top_up_fulfillment.py`. It makes deposited funds spendable: it raises the budget's `spend_limit` by
+`amount_cents`, once, and moves the top-up to `fulfilled`. Nothing calls it yet. The fulfillment task (chunk 10)
+will, after the deposit step (chunk 8). It follows the spec's Fulfillment rule 3 and TR-5.
+
+| Outcome | Returns / raises | Top-up and budget afterwards |
+|---|---|---|
+| Fulfilled | `True` | `fulfilled`, `fulfilled_at` set. `spend_limit` raised by `amount_cents`, and `spend_limit_before` / `spend_limit_after` recorded. A budget with no spend limit is left without one, and both fields stay `NULL`. |
+| Not `deposited` (already fulfilled, not deposited yet, errored, ...) | `False` | Unchanged. The subsidy isn't read. |
+| The subsidy read fails: any HTTP error, a connection error or a timeout | `RetryableFulfillmentError` | Unchanged (`deposited`). |
+| The raised `spend_limit` fails the policy's validation, even with a fresh record | `NonRetryableFulfillmentError` | Unchanged (`deposited`). A retry would fail the same way. |
+
+Both errors subclass `LearnerCreditTopUpFulfillmentError` and chain the original exception as `__cause__`. Moving a
+failed top-up to `errored_fulfillment`, and recording whether the error is retryable, is the caller's job (chunk 10).
+Database errors, such as a lock wait timeout, are not wrapped.
+
+How it works:
+
+1. **State check, before any network call.** The top-up is reloaded (unsaved changes to the instance are discarded),
+   and the step returns `False` unless it is `deposited`.
+2. **Fresh subsidy read, outside any transaction.** `policy.clear_cached_subsidy_record()`, then
+   `policy.subsidy_record(raise_on_error=True)`. Clearing is required: `subsidy_record()` returns a request-cached
+   record even with `raise_on_error=True`, and a record cached by the eligibility check earlier in the request, or by
+   an earlier task in the same worker, predates the deposit. With it, the raise would exceed `total_deposits` and fail
+   validation (TR-2). The request cache is keyed by enterprise and subsidy, so clearing it for one policy clears it for
+   every policy of that subsidy.
+3. **One `transaction.atomic()` block, no network calls.** It locks the policy row, **then** the top-up row
+   (`select_for_update()`, always in this order, TR-5), and checks the state again under the lock. A run overtaken by
+   another run during its read returns `False` here. It then raises and saves `spend_limit`, and calls
+   `transition_to(FULFILLED, spend_limit_before=..., spend_limit_after=...)`. `policy.save()` runs `full_clean()`, and
+   so `clean_spend_limit()`, which reads the record cached in step 2. The policy's history record has the change reason
+   `Learner credit top-up <uuid>`.
+
+Testing notes:
+
+- Scenario 4 (no network call inside the block) is a `TransactionTestCase`, because under `TestCase`
+  `connection.in_atomic_block` is always `True`. It also checks that `subsidy_record()` *is* read inside the block,
+  from the cache.
+- SQLite ignores `select_for_update()`, so the lock order is tested by recording the models `select_for_update()` is
+  called on. Races are tested with copies loaded before either writes, and with a run that another run overtakes from
+  inside the mocked subsidy read.

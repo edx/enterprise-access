@@ -805,6 +805,27 @@ class SubsidyAccessPolicyTests(MockPolicyDependenciesMixin, TestCase):
         self.assertIsNone(policy.is_subsidy_active)
         self.assertEqual(policy.subsidy_balance(), 0)
 
+    def test_clear_cached_subsidy_record(self):
+        """
+        clear_cached_subsidy_record() makes the next subsidy_record() call fetch the record again, for every
+        policy of the same subsidy, since they share the cached record.
+        """
+        policy = PerLearnerEnrollmentCapLearnerCreditAccessPolicyFactory.create()
+        sibling = PerLearnerEnrollmentCapLearnerCreditAccessPolicyFactory.create(
+            enterprise_customer_uuid=policy.enterprise_customer_uuid,
+            subsidy_uuid=policy.subsidy_uuid,
+        )
+        self.mock_subsidy_client.reset_mock()
+        self.mock_subsidy_client.retrieve_subsidy.return_value = {'total_deposits': 1}
+        self.assertEqual(policy.subsidy_record(), {'total_deposits': 1})
+        self.mock_subsidy_client.retrieve_subsidy.return_value = {'total_deposits': 2}
+        self.assertEqual(sibling.subsidy_record(raise_on_error=True), {'total_deposits': 1})
+
+        sibling.clear_cached_subsidy_record()
+
+        self.assertEqual(policy.subsidy_record(), {'total_deposits': 2})
+        self.assertEqual(self.mock_subsidy_client.retrieve_subsidy.call_count, 2)
+
     @ddt.data(
         # late redemption never set.
         {
