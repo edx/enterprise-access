@@ -6,7 +6,7 @@ from unittest import mock
 
 import ddt
 import requests
-from django.db import connection
+from django.db import DatabaseError, connection
 from django.db.models import QuerySet
 from django.test import TestCase, TransactionTestCase
 from django.utils import timezone
@@ -115,7 +115,31 @@ class TestFulfillSpendLimitStep(SpendLimitStepTestMixin, TestCase):
             self.assertEqual(fulfilled.fulfilled_at, timezone.now())
             self.assertEqual(fulfilled.spend_limit_before, self.SPEND_LIMIT)
             self.assertEqual(fulfilled.spend_limit_after, self.SPEND_LIMIT + self.AMOUNT)
-        self.assertEqual(self.policy.history.first().history_change_reason, f'Learner credit top-up {top_up.uuid}')
+        # Latest by insertion, not by history_date: setUp created the policy at the real time, outside freeze_time.
+        latest_policy_history = self.policy.history.order_by('-history_id').first()
+        self.assertEqual(latest_policy_history.history_change_reason, f'Learner credit top-up {top_up.uuid}')
+
+    def test_raise_and_state_change_share_one_transaction(self):
+        """
+        Scenario 1: the raise and the state change are written in one transaction. If moving the top-up to
+        fulfilled fails after the raised spend limit is saved, the raise is rolled back with it.
+        """
+        top_up = self.create_top_up()
+        policy_history_count = self.policy.history.count()
+        spend_limit_when_transition_failed = []
+
+        def fail_transition(*args, **kwargs):
+            spend_limit_when_transition_failed.append(self.stored_spend_limit())
+            raise DatabaseError('transition failed')
+
+        with mock.patch.object(LearnerCreditTopUp, 'transition_to', side_effect=fail_transition):
+            with self.assertRaises(DatabaseError):
+                fulfill_spend_limit_step(top_up)
+
+        # The raise was written before the transition failed, then rolled back with it.
+        self.assertEqual(spend_limit_when_transition_failed, [self.SPEND_LIMIT + self.AMOUNT])
+        self.assert_nothing_changed(top_up)
+        self.assertEqual(self.policy.history.count(), policy_history_count)
 
     @ddt.data(
         # Scenario 2: the eligibility check cached the record earlier in the same request, before the deposit.
@@ -278,15 +302,20 @@ class TestFulfillSpendLimitStep(SpendLimitStepTestMixin, TestCase):
 
     def test_two_top_ups_on_one_budget(self):
         """
-        TR-5: two top-ups on one budget each raise its spend limit, from the value the other one left.
+        Scenario 3 and TR-5: two top-ups on one budget each raise its spend limit, from the value the other one
+        left. The second run, in the same process, reads the subsidy again rather than using the record the
+        first run cached before the second deposit, which would fail validation.
         """
         first = self.create_top_up(amount_cents=100_000)
         second = self.create_top_up(amount_cents=250_000)
-        self.set_total_deposits(self.SPEND_LIMIT + 350_000)
+        self.set_total_deposits(self.SPEND_LIMIT + 100_000)
 
         self.assertTrue(fulfill_spend_limit_step(first))
+        # The second top-up's deposit lands after the first run cached the subsidy record.
+        self.set_total_deposits(self.SPEND_LIMIT + 350_000)
         self.assertTrue(fulfill_spend_limit_step(second))
 
+        self.assertEqual(self.mock_subsidy_client.retrieve_subsidy.call_count, 2)
         self.assertEqual((first.spend_limit_before, first.spend_limit_after), (500_000, 600_000))
         self.assertEqual((second.spend_limit_before, second.spend_limit_after), (600_000, 850_000))
         self.assertEqual(self.stored_spend_limit(), 850_000)
@@ -339,11 +368,11 @@ class TestFulfillSpendLimitStepNetworkCalls(SpendLimitStepTestMixin, Transaction
             fetched_in_atomic_block.append(connection.in_atomic_block)
             return record
 
-        read_in_atomic_block = []
+        reads = []
         subsidy_record = SubsidyAccessPolicy.subsidy_record
 
         def read_subsidy_record(policy, *args, **kwargs):
-            read_in_atomic_block.append(connection.in_atomic_block)
+            reads.append((connection.in_atomic_block, kwargs.get('raise_on_error', False)))
             return subsidy_record(policy, *args, **kwargs)
 
         self.mock_subsidy_client.retrieve_subsidy.side_effect = retrieve_subsidy
@@ -356,7 +385,8 @@ class TestFulfillSpendLimitStepNetworkCalls(SpendLimitStepTestMixin, Transaction
         # One fetch, before the transaction, and no other enterprise-subsidy call.
         self.assertEqual(fetched_in_atomic_block, [False])
         self.assertEqual([name for name, _, _ in self.mock_subsidy_client.method_calls], ['retrieve_subsidy'])
-        # The fresh read before the transaction, then the validation in save() inside it, from the cache.
-        self.assertEqual(read_in_atomic_block[0], False)
-        self.assertIn(True, read_in_atomic_block)
+        # Scenario 2: the fresh read comes first, before the transaction, with raise_on_error=True. Then the
+        # validation in save() reads the record inside the transaction, from the cache.
+        self.assertEqual(reads[0], (False, True))
+        self.assertIn(True, [in_atomic_block for in_atomic_block, _ in reads[1:]])
         self.assertEqual(self.stored_spend_limit(), self.SPEND_LIMIT + self.AMOUNT)
