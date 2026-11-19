@@ -8,6 +8,7 @@ from urllib.parse import urlencode
 
 from django.urls import reverse
 from django.utils import timezone
+from edx_django_utils.cache import RequestCache
 from edx_toggles.toggles.testutils import override_waffle_switch
 from rest_framework.exceptions import ErrorDetail
 
@@ -199,6 +200,8 @@ class StripeSubscriptionPlanInfoTests(APITest):
 
     def setUp(self):
         super().setUp()
+        # override_waffle_switch as a method decorator leaves its value in the request cache.
+        self.addCleanup(RequestCache.clear_all_namespaces)
         self.user = UserFactory()
         self.enterprise_uuid = str(uuid.uuid4())
         self.stripe_customer_id = 'cus_test_123'

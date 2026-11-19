@@ -323,6 +323,29 @@ def _get_paid_access_end_after_early_deletion(subscription: dict, previous_summa
     return None
 
 
+def _get_cancel_date_after_deletion(subscription: dict, previous_summary, access_ends_at):
+    """
+    Return the cancel date to keep on the renewals once Stripe deletes a subscription, or None to clear it.
+
+    The admin portal card reads this date: Pending Cancellation until it passes, Canceled after it.
+    With the ``ssp_paid_renewal`` switch on, for a subscription that was ``active`` (a paid term):
+
+    - after an early deletion, the date paid access ends (``access_ends_at``, the period end);
+    - after a deletion at the period end (a scheduled cancellation), the deletion time (``ended_at``).
+      Clearing it would show the expired paid plan as Ended, as if it had never been cancelled.
+
+    Otherwise (switch off, a trial, or a lapsed grace period) it is cleared, as before.
+    """
+    if access_ends_at:
+        return access_ends_at
+    if not ssp_paid_renewal_enabled():
+        return None
+    if not previous_summary or previous_summary.subscription_status != StripeSubscriptionStatus.ACTIVE:
+        return None
+    ended_at = subscription.get('ended_at')
+    return datetime_from_timestamp(ended_at) if ended_at else timezone.now()
+
+
 def _update_renewal_cancellation_state(
     checkout_intent: CheckoutIntent,
     is_canceled: bool,
@@ -1431,9 +1454,11 @@ class StripeEventHandler:
                 subscription['id'],
                 checkout_intent.id,
             )
-        # After an early deletion, keep the date access ends, so the admin portal shows the plan as
-        # pending cancellation until then rather than as active with no end date.
-        _update_renewal_cancellation_state(checkout_intent, is_canceled=True, subscription_cancel_at=access_ends_at)
+        _update_renewal_cancellation_state(
+            checkout_intent,
+            is_canceled=True,
+            subscription_cancel_at=_get_cancel_date_after_deletion(subscription, previous_summary, access_ends_at),
+        )
         _set_renewal_grace_period(checkout_intent, None, False)
 
         if previous_summary:

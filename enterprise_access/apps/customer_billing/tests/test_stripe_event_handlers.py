@@ -1314,12 +1314,12 @@ class TestStripeEventHandler(TestCase):
         self.assertTrue(any('deleted before its current period end' in line for line in logs.output))
 
     @ddt.data(
-        # Switch off: previous behaviour.
-        (False, StripeSubscriptionStatus.ACTIVE, timedelta(days=200)),
-        # Deleted at the end of the period, after a scheduled cancellation.
-        (True, StripeSubscriptionStatus.ACTIVE, -timedelta(minutes=1)),
-        # Grace period lapsed: Stripe has already moved the period to the unpaid next term.
-        (True, StripeSubscriptionStatus.PAST_DUE, timedelta(days=360)),
+        # Switch off: previous behaviour, the cancel date is cleared.
+        (False, StripeSubscriptionStatus.ACTIVE, timedelta(days=200), False),
+        # Deleted at the end of the period, after a scheduled cancellation: keeps the deletion time.
+        (True, StripeSubscriptionStatus.ACTIVE, -timedelta(minutes=1), True),
+        # Grace period lapsed: Stripe has already moved the period to the unpaid next term. Cleared.
+        (True, StripeSubscriptionStatus.PAST_DUE, timedelta(days=360), False),
     )
     @ddt.unpack
     @mock.patch(
@@ -1329,13 +1329,15 @@ class TestStripeEventHandler(TestCase):
         "enterprise_access.apps.customer_billing.stripe_event_handlers.LicenseManagerApiClient",
         autospec=True,
     )
-    def test_subscription_deleted_without_early_paid_deletion_clears_cancel_date(
-        self, switch_enabled, prior_status, period_end_offset, mock_lms_client, mock_send_cancelation_email,
+    def test_subscription_deleted_without_early_paid_deletion(
+        self, switch_enabled, prior_status, period_end_offset, expect_cancel_date_kept,
+        mock_lms_client, mock_send_cancelation_email,
     ):
         """
-        Only an early deletion of an active paid subscription, with the switch on, keeps a cancel
-        date. Otherwise the cancel date is cleared as before, and the finalization email (sent
-        only for a previously active subscription) uses the deletion time.
+        When an active paid subscription is deleted at its period end (switch on), the renewal keeps
+        the deletion time as its cancel date, so the admin portal card shows the expired plan as
+        Canceled rather than Ended. Otherwise the cancel date is cleared as before. The finalization
+        email (sent only for a previously active subscription) uses the deletion time.
         """
         mock_lms_client.return_value.update_subscription_plan.return_value = {}
         subscription_id = 'sub_test_not_early_paid_deletion'
@@ -1357,7 +1359,10 @@ class TestStripeEventHandler(TestCase):
 
         renewal.refresh_from_db()
         self.assertTrue(renewal.is_canceled)
-        self.assertIsNone(renewal.subscription_cancel_at)
+        if expect_cancel_date_kept:
+            self.assertEqual(renewal.subscription_cancel_at, datetime_from_timestamp(ended_at))
+        else:
+            self.assertIsNone(renewal.subscription_cancel_at)
         if prior_status == StripeSubscriptionStatus.ACTIVE:
             mock_send_cancelation_email.delay.assert_called_once_with(
                 checkout_intent_id=self.checkout_intent.id,
