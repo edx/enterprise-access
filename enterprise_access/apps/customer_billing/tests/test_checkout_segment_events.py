@@ -6,6 +6,7 @@ from unittest import mock
 
 import ddt
 import stripe
+from analytics.request import APIError
 from celery.exceptions import Retry
 from django.test import TestCase, override_settings
 from django.utils import timezone
@@ -14,12 +15,17 @@ from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.customer_billing.constants import CheckoutSegmentEvents
 from enterprise_access.apps.customer_billing.models import CheckoutIntent, StripeEventSummary
 from enterprise_access.apps.customer_billing.segment_payloads import (
+    AcademyTitleUnavailableError,
     IncompleteOrderPayloadError,
     build_order_cancelled_properties,
     build_order_completed_properties
 )
-from enterprise_access.apps.customer_billing.tasks import send_checkout_segment_event_task
+from enterprise_access.apps.customer_billing.tasks import (
+    SEGMENT_EVENT_DROPPED_LOG_PREFIX,
+    send_checkout_segment_event_task
+)
 from enterprise_access.apps.customer_billing.tests.factories import StripeEventDataFactory
+from enterprise_access.apps.track.segment import SEGMENT_DELIVERY_ERRORS
 
 TASKS = 'enterprise_access.apps.customer_billing.tasks'
 PAYLOADS = 'enterprise_access.apps.customer_billing.segment_payloads'
@@ -137,6 +143,16 @@ class TestOrderCompletedPayload(CheckoutSegmentTestCase):
             )
         self.assert_properties(props, name='essentials', variant='AI Academy')
 
+    def test_essentials_without_academy_title_is_retried_not_sent_without_variant(self):
+        """``academy_title`` is None when the catalog call fails; the payload is never sent without it."""
+        product = self.intent.ssp_product
+        with mock.patch.object(type(product), 'academy_title', new_callable=mock.PropertyMock, return_value=None), \
+                mock.patch(f'{PAYLOADS}.get_product_type', return_value='essentials'):
+            with self.assertRaises(AcademyTitleUnavailableError):
+                build_order_completed_properties(
+                    self.intent, 'cs_123', make_stripe_subscription(), make_invoice_summary(),
+                )
+
     @ddt.data(
         # (subscription, invoice summary, missing properties named in the error)
         (make_stripe_subscription(interval='week'), make_invoice_summary(), 'payment_schedule'),
@@ -220,7 +236,7 @@ class TestSendCheckoutSegmentEventTask(CheckoutSegmentTestCase):
         self.first_invoice_summary = self.create_invoice_paid_summary('in_123', amount_paid=0)
         patchers = {
             'subscription': mock.patch(f'{TASKS}.get_stripe_subscription', return_value=make_stripe_subscription()),
-            'track': mock.patch(f'{TASKS}.track_event'),
+            'track': mock.patch(f'{TASKS}.track_event_or_raise', return_value=True),
         }
         self.mocks = {}
         for key, patcher in patchers.items():
@@ -256,7 +272,7 @@ class TestSendCheckoutSegmentEventTask(CheckoutSegmentTestCase):
         return send_checkout_segment_event_task(*args, **task_kwargs)
 
     def sent(self):
-        """The kwargs ``track_event`` was called with."""
+        """The kwargs ``track_event_or_raise`` was called with."""
         self.mocks['track'].assert_called_once()
         return self.mocks['track'].call_args.kwargs
 
@@ -306,6 +322,35 @@ class TestSendCheckoutSegmentEventTask(CheckoutSegmentTestCase):
         mock_retry.assert_called_once()
         self.mocks['track'].assert_not_called()
 
+    def assert_retried(self, event_name=ORDER_COMPLETED):
+        """Running the task raises Celery's Retry, through autoretry_for."""
+        args, kwargs = self.task_args(event_name)
+        with mock.patch.object(send_checkout_segment_event_task, 'retry', side_effect=Retry('retry')) as mock_retry:
+            with self.assertRaises(Retry):
+                send_checkout_segment_event_task.apply(args=args, kwargs=kwargs, throw=True).get()
+        mock_retry.assert_called_once()
+
+    @ddt.data(*SEGMENT_DELIVERY_ERRORS)
+    def test_segment_not_accepting_the_event_is_retried(self, error_class):
+        """Segment unreachable or answering non-200: the event was not delivered, so the task retries it."""
+        error = error_class(503, 'unavailable', 'down') if error_class is APIError else error_class('unreachable')
+        self.mocks['track'].side_effect = error
+        with mock.patch(f'{TASKS}.logger') as mock_logger:
+            self.assert_retried()
+        mock_logger.info.assert_not_called()  # never logged as sent
+
+    def test_essentials_without_academy_title_is_retried(self):
+        with mock.patch(f'{TASKS}.build_order_completed_properties', side_effect=AcademyTitleUnavailableError()):
+            self.assert_retried()
+        self.mocks['track'].assert_not_called()
+
+    def test_without_segment_key_is_not_logged_as_sent(self):
+        self.mocks['track'].return_value = False
+        with mock.patch(f'{TASKS}.logger') as mock_logger:
+            self.run_task(ORDER_COMPLETED)
+        self.mocks['track'].assert_called_once()
+        mock_logger.info.assert_not_called()
+
     @ddt.data(
         # (event, task kwargs)
         (ORDER_COMPLETED, {'invoice_id': 'in_unknown'}),
@@ -348,6 +393,9 @@ class TestSendCheckoutSegmentEventTask(CheckoutSegmentTestCase):
         elif problem == 'no Checkout Session ID to use as the order_id':
             CheckoutIntent.objects.filter(id=self.intent.id).update(stripe_checkout_session_id=None)
 
-        self.run_task(event_name, **task_kwargs)
+        with self.assertLogs(TASKS, level='ERROR') as logs:
+            self.run_task(event_name, **task_kwargs)
 
         self.mocks['track'].assert_not_called()
+        # A stable prefix, so an alert can match a dropped event.
+        self.assertIn(SEGMENT_EVENT_DROPPED_LOG_PREFIX, logs.output[0])

@@ -231,7 +231,7 @@ settings and builds the adapters; views and management commands call it. Pass re
 (the `pathways/catalog_access.py` pattern) rather than reaching for `crum`. Guard the boundary with a test that parses
 the core's imports (`personalized_search/tests/test_core.py`). Example: `apps/personalized_search`.
 
-### 26. Stripe webhook handlers: let a broker error fail the webhook, and queue once-per-event tasks last
+### 27. Stripe webhook handlers: let a broker error fail the webhook, and queue once-per-event tasks last
 
 The Stripe webhook view re-raises handler errors on purpose, and Stripe redelivers a failed webhook for up to three
 days, so a handler needs no outbox of its own to survive a broker outage: let `.delay()` raise.
@@ -242,9 +242,13 @@ Every redelivery runs the handler again, so for a task that must run once per St
 - queue it as the handler's **last** step, after any work that can raise (license-manager calls, a missing renewal
   raised on purpose to make Stripe retry). A handler that keeps failing is never marked handled, so a task queued
   before that work would be queued on every redelivery, for longer than e.g. Segment de-duplicates a `messageId`.
-  A broker outage fails the handler's earlier `.delay()` calls first, so queuing last doesn't add duplicate emails;
+  The trade-off: the handler's other `.delay()` calls (e.g. emails) come before it, so a broker error that hits only
+  the last `.delay()` fails a webhook whose emails were already queued, and the redelivery queues them again. A
+  sustained outage fails the earlier calls first, so only a brief broker failure can send those emails twice;
 - make the task tolerate the rare second run (a broker error after the earlier work), e.g. with a fixed Segment
-  `messageId`.
+  `messageId`;
+- if the task sends to Segment, use `track_event_or_raise` so the Celery retry covers delivery. `track_event` only
+  queues the event for analytics-python's background thread and swallows errors.
 
 ### Key Takeaways for Implementation:
 - Check permissions early using `@permission_required` decorator

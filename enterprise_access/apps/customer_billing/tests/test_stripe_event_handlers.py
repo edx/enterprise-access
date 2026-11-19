@@ -1262,7 +1262,6 @@ class TestStripeEventHandler(TestCase):
     @ddt.data(
         # (total, billing_reason, expect_order_completed)
         (0, 'subscription_create', True),  # the free-trial checkout
-        (5000, 'subscription_create', True),  # a checkout without a trial
         (5000, 'subscription_cycle', False),  # trial-end payment and renewals
         (5000, 'subscription_update', False),  # license changes
         (5000, None, False),

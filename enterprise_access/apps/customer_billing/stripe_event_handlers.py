@@ -334,7 +334,11 @@ def _queue_checkout_segment_event(event, event_name, checkout_intent, subscripti
 
 
 def _queue_order_completed_segment_event(event, checkout_intent, invoice, subscription_details):
-    """Queue ``order_completed`` if ``invoice`` is the subscription's first one, paid at checkout ($0 for a trial)."""
+    """
+    Queue ``order_completed`` if ``invoice`` is the subscription's first one, paid at checkout. Every SSP checkout
+    starts a trial (``SSP_TRIAL_PERIOD_DAYS``), so that invoice is always $0; a paid ``subscription_create`` invoice
+    would need queuing before ``_handle_invoice_paid_status_updated``, which raises for it.
+    """
     if invoice.to_dict().get('billing_reason') != StripeInvoiceBillingReason.SUBSCRIPTION_CREATE:
         return
     _queue_checkout_segment_event(
@@ -659,8 +663,6 @@ class StripeEventHandler:
                 return
             # only update status for non-trial invoice.paid events
             _handle_invoice_paid_status_updated(event, checkout_intent)
-            # Last, after the status update that raises to make Stripe retry, so a failed delivery queues nothing.
-            _queue_order_completed_segment_event(event, checkout_intent, invoice, subscription_details)
             return
 
         try:

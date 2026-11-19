@@ -22,16 +22,44 @@ enterprise-access Segment source, not the checkout MFE's; join them to the MFE's
 ## How it is sent
 No table of its own: it relies on `StripeEventData` / `StripeEventSummary`, which every webhook already persists.
 * The webhook handlers queue `send_checkout_segment_event_task`. A broker error fails the webhook, and Stripe
-  redelivers it (pattern 26 in `docs/architecture-patterns.md`).
+  redelivers it (pattern 27 in `docs/architecture-patterns.md`).
 * Each order has exactly one triggering Stripe event, so the handlers queue the task once per Stripe event: a
   redelivery of an event whose `StripeEventData.handled_at` is set queues nothing. The task is queued as the
   handler's last step, so a delivery whose handler fails queues nothing: Stripe redelivers it for up to three days,
   longer than Segment de-duplicates a `messageId` (about a day). The `messageId` `<event>:<order_id>` covers the rare
   repeat when only the queuing itself fails.
-* Retried with backoff: Stripe network errors, 429 and 5xx, DB `OperationalError`, and an order invoice's
-  `invoice.paid` `StripeEventSummary` that isn't readable yet (its signal logs and swallows its own errors). Logged
-  as an error and not sent: a missing required property, any other Stripe error, a user without `lms_user_id`, or an
-  order that can't be identified.
+* The task posts the event to Segment itself (`track_event_or_raise`, a `sync_mode` analytics client), not through
+  `track_event`, whose client only queues events for a background thread and swallows errors: an event queued that
+  way is lost if Segment stays unreachable or the worker exits first, and the task would never know.
+* Retried with backoff (`TASK_MAX_RETRIES`): Stripe network errors, 429 and 5xx, DB `OperationalError`, an order
+  invoice's `invoice.paid` `StripeEventSummary` that isn't readable yet (its signal logs and swallows its own errors),
+  an Essentials product's Academy title that can't be read (the catalog call failed), and Segment not accepting the
+  event (network error, timeout or a non-200 response). Logged as an error with the prefix
+  `[CheckoutSegmentEventDropped]` and not sent: a missing required property, any other Stripe error, a user without
+  `lms_user_id`, or an order that can't be identified.
+
+## Resending a dropped event
+Replaying the Stripe event doesn't resend it: the admin "Handle the selected events" action and
+`fetch_and_handle_stripe_events` both see `handled_at` set and queue nothing. Once the cause is fixed, queue the task
+from a Django shell with the arguments the webhook handler would have used:
+
+```python
+from enterprise_access.apps.customer_billing.constants import CheckoutSegmentEvents
+from enterprise_access.apps.customer_billing.tasks import send_checkout_segment_event_task
+
+# order_completed: the subscription's first (subscription_create) invoice
+send_checkout_segment_event_task.delay(
+    CheckoutSegmentEvents.ORDER_COMPLETED, checkout_intent_id, 'sub_...', invoice_id='in_...',
+)
+# order_cancelled: the cancelled subscription's id and items, from the customer.subscription.deleted event's data
+send_checkout_segment_event_task.delay(
+    CheckoutSegmentEvents.ORDER_CANCELLED, checkout_intent_id, 'sub_...',
+    subscription_data={'id': 'sub_...', 'items': event_data['data']['object']['items']},
+)
+```
+
+Segment drops a `messageId` it has seen in about the last day, so resending an event it did receive within that
+window is harmless; after that it would be counted twice.
 
 ## Payload
 No PII: payloads are built only from the fields below, and a test lists every allowed key.

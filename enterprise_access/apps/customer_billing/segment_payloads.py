@@ -21,7 +21,14 @@ TRANSIENT_STRIPE_ERRORS = (stripe.APIConnectionError, stripe.RateLimitError, str
 
 
 class IncompleteOrderPayloadError(Exception):
-    """A required order property could not be determined from Stripe's data. Retrying gives the same result."""
+    """
+    The event can't be sent and retrying won't change that: a required order property can't be determined from
+    Stripe's data, the order has no ``order_id``, or its user has no LMS user ID. Logged and dropped.
+    """
+
+
+class AcademyTitleUnavailableError(Exception):
+    """An Essentials order's Academy name (its ``variant``) can't be read yet, e.g. the catalog call failed. Retried."""
 
 
 def _get(obj, *keys):
@@ -54,6 +61,17 @@ def _subscription_item(subscription):
     return items[0]
 
 
+def _essentials_variant(ssp_product):
+    """
+    The Academy name of an Essentials product. ``academy_title`` is None when the catalog call fails, and a payload
+    is never corrected after it was sent, so raise to retry instead of sending it without one.
+    """
+    title = ssp_product.academy_title
+    if not title:
+        raise AcademyTitleUnavailableError(f'No Academy title for Essentials product {ssp_product.slug}')
+    return title
+
+
 def _properties(checkout_intent, order_id, price, quantity, invoice_summary) -> dict:
     """
     The payload shared by both events. Product, unit price and billing interval come from the subscription item's
@@ -72,7 +90,7 @@ def _properties(checkout_intent, order_id, price, quantity, invoice_summary) -> 
         'name': product_type,
         'brand': 'enterprise',
         'slug': ssp_product.slug,
-        'variant': ssp_product.academy_title if product_type == 'essentials' else None,
+        'variant': _essentials_variant(ssp_product) if product_type == 'essentials' else None,
         # ``product`` is an ID unless the price was retrieved with it expanded.
         'product_id': product if isinstance(product, str) else _get(product, 'id'),
         'price': _dollars(unit_amount if unit_amount is not None else _get(price, 'unit_amount')),
