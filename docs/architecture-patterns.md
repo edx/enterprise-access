@@ -192,7 +192,37 @@ copy's other fields. For records where that can cost money (`LearnerCreditTopUp.
 The test database is SQLite, where `select_for_update()` does nothing: test with two copies of one row loaded
 before either writes, which proves the stored-state check but not the lock.
 
-### 25. Portable features: a pure core behind ports, one composition root
+### 25. Subsidy API connections: reuse, retry at the transport level, 503 when unreachable
+
+Production reaches enterprise-subsidy through its public hostname, out through the NAT gateway and back in through
+Cloudflare, and a TLS handshake is occasionally dropped (`SSLError ... UNEXPECTED_EOF_WHILE_READING`). By default
+`requests` makes one attempt: "Max retries exceeded" in that message means none were made.
+
+- **Always get a client from `get_versioned_subsidy_client()`.** It reuses one client per thread, so calls share
+  open connections, and mounts an `HTTPAdapter` that retries with `SUBSIDY_CLIENT_RETRY`. It sets no timeout:
+  calls that need one pass it themselves, as the transactions export does. A client is replaced after 60s because
+  the NAT gateway silently drops connections idle for 350s, and a POST sent on one can't safely be retried. It's
+  per thread rather than per request because nothing clears `RequestCache` between Celery tasks.
+- **Retries happen in urllib3, not in `@backoff` around a client method**, because only urllib3 knows whether the
+  request was sent. A failure to connect (refused, DNS, connect timeout) is retried for any method. A dropped
+  handshake is retried only for a GET: urllib3 raises the same `SSLError` for it as for a response cut off after the
+  request was sent, so a POST (a redeem, say) is never resent after one. A connection that broke after a GET was
+  sent is retried once. `SubsidyClientRetry` stops two resends urllib3 would otherwise make: a request that timed
+  out waiting for a response (urllib3 counts that as a read error, so it would rerun a slow transactions export),
+  and a POST after any `SSLError` (urllib3 retries those for every method). HTTP responses are never retried:
+  `respect_retry_after_header=False` matters, because otherwise a 503 with `Retry-After` comes back as a
+  `RetryError` instead of an `HTTPError`, and skips every `except HTTPError` handler.
+- **Connection errors aren't `HTTPError`s.** `SSLError`, `ConnectionError` and `Timeout` get past the
+  `except HTTPError` handlers in `subsidy_record()`, `credit_available()` and `LmsApiClient.get_enterprise_user()`.
+  A view that calls the Subsidy API should turn them into `SubsidyAPIUnavailableException` (503), as
+  `credits_available` does. It should catch `HTTPError` there too: a 5xx (a Cloudflare 525, a 502) isn't retried,
+  and `aggregates_for_policy()` doesn't catch it. Inner handlers that mean to handle an `HTTPError` (a soft-deleted
+  subsidy's 404) run first. Such a handler also catches LMS and catalog failures, so don't name the Subsidy API in
+  its log message.
+- **To test retries end to end**, patch `urllib3.connectionpool.HTTPConnectionPool._make_request` with one outcome
+  per attempt (see `GetVersionedSubsidyClientTests`). Patching higher, e.g. `HTTPAdapter.send`, skips the retry
+  logic. The root `conftest.py` clears cached clients between tests.
+### 26. Portable features: a pure core behind ports, one composition root
 
 When a feature should be reusable outside this service (another backend, a notebook, an offline harness), keep its
 logic in a `core/` package that imports only the standard library, and reach Django, HTTP clients and model SDKs
