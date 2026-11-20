@@ -18,6 +18,9 @@ Trial-end and renewal invoices (`subscription_cycle`) and license changes (`subs
 `FEATURE_SSP_CHECKOUT_SEGMENT_EVENTS_V2` (Django setting, off by default; set it in edx-internal
 `argocd/applications/enterprise-access/<env>-config.yaml`). `SEGMENT_KEY` must also be set. These events arrive in the
 enterprise-access Segment source, not the checkout MFE's; join them to the MFE's funnel events on `order_id`.
+Once it is on, `order_cancelled` is sent for every subscription cancelled, including ones bought before it was turned
+on. Those orders have no `order_completed`, from the server or the MFE, so expect cancellations without a matching
+completion in the funnel for a while after the switch.
 
 ## How it is sent
 No table of its own: it relies on `StripeEventData` / `StripeEventSummary`, which every webhook already persists.
@@ -33,10 +36,12 @@ No table of its own: it relies on `StripeEventData` / `StripeEventSummary`, whic
   way is lost if Segment stays unreachable or the worker exits first, and the task would never know.
 * Retried with backoff (`TASK_MAX_RETRIES`): Stripe network errors, 429 and 5xx, DB `OperationalError`, an order
   invoice's `invoice.paid` `StripeEventSummary` that isn't readable yet (its signal logs and swallows its own errors),
-  an Essentials product's Academy title that can't be read (the catalog call failed), and Segment not accepting the
-  event (network error, timeout or a non-200 response). Logged as an error with the prefix
-  `[CheckoutSegmentEventDropped]` and not sent: a missing required property, any other Stripe error, a user without
-  `lms_user_id`, or an order that can't be identified.
+  an Essentials product's Academy title that can't be read (the catalog call failed), and Segment being unreachable,
+  timing out or answering 429 or 5xx. The retries run out within about 25 minutes.
+* Logged as an error with the prefix `[CheckoutSegmentEventDropped]` and not sent (alert on the prefix): a missing
+  required property, any other Stripe error, a user without `lms_user_id`, an order that can't be identified, Segment
+  rejecting the event with another 4xx (e.g. a wrong `SEGMENT_KEY`), and an event whose retries ran out (logged by
+  the task's `on_failure`).
 
 ## Resending a dropped event
 Replaying the Stripe event doesn't resend it: the admin "Handle the selected events" action and

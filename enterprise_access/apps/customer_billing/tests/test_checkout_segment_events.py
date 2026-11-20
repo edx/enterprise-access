@@ -8,6 +8,7 @@ import ddt
 import stripe
 from analytics.request import APIError
 from celery.exceptions import Retry
+from django.conf import settings
 from django.test import TestCase, override_settings
 from django.utils import timezone
 
@@ -338,6 +339,36 @@ class TestSendCheckoutSegmentEventTask(CheckoutSegmentTestCase):
         with mock.patch(f'{TASKS}.logger') as mock_logger:
             self.assert_retried()
         mock_logger.info.assert_not_called()  # never logged as sent
+
+    def test_event_whose_retries_run_out_is_logged_as_dropped(self):
+        """The last retry's failure gets the prefix too, so the alert and the resend steps find it."""
+        self.mocks['track'].side_effect = APIError(503, 'unavailable', 'down')
+        args, kwargs = self.task_args(ORDER_COMPLETED)
+        with self.assertLogs(TASKS, level='ERROR') as logs:
+            result = send_checkout_segment_event_task.apply(
+                args=args, kwargs=kwargs, retries=settings.TASK_MAX_RETRIES,
+            )
+        self.assertTrue(result.failed())
+        self.assertIsInstance(result.result, APIError)
+        self.mocks['track'].assert_called_once()
+        dropped = [line for line in logs.output if SEGMENT_EVENT_DROPPED_LOG_PREFIX in line]
+        self.assertEqual(len(dropped), 1)
+        self.assertIn(f'{ORDER_COMPLETED} for CheckoutIntent {self.intent.id} (subscription sub_123)', dropped[0])
+
+    @ddt.data(400, 401, 403, 404)
+    def test_event_segment_rejects_is_dropped_not_retried(self, status):
+        """A 4xx other than 429 (e.g. a wrong SEGMENT_KEY) gets the same answer on every retry."""
+        self.mocks['track'].side_effect = APIError(status, 'rejected', 'no')
+        with mock.patch.object(send_checkout_segment_event_task, 'retry') as mock_retry, \
+                self.assertLogs(TASKS, level='ERROR') as logs:
+            self.run_task(ORDER_COMPLETED)
+        mock_retry.assert_not_called()
+        self.assertIn(SEGMENT_EVENT_DROPPED_LOG_PREFIX, logs.output[0])
+
+    @ddt.data(429, 500, 503)
+    def test_segment_rate_limit_and_server_errors_are_retried(self, status):
+        self.mocks['track'].side_effect = APIError(status, 'unavailable', 'down')
+        self.assert_retried()
 
     def test_essentials_without_academy_title_is_retried(self):
         with mock.patch(f'{TASKS}.build_order_completed_properties', side_effect=AcademyTitleUnavailableError()):

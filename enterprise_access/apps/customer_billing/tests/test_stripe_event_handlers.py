@@ -1262,6 +1262,8 @@ class TestStripeEventHandler(TestCase):
     @ddt.data(
         # (total, billing_reason, expect_order_completed)
         (0, 'subscription_create', True),  # the free-trial checkout
+        # Never happens (every SSP checkout starts a trial), and must not queue: the paid path raises without a renewal.
+        (5000, 'subscription_create', False),
         (5000, 'subscription_cycle', False),  # trial-end payment and renewals
         (5000, 'subscription_update', False),  # license changes
         (5000, None, False),
@@ -1309,22 +1311,6 @@ class TestStripeEventHandler(TestCase):
 
         mock_segment_task.delay.assert_called_once()
         self.assertIsNotNone(StripeEventData.objects.get(event_id=event.id).handled_at)
-
-    @override_settings(FEATURE_SSP_CHECKOUT_SEGMENT_EVENTS_V2=True)
-    @mock.patch("enterprise_access.apps.customer_billing.stripe_event_handlers._handle_invoice_paid_status_updated")
-    @mock.patch("enterprise_access.apps.customer_billing.stripe_event_handlers.send_payment_receipt_email")
-    @mock.patch(SEGMENT_TASK)
-    def test_paid_invoice_whose_handler_fails_queues_no_order_completed(
-        self, mock_segment_task, _mock_receipt, mock_status_updated,
-    ):
-        """The paid-path status update raises to make Stripe retry; that delivery must not queue order_completed."""
-        mock_status_updated.side_effect = Exception('No SelfServiceSubscriptionRenewal found')
-        event = self._paid_invoice_event(5000, 'subscription_create')
-
-        with self.assertRaises(Exception):
-            StripeEventHandler.dispatch(stripe.Event.construct_from(event.to_dict(), stripe.api_key))
-
-        mock_segment_task.delay.assert_not_called()
 
     @mock.patch(SEGMENT_TASK)
     @mock.patch("enterprise_access.apps.customer_billing.stripe_event_handlers.cancel_all_future_plans")

@@ -1154,13 +1154,38 @@ def _build_properties(event_name, checkout_intent, subscription_id, invoice_id, 
     return order_id, build_order_cancelled_properties(checkout_intent, order_id, subscription_data, invoice_summary)
 
 
-# Logged when an event is dropped, so an alert can match it; see docs/references/checkout_segment_events.md to resend.
+# Logged whenever an event is dropped, so an alert can match it; see docs/references/checkout_segment_events.md to
+# resend.
 SEGMENT_EVENT_DROPPED_LOG_PREFIX = '[CheckoutSegmentEventDropped]'
+
+
+def _is_permanent_segment_error(exc):
+    """A 4xx other than 429 (e.g. a wrong SEGMENT_KEY): retrying sends the same request and gets the same answer."""
+    status = getattr(exc, 'status', None)
+    return isinstance(status, int) and 400 <= status < 500 and status != 429
+
+
+class CheckoutSegmentEventTask(LoggedTaskWithRetry):  # pylint: disable=abstract-method
+    """
+    Logs ``SEGMENT_EVENT_DROPPED_LOG_PREFIX`` when the task fails for good: its retries ran out, or it raised an error
+    that isn't retried. LoggedTask's own failure log has no prefix, so an alert on the prefix would miss these.
+    """
+
+    def on_failure(self, exc, task_id, args, kwargs, einfo):
+        names = ('event_name', 'checkout_intent_id', 'subscription_id')
+        values = dict(zip(names, args or ()))
+        values.update({name: (kwargs or {})[name] for name in names if name in (kwargs or {})})
+        logger.error(
+            '%s Segment event %s for CheckoutIntent %s (subscription %s) failed after %s retries: %r',
+            SEGMENT_EVENT_DROPPED_LOG_PREFIX, values.get('event_name'), values.get('checkout_intent_id'),
+            values.get('subscription_id'), self.request.retries, exc,
+        )
+        super().on_failure(exc, task_id, args, kwargs, einfo)
 
 
 # autoretry_for replaces the base class's list, so the DB OperationalError it retries is listed again.
 @shared_task(
-    base=LoggedTaskWithRetry,
+    base=CheckoutSegmentEventTask,
     autoretry_for=(
         *TRANSIENT_STRIPE_ERRORS,
         *SEGMENT_DELIVERY_ERRORS,
@@ -1179,8 +1204,9 @@ def send_checkout_segment_event_task(
     The webhook handlers queue it once per handled Stripe event, and each order has one such event, so it is not
     deduplicated here; the ``messageId`` is deterministic, so Segment drops a resend after a redelivered webhook.
     The event is posted to Segment before the task returns. Transient Stripe errors, DB errors, a not-yet-readable
-    invoice summary or Academy title, and Segment not accepting the event are retried. An event that can't be built
-    is logged with ``SEGMENT_EVENT_DROPPED_LOG_PREFIX`` and never sent.
+    invoice summary or Academy title, and Segment being unreachable or answering 429/5xx are retried. An event that
+    can't be built, that Segment rejects with another 4xx, or whose retries run out is logged with
+    ``SEGMENT_EVENT_DROPPED_LOG_PREFIX`` and never sent.
     """
     if not settings.FEATURE_SSP_CHECKOUT_SEGMENT_EVENTS_V2:
         logger.info('Checkout Segment events are disabled; not sending %s for CheckoutIntent %s',
@@ -1211,10 +1237,18 @@ def send_checkout_segment_event_task(
         return
 
     # Raises if Segment did not accept the event, so it is retried; the fixed messageId makes a retry safe.
-    if track_event_or_raise(
-        lms_user_id=str(lms_user_id),
-        event_name=event_name,
-        properties=properties,
-        message_id=f'{event_name}:{order_id}',
-    ):
+    try:
+        sent = track_event_or_raise(
+            lms_user_id=str(lms_user_id),
+            event_name=event_name,
+            properties=properties,
+            message_id=f'{event_name}:{order_id}',
+        )
+    except SEGMENT_DELIVERY_ERRORS as exc:
+        if not _is_permanent_segment_error(exc):
+            raise
+        logger.error('%s Segment rejected event %s for order %s: %s',
+                     SEGMENT_EVENT_DROPPED_LOG_PREFIX, event_name, order_id, exc)
+        return
+    if sent:
         logger.info('Sent Segment event %s for order %s', event_name, order_id)
