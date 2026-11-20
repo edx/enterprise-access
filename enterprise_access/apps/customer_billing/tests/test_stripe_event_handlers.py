@@ -1262,10 +1262,15 @@ class TestStripeEventHandler(TestCase):
     @ddt.data(
         # (total, billing_reason, expect_order_completed)
         (0, 'subscription_create', True),  # the free-trial checkout
+        # Other $0 invoices also take the $0 path, so only the billing_reason filter keeps them from sending a second
+        # order_completed: e.g. a license change during the trial (proration_behavior='always_invoice').
+        (0, 'subscription_update', False),
+        (0, 'subscription_cycle', False),
+        (0, None, False),
         # Never happens (every SSP checkout starts a trial), and must not queue: the paid path raises without a renewal.
         (5000, 'subscription_create', False),
         (5000, 'subscription_cycle', False),  # trial-end payment and renewals
-        (5000, 'subscription_update', False),  # license changes
+        (5000, 'subscription_update', False),  # paid license changes
         (5000, None, False),
     )
     @ddt.unpack

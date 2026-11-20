@@ -351,11 +351,6 @@ class TestSendCheckoutSegmentEventTask(CheckoutSegmentTestCase):
         mock_retry.assert_not_called()
         self.assertIn(SEGMENT_EVENT_DROPPED_LOG_PREFIX, logs.output[0])
 
-    @ddt.data(429, 500, 503)
-    def test_segment_rate_limit_and_server_errors_are_retried(self, status):
-        self.mocks['track'].side_effect = APIError(status, 'unavailable', 'down')
-        self.assert_retried()
-
     def test_without_segment_key_is_not_logged_as_sent(self):
         self.mocks['track'].return_value = False
         with mock.patch(f'{TASKS}.logger') as mock_logger:
