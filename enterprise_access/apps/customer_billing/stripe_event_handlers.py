@@ -333,23 +333,6 @@ def _queue_checkout_segment_event(event, event_name, checkout_intent, subscripti
     send_checkout_segment_event_task.delay(event_name, checkout_intent.id, subscription_id, **task_kwargs)
 
 
-def _queue_order_completed_segment_event(event, checkout_intent, invoice, subscription_details):
-    """
-    Queue ``order_completed`` if ``invoice`` is the subscription's first one, paid at checkout. Every SSP checkout
-    starts a trial (``SSP_TRIAL_PERIOD_DAYS``), so that invoice is always $0; a paid ``subscription_create`` invoice
-    would need queuing before ``_handle_invoice_paid_status_updated``, which raises for it.
-    """
-    if invoice.to_dict().get('billing_reason') != StripeInvoiceBillingReason.SUBSCRIPTION_CREATE:
-        return
-    _queue_checkout_segment_event(
-        event,
-        CheckoutSegmentEvents.ORDER_COMPLETED,
-        checkout_intent,
-        subscription_details.to_dict().get('subscription'),
-        invoice_id=invoice.id,
-    )
-
-
 def track_subscription_cancellation(checkout_intent: CheckoutIntent, cancellation_details: dict):
     """
     Track subscription cancellation event to Segment with cancellation details.
@@ -676,8 +659,14 @@ class StripeEventHandler:
                 'Could not mark checkout intent %s as paid via invoice %s, because %s',
                 checkout_intent.uuid, invoice.id, exc,
             )
-        # Last, after mark_as_paid, so a broker outage never holds up the checkout; redelivery repeats it harmlessly.
-        _queue_order_completed_segment_event(event, checkout_intent, invoice, subscription_details)
+        # order_completed for the subscription's first invoice, paid at checkout. Every SSP checkout starts a trial
+        # (SSP_TRIAL_PERIOD_DAYS), so that invoice is always $0 and handled here, not on the paid path above. Last,
+        # after mark_as_paid, so a broker outage never holds up the checkout; redelivery repeats it harmlessly.
+        if invoice.to_dict().get('billing_reason') == StripeInvoiceBillingReason.SUBSCRIPTION_CREATE:
+            _queue_checkout_segment_event(
+                event, CheckoutSegmentEvents.ORDER_COMPLETED, checkout_intent,
+                subscription_details.to_dict().get('subscription'), invoice_id=invoice.id,
+            )
 
     @on_stripe_event('invoice.created')
     @staticmethod

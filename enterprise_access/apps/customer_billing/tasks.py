@@ -1121,36 +1121,32 @@ class OrderInvoiceSummaryNotFoundError(Exception):
     """
 
 
-def _order_invoice_summary(event_name, subscription_id, invoice_id) -> StripeEventSummary:
+def _build_properties(event_name, checkout_intent, subscription_id, invoice_id, subscription_data) -> tuple[str, dict]:
     """
-    The ``invoice.paid`` StripeEventSummary of the order's first invoice, which the webhook persisted: for
+    The event's ``order_id`` and Segment properties. Raises if they can't be built; see the task. Revenue comes from
+    the ``invoice.paid`` StripeEventSummary of the order's first invoice, which the webhook persisted: for
     ``order_completed`` the invoice it was queued for, for ``order_cancelled`` the subscription's earliest paid one.
     """
-    if event_name == CheckoutSegmentEvents.ORDER_COMPLETED:
-        summary = StripeEventSummary.get_latest_invoice_paid(invoice_id)
-    else:
-        summary = StripeEventSummary.get_first_invoice_paid(subscription_id)
-    if summary is None:
-        raise OrderInvoiceSummaryNotFoundError(
-            f'Found no invoice.paid summary for invoice {invoice_id} of subscription {subscription_id}'
-        )
-    return summary
-
-
-def _build_properties(event_name, checkout_intent, subscription_id, invoice_id, subscription_data) -> tuple[str, dict]:
-    """The event's ``order_id`` and Segment properties. Raises if they can't be built; see the task."""
+    completed = event_name == CheckoutSegmentEvents.ORDER_COMPLETED
     # The Checkout Session ID of the purchase, the same order_id the checkout MFE sends.
     order_id = checkout_intent.stripe_checkout_session_id
     if not order_id:
         raise IncompleteOrderPayloadError(
             f'CheckoutIntent {checkout_intent.id} has no Stripe Checkout Session ID to use as the order_id'
         )
-    invoice_summary = _order_invoice_summary(event_name, subscription_id, invoice_id)
-    if event_name == CheckoutSegmentEvents.ORDER_COMPLETED:
+    if not completed and not subscription_data:
+        raise IncompleteOrderPayloadError(f'order_cancelled for subscription {subscription_id} has no subscription')
+    if completed:
+        invoice_summary = StripeEventSummary.get_latest_invoice_paid(invoice_id)
+    else:
+        invoice_summary = StripeEventSummary.get_first_invoice_paid(subscription_id)
+    if invoice_summary is None:
+        raise OrderInvoiceSummaryNotFoundError(
+            f'Found no invoice.paid summary for invoice {invoice_id} of subscription {subscription_id}'
+        )
+    if completed:
         subscription = get_stripe_subscription(subscription_id)
         return order_id, build_order_completed_properties(checkout_intent, order_id, subscription, invoice_summary)
-    if not subscription_data:
-        raise IncompleteOrderPayloadError(f'order_cancelled for subscription {subscription_id} has no subscription')
     return order_id, build_order_cancelled_properties(checkout_intent, order_id, subscription_data, invoice_summary)
 
 
@@ -1159,10 +1155,16 @@ def _build_properties(event_name, checkout_intent, subscription_id, invoice_id, 
 SEGMENT_EVENT_DROPPED_LOG_PREFIX = '[CheckoutSegmentEventDropped]'
 
 
-def _is_permanent_segment_error(exc):
-    """A 4xx other than 429 (e.g. a wrong SEGMENT_KEY): retrying sends the same request and gets the same answer."""
+def _is_retryable(exc):
+    """
+    Transient Stripe errors, and Segment unreachable or answering 429/5xx. Not a Segment 4xx other than 429 (e.g. a
+    wrong SEGMENT_KEY): retrying sends the same request and gets the same answer.
+    """
+    if isinstance(exc, TRANSIENT_STRIPE_ERRORS):
+        return True
     status = getattr(exc, 'status', None)
-    return isinstance(status, int) and 400 <= status < 500 and status != 429
+    rejected = isinstance(status, int) and 400 <= status < 500 and status != 429
+    return isinstance(exc, SEGMENT_DELIVERY_ERRORS) and not rejected
 
 
 class CheckoutSegmentEventTask(LoggedTaskWithRetry):  # pylint: disable=abstract-method
@@ -1213,15 +1215,12 @@ def send_checkout_segment_event_task(
                     event_name, checkout_intent_id)
         return
 
-    checkout_intent = CheckoutIntent.objects.select_related('user', 'ssp_product').filter(
-        id=checkout_intent_id,
-    ).first()
-    if checkout_intent is None:
-        logger.error('%s Not sending Segment event %s: CheckoutIntent %s does not exist',
-                     SEGMENT_EVENT_DROPPED_LOG_PREFIX, event_name, checkout_intent_id)
-        return
-
     try:
+        checkout_intent = CheckoutIntent.objects.select_related('user', 'ssp_product').filter(
+            id=checkout_intent_id,
+        ).first()
+        if checkout_intent is None:
+            raise IncompleteOrderPayloadError(f'CheckoutIntent {checkout_intent_id} does not exist')
         lms_user_id = checkout_intent.user.lms_user_id
         if not lms_user_id:
             # The local DB user id is not an LMS user id, so it is never used instead.
@@ -1229,26 +1228,18 @@ def send_checkout_segment_event_task(
         order_id, properties = _build_properties(
             event_name, checkout_intent, subscription_id, invoice_id, subscription_data,
         )
-    except TRANSIENT_STRIPE_ERRORS:
-        raise
-    except (IncompleteOrderPayloadError, stripe.StripeError) as exc:
-        logger.error('%s Cannot send Segment event %s for CheckoutIntent %s (subscription %s): %s',
-                     SEGMENT_EVENT_DROPPED_LOG_PREFIX, event_name, checkout_intent.id, subscription_id, exc)
-        return
-
-    # Raises if Segment did not accept the event, so it is retried; the fixed messageId makes a retry safe.
-    try:
+        # Raises if Segment did not accept the event, so it is retried; the fixed messageId makes a retry safe.
         sent = track_event_or_raise(
             lms_user_id=str(lms_user_id),
             event_name=event_name,
             properties=properties,
             message_id=f'{event_name}:{order_id}',
         )
-    except SEGMENT_DELIVERY_ERRORS as exc:
-        if not _is_permanent_segment_error(exc):
+    except (IncompleteOrderPayloadError, stripe.StripeError, *SEGMENT_DELIVERY_ERRORS) as exc:
+        if _is_retryable(exc):
             raise
-        logger.error('%s Segment rejected event %s for order %s: %s',
-                     SEGMENT_EVENT_DROPPED_LOG_PREFIX, event_name, order_id, exc)
+        logger.error('%s Cannot send Segment event %s for CheckoutIntent %s (subscription %s): %s',
+                     SEGMENT_EVENT_DROPPED_LOG_PREFIX, event_name, checkout_intent_id, subscription_id, exc)
         return
     if sent:
         logger.info('Sent Segment event %s for order %s', event_name, order_id)
