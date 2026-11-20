@@ -1051,7 +1051,7 @@ class TestStripeEventHandler(TestCase):
 
     @ddt.data(
         # Before automated renewals: every renewal's plan is deactivated, including the paid plan in effect.
-        {'renewal_switch_on': False, 'expected_kwargs': {}},
+        {'renewal_switch_on': False, 'expected_kwargs': {'include_processed': True}},
         # With automated renewals, the paid plan in effect stays active through a failed renewal's grace period.
         {'renewal_switch_on': True, 'expected_kwargs': {'include_processed': False}},
     )

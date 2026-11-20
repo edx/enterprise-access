@@ -115,12 +115,21 @@ event from the Stripe dashboard (or wait for Stripe's next retry). The retry res
 Manager renewal.
 
 - **Duplicate plan title** (License Manager 500, MySQL duplicate-key error on the title). A plan with the same
-  title already exists under the customer agreement, e.g. one created by hand. Change the conflicting plan's
-  title, or the renewal's `renewed_plan_title`, in the License Manager Django admin.
+  title already exists under the customer agreement, e.g. one created by hand. Rename the conflicting plan in
+  the License Manager Django admin (subscription plans), or change the renewal's `renewed_plan_title` through
+  the API below.
 - **"Cannot renew for fewer than the number of original activated licenses"** (License Manager 500). The
   renewal invoice's seat count is below the licenses year 1 copies forward (assigned plus activated). Either
-  the customer frees up licenses, or CS raises `number_of_licenses` on the License Manager renewal and adjusts
-  the Stripe subscription quantity to match.
+  the customer frees up licenses, or CS raises the renewal's `number_of_licenses` through the API below and
+  adjusts the Stripe subscription quantity to match.
+
+Change an SSP renewal with `PATCH /api/v1/provisioning-admins/subscription-plan-renewals/<id>/` on License
+Manager, where `<id>` is the `license_manager_renewal_id` in the `outcome=created` audit line. For example,
+`{"renewed_plan_title": "..."}` or `{"number_of_licenses": 15}`. It needs the `enterprise_provisioning_admin`
+role, and accepts a JWT or a logged-in session (the License Manager API docs page). **Don't use the License
+Manager Django admin to edit the renewal:** its form rejects every SSP renewal during the grace week, because
+the effective date is in the past and before year 1's extended expiration, and SSP renewals have no
+Salesforce opportunity ID.
 
 `invoice.created` and `invoice.payment_failed` with no processed paid plan to keep active log
 `outcome=halted` but don't fail the webhook, since a retry can't fix that. `invoice.paid` halts on the same

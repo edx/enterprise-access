@@ -51,6 +51,9 @@ from enterprise_access.toggles import ssp_paid_renewal_enabled
 
 logger = logging.getLogger(__name__)
 
+# Invoice events whose payload carries the subscription details, under ``invoice.parent``.
+INVOICE_EVENT_TYPES = ('invoice.paid', 'invoice.created', 'invoice.payment_failed')
+
 # How long a paid plan stays active past its end date while its annual renewal invoice is unpaid.
 ANNUAL_RENEWAL_GRACE_PERIOD = timedelta(days=7)
 # Length of each renewed paid term.
@@ -137,7 +140,7 @@ def persist_stripe_event(event: stripe.Event) -> StripeEventData | None:
     related subscription can be found for the given event.
     """
     stripe_subscription = None
-    if event.type in ('invoice.paid', 'invoice.created', 'invoice.payment_failed'):
+    if event.type in INVOICE_EVENT_TYPES:
         _, stripe_subscription = get_invoice_and_subscription(event)
     elif event.type.startswith('customer.subscription'):
         stripe_subscription = event.data.object
@@ -470,16 +473,6 @@ def _renewal_invoice_line(invoice_dict: dict) -> dict:
     raise AnnualRenewalError(f'Invoice {invoice_dict.get("id")} has no subscription term line')
 
 
-def _invoice_line_price_id(line: dict) -> str | None:
-    """
-    Return the Stripe Price ID an invoice line bills.
-
-    Since Stripe API 2025-03-31.basil, invoice lines carry the price ID under ``pricing.price_details.price``
-    instead of an expanded ``price`` object, so Price metadata has to be fetched separately.
-    """
-    return ((line.get('pricing') or {}).get('price_details') or {}).get('price')
-
-
 def _ssp_product_slugs_for_price(price_id: str) -> set[str]:
     """
     Return the SspProduct slugs a Stripe Price points at: its ``ssp_product_slug`` metadata, and the product
@@ -534,8 +527,8 @@ def _audit_renewal_failures(step: str, checkout_intent: CheckoutIntent, invoice_
 
 def _halt_annual_renewal(message: str, checkout_intent: CheckoutIntent, invoice_id: str):
     """
-    Log an annual renewal that cannot proceed with enough context for engineering and CS, then raise so the
-    webhook fails and Stripe retries it.
+    Log an annual renewal that cannot proceed with enough context for engineering and CS, then raise. The caller
+    decides whether the webhook fails.
     """
     _log_renewal(logging.ERROR, 'halted', checkout_intent, invoice_id, f'reason={message!r}')
     raise AnnualRenewalError(message, audit_logged=True)
@@ -560,10 +553,11 @@ def resolve_renewal_product(checkout_intent: CheckoutIntent, invoice) -> SspProd
     def halt(message):
         _halt_annual_renewal(message, checkout_intent, invoice_id)
 
+    # Lines carry only the Price ID, not a Price object (see "Gotchas" in docs/references/ssp_annual_renewals.md).
     price_ids = {
         price_id
         for line in _subscription_item_lines(invoice_dict)
-        if (price_id := _invoice_line_price_id(line))
+        if (price_id := ((line.get('pricing') or {}).get('price_details') or {}).get('price'))
     }
     if not price_ids:
         halt('the renewal invoice has no Stripe Price')
@@ -925,12 +919,9 @@ def _handle_subscription_updated_status_updates(
         )
         enterprise_uuid = checkout_intent.enterprise_uuid
         if enterprise_uuid:
-            if ssp_paid_renewal_enabled():
-                # Keep the paid plan in effect: a failed annual renewal charge gets a grace period, and the
-                # plan expires on its own if the charge never clears.
-                cancel_all_future_plans(checkout_intent, include_processed=False)
-            else:
-                cancel_all_future_plans(checkout_intent)
+            # With ssp_paid_renewal on, keep the paid plan in effect: a failed annual renewal charge gets a grace
+            # period, and the plan expires on its own if the charge never clears.
+            cancel_all_future_plans(checkout_intent, include_processed=not ssp_paid_renewal_enabled())
         else:
             logger.error(
                 (
@@ -970,7 +961,7 @@ class StripeEventHandler:
                 # The default __repr__ is really long because it just barfs out the entire payload.
                 event_short_repr = f'<stripe.Event id={event.id} type={event.type}>'
                 logger.info(f'[StripeEventHandler] handling {event_short_repr}.')
-                if event.type in ('invoice.paid', 'invoice.created', 'invoice.payment_failed') \
+                if event.type in INVOICE_EVENT_TYPES \
                         and not _valid_invoice_event_type(event):
                     logger.warning(
                         f'[StripeEventHandler] event {event_short_repr} is not a valid invoice type'

@@ -332,25 +332,6 @@ class TestAnnualRenewal(TestCase):
         self.mock_receipt_email.delay.assert_called_once()
         self.assertEqual(self.mock_receipt_email.delay.call_args.kwargs['invoice_id'], RENEWAL_INVOICE_ID)
 
-    @ddt.data(TEAMS_SLUG, 'ai-academy-yearly', 'data-academy-yearly', 'legacy-academy-yearly')
-    def test_resolve_renewal_product_uses_the_purchased_product(self, product_slug):
-        """
-        Each product resolves to itself, including a grandfathered (inactive) academy, so year 2 stays on the
-        catalog query of the product the customer bought.
-        """
-        self._set_up_paid_subscriber(product_slug)
-        price_id = next(
-            price_id for price_id, price in self.stripe_prices.items()
-            if price['metadata']['ssp_product_slug'] == product_slug
-        )
-        invoice = self._renewal_invoice_event(price_ids=(price_id,)).data.object
-
-        product = resolve_renewal_product(self.checkout_intent, invoice)
-
-        expected = SspProduct.objects.get(slug=product_slug)
-        self.assertEqual(product, expected)
-        self.assertEqual(product.catalog_query_uuid, expected.catalog_query_uuid)
-
     def test_resolve_renewal_product_falls_back_to_price_lookup_key(self):
         """A Price without ssp_product_slug metadata resolves through its lookup key, never to a default."""
         self._set_up_paid_subscriber('ai-academy-yearly')
@@ -590,19 +571,6 @@ class TestAnnualRenewal(TestCase):
         self.assertTrue(any('could not find Checkout Intent' in line for line in logs.output))
         self.mock_lm_client.update_subscription_plan.assert_not_called()
 
-    def test_invoice_created_without_paid_plan_does_not_fail(self):
-        """
-        invoice.created for a renewal with no paid plan to keep active is audit logged as halted, but doesn't
-        fail: invoice.paid halts on the same problem.
-        """
-        self._set_up_paid_subscriber(with_paid_plan=False)
-
-        with self.assertLogs(HANDLERS_MODULE, level='ERROR') as logs:
-            StripeEventHandler.dispatch(self._renewal_invoice_event(event_type='invoice.created'))
-
-        self.assertTrue(any('outcome=halted' in line for line in logs.output))
-        self.mock_lm_client.update_subscription_plan.assert_not_called()
-
     @ddt.data(
         {'product_slug': TEAMS_SLUG, 'price_id': TEAMS_PRICE_ID, 'product_name': 'Teams'},
         {'product_slug': 'ai-academy-yearly', 'price_id': 'price_ai_academy',
@@ -684,19 +652,21 @@ class TestAnnualRenewal(TestCase):
         self.assertIn('License Manager is down', failed_logs[0])
         self.assertIn(f'invoice_id={RENEWAL_INVOICE_ID}', failed_logs[0])
 
-    def test_payment_failed_without_paid_plan_halts_without_failing(self):
+    @ddt.data('invoice.created', 'invoice.payment_failed')
+    def test_grace_extension_without_paid_plan_halts_without_failing(self, event_type):
         """
-        A failed renewal charge with no paid plan to keep active is audit logged once, as halted, and doesn't
-        fail the webhook: a retry can't fix it.
+        A created or failed renewal invoice with no paid plan to keep active is audit logged once, as halted, and
+        doesn't fail the webhook: a retry can't fix it, and invoice.paid halts on the same problem.
         """
         self._set_up_paid_subscriber(with_paid_plan=False)
 
         with self.assertLogs(HANDLERS_MODULE, level='ERROR') as logs:
-            StripeEventHandler.dispatch(self._renewal_invoice_event(event_type='invoice.payment_failed'))
+            StripeEventHandler.dispatch(self._renewal_invoice_event(event_type=event_type))
 
         audit_logs = [line for line in logs.output if '[SSPAnnualRenewal]' in line]
         self.assertEqual(len(audit_logs), 1)
         self.assertIn('outcome=halted', audit_logs[0])
+        self.mock_lm_client.update_subscription_plan.assert_not_called()
 
     @ddt.data('invoice.payment_failed', 'invoice.created')
     def test_year_one_kept_active_until_a_week_after_its_end(self, event_type):
