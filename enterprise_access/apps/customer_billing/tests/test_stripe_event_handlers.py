@@ -14,6 +14,8 @@ import stripe
 from django.contrib.auth.models import AbstractUser
 from django.test import TestCase, override_settings
 from django.utils import timezone
+from edx_django_utils.cache import RequestCache
+from edx_toggles.toggles.testutils import override_waffle_switch
 from kombu.utils.json import dumps as json_dumps
 from kombu.utils.json import loads as json_loads
 
@@ -52,6 +54,7 @@ from enterprise_access.apps.provisioning.models import (
     GetCreateTrialSubscriptionPlanStep
 )
 from enterprise_access.apps.provisioning.tests.factories import ProvisionNewCustomerWorkflowFactory
+from enterprise_access.toggles import SSP_PAID_RENEWAL
 
 SEGMENT_TASK = 'enterprise_access.apps.customer_billing.stripe_event_handlers.send_checkout_segment_event_task'
 
@@ -1046,6 +1049,13 @@ class TestStripeEventHandler(TestCase):
 
         mock_paid_email_task.delay.assert_not_called()
 
+    @ddt.data(
+        # Before automated renewals: every renewal's plan is deactivated, including the paid plan in effect.
+        {'renewal_switch_on': False, 'expected_kwargs': {'include_processed': True}},
+        # With automated renewals, the paid plan in effect stays active through a failed renewal's grace period.
+        {'renewal_switch_on': True, 'expected_kwargs': {'include_processed': False}},
+    )
+    @ddt.unpack
     @mock.patch(
         "enterprise_access.apps.customer_billing.stripe_event_handlers.cancel_all_future_plans"
     )
@@ -1053,7 +1063,7 @@ class TestStripeEventHandler(TestCase):
         "enterprise_access.apps.customer_billing.stripe_event_handlers.send_billing_error_email_task"
     )
     def test_subscription_updated_past_due_cancels_future_plans(
-        self, mock_send_billing_error, mock_cancel,
+        self, mock_send_billing_error, mock_cancel, renewal_switch_on, expected_kwargs,
     ):
         """Past-due transition triggers cancel_all_future_plans with expected args."""
         subscription_id = "sub_test_past_due_123"
@@ -1077,9 +1087,12 @@ class TestStripeEventHandler(TestCase):
             "customer.subscription.updated", subscription_data
         )
 
-        StripeEventHandler.dispatch(mock_event)
+        # override_waffle_switch leaves its value in the request cache, which would leak into later tests.
+        self.addCleanup(RequestCache.clear_all_namespaces)
+        with override_waffle_switch(SSP_PAID_RENEWAL, renewal_switch_on):
+            StripeEventHandler.dispatch(mock_event)
 
-        mock_cancel.assert_called_once_with(self.checkout_intent)
+        mock_cancel.assert_called_once_with(self.checkout_intent, **expected_kwargs)
         mock_send_billing_error.delay.assert_called_once()
         call_kwargs = mock_send_billing_error.delay.call_args.kwargs
         self.assertEqual(call_kwargs.get('checkout_intent_id'), self.checkout_intent.id)
@@ -1333,7 +1346,7 @@ class TestStripeEventHandler(TestCase):
     def test_subscription_deleted_marks_renewals_canceled(
         self, mock_send_cancelation_email, mock_cancel,
     ):
-        """Subscription deleted event marks related renewal records as canceled."""
+        """Subscription deleted event marks related renewal records as canceled and ends any grace period."""
         event_data = StripeEventDataFactory(
             checkout_intent=self.checkout_intent,
             event_type='customer.subscription.created',
@@ -1354,7 +1367,9 @@ class TestStripeEventHandler(TestCase):
         )
 
         self.checkout_intent.enterprise_uuid = uuid.uuid4()
-        self.checkout_intent.save(update_fields=['enterprise_uuid'])
+        # Stripe cancels a subscription whose renewal charge kept failing, ending the grace period.
+        self.checkout_intent.in_renewal_grace_period = True
+        self.checkout_intent.save(update_fields=['enterprise_uuid', 'in_renewal_grace_period'])
 
         mock_event = self._create_mock_stripe_event(
             'customer.subscription.deleted',
@@ -1371,6 +1386,8 @@ class TestStripeEventHandler(TestCase):
         renewal.refresh_from_db()
         self.assertTrue(renewal.is_canceled)
         self.assertIsNone(renewal.subscription_cancel_at)
+        self.checkout_intent.refresh_from_db()
+        self.assertFalse(self.checkout_intent.in_renewal_grace_period)
         mock_cancel.assert_called_once_with(self.checkout_intent)
         mock_send_cancelation_email.delay.assert_called_once()
         call_kwargs = mock_send_cancelation_email.delay.call_args.kwargs
@@ -2902,7 +2919,8 @@ class TestInvoiceCreatedHandler(TestCase):
         StripeEventData.objects.all().delete()
         StripeEventSummary.objects.all().delete()
 
-    def _create_invoice_created_event(self, subscription_id=None, period_start=None, invoice_id=None):
+    def _create_invoice_created_event(self, subscription_id=None, period_start=None, invoice_id=None,
+                                      billing_reason=None):
         """Create a stripe.Event for invoice.created."""
         subscription_id = subscription_id or self.subscription_id
         period_start = period_start or self.period_start_ts
@@ -2920,6 +2938,7 @@ class TestInvoiceCreatedHandler(TestCase):
             'id': invoice_id,
             'customer': self.stripe_customer_id,
             'object': 'invoice',
+            'billing_reason': billing_reason,
             'parent': {
                 'subscription_details': {
                     'metadata': mock_subscription,
@@ -2970,6 +2989,24 @@ class TestInvoiceCreatedHandler(TestCase):
 
         renewal.refresh_from_db()
         self.assertEqual(renewal.stripe_invoice_id, self.invoice_id)
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_event_handlers.LicenseManagerApiClient')
+    def test_invoice_created_links_trial_to_paid_invoice_with_renewal_switch_on(self, mock_lm_client):
+        """
+        Stripe also bills the first paid invoice, when the trial ends, as a subscription_cycle. With no earlier
+        paid invoice it is not an annual renewal, so the ssp_paid_renewal switch must not stop it being linked.
+        """
+        renewal = self._create_renewal_with_effective_date()
+        event = self._create_invoice_created_event(billing_reason='subscription_cycle')
+
+        # override_waffle_switch leaves its value in the request cache, which would leak into later tests.
+        self.addCleanup(RequestCache.clear_all_namespaces)
+        with override_waffle_switch(SSP_PAID_RENEWAL, True):
+            StripeEventHandler.dispatch(event)
+
+        renewal.refresh_from_db()
+        self.assertEqual(renewal.stripe_invoice_id, self.invoice_id)
+        mock_lm_client.return_value.update_subscription_plan.assert_not_called()
 
     def test_invoice_created_handles_salesforce_style_invoice_payload(self):
         """Test invoice.created ingestion with the Salesforce-style payload shape."""

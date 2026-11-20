@@ -152,6 +152,11 @@ PII clearing cannot be undone, so behavior that extends it (e.g. `COURSE_RUN_END
 switch in `enterprise_access/toggles.py`, off by default, and the switch must also stop PII clearing for rows
 already recorded under that behavior. Use `override_waffle_switch` on the test class to turn it on.
 
+`override_waffle_switch` used as a context manager or method decorator also writes its value into the switch's
+request cache and never removes it, so it leaks into later tests in the same process. Add
+`self.addCleanup(RequestCache.clear_all_namespaces)` (`edx_django_utils.cache`) in any test or class that uses it
+that way. As a decorator on a `TestCase` class it only changes the database row, so it doesn't leak.
+
 ### 21. Catalog lookups on scheduled jobs: only a 404 is "no metadata"
 
 A transient catalog failure must not be treated as "no metadata", or the job acts on incomplete data and records a
