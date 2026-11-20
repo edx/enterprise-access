@@ -4,6 +4,7 @@ Unit tests for Stripe event handlers.
 import uuid
 from contextlib import nullcontext
 from datetime import timedelta
+from decimal import Decimal
 from random import randint
 from typing import Type, cast
 from unittest import mock
@@ -11,13 +12,16 @@ from unittest import mock
 import ddt
 import stripe
 from django.contrib.auth.models import AbstractUser
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.utils import timezone
+from kombu.utils.json import dumps as json_dumps
+from kombu.utils.json import loads as json_loads
 
 from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.customer_billing.constants import (
     SUBSCRIPTION_ITEM_TYPE,
     CheckoutIntentState,
+    CheckoutSegmentEvents,
     StripeSubscriptionStatus
 )
 from enterprise_access.apps.customer_billing.models import (
@@ -48,6 +52,8 @@ from enterprise_access.apps.provisioning.models import (
     GetCreateTrialSubscriptionPlanStep
 )
 from enterprise_access.apps.provisioning.tests.factories import ProvisionNewCustomerWorkflowFactory
+
+SEGMENT_TASK = 'enterprise_access.apps.customer_billing.stripe_event_handlers.send_checkout_segment_event_task'
 
 
 def _rand_numeric_string():
@@ -1200,6 +1206,123 @@ class TestStripeEventHandler(TestCase):
         # The different between these two integer timestamps should be small,
         # certainly less than one second.
         self.assertLess(timezone.now().timestamp() - trial_end_value, 1)
+
+    def _subscription_deletion_event(self, subscription_id):
+        """A ``customer.subscription.deleted`` event for the subscription, with its final item."""
+        return self._create_mock_stripe_event('customer.subscription.deleted', {
+            'id': subscription_id,
+            'object': 'subscription',
+            'status': 'canceled',
+            'metadata': self._create_mock_stripe_subscription(self.checkout_intent),
+            'items': {'object': 'list', 'data': [{
+                'object': 'subscription_item',
+                'quantity': 12,
+                'price': {'object': 'price', 'id': 'price_1', 'unit_amount_decimal': '1250'},
+            }]},
+        })
+
+    def _paid_invoice_event(self, total, billing_reason):
+        return self._create_mock_stripe_event('invoice.paid', {
+            'id': 'in_1',
+            'object': 'invoice',
+            'customer': 'cus_1',
+            'total': total,
+            'billing_reason': billing_reason,
+            'parent': {'subscription_details': {
+                'metadata': self._create_mock_stripe_subscription(self.checkout_intent),
+                'subscription': 'sub_1',
+            }},
+            'lines': {'data': [{'parent': {'type': SUBSCRIPTION_ITEM_TYPE}}]},
+        })
+
+    @override_settings(FEATURE_SSP_CHECKOUT_SEGMENT_EVENTS_V2=True)
+    @mock.patch(SEGMENT_TASK)
+    @mock.patch("enterprise_access.apps.customer_billing.stripe_event_handlers.cancel_all_future_plans")
+    def test_subscription_deleted_queues_order_cancelled(self, _mock_cancel, mock_segment_task):
+        """
+        The task gets the subscription's id and final items, and nothing else from the payload. In a real Stripe
+        event ``unit_amount_decimal`` is a ``Decimal``, which must survive Celery's JSON serializer.
+        """
+        subscription_id = 'sub_cancel_segment'
+        self._create_existing_event_data_records(subscription_id, subscription_status=StripeSubscriptionStatus.ACTIVE)
+        event = self._subscription_deletion_event(subscription_id)
+
+        StripeEventHandler.dispatch(stripe.Event.construct_from(event.to_dict(), stripe.api_key))
+
+        mock_segment_task.delay.assert_called_once()
+        self.assertEqual(
+            mock_segment_task.delay.call_args.args,
+            (CheckoutSegmentEvents.ORDER_CANCELLED, self.checkout_intent.id, subscription_id),
+        )
+        subscription_data = json_loads(json_dumps(mock_segment_task.delay.call_args.kwargs))['subscription_data']
+        self.assertEqual(set(subscription_data), {'id', 'items'})
+        item = subscription_data['items']['data'][0]
+        self.assertEqual((item['quantity'], item['price']['unit_amount_decimal']), (12, Decimal('1250')))
+
+    @ddt.data(
+        # (total, billing_reason, expect_order_completed)
+        (0, 'subscription_create', True),  # the free-trial checkout
+        # Other $0 invoices also take the $0 path, so only the billing_reason filter keeps them from sending a second
+        # order_completed: e.g. a license change during the trial (proration_behavior='always_invoice').
+        (0, 'subscription_update', False),
+        (0, 'subscription_cycle', False),
+        (0, None, False),
+        # Never happens (every SSP checkout starts a trial), and must not queue: the paid path raises without a renewal.
+        (5000, 'subscription_create', False),
+        (5000, 'subscription_cycle', False),  # trial-end payment and renewals
+        (5000, 'subscription_update', False),  # paid license changes
+        (5000, None, False),
+    )
+    @ddt.unpack
+    @override_settings(FEATURE_SSP_CHECKOUT_SEGMENT_EVENTS_V2=True)
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_paid_subscription_renewal_notice_email_task"
+    )
+    @mock.patch("enterprise_access.apps.customer_billing.stripe_event_handlers._handle_invoice_paid_status_updated")
+    @mock.patch("enterprise_access.apps.customer_billing.stripe_event_handlers.send_payment_receipt_email")
+    @mock.patch(SEGMENT_TASK)
+    def test_invoice_paid_queues_order_completed_for_the_first_invoice_only(
+        self, total, billing_reason, expect_order_completed, mock_segment_task, *_mocks,
+    ):
+        """Queued when Stripe confirms the order at checkout, not when the trial ends."""
+        event = self._paid_invoice_event(total, billing_reason)
+        StripeEventHandler.dispatch(stripe.Event.construct_from(event.to_dict(), stripe.api_key))
+
+        if expect_order_completed:
+            mock_segment_task.delay.assert_called_once_with(
+                CheckoutSegmentEvents.ORDER_COMPLETED, self.checkout_intent.id, 'sub_1', invoice_id='in_1',
+            )
+        else:
+            mock_segment_task.delay.assert_not_called()
+
+    @override_settings(FEATURE_SSP_CHECKOUT_SEGMENT_EVENTS_V2=True)
+    @mock.patch(SEGMENT_TASK)
+    @mock.patch("enterprise_access.apps.customer_billing.stripe_event_handlers._update_renewal_cancellation_state")
+    def test_order_cancelled_is_queued_once_across_redeliveries(self, mock_update_renewal, mock_segment_task):
+        """
+        A delivery whose handler fails queues nothing (Stripe redelivers for days, longer than Segment de-duplicates a
+        messageId); the delivery that succeeds queues the event, and redeliveries after it queue nothing.
+        """
+        self._create_existing_event_data_records('sub_redelivered', subscription_status=StripeSubscriptionStatus.ACTIVE)
+        event = self._subscription_deletion_event('sub_redelivered')
+        mock_update_renewal.side_effect = [Exception('cancellation work failed'), None, None]
+
+        with self.assertRaises(Exception):
+            StripeEventHandler.dispatch(event)
+        mock_segment_task.delay.assert_not_called()
+
+        StripeEventHandler.dispatch(event)
+        StripeEventHandler.dispatch(event)
+
+        mock_segment_task.delay.assert_called_once()
+        self.assertIsNotNone(StripeEventData.objects.get(event_id=event.id).handled_at)
+
+    @mock.patch(SEGMENT_TASK)
+    @mock.patch("enterprise_access.apps.customer_billing.stripe_event_handlers.cancel_all_future_plans")
+    def test_flag_off_queues_no_checkout_segment_event(self, _mock_cancel, mock_segment_task):
+        StripeEventHandler.dispatch(self._paid_invoice_event(0, 'subscription_create'))
+        StripeEventHandler.dispatch(self._subscription_deletion_event('sub_flag_off'))
+        mock_segment_task.delay.assert_not_called()
 
     @mock.patch(
         "enterprise_access.apps.customer_billing.stripe_event_handlers.cancel_all_future_plans"
