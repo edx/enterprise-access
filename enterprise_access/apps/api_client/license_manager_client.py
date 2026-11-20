@@ -350,38 +350,6 @@ class LicenseManagerApiClient(BaseOAuthClient):
             )
             raise
 
-    def update_subscription_plan_renewal(self, renewal_id: int, **fields) -> dict:
-        """
-        Partially update an existing subscription plan renewal via the license-manager service.
-
-        Arguments:
-            renewal_id (int): ID of the subscription plan renewal to update
-            **fields: The renewal fields to change, e.g. ``renewed_plan_title``
-
-        Returns:
-            dict: The updated subscription plan renewal record
-
-        Raises:
-            APIClientException: If the API call fails
-        """
-        endpoint = f'{self.subscription_plan_renewal_provisioning_endpoint}{renewal_id}/'
-
-        try:
-            response = self.client.patch(endpoint, json=fields, timeout=settings.LICENSE_MANAGER_CLIENT_TIMEOUT)
-            response.raise_for_status()
-            return response.json()
-        except requests.exceptions.HTTPError as exc:
-            logger.exception(
-                'Failed to update subscription plan renewal %s, response %s, exception: %s',
-                renewal_id,
-                safe_error_response_content(exc),
-                exc,
-            )
-            raise APIClientException(
-                f'Could not update subscription plan renewal {renewal_id}',
-                exc,
-            ) from exc
-
     def process_subscription_plan_renewal(self, renewal_id: int) -> dict:
         """
         Process an existing subscription plan renewal via the license-manager service.

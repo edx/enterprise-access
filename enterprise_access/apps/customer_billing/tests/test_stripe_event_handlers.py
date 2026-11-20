@@ -2796,7 +2796,8 @@ class TestInvoiceCreatedHandler(TestCase):
         StripeEventData.objects.all().delete()
         StripeEventSummary.objects.all().delete()
 
-    def _create_invoice_created_event(self, subscription_id=None, period_start=None, invoice_id=None):
+    def _create_invoice_created_event(self, subscription_id=None, period_start=None, invoice_id=None,
+                                      billing_reason=None):
         """Create a stripe.Event for invoice.created."""
         subscription_id = subscription_id or self.subscription_id
         period_start = period_start or self.period_start_ts
@@ -2814,6 +2815,7 @@ class TestInvoiceCreatedHandler(TestCase):
             'id': invoice_id,
             'customer': self.stripe_customer_id,
             'object': 'invoice',
+            'billing_reason': billing_reason,
             'parent': {
                 'subscription_details': {
                     'metadata': mock_subscription,
@@ -2864,6 +2866,24 @@ class TestInvoiceCreatedHandler(TestCase):
 
         renewal.refresh_from_db()
         self.assertEqual(renewal.stripe_invoice_id, self.invoice_id)
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_event_handlers.LicenseManagerApiClient')
+    def test_invoice_created_links_trial_to_paid_invoice_with_renewal_switch_on(self, mock_lm_client):
+        """
+        Stripe also bills the first paid invoice, when the trial ends, as a subscription_cycle. With no earlier
+        paid invoice it is not an annual renewal, so the ssp_paid_renewal switch must not stop it being linked.
+        """
+        renewal = self._create_renewal_with_effective_date()
+        event = self._create_invoice_created_event(billing_reason='subscription_cycle')
+
+        # override_waffle_switch leaves its value in the request cache, which would leak into later tests.
+        self.addCleanup(RequestCache.clear_all_namespaces)
+        with override_waffle_switch(SSP_PAID_RENEWAL, True):
+            StripeEventHandler.dispatch(event)
+
+        renewal.refresh_from_db()
+        self.assertEqual(renewal.stripe_invoice_id, self.invoice_id)
+        mock_lm_client.return_value.update_subscription_plan.assert_not_called()
 
     def test_invoice_created_handles_salesforce_style_invoice_payload(self):
         """Test invoice.created ingestion with the Salesforce-style payload shape."""

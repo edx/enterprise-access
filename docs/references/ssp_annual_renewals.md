@@ -31,12 +31,17 @@ the trial->paid path.
 `CheckoutIntent.in_renewal_grace_period` marks the rare case of a failed renewal charge: the customer is in the
 grace week, still on year 1. `invoice.created` alone (the normal short gap before payment) doesn't set it.
 
+The flag is only cleared by a processed renewal or `customer.subscription.deleted`. If Stripe's dunning
+settings end a failed subscription as `unpaid` or leave it `past_due` instead of canceling it, the flag stays
+`True` after year 1 has expired. Anything that reads it (such as a grace banner) should also check that the
+grace week (`period.start + 7 days`) hasn't passed.
+
 ## Processing a paid renewal
 
-1. `resolve_renewal_product()` finds the `SspProduct` from the invoice's Stripe Price. It must be the
-   checkout intent's product. There is **no fallback** to `teams-yearly`. If the product is missing,
-   unknown, ambiguous or mismatched, it logs an `outcome=halted` audit line (see "Audit logs") and
-   raises `RenewalProductError`, so Stripe retries. Inactive (grandfathered) products are accepted.
+1. `resolve_renewal_product()` checks the invoice's Stripe Prices: each one must resolve to the checkout
+   intent's product and nothing else. There is **no fallback** to `teams-yearly`. If a Price resolves to no
+   product, another product or more than one, it logs an `outcome=halted` audit line (see "Audit logs") and
+   raises `AnnualRenewalError`, so Stripe retries. Inactive (grandfathered) products are accepted.
 2. It creates a License Manager `SubscriptionPlanRenewal` with no renewed plan. `prior` is the renewed plan
    of the most recently processed `SelfServiceSubscriptionRenewal`. Effective date is the invoice line's
    `period.start` (year 1's original end date) and expiration is one year later. The license count comes
@@ -55,9 +60,9 @@ Only subscription item lines are read (`parent.type == 'subscription_item_detail
 one that isn't a proration; one-off invoice items such as adjustments never set the seats, dates or product.
 
 Idempotency is keyed on `stripe_invoice_id`. A processed renewal is skipped. An unprocessed one resumes at
-the processing step without creating another License Manager renewal. The resume first sets the current
-title on that License Manager renewal, so a renewal License Manager rejected over its title can
-complete on Stripe's retry.
+the processing step without creating another License Manager renewal. The resume sends the License Manager
+renewal unchanged, so a renewal that fails on its data (see "Runbook") needs a manual fix before a retry can
+succeed.
 
 ## Audit logs and monitoring
 
@@ -74,7 +79,6 @@ monitors:
 | `failed` | ERROR | Unexpected error (e.g. a License Manager API error). `step=` is `process` or `grace_extension`. |
 | `switch_off` | ERROR | A renewal was paid but `ssp_paid_renewal` is off, so it must be handled by hand. |
 | `created` | INFO | License Manager renewal created (`renewal_id`, `license_manager_renewal_id`, `product`, `licenses`). |
-| `title_updated` | INFO | A retried Essentials renewal had its License Manager title reset before processing. |
 | `processed` | INFO | Year 2 is active (`prior_plan_uuid`, `renewed_plan_uuid`). |
 | `already_processed` | INFO | Replayed `invoice.paid`, skipped. |
 | `grace_extended` | INFO | Year 1 kept active until `expiration_date` (renewal invoice created or charge failed). |
@@ -102,6 +106,25 @@ and year make each term unique. The end month matches what the admin portal show
 this title itself from the Stripe billing period and ignores the License Manager title; for Teams it shows the
 License Manager title. Without a title, License Manager would default to `{prior title} - Renewal {year}`,
 which grows each year (`Acme - Renewal 2027 - Renewal 2028`).
+
+## Runbook
+
+Each case below logs `outcome=failed step=process` on every Stripe retry. The customer has paid, and year 1
+expires at `period.start + 7 days`, so fix it within the grace week. After the fix, resend the `invoice.paid`
+event from the Stripe dashboard (or wait for Stripe's next retry). The retry resumes the existing License
+Manager renewal.
+
+- **Duplicate plan title** (License Manager 500, MySQL duplicate-key error on the title). A plan with the same
+  title already exists under the customer agreement, e.g. one created by hand. Change the conflicting plan's
+  title, or the renewal's `renewed_plan_title`, in the License Manager Django admin.
+- **"Cannot renew for fewer than the number of original activated licenses"** (License Manager 500). The
+  renewal invoice's seat count is below the licenses year 1 copies forward (assigned plus activated). Either
+  the customer frees up licenses, or CS raises `number_of_licenses` on the License Manager renewal and adjusts
+  the Stripe subscription quantity to match.
+
+`invoice.created` and `invoice.payment_failed` with no processed paid plan to keep active log
+`outcome=halted` but don't fail the webhook, since a retry can't fix that. `invoice.paid` halts on the same
+problem and does fail, so it keeps alerting.
 
 ## Gotchas
 

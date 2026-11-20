@@ -407,31 +407,6 @@ class TestLicenseManagerRenewalProcessing(TestCase):
         )
 
     @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient', autospec=True)
-    def test_update_subscription_plan_renewal_success(self, mock_oauth_client):
-        """Updating a renewal PATCHes only the given fields."""
-        mock_patch = mock_oauth_client.return_value.patch
-        mock_patch.return_value.json.return_value = {'id': 123, 'renewed_plan_title': 'New title'}
-
-        result = LicenseManagerApiClient().update_subscription_plan_renewal(123, renewed_plan_title='New title')
-
-        self.assertEqual(result, {'id': 123, 'renewed_plan_title': 'New title'})
-        mock_patch.assert_called_once_with(
-            'http://license-manager.example.com/api/v1/provisioning-admins/subscription-plan-renewals/123/',
-            json={'renewed_plan_title': 'New title'},
-            timeout=settings.LICENSE_MANAGER_CLIENT_TIMEOUT,
-        )
-
-    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient', autospec=True)
-    def test_update_subscription_plan_renewal_http_error(self, mock_oauth_client):
-        """HTTP errors while updating a renewal raise an APIClientException naming the renewal."""
-        mock_oauth_client.return_value.patch.return_value.raise_for_status.side_effect = HTTPError('400 Client Error')
-
-        with self.assertRaises(APIClientException) as context:
-            LicenseManagerApiClient().update_subscription_plan_renewal(123, renewed_plan_title='New title')
-
-        self.assertIn('Could not update subscription plan renewal 123', str(context.exception))
-
-    @mock.patch('enterprise_access.apps.api_client.base_oauth.OAuthAPIClient', autospec=True)
     def test_process_subscription_plan_renewal_http_error(self, mock_oauth_client):
         """Test that HTTP errors are properly raised during renewal processing."""
         mock_post = mock_oauth_client.return_value.post

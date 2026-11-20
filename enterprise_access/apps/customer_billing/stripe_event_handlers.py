@@ -69,13 +69,6 @@ class AnnualRenewalError(Exception):
         self.audit_logged = audit_logged
 
 
-class RenewalProductError(AnnualRenewalError):
-    """
-    Raised when a renewal invoice's SSP product is missing, unknown, ambiguous or not the product the
-    customer bought. Renewals never fall back to a default product.
-    """
-
-
 # Central registry for event handlers.
 #
 # Needs to be in module scope instead of class scope because the decorator
@@ -517,18 +510,13 @@ def _audit_renewal_failures(step: str, checkout_intent: CheckoutIntent, invoice_
         raise
 
 
-def _halt_annual_renewal(
-    message: str,
-    checkout_intent: CheckoutIntent,
-    invoice_id: str,
-    exception_class: type[AnnualRenewalError] = AnnualRenewalError,
-):
+def _halt_annual_renewal(message: str, checkout_intent: CheckoutIntent, invoice_id: str):
     """
     Log an annual renewal that cannot proceed with enough context for engineering and CS, then raise so the
     webhook fails and Stripe retries it.
     """
     _log_renewal(logging.ERROR, 'halted', checkout_intent, invoice_id, f'reason={message!r}')
-    raise exception_class(message, audit_logged=True)
+    raise AnnualRenewalError(message, audit_logged=True)
 
 
 def resolve_renewal_product(checkout_intent: CheckoutIntent, invoice) -> SspProduct:
@@ -541,14 +529,14 @@ def resolve_renewal_product(checkout_intent: CheckoutIntent, invoice) -> SspProd
     grandfathered customers can still renew.
 
     Raises:
-        RenewalProductError: if the product is missing, unknown, ambiguous, does not match the checkout
-            intent, or is an academy product whose title cannot be resolved for the renewed plan.
+        AnnualRenewalError: if a Price resolves to no product, to more than one, or to one other than the
+            purchased product, or if an academy product's title cannot be resolved for the renewed plan.
     """
     invoice_dict = invoice.to_dict()
     invoice_id = invoice_dict['id']
 
     def halt(message):
-        _halt_annual_renewal(message, checkout_intent, invoice_id, RenewalProductError)
+        _halt_annual_renewal(message, checkout_intent, invoice_id)
 
     price_ids = {
         price_id
@@ -558,23 +546,18 @@ def resolve_renewal_product(checkout_intent: CheckoutIntent, invoice) -> SspProd
     if not price_ids:
         halt('the renewal invoice has no Stripe Price')
 
-    slugs = set()
+    purchased_slug = checkout_intent.ssp_product_id
     for price_id in sorted(price_ids):
         price_slugs = _ssp_product_slugs_for_price(price_id)
-        if not price_slugs:
-            halt(f'Stripe Price {price_id} has no ssp_product_slug and matches no SspProduct lookup key')
-        slugs |= price_slugs
-    if len(slugs) != 1:
-        halt(f'the renewal invoice resolves to more than one SSP product: {sorted(slugs)}')
+        if price_slugs != {purchased_slug}:
+            halt(
+                f'Stripe Price {price_id} resolves to SSP products {sorted(price_slugs)}, '
+                f'not the purchased product {purchased_slug!r}'
+            )
 
-    slug = slugs.pop()
-    product = SspProduct.objects.filter(slug=slug).first()
-    if product is None:
-        halt(f'unknown ssp_product_slug {slug!r}')
-    if product.slug != checkout_intent.ssp_product_id:
-        halt(f'renewal product {slug!r} does not match the purchased product {checkout_intent.ssp_product_id!r}')
+    product = checkout_intent.ssp_product
     if product.academy_uuid and not product.academy_title:
-        halt(f'could not resolve the academy title of {slug!r} to name the renewed plan')
+        halt(f'could not resolve the academy title of {purchased_slug!r} to name the renewed plan')
     return product
 
 
@@ -707,8 +690,6 @@ def _process_annual_renewal(
     product = resolve_renewal_product(checkout_intent, invoice)
     line = _renewal_invoice_line(invoice_dict)
     effective_date = datetime_from_timestamp(line['period']['start'])
-    renewed_plan_title = _renewed_plan_title(checkout_intent, product, effective_date, line['quantity'])
-
     if renewal is None:
         prior_plan_uuid = _current_paid_plan_uuid(checkout_intent)
         if prior_plan_uuid is None:
@@ -721,7 +702,7 @@ def _process_annual_renewal(
             effective_date=effective_date.isoformat(),
             renewed_expiration_date=(effective_date + ANNUAL_RENEWAL_TERM).isoformat(),
             number_of_licenses=line['quantity'],
-            renewed_plan_title=renewed_plan_title,
+            renewed_plan_title=_renewed_plan_title(checkout_intent, product, effective_date, line['quantity']),
             # This handler processes the renewal itself, the License Manager batch job must not.
             exempt_from_batch_processing=True,
         )
@@ -738,16 +719,6 @@ def _process_annual_renewal(
             logging.INFO, 'created', checkout_intent, stripe_invoice_id,
             f'renewal_id={renewal.id} license_manager_renewal_id={plan_renewal["id"]} product={product.slug} '
             f'prior_plan_uuid={prior_plan_uuid} licenses={line["quantity"]}',
-        )
-    else:
-        # An earlier attempt created the License Manager renewal but didn't process it, possibly because License
-        # Manager rejected its title. Set the current title so this retry can complete.
-        client.update_subscription_plan_renewal(
-            renewal.subscription_plan_renewal_id, renewed_plan_title=renewed_plan_title,
-        )
-        _log_renewal(
-            logging.INFO, 'title_updated', checkout_intent, stripe_invoice_id,
-            f'renewal_id={renewal.id} license_manager_renewal_id={renewal.subscription_plan_renewal_id}',
         )
 
     result = client.process_subscription_plan_renewal(renewal.subscription_plan_renewal_id)
@@ -1074,7 +1045,12 @@ class StripeEventHandler:
 
         if not ssp_paid_renewal_enabled() or not _is_annual_renewal_invoice(invoice, subscription_details):
             return
-        if keep_current_plan_active_for_renewal(checkout_intent, invoice):
+        try:
+            extended = keep_current_plan_active_for_renewal(checkout_intent, invoice)
+        except AnnualRenewalError:
+            # Already audit logged. A retry can't fix it, so don't fail the webhook.
+            return
+        if extended:
             _set_renewal_grace_period(checkout_intent, invoice['id'], True)
 
     @on_stripe_event('invoice.created')
