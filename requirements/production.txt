@@ -18,7 +18,7 @@ annotated-types==0.8.0
     # via
     #   -r requirements/base.txt
     #   pydantic
-anthropic==2.10.0
+anthropic==2.12.0
     # via -r requirements/base.txt
 anyio==4.16.0
     # via
@@ -60,7 +60,7 @@ celery==5.7.0
     #   django-celery-results
     #   edx-celeryutils
     #   openedx-events
-certifi==2026.10.23
+certifi==2026.11.20
     # via
     #   -r requirements/base.txt
     #   requests
@@ -94,7 +94,7 @@ click-repl==0.4.1
     # via
     #   -r requirements/base.txt
     #   celery
-code-annotations==3.0.0
+code-annotations==3.1.0
     # via
     #   -r requirements/base.txt
     #   edx-toggles
@@ -212,13 +212,13 @@ drf-yasg==1.21.18
     # via
     #   -r requirements/base.txt
     #   edx-api-doc-tools
-edx-api-doc-tools==3.0.0
+edx-api-doc-tools==3.1.0
     # via -r requirements/base.txt
 edx-auth-backends==5.1.1
     # via -r requirements/base.txt
 edx-braze-client==0.2.5
     # via -r requirements/base.txt
-edx-ccx-keys==2.1.0
+edx-ccx-keys==3.0.0
     # via
     #   -r requirements/base.txt
     #   openedx-events
@@ -226,7 +226,7 @@ edx-celeryutils==2.1.0
     # via -r requirements/base.txt
 edx-django-release-util==1.5.0
     # via -r requirements/base.txt
-edx-django-utils==8.2.0
+edx-django-utils==8.2.1
     # via
     #   -r requirements/base.txt
     #   edx-auth-backends
@@ -241,7 +241,7 @@ edx-drf-extensions==10.11.0
     #   edx-rbac
 edx-event-bus-kafka==6.2.0
     # via -r requirements/base.txt
-edx-opaque-keys[django]==4.0.1
+edx-opaque-keys[django]==5.0.0
     # via
     #   -r requirements/base.txt
     #   edx-ccx-keys
@@ -253,7 +253,7 @@ edx-rest-api-client==7.1.2
     # via
     #   -r requirements/base.txt
     #   2u-enterprise-subsidy-client
-edx-toggles==6.1.0
+edx-toggles==6.1.2
     # via
     #   -r requirements/base.txt
     #   edx-auth-backends
@@ -333,7 +333,7 @@ monotonic==1.6
     # via
     #   -r requirements/base.txt
     #   analytics-python
-mysqlclient==2.3.0
+mysqlclient==2.3.2
     # via
     #   -r requirements/base.txt
     #   -r requirements/production.in
@@ -342,7 +342,7 @@ oauthlib==4.0.1
     #   -r requirements/base.txt
     #   requests-oauthlib
     #   social-auth-core
-openai==3.54.0
+openai==3.57.0
     # via -r requirements/base.txt
 openedx-atlas==0.7.2
     # via -r requirements/base.txt
@@ -378,12 +378,12 @@ pycparser==3.12
     # via
     #   -r requirements/base.txt
     #   cffi
-pydantic==2.14.3
+pydantic==2.14.4
     # via
     #   -r requirements/base.txt
     #   anthropic
     #   openai
-pydantic-core==2.50.4
+pydantic-core==2.50.5
     # via
     #   -r requirements/base.txt
     #   pydantic
@@ -399,7 +399,7 @@ pyjwt[crypto]==2.15.1
     #   social-auth-core
 pymemcache==4.0.0
     # via -r requirements/base.txt
-pymongo==4.20.0
+pymongo==4.20.1
     # via
     #   -r requirements/base.txt
     #   edx-opaque-keys
@@ -427,7 +427,7 @@ pytz==2026.6
     #   -r requirements/base.txt
     #   drf-yasg
     #   snowflake-connector-python
-pyyaml==6.0.3
+pyyaml==6.0.4
     # via
     #   -r requirements/base.txt
     #   -r requirements/production.in
@@ -474,7 +474,6 @@ six==1.17.0
     #   -r requirements/base.txt
     #   analytics-python
     #   edx-auth-backends
-    #   edx-ccx-keys
     #   edx-django-release-util
     #   edx-rbac
     #   python-dateutil
@@ -504,7 +503,7 @@ stevedore==5.10.0
     #   code-annotations
     #   edx-django-utils
     #   edx-opaque-keys
-stripe==17.0.0
+stripe==17.1.0
     # via -r requirements/base.txt
 swagger-spec-validator==3.0.4
     # via
