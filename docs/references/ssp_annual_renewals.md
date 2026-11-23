@@ -51,8 +51,9 @@ grace week (`period.start + 7 days`) hasn't passed.
    activates year 2 and sets year 1's expiration back to the period start (undoing any grace extension).
 4. Only then does it queue the payment receipt and the renewal notice, and then it marks the record processed.
    A failed attempt, including a broker error while queuing an email, raises before the processed checkpoint,
-   so Stripe's retry sends the emails. A replay of a processed renewal sends nothing. The only duplicate is when
-   the checkpoint save itself fails after the emails are queued (see architecture pattern #27).
+   so Stripe's retry sends the emails. A replay of a processed renewal sends nothing. A retry can repeat an email
+   that was already queued: the receipt if queuing the notice failed, or both if the checkpoint save failed
+   (see architecture pattern #27).
 
 If `customer.subscription.deleted` has already canceled the subscription (its renewals are `is_canceled`), a
 renewal invoice paid or delivered afterwards is not processed: it logs `outcome=halted` and the webhook succeeds,

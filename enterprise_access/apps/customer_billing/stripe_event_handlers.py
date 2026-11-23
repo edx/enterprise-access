@@ -766,8 +766,8 @@ def _process_annual_renewal(
         expiration_date=renewal.effective_date.isoformat(),
     )
     # Before the processed checkpoint, so a failure in between (e.g. a broker error queuing an email) is
-    # retried: a replay of a processed renewal does nothing. The worst case is a duplicate email if the
-    # checkpoint save itself fails.
+    # retried: a replay of a processed renewal does nothing. A retry can repeat an email that was already
+    # queued: the receipt if queuing the notice failed, or both if the checkpoint save failed (pattern #27).
     _set_renewal_grace_period(checkout_intent, stripe_invoice_id, False)
     _send_annual_renewal_emails(invoice, checkout_intent)
     renewal.mark_as_processed()
@@ -788,8 +788,9 @@ def _handle_annual_renewal_invoice_paid(
     Handle a paid annual renewal invoice.
 
     With the ``ssp_paid_renewal`` switch on, renew onto next year's plan, then email the admins. The emails go
-    out only after the new plan exists, and only once per invoice: a failed attempt raises first so Stripe
-    retries, and a replay of a processed renewal sends nothing.
+    out only after the new plan exists: a failed attempt raises first so Stripe retries, and a replay of a
+    processed renewal sends nothing. A retry can repeat an email that was already queued: the receipt if queuing
+    the notice failed, or both if the checkpoint save failed (pattern #27).
 
     With the switch off, keep the behaviour from before automated renewals: email the admins and log an error,
     so the renewal is noticed and handled by hand.

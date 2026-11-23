@@ -659,29 +659,6 @@ class TestAnnualRenewal(TestCase):
             self.checkout_intent.in_renewal_grace_period, switch_on and event_type == 'invoice.payment_failed',
         )
 
-    def test_failed_renewal_charge_flags_grace_period_until_paid(self):
-        """
-        A failed renewal charge sets in_renewal_grace_period (once, however often Stripe retries), and paying
-        the renewal clears it. invoice.created alone, the normal gap before payment, does not set it.
-        """
-        self._set_up_paid_subscriber()
-
-        StripeEventHandler.dispatch(self._renewal_invoice_event(event_type='invoice.created'))
-        self.checkout_intent.refresh_from_db()
-        self.assertFalse(self.checkout_intent.in_renewal_grace_period)
-
-        with self.assertLogs(HANDLERS_MODULE, level='INFO') as logs:
-            StripeEventHandler.dispatch(self._renewal_invoice_event(event_type='invoice.payment_failed'))
-            StripeEventHandler.dispatch(self._renewal_invoice_event(event_type='invoice.payment_failed'))
-        self.checkout_intent.refresh_from_db()
-        self.assertTrue(self.checkout_intent.in_renewal_grace_period)
-        self.assertEqual(sum('outcome=grace_period_started' in line for line in logs.output), 1)
-
-        StripeEventHandler.dispatch(self._renewal_invoice_event())
-        self.checkout_intent.refresh_from_db()
-        self.assertFalse(self.checkout_intent.in_renewal_grace_period)
-        self.assertEqual(self.checkout_intent.history.filter(in_renewal_grace_period=True).count(), 1)
-
     def test_payment_failed_after_renewal_is_ignored(self):
         """
         A late payment_failed for an invoice that is already renewed leaves year 1's end date alone and the
@@ -726,12 +703,17 @@ class TestAnnualRenewal(TestCase):
     def test_payment_within_grace_period_keeps_original_dates(self):
         """
         After a failed charge, a payment during the grace week creates year 2 on year 1's original end date,
-        ending one year later, and moves year 1's extended end date back to it.
+        ending one year later, and moves year 1's extended end date back to it. The failed charge sets
+        in_renewal_grace_period (once, however often Stripe retries), and paying the renewal clears it.
         """
         self._set_up_paid_subscriber('ai-academy-yearly')
-        StripeEventHandler.dispatch(
-            self._renewal_invoice_event(event_type='invoice.payment_failed', price_ids=('price_ai_academy',))
-        )
+        failed_event = self._renewal_invoice_event(event_type='invoice.payment_failed', price_ids=('price_ai_academy',))
+        with self.assertLogs(HANDLERS_MODULE, level='INFO') as logs:
+            StripeEventHandler.dispatch(failed_event)
+            StripeEventHandler.dispatch(failed_event)
+        self.checkout_intent.refresh_from_db()
+        self.assertTrue(self.checkout_intent.in_renewal_grace_period)
+        self.assertEqual(sum('outcome=grace_period_started' in line for line in logs.output), 1)
 
         with mock.patch('django.utils.timezone.now', return_value=self.period_start + timedelta(days=5)):
             StripeEventHandler.dispatch(self._renewal_invoice_event(price_ids=('price_ai_academy',)))
@@ -744,11 +726,15 @@ class TestAnnualRenewal(TestCase):
         grace_end = (self.period_start + timedelta(days=7)).isoformat()
         self.assertEqual(self.mock_lm_client.update_subscription_plan.call_args_list, [
             mock.call(str(self.year_one_plan_uuid), expiration_date=grace_end),
+            mock.call(str(self.year_one_plan_uuid), expiration_date=grace_end),
             mock.call(str(self.year_two_plan_uuid), is_active=True),
             mock.call(str(self.year_one_plan_uuid), expiration_date=self.period_start.isoformat()),
         ])
         renewal = SelfServiceSubscriptionRenewal.objects.get(stripe_invoice_id=RENEWAL_INVOICE_ID)
         self.assertEqual(renewal.effective_date, datetime_from_timestamp(int(self.period_start.timestamp())))
+        self.checkout_intent.refresh_from_db()
+        self.assertFalse(self.checkout_intent.in_renewal_grace_period)
+        self.assertEqual(self.checkout_intent.history.filter(in_renewal_grace_period=True).count(), 1)
 
     def test_switch_off_invoice_paid_only_emails_and_logs(self):
         """
