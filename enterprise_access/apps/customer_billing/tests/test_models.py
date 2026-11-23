@@ -1368,6 +1368,24 @@ class TestStripeEventSummary(TestCase):
         summary = StripeEventSummary.objects.get(event_id=stripe_event_data.event_id)
         self.assertEqual(summary.upcoming_invoice_amount_due, 200)
 
+    def test_get_first_invoice_paid(self):
+        """The subscription's earliest invoice.paid summary: not a later one, another event type's or subscription's."""
+        def summary(event_type, subscription_id, hours_ago):
+            event_data = StripeEventDataFactory(event_type=event_type, checkout_intent=self.checkout_intent)
+            StripeEventSummary.objects.filter(stripe_event_data=event_data).update(
+                stripe_subscription_id=subscription_id,
+                stripe_event_created_at=timezone.now() - timedelta(hours=hours_ago),
+            )
+            return StripeEventSummary.objects.get(stripe_event_data=event_data)
+
+        first = summary('invoice.paid', 'sub_first', hours_ago=2)
+        summary('invoice.paid', 'sub_first', hours_ago=1)
+        summary('invoice.created', 'sub_first', hours_ago=3)
+        summary('invoice.paid', 'sub_other', hours_ago=4)
+
+        self.assertEqual(StripeEventSummary.get_first_invoice_paid('sub_first'), first)
+        self.assertIsNone(StripeEventSummary.get_first_invoice_paid('sub_unknown'))
+
 
 class TestCheckoutIntentStalledFulfillment(TestCase):
     """
