@@ -56,11 +56,10 @@ grace week (`period.start + 7 days`) hasn't passed.
    (see architecture pattern #27).
 
 If `customer.subscription.deleted` has already canceled the subscription (its renewals are `is_canceled`, or a
-`customer.subscription.deleted` summary exists for its Stripe subscription id), a renewal invoice paid or delivered
-afterwards is not processed. The summary check matters because a stale `customer.subscription.updated` (active),
-handled after the deletion, sets `is_canceled` back to False; a deleted Stripe subscription never comes back. Such an
-invoice is not processed: it logs `outcome=halted` and the webhook succeeds,
-since a retry can't change it. The customer may have paid, so CS refunds or reinstates by hand.
+`customer.subscription.deleted` summary exists for its Stripe subscription id, which covers a stale
+`customer.subscription.updated` that sets `is_canceled` back to False), a renewal invoice paid or delivered
+afterwards is not processed: it logs `outcome=halted` and the webhook succeeds, since a retry can't change it.
+The customer may have paid, so CS refunds or reinstates by hand.
 A late `invoice.created` or `invoice.payment_failed` for a canceled subscription doesn't extend year 1 or set
 `in_renewal_grace_period` either (`outcome=grace_skipped_canceled`).
 

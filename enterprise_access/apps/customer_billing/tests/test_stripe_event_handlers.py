@@ -2903,6 +2903,7 @@ class TestStripeEventHandler(TestCase):
         self.assertIsNotNone(event_data.handled_at)
 
 
+@ddt.ddt
 class TestInvoiceCreatedHandler(TestCase):
     """
     Tests for the invoice.created event handler that links Stripe invoices
@@ -2936,8 +2937,11 @@ class TestInvoiceCreatedHandler(TestCase):
         StripeEventSummary.objects.all().delete()
 
     def _create_invoice_created_event(self, subscription_id=None, period_start=None, invoice_id=None,
-                                      billing_reason=None):
-        """Create a stripe.Event for invoice.created."""
+                                      billing_reason=None, leading_adjustment=False):
+        """
+        Create a stripe.Event for invoice.created. ``leading_adjustment`` lists a one-off invoice item with a
+        different period before the subscription line, as Stripe does for pending invoice items.
+        """
         subscription_id = subscription_id or self.subscription_id
         period_start = period_start or self.period_start_ts
         invoice_id = invoice_id or self.invoice_id
@@ -2973,6 +2977,11 @@ class TestInvoiceCreatedHandler(TestCase):
                 ]
             },
         }
+        if leading_adjustment:
+            invoice_data['lines']['data'].insert(0, {
+                'parent': {'type': 'invoice_item_details'},
+                'period': {'start': period_start - 30 * 86400, 'end': period_start - 30 * 86400},
+            })
         event = stripe.Event()
         event.id = f'evt_test_invoice_created_{_rand_numeric_string()}'
         event.created = int(timezone.now().timestamp())
@@ -2996,10 +3005,14 @@ class TestInvoiceCreatedHandler(TestCase):
             stripe_invoice_id=stripe_invoice_id,
         )
 
-    def test_invoice_created_links_invoice_to_renewal(self):
-        """Test that invoice.created handler links invoice ID to matching renewal."""
+    @ddt.data(False, True)
+    def test_invoice_created_links_invoice_to_renewal(self, leading_adjustment):
+        """
+        Test that invoice.created handler links invoice ID to matching renewal, using the subscription line's
+        period even when an adjustment is listed first.
+        """
         renewal = self._create_renewal_with_effective_date()
-        event = self._create_invoice_created_event()
+        event = self._create_invoice_created_event(leading_adjustment=leading_adjustment)
 
         StripeEventHandler.dispatch(event)
 

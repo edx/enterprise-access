@@ -458,10 +458,9 @@ def _subscription_is_canceled(checkout_intent: CheckoutIntent, invoice) -> bool:
     """
     if checkout_intent.renewals.filter(is_canceled=True).exists():
         return True
-    subscription_details = (invoice.to_dict().get('parent') or {}).get('subscription_details') or {}
-    stripe_subscription_id = subscription_details.get('subscription')
-    return bool(stripe_subscription_id) and StripeEventSummary.objects.filter(
-        stripe_subscription_id=stripe_subscription_id, event_type='customer.subscription.deleted',
+    return StripeEventSummary.objects.filter(
+        stripe_subscription_id=invoice.parent.subscription_details.subscription,
+        event_type='customer.subscription.deleted',
     ).exists()
 
 
@@ -804,10 +803,8 @@ def _handle_annual_renewal_invoice_paid(
     """
     Handle a paid annual renewal invoice.
 
-    With the ``ssp_paid_renewal`` switch on, renew onto next year's plan, then email the admins. The emails go
-    out only after the new plan exists: a failed attempt raises first so Stripe retries, and a replay of a
-    processed renewal sends nothing. A retry can repeat an email that was already queued: the receipt if queuing
-    the notice failed, or both if the checkpoint save failed (pattern #27).
+    With the ``ssp_paid_renewal`` switch on, renew onto next year's plan, then email the admins (see
+    ``_process_annual_renewal`` for when the emails go out on a retry).
 
     With the switch off, keep the behaviour from before automated renewals: email the admins and log an error,
     so the renewal is noticed and handled by hand.
@@ -1116,7 +1113,8 @@ class StripeEventHandler:
 
         # Extract the invoice period start from line items to match against renewal effective_date
         try:
-            invoice_period_start = invoice['lines']['data'][0]['period']['start']
+            # Not lines[0]: Stripe lists pending invoice items, such as adjustments, first.
+            invoice_period_start = _subscription_item_lines(invoice.to_dict())[0]['period']['start']
         except (KeyError, IndexError, TypeError):
             logger.error(
                 '[StripeEventHandler] invoice.created event %s missing period start in line items',

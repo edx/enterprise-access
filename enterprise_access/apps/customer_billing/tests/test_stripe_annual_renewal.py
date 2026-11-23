@@ -241,18 +241,20 @@ class TestAnnualRenewal(TestCase):
             },
         }
 
-    def _cancel_subscription(self, stale_update_after_deletion):
+    def _cancel_subscription(self, canceled_by, stripe_subscription_id=STRIPE_SUBSCRIPTION_ID):
         """
-        Record customer.subscription.deleted for the subscription. With ``stale_update_after_deletion``, a
-        customer.subscription.updated (active) sent earlier is handled afterwards, which sets the renewals'
-        is_canceled back to False.
+        Cancel the subscription the way one guard sees it. 'is_canceled': customer.subscription.deleted set the
+        renewals' flag. 'deletion_summary': the deletion is recorded, but a stale customer.subscription.updated
+        (active) handled afterwards set the flag back to False.
         """
+        if canceled_by == 'is_canceled':
+            self.checkout_intent.renewals.update(is_canceled=True)
+            return
         deleted_event = StripeEventDataFactory(
             checkout_intent=self.checkout_intent, event_type='customer.subscription.deleted',
         )
-        deleted_event.summary.stripe_subscription_id = STRIPE_SUBSCRIPTION_ID
+        deleted_event.summary.stripe_subscription_id = stripe_subscription_id
         deleted_event.summary.save()
-        self.checkout_intent.renewals.update(is_canceled=not stale_update_after_deletion)
 
     def _assert_nothing_created(self):
         """Assert that no renewal was created or processed, locally or in License Manager."""
@@ -481,15 +483,15 @@ class TestAnnualRenewal(TestCase):
         self.assertTrue(any('outcome=halted' in line and 'no subscription term line' in line for line in logs.output))
         self.mock_lm_client.update_subscription_plan.assert_not_called()
 
-    @ddt.data(False, True)
-    def test_paid_invoice_after_subscription_deleted_is_not_renewed(self, stale_update_after_deletion):
+    @ddt.data('is_canceled', 'deletion_summary')
+    def test_paid_invoice_after_subscription_deleted_is_not_renewed(self, canceled_by):
         """
         A renewal invoice paid (or delivered) after customer.subscription.deleted doesn't bring the canceled
         subscription back, even if a stale customer.subscription.updated reset is_canceled in between. It is
         audit logged as halted for CS, and the webhook succeeds because a retry can't change the outcome.
         """
         self._set_up_paid_subscriber()
-        self._cancel_subscription(stale_update_after_deletion)
+        self._cancel_subscription(canceled_by)
 
         with self.assertLogs(HANDLERS_MODULE, level='ERROR') as logs:
             StripeEventHandler.dispatch(self._renewal_invoice_event())
@@ -498,6 +500,18 @@ class TestAnnualRenewal(TestCase):
         halted = [line for line in logs.output if 'outcome=halted' in line]
         self.assertEqual(len(halted), 1)
         self.assertIn('the subscription is canceled', halted[0])
+
+    def test_deletion_of_an_earlier_subscription_does_not_block_renewal(self):
+        """A deletion recorded for an earlier subscription on the same checkout intent doesn't block this renewal."""
+        self._set_up_paid_subscriber()
+        self._cancel_subscription('deletion_summary', stripe_subscription_id='sub_test_earlier')
+
+        StripeEventHandler.dispatch(self._renewal_invoice_event())
+
+        self.mock_lm_client.create_subscription_plan_renewal.assert_called_once()
+        self.assertIsNotNone(
+            SelfServiceSubscriptionRenewal.objects.get(stripe_invoice_id=RENEWAL_INVOICE_ID).processed_at,
+        )
 
     def test_invoice_paid_halts_when_license_manager_returns_no_renewed_plan(self):
         """A processed renewal without a renewed plan is a halt: nothing is activated and no emails are sent."""
@@ -568,21 +582,13 @@ class TestAnnualRenewal(TestCase):
         (architecture pattern #27).
         """
         self._set_up_paid_subscriber()
-        mark_as_processed = SelfServiceSubscriptionRenewal.mark_as_processed
-        attempts = []
-
-        def fail_once(renewal):
-            attempts.append(renewal.id)
-            if len(attempts) == 1:
-                raise DatabaseError('checkpoint save failed')
-            mark_as_processed(renewal)
 
         with mock.patch.object(
-            SelfServiceSubscriptionRenewal, 'mark_as_processed', autospec=True, side_effect=fail_once,
+            SelfServiceSubscriptionRenewal, 'mark_as_processed', side_effect=DatabaseError('checkpoint save failed'),
         ):
             with self.assertRaises(DatabaseError):
                 StripeEventHandler.dispatch(self._renewal_invoice_event())
-            StripeEventHandler.dispatch(self._renewal_invoice_event())
+        StripeEventHandler.dispatch(self._renewal_invoice_event())
 
         self.mock_lm_client.create_subscription_plan_renewal.assert_called_once()
         self.assertEqual(self.mock_lm_client.process_subscription_plan_renewal.call_args_list, [mock.call(777)] * 2)
@@ -728,20 +734,20 @@ class TestAnnualRenewal(TestCase):
         self.assertFalse(self.checkout_intent.in_renewal_grace_period)
 
     @ddt.data(
-        ('invoice.payment_failed', False),
-        ('invoice.created', False),
-        ('invoice.payment_failed', True),
-        ('invoice.created', True),
+        ('invoice.payment_failed', 'is_canceled'),
+        ('invoice.created', 'is_canceled'),
+        ('invoice.payment_failed', 'deletion_summary'),
+        ('invoice.created', 'deletion_summary'),
     )
     @ddt.unpack
-    def test_late_grace_event_after_subscription_deleted_is_ignored(self, event_type, stale_update_after_deletion):
+    def test_late_grace_event_after_subscription_deleted_is_ignored(self, event_type, canceled_by):
         """
         A renewal invoice event handled after customer.subscription.deleted neither extends the deactivated
         year 1 plan nor flags the checkout intent as in the grace period, even if a stale
         customer.subscription.updated reset is_canceled in between.
         """
         self._set_up_paid_subscriber()
-        self._cancel_subscription(stale_update_after_deletion)
+        self._cancel_subscription(canceled_by)
 
         with self.assertLogs(HANDLERS_MODULE, level='INFO') as logs:
             StripeEventHandler.dispatch(self._renewal_invoice_event(event_type=event_type))
