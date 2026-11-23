@@ -226,8 +226,8 @@ def assignment_course_run_ended_expiration_enabled():
 # .. toggle_implementation: WaffleSwitch
 # .. toggle_default: False
 # .. toggle_description: Lets the nightly ``expire_requests_for_ended_budgets`` command move Browse & Request
-#     learner credit requests that are still awaiting review to ``expired`` once their budget is retired,
-#     deactivated, or its subsidy has expired. When disabled, a run across every budget only logs what it
+#     learner credit requests that are still awaiting review to ``expired`` once their budget is retired or
+#     its subsidy has expired. When disabled, a run across every budget only logs what it
 #     would expire. A run scoped with ``--enterprise-customer-uuid`` or ``--policy-uuid`` is a deliberate
 #     operator action and expires requests whatever this switch says, so the behaviour can be checked one
 #     customer at a time. The transition can't be undone in bulk, so this stays off until that check is done,

@@ -6,7 +6,8 @@ from unittest import mock
 import ddt
 from django.core.management import CommandError, call_command
 from django.test import TestCase
-from requests.exceptions import HTTPError
+from requests.exceptions import ConnectionError as RequestsConnectionError
+from requests.exceptions import HTTPError, ReadTimeout
 
 from enterprise_access.apps.content_assignments.tests.factories import LearnerContentAssignmentFactory
 from enterprise_access.apps.subsidy_access_policy.models import SubsidyAccessPolicy
@@ -55,13 +56,15 @@ class TestExpireRequestsForEndedBudgets(TestCase):
             raise subsidy_response
         return subsidy_response
 
-    def _create_request(self, subsidy_response=None, state=SubsidyRequestStates.REQUESTED, **policy_kwargs):
+    def _create_request(
+        self, subsidy_response=None, state=SubsidyRequestStates.REQUESTED, config_active=True, **policy_kwargs,
+    ):
         """
         Creates a request on its own Browse & Request budget, whose subsidy answers ``subsidy_response``
         (an expired subsidy unless given).
         """
         policy = PerLearnerSpendCapLearnerCreditAccessPolicyFactory(
-            learner_credit_request_config=LearnerCreditRequestConfigurationFactory(active=True),
+            learner_credit_request_config=LearnerCreditRequestConfigurationFactory(active=config_active),
             **policy_kwargs,
         )
         self.subsidy_responses[str(policy.subsidy_uuid)] = subsidy_response or EXPIRED_SUBSIDY
@@ -74,7 +77,10 @@ class TestExpireRequestsForEndedBudgets(TestCase):
     @ddt.data(
         {'subsidy_response': EXPIRED_SUBSIDY},
         {'subsidy_response': LIVE_SUBSIDY, 'retired': True},
-        {'subsidy_response': LIVE_SUBSIDY, 'active': False},
+        # A deactivated budget counts once its subsidy has expired, like any other.
+        {'subsidy_response': EXPIRED_SUBSIDY, 'active': False},
+        # Browse & Request was switched off on the budget before it ended.
+        {'subsidy_response': EXPIRED_SUBSIDY, 'config_active': False},
         # A request whose approval errored is still awaiting review.
         {'state': SubsidyRequestStates.ERROR},
     )
@@ -98,6 +104,10 @@ class TestExpireRequestsForEndedBudgets(TestCase):
     @ddt.data(
         {'subsidy_response': LIVE_SUBSIDY},
         {'subsidy_response': FUTURE_SUBSIDY},
+        # A deactivated budget can be switched back on, so deactivation alone is not the end of it.
+        {'subsidy_response': LIVE_SUBSIDY, 'active': False},
+        # Browse & Request switched off on a live budget: its requests are left for an admin or support.
+        {'subsidy_response': LIVE_SUBSIDY, 'config_active': False},
         # A subsidy with no expiration date never ends on its own.
         {'subsidy_response': {'is_active': True, 'expiration_datetime': None}},
         # Requests that were reviewed are left alone, even on an ended budget.
@@ -156,11 +166,16 @@ class TestExpireRequestsForEndedBudgets(TestCase):
         # In every case above, the other customer's request is either out of scope or only logged.
         self.assertEqual(other_customer_request.state, SubsidyRequestStates.REQUESTED)
 
-    def test_subsidy_lookup_failure_skips_that_budget_and_fails_the_run(self):
+    @ddt.data(
+        HTTPError('the subsidy service answered 503'),
+        RequestsConnectionError('the connection was dropped'),
+        ReadTimeout('the subsidy service did not answer'),
+    )
+    def test_subsidy_lookup_failure_skips_that_budget_and_fails_the_run(self, lookup_error):
         """
         Test that a failed subsidy lookup is never read as an ended budget, and is reported once the run is done.
         """
-        unverified_request = self._create_request(subsidy_response=HTTPError('the subsidy service is down'))
+        unverified_request = self._create_request(subsidy_response=lookup_error)
         ended_budget_request = self._create_request()
 
         with self.assertRaises(CommandError):
