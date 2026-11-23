@@ -9,15 +9,24 @@ import stripe
 from braze.exceptions import BrazeClientError
 from celery import shared_task
 from django.conf import settings
+from django.db import OperationalError
 
 from enterprise_access.apps.api_client.braze_client import BrazeApiClient
 from enterprise_access.apps.api_client.lms_client import LmsApiClient
 from enterprise_access.apps.customer_billing.constants import (
     BRAZE_DATE_FORMAT_1,
     BRAZE_DATE_FORMAT_2,
-    BRAZE_TIMESTAMP_FORMAT
+    BRAZE_TIMESTAMP_FORMAT,
+    CheckoutSegmentEvents
 )
 from enterprise_access.apps.customer_billing.models import CheckoutIntent, StripeEventSummary
+from enterprise_access.apps.customer_billing.segment_payloads import (
+    TRANSIENT_STRIPE_ERRORS,
+    AcademyTitleUnavailableError,
+    IncompleteOrderPayloadError,
+    build_order_cancelled_properties,
+    build_order_completed_properties
+)
 from enterprise_access.apps.customer_billing.stripe_api import (
     get_stripe_payment_intent,
     get_stripe_payment_method,
@@ -26,6 +35,7 @@ from enterprise_access.apps.customer_billing.stripe_api import (
 )
 from enterprise_access.apps.customer_billing.utils import datetime_from_timestamp, get_campaign_id, get_product_type
 from enterprise_access.apps.provisioning.utils import validate_trial_subscription
+from enterprise_access.apps.track.segment import SEGMENT_DELIVERY_ERRORS, track_event_or_raise
 from enterprise_access.tasks import LoggedTaskWithRetry
 from enterprise_access.utils import cents_to_dollars, format_cents_for_user_display, format_datetime_obj
 
@@ -1102,3 +1112,134 @@ def send_payment_receipt_email(
         organization_name=enterprise_customer_name,
         email_description='payment receipt email',
     )
+
+
+class OrderInvoiceSummaryNotFoundError(Exception):
+    """
+    The order's ``invoice.paid`` StripeEventSummary is not readable yet. Retried: the StripeEventData signal that
+    creates it logs and swallows its own errors, and the webhook's write may not be visible to the worker yet.
+    """
+
+
+def _build_properties(event_name, checkout_intent, subscription_id, invoice_id, subscription_data) -> tuple[str, dict]:
+    """
+    The event's ``order_id`` and Segment properties. Raises if they can't be built; see the task. Revenue comes from
+    the ``invoice.paid`` StripeEventSummary of the order's first invoice, which the webhook persisted: for
+    ``order_completed`` the invoice it was queued for, for ``order_cancelled`` the subscription's earliest paid one.
+    """
+    completed = event_name == CheckoutSegmentEvents.ORDER_COMPLETED
+    # The Checkout Session ID of the purchase, the same order_id the checkout MFE sends.
+    order_id = checkout_intent.stripe_checkout_session_id
+    if not order_id:
+        raise IncompleteOrderPayloadError(
+            f'CheckoutIntent {checkout_intent.id} has no Stripe Checkout Session ID to use as the order_id'
+        )
+    if not completed and not subscription_data:
+        raise IncompleteOrderPayloadError(f'order_cancelled for subscription {subscription_id} has no subscription')
+    if completed:
+        invoice_summary = StripeEventSummary.get_latest_invoice_paid(invoice_id)
+    else:
+        invoice_summary = StripeEventSummary.get_first_invoice_paid(subscription_id)
+    if invoice_summary is None:
+        raise OrderInvoiceSummaryNotFoundError(
+            f'Found no invoice.paid summary for invoice {invoice_id} of subscription {subscription_id}'
+        )
+    if completed:
+        subscription = get_stripe_subscription(subscription_id)
+        return order_id, build_order_completed_properties(checkout_intent, order_id, subscription, invoice_summary)
+    return order_id, build_order_cancelled_properties(checkout_intent, order_id, subscription_data, invoice_summary)
+
+
+# Logged whenever an event is dropped, so an alert can match it; see docs/references/checkout_segment_events.md to
+# resend.
+SEGMENT_EVENT_DROPPED_LOG_PREFIX = '[CheckoutSegmentEventDropped]'
+
+
+def _is_retryable(exc):
+    """
+    Transient Stripe errors, and Segment unreachable or answering 429/5xx. Not a Segment 4xx other than 429 (e.g. a
+    wrong SEGMENT_KEY): retrying sends the same request and gets the same answer.
+    """
+    if isinstance(exc, TRANSIENT_STRIPE_ERRORS):
+        return True
+    status = getattr(exc, 'status', None)
+    rejected = isinstance(status, int) and 400 <= status < 500 and status != 429
+    return isinstance(exc, SEGMENT_DELIVERY_ERRORS) and not rejected
+
+
+class CheckoutSegmentEventTask(LoggedTaskWithRetry):  # pylint: disable=abstract-method
+    """
+    Logs ``SEGMENT_EVENT_DROPPED_LOG_PREFIX`` when the task fails for good: its retries ran out, or it raised an error
+    that isn't retried. LoggedTask's own failure log has no prefix, so an alert on the prefix would miss these.
+    """
+
+    def on_failure(self, exc, task_id, args, kwargs, einfo):
+        names = ('event_name', 'checkout_intent_id', 'subscription_id')
+        values = dict(zip(names, args or ()))
+        values.update({name: (kwargs or {})[name] for name in names if name in (kwargs or {})})
+        logger.error(
+            '%s Segment event %s for CheckoutIntent %s (subscription %s) failed after %s retries: %r',
+            SEGMENT_EVENT_DROPPED_LOG_PREFIX, values.get('event_name'), values.get('checkout_intent_id'),
+            values.get('subscription_id'), self.request.retries, exc,
+        )
+        super().on_failure(exc, task_id, args, kwargs, einfo)
+
+
+# autoretry_for replaces the base class's list, so the DB OperationalError it retries is listed again.
+@shared_task(
+    base=CheckoutSegmentEventTask,
+    autoretry_for=(
+        *TRANSIENT_STRIPE_ERRORS,
+        *SEGMENT_DELIVERY_ERRORS,
+        OperationalError,
+        OrderInvoiceSummaryNotFoundError,
+        AcademyTitleUnavailableError,
+    ),
+)
+def send_checkout_segment_event_task(
+    event_name, checkout_intent_id, subscription_id, invoice_id=None, subscription_data=None,
+):
+    """
+    Send ``order_completed`` (with ``invoice_id``, the order's first invoice) or ``order_cancelled`` (with
+    ``subscription_data``, the cancelled subscription's id and items) to Segment.
+
+    The webhook handlers queue it once per handled Stripe event, and each order has one such event, so it is not
+    deduplicated here; the ``messageId`` is deterministic, so Segment drops a resend after a redelivered webhook.
+    The event is posted to Segment before the task returns. Transient Stripe errors, DB errors, a not-yet-readable
+    invoice summary or Academy title, and Segment being unreachable or answering 429/5xx are retried. An event that
+    can't be built, that Segment rejects with another 4xx, or whose retries run out is logged with
+    ``SEGMENT_EVENT_DROPPED_LOG_PREFIX`` and never sent.
+    """
+    if not settings.FEATURE_SSP_CHECKOUT_SEGMENT_EVENTS_V2:
+        logger.info('Checkout Segment events are disabled; not sending %s for CheckoutIntent %s',
+                    event_name, checkout_intent_id)
+        return
+
+    try:
+        checkout_intent = CheckoutIntent.objects.select_related('user', 'ssp_product').filter(
+            id=checkout_intent_id,
+        ).first()
+        if checkout_intent is None:
+            raise IncompleteOrderPayloadError(f'CheckoutIntent {checkout_intent_id} does not exist')
+        lms_user_id = checkout_intent.user.lms_user_id
+        if not lms_user_id:
+            # The local DB user id is not an LMS user id, so it is never used instead.
+            raise IncompleteOrderPayloadError(f'CheckoutIntent {checkout_intent.id} has no lms_user_id')
+        order_id, properties = _build_properties(
+            event_name, checkout_intent, subscription_id, invoice_id, subscription_data,
+        )
+        # Raises if Segment did not accept the event, so it is retried; the fixed messageId makes a retry safe.
+        sent = track_event_or_raise(
+            lms_user_id=str(lms_user_id),
+            event_name=event_name,
+            properties=properties,
+            message_id=f'{event_name}:{order_id}',
+        )
+    except (IncompleteOrderPayloadError, stripe.StripeError, *SEGMENT_DELIVERY_ERRORS) as exc:
+        if _is_retryable(exc):
+            raise
+        logger.error('%s Cannot send Segment event %s for CheckoutIntent %s (subscription %s): %s',
+                     SEGMENT_EVENT_DROPPED_LOG_PREFIX, event_name, checkout_intent_id, subscription_id, exc)
+        return
+    if sent:
+        logger.info('Sent Segment event %s for order %s', event_name, order_id)
