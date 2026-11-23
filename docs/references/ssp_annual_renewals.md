@@ -55,15 +55,19 @@ grace week (`period.start + 7 days`) hasn't passed.
    that was already queued: the receipt if queuing the notice failed, or both if the checkpoint save failed
    (see architecture pattern #27).
 
-If `customer.subscription.deleted` has already canceled the subscription (its renewals are `is_canceled`), a
-renewal invoice paid or delivered afterwards is not processed: it logs `outcome=halted` and the webhook succeeds,
+If `customer.subscription.deleted` has already canceled the subscription (its renewals are `is_canceled`, or a
+`customer.subscription.deleted` summary exists for its Stripe subscription id), a renewal invoice paid or delivered
+afterwards is not processed. The summary check matters because a stale `customer.subscription.updated` (active),
+handled after the deletion, sets `is_canceled` back to False; a deleted Stripe subscription never comes back. Such an
+invoice is not processed: it logs `outcome=halted` and the webhook succeeds,
 since a retry can't change it. The customer may have paid, so CS refunds or reinstates by hand.
 A late `invoice.created` or `invoice.payment_failed` for a canceled subscription doesn't extend year 1 or set
 `in_renewal_grace_period` either (`outcome=grace_skipped_canceled`).
 
 Only subscription item lines are read (`parent.type == 'subscription_item_details'`). The term line is the first
 one that isn't a proration; one-off invoice items such as adjustments never set the seats, dates or product. An
-invoice without a term line halts (`outcome=halted`).
+invoice without a term line halts (`outcome=halted`). Stripe lists pending invoice items before the subscription
+lines, so the webhook accepts an invoice as an SSP invoice if any line is a subscription item, not just the first.
 
 Idempotency is keyed on `stripe_invoice_id`. A processed renewal is skipped. An unprocessed one resumes at
 the processing step without creating another License Manager renewal. The resume sends the License Manager

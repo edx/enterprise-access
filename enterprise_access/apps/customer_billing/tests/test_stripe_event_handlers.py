@@ -445,6 +445,18 @@ class TestStripeEventHandler(TestCase):
             },
             'expected': False,
         },
+        # Stripe lists pending invoice items (e.g. an adjustment) before the subscription lines
+        {
+            'name': 'adjustment_before_subscription_item',
+            'invoice': {
+                'object': 'invoice',
+                'lines': {'data': [
+                    {'parent': {'type': 'invoice_item_details'}},
+                    {'parent': {'type': SUBSCRIPTION_ITEM_TYPE}},
+                ]},
+            },
+            'expected': True,
+        },
         # missing lines key
         {
             'name': 'missing_lines',

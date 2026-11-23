@@ -406,10 +406,11 @@ def _valid_invoice_event_type(event: stripe.Event):
     acts as a guard to identify only those invoices that were generated from a
     subscription-based SSP checkout flow.
 
-    The check is performed by inspecting the first invoice line item and verifying
-    that its parent type matches ``SUBSCRIPTION_ITEM_TYPE`` to confirm this
-    invoice was created by a subscription, as opposed to a one-off invoice or
-    other non-SSP invoicing scenarios.
+    The check verifies that at least one invoice line's parent type matches
+    ``SUBSCRIPTION_ITEM_TYPE`` to confirm this invoice was created by a subscription,
+    as opposed to a one-off invoice or other non-SSP invoicing scenarios. Not only the
+    first line: Stripe lists pending invoice items (e.g. a CS adjustment) before the
+    subscription lines.
 
     The function is intentionally defensive:
     - If the invoice payload is missing expected fields
@@ -426,8 +427,8 @@ def _valid_invoice_event_type(event: stripe.Event):
     """
     invoice = event.data.object
     try:
-        return invoice["lines"]["data"][0]["parent"]["type"] == SUBSCRIPTION_ITEM_TYPE
-    except (KeyError, IndexError, TypeError):
+        return bool(_subscription_item_lines(invoice.to_dict()))
+    except (AttributeError, KeyError, IndexError, TypeError):
         return False
 
 
@@ -446,6 +447,22 @@ def _is_annual_renewal_invoice(invoice, subscription_details) -> bool:
         event_type='invoice.paid',
         invoice_amount_paid__gt=0,
     ).exclude(stripe_invoice_id=invoice['id']).exists()
+
+
+def _subscription_is_canceled(checkout_intent: CheckoutIntent, invoice) -> bool:
+    """
+    Whether the invoice's subscription has ended. customer.subscription.deleted sets ``is_canceled`` on the
+    renewals, but a late customer.subscription.updated (Stripe doesn't guarantee event order) can set it back.
+    A recorded deletion is terminal, since Stripe never revives a deleted subscription. Filtering on the
+    subscription id lets a new subscription on the same checkout intent still renew.
+    """
+    if checkout_intent.renewals.filter(is_canceled=True).exists():
+        return True
+    subscription_details = (invoice.to_dict().get('parent') or {}).get('subscription_details') or {}
+    stripe_subscription_id = subscription_details.get('subscription')
+    return bool(stripe_subscription_id) and StripeEventSummary.objects.filter(
+        stripe_subscription_id=stripe_subscription_id, event_type='customer.subscription.deleted',
+    ).exists()
 
 
 def _subscription_item_lines(invoice_dict: dict) -> list[dict]:
@@ -617,7 +634,7 @@ def keep_current_plan_active_for_renewal(checkout_intent: CheckoutIntent, invoic
     if already_renewed:
         _log_renewal(logging.INFO, 'grace_skipped_already_renewed', checkout_intent, invoice_id)
         return False
-    if checkout_intent.renewals.filter(is_canceled=True).exists():
+    if _subscription_is_canceled(checkout_intent, invoice):
         # A late event after customer.subscription.deleted: the plans are deactivated, don't extend year 1.
         _log_renewal(logging.INFO, 'grace_skipped_canceled', checkout_intent, invoice_id)
         return False
@@ -704,7 +721,7 @@ def _process_annual_renewal(
     if renewal and renewal.processed_at:
         _log_renewal(logging.INFO, 'already_processed', checkout_intent, stripe_invoice_id, f'renewal_id={renewal.id}')
         return
-    if checkout_intent.renewals.filter(is_canceled=True).exists():
+    if _subscription_is_canceled(checkout_intent, invoice):
         # customer.subscription.deleted already ended the subscription and deactivated its plans. Don't renew
         # it, and don't fail the webhook: retries can't change this. The customer may have paid, so CS has to
         # refund or reinstate by hand.
