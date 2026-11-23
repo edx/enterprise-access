@@ -13,11 +13,11 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name='checkoutintent',
             name='in_renewal_grace_period',
-            field=models.BooleanField(default=False, help_text='True while an annual renewal charge has failed and the current paid plan is kept active for the one-week grace period. Cleared when the renewal is paid or the subscription is canceled.'),
+            field=models.BooleanField(db_default=False, default=False, help_text='True while an annual renewal charge has failed and the current paid plan is kept active for the one-week grace period. Cleared when the renewal is paid or the subscription is canceled.'),
         ),
         migrations.AddField(
             model_name='historicalcheckoutintent',
             name='in_renewal_grace_period',
-            field=models.BooleanField(default=False, help_text='True while an annual renewal charge has failed and the current paid plan is kept active for the one-week grace period. Cleared when the renewal is paid or the subscription is canceled.'),
+            field=models.BooleanField(db_default=False, default=False, help_text='True while an annual renewal charge has failed and the current paid plan is kept active for the one-week grace period. Cleared when the renewal is paid or the subscription is canceled.'),
         ),
     ]
