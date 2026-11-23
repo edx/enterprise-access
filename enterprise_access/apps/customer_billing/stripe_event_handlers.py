@@ -6,10 +6,10 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from functools import wraps
+from typing import NoReturn
 from uuid import UUID
 
 import stripe
-from dateutil.relativedelta import relativedelta
 from django.conf import settings
 from django.utils import timezone
 from simple_history.utils import bulk_update_with_history
@@ -56,8 +56,6 @@ INVOICE_EVENT_TYPES = ('invoice.paid', 'invoice.created', 'invoice.payment_faile
 
 # How long a paid plan stays active past its end date while its annual renewal invoice is unpaid.
 ANNUAL_RENEWAL_GRACE_PERIOD = timedelta(days=7)
-# Length of each renewed paid term.
-ANNUAL_RENEWAL_TERM = relativedelta(years=1)
 
 
 class CheckoutIntentLookupError(Exception):
@@ -67,13 +65,9 @@ class CheckoutIntentLookupError(Exception):
 class AnnualRenewalError(Exception):
     """
     Raised when an annual renewal cannot be processed. The webhook fails so Stripe retries it, and the
-    ``outcome=halted`` audit log alerts engineering and CS.
+    ``outcome=halted`` audit log alerts engineering and CS. Always raised by ``_halt_annual_renewal``, which
+    writes that log.
     """
-
-    def __init__(self, message: str = '', audit_logged: bool = False):
-        super().__init__(message)
-        # True once the error is audit logged, so it is not logged again as outcome=failed.
-        self.audit_logged = audit_logged
 
 
 # Central registry for event handlers.
@@ -462,7 +456,7 @@ def _subscription_item_lines(invoice_dict: dict) -> list[dict]:
     return [line for line in lines if (line.get('parent') or {}).get('type') == SUBSCRIPTION_ITEM_TYPE]
 
 
-def _renewal_invoice_line(invoice_dict: dict) -> dict:
+def _renewal_invoice_line(invoice_dict: dict, checkout_intent: CheckoutIntent) -> dict:
     """
     Return the invoice line that bills the renewed subscription term: the first subscription item line that is
     not a proration.
@@ -470,7 +464,7 @@ def _renewal_invoice_line(invoice_dict: dict) -> dict:
     for line in _subscription_item_lines(invoice_dict):
         if not line['parent'].get('subscription_item_details', {}).get('proration'):
             return line
-    raise AnnualRenewalError(f'Invoice {invoice_dict.get("id")} has no subscription term line')
+    _halt_annual_renewal('the invoice has no subscription term line', checkout_intent, invoice_dict['id'])
 
 
 def _ssp_product_slugs_for_price(price_id: str) -> set[str]:
@@ -480,16 +474,12 @@ def _ssp_product_slugs_for_price(price_id: str) -> set[str]:
     table disagree.
     """
     price = stripe.Price.retrieve(price_id).to_dict()
-    slugs = set()
-    metadata_slug = (price.get('metadata') or {}).get('ssp_product_slug')
-    if metadata_slug:
+    # No is_active filter: grandfathered products must still renew.
+    slugs = set(SspProduct.objects.filter(
+        stripe_price_lookup_key__isnull=False, stripe_price_lookup_key=price.get('lookup_key'),
+    ).values_list('slug', flat=True))
+    if metadata_slug := (price.get('metadata') or {}).get('ssp_product_slug'):
         slugs.add(metadata_slug)
-    lookup_key = price.get('lookup_key')
-    if lookup_key:
-        # No is_active filter: grandfathered products must still renew.
-        product = SspProduct.objects.filter(stripe_price_lookup_key=lookup_key).only('slug').first()
-        if product:
-            slugs.add(product.slug)
     return slugs
 
 
@@ -519,19 +509,19 @@ def _audit_renewal_failures(step: str, checkout_intent: CheckoutIntent, invoice_
     try:
         yield
     except Exception as exc:
-        if not getattr(exc, 'audit_logged', False):
+        if not isinstance(exc, AnnualRenewalError):
             _log_renewal(logging.ERROR, 'failed', checkout_intent, invoice_id, f'step={step} error={exc!r}',
                          exc_info=True)
         raise
 
 
-def _halt_annual_renewal(message: str, checkout_intent: CheckoutIntent, invoice_id: str):
+def _halt_annual_renewal(message: str, checkout_intent: CheckoutIntent, invoice_id: str) -> NoReturn:
     """
     Log an annual renewal that cannot proceed with enough context for engineering and CS, then raise. The caller
     decides whether the webhook fails.
     """
     _log_renewal(logging.ERROR, 'halted', checkout_intent, invoice_id, f'reason={message!r}')
-    raise AnnualRenewalError(message, audit_logged=True)
+    raise AnnualRenewalError(message)
 
 
 def resolve_renewal_product(checkout_intent: CheckoutIntent, invoice) -> SspProduct:
@@ -580,7 +570,7 @@ def resolve_renewal_product(checkout_intent: CheckoutIntent, invoice) -> SspProd
 def _renewed_plan_title(
     checkout_intent: CheckoutIntent,
     product: SspProduct,
-    effective_date: datetime,
+    term_end: datetime,
     number_of_licenses: int,
 ) -> str:
     """
@@ -591,7 +581,6 @@ def _renewed_plan_title(
     "[Company Name] [# licenses] SUBS [Month YYYY] - Teams PAID". License Manager requires plan titles to be unique
     per customer agreement, and the month and year make each term's title unique.
     """
-    term_end = effective_date + ANNUAL_RENEWAL_TERM
     product_name = f'Essentials {product.academy_title}' if product.academy_uuid else 'Teams'
     return f'{checkout_intent.enterprise_name} {number_of_licenses} SUBS {term_end:%B %Y} - {product_name} PAID'
 
@@ -601,12 +590,10 @@ def _current_paid_plan_uuid(checkout_intent: CheckoutIntent) -> UUID | None:
     Return the paid plan currently in effect for the checkout intent: the renewed plan of its most recently
     processed renewal (the first paid plan after trial->paid, then each annual renewal's plan).
     """
-    renewal = SelfServiceSubscriptionRenewal.objects.filter(
-        checkout_intent=checkout_intent,
+    return checkout_intent.renewals.filter(
         processed_at__isnull=False,
         renewed_subscription_plan_uuid__isnull=False,
-    ).order_by('-processed_at').first()
-    return renewal.renewed_subscription_plan_uuid if renewal else None
+    ).order_by('-processed_at').values_list('renewed_subscription_plan_uuid', flat=True).first()
 
 
 def keep_current_plan_active_for_renewal(checkout_intent: CheckoutIntent, invoice) -> bool:
@@ -619,10 +606,9 @@ def keep_current_plan_active_for_renewal(checkout_intent: CheckoutIntent, invoic
     Once the renewal is processed, ``_process_annual_renewal`` moves it back to the period start.
 
     Returns:
-        bool: True if year 1 was extended, False if the invoice is already renewed.
-
-    Raises:
-        AnnualRenewalError: if the checkout intent has no processed paid plan.
+        bool: True if year 1 was extended. False if the invoice is already renewed, the subscription is
+        canceled, or the extension halted (already audit logged: a retry can't fix it, so callers don't fail
+        the webhook).
     """
     invoice_id = invoice['id']
     already_renewed = SelfServiceSubscriptionRenewal.objects.filter(
@@ -631,22 +617,31 @@ def keep_current_plan_active_for_renewal(checkout_intent: CheckoutIntent, invoic
     if already_renewed:
         _log_renewal(logging.INFO, 'grace_skipped_already_renewed', checkout_intent, invoice_id)
         return False
+    if checkout_intent.renewals.filter(is_canceled=True).exists():
+        # A late event after customer.subscription.deleted: the plans are deactivated, don't extend year 1.
+        _log_renewal(logging.INFO, 'grace_skipped_canceled', checkout_intent, invoice_id)
+        return False
 
-    with _audit_renewal_failures('grace_extension', checkout_intent, invoice_id):
-        current_plan_uuid = _current_paid_plan_uuid(checkout_intent)
-        if current_plan_uuid is None:
-            _halt_annual_renewal('no processed paid subscription plan to keep active', checkout_intent, invoice_id)
+    try:
+        with _audit_renewal_failures('grace_extension', checkout_intent, invoice_id):
+            current_plan_uuid = _current_paid_plan_uuid(checkout_intent)
+            if current_plan_uuid is None:
+                _halt_annual_renewal(
+                    'no processed paid subscription plan to keep active', checkout_intent, invoice_id,
+                )
 
-        period_start = datetime_from_timestamp(_renewal_invoice_line(invoice.to_dict())['period']['start'])
-        grace_expiration = period_start + ANNUAL_RENEWAL_GRACE_PERIOD
-        LicenseManagerApiClient().update_subscription_plan(
-            str(current_plan_uuid),
-            expiration_date=grace_expiration.isoformat(),
-        )
-        _log_renewal(
-            logging.INFO, 'grace_extended', checkout_intent, invoice_id,
-            f'plan_uuid={current_plan_uuid} expiration_date={grace_expiration.isoformat()}',
-        )
+            line = _renewal_invoice_line(invoice.to_dict(), checkout_intent)
+            grace_expiration = datetime_from_timestamp(line['period']['start']) + ANNUAL_RENEWAL_GRACE_PERIOD
+            LicenseManagerApiClient().update_subscription_plan(
+                str(current_plan_uuid),
+                expiration_date=grace_expiration.isoformat(),
+            )
+            _log_renewal(
+                logging.INFO, 'grace_extended', checkout_intent, invoice_id,
+                f'plan_uuid={current_plan_uuid} expiration_date={grace_expiration.isoformat()}',
+            )
+    except AnnualRenewalError:
+        return False
     return True
 
 
@@ -663,27 +658,43 @@ def _set_renewal_grace_period(checkout_intent: CheckoutIntent, invoice_id: str |
     _log_renewal(logging.INFO, outcome, checkout_intent, invoice_id)
 
 
+def _send_payment_receipt(invoice, checkout_intent: CheckoutIntent) -> None:
+    send_payment_receipt_email.delay(
+        invoice_id=invoice.id,
+        invoice_data=invoice.to_dict(),
+        enterprise_customer_name=checkout_intent.enterprise_name,
+        enterprise_slug=checkout_intent.enterprise_slug,
+    )
+
+
+def _send_annual_renewal_emails(invoice, checkout_intent: CheckoutIntent) -> None:
+    """Email the admins the payment receipt and the renewal notice for a paid annual renewal invoice."""
+    _send_payment_receipt(invoice, checkout_intent)
+    send_paid_subscription_renewal_notice_email_task.delay(
+        checkout_intent_id=checkout_intent.id,
+        invoice_data=invoice.to_dict(),
+    )
+
+
 def _process_annual_renewal(
     event: stripe.Event,
     checkout_intent: CheckoutIntent,
     invoice,
     subscription_details,
-) -> bool:
+) -> None:
     """
     Move a paid subscription onto next year's paid plan, for a paid ``subscription_cycle`` invoice.
 
     Creates a License Manager SubscriptionPlanRenewal without a renewed plan (License Manager creates it from
     year 1 when processing: same product, enterprise catalog and catalog query), tracks it in a
-    SelfServiceSubscriptionRenewal keyed by the invoice, processes it and activates the new plan.
+    SelfServiceSubscriptionRenewal keyed by the invoice, processes it, activates the new plan and emails the
+    admins the receipt and renewal notice.
 
-    Year 2 starts at the invoice period start, which is year 1's original end date, and ends one year later,
-    so a payment that clears during the grace period keeps the original dates.
+    Year 2 runs over the invoice line's period: it starts at year 1's original end date and ends at Stripe's
+    term end, so a payment that clears during the grace period keeps the original dates.
 
     Idempotent on ``stripe_invoice_id``: a processed renewal is skipped, and an unprocessed one resumes at the
     processing step.
-
-    Returns:
-        bool: True if this call processed the renewal, False if it had already been processed.
     """
     invoice_dict = invoice.to_dict()
     stripe_invoice_id = invoice_dict['id']
@@ -692,7 +703,7 @@ def _process_annual_renewal(
     renewal = SelfServiceSubscriptionRenewal.objects.filter(stripe_invoice_id=stripe_invoice_id).first()
     if renewal and renewal.processed_at:
         _log_renewal(logging.INFO, 'already_processed', checkout_intent, stripe_invoice_id, f'renewal_id={renewal.id}')
-        return False
+        return
     if checkout_intent.renewals.filter(is_canceled=True).exists():
         # customer.subscription.deleted already ended the subscription and deactivated its plans. Don't renew
         # it, and don't fail the webhook: retries can't change this. The customer may have paid, so CS has to
@@ -701,11 +712,13 @@ def _process_annual_renewal(
             logging.ERROR, 'halted', checkout_intent, stripe_invoice_id,
             "reason='the subscription is canceled, so the paid renewal invoice was not processed'",
         )
-        return False
+        return
 
     product = resolve_renewal_product(checkout_intent, invoice)
-    line = _renewal_invoice_line(invoice_dict)
+    line = _renewal_invoice_line(invoice_dict, checkout_intent)
     effective_date = datetime_from_timestamp(line['period']['start'])
+    # Stripe's term end, which is also the next renewal invoice's period start.
+    term_end = datetime_from_timestamp(line['period']['end'])
     if renewal is None:
         prior_plan_uuid = _current_paid_plan_uuid(checkout_intent)
         if prior_plan_uuid is None:
@@ -713,12 +726,11 @@ def _process_annual_renewal(
 
         plan_renewal = client.create_subscription_plan_renewal(
             prior_subscription_plan_uuid=str(prior_plan_uuid),
-            renewed_subscription_plan_uuid=None,
             salesforce_opportunity_line_item_id=None,
             effective_date=effective_date.isoformat(),
-            renewed_expiration_date=(effective_date + ANNUAL_RENEWAL_TERM).isoformat(),
+            renewed_expiration_date=term_end.isoformat(),
             number_of_licenses=line['quantity'],
-            renewed_plan_title=_renewed_plan_title(checkout_intent, product, effective_date, line['quantity']),
+            renewed_plan_title=_renewed_plan_title(checkout_intent, product, term_end, line['quantity']),
             # This handler processes the renewal itself, the License Manager batch job must not.
             exempt_from_batch_processing=True,
         )
@@ -738,7 +750,7 @@ def _process_annual_renewal(
         )
 
     result = client.process_subscription_plan_renewal(renewal.subscription_plan_renewal_id)
-    renewed_plan_uuid = (result or {}).get('renewed_subscription_plan')
+    renewed_plan_uuid = result.get('renewed_subscription_plan')
     if not renewed_plan_uuid:
         _halt_annual_renewal(
             f'License Manager returned no renewed plan for renewal {renewal.subscription_plan_renewal_id}',
@@ -753,24 +765,16 @@ def _process_annual_renewal(
         str(renewal.prior_subscription_plan_uuid),
         expiration_date=renewal.effective_date.isoformat(),
     )
-    # Before the processed checkpoint, so a failure in between is retried: a replay of a processed renewal
-    # does nothing.
+    # Before the processed checkpoint, so a failure in between (e.g. a broker error queuing an email) is
+    # retried: a replay of a processed renewal does nothing. The worst case is a duplicate email if the
+    # checkpoint save itself fails.
     _set_renewal_grace_period(checkout_intent, stripe_invoice_id, False)
+    _send_annual_renewal_emails(invoice, checkout_intent)
     renewal.mark_as_processed()
     _log_renewal(
         logging.INFO, 'processed', checkout_intent, stripe_invoice_id,
         f'renewal_id={renewal.id} prior_plan_uuid={renewal.prior_subscription_plan_uuid} '
         f'renewed_plan_uuid={renewed_plan_uuid}',
-    )
-    return True
-
-
-def _send_payment_receipt(invoice, checkout_intent: CheckoutIntent) -> None:
-    send_payment_receipt_email.delay(
-        invoice_id=invoice.id,
-        invoice_data=invoice.to_dict(),
-        enterprise_customer_name=checkout_intent.enterprise_name,
-        enterprise_slug=checkout_intent.enterprise_slug,
     )
 
 
@@ -795,17 +799,11 @@ def _handle_annual_renewal_invoice_paid(
             logging.ERROR, 'switch_off', checkout_intent, invoice.id,
             'reason=\'annual renewal not processed, the ssp_paid_renewal switch is off\'',
         )
-    else:
-        with _audit_renewal_failures('process', checkout_intent, invoice.id):
-            renewed = _process_annual_renewal(event, checkout_intent, invoice, subscription_details)
-        if not renewed:
-            return
+        _send_annual_renewal_emails(invoice, checkout_intent)
+        return
 
-    _send_payment_receipt(invoice, checkout_intent)
-    send_paid_subscription_renewal_notice_email_task.delay(
-        checkout_intent_id=checkout_intent.id,
-        invoice_data=invoice.to_dict(),
-    )
+    with _audit_renewal_failures('process', checkout_intent, invoice.id):
+        _process_annual_renewal(event, checkout_intent, invoice, subscription_details)
 
 
 def _handle_invoice_paid_status_updated(
@@ -961,8 +959,7 @@ class StripeEventHandler:
                 # The default __repr__ is really long because it just barfs out the entire payload.
                 event_short_repr = f'<stripe.Event id={event.id} type={event.type}>'
                 logger.info(f'[StripeEventHandler] handling {event_short_repr}.')
-                if event.type in INVOICE_EVENT_TYPES \
-                        and not _valid_invoice_event_type(event):
+                if event.type in INVOICE_EVENT_TYPES and not _valid_invoice_event_type(event):
                     logger.warning(
                         f'[StripeEventHandler] event {event_short_repr} is not a valid invoice type'
                     )
@@ -1066,12 +1063,7 @@ class StripeEventHandler:
 
         if not ssp_paid_renewal_enabled() or not _is_annual_renewal_invoice(invoice, subscription_details):
             return
-        try:
-            extended = keep_current_plan_active_for_renewal(checkout_intent, invoice)
-        except AnnualRenewalError:
-            # Already audit logged. A retry can't fix it, so don't fail the webhook.
-            return
-        if extended:
+        if keep_current_plan_active_for_renewal(checkout_intent, invoice):
             _set_renewal_grace_period(checkout_intent, invoice['id'], True)
 
     @on_stripe_event('invoice.created')
@@ -1101,11 +1093,7 @@ class StripeEventHandler:
 
         if ssp_paid_renewal_enabled() and _is_annual_renewal_invoice(invoice, invoice.parent.subscription_details):
             # Year 1 ends at this invoice's period start, before the invoice can be paid. Cover the gap.
-            try:
-                keep_current_plan_active_for_renewal(checkout_intent, invoice)
-            except AnnualRenewalError:
-                # Already audit logged. invoice.paid halts on the same problem, so don't fail this event too.
-                pass
+            keep_current_plan_active_for_renewal(checkout_intent, invoice)
             return
 
         # Extract the invoice period start from line items to match against renewal effective_date

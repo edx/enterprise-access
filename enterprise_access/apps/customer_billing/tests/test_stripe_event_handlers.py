@@ -1097,14 +1097,16 @@ class TestStripeEventHandler(TestCase):
         call_kwargs = mock_send_billing_error.delay.call_args.kwargs
         self.assertEqual(call_kwargs.get('checkout_intent_id'), self.checkout_intent.id)
 
+    @ddt.data(True, False)
     @mock.patch(
         "enterprise_access.apps.customer_billing.stripe_event_handlers.LicenseManagerApiClient",
         autospec=True,
     )
-    def test_cancel_all_future_plans_deactivates_all(self, mock_lms_client):
+    def test_cancel_all_future_plans_deactivates_all(self, include_processed, mock_lms_client):
         """
-        cancel_all_future_plans() patches all future plans, even the ones on processed renewals,
-        and returns their uuids.
+        cancel_all_future_plans() patches all future plans, including the ones on processed renewals unless
+        include_processed is False (past_due during a renewal grace period keeps the plan in effect), and
+        returns their uuids. Renewals whose plan License Manager has not created yet are skipped.
         """
         mock_client = mock_lms_client.return_value
         trial_plan_uuid = uuid.uuid4()
@@ -1122,18 +1124,20 @@ class TestStripeEventHandler(TestCase):
             renewed_subscription_plan_uuid=paid_plan_b_uuid,
             processed_at=None,
         )
-
-        deactivated = cancel_all_future_plans(self.checkout_intent)
-
-        self.assertEqual(set(deactivated), {paid_plan_a_uuid, paid_plan_b_uuid})
-        self.assertEqual(2, mock_client.update_subscription_plan.call_count)
-        mock_client.update_subscription_plan.assert_any_call(
-            str(paid_plan_a_uuid),
-            is_active=False,
+        SelfServiceSubscriptionRenewalFactory.create(
+            checkout_intent=self.checkout_intent,
+            prior_subscription_plan_uuid=paid_plan_b_uuid,
+            renewed_subscription_plan_uuid=None,
+            processed_at=None,
         )
-        mock_client.update_subscription_plan.assert_any_call(
-            str(paid_plan_b_uuid),
-            is_active=False,
+
+        deactivated = cancel_all_future_plans(self.checkout_intent, include_processed=include_processed)
+
+        expected = {paid_plan_a_uuid, paid_plan_b_uuid} if include_processed else {paid_plan_b_uuid}
+        self.assertEqual(set(deactivated), expected)
+        self.assertCountEqual(
+            mock_client.update_subscription_plan.call_args_list,
+            [mock.call(str(plan_uuid), is_active=False) for plan_uuid in expected],
         )
 
     @mock.patch(

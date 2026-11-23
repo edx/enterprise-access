@@ -44,20 +44,25 @@ grace week (`period.start + 7 days`) hasn't passed.
    raises `AnnualRenewalError`, so Stripe retries. Inactive (grandfathered) products are accepted.
 2. It creates a License Manager `SubscriptionPlanRenewal` with no renewed plan. `prior` is the renewed plan
    of the most recently processed `SelfServiceSubscriptionRenewal`. Effective date is the invoice line's
-   `period.start` (year 1's original end date) and expiration is one year later. The license count comes
+   `period.start` (year 1's original end date) and expiration is its `period.end` (Stripe's term end, which is
+   also the next renewal invoice's `period.start`). The license count comes
    from the line quantity. The renewed plan's title is set by `_renewed_plan_title()` (see "Plan titles").
 3. It creates a `SelfServiceSubscriptionRenewal` with `stripe_invoice_id`, then processes the renewal,
-   activates year 2, sets year 1's expiration back to the period start (undoing any grace extension) and
-   marks the record processed.
-4. Only then does it send the payment receipt and the renewal notice. A failed attempt raises before the
-   emails, so Stripe's retry sends them once, and a replay of a processed renewal sends nothing.
+   activates year 2 and sets year 1's expiration back to the period start (undoing any grace extension).
+4. Only then does it queue the payment receipt and the renewal notice, and then it marks the record processed.
+   A failed attempt, including a broker error while queuing an email, raises before the processed checkpoint,
+   so Stripe's retry sends the emails. A replay of a processed renewal sends nothing. The only duplicate is when
+   the checkpoint save itself fails after the emails are queued (see architecture pattern #27).
 
 If `customer.subscription.deleted` has already canceled the subscription (its renewals are `is_canceled`), a
 renewal invoice paid or delivered afterwards is not processed: it logs `outcome=halted` and the webhook succeeds,
 since a retry can't change it. The customer may have paid, so CS refunds or reinstates by hand.
+A late `invoice.created` or `invoice.payment_failed` for a canceled subscription doesn't extend year 1 or set
+`in_renewal_grace_period` either (`outcome=grace_skipped_canceled`).
 
 Only subscription item lines are read (`parent.type == 'subscription_item_details'`). The term line is the first
-one that isn't a proration; one-off invoice items such as adjustments never set the seats, dates or product.
+one that isn't a proration; one-off invoice items such as adjustments never set the seats, dates or product. An
+invoice without a term line halts (`outcome=halted`).
 
 Idempotency is keyed on `stripe_invoice_id`. A processed renewal is skipped. An unprocessed one resumes at
 the processing step without creating another License Manager renewal. The resume sends the License Manager
@@ -83,6 +88,7 @@ monitors:
 | `already_processed` | INFO | Replayed `invoice.paid`, skipped. |
 | `grace_extended` | INFO | Year 1 kept active until `expiration_date` (renewal invoice created or charge failed). |
 | `grace_skipped_already_renewed` | INFO | Grace extension skipped, the invoice is already renewed. |
+| `grace_skipped_canceled` | INFO | Grace extension skipped, the subscription is already canceled. |
 | `grace_period_started` / `grace_period_ended` | INFO | `in_renewal_grace_period` was set / cleared. |
 
 `halted`, `failed` and `switch_off` all mean the customer may have paid without getting next year's plan.

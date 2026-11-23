@@ -27,7 +27,6 @@ from enterprise_access.apps.customer_billing.models import (
 from enterprise_access.apps.customer_billing.stripe_event_handlers import (
     AnnualRenewalError,
     StripeEventHandler,
-    cancel_all_future_plans,
     resolve_renewal_product
 )
 from enterprise_access.apps.customer_billing.tests.factories import (
@@ -112,31 +111,20 @@ class TestAnnualRenewal(TestCase):
         # Year 1 ends, and year 2 starts, at the renewal invoice's period start.
         self.period_start = timezone.now().replace(microsecond=0) - timedelta(hours=1)
 
-        for patcher in (
-            mock.patch(f'{HANDLERS_MODULE}.stripe.Price.retrieve', side_effect=self._retrieve_price),
-            mock.patch(
-                'enterprise_access.apps.customer_billing.models.get_cached_academy_data',
-                side_effect=_academy_data,
-            ),
-        ):
-            patcher.start()
-            self.addCleanup(patcher.stop)
-
-        receipt_patcher = mock.patch(f'{HANDLERS_MODULE}.send_payment_receipt_email')
-        self.mock_receipt_email = receipt_patcher.start()
-        self.addCleanup(receipt_patcher.stop)
-
-        lm_patcher = mock.patch(f'{HANDLERS_MODULE}.LicenseManagerApiClient', autospec=True)
-        self.mock_lm_client = lm_patcher.start().return_value
-        self.addCleanup(lm_patcher.stop)
+        self._patch(f'{HANDLERS_MODULE}.stripe.Price.retrieve', side_effect=self._retrieve_price)
+        self._patch('enterprise_access.apps.customer_billing.models.get_cached_academy_data', side_effect=_academy_data)
+        self.mock_receipt_email = self._patch(f'{HANDLERS_MODULE}.send_payment_receipt_email')
+        self.mock_renewal_email = self._patch(f'{HANDLERS_MODULE}.send_paid_subscription_renewal_notice_email_task')
+        self.mock_lm_client = self._patch(f'{HANDLERS_MODULE}.LicenseManagerApiClient', autospec=True).return_value
         self.mock_lm_client.create_subscription_plan_renewal.return_value = {'id': 777}
         self.mock_lm_client.process_subscription_plan_renewal.return_value = {
             'id': 777, 'renewed_subscription_plan': str(self.year_two_plan_uuid),
         }
 
-        email_patcher = mock.patch(f'{HANDLERS_MODULE}.send_paid_subscription_renewal_notice_email_task')
-        self.mock_renewal_email = email_patcher.start()
-        self.addCleanup(email_patcher.stop)
+    def _patch(self, target, **kwargs):
+        patcher = mock.patch(target, **kwargs)
+        self.addCleanup(patcher.stop)
+        return patcher.start()
 
     def _retrieve_price(self, price_id, **_kwargs):
         if price_id not in self.stripe_prices:
@@ -195,36 +183,8 @@ class TestAnnualRenewal(TestCase):
         Build a renewal invoice event shaped like Stripe API 2025-03-31.basil and later, where invoice lines
         only carry the Price ID under ``pricing.price_details``. ``lines`` replaces the default invoice lines.
         """
-        period_start = int(self.period_start.timestamp())
-        default_lines = [
-            {
-                'object': 'line_item',
-                'parent': {
-                    'type': SUBSCRIPTION_ITEM_TYPE,
-                    'subscription_item_details': {'proration': False, 'subscription': STRIPE_SUBSCRIPTION_ID},
-                },
-                'quantity': quantity,
-                'pricing': {
-                    'type': 'price_details',
-                    'price_details': {'price': price_id, 'product': 'prod_test'},
-                    'unit_amount_decimal': '20000',
-                },
-                'period': {
-                    'start': period_start,
-                    'end': int((self.period_start + relativedelta(years=1)).timestamp()),
-                },
-            }
-            for price_id in price_ids
-        ]
-        if not price_ids:
-            default_lines = [{
-                'object': 'line_item',
-                'parent': {'type': SUBSCRIPTION_ITEM_TYPE},
-                'quantity': quantity,
-                'pricing': {'unit_amount_decimal': '20000'},
-                'period': {'start': period_start, 'end': period_start + 1},
-            }]
-        lines = default_lines if lines is None else lines
+        if lines is None:
+            lines = [self._invoice_line(price_id, quantity, self.period_start) for price_id in price_ids or (None,)]
         amount = 0 if event_type == 'invoice.payment_failed' else 500000
         invoice_data = {
             'id': invoice_id,
@@ -257,19 +217,27 @@ class TestAnnualRenewal(TestCase):
         return event
 
     def _invoice_line(self, price_id, quantity, start, proration=False, parent_type=SUBSCRIPTION_ITEM_TYPE):
-        """An invoice line billing ``price_id``. ``parent_type`` 'invoice_item_details' is a one-off item."""
+        """
+        An invoice line billing ``price_id`` (no Price if None) for one year from ``start``. ``parent_type``
+        'invoice_item_details' is a one-off item.
+        """
         parent = {'type': parent_type}
         if parent_type == SUBSCRIPTION_ITEM_TYPE:
             parent['subscription_item_details'] = {'proration': proration, 'subscription': STRIPE_SUBSCRIPTION_ID}
         else:
             parent['invoice_item_details'] = {'invoice_item': 'ii_test_adjustment'}
-        start_ts = int(start.timestamp())
+        pricing = {'unit_amount_decimal': '20000'}
+        if price_id:
+            pricing.update(type='price_details', price_details={'price': price_id, 'product': 'prod_test'})
         return {
             'object': 'line_item',
             'parent': parent,
             'quantity': quantity,
-            'pricing': {'type': 'price_details', 'price_details': {'price': price_id, 'product': 'prod_test'}},
-            'period': {'start': start_ts, 'end': start_ts + 3600},
+            'pricing': pricing,
+            'period': {
+                'start': int(start.timestamp()),
+                'end': int((start + relativedelta(years=1)).timestamp()),
+            },
         }
 
     def _assert_nothing_created(self):
@@ -306,7 +274,6 @@ class TestAnnualRenewal(TestCase):
 
         self.mock_lm_client.create_subscription_plan_renewal.assert_called_once_with(
             prior_subscription_plan_uuid=str(self.year_one_plan_uuid),
-            renewed_subscription_plan_uuid=None,
             salesforce_opportunity_line_item_id=None,
             effective_date=self.period_start.isoformat(),
             renewed_expiration_date=(self.period_start + relativedelta(years=1)).isoformat(),
@@ -401,14 +368,18 @@ class TestAnnualRenewal(TestCase):
         self._assert_nothing_created()
 
     def test_invoice_paid_replay_is_skipped(self):
-        """Replaying a processed renewal invoice does not touch License Manager or email admins again."""
+        """
+        Replaying a processed renewal invoice does not touch License Manager or email admins again. The renewal
+        leaves a created and a processed audit log line, and the replay an already_processed one.
+        """
         self._set_up_paid_subscriber()
-        StripeEventHandler.dispatch(self._renewal_invoice_event())
-        self.mock_lm_client.reset_mock()
-        self.mock_renewal_email.reset_mock()
-        self.mock_receipt_email.reset_mock()
+        with self.assertLogs(HANDLERS_MODULE, level='INFO') as logs:
+            StripeEventHandler.dispatch(self._renewal_invoice_event())
+            self.mock_lm_client.reset_mock()
+            self.mock_renewal_email.reset_mock()
+            self.mock_receipt_email.reset_mock()
 
-        StripeEventHandler.dispatch(self._renewal_invoice_event())
+            StripeEventHandler.dispatch(self._renewal_invoice_event())
 
         self.mock_lm_client.create_subscription_plan_renewal.assert_not_called()
         self.mock_lm_client.process_subscription_plan_renewal.assert_not_called()
@@ -417,27 +388,38 @@ class TestAnnualRenewal(TestCase):
         self.mock_receipt_email.delay.assert_not_called()
         self.assertEqual(SelfServiceSubscriptionRenewal.objects.filter(stripe_invoice_id=RENEWAL_INVOICE_ID).count(), 1)
 
-    def test_invoice_paid_resumes_unprocessed_renewal(self):
-        """A renewal created on an earlier failed attempt is processed without creating another one."""
+        audit_logs = [line for line in logs.output if '[SSPAnnualRenewal]' in line]
+        self.assertEqual(
+            [line.split('outcome=')[1].split()[0] for line in audit_logs],
+            ['created', 'processed', 'already_processed'],
+        )
+        for line in audit_logs:
+            self.assertIn(f'checkout_intent_uuid={self.checkout_intent.uuid}', line)
+            self.assertIn(f'enterprise_slug={self.checkout_intent.enterprise_slug}', line)
+            self.assertIn(f'invoice_id={RENEWAL_INVOICE_ID}', line)
+        self.assertIn(f'renewed_plan_uuid={self.year_two_plan_uuid}', audit_logs[1])
+
+    @ddt.data('receipt', 'notice')
+    def test_broker_error_queuing_an_email_is_retried_with_the_emails(self, failing_email):
+        """
+        A broker error while queuing a renewal email fails the webhook before the renewal is marked processed,
+        so Stripe's retry finishes the renewal and sends both emails instead of skipping it as already processed.
+        """
         self._set_up_paid_subscriber()
-        self.mock_lm_client.process_subscription_plan_renewal.side_effect = Exception('License Manager is down')
+        failing_mock = self.mock_receipt_email if failing_email == 'receipt' else self.mock_renewal_email
+        failing_mock.delay.side_effect = [Exception('broker is down'), None]
+
         with self.assertRaises(Exception):
             StripeEventHandler.dispatch(self._renewal_invoice_event())
         renewal = SelfServiceSubscriptionRenewal.objects.get(stripe_invoice_id=RENEWAL_INVOICE_ID)
         self.assertIsNone(renewal.processed_at)
-        # No receipt for a renewal that failed: Stripe retries the event, and the retry sends it once.
-        self.mock_receipt_email.delay.assert_not_called()
-        self.mock_renewal_email.delay.assert_not_called()
 
-        self.mock_lm_client.reset_mock()
-        self.mock_lm_client.process_subscription_plan_renewal.side_effect = None
+        self.mock_receipt_email.reset_mock(side_effect=True)
+        self.mock_renewal_email.reset_mock(side_effect=True)
         StripeEventHandler.dispatch(self._renewal_invoice_event())
 
-        self.mock_lm_client.create_subscription_plan_renewal.assert_not_called()
-        self.mock_lm_client.process_subscription_plan_renewal.assert_called_once_with(777)
         renewal.refresh_from_db()
         self.assertIsNotNone(renewal.processed_at)
-        self.assertEqual(renewal.renewed_subscription_plan_uuid, self.year_two_plan_uuid)
         self.mock_receipt_email.delay.assert_called_once()
         self.mock_renewal_email.delay.assert_called_once()
 
@@ -461,9 +443,9 @@ class TestAnnualRenewal(TestCase):
         self.assertEqual(kwargs['number_of_licenses'], 25)
         self.assertEqual(kwargs['effective_date'], self.period_start.isoformat())
 
-    def test_grace_extension_fails_without_a_subscription_term_line(self):
+    def test_grace_extension_halts_without_a_subscription_term_line(self):
         """
-        A renewal invoice with only prorations and one-off items is an error, logged as outcome=failed. The webhook
+        A renewal invoice with only prorations and one-off items is an error, logged as outcome=halted. The webhook
         doesn't fail, since a retry can't fix it.
         """
         self._set_up_paid_subscriber()
@@ -475,7 +457,7 @@ class TestAnnualRenewal(TestCase):
         with self.assertLogs(HANDLERS_MODULE, level='ERROR') as logs:
             StripeEventHandler.dispatch(self._renewal_invoice_event(event_type='invoice.payment_failed', lines=lines))
 
-        self.assertTrue(any('outcome=failed' in line and 'step=grace_extension' in line for line in logs.output))
+        self.assertTrue(any('outcome=halted' in line and 'no subscription term line' in line for line in logs.output))
         self.mock_lm_client.update_subscription_plan.assert_not_called()
 
     def test_paid_invoice_after_subscription_deleted_is_not_renewed(self):
@@ -510,29 +492,27 @@ class TestAnnualRenewal(TestCase):
         self.mock_renewal_email.delay.assert_not_called()
 
     @ddt.data(
+        # License Manager failed to process the renewal.
+        ('process_subscription_plan_renewal', 0),
         # License Manager processed the renewal, then activating year 2 failed.
-        {'failing_call_index': 0},
+        ('update_subscription_plan', 0),
         # Year 2 was activated, then moving year 1's end date back failed.
-        {'failing_call_index': 1},
+        ('update_subscription_plan', 1),
     )
     @ddt.unpack
-    def test_retry_completes_a_renewal_license_manager_already_processed(self, failing_call_index):
+    def test_retry_resumes_a_failed_renewal(self, failing_call, failing_call_index):
         """
-        If a step fails after License Manager processed the renewal, Stripe's retry finishes it on the same
-        year 2 plan: License Manager returns an already processed renewal unchanged, and no second renewal is
-        created. The grace flag is cleared and the emails are sent once.
+        A renewal that failed part way is finished by Stripe's retry on the same License Manager renewal and year 2
+        plan: no second renewal is created (License Manager returns an already processed renewal unchanged). The
+        failed attempt sends no emails; the retry clears the grace flag and sends them once.
         """
         self._set_up_paid_subscriber()
         self.checkout_intent.in_renewal_grace_period = True
         self.checkout_intent.save(update_fields=['in_renewal_grace_period'])
-        calls = {'count': 0}
+        getattr(self.mock_lm_client, failing_call).side_effect = (
+            [mock.DEFAULT] * failing_call_index + [Exception('License Manager is down')] + [mock.DEFAULT] * 3
+        )
 
-        def update_plan(*_args, **_kwargs):
-            calls['count'] += 1
-            if calls['count'] - 1 == failing_call_index:
-                raise Exception('License Manager is down')
-
-        self.mock_lm_client.update_subscription_plan.side_effect = update_plan
         with self.assertRaises(Exception):
             StripeEventHandler.dispatch(self._renewal_invoice_event())
         renewal = SelfServiceSubscriptionRenewal.objects.get(stripe_invoice_id=RENEWAL_INVOICE_ID)
@@ -540,9 +520,9 @@ class TestAnnualRenewal(TestCase):
         self.checkout_intent.refresh_from_db()
         self.assertTrue(self.checkout_intent.in_renewal_grace_period)
         self.mock_receipt_email.delay.assert_not_called()
+        self.mock_renewal_email.delay.assert_not_called()
 
         self.mock_lm_client.reset_mock()
-        self.mock_lm_client.update_subscription_plan.side_effect = None
         StripeEventHandler.dispatch(self._renewal_invoice_event())
 
         self.mock_lm_client.create_subscription_plan_renewal.assert_not_called()
@@ -610,25 +590,6 @@ class TestAnnualRenewal(TestCase):
             str(self.year_two_plan_uuid),
         )
 
-    def test_invoice_paid_writes_audit_logs(self):
-        """A renewal leaves a created and a processed audit log line, and a replay an already_processed one."""
-        self._set_up_paid_subscriber()
-
-        with self.assertLogs(HANDLERS_MODULE, level='INFO') as logs:
-            StripeEventHandler.dispatch(self._renewal_invoice_event())
-            StripeEventHandler.dispatch(self._renewal_invoice_event())
-
-        audit_logs = [line for line in logs.output if '[SSPAnnualRenewal]' in line]
-        self.assertEqual(
-            [line.split('outcome=')[1].split()[0] for line in audit_logs],
-            ['created', 'processed', 'already_processed'],
-        )
-        for line in audit_logs:
-            self.assertIn(f'checkout_intent_uuid={self.checkout_intent.uuid}', line)
-            self.assertIn(f'enterprise_slug={self.checkout_intent.enterprise_slug}', line)
-            self.assertIn(f'invoice_id={RENEWAL_INVOICE_ID}', line)
-        self.assertIn(f'renewed_plan_uuid={self.year_two_plan_uuid}', audit_logs[1])
-
     @ddt.data(
         {'event_type': 'invoice.paid', 'failing_call': 'process_subscription_plan_renewal', 'step': 'process'},
         {'event_type': 'invoice.payment_failed', 'failing_call': 'update_subscription_plan',
@@ -668,23 +629,35 @@ class TestAnnualRenewal(TestCase):
         self.assertIn('outcome=halted', audit_logs[0])
         self.mock_lm_client.update_subscription_plan.assert_not_called()
 
-    @ddt.data('invoice.payment_failed', 'invoice.created')
-    def test_year_one_kept_active_until_a_week_after_its_end(self, event_type):
+    @ddt.data(
+        ('invoice.payment_failed', True),
+        ('invoice.created', True),
+        ('invoice.payment_failed', False),
+        ('invoice.created', False),
+    )
+    @ddt.unpack
+    def test_year_one_kept_active_until_a_week_after_its_end(self, event_type, switch_on):
         """
         A created (not yet paid) or failed renewal invoice extends year 1 to an absolute date a week after its
-        original end date, so repeated events do not keep pushing it out.
+        original end date, so repeated events do not keep pushing it out. With the ssp_paid_renewal switch off,
+        year 1 is not extended.
         """
         self._set_up_paid_subscriber()
 
-        StripeEventHandler.dispatch(self._renewal_invoice_event(event_type=event_type))
-        StripeEventHandler.dispatch(self._renewal_invoice_event(event_type=event_type))
+        with override_waffle_switch(SSP_PAID_RENEWAL, switch_on):
+            StripeEventHandler.dispatch(self._renewal_invoice_event(event_type=event_type))
+            StripeEventHandler.dispatch(self._renewal_invoice_event(event_type=event_type))
 
         grace_end = (self.period_start + timedelta(days=7)).isoformat()
         self.assertEqual(
             self.mock_lm_client.update_subscription_plan.call_args_list,
-            [mock.call(str(self.year_one_plan_uuid), expiration_date=grace_end)] * 2,
+            [mock.call(str(self.year_one_plan_uuid), expiration_date=grace_end)] * 2 if switch_on else [],
         )
         self.mock_lm_client.create_subscription_plan_renewal.assert_not_called()
+        self.checkout_intent.refresh_from_db()
+        self.assertEqual(
+            self.checkout_intent.in_renewal_grace_period, switch_on and event_type == 'invoice.payment_failed',
+        )
 
     def test_failed_renewal_charge_flags_grace_period_until_paid(self):
         """
@@ -724,6 +697,23 @@ class TestAnnualRenewal(TestCase):
         self.checkout_intent.refresh_from_db()
         self.assertFalse(self.checkout_intent.in_renewal_grace_period)
 
+    @ddt.data('invoice.payment_failed', 'invoice.created')
+    def test_late_grace_event_after_subscription_deleted_is_ignored(self, event_type):
+        """
+        A renewal invoice event handled after customer.subscription.deleted neither extends the deactivated
+        year 1 plan nor flags the checkout intent as in the grace period.
+        """
+        self._set_up_paid_subscriber()
+        self.checkout_intent.renewals.update(is_canceled=True)
+
+        with self.assertLogs(HANDLERS_MODULE, level='INFO') as logs:
+            StripeEventHandler.dispatch(self._renewal_invoice_event(event_type=event_type))
+
+        self.mock_lm_client.update_subscription_plan.assert_not_called()
+        self.checkout_intent.refresh_from_db()
+        self.assertFalse(self.checkout_intent.in_renewal_grace_period)
+        self.assertTrue(any('outcome=grace_skipped_canceled' in line for line in logs.output))
+
     def test_payment_failed_for_first_paid_invoice_is_ignored(self):
         """A failed trial->paid charge is not an annual renewal, and is left to the past_due handling."""
         self._set_up_paid_subscriber(with_paid_plan=False)
@@ -760,28 +750,6 @@ class TestAnnualRenewal(TestCase):
         renewal = SelfServiceSubscriptionRenewal.objects.get(stripe_invoice_id=RENEWAL_INVOICE_ID)
         self.assertEqual(renewal.effective_date, datetime_from_timestamp(int(self.period_start.timestamp())))
 
-    def test_past_due_keeps_current_paid_plan_active(self):
-        """
-        A failed renewal charge makes the subscription past_due: plans that have not started are deactivated,
-        but the paid plan in effect (year 1) stays active for the grace period.
-        """
-        self._set_up_paid_subscriber()
-        not_started_plan_uuid = uuid.uuid4()
-        SelfServiceSubscriptionRenewalFactory(
-            checkout_intent=self.checkout_intent,
-            prior_subscription_plan_uuid=self.year_one_plan_uuid,
-            renewed_subscription_plan_uuid=not_started_plan_uuid,
-        )
-        # A renewal whose plan License Manager has not created yet.
-        SelfServiceSubscriptionRenewalFactory(checkout_intent=self.checkout_intent)
-
-        deactivated = cancel_all_future_plans(self.checkout_intent, include_processed=False)
-
-        self.assertEqual(deactivated, [not_started_plan_uuid])
-        self.mock_lm_client.update_subscription_plan.assert_called_once_with(
-            str(not_started_plan_uuid), is_active=False,
-        )
-
     def test_switch_off_invoice_paid_only_emails_and_logs(self):
         """
         With the ssp_paid_renewal switch off, a paid renewal invoice keeps the behaviour from before automated
@@ -803,15 +771,3 @@ class TestAnnualRenewal(TestCase):
         self.assertIn('ssp_paid_renewal switch is off', logs.output[0])
         self.assertIn(str(self.checkout_intent.uuid), logs.output[0])
         self.assertIn(RENEWAL_INVOICE_ID, logs.output[0])
-
-    @ddt.data('invoice.payment_failed', 'invoice.created')
-    def test_switch_off_year_one_is_not_extended(self, event_type):
-        """With the ssp_paid_renewal switch off, an unpaid renewal invoice does not extend year 1."""
-        self._set_up_paid_subscriber()
-
-        with override_waffle_switch(SSP_PAID_RENEWAL, False):
-            StripeEventHandler.dispatch(self._renewal_invoice_event(event_type=event_type))
-
-        self.mock_lm_client.update_subscription_plan.assert_not_called()
-        self.checkout_intent.refresh_from_db()
-        self.assertFalse(self.checkout_intent.in_renewal_grace_period)
