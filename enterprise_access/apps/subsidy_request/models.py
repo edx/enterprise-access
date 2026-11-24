@@ -120,7 +120,8 @@ class SubsidyRequest(TimeStampedModel, SoftDeletableModel):
         raise NotImplementedError
 
     def clean(self):
-        if self.state != SubsidyRequestStates.REQUESTED:
+        # An automatic expiry is not a review, so it has no reviewer.
+        if self.state not in (SubsidyRequestStates.REQUESTED, SubsidyRequestStates.EXPIRED):
             if not (self.reviewed_at and self.reviewer):
                 raise ValidationError('Both reviewer and reviewed_at are required for a review.')
 
