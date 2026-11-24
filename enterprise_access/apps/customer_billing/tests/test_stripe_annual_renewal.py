@@ -248,7 +248,14 @@ class TestAnnualRenewal(TestCase):
         (active) handled afterwards set the flag back to False.
         """
         if canceled_by == 'is_canceled':
-            self.checkout_intent.renewals.update(is_canceled=True)
+            renewals = self.checkout_intent.renewals.filter(stripe_subscription_id=stripe_subscription_id)
+            if not renewals.exists():
+                SelfServiceSubscriptionRenewalFactory(
+                    checkout_intent=self.checkout_intent,
+                    stripe_subscription_id=stripe_subscription_id,
+                    stripe_invoice_id=f'in_{stripe_subscription_id}',
+                )
+            renewals.update(is_canceled=True)
             return
         deleted_event = StripeEventDataFactory(
             checkout_intent=self.checkout_intent, event_type='customer.subscription.deleted',
@@ -501,10 +508,14 @@ class TestAnnualRenewal(TestCase):
         self.assertEqual(len(halted), 1)
         self.assertIn('the subscription is canceled', halted[0])
 
-    def test_deletion_of_an_earlier_subscription_does_not_block_renewal(self):
-        """A deletion recorded for an earlier subscription on the same checkout intent doesn't block this renewal."""
+    @ddt.data('is_canceled', 'deletion_summary')
+    def test_deletion_of_an_earlier_subscription_does_not_block_renewal(self, canceled_by):
+        """
+        A canceled earlier subscription on the same checkout intent (its renewals flagged is_canceled, or its
+        deletion recorded) doesn't block this subscription's renewal.
+        """
         self._set_up_paid_subscriber()
-        self._cancel_subscription('deletion_summary', stripe_subscription_id='sub_test_earlier')
+        self._cancel_subscription(canceled_by, stripe_subscription_id='sub_test_earlier')
 
         StripeEventHandler.dispatch(self._renewal_invoice_event())
 

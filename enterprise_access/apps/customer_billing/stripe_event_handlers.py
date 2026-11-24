@@ -456,10 +456,11 @@ def _subscription_is_canceled(checkout_intent: CheckoutIntent, invoice) -> bool:
     A recorded deletion is terminal, since Stripe never revives a deleted subscription. Filtering on the
     subscription id lets a new subscription on the same checkout intent still renew.
     """
-    if checkout_intent.renewals.filter(is_canceled=True).exists():
+    stripe_subscription_id = invoice.parent.subscription_details.subscription
+    if checkout_intent.renewals.filter(stripe_subscription_id=stripe_subscription_id, is_canceled=True).exists():
         return True
     return StripeEventSummary.objects.filter(
-        stripe_subscription_id=invoice.parent.subscription_details.subscription,
+        stripe_subscription_id=stripe_subscription_id,
         event_type='customer.subscription.deleted',
     ).exists()
 
@@ -932,8 +933,10 @@ def _handle_subscription_updated_status_updates(
         )
         enterprise_uuid = checkout_intent.enterprise_uuid
         if enterprise_uuid:
-            # With ssp_paid_renewal on, keep the paid plan in effect: a failed annual renewal charge gets a grace
-            # period, and the plan expires on its own if the charge never clears.
+            # With ssp_paid_renewal on, keep the paid plan in effect for any failed invoice. For a failed annual
+            # renewal charge, the grace period sets the plan to expire at period start + 7 days. For a failed
+            # mid-term invoice (e.g. a seat change), the plan runs to its term end, since seats only change once
+            # an invoice is paid. If Stripe cancels the subscription, customer.subscription.deleted ends it.
             cancel_all_future_plans(checkout_intent, include_processed=not ssp_paid_renewal_enabled())
         else:
             logger.error(
