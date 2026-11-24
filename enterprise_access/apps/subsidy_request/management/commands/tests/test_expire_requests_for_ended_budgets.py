@@ -61,17 +61,19 @@ class TestExpireRequestsForEndedBudgets(TestCase):
     ):
         """
         Creates a request on its own Browse & Request budget, whose subsidy answers ``subsidy_response``
-        (an expired subsidy unless given).
+        (an expired subsidy unless given). A ``requested`` row has no reviewer, as in production.
         """
         policy = PerLearnerSpendCapLearnerCreditAccessPolicyFactory(
             learner_credit_request_config=LearnerCreditRequestConfigurationFactory(active=config_active),
             **policy_kwargs,
         )
         self.subsidy_responses[str(policy.subsidy_uuid)] = subsidy_response or EXPIRED_SUBSIDY
+        review_kwargs = {'reviewer': None, 'reviewed_at': None} if state == SubsidyRequestStates.REQUESTED else {}
         return LearnerCreditRequestFactory(
             learner_credit_request_config=policy.learner_credit_request_config,
             enterprise_customer_uuid=policy.enterprise_customer_uuid,
             state=state,
+            **review_kwargs,
         )
 
     @ddt.data(
@@ -185,6 +187,29 @@ class TestExpireRequestsForEndedBudgets(TestCase):
         ended_budget_request.refresh_from_db()
         self.assertEqual(unverified_request.state, SubsidyRequestStates.REQUESTED)
         self.assertEqual(ended_budget_request.state, SubsidyRequestStates.EXPIRED)
+
+    def test_malformed_expiration_date_does_not_stop_other_budgets(self):
+        unverified_request = self._create_request(subsidy_response={'expiration_datetime': 'not-a-date'})
+        ended_budget_request = self._create_request(retired=True)
+        unverified_policy = unverified_request.learner_credit_request_config.learner_credit_config
+
+        with self.assertRaisesRegex(CommandError, str(unverified_policy.uuid)):
+            call_command(COMMAND)
+
+        unverified_request.refresh_from_db()
+        ended_budget_request.refresh_from_db()
+        self.assertEqual(unverified_request.state, SubsidyRequestStates.REQUESTED)
+        self.assertEqual(ended_budget_request.state, SubsidyRequestStates.EXPIRED)
+
+    def test_expires_request_that_has_no_reviewer(self):
+        request = self._create_request(retired=True)
+        self.assertIsNone(request.reviewer)
+
+        call_command(COMMAND)
+
+        request.refresh_from_db()
+        self.assertEqual(request.state, SubsidyRequestStates.EXPIRED)
+        self.assertEqual(request.actions.get().recent_action, SubsidyRequestStates.EXPIRED)
 
     def test_request_that_fails_to_expire_fails_the_run_once_the_rest_are_processed(self):
         failing_request = self._create_request()

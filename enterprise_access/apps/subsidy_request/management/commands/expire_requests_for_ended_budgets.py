@@ -52,6 +52,7 @@ class Command(BaseCommand):
         Raises:
             requests.exceptions.RequestException: if the subsidy can't be fetched (an HTTP error, a dropped
                 connection or a timeout), so that a failed lookup isn't read as "ended".
+            ValueError: if the subsidy's expiration date can't be parsed.
         """
         if policy.retired:
             return True
@@ -89,10 +90,10 @@ class Command(BaseCommand):
             try:
                 if not self.budget_has_ended(policy):
                     continue
-            except requests.exceptions.RequestException:
-                # Any failure to reach the subsidy service, not only an HTTP error: one budget's lookup failing
-                # must not stop the run for every other customer.
-                logger.exception('%s Could not fetch the subsidy for policy %s, skipping it.', LOG_PREFIX, policy.uuid)
+            except (requests.exceptions.RequestException, ValueError):
+                # Any failure to reach the subsidy service, not only an HTTP error, or a malformed expiration date:
+                # one budget's lookup failing must not stop the run for every other customer.
+                logger.exception('%s Could not check the subsidy for policy %s, skipping it.', LOG_PREFIX, policy.uuid)
                 failures.append(f'policy {policy.uuid}')
                 continue
 
