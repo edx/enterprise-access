@@ -466,8 +466,7 @@ class StripeSubscriptionPlanInfoTests(APITest):
     def test_get_stripe_subscription_plan_info_first_paid_plan(self):
         """
         The first paid plan has no event summaries of its own (they carry the trial plan's uuid), so its
-        enterprise and cancellation come from the trial->paid renewal. Its admin portal card shows
-        Pending Cancellation from this response (ENT-11534).
+        enterprise and cancellation come from the trial->paid renewal.
         """
         self.set_jwt_cookie([{
             'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
@@ -511,8 +510,8 @@ class StripeSubscriptionPlanInfoTests(APITest):
     @override_waffle_switch(SSP_PAID_RENEWAL, False)
     def test_get_stripe_subscription_plan_info_first_paid_plan_switch_off(self):
         """
-        With the ssp_paid_renewal switch off, the first paid plan is not found through its renewal, so its
-        admin portal card keeps its pre-ENT-11534 behaviour (no cancellation date).
+        With the ssp_paid_renewal switch off, the first paid plan is not found through its renewal, so the
+        endpoint returns 403, as before.
         """
         self.set_jwt_cookie([{
             'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
@@ -531,8 +530,8 @@ class StripeSubscriptionPlanInfoTests(APITest):
     @override_waffle_switch(SSP_PAID_RENEWAL, False)
     def test_get_stripe_subscription_plan_info_first_paid_plan_switch_off_operator(self):
         """
-        With the ssp_paid_renewal switch off, even an operator gets a 403 for the first paid plan, as before
-        ENT-11534: no enterprise is found for the plan.
+        With the ssp_paid_renewal switch off, even an operator gets a 403 for the first paid plan, as before:
+        no enterprise is found for the plan.
         """
         self.set_jwt_cookie([{
             'system_wide_role': SYSTEM_ENTERPRISE_OPERATOR_ROLE,

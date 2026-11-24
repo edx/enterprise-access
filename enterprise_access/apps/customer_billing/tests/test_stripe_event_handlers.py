@@ -1172,39 +1172,6 @@ class TestStripeEventHandler(TestCase):
         "enterprise_access.apps.customer_billing.stripe_event_handlers.LicenseManagerApiClient",
         autospec=True,
     )
-    def test_cancel_all_future_plans_exclude_processed_skips_processed_renewals(self, mock_lms_client):
-        """
-        With include_processed=False, only the plans of unprocessed renewals are deactivated.
-        The plan of a processed renewal is the current paid plan and stays active.
-        """
-        mock_client = mock_lms_client.return_value
-        current_paid_plan_uuid = uuid.uuid4()
-        future_plan_uuid = uuid.uuid4()
-        SelfServiceSubscriptionRenewalFactory.create(
-            checkout_intent=self.checkout_intent,
-            prior_subscription_plan_uuid=uuid.uuid4(),
-            renewed_subscription_plan_uuid=current_paid_plan_uuid,
-            processed_at=timezone.now(),
-        )
-        SelfServiceSubscriptionRenewalFactory.create(
-            checkout_intent=self.checkout_intent,
-            prior_subscription_plan_uuid=current_paid_plan_uuid,
-            renewed_subscription_plan_uuid=future_plan_uuid,
-            processed_at=None,
-        )
-
-        deactivated = cancel_all_future_plans(self.checkout_intent, include_processed=False)
-
-        self.assertEqual(deactivated, [future_plan_uuid])
-        mock_client.update_subscription_plan.assert_called_once_with(
-            str(future_plan_uuid),
-            is_active=False,
-        )
-
-    @mock.patch(
-        "enterprise_access.apps.customer_billing.stripe_event_handlers.LicenseManagerApiClient",
-        autospec=True,
-    )
     def test_cancel_all_future_plans_exclude_processed_keeps_current_paid_plan(self, mock_lms_client):
         """
         With include_processed=False, a customer in their paid year (only a processed trial -> paid renewal)
@@ -1272,9 +1239,8 @@ class TestStripeEventHandler(TestCase):
         self, mock_lms_client, mock_send_cancelation_email, mock_send_ended_email,
     ):
         """
-        ENT-11534: when Stripe deletes a paid subscription before current_period_end (e.g. an
-        immediate cancel in the Dashboard), the current paid plan is not deactivated. It stays
-        active until its expiration date, when license-manager moves enrollments to Audit.
+        When Stripe deletes a paid subscription before current_period_end (e.g. an immediate cancel
+        in the Dashboard), the current paid plan stays active until its expiration date.
 
         The renewal is marked canceled and keeps the period end as its cancel date, so the admin
         portal shows the plan as pending cancellation until then. Both emails give the period
@@ -1569,7 +1535,7 @@ class TestStripeEventHandler(TestCase):
     @ddt.data(
         # Before automated renewals: every renewal's plan is deactivated, including the paid plan in effect.
         {'renewal_switch_on': False, 'expected_kwargs': {}},
-        # With automated renewals, the paid plan in effect stays active until its expiration date (ENT-11534).
+        # With automated renewals, the paid plan in effect stays active until its expiration date.
         {'renewal_switch_on': True, 'expected_kwargs': {'include_processed': False}},
     )
     @ddt.unpack

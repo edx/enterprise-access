@@ -650,8 +650,7 @@ def stripe_event_summary_permission_detail_fn(request, *args, **kwargs):
     if summary and summary.checkout_intent:
         return summary.checkout_intent.enterprise_uuid
 
-    # Event summaries carry the trial plan's uuid only, so the first paid plan is found through its renewal.
-    # Behind the ssp_paid_renewal switch, so admins see no change until the new cancellation flow launches.
+    # Summaries carry only the trial plan's uuid, so find the first paid plan through its renewal (switch on only).
     if not ssp_paid_renewal_enabled():
         return None
     renewal = _get_first_renewal_for_subscription_plan(subs_plan_uuid)
@@ -771,8 +770,7 @@ class StripeEventSummaryViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
         if first_related_renewal:
             checkout_intent_uuid = first_related_renewal.checkout_intent.uuid
             is_canceled = first_related_renewal.is_canceled
-            # Only the plan being renewed points at its renewed plan. The renewed plan itself must not point at
-            # itself, or the admin portal hides it as a renewal that hasn't started yet.
+            # A renewed plan must not point at itself, or the admin portal hides it as a future renewal.
             if str(first_related_renewal.renewed_subscription_plan_uuid) != str(subscription_plan_uuid).lower():
                 renewed_subscription_plan_uuid = first_related_renewal.renewed_subscription_plan_uuid
             canceled_date = first_related_renewal.subscription_cancel_at
@@ -805,9 +803,7 @@ class StripeEventSummaryViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
         )
         if not subscription_plan_uuid:
             raise exceptions.NotFound("No associated subscription plan uuid was found")
-        # The first paid plan has no event summaries of its own (they carry the trial plan's uuid), but its
-        # renewal holds the cancellation the admin portal shows, e.g. Pending Cancellation (ENT-11534).
-        # Only reachable for the first paid plan with the ssp_paid_renewal switch on (see the permission fn above).
+        # The first paid plan has no summaries of its own; its renewal holds the cancellation (switch on only).
         if not (first_related_renewal or updated_event_summary or created_event_summary):
             raise exceptions.NotFound("No Stripe subscription data found for this plan")
         response_serializer.is_valid(raise_exception=True)

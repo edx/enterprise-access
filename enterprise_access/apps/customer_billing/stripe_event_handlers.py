@@ -267,8 +267,7 @@ def cancel_all_future_plans(checkout_intent, include_processed=True):
     By default this includes processed renewals, whose renewed plan is the one currently in effect, which is
     what a canceled subscription needs. Pass ``include_processed=False`` to only deactivate plans that have not
     started yet, keeping the current paid plan active (e.g. through an annual renewal's grace period, or until
-    period end when Stripe deletes a subscription early, ENT-11534). Plans kept active end on their expiration
-    date, when License Manager's daily expiry job moves enrollments to Audit.
+    period end after an early deletion). License Manager expires kept plans on their expiration date.
     Renewals without a renewed plan yet are skipped.
     """
     renewals = checkout_intent.renewals.filter(renewed_subscription_plan_uuid__isnull=False)
@@ -306,12 +305,10 @@ def _get_current_period_end(subscription: dict):
 
 def _get_paid_access_end_after_early_deletion(subscription: dict, previous_summary):
     """
-    Return when paid access ends for a subscription Stripe deleted before its period end, or None.
+    Return when paid access ends for an active subscription Stripe deleted before its period end, or None.
 
-    Only applies with the ``ssp_paid_renewal`` switch on (it is what keeps the current plan active,
-    see ``cancel_all_future_plans()``), and only to a subscription that was ``active`` (a paid term)
-    before the deletion. Not to a trial, and not to a lapsed grace period (``past_due``), where
-    Stripe has already moved ``current_period_end`` to the unpaid next term.
+    Switch on only. Not for a trial or a lapsed grace period (``past_due``), where Stripe has already moved
+    ``current_period_end`` to the unpaid next term.
     """
     if not ssp_paid_renewal_enabled():
         return None
@@ -325,16 +322,10 @@ def _get_paid_access_end_after_early_deletion(subscription: dict, previous_summa
 
 def _get_cancel_date_after_deletion(subscription: dict, previous_summary, access_ends_at):
     """
-    Return the cancel date to keep on the renewals once Stripe deletes a subscription, or None to clear it.
+    Return the cancel date to keep on the renewals after a deletion, or None to clear it.
 
-    The admin portal card reads this date: Pending Cancellation until it passes, Canceled after it.
-    With the ``ssp_paid_renewal`` switch on, for a subscription that was ``active`` (a paid term):
-
-    - after an early deletion, the date paid access ends (``access_ends_at``, the period end);
-    - after a deletion at the period end (a scheduled cancellation), the deletion time (``ended_at``).
-      Clearing it would show the expired paid plan as Ended, as if it had never been cancelled.
-
-    Otherwise (switch off, a trial, or a lapsed grace period) it is cleared, as before.
+    The admin portal card shows Pending Cancellation until this date and Canceled after it. Kept only with the
+    switch on for an active subscription: ``access_ends_at`` after an early deletion, else the deletion time.
     """
     if access_ends_at:
         return access_ends_at
@@ -777,8 +768,7 @@ def _process_annual_renewal(
         _log_renewal(logging.INFO, 'already_processed', checkout_intent, stripe_invoice_id, f'renewal_id={renewal.id}')
         return
     if _subscription_is_canceled(checkout_intent, invoice):
-        # customer.subscription.deleted already ended the subscription (the current plan runs out on its
-        # expiration date, or was deactivated with the ssp_paid_renewal switch off). Don't renew
+        # customer.subscription.deleted already ended the subscription. Don't renew
         # it, and don't fail the webhook: retries can't change this. The customer may have paid, so CS has to
         # refund or reinstate by hand.
         _log_renewal(
@@ -1439,9 +1429,7 @@ class StripeEventHandler:
         enterprise_uuid = checkout_intent.enterprise_uuid
         if enterprise_uuid:
             if ssp_paid_renewal_enabled():
-                # Keep the paid plan in effect: it stays active until its expiration date (the period end,
-                # or the grace end after a failed renewal charge), then License Manager moves enrollments
-                # to Audit. Only plans that have not started yet are deactivated (ENT-11534).
+                # Keep the current paid plan until its expiration date; deactivate only plans not started yet.
                 cancel_all_future_plans(checkout_intent, include_processed=False)
             else:
                 cancel_all_future_plans(checkout_intent)
