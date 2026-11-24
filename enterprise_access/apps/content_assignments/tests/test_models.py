@@ -3,17 +3,21 @@ Tests for the ``models.py`` module of the content_assignments app.
 """
 import re
 import uuid
+from unittest import mock
 
+from django.db import transaction
 from django.test import TestCase
 from django.utils import timezone
 
 from enterprise_access.apps.subsidy_access_policy.tests.factories import AssignedLearnerCreditAccessPolicyFactory
 
+from ..api import _expire_assignment_and_notify
 from ..constants import (
     RETIRED_EMAIL_ADDRESS_FORMAT,
     AssignmentActionErrors,
     AssignmentActions,
     AssignmentActorTypes,
+    AssignmentAutomaticExpiredReason,
     AssignmentSources,
     LearnerContentAssignmentStateChoices
 )
@@ -288,6 +292,59 @@ class TestAssignmentActions(TestCase):
             only_scheduled.uuid: 'COURSE_RUN_ENDED',
             emailed.uuid: 'NINETY_DAYS_PASSED',
         })
+
+    def _expire_without_email_row(self, reason):
+        """
+        Expire an allocated assignment through ``_expire_assignment_and_notify`` with ``reason``. The email task is
+        mocked, so no "expiration email sent" row exists (for BUDGET_RETIRED none is ever written).
+        """
+        assignment = LearnerContentAssignmentFactory.create(
+            assignment_configuration=self.assignment_configuration,
+            lms_user_id=98765,
+            state=LearnerContentAssignmentStateChoices.ALLOCATED,
+        )
+        with mock.patch('enterprise_access.apps.content_assignments.api.send_assignment_automatically_expired_email'):
+            with self.captureOnCommitCallbacks(execute=True), transaction.atomic():
+                _expire_assignment_and_notify(assignment, None, reason)
+        assignment.refresh_from_db()
+        return assignment
+
+    def _acknowledge(self, assignment):
+        return self.assignment_configuration.acknowledge_assignments([assignment.uuid], assignment.lms_user_id)
+
+    def test_budget_retired_expiry_can_be_acknowledged(self):
+        """A silent BUDGET_RETIRED expiry never gets an email row, so its scheduled_job row is acknowledged."""
+        from ..tasks import _get_expiration_action_info  # pylint: disable=import-outside-toplevel
+
+        assignment = self._expire_without_email_row(AssignmentAutomaticExpiredReason.BUDGET_RETIRED)
+        self.assertFalse(assignment.learner_acknowledged)
+
+        self.assertEqual(self._acknowledge(assignment), ([assignment], [], []))
+        self.assertEqual(self._acknowledge(assignment), ([], [assignment], []))
+
+        self.assertTrue(assignment.learner_acknowledged)
+        self.assertEqual(assignment.actions.filter(action_type=AssignmentActions.EXPIRED_ACKNOWLEDGED).count(), 1)
+        # Still not "expiration email sent", so the PII sweep never clears it.
+        self.assertIsNone(assignment.get_last_successful_expiration_action())
+        self.assertEqual(
+            _get_expiration_action_info([assignment]),
+            (set(), {assignment.uuid: AssignmentAutomaticExpiredReason.BUDGET_RETIRED}),
+        )
+
+    def test_other_reason_without_email_row_is_not_acknowledgeable_via_scheduled_row(self):
+        """
+        Unchanged for every other reason until its email row exists: it never reads as acknowledged, and every
+        acknowledge call logs the missing-expiration-action error and writes another acknowledgement row.
+        """
+        assignment = self._expire_without_email_row(AssignmentAutomaticExpiredReason.NINETY_DAYS_PASSED)
+
+        with self.assertLogs('enterprise_access.apps.content_assignments.models', level='ERROR') as logs:
+            self.assertEqual(self._acknowledge(assignment), ([assignment], [], []))
+            self.assertEqual(self._acknowledge(assignment), ([assignment], [], []))
+
+        self.assertEqual(sum('has no successful expiration action' in line for line in logs.output), 2)
+        self.assertFalse(assignment.learner_acknowledged)
+        self.assertEqual(assignment.actions.filter(action_type=AssignmentActions.EXPIRED_ACKNOWLEDGED).count(), 2)
 
     def test_add_audit_action_with_error(self):
         """add_audit_action creates an audit action with error details."""
