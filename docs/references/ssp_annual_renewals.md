@@ -87,7 +87,8 @@ monitors:
 | `halted` | ERROR | Renewal stopped on purpose (missing/mismatched product, no paid plan, ...). `reason=` says why. |
 | `failed` | ERROR | Unexpected error (e.g. a License Manager API error). `step=` is `process` or `grace_extension`. |
 | `switch_off` | ERROR | A renewal was paid but `ssp_paid_renewal` is off, so it must be handled by hand. |
-| `created` | INFO | License Manager renewal created (`renewal_id`, `license_manager_renewal_id`, `product`, `licenses`). |
+| `lm_renewal_created` | INFO | License Manager returned the renewal (`license_manager_renewal_id`, `prior_plan_uuid`), logged before the local record is saved. |
+| `created` | INFO | Local `SelfServiceSubscriptionRenewal` saved (`renewal_id`, `license_manager_renewal_id`, `product`, `licenses`). |
 | `processed` | INFO | Year 2 is active (`prior_plan_uuid`, `renewed_plan_uuid`). |
 | `already_processed` | INFO | Replayed `invoice.paid`, skipped. |
 | `grace_extended` | INFO | Year 1 kept active until `expiration_date` (renewal invoice created or charge failed). |
@@ -132,9 +133,31 @@ Manager renewal.
   renewal invoice's seat count is below the licenses year 1 copies forward (assigned plus activated). Either
   the customer frees up licenses, or CS raises the renewal's `number_of_licenses` through the API below and
   adjusts the Stripe subscription quantity to match.
+- **License Manager renewal created, local record missing** (`outcome=lm_renewal_created` with no
+  `outcome=created` after it for the invoice, then `outcome=failed step=process`). Saving the
+  `SelfServiceSubscriptionRenewal` failed. Usually no fix is needed: the retry asks License Manager again for the
+  same prior plan, License Manager returns the same unprocessed renewal (an exact match, 200), and the retry links
+  it. If retries fail with a 422 "Conflicting renewal" from License Manager instead, that renewal was already
+  processed. Re-link it by hand in a Django shell, with the `license_manager_renewal_id` and `prior_plan_uuid`
+  from the `lm_renewal_created` line, and the `invoice.paid` event's `StripeEventData`:
+
+  ```python
+  SelfServiceSubscriptionRenewal.objects.create(
+      checkout_intent=checkout_intent,
+      subscription_plan_renewal_id=<license_manager_renewal_id>,
+      prior_subscription_plan_uuid='<prior_plan_uuid>',
+      stripe_event_data=StripeEventData.objects.get(event_id='<invoice.paid event id>'),
+      stripe_subscription_id='<sub_...>',
+      stripe_invoice_id='<in_...>',
+      effective_date=<the invoice line's period.start>,
+  )
+  ```
+
+  Then resend `invoice.paid`. The retry processes the renewal again, which License Manager returns unchanged
+  with year 2, and finishes the renewal.
 
 Change an SSP renewal with `PATCH /api/v1/provisioning-admins/subscription-plan-renewals/<id>/` on License
-Manager, where `<id>` is the `license_manager_renewal_id` in the `outcome=created` audit line. For example,
+Manager, where `<id>` is the `license_manager_renewal_id` in the `outcome=lm_renewal_created` audit line. For example,
 `{"renewed_plan_title": "..."}` or `{"number_of_licenses": 15}`. It needs the `enterprise_provisioning_admin`
 role, and accepts a JWT or a logged-in session (the License Manager API docs page). **Don't use the License
 Manager Django admin to edit the renewal:** its form rejects every SSP renewal during the grace week, because

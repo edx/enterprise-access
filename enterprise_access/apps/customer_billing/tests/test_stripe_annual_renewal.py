@@ -418,7 +418,7 @@ class TestAnnualRenewal(TestCase):
     def test_invoice_paid_replay_is_skipped(self):
         """
         Replaying a processed renewal invoice does not touch License Manager or email admins again. The renewal
-        leaves a created and a processed audit log line, and the replay an already_processed one.
+        leaves lm_renewal_created, created and processed audit log lines, and the replay an already_processed one.
         """
         self._set_up_paid_subscriber()
         with self.assertLogs(HANDLERS_MODULE, level='INFO') as logs:
@@ -439,13 +439,13 @@ class TestAnnualRenewal(TestCase):
         audit_logs = [line for line in logs.output if '[SSPAnnualRenewal]' in line]
         self.assertEqual(
             [line.split('outcome=')[1].split()[0] for line in audit_logs],
-            ['created', 'processed', 'already_processed'],
+            ['lm_renewal_created', 'created', 'processed', 'already_processed'],
         )
         for line in audit_logs:
             self.assertIn(f'checkout_intent_uuid={self.checkout_intent.uuid}', line)
             self.assertIn(f'enterprise_slug={self.checkout_intent.enterprise_slug}', line)
             self.assertIn(f'invoice_id={RENEWAL_INVOICE_ID}', line)
-        self.assertIn(f'renewed_plan_uuid={self.year_two_plan_uuid}', audit_logs[1])
+        self.assertIn(f'renewed_plan_uuid={self.year_two_plan_uuid}', audit_logs[2])
 
     @ddt.data('receipt', 'notice')
     def test_broker_error_queuing_an_email_is_retried_with_the_emails(self, failing_email):
@@ -608,6 +608,40 @@ class TestAnnualRenewal(TestCase):
         self.assertEqual(renewal.renewed_subscription_plan_uuid, self.year_two_plan_uuid)
         self.checkout_intent.refresh_from_db()
         self.assertFalse(self.checkout_intent.in_renewal_grace_period)
+        self.mock_receipt_email.delay.assert_called_once()
+        self.mock_renewal_email.delay.assert_called_once()
+
+    def test_retry_links_the_license_manager_renewal_when_the_local_save_fails(self):
+        """
+        If saving the SelfServiceSubscriptionRenewal fails after License Manager created its renewal, the License
+        Manager renewal id is already logged. Stripe's retry asks License Manager again with the same prior plan,
+        gets the same (unprocessed) renewal back, as License Manager's create API returns an exact match with a 200,
+        and links it. No renewal is processed and no email is sent until then.
+        """
+        self._set_up_paid_subscriber()
+
+        with mock.patch.object(
+            SelfServiceSubscriptionRenewal.objects, 'create', side_effect=DatabaseError('save failed'),
+        ), self.assertLogs(HANDLERS_MODULE, level='INFO') as logs, self.assertRaises(DatabaseError):
+            StripeEventHandler.dispatch(self._renewal_invoice_event())
+
+        lm_renewal_logs = [line for line in logs.output if 'outcome=lm_renewal_created' in line]
+        self.assertEqual(len(lm_renewal_logs), 1)
+        self.assertIn('license_manager_renewal_id=777', lm_renewal_logs[0])
+        self.assertIn(f'prior_plan_uuid={self.year_one_plan_uuid}', lm_renewal_logs[0])
+        self.assertFalse(SelfServiceSubscriptionRenewal.objects.filter(stripe_invoice_id=RENEWAL_INVOICE_ID).exists())
+        self.mock_lm_client.process_subscription_plan_renewal.assert_not_called()
+        self.mock_receipt_email.delay.assert_not_called()
+        self.mock_renewal_email.delay.assert_not_called()
+
+        StripeEventHandler.dispatch(self._renewal_invoice_event())
+
+        first_call, retry_call = self.mock_lm_client.create_subscription_plan_renewal.call_args_list
+        self.assertEqual(retry_call, first_call)
+        self.mock_lm_client.process_subscription_plan_renewal.assert_called_once_with(777)
+        renewal = SelfServiceSubscriptionRenewal.objects.get(stripe_invoice_id=RENEWAL_INVOICE_ID)
+        self.assertEqual(renewal.subscription_plan_renewal_id, 777)
+        self.assertIsNotNone(renewal.processed_at)
         self.mock_receipt_email.delay.assert_called_once()
         self.mock_renewal_email.delay.assert_called_once()
 

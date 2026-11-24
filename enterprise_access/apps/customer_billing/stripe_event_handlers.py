@@ -751,6 +751,12 @@ def _process_annual_renewal(
             # This handler processes the renewal itself, the License Manager batch job must not.
             exempt_from_batch_processing=True,
         )
+        # Logged before the local record is saved, so the License Manager renewal can be found if that save
+        # fails (see "Runbook" in docs/references/ssp_annual_renewals.md).
+        _log_renewal(
+            logging.INFO, 'lm_renewal_created', checkout_intent, stripe_invoice_id,
+            f'license_manager_renewal_id={plan_renewal["id"]} prior_plan_uuid={prior_plan_uuid}',
+        )
         renewal = SelfServiceSubscriptionRenewal.objects.create(
             checkout_intent=checkout_intent,
             subscription_plan_renewal_id=plan_renewal['id'],
