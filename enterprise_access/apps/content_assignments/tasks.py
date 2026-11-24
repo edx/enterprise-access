@@ -838,10 +838,11 @@ def _should_clear_pii_for_assignment(
     # Use the reason recorded when the assignment was expired, so that this decision doesn't depend on
     # today's catalog data. Legacy rows without a recorded reason fall back to recomputing it, without the
     # course run end date: those rows expired before COURSE_RUN_ENDED existed, so it can't have been their reason.
+    # Likewise without budget retirement: they expired before BUDGET_RETIRED existed.
     expiration_reason = recorded_reason
     if not expiration_reason:
         expiration_reason = get_automatic_expiration_date_and_reason(
-            assignment, content_metadata, include_course_run_end=False,
+            assignment, content_metadata, include_course_run_end=False, include_budget_retired=False,
         ).get('reason')
 
     # PII clearing is irreversible: with the switch off, COURSE_RUN_ENDED rows are left alone too.

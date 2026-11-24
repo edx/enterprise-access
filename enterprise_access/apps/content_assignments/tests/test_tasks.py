@@ -1721,6 +1721,49 @@ class TestClearPiiForExpiredAssignmentsTask(APITestWithMocks):
         assignment.refresh_from_db()
         assert assignment.learner_email == original_email
 
+    @mock.patch('enterprise_access.utils.expire_assignments_on_retired_budgets_enabled', return_value=True)
+    @mock.patch(
+        'enterprise_access.apps.content_assignments.content_metadata_api.get_content_metadata_for_assignments',
+        return_value={},
+    )
+    @mock.patch(
+        'enterprise_access.apps.content_assignments.tasks.get_content_metadata_for_assignments', return_value={},
+    )
+    @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_client')
+    def test_pii_sweep_legacy_fallback_ignores_budget_retired(self, mock_subsidy_client, *_):
+        """
+        A legacy row (no recorded reason) expired before BUDGET_RETIRED existed, so retiring its budget before its
+        90-day date must not change the recomputed reason: it still clears as NINETY_DAYS_PASSED.
+        """
+        mock_subsidy_client.retrieve_subsidy.return_value = {
+            'enterprise_customer_uuid': str(self.enterprise_uuid),
+            'expiration_datetime': (now() + timedelta(days=365)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            'is_active': True,
+        }
+        self.policy.retired = True
+        self.policy.save()
+        legacy = self._make_expired_assignment('legacy-retired@test.com', None)
+        legacy.actions.filter(action_type=AssignmentActions.EXPIRED, source=AssignmentSources.SCHEDULED_JOB).delete()
+
+        result = clear_pii_for_expired_assignments(dry_run=False)
+
+        assert result['assignment_uuids_cleared'] == [str(legacy.uuid)]
+
+    @mock.patch('enterprise_access.utils.expire_assignments_on_retired_budgets_enabled', return_value=True)
+    @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_client')
+    def test_pii_not_cleared_for_budget_retired(self, mock_subsidy_client, _):
+        """BUDGET_RETIRED is not a PII-clearable reason, even if an expiration email had been sent."""
+        mock_subsidy_client.retrieve_subsidy.return_value = {'is_active': True}
+        assignment = self._make_expired_assignment(
+            'budget-retired@test.com', AssignmentAutomaticExpiredReason.BUDGET_RETIRED,
+        )
+
+        result = clear_pii_for_expired_assignments(dry_run=False)
+
+        assert result['cleared_count'] == 0
+        assignment.refresh_from_db()
+        assert assignment.learner_email == 'budget-retired@test.com'
+
     @mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient')
     @mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_client')
     def test_clear_pii_creates_audit_action(

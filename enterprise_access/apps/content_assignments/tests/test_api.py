@@ -5,7 +5,7 @@ from unittest import mock
 from uuid import uuid4
 
 import ddt
-from django.db import DatabaseError
+from django.db import DatabaseError, transaction
 from django.test import TestCase
 from django.utils import timezone
 from edx_toggles.toggles.testutils import override_waffle_switch
@@ -23,6 +23,7 @@ from enterprise_access.utils import get_automatic_expiration_date_and_reason
 
 from ..api import (
     AllocationException,
+    _expire_assignment_and_notify,
     allocate_assignment_for_requests,
     allocate_assignments,
     cancel_assignments,
@@ -1792,6 +1793,33 @@ class TestAssignmentExpiration(TestCase):
         self._assert_nothing_persisted(assignment, credit_request)
         mock_expired_email.delay.assert_not_called()
         mock_bnr_expired_email.delay.assert_not_called()
+
+    @ddt.data(
+        (False, 'BUDGET_RETIRED', False),
+        (True, 'BUDGET_RETIRED', False),
+        (False, AssignmentAutomaticExpiredReason.NINETY_DAYS_PASSED, True),
+        (True, AssignmentAutomaticExpiredReason.NINETY_DAYS_PASSED, True),
+    )
+    @ddt.unpack
+    @mock.patch('enterprise_access.apps.content_assignments.api.send_bnr_automatically_expired_email')
+    @mock.patch('enterprise_access.apps.content_assignments.api.send_assignment_automatically_expired_email')
+    def test_no_expiry_email_for_budget_retired(
+        self, with_credit_request, reason, expect_email, mock_expired_email, mock_bnr_expired_email,
+    ):
+        """A retired budget expires its assignments silently; other reasons still email the learner."""
+        assignment = self._expirable_assignment()
+        credit_request = LearnerCreditRequestFactory.create(assignment=assignment) if with_credit_request else None
+
+        with self.captureOnCommitCallbacks(execute=True), transaction.atomic():
+            assert _expire_assignment_and_notify(assignment, credit_request, reason)
+
+        assignment.refresh_from_db()
+        assert assignment.state == LearnerContentAssignmentStateChoices.EXPIRED
+        email, other_email = mock_expired_email.delay, mock_bnr_expired_email.delay
+        if with_credit_request:
+            email, other_email = other_email, email
+        assert email.called is expect_email
+        other_email.assert_not_called()
 
     @mock.patch('enterprise_access.apps.content_assignments.api.send_assignment_automatically_expired_email')
     def test_audit_action_write_failure_rolls_back_assignment_save(self, mock_expired_email):
