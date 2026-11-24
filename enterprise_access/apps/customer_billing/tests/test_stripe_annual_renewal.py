@@ -249,13 +249,13 @@ class TestAnnualRenewal(TestCase):
         """
         if canceled_by == 'is_canceled':
             renewals = self.checkout_intent.renewals.filter(stripe_subscription_id=stripe_subscription_id)
-            if not renewals.exists():
+            if not renewals.update(is_canceled=True):
                 SelfServiceSubscriptionRenewalFactory(
                     checkout_intent=self.checkout_intent,
                     stripe_subscription_id=stripe_subscription_id,
                     stripe_invoice_id=f'in_{stripe_subscription_id}',
+                    is_canceled=True,
                 )
-            renewals.update(is_canceled=True)
             return
         deleted_event = StripeEventDataFactory(
             checkout_intent=self.checkout_intent, event_type='customer.subscription.deleted',
@@ -322,10 +322,20 @@ class TestAnnualRenewal(TestCase):
         self.mock_receipt_email.delay.assert_called_once()
         self.assertEqual(self.mock_receipt_email.delay.call_args.kwargs['invoice_id'], RENEWAL_INVOICE_ID)
 
-    def test_resolve_renewal_product_falls_back_to_price_lookup_key(self):
-        """A Price without ssp_product_slug metadata resolves through its lookup key, never to a default."""
+    @ddt.data(
+        {'lookup_key': 'unchanged', 'metadata': {}},
+        {'lookup_key': None, 'metadata': {'ssp_product_slug': 'ai-academy-yearly'}},
+    )
+    @ddt.unpack
+    def test_resolve_renewal_product_from_either_price_field(self, lookup_key, metadata):
+        """
+        A Price resolves to its product through either its lookup key or its ssp_product_slug metadata alone,
+        never to a default.
+        """
         self._set_up_paid_subscriber('ai-academy-yearly')
-        self.stripe_prices['price_ai_academy']['metadata'] = {}
+        if lookup_key != 'unchanged':
+            self.stripe_prices['price_ai_academy']['lookup_key'] = lookup_key
+        self.stripe_prices['price_ai_academy']['metadata'] = metadata
         invoice = self._renewal_invoice_event(price_ids=('price_ai_academy',)).data.object
 
         product = resolve_renewal_product(self.checkout_intent, invoice)
@@ -380,6 +390,21 @@ class TestAnnualRenewal(TestCase):
                 StripeEventHandler.dispatch(self._renewal_invoice_event(price_ids=('price_ai_academy',)))
 
         self._assert_nothing_created()
+
+    def test_first_paid_invoice_after_the_trial_is_not_a_renewal(self):
+        """
+        The first paid invoice at trial end is also a subscription_cycle invoice, but it goes to trial->paid. Neither
+        the $0 trial invoice.paid nor the invoice's own summary (saved before the handler runs) counts as an
+        earlier paid invoice.
+        """
+        self._set_up_paid_subscriber(with_paid_plan=False)
+        StripeEventSummary.objects.filter(stripe_invoice_id=FIRST_PAID_INVOICE_ID).update(invoice_amount_paid=0)
+
+        with mock.patch(f'{HANDLERS_MODULE}._handle_invoice_paid_status_updated') as mock_trial_to_paid:
+            StripeEventHandler.dispatch(self._renewal_invoice_event())
+
+        mock_trial_to_paid.assert_called_once()
+        self.mock_lm_client.create_subscription_plan_renewal.assert_not_called()
 
     def test_invoice_paid_halts_without_a_processed_paid_plan(self):
         """Without a processed paid plan to renew there is nothing to renew from, so nothing is created."""
@@ -586,19 +611,27 @@ class TestAnnualRenewal(TestCase):
         self.mock_receipt_email.delay.assert_called_once()
         self.mock_renewal_email.delay.assert_called_once()
 
-    def test_retry_resumes_when_the_processed_checkpoint_fails(self):
+    @ddt.data(
+        {'failing_step': 'enterprise_access.apps.customer_billing.models.SelfServiceSubscriptionRenewal'
+                         '.mark_as_processed', 'expected_emails': 2},
+        {'failing_step': f'{HANDLERS_MODULE}._set_renewal_grace_period', 'expected_emails': 1},
+    )
+    @ddt.unpack
+    def test_retry_resumes_when_the_processed_checkpoint_fails(self, failing_step, expected_emails):
         """
-        If saving the processed checkpoint fails after License Manager processed the renewal, Stripe's retry
-        finishes it on the same License Manager renewal. The emails queued by the failed attempt are queued again
-        (architecture pattern #27).
+        If a save after License Manager processed the renewal fails (the processed checkpoint, or clearing the
+        grace flag just before it), Stripe's retry finishes it on the same License Manager renewal and clears the
+        grace flag. The flag is cleared before the checkpoint, so a retry can't skip it. Emails queued by the
+        failed attempt are queued again (architecture pattern #27).
         """
         self._set_up_paid_subscriber()
+        self.checkout_intent.in_renewal_grace_period = True
+        self.checkout_intent.save()
 
-        with mock.patch.object(
-            SelfServiceSubscriptionRenewal, 'mark_as_processed', side_effect=DatabaseError('checkpoint save failed'),
-        ):
+        with mock.patch(failing_step, side_effect=DatabaseError('save failed')):
             with self.assertRaises(DatabaseError):
                 StripeEventHandler.dispatch(self._renewal_invoice_event())
+        self.assertIsNone(SelfServiceSubscriptionRenewal.objects.get(stripe_invoice_id=RENEWAL_INVOICE_ID).processed_at)
         StripeEventHandler.dispatch(self._renewal_invoice_event())
 
         self.mock_lm_client.create_subscription_plan_renewal.assert_called_once()
@@ -606,8 +639,10 @@ class TestAnnualRenewal(TestCase):
         renewal = SelfServiceSubscriptionRenewal.objects.get(stripe_invoice_id=RENEWAL_INVOICE_ID)
         self.assertIsNotNone(renewal.processed_at)
         self.assertEqual(renewal.renewed_subscription_plan_uuid, self.year_two_plan_uuid)
-        self.assertEqual(self.mock_receipt_email.delay.call_count, 2)
-        self.assertEqual(self.mock_renewal_email.delay.call_count, 2)
+        self.checkout_intent.refresh_from_db()
+        self.assertFalse(self.checkout_intent.in_renewal_grace_period)
+        self.assertEqual(self.mock_receipt_email.delay.call_count, expected_emails)
+        self.assertEqual(self.mock_renewal_email.delay.call_count, expected_emails)
 
     def test_payment_failed_for_unknown_checkout_intent_is_logged(self):
         """A failed invoice whose checkout intent can't be found is logged and ignored."""
@@ -659,6 +694,9 @@ class TestAnnualRenewal(TestCase):
             ],
             str(self.year_two_plan_uuid),
         )
+        # The seat count comes from each invoice line, not the checkout intent (25 seats).
+        create_calls = self.mock_lm_client.create_subscription_plan_renewal.call_args_list
+        self.assertEqual([c.kwargs['number_of_licenses'] for c in create_calls], [25, 30])
 
     @ddt.data(
         {'event_type': 'invoice.paid', 'failing_call': 'process_subscription_plan_renewal', 'step': 'process'},
