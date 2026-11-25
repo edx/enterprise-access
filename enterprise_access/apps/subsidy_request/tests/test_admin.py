@@ -8,12 +8,14 @@ from django.http import HttpRequest
 from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.subsidy_request.admin import (
     LearnerCreditRequestAdmin,
+    LearnerCreditRequestConfigurationAdmin,
     LicenseRequestAdmin,
     SubsidyRequestCustomerConfigurationAdmin
 )
 from enterprise_access.apps.subsidy_request.constants import SubsidyRequestStates
 from enterprise_access.apps.subsidy_request.models import (
     LearnerCreditRequest,
+    LearnerCreditRequestConfiguration,
     LicenseRequest,
     SubsidyRequestCustomerConfiguration
 )
@@ -286,3 +288,17 @@ class AdminTests(TestCaseWithMockedDiscoveryApiClient):
             assert req.reviewer == reviewer
             assert req.decline_reason == "Declined via admin bulk action"
             assert req.reviewed_at is not None
+
+    def test_active_help_text_states_default_off(self):
+        """
+        The admin form's ``active`` checkbox says it is off by default and what ticking it does.
+        """
+        config_admin = LearnerCreditRequestConfigurationAdmin(LearnerCreditRequestConfiguration, AdminSite())
+        request = HttpRequest()
+        request.user = UserFactory(is_staff=True, is_superuser=True)
+        form_class = config_admin.get_form(request)
+        help_text = str(form_class.base_fields['active'].help_text)
+
+        assert 'Defaults to True' not in help_text
+        assert 'off by default' in help_text.lower()
+        assert 'assignment configuration' in help_text.lower()

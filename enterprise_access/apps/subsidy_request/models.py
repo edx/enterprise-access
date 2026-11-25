@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from django.db import models
+from django.db import models, transaction
 from django.db.models import Case, CharField, F, IntegerField, OuterRef, Q, Subquery, Value, When
 from django.dispatch import receiver
 from django.utils import timezone
@@ -375,8 +375,22 @@ class LearnerCreditRequestConfiguration(TimeStampedModel):
                 )
 
     def save(self, *args, **kwargs):
+        """
+        Validate and save. When active, re-save the attached policy if it has no
+        assignment configuration, so the policy's own save() creates one; approving a
+        request needs it. Both writes share one transaction.
+        """
+        from enterprise_access.apps.subsidy_access_policy.models import PerLearnerSpendCreditAccessPolicy
         self.full_clean()
-        super().save(*args, **kwargs)
+        with transaction.atomic():
+            super().save(*args, **kwargs)
+            if self.active:
+                policy = PerLearnerSpendCreditAccessPolicy.objects.filter(
+                    learner_credit_request_config=self,
+                    assignment_configuration__isnull=True,
+                ).first()
+                if policy:
+                    policy.save()
 
 
 class LearnerCreditRequest(SubsidyRequest):
