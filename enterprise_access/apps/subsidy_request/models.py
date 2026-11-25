@@ -347,10 +347,24 @@ class LearnerCreditRequestConfiguration(TimeStampedModel):
 
     def clean(self):
         """
-        Validate that only one subsidy type can have B&R enabled at a time.
+        Validate that only one subsidy type can have B&R enabled at a time, and that
+        a stored active config is not switched off while any of its requests is open.
         """
         super().clean()
         from enterprise_access.apps.subsidy_access_policy.models import SubsidyAccessPolicy
+        is_deactivating = not self.active and LearnerCreditRequestConfiguration.objects.filter(
+            pk=self.pk, active=True,
+        ).exists()
+        if is_deactivating:
+            open_count = self.learner_credit_requests.filter(
+                state__in=SubsidyRequestStates.LC_OPEN_REQUEST_STATES,
+            ).count()
+            if open_count:
+                raise ValidationError(
+                    f"Browse & Request cannot be turned off: this configuration has {open_count} open "
+                    "learner credit request(s) (requested, pending, approved or error). Decline or cancel "
+                    "them first, or retire the budget and let the nightly jobs close them."
+                )
         if self.active:
             policy = SubsidyAccessPolicy.objects.filter(
                 learner_credit_request_config=self

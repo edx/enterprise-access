@@ -398,6 +398,107 @@ class LearnerCreditRequestConfigurationActivationTests(TestCase):
 
 
 @ddt.ddt
+class LearnerCreditRequestConfigurationDeactivationTests(TestCase):
+    """
+    A config cannot be switched off while any of its learner credit requests is still open.
+    """
+
+    def _stored_active(self, config):
+        return LearnerCreditRequestConfiguration.objects.get(uuid=config.uuid).active
+
+    def _add_request(self, config, state):
+        return LearnerCreditRequestFactory(learner_credit_request_config=config, state=state)
+
+    @ddt.data(
+        SubsidyRequestStates.REQUESTED,
+        SubsidyRequestStates.PENDING,
+        SubsidyRequestStates.APPROVED,
+        SubsidyRequestStates.ERROR,
+    )
+    def test_cannot_deactivate_config_with_open_requests(self, state):
+        config = LearnerCreditRequestConfigurationFactory(active=True)
+        self._add_request(config, state)
+
+        config.active = False
+        with self.assertRaises(ValidationError) as ctx:
+            config.save()
+
+        self.assertIn('1 open', str(ctx.exception))
+        self.assertIn('Decline or cancel', str(ctx.exception))
+        self.assertIn('retire the budget', str(ctx.exception))
+        self.assertTrue(self._stored_active(config))
+
+    def test_cannot_deactivate_counts_every_open_request(self):
+        config = LearnerCreditRequestConfigurationFactory(active=True)
+        self._add_request(config, SubsidyRequestStates.REQUESTED)
+        self._add_request(config, SubsidyRequestStates.APPROVED)
+        self._add_request(config, SubsidyRequestStates.ACCEPTED)
+        # An open request on another config does not count.
+        self._add_request(LearnerCreditRequestConfigurationFactory(active=True), SubsidyRequestStates.REQUESTED)
+
+        config.active = False
+        with self.assertRaises(ValidationError) as ctx:
+            config.save()
+
+        self.assertIn('2 open', str(ctx.exception))
+        self.assertTrue(self._stored_active(config))
+
+    @ddt.data(
+        SubsidyRequestStates.ACCEPTED,
+        SubsidyRequestStates.DECLINED,
+        SubsidyRequestStates.CANCELLED,
+        SubsidyRequestStates.EXPIRED,
+        SubsidyRequestStates.REVERSED,
+        None,
+    )
+    def test_can_deactivate_config_when_all_requests_closed(self, state):
+        config = LearnerCreditRequestConfigurationFactory(active=True)
+        if state:
+            self._add_request(config, state)
+
+        config.active = False
+        config.save()
+
+        self.assertFalse(self._stored_active(config))
+
+    def test_inactive_config_resave_ignores_open_requests(self):
+        new_config = LearnerCreditRequestConfiguration(active=False)
+        new_config.save()
+        self.assertFalse(self._stored_active(new_config))
+
+        config = LearnerCreditRequestConfigurationFactory(active=False)
+        self._add_request(config, SubsidyRequestStates.REQUESTED)
+
+        config.save()
+        self.assertFalse(self._stored_active(config))
+
+        config.active = True
+        config.save()
+        self.assertTrue(self._stored_active(config))
+
+        # An active config re-saved unchanged is not affected either.
+        config.save()
+        self.assertTrue(self._stored_active(config))
+
+    @ddt.data(None, {'retired': True}, {'retired': False})
+    def test_rule_applies_without_a_policy_and_on_a_retired_budget(self, policy_kwargs):
+        config = LearnerCreditRequestConfigurationFactory(active=True)
+        if policy_kwargs is not None:
+            PerLearnerSpendCapLearnerCreditAccessPolicyFactory(
+                learner_credit_request_config=config,
+                **policy_kwargs,
+            )
+        self._add_request(config, SubsidyRequestStates.PENDING)
+
+        config.active = False
+        with self.assertRaises(ValidationError) as ctx:
+            config.save()
+
+        self.assertIn('1 open', str(ctx.exception))
+        self.assertTrue(self._stored_active(config))
+
+
+@ddt.ddt
 class LearnerCreditRequestActionsTests(TestCase):
     """
     Test cases for the LearnerCreditRequestActions model.
