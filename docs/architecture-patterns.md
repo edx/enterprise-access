@@ -255,6 +255,20 @@ Every redelivery runs the handler again, so for a task that must run once per St
 - if the task sends to Segment, use `track_event_or_raise` so the Celery retry covers delivery. `track_event` only
   queues the event for analytics-python's background thread and swallows errors.
 
+### 28. View-only admins with history: subclass `ViewOnlyHistoryAdmin`
+
+Returning `False` from `has_add_permission`, `has_change_permission` and `has_delete_permission` makes a Django admin
+view-only, but not under `SimpleHistoryAdmin` (django-simple-history 3.13). Its version page
+(`<pk>/history/<history_id>/`, `history_form_view`) builds the form without Django's view-only exclusion, so it:
+
+- renders every field as an editable input, and every foreign key as a `<select>` listing every related row (for
+  example every `User`);
+- checks only the **view** permission, then saves a valid POST through `save_model()`. The Revert button is hidden,
+  but a hand-made POST still writes the row.
+
+`customer_billing.admin.ViewOnlyHistoryAdmin` makes every field read-only and refuses that POST. Use it for any
+view-only admin that keeps history, and test the POST to the version URL.
+
 ### Key Takeaways for Implementation:
 - Check permissions early using `@permission_required` decorator
 - Use separate serializers for request/response
