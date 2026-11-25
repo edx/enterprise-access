@@ -24,7 +24,7 @@ annotated-types==0.8.0
     # via
     #   -r requirements/test.txt
     #   pydantic
-anthropic==2.12.0
+anthropic==2.14.0
     # via -r requirements/test.txt
 anyio==4.16.0
     # via
@@ -55,7 +55,7 @@ avro==1.12.2
     # via
     #   -r requirements/test.txt
     #   confluent-kafka
-babel==2.18.0
+babel==2.19.0
     # via
     #   pydata-sphinx-theme
     #   sphinx
@@ -90,7 +90,7 @@ cffi==2.1.1
     #   -r requirements/test.txt
     #   cryptography
     #   pynacl
-charset-normalizer==3.5.2
+charset-normalizer==3.5.3
     # via
     #   -r requirements/test.txt
     #   requests
@@ -134,7 +134,7 @@ confluent-kafka[avro,schema-registry]==2.6.1
     # via
     #   -c requirements/constraints.txt
     #   -r requirements/test.txt
-coverage[toml]==7.17.4
+coverage[toml]==7.17.5
     # via
     #   -r requirements/test.txt
     #   pytest-cov
@@ -339,7 +339,7 @@ fastavro==1.13.1
     #   -r requirements/test.txt
     #   confluent-kafka
     #   openedx-events
-filelock==4.2.12
+filelock==4.3.1
     # via
     #   -r requirements/test.txt
     #   python-discovery
@@ -443,7 +443,7 @@ oauthlib==4.0.1
     #   -r requirements/test.txt
     #   requests-oauthlib
     #   social-auth-core
-openai==3.57.0
+openai==3.59.0
     # via -r requirements/test.txt
 openedx-atlas==0.7.2
     # via -r requirements/test.txt
@@ -455,7 +455,7 @@ opentelemetry-api==1.45.2
     # via
     #   -r requirements/test.txt
     #   anthropic
-packaging==26.3
+packaging==26.4
     # via
     #   -r requirements/test.txt
     #   drf-yasg
@@ -575,7 +575,7 @@ python-dateutil==2.9.0.post0
     #   analytics-python
     #   celery
     #   freezegun
-python-discovery==1.9.6
+python-discovery==1.9.7
     # via
     #   -r requirements/test.txt
     #   tox
@@ -604,7 +604,7 @@ pyyaml==6.0.4
     #   swagger-spec-validator
 readme-renderer==46.0
     # via -r requirements/doc.in
-redis==8.1.0
+redis==8.2.0
     # via -r requirements/test.txt
 referencing==0.37.0
     # via
@@ -723,13 +723,13 @@ tomli-w==1.2.0
     # via
     #   -r requirements/test.txt
     #   tox
-tomlkit==0.15.2
+tomlkit==0.15.3
     # via
     #   -r requirements/test.txt
     #   edx-lint
     #   pylint
     #   snowflake-connector-python
-tox==4.67.15
+tox==4.67.16
     # via -r requirements/test.txt
 truststore==0.10.5
     # via
@@ -779,11 +779,11 @@ vine==5.1.0
     #   amqp
     #   celery
     #   kombu
-virtualenv==21.15.11
+virtualenv==21.15.13
     # via
     #   -r requirements/test.txt
     #   tox
-wcwidth==0.9.4
+wcwidth==0.9.5
     # via
     #   -r requirements/test.txt
     #   prompt-toolkit
