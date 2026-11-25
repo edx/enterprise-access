@@ -331,6 +331,18 @@ class TestAssignmentActions(TestCase):
             (set(), {assignment.uuid: AssignmentAutomaticExpiredReason.BUDGET_RETIRED}),
         )
 
+    def test_emailed_expiry_is_acknowledged_through_its_email_row(self):
+        """Once the email row exists (as for any reason but BUDGET_RETIRED), it is the row acknowledged."""
+        assignment = self._expire_without_email_row(AssignmentAutomaticExpiredReason.NINETY_DAYS_PASSED)
+        email_action = assignment.add_successful_expiration_action()
+
+        self.assertEqual(assignment.get_last_acknowledgeable_expiration_action(), email_action)
+        self.assertFalse(assignment.learner_acknowledged)
+        self.assertEqual(self._acknowledge(assignment), ([assignment], [], []))
+        self.assertEqual(self._acknowledge(assignment), ([], [assignment], []))
+        self.assertTrue(assignment.learner_acknowledged)
+        self.assertEqual(assignment.actions.filter(action_type=AssignmentActions.EXPIRED_ACKNOWLEDGED).count(), 1)
+
     def test_other_reason_without_email_row_is_not_acknowledgeable_via_scheduled_row(self):
         """
         Unchanged for every other reason until its email row exists: it never reads as acknowledged, and every
