@@ -3037,6 +3037,53 @@ class TestStripeEventHandler(TestCase):
         other_renewal.refresh_from_db()
         self.assertTrue(other_renewal.is_canceled)
 
+    @ddt.data(
+        # A created event retried or replayed after a later update scheduled a cancellation: keep it.
+        {'update_minutes_ago': 5, 'expect_cancel_kept': True},
+        # An update from before the created event doesn't block the reset.
+        {'update_minutes_ago': 15, 'expect_cancel_kept': False},
+    )
+    @ddt.unpack
+    @mock.patch('stripe.Subscription.modify')
+    def test_subscription_created_late_event_keeps_newer_cancellation_state(
+        self, mock_stripe_modify, update_minutes_ago, expect_cancel_kept,
+    ):
+        """
+        A customer.subscription.created handled after a later update of the same subscription (a retry or a
+        Dashboard replay) doesn't clear the cancellation that update scheduled.
+        """
+        subscription_id = 'sub_test_created_late'
+        cancel_at = timezone.now() + timedelta(days=30)
+        renewal = SelfServiceSubscriptionRenewalFactory(
+            checkout_intent=self.checkout_intent,
+            stripe_subscription_id=subscription_id,
+            is_canceled=False,
+            subscription_cancel_at=cancel_at,
+        )
+        _, update_summary = self._create_existing_event_data_records(
+            subscription_id, event_type='customer.subscription.updated',
+            subscription_status=StripeSubscriptionStatus.ACTIVE,
+        )
+        update_summary.stripe_event_created_at = timezone.now() - timedelta(minutes=update_minutes_ago)
+        update_summary.save()
+
+        StripeEventHandler.dispatch(self._create_mock_stripe_event(
+            'customer.subscription.created',
+            {
+                'id': subscription_id,
+                'status': StripeSubscriptionStatus.TRIALING,
+                'object': 'subscription',
+                'metadata': self._create_mock_stripe_subscription(self.checkout_intent),
+            },
+            created=int((timezone.now() - timedelta(minutes=10)).timestamp()),
+        ))
+
+        renewal.refresh_from_db()
+        self.assertFalse(renewal.is_canceled)
+        self.assertEqual(renewal.subscription_cancel_at, cancel_at if expect_cancel_kept else None)
+        # The rest of the handler still runs.
+        mock_stripe_modify.assert_called_once()
+
     @mock.patch('stripe.Subscription.modify')
     def test_subscription_created_handler_checkout_intent_not_found(self, mock_stripe_modify):
         """Test customer.subscription.created when CheckoutIntent is not found."""

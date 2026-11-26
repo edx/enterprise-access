@@ -301,6 +301,7 @@ def _is_superseded_subscription_event(event: stripe.Event, stripe_subscription_i
     """
     # customer.subscription.created isn't listed: it's a subscription's first event, so it's never later than an
     # update of the same subscription. Invoice events aren't listed: they don't describe the cancellation state.
+    # A created event can itself be superseded when it's retried or replayed after an update or deletion.
     return StripeEventSummary.objects.filter(
         stripe_subscription_id=stripe_subscription_id,
         event_type__in=('customer.subscription.updated', 'customer.subscription.deleted'),
@@ -1245,7 +1246,10 @@ class StripeEventHandler:
         link_event_data_to_checkout_intent(event, checkout_intent)
         # Explicitly mark as not canceled on subscription creation rather than relying on the model default.
         # This ensures consistency since cancellations can be triggered by both updates and deletions.
-        _update_renewal_cancellation_state(checkout_intent, subscription['id'], is_canceled=False)
+        # Skipped when this event is handled late (a retry or a Dashboard replay) after a later update or
+        # deletion, so it doesn't clear the cancellation state that event set.
+        if not _is_superseded_subscription_event(event, subscription['id']):
+            _update_renewal_cancellation_state(checkout_intent, subscription['id'], is_canceled=False)
 
         subscription = subscription.to_dict()
         checkout_intent.stripe_customer_id = subscription.get('customer', None)

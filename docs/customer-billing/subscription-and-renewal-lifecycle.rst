@@ -206,7 +206,9 @@ On reinstatement:
 * An older ``customer.subscription.updated`` delivered after a newer updated or deleted event for the same
   subscription is ignored (``_is_superseded_subscription_event()``): it doesn't change the renewals' cancellation
   state, send a cancellation or reinstatement email, or handle a status change. So a late "cancellation scheduled"
-  event can't undo a reinstatement or tell the admin the subscription is being canceled
+  event can't undo a reinstatement or tell the admin the subscription is being canceled. Likewise, a
+  ``customer.subscription.created`` handled after such an event (a retry or a Dashboard replay) doesn't reset the
+  renewals' cancellation state; the rest of its handler still runs
 * A checkout intent can have more than one Stripe subscription (e.g. a new one after an earlier one ended). The
   created, updated and deleted handlers only change the renewals of the event's own subscription, and an update is
   compared with that subscription's previous event only, so an ended subscription's state can't leak into a new one
