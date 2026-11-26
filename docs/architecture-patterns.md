@@ -255,6 +255,28 @@ Every redelivery runs the handler again, so for a task that must run once per St
 - if the task sends to Segment, use `track_event_or_raise` so the Celery retry covers delivery. `track_event` only
   queues the event for analytics-python's background thread and swallows errors.
 
+### 28. Read remote data before taking row locks; validation inside the lock reads the cache
+
+When a write under `select_for_update()` is validated against data from another service (e.g. `SubsidyAccessPolicy.save()`
+runs `clean_spend_limit()`, which reads the subsidy's `total_deposits` through `subsidy_record()`), fetch that data
+before `transaction.atomic()` opens, so the lock is never held across a network call:
+
+- **Clear the cache, then read.** `subsidy_record()` is request-cached and returns a cached record even with
+  `raise_on_error=True`, so call `policy.clear_cached_subsidy_record()` first. A record cached earlier in the request,
+  or by an earlier Celery task in the same worker, may predate the change you are about to rely on.
+- **Inside the block, validation reads the warm cache** and makes no network call. A failed read happens before any
+  write, so it is safe to retry.
+- **A validation failure may be a race, not a real failure.** The rows read under the lock can include a change whose
+  remote counterpart landed after your read (e.g. another top-up's spend-limit raise, without its deposit). Let the
+  block roll back, read the remote data again, and treat the failure as retryable if it changed.
+- **Lock rows in one fixed order** (e.g. the policy, then the top-up) and re-check the state under the lock, since the
+  record may have moved while you were reading.
+- **Call it outside any transaction.** Inside one, the block is a savepoint, and InnoDB keeps its row locks after the
+  savepoint rolls back, until the outer transaction ends.
+- **Testing:** under `TestCase`, `connection.in_atomic_block` is always `True`; use a `TransactionTestCase` and record
+  `connection.in_atomic_block` from the mocked client to prove the call happened outside the block. Example:
+  `customer_billing/top_up_fulfillment.py`, `docs/references/learner_credit_top_ups.md`.
+
 ### Key Takeaways for Implementation:
 - Check permissions early using `@permission_required` decorator
 - Use separate serializers for request/response
