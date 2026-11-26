@@ -291,13 +291,35 @@ def cancel_all_future_plans(checkout_intent, include_processed=True):
     return deactivated
 
 
+def _is_superseded_subscription_event(event: stripe.Event, stripe_subscription_id: str) -> bool:
+    """
+    Whether a later created/updated/deleted event for this subscription has already been received.
+
+    Stripe doesn't guarantee delivery order and retries failed deliveries for days, so an older event can be
+    handled after a newer one, e.g. a scheduled cancellation after the reinstatement that reversed it. Its
+    cancellation state is out of date and must not overwrite the newer event's.
+    """
+    # customer.subscription.created isn't listed: it's a subscription's first event, so it's never later than an
+    # update of the same subscription. Invoice events aren't listed: they don't describe the cancellation state.
+    # A created event can itself be superseded when it's retried or replayed after an update or deletion.
+    return StripeEventSummary.objects.filter(
+        stripe_subscription_id=stripe_subscription_id,
+        event_type__in=('customer.subscription.updated', 'customer.subscription.deleted'),
+        stripe_event_created_at__gt=datetime_from_timestamp(event.created),
+    ).exists()
+
+
 def _update_renewal_cancellation_state(
     checkout_intent: CheckoutIntent,
+    stripe_subscription_id: str,
     is_canceled: bool,
     subscription_cancel_at=None,
 ) -> None:
-    """Set cancellation state on all renewals for a checkout intent."""
-    renewals = list(checkout_intent.renewals.all())
+    """
+    Set cancellation state on the checkout intent's renewals for one Stripe subscription. Renewals of another
+    subscription on the same checkout intent (e.g. an earlier one that ended) keep their own state.
+    """
+    renewals = list(checkout_intent.renewals.filter(stripe_subscription_id=stripe_subscription_id))
     for renewal in renewals:
         renewal.is_canceled = is_canceled
         renewal.subscription_cancel_at = subscription_cancel_at
@@ -310,8 +332,8 @@ def _update_renewal_cancellation_state(
         batch_size=100,
     )
     logger.info(
-        'Updated %d renewal(s) for CheckoutIntent %s: is_canceled=%s, subscription_cancel_at=%s',
-        updated, checkout_intent.id, is_canceled, subscription_cancel_at,
+        'Updated %d renewal(s) for CheckoutIntent %s, subscription %s: is_canceled=%s, subscription_cancel_at=%s',
+        updated, checkout_intent.id, stripe_subscription_id, is_canceled, subscription_cancel_at,
     )
 
 
@@ -1224,7 +1246,10 @@ class StripeEventHandler:
         link_event_data_to_checkout_intent(event, checkout_intent)
         # Explicitly mark as not canceled on subscription creation rather than relying on the model default.
         # This ensures consistency since cancellations can be triggered by both updates and deletions.
-        _update_renewal_cancellation_state(checkout_intent, is_canceled=False)
+        # Skipped when this event is handled late (a retry or a Dashboard replay) after a later update or
+        # deletion, so it doesn't clear the cancellation state that event set.
+        if not _is_superseded_subscription_event(event, subscription['id']):
+            _update_renewal_cancellation_state(checkout_intent, subscription['id'], is_canceled=False)
 
         subscription = subscription.to_dict()
         checkout_intent.stripe_customer_id = subscription.get('customer', None)
@@ -1256,6 +1281,17 @@ class StripeEventHandler:
 
         subscription = subscription.to_dict()
 
+        # A later event for this subscription has already been handled, and the state it describes
+        # supersedes this one's. Applying this event would undo it (e.g. a reinstatement) and send emails
+        # about a change that no longer holds.
+        if _is_superseded_subscription_event(event, subscription['id']):
+            logger.warning(
+                'Ignoring event %s for subscription %s (status=%s, cancel_at=%s): '
+                'a later event for the subscription has already been received',
+                event.id, subscription['id'], subscription.get('status'), subscription.get('cancel_at'),
+            )
+            return
+
         # Pending update
         pending_update = subscription.get("pending_update")
         if pending_update:
@@ -1280,11 +1316,14 @@ class StripeEventHandler:
             # 4. Renewal record's subscription_cancel_at is cleared to None
             _update_renewal_cancellation_state(
                 checkout_intent,
+                subscription['id'],
                 is_canceled=False,
                 subscription_cancel_at=current_cancel_at_datetime,
             )
 
-        previous_summary = checkout_intent.previous_summary(event, stripe_object_type='subscription')
+        previous_summary = checkout_intent.previous_summary(
+            event, stripe_object_type='subscription', stripe_subscription_id=subscription['id'],
+        )
         if not previous_summary:
             logger.warning(
                 'No previous subscription summary for stripe subscription %s, event %s',
@@ -1383,7 +1422,9 @@ class StripeEventHandler:
                 subscription['id'],
                 checkout_intent.id,
             )
-        _update_renewal_cancellation_state(checkout_intent, is_canceled=True, subscription_cancel_at=None)
+        _update_renewal_cancellation_state(
+            checkout_intent, subscription['id'], is_canceled=True, subscription_cancel_at=None,
+        )
         _set_renewal_grace_period(checkout_intent, None, False)
 
         previous_summary = checkout_intent.previous_summary(event, stripe_object_type='subscription')

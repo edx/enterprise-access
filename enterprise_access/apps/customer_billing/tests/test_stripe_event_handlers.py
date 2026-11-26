@@ -1376,6 +1376,10 @@ class TestStripeEventHandler(TestCase):
             is_canceled=False,
             subscription_cancel_at=timezone.now() + timedelta(days=30),
         )
+        # Another subscription on the same checkout intent isn't the one that ended.
+        other_renewal = SelfServiceSubscriptionRenewalFactory(
+            checkout_intent=self.checkout_intent, stripe_subscription_id='sub_test_other', is_canceled=False,
+        )
 
         self._create_existing_event_data_records(
             'sub_test_deleted_marks_renewal',
@@ -1402,6 +1406,8 @@ class TestStripeEventHandler(TestCase):
         renewal.refresh_from_db()
         self.assertTrue(renewal.is_canceled)
         self.assertIsNone(renewal.subscription_cancel_at)
+        other_renewal.refresh_from_db()
+        self.assertFalse(other_renewal.is_canceled)
         self.checkout_intent.refresh_from_db()
         self.assertFalse(self.checkout_intent.in_renewal_grace_period)
         mock_cancel.assert_called_once_with(self.checkout_intent)
@@ -1427,6 +1433,10 @@ class TestStripeEventHandler(TestCase):
             is_canceled=True,
             subscription_cancel_at=timezone.now() + timedelta(days=30),
         )
+        # An ended subscription on the same checkout intent stays canceled.
+        other_renewal = SelfServiceSubscriptionRenewalFactory(
+            checkout_intent=self.checkout_intent, stripe_subscription_id='sub_test_other', is_canceled=True,
+        )
 
         mock_event = self._create_mock_stripe_event(
             'customer.subscription.updated',
@@ -1442,6 +1452,176 @@ class TestStripeEventHandler(TestCase):
         renewal.refresh_from_db()
         self.assertFalse(renewal.is_canceled)
         self.assertIsNone(renewal.subscription_cancel_at)
+        other_renewal.refresh_from_db()
+        self.assertTrue(other_renewal.is_canceled)
+
+    @ddt.data(
+        # A cancellation scheduled before a reinstatement, delivered after it.
+        {'newer_event_type': 'customer.subscription.updated', 'is_canceled': False, 'cancel_at': None,
+         'stale_cancel_at': 1900000000},
+        # An update from before a deletion, delivered after it.
+        {'newer_event_type': 'customer.subscription.deleted', 'is_canceled': True, 'cancel_at': None,
+         'stale_cancel_at': None},
+    )
+    @ddt.unpack
+    def test_subscription_updated_older_event_keeps_newer_cancellation_state(
+        self, newer_event_type, is_canceled, cancel_at, stale_cancel_at,
+    ):
+        """
+        Stripe can deliver an older customer.subscription.updated after a newer event for the same subscription.
+        Its cancellation state is out of date, so the renewals keep the state the newer event set.
+        """
+        subscription_id = 'sub_test_out_of_order'
+        renewal = SelfServiceSubscriptionRenewalFactory(
+            checkout_intent=self.checkout_intent,
+            stripe_subscription_id=subscription_id,
+            is_canceled=is_canceled,
+            subscription_cancel_at=cancel_at,
+        )
+        _, newer_summary = self._create_existing_event_data_records(
+            subscription_id, event_type=newer_event_type, subscription_status=StripeSubscriptionStatus.ACTIVE,
+        )
+        newer_summary.stripe_event_created_at = timezone.now() - timedelta(minutes=5)
+        newer_summary.save()
+
+        subscription_data = {
+            'id': subscription_id,
+            'status': StripeSubscriptionStatus.ACTIVE,
+            'metadata': self._create_mock_stripe_subscription(self.checkout_intent),
+        }
+        if stale_cancel_at:
+            subscription_data['cancel_at'] = stale_cancel_at
+        stale_event = self._create_mock_stripe_event(
+            'customer.subscription.updated',
+            subscription_data,
+            created=int((timezone.now() - timedelta(minutes=10)).timestamp()),
+        )
+
+        StripeEventHandler.dispatch(stale_event)
+
+        renewal.refresh_from_db()
+        self.assertEqual(renewal.is_canceled, is_canceled)
+        self.assertEqual(renewal.subscription_cancel_at, cancel_at)
+
+    @ddt.data(
+        # A newer event for a different subscription on the same checkout intent.
+        ('sub_test_other', 'customer.subscription.updated', 'subscription'),
+        # A newer invoice event for the same subscription, e.g. the renewal invoice.
+        ('sub_test_current', 'invoice.paid', 'invoice'),
+    )
+    @ddt.unpack
+    def test_subscription_updated_older_event_not_blocked_by_unrelated_newer_event(
+        self, newer_subscription_id, newer_event_type, newer_object_type,
+    ):
+        """Only a newer subscription event for the same subscription makes this subscription's event out of date."""
+        renewal = SelfServiceSubscriptionRenewalFactory(
+            checkout_intent=self.checkout_intent,
+            stripe_subscription_id='sub_test_current',
+            is_canceled=False,
+            subscription_cancel_at=timezone.now() + timedelta(days=30),
+        )
+        _, other_summary = self._create_existing_event_data_records(
+            newer_subscription_id, event_type=newer_event_type,
+            subscription_status=StripeSubscriptionStatus.ACTIVE, stripe_object_type=newer_object_type,
+        )
+        other_summary.stripe_event_created_at = timezone.now()
+        other_summary.save()
+
+        StripeEventHandler.dispatch(self._create_mock_stripe_event(
+            'customer.subscription.updated',
+            {
+                'id': 'sub_test_current',
+                'status': StripeSubscriptionStatus.ACTIVE,
+                'metadata': self._create_mock_stripe_subscription(self.checkout_intent),
+            },
+            created=int((timezone.now() - timedelta(minutes=10)).timestamp()),
+        ))
+
+        renewal.refresh_from_db()
+        self.assertIsNone(renewal.subscription_cancel_at)
+
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_event_handlers.send_paid_reinstatement_email_task')
+    def test_subscription_updated_compares_with_its_own_subscription_only(self, mock_reinstatement_email):
+        """
+        A subscription's update is compared with that subscription's last event, not with another subscription's on
+        the same checkout intent. An ended subscription that was scheduled to cancel doesn't make a new
+        subscription's first update look like a reinstatement.
+        """
+        _, ended_summary = self._create_existing_event_data_records(
+            'sub_test_ended', event_type='customer.subscription.updated',
+            subscription_status=StripeSubscriptionStatus.ACTIVE,
+            cancel_at=1700000000,
+        )
+        ended_summary.subscription_cancel_at = datetime_from_timestamp(1700000000)
+        ended_summary.save()
+
+        StripeEventHandler.dispatch(self._create_mock_stripe_event(
+            'customer.subscription.updated',
+            {
+                'id': 'sub_test_new',
+                'status': StripeSubscriptionStatus.ACTIVE,
+                'metadata': self._create_mock_stripe_subscription(self.checkout_intent),
+            },
+        ))
+
+        mock_reinstatement_email.delay.assert_not_called()
+
+    @ddt.data(
+        # A cancellation scheduled before a reinstatement, delivered after it: no cancellation email.
+        {'prior_cancel_at': None, 'newer_cancel_at': None, 'stale_cancel_at': 1900000000,
+         'stale_status': StripeSubscriptionStatus.ACTIVE},
+        # A reinstatement from before a new cancellation, delivered after it: no reinstatement email.
+        {'prior_cancel_at': 1900000000, 'newer_cancel_at': 1900000000, 'stale_cancel_at': None,
+         'stale_status': StripeSubscriptionStatus.ACTIVE},
+        # A past_due update from before the subscription recovered, delivered after it: no status change handling.
+        {'prior_cancel_at': None, 'newer_cancel_at': None, 'stale_cancel_at': None,
+         'stale_status': StripeSubscriptionStatus.PAST_DUE},
+    )
+    @ddt.unpack
+    @mock.patch(
+        'enterprise_access.apps.customer_billing.stripe_event_handlers._handle_subscription_updated_status_updates'
+    )
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_event_handlers.send_paid_reinstatement_email_task')
+    @mock.patch('enterprise_access.apps.customer_billing.stripe_event_handlers.send_paid_cancellation_email_task')
+    def test_subscription_updated_older_event_sends_no_notifications(
+        self, mock_cancellation_email, mock_reinstatement_email, mock_status_updates,
+        prior_cancel_at, newer_cancel_at, stale_cancel_at, stale_status,
+    ):
+        """
+        An older customer.subscription.updated delivered after a newer one describes a change the newer event has
+        already superseded, so it doesn't send the cancellation or reinstatement email or handle a status change.
+        """
+        subscription_id = 'sub_test_out_of_order_notifications'
+        _, prior_summary = self._create_existing_event_data_records(
+            subscription_id, subscription_status=StripeSubscriptionStatus.ACTIVE,
+        )
+        prior_summary.stripe_event_created_at = timezone.now() - timedelta(minutes=20)
+        prior_summary.subscription_cancel_at = datetime_from_timestamp(prior_cancel_at) if prior_cancel_at else None
+        prior_summary.save()
+        _, newer_summary = self._create_existing_event_data_records(
+            subscription_id, event_type='customer.subscription.updated',
+            subscription_status=StripeSubscriptionStatus.ACTIVE,
+        )
+        newer_summary.stripe_event_created_at = timezone.now() - timedelta(minutes=5)
+        newer_summary.subscription_cancel_at = datetime_from_timestamp(newer_cancel_at) if newer_cancel_at else None
+        newer_summary.save()
+
+        subscription_data = {
+            'id': subscription_id,
+            'status': stale_status,
+            'metadata': self._create_mock_stripe_subscription(self.checkout_intent),
+        }
+        if stale_cancel_at:
+            subscription_data['cancel_at'] = stale_cancel_at
+        StripeEventHandler.dispatch(self._create_mock_stripe_event(
+            'customer.subscription.updated',
+            subscription_data,
+            created=int((timezone.now() - timedelta(minutes=10)).timestamp()),
+        ))
+
+        mock_cancellation_email.delay.assert_not_called()
+        mock_reinstatement_email.delay.assert_not_called()
+        mock_status_updates.assert_not_called()
 
     def test_subscription_updated_sets_subscription_cancel_at(self):
         """subscription_updated with cancel_at should set subscription_cancel_at on the renewal."""
@@ -2820,6 +3000,10 @@ class TestStripeEventHandler(TestCase):
     def test_subscription_created_handler_success(self, mock_stripe_modify):
         """Test successful customer.subscription.created event handling."""
         subscription_id = 'sub_test_created_123'
+        # An ended subscription on the same checkout intent stays canceled.
+        other_renewal = SelfServiceSubscriptionRenewalFactory(
+            checkout_intent=self.checkout_intent, stripe_subscription_id='sub_test_other', is_canceled=True,
+        )
         subscription_data = {
             'id': subscription_id,
             'status': StripeSubscriptionStatus.TRIALING,
@@ -2850,6 +3034,55 @@ class TestStripeEventHandler(TestCase):
         summary = event_data.summary
         self.assertEqual(summary.checkout_intent, self.checkout_intent)
         self.assertEqual(summary.subscription_status, StripeSubscriptionStatus.TRIALING)
+        other_renewal.refresh_from_db()
+        self.assertTrue(other_renewal.is_canceled)
+
+    @ddt.data(
+        # A created event retried or replayed after a later update scheduled a cancellation: keep it.
+        {'update_minutes_ago': 5, 'expect_cancel_kept': True},
+        # An update from before the created event doesn't block the reset.
+        {'update_minutes_ago': 15, 'expect_cancel_kept': False},
+    )
+    @ddt.unpack
+    @mock.patch('stripe.Subscription.modify')
+    def test_subscription_created_late_event_keeps_newer_cancellation_state(
+        self, mock_stripe_modify, update_minutes_ago, expect_cancel_kept,
+    ):
+        """
+        A customer.subscription.created handled after a later update of the same subscription (a retry or a
+        Dashboard replay) doesn't clear the cancellation that update scheduled.
+        """
+        subscription_id = 'sub_test_created_late'
+        cancel_at = timezone.now() + timedelta(days=30)
+        renewal = SelfServiceSubscriptionRenewalFactory(
+            checkout_intent=self.checkout_intent,
+            stripe_subscription_id=subscription_id,
+            is_canceled=False,
+            subscription_cancel_at=cancel_at,
+        )
+        _, update_summary = self._create_existing_event_data_records(
+            subscription_id, event_type='customer.subscription.updated',
+            subscription_status=StripeSubscriptionStatus.ACTIVE,
+        )
+        update_summary.stripe_event_created_at = timezone.now() - timedelta(minutes=update_minutes_ago)
+        update_summary.save()
+
+        StripeEventHandler.dispatch(self._create_mock_stripe_event(
+            'customer.subscription.created',
+            {
+                'id': subscription_id,
+                'status': StripeSubscriptionStatus.TRIALING,
+                'object': 'subscription',
+                'metadata': self._create_mock_stripe_subscription(self.checkout_intent),
+            },
+            created=int((timezone.now() - timedelta(minutes=10)).timestamp()),
+        ))
+
+        renewal.refresh_from_db()
+        self.assertFalse(renewal.is_canceled)
+        self.assertEqual(renewal.subscription_cancel_at, cancel_at if expect_cancel_kept else None)
+        # The rest of the handler still runs.
+        mock_stripe_modify.assert_called_once()
 
     @mock.patch('stripe.Subscription.modify')
     def test_subscription_created_handler_checkout_intent_not_found(self, mock_stripe_modify):
