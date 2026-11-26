@@ -245,6 +245,26 @@ def expire_requests_for_ended_budgets_enabled():
     return EXPIRE_REQUESTS_FOR_ENDED_BUDGETS.is_enabled()
 
 
+# .. toggle_name: enterprise_access.expire_assignments_on_retired_budgets
+# .. toggle_implementation: WaffleSwitch
+# .. toggle_default: False
+# .. toggle_description: Enables the nightly expiration job to expire allocated assignments (and the approved
+#     Browse & Request requests behind them) once their budget is retired (BUDGET_RETIRED), without emailing
+#     the learner. When disabled, a budget's retirement is ignored by expiration. An expired assignment is not
+#     reopened, so this stays off until product signs off; turning it off again stops further expirations.
+# .. toggle_use_cases: open_edx
+# .. toggle_creation_date: 2026-11-24
+EXPIRE_ASSIGNMENTS_ON_RETIRED_BUDGETS = WaffleSwitch(
+    f'{ENTERPRISE_ACCESS_NAMESPACE}.expire_assignments_on_retired_budgets',
+    __name__,
+)
+
+
+def expire_assignments_on_retired_budgets_enabled():
+    """Return whether assignments expire (silently) once their budget is retired."""
+    return EXPIRE_ASSIGNMENTS_ON_RETIRED_BUDGETS.is_enabled()
+
+
 # A switch because it is read off-request, in Stripe webhook handlers and Celery tasks.
 #
 # .. toggle_name: enterprise_access.ssp_paid_renewal

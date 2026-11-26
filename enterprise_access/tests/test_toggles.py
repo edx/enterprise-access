@@ -135,3 +135,12 @@ def test_expire_requests_for_ended_budgets_is_off_by_default_and_can_be_enabled(
     assert toggles.expire_requests_for_ended_budgets_enabled() is False
     with override_waffle_switch(toggles.EXPIRE_REQUESTS_FOR_ENDED_BUDGETS, True):
         assert toggles.expire_requests_for_ended_budgets_enabled() is True
+
+
+@pytest.mark.django_db
+def test_expire_assignments_on_retired_budgets_is_off_by_default():
+    """Expiring silently cannot be undone, so off until someone turns it on (architecture pattern 20)."""
+    assert isinstance(toggles.EXPIRE_ASSIGNMENTS_ON_RETIRED_BUDGETS, WaffleSwitch)
+    assert toggles.expire_assignments_on_retired_budgets_enabled() is False
+    with override_waffle_switch(toggles.EXPIRE_ASSIGNMENTS_ON_RETIRED_BUDGETS, True):
+        assert toggles.expire_assignments_on_retired_budgets_enabled() is True
