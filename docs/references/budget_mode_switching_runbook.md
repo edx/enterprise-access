@@ -2,20 +2,18 @@
 
 This runbook is for support staff (ECS) who move a customer between the three learner credit budget modes. A budget is a subsidy access policy: it says which subsidy pays, for which catalog, and how learners get access. Steps name the Django admin page or the API call. The last section, for engineers, says where each statement comes from in the code.
 
-The procedures describe what the code on `main` does today. Eight pull requests that change this area are still open. Every step that depends on one of them says so.
+The procedures describe what the code on `main` does today. Six pull requests that change this area are still open. Every step that depends on one of them says so.
 
-## What is live and what is not (as of 2026-11-25)
+## What is live and what is not (as of 2026-11-26)
 
 None of these pull requests is merged. Until one is, its "after" behaviour does not exist.
 
 | Pull request | Status | Effect on this procedure once merged and deployed |
 |---|---|---|
 | edx/enterprise-access#413 | Open | A learner is no longer shown "funds expired" from an ended budget while a live one exists. The learner dashboard's request card shows only while a B&R budget can still take requests. |
-| edx/enterprise-access#414 | Open | New nightly command `expire_requests_for_ended_budgets` moves requests awaiting review (`requested`, `error`) on a retired or expired B&R budget to `expired`. Waffle switch `enterprise_access.expire_requests_for_ended_budgets`, off by default; while off, the nightly run only logs. A run with `--enterprise-customer-uuid` or `--policy-uuid` acts even while the switch is off. `--dry-run` only logs. |
-| edx/edx-internal#15171 | Open | Schedules #414 daily at 01:00 UTC. Merges only after #414 is deployed. |
-| edx/enterprise-access#419 | Open | `automatically_expire_assignments` also expires allocated assignments on a retired budget (reason `BUDGET_RETIRED`). A linked approved request moves to `expired`. No learner email. Waffle switch `enterprise_access.expire_assignments_on_retired_budgets`, off by default; product must agree before it is turned on. |
-| edx/enterprise-access#421 | Open | Saving an active request configuration gives its budget an assignment configuration if it has none. The order of the enable steps stops mattering. |
-| edx/enterprise-access#422 | Open | Unticking `active` on a request configuration is refused while any of its requests is `requested`, `pending`, `approved` or `error`. |
+| edx/enterprise-access#414 | Open | New nightly command `expire_requests_for_ended_budgets` moves requests awaiting review (`requested`, `error`) on a retired or expired B&R budget to `expired`. Waffle switch `enterprise_access.expire_requests_for_ended_budgets`, off by default; while off, the nightly run only logs. A run with `--enterprise-customer-uuid` or `--policy-uuid` acts even while the switch is off. `--dry-run` only logs. `automatically_expire_assignments` also expires allocated assignments on a retired budget (reason `BUDGET_RETIRED`). A linked approved request moves to `expired`. No learner email. Waffle switch `enterprise_access.expire_assignments_on_retired_budgets`, off by default; product must agree before it is turned on. |
+| edx/edx-internal#15171 | Open | Schedules the #414 command `expire_requests_for_ended_budgets` daily at 01:00 UTC. Merges only after #414 is deployed. |
+| edx/enterprise-access#421 | Open | Saving an active request configuration gives its budget an assignment configuration if it has none. The order of the enable steps stops mattering. Unticking `active` on a request configuration is refused while any of its requests is `requested`, `pending`, `approved` or `error`. It also adds this runbook. |
 | edx/frontend-app-learner-portal-enterprise#223 | Open | On a course page, a way to enroll (for example an assignment) wins over an old pending request: the learner sees Enroll, not "Awaiting approval". |
 | edx/frontend-app-admin-portal#209 | Open | On a retired or expired budget, the Requests tab disables Approve and keeps Decline. |
 
@@ -52,8 +50,8 @@ The same fields come from `GET /api/v1/subsidy-access-policies/<budget uuid>/`.
 ## Rules you must not break
 
 - Do not try to change a budget's class. `policy_type` is not editable in Django admin and the update API does not accept it. Moving to or from Admin Assign always means a new budget.
-- Do not untick `active` on a request configuration while any of its requests is `requested`, `pending`, `approved` or `error`. Approved requests stop counting against the budget, so it shows more money available than it has, and learners can enroll directly at once. Retire the budget instead, or close the requests first (see "Closing a request by hand"). After #422 the admin refuses the untick.
-- Detaching is the same as unticking. Clearing "Learner credit request config" on the budget's page, or deleting the configuration, also turns B&R off, because B&R needs an attached, active configuration. The same harm follows, and #422 refuses neither. After #414, its job finds requests through the configuration attached to a budget, so a detached configuration's requests would never expire.
+- Do not untick `active` on a request configuration while any of its requests is `requested`, `pending`, `approved` or `error`. Approved requests stop counting against the budget, so it shows more money available than it has, and learners can enroll directly at once. Retire the budget instead, or close the requests first (see "Closing a request by hand"). After #421 the admin refuses the untick.
+- Detaching is the same as unticking. Clearing "Learner credit request config" on the budget's page, or deleting the configuration, also turns B&R off, because B&R needs an attached, active configuration. The same harm follows, and #421 refuses neither. After #414, its job finds requests through the configuration attached to a budget, so a detached configuration's requests would never expire.
 - Do not deactivate (untick `active` on) a budget that has spend. The model refuses it with "Cannot deactivate this policy while it has existing spend." Retire it instead: that keeps its history visible to admins.
 - Do not turn B&R on while licence or coupon requests are enabled for the customer. Only one subsidy type can take requests at a time; saving the request configuration or the budget fails with "Only one subsidy type can have Browse & Request enabled at a time." Check Subsidy request > Subsidy request customer configurations (`/admin/subsidy_request/subsidyrequestcustomerconfiguration/`) and turn `subsidy_requests_enabled` off there first, with the customer's agreement.
 - Do not reuse a request configuration on a second budget. A configuration belongs to one budget. Create a new one.
@@ -93,7 +91,7 @@ Do not rely on the API to make a second budget on the same subsidy and catalog. 
 4. Turn on B&R for the new budget with Move 3, steps 2 to 5.
 5. Retire only when the old budget has no allocated assignment left (the Django admin list in query 1 of "Checking the result", searched by the old budget's assignment configuration UUID, shows none; the query's code counts retired budgets only), or when the customer has agreed, in writing, to lose them. Then, on the old budget's page (Assigned learner credit access policies), tick `retired` and save. Do not untick `active`. Assignments still allocated when the budget is retired can no longer be used to enroll, and they hold their funds until the nightly job below expires them.
 
-Left open on the old budget: allocated assignments. Today the nightly `automatically_expire_assignments` command expires each one at the earliest of: 90 days after allocation, the course's enrollment deadline, or the subsidy's expiry. A fourth rule, course run end, applies only while the `assignment_course_run_ended_expiration` switch is on. There is no switch for the other three. After #419 with `enterprise_access.expire_assignments_on_retired_budgets` on, the next nightly run expires them with reason `BUDGET_RETIRED` and no email.
+Left open on the old budget: allocated assignments. Today the nightly `automatically_expire_assignments` command expires each one at the earliest of: 90 days after allocation, the course's enrollment deadline, or the subsidy's expiry. A fourth rule, course run end, applies only while the `assignment_course_run_ended_expiration` switch is on. There is no switch for the other three. After #414 with `enterprise_access.expire_assignments_on_retired_budgets` on, the next nightly run expires them with reason `BUDGET_RETIRED` and no email.
 
 ## Move 2: Browse & Request → Admin Assign
 
@@ -105,7 +103,7 @@ Left open on the old budget: allocated assignments. Today the nightly `automatic
 
 Left open on the old budget:
 - Requests awaiting review (`requested`, `error`). Today nothing closes them: they wait forever and block the same learner from requesting the same course again. After #414 with `enterprise_access.expire_requests_for_ended_budgets` on (and the #15171 schedule), the next 01:00 UTC run moves them to `expired`. Before the switch is on, an engineer can run the command for this budget with `--policy-uuid`.
-- Approved requests not yet redeemed. They expire with their assignment under the same rules as Move 1, and the request moves to `expired` with it. After #419 with its switch on, they expire at the next nightly run.
+- Approved requests not yet redeemed. They expire with their assignment under the same rules as Move 1, and the request moves to `expired` with it. After #414 with `enterprise_access.expire_assignments_on_retired_budgets` on, they expire at the next nightly run.
 - Today the admin portal still offers Approve on the retired budget's requests. Tell admins to decline instead. After #209, Approve is disabled there.
 
 ## Move 3: Browse & Enroll → Browse & Request (same budget)
@@ -128,7 +126,7 @@ Do not do these steps in the other order today. If the configuration is attached
 4. Open the budget's request configuration (Learner credit request configurations). Untick `active` and save. Leave it attached to the budget.
 5. Check the budget's "Extra" section shows `bnr_enabled: false`.
 
-If the requests cannot be closed, for example an `error` request whose approval fails again, do not untick and do not detach the configuration. Retire this budget (with the gate in Move 2, step 4), create a new Browse & Enroll budget, and treat the old one as in Move 2. After #422 the untick in step 4 is refused while any open request remains.
+If the requests cannot be closed, for example an `error` request whose approval fails again, do not untick and do not detach the configuration. Retire this budget (with the gate in Move 2, step 4), create a new Browse & Enroll budget, and treat the old one as in Move 2. After #421 the untick in step 4 is refused while any open request remains.
 
 ## Move 5: back to Browse & Request after a spell on Admin Assign
 
@@ -136,18 +134,18 @@ This is Move 1 again, with two extra checks for what the first B&R spell left be
 
 1. Do Move 1, including the gate before its retire step. Use a new budget and a new request configuration. A configuration that belongs to the old B&R budget cannot be attached to a second budget.
 2. If the old B&R budget is on the same subsidy and catalog, create the new budget in Django admin, not the API: the API returns the old retired budget instead.
-3. List the customer's requests still in `requested`, `approved` or `error` (see "Checking the result"). Today any of these blocks the same learner from requesting the same course again on any budget of the customer, and so does an `accepted` one (the learner already enrolled). Ask the admin to close the stale ones on the old budget (see "Closing a request by hand"). After #414 with its switch on, `requested` and `error` requests on the retired budget expire at the next run; after #419, approved ones do too.
+3. List the customer's requests still in `requested`, `approved` or `error` (see "Checking the result"). Today any of these blocks the same learner from requesting the same course again on any budget of the customer, and so does an `accepted` one (the learner already enrolled). Ask the admin to close the stale ones on the old budget (see "Closing a request by hand"). After #414 with `enterprise_access.expire_requests_for_ended_budgets` on, `requested` and `error` requests on the retired budget expire at the next run. With `enterprise_access.expire_assignments_on_retired_budgets` on, approved ones expire with their assignment at the next nightly run.
 4. A learner who has both an old pending request and a new assignment for the same course sees "Awaiting approval" on the course page today. After #223 they see Enroll.
 
 ## What is left open after each move
 
 | Move | Left open on the old budget | What closes it today | After the open pull requests |
 |---|---|---|---|
-| Admin Assign → B&R | Allocated assignments | `automatically_expire_assignments`, nightly: 90 days, enrollment deadline or subsidy expiry; course run end behind `assignment_course_run_ended_expiration` | #419: next nightly run, behind `enterprise_access.expire_assignments_on_retired_budgets` |
+| Admin Assign → B&R | Allocated assignments | `automatically_expire_assignments`, nightly: 90 days, enrollment deadline or subsidy expiry; course run end behind `assignment_course_run_ended_expiration` | #414: next nightly run, behind `enterprise_access.expire_assignments_on_retired_budgets` |
 | B&R → Admin Assign | Requests awaiting review | Nothing; they wait forever | #414 and #15171: next 01:00 UTC run, behind `enterprise_access.expire_requests_for_ended_budgets` |
-| B&R → Admin Assign | Approved, unredeemed requests | Same as allocated assignments; the request expires with its assignment | #419, as above |
+| B&R → Admin Assign | Approved, unredeemed requests | Same as allocated assignments; the request expires with its assignment | #414: next nightly run, behind `enterprise_access.expire_assignments_on_retired_budgets` |
 | Browse & Enroll → B&R | Nothing | Not needed | Not needed |
-| B&R → Browse & Enroll | Nothing, if step 3 returned nothing | Not needed | #422 enforces step 3 |
+| B&R → Browse & Enroll | Nothing, if step 3 returned nothing | Not needed | #421 enforces step 3 |
 | Back to B&R | As B&R → Admin Assign, for the first B&R budget | As above | As above |
 
 ## Checking the result
@@ -169,7 +167,7 @@ Replace `C` with the customer UUID. All three are read-only. Each says when it s
    LearnerContentAssignment.objects.filter(assignment_configuration__enterprise_customer_uuid=C, assignment_configuration__subsidy_access_policy__retired=True, state='allocated')
    ```
 
-   Empty today once the customer admin has cancelled the assignments and learners have accepted the rest, or once the nightly expiry rules have expired them (up to 90 days). After #419 with its switch on: after the next nightly run.
+   Empty today once the customer admin has cancelled the assignments and learners have accepted the rest, or once the nightly expiry rules have expired them (up to 90 days). After #414 with `enterprise_access.expire_assignments_on_retired_budgets` on: after the next nightly run.
 
 2. Requests still open on a retired budget. Django admin: Subsidy request > Learner credit requests (`/admin/subsidy_request/learnercreditrequest/`), filter by the customer UUID and by state (one of requested, pending, approved, error at a time). The list cannot filter by budget; open a request to see its configuration. The query cannot see subsidy expiry, which lives in the subsidy service; it covers retired budgets only.
 
@@ -177,7 +175,7 @@ Replace `C` with the customer UUID. All three are read-only. Each says when it s
    LearnerCreditRequest.objects.filter(enterprise_customer_uuid=C, learner_credit_request_config__learner_credit_config__retired=True, state__in=['requested', 'pending', 'approved', 'error'])
    ```
 
-   Empty today once the customer admin has closed the requests by hand. Approved ones also go when the nightly expiry rules expire their assignments; `requested` and `error` ones stay until someone closes them. After #414 (with its switch on and the #15171 schedule) and #419 (with its switch on): after the next nightly runs.
+   Empty today once the customer admin has closed the requests by hand. Approved ones also go when the nightly expiry rules expire their assignments; `requested` and `error` ones stay until someone closes them. After #414 (with both its switches on and the #15171 schedule): after the next nightly runs.
 
 3. A B&R budget with no assignment configuration. Django admin has no list filter for this: open each of the customer's per learner spend budgets and check the "Extra" section, as in Move 3, step 4.
 
