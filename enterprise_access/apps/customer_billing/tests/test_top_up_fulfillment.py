@@ -6,6 +6,7 @@ from unittest import mock
 
 import ddt
 import requests
+from django.core.exceptions import ValidationError
 from django.db import DatabaseError, connection
 from django.db.models import QuerySet
 from django.test import TestCase, TransactionTestCase
@@ -203,21 +204,72 @@ class TestFulfillSpendLimitStep(SpendLimitStepTestMixin, TestCase):
         self.assertIsInstance(context.exception.__cause__, requests.exceptions.RequestException)
         self.assert_nothing_changed(top_up, history_count=history_count)
 
-    def test_validation_failure_is_not_retryable(self):
+    @ddt.data(
+        # Scenario 6: total_deposits is unchanged when read again, so a later run would fail the same way.
+        {'second_read_error': None, 'expected_error': NonRetryableFulfillmentError},
+        # The second read fails, so a race can't be ruled out.
+        {'second_read_error': requests.exceptions.ConnectionError, 'expected_error': RetryableFulfillmentError},
+    )
+    @ddt.unpack
+    def test_validation_failure(self, second_read_error, expected_error):
         """
-        Scenario 6: a raised spend limit that fails the policy's validation with a fresh record raises a
-        non-retryable error and changes nothing.
+        A raised spend limit that fails the policy's validation changes nothing, and the subsidy is read again
+        after the block to decide whether a later run may succeed.
         """
         top_up = self.create_top_up()
         self.set_total_deposits(self.SPEND_LIMIT + self.AMOUNT - 1)
+        record = self.mock_subsidy_client.retrieve_subsidy.return_value
+        self.mock_subsidy_client.retrieve_subsidy.side_effect = [record, second_read_error or record]
         top_up_history_count = top_up.history.count()
         policy_history_count = self.policy.history.count()
 
-        with self.assertRaises(NonRetryableFulfillmentError):
+        with self.assertRaises(expected_error) as context:
             fulfill_spend_limit_step(top_up)
 
+        self.assertIsInstance(context.exception.__cause__, ValidationError)
+        self.assertEqual(self.mock_subsidy_client.retrieve_subsidy.call_count, 2)
         self.assert_nothing_changed(top_up, history_count=top_up_history_count)
         self.assertEqual(self.policy.history.count(), policy_history_count)
+
+    def test_validation_failure_after_another_top_up_is_retryable(self):
+        """
+        TR-5: another top-up of the same subsidy is deposited and fulfilled between this run's subsidy read and its
+        lock. The spend limit read under the lock includes the other raise, but the total_deposits read before
+        it doesn't include the other deposit, so validation fails. total_deposits has grown when read again, so
+        the error is retryable, and the next run fulfills the top-up.
+        """
+        other_amount = 250_000
+        top_up = self.create_top_up()
+        record = self.mock_subsidy_client.retrieve_subsidy.return_value
+        record_after_other_deposit = {**record, 'total_deposits': record['total_deposits'] + other_amount}
+
+        def other_top_up_fulfilled_during_read(*args, **kwargs):
+            # The other top-up's step raised the spend limit after its deposit; neither is in the record returned.
+            SubsidyAccessPolicy.objects.filter(uuid=self.policy.uuid).update(
+                spend_limit=self.SPEND_LIMIT + other_amount,
+            )
+            self.mock_subsidy_client.retrieve_subsidy.side_effect = None
+            self.mock_subsidy_client.retrieve_subsidy.return_value = record_after_other_deposit
+            return record
+
+        self.mock_subsidy_client.retrieve_subsidy.side_effect = other_top_up_fulfilled_during_read
+
+        with self.assertRaises(RetryableFulfillmentError) as context:
+            fulfill_spend_limit_step(top_up)
+
+        self.assertIsInstance(context.exception.__cause__, ValidationError)
+        self.assertEqual(self.mock_subsidy_client.retrieve_subsidy.call_count, 2)
+        top_up.refresh_from_db()
+        self.assertEqual(top_up.state, LearnerCreditTopUpState.DEPOSITED)
+        self.assertEqual(self.stored_spend_limit(), self.SPEND_LIMIT + other_amount)
+
+        self.assertTrue(fulfill_spend_limit_step(top_up))
+
+        self.assertEqual(
+            (top_up.spend_limit_before, top_up.spend_limit_after),
+            (self.SPEND_LIMIT + other_amount, self.SPEND_LIMIT + other_amount + self.AMOUNT),
+        )
+        self.assertEqual(self.stored_spend_limit(), self.SPEND_LIMIT + other_amount + self.AMOUNT)
 
     def test_budget_without_spend_limit(self):
         """
@@ -390,3 +442,25 @@ class TestFulfillSpendLimitStepNetworkCalls(SpendLimitStepTestMixin, Transaction
         self.assertEqual(reads[0], (False, True))
         self.assertIn(True, [in_atomic_block for in_atomic_block, _ in reads[1:]])
         self.assertEqual(self.stored_spend_limit(), self.SPEND_LIMIT + self.AMOUNT)
+
+    def test_subsidy_is_read_again_after_the_transaction_on_a_validation_failure(self):
+        """
+        After a validation failure, the subsidy is read again once the block has rolled back, so no lock is held
+        during the call.
+        """
+        top_up = self.create_top_up()
+        self.set_total_deposits(self.SPEND_LIMIT + self.AMOUNT - 1)
+        fetched_in_atomic_block = []
+        record = self.mock_subsidy_client.retrieve_subsidy.return_value
+
+        def retrieve_subsidy(*args, **kwargs):
+            fetched_in_atomic_block.append(connection.in_atomic_block)
+            return record
+
+        self.mock_subsidy_client.retrieve_subsidy.side_effect = retrieve_subsidy
+
+        with self.assertRaises(NonRetryableFulfillmentError):
+            fulfill_spend_limit_step(top_up)
+
+        self.assertEqual(fetched_in_atomic_block, [False, False])
+        self.assertEqual(self.stored_spend_limit(), self.SPEND_LIMIT)

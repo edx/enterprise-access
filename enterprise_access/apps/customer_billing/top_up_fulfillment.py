@@ -58,6 +58,11 @@ def fulfill_spend_limit_step(top_up: LearnerCreditTopUp) -> bool:
        so two steps for one budget can't deadlock), raises ``spend_limit`` and moves the top-up to
        ``fulfilled``. ``save()`` reads the record cached in step 1, so the block makes no network
        call. A policy with no ``spend_limit`` is left unchanged, and both audit fields stay null.
+    3. If the raised spend limit fails validation, the block rolls back, and the subsidy is read
+       again to tell a real failure from a race (see ``_validation_failure()``).
+
+    Call it outside any transaction. Inside one, the block is a savepoint, and its row locks are
+    held until the outer transaction ends, so the read in step 3 would run under them.
 
     Returns:
         True if this call fulfilled the top-up. False if the top-up was not ``deposited``: nothing
@@ -65,9 +70,10 @@ def fulfill_spend_limit_step(top_up: LearnerCreditTopUp) -> bool:
 
     Raises:
         RetryableFulfillmentError: the subsidy record couldn't be read (an HTTP error, a connection
-            error or a timeout). Nothing was changed.
-        NonRetryableFulfillmentError: the raised spend limit failed the policy's validation, even
-            with a fresh record. Nothing was changed.
+            error or a timeout), or the raised spend limit failed validation but the subsidy's
+            ``total_deposits`` grew while this run held no lock. Nothing was changed.
+        NonRetryableFulfillmentError: the raised spend limit failed the policy's validation, and
+            the subsidy's ``total_deposits`` hadn't changed. Nothing was changed.
     """
     top_up.refresh_from_db()
     if top_up.state != LearnerCreditTopUpState.DEPOSITED:
@@ -77,43 +83,36 @@ def fulfill_spend_limit_step(top_up: LearnerCreditTopUp) -> bool:
         )
         return False
 
-    _read_fresh_subsidy_record(top_up)
+    total_deposits_read = _read_fresh_subsidy_record(top_up)
 
-    with transaction.atomic():
-        policy = SubsidyAccessPolicy.objects.select_for_update().get(uuid=top_up.subsidy_access_policy_id)
-        top_up.refresh_from_db(from_queryset=LearnerCreditTopUp.objects.select_for_update())
-        if top_up.state != LearnerCreditTopUpState.DEPOSITED:
-            logger.info(
-                'Skipping the spend-limit step for LearnerCreditTopUp %s: another run moved it to %s.',
-                top_up.uuid, top_up.state,
-            )
-            return False
-
-        spend_limit_before = policy.spend_limit
-        spend_limit_after = None
-        if spend_limit_before is not None:
-            spend_limit_after = spend_limit_before + top_up.amount_cents
-            policy.spend_limit = spend_limit_after
-            # Recorded on the policy's history record, next to the spend_limit change.
-            policy._change_reason = f'Learner credit top-up {top_up.uuid}'  # pylint: disable=protected-access
-            try:
-                policy.save()
-            except ValidationError as exc:
-                logger.error(
-                    'Spend-limit step for LearnerCreditTopUp %s failed validation raising policy %s spend_limit '
-                    'from %s to %s: %s',
-                    top_up.uuid, policy.uuid, spend_limit_before, spend_limit_after, exc,
+    try:
+        with transaction.atomic():
+            policy = SubsidyAccessPolicy.objects.select_for_update().get(uuid=top_up.subsidy_access_policy_id)
+            top_up.refresh_from_db(from_queryset=LearnerCreditTopUp.objects.select_for_update())
+            if top_up.state != LearnerCreditTopUpState.DEPOSITED:
+                logger.info(
+                    'Skipping the spend-limit step for LearnerCreditTopUp %s: another run moved it to %s.',
+                    top_up.uuid, top_up.state,
                 )
-                raise NonRetryableFulfillmentError(
-                    f'Raising the spend_limit of policy {policy.uuid} for LearnerCreditTopUp {top_up.uuid} '
-                    f'failed validation: {exc}'
-                ) from exc
+                return False
 
-        top_up.transition_to(
-            LearnerCreditTopUpState.FULFILLED,
-            spend_limit_before=spend_limit_before,
-            spend_limit_after=spend_limit_after,
-        )
+            spend_limit_before = policy.spend_limit
+            spend_limit_after = None
+            if spend_limit_before is not None:
+                spend_limit_after = spend_limit_before + top_up.amount_cents
+                policy.spend_limit = spend_limit_after
+                # Recorded on the policy's history record, next to the spend_limit change.
+                policy._change_reason = f'Learner credit top-up {top_up.uuid}'  # pylint: disable=protected-access
+                policy.save()
+
+            top_up.transition_to(
+                LearnerCreditTopUpState.FULFILLED,
+                spend_limit_before=spend_limit_before,
+                spend_limit_after=spend_limit_after,
+            )
+    except ValidationError as exc:
+        # Only policy.save() raises ValidationError in the block. The block has rolled back, releasing its locks.
+        raise _validation_failure(top_up, total_deposits_read, exc) from exc
 
     logger.info(
         'Fulfilled LearnerCreditTopUp %s: policy %s spend_limit %s -> %s.',
@@ -122,18 +121,54 @@ def fulfill_spend_limit_step(top_up: LearnerCreditTopUp) -> bool:
     return True
 
 
-def _read_fresh_subsidy_record(top_up: LearnerCreditTopUp):
+def _validation_failure(
+    top_up: LearnerCreditTopUp,
+    total_deposits_read: int,
+    error: ValidationError,
+) -> LearnerCreditTopUpFulfillmentError:
     """
-    Replace the request-cached subsidy record of ``top_up``'s policy with one fetched now.
+    Return the error to raise when the raised spend limit failed the policy's validation. Call it after the block
+    has rolled back, so no lock is held.
+
+    The validation compares the spend limits of the subsidy's policies, read under the lock, with the
+    ``total_deposits`` read before it (``total_deposits_read``). If another top-up of the same subsidy was deposited
+    and fulfilled in between, the spend limits include its raise but the deposits read don't include its deposit, so
+    the validation fails although a run with a fresh read would pass. The subsidy is read again to tell the two
+    apart: if ``total_deposits`` grew, or the read fails, a later run may succeed.
+    """
+    try:
+        total_deposits_now = _read_fresh_subsidy_record(top_up)
+    except RetryableFulfillmentError:
+        total_deposits_now = None
+
+    message = (
+        f'Raising the spend_limit of policy {top_up.subsidy_access_policy_id} by {top_up.amount_cents} for '
+        f'LearnerCreditTopUp {top_up.uuid} failed validation: {error}'
+    )
+    if total_deposits_now is None or total_deposits_now > total_deposits_read:
+        logger.warning(
+            '%s Retryable: the subsidy total_deposits read before the lock was %s, and is now %s.',
+            message, total_deposits_read, 'unknown' if total_deposits_now is None else total_deposits_now,
+        )
+        return RetryableFulfillmentError(message)
+
+    logger.error('%s Not retryable: the subsidy total_deposits is still %s.', message, total_deposits_now)
+    return NonRetryableFulfillmentError(message)
+
+
+def _read_fresh_subsidy_record(top_up: LearnerCreditTopUp) -> int:
+    """
+    Replace the request-cached subsidy record of ``top_up``'s policy with one fetched now, and return the
+    subsidy's ``total_deposits``.
 
     Clearing comes first because ``subsidy_record()`` returns a cached record even with
-    ``raise_on_error=True``. The policy is loaded again rather than taken from ``top_up``, whose
-    cached copy may be stale, so the cache key matches the one the locked policy's ``save()`` reads.
+    ``raise_on_error=True``. The cache is keyed by the enterprise and the subsidy, so the locked copy of
+    the policy that ``save()`` validates reads this same record.
 
     Raises:
         RetryableFulfillmentError: the read failed.
     """
-    policy = SubsidyAccessPolicy.objects.get(uuid=top_up.subsidy_access_policy_id)
+    policy = top_up.subsidy_access_policy
     policy.clear_cached_subsidy_record()
     try:
         policy.subsidy_record(raise_on_error=True)
@@ -147,3 +182,4 @@ def _read_fresh_subsidy_record(top_up: LearnerCreditTopUp):
         raise RetryableFulfillmentError(
             f'Could not read subsidy {policy.subsidy_uuid} for LearnerCreditTopUp {top_up.uuid}.'
         ) from exc
+    return policy.total_deposits_for_subsidy

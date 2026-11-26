@@ -6,7 +6,7 @@ import logging
 import stripe
 from django import forms
 from django.contrib import admin, messages
-from django.core.exceptions import PermissionDenied, ValidationError
+from django.core.exceptions import ValidationError
 from django.core.management import call_command
 from django.utils import timezone
 from django.utils.html import format_html
@@ -17,7 +17,6 @@ from .constants import CheckoutIntentState
 from .models import (
     CheckoutIntent,
     EnterpriseStripeCustomer,
-    LearnerCreditTopUp,
     SelfServiceSubscriptionRenewal,
     SspProduct,
     StripeEventData,
@@ -434,35 +433,8 @@ class SelfServiceSubscriptionRenewalAdmin(DjangoQLSearchMixin, admin.ModelAdmin)
         return super().get_queryset(request).select_related('checkout_intent')
 
 
-class ViewOnlyHistoryAdmin(SimpleHistoryAdmin):
-    """
-    A SimpleHistoryAdmin that shows rows and their history, but can't add, change, delete or revert one.
-
-    simple-history's version page (``<pk>/history/<history_id>/``) builds an editable form, and saves a POST after
-    checking only the view permission. So every field is read-only, which also keeps that page from listing every
-    related row as a ``<select>`` option, and its POST is refused (docs/architecture-patterns.md §28).
-    """
-
-    def get_readonly_fields(self, request, obj=None):
-        return [field.name for field in self.model._meta.fields]
-
-    def has_add_permission(self, request):
-        return False
-
-    def has_change_permission(self, request, obj=None):
-        return False
-
-    def has_delete_permission(self, request, obj=None):
-        return False
-
-    def history_form_view(self, request, object_id, version_id, extra_context=None):
-        if request.method == 'POST':
-            raise PermissionDenied
-        return super().history_form_view(request, object_id, version_id, extra_context=extra_context)
-
-
 @admin.register(EnterpriseStripeCustomer)
-class EnterpriseStripeCustomerAdmin(DjangoQLSearchMixin, ViewOnlyHistoryAdmin):
+class EnterpriseStripeCustomerAdmin(DjangoQLSearchMixin, SimpleHistoryAdmin):
     """
     View-only: the Stripe customer billing management uses for each enterprise, which wins over the customer on its
     CheckoutIntent. Rows come from migration 0044's backfill and get_or_create_enterprise_stripe_customer().
@@ -472,33 +444,11 @@ class EnterpriseStripeCustomerAdmin(DjangoQLSearchMixin, ViewOnlyHistoryAdmin):
     search_fields = ('enterprise_customer_uuid', 'stripe_customer_id')
     ordering = ('-created',)
 
+    def has_add_permission(self, request):
+        return False
 
-@admin.register(LearnerCreditTopUp)
-class LearnerCreditTopUpAdmin(DjangoQLSearchMixin, ViewOnlyHistoryAdmin):
-    """
-    View-only: self-service Learner Credit top-ups and their history, for ops and support to look one up.
+    def has_change_permission(self, request, obj=None):
+        return False
 
-    Each row is the audit record of a payment. Its state changes only through transition_to(), and it must never be
-    deleted, so this admin can't add, change, delete or revert a top-up.
-    """
-    list_display = (
-        'uuid',
-        'enterprise_customer_uuid',
-        'subsidy_access_policy',
-        'state',
-        'amount_cents',
-        'charge_amount_cents',
-        'created',
-        'fulfilled_at',
-    )
-    list_filter = ('state',)
-    search_fields = (
-        'uuid',
-        'enterprise_customer_uuid',
-        'subsidy_access_policy__uuid',
-        'subsidy_uuid',
-        'stripe_customer_id',
-        'stripe_payment_intent_id',
-        'deposit_uuid',
-    )
-    ordering = ('-created',)
+    def has_delete_permission(self, request, obj=None):
+        return False

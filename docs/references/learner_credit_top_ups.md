@@ -258,7 +258,8 @@ will, after the deposit step (chunk 8). It follows the spec's Fulfillment rule 3
 | Fulfilled | `True` | `fulfilled`, `fulfilled_at` set. `spend_limit` raised by `amount_cents`, and `spend_limit_before` / `spend_limit_after` recorded. A budget with no spend limit is left without one, and both fields stay `NULL`. |
 | Not `deposited` (already fulfilled, not deposited yet, errored, ...) | `False` | Unchanged. The subsidy isn't read. |
 | The subsidy read fails: any HTTP error, a connection error or a timeout | `RetryableFulfillmentError` | Unchanged (`deposited`). |
-| The raised `spend_limit` fails the policy's validation, even with a fresh record | `NonRetryableFulfillmentError` | Unchanged (`deposited`). A retry would fail the same way. |
+| The raised `spend_limit` fails the policy's validation, and the subsidy's `total_deposits` is unchanged when read again | `NonRetryableFulfillmentError` | Unchanged (`deposited`). A retry would fail the same way. |
+| The raised `spend_limit` fails the policy's validation, but `total_deposits` has grown when read again (another top-up of the subsidy was deposited and fulfilled during this run), or that read fails | `RetryableFulfillmentError` | Unchanged (`deposited`). A later run reads the new deposits and may succeed. |
 
 Both errors subclass `LearnerCreditTopUpFulfillmentError` and chain the original exception as `__cause__`. Moving a
 failed top-up to `errored_fulfillment`, and recording whether the error is retryable, is the caller's job (chunk 10).
@@ -280,6 +281,15 @@ How it works:
    `transition_to(FULFILLED, spend_limit_before=..., spend_limit_after=...)`. `policy.save()` runs `full_clean()`, and
    so `clean_spend_limit()`, which reads the record cached in step 2. The policy's history record has the change reason
    `Learner credit top-up <uuid>`.
+4. **On a validation failure, read the subsidy again, after the block.** `clean_spend_limit()` compares the spend
+   limits of the subsidy's policies, read under the lock, with the `total_deposits` read in step 2. If another top-up
+   of the same subsidy was deposited and fulfilled in between, the spend limits include its raise but the deposits
+   read don't include its deposit, so validation fails although a run with a fresh read would pass. The block has
+   rolled back by then, so the second read holds no lock. If `total_deposits` grew, or the read fails, the error is
+   retryable; otherwise it isn't.
+
+Call the step outside any transaction. Inside one, its block is a savepoint, and InnoDB keeps the row locks after a
+savepoint rolls back until the outer transaction ends, so the read in step 4 would run under them.
 
 Testing notes:
 
@@ -289,3 +299,6 @@ Testing notes:
 - SQLite ignores `select_for_update()`, so the lock order is tested by recording the models `select_for_update()` is
   called on. Races are tested with copies loaded before either writes, and with a run that another run overtakes from
   inside the mocked subsidy read.
+- The step-4 race is simulated from inside the first mocked subsidy read: it raises the stored spend limit (the other
+  top-up's raise) and makes the next read return the other deposit too. The `TransactionTestCase` also checks that
+  the second read happens outside the block.
