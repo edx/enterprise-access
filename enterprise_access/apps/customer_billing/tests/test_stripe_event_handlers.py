@@ -1196,10 +1196,12 @@ class TestStripeEventHandler(TestCase):
         current_period_end,
         prior_status=StripeSubscriptionStatus.ACTIVE,
         cancellation_reason=None,
+        ended_at=None,
     ):
         """
         Dispatch a customer.subscription.deleted event for a subscription whose last known
         status was ``prior_status``, with the given current period end on its subscription item.
+        ``ended_at`` (default now) is when Stripe deleted it.
 
         Returns the (ended_at, current_period_end) Unix timestamps sent in the event.
         """
@@ -1209,7 +1211,7 @@ class TestStripeEventHandler(TestCase):
         )
         self.checkout_intent.enterprise_uuid = uuid.uuid4()
         self.checkout_intent.save(update_fields=['enterprise_uuid'])
-        ended_at = int(timezone.now().timestamp())
+        ended_at = int((ended_at or timezone.now()).timestamp())
         period_end = int(current_period_end.timestamp())
         subscription_data = {
             'id': subscription_id,
@@ -1224,6 +1226,13 @@ class TestStripeEventHandler(TestCase):
         StripeEventHandler.dispatch(mock_event)
         return ended_at, period_end
 
+    @ddt.data(
+        # Webhook processed right away.
+        (timedelta(0), timedelta(days=200)),
+        # Webhook retried or replayed after the period end: still early, compared with Stripe's ended_at.
+        (-timedelta(days=10), -timedelta(days=5)),
+    )
+    @ddt.unpack
     @override_waffle_switch(SSP_PAID_RENEWAL, True)
     @mock.patch(
         "enterprise_access.apps.customer_billing.stripe_event_handlers.send_paid_subscription_ended_email_task"
@@ -1236,7 +1245,8 @@ class TestStripeEventHandler(TestCase):
         autospec=True,
     )
     def test_subscription_deleted_before_period_end_keeps_current_plan_active(
-        self, mock_lms_client, mock_send_cancelation_email, mock_send_ended_email,
+        self, ended_at_offset, period_end_offset,
+        mock_lms_client, mock_send_cancelation_email, mock_send_ended_email,
     ):
         """
         When Stripe deletes a paid subscription before current_period_end (e.g. an immediate cancel
@@ -1244,7 +1254,7 @@ class TestStripeEventHandler(TestCase):
 
         The renewal is marked canceled and keeps the period end as its cancel date, so the admin
         portal shows the plan as pending cancellation until then. Both emails give the period
-        end as the date access ends, not the moment of deletion.
+        end as the date access ends, not the moment of deletion, even if the webhook arrives late.
         """
         mock_client = mock_lms_client.return_value
         subscription_id = 'sub_test_early_deletion'
@@ -1261,8 +1271,9 @@ class TestStripeEventHandler(TestCase):
         ) as logs:
             _, period_end = self._dispatch_subscription_deleted(
                 subscription_id,
-                current_period_end=timezone.now() + timedelta(days=200),
+                current_period_end=timezone.now() + period_end_offset,
                 cancellation_reason='cancellation_requested',
+                ended_at=timezone.now() + ended_at_offset,
             )
 
         mock_client.update_subscription_plan.assert_not_called()
@@ -1281,11 +1292,13 @@ class TestStripeEventHandler(TestCase):
 
     @ddt.data(
         # Switch off: previous behaviour, the cancel date is cleared.
-        (False, StripeSubscriptionStatus.ACTIVE, timedelta(days=200), False),
+        (False, StripeSubscriptionStatus.ACTIVE, timedelta(days=200), False, False),
         # Deleted at the end of the period, after a scheduled cancellation: keeps the deletion time.
-        (True, StripeSubscriptionStatus.ACTIVE, -timedelta(minutes=1), True),
+        (True, StripeSubscriptionStatus.ACTIVE, -timedelta(minutes=1), False, True),
         # Grace period lapsed: Stripe has already moved the period to the unpaid next term. Cleared.
-        (True, StripeSubscriptionStatus.PAST_DUE, timedelta(days=360), False),
+        (True, StripeSubscriptionStatus.PAST_DUE, timedelta(days=360), True, False),
+        # Renewal charge failed but the past_due update is not processed yet: same as a lapsed grace period.
+        (True, StripeSubscriptionStatus.ACTIVE, timedelta(days=360), True, False),
     )
     @ddt.unpack
     @mock.patch(
@@ -1296,7 +1309,7 @@ class TestStripeEventHandler(TestCase):
         autospec=True,
     )
     def test_subscription_deleted_without_early_paid_deletion(
-        self, switch_enabled, prior_status, period_end_offset, expect_cancel_date_kept,
+        self, switch_enabled, prior_status, period_end_offset, in_grace_period, expect_cancel_date_kept,
         mock_lms_client, mock_send_cancelation_email,
     ):
         """
@@ -1315,6 +1328,8 @@ class TestStripeEventHandler(TestCase):
             processed_at=timezone.now() - timedelta(days=100),
             subscription_cancel_at=timezone.now(),
         )
+        self.checkout_intent.in_renewal_grace_period = in_grace_period
+        self.checkout_intent.save(update_fields=['in_renewal_grace_period'])
 
         with override_waffle_switch(SSP_PAID_RENEWAL, switch_enabled):
             ended_at, _ = self._dispatch_subscription_deleted(
@@ -1337,19 +1352,24 @@ class TestStripeEventHandler(TestCase):
         else:
             mock_send_cancelation_email.delay.assert_not_called()
 
+    @ddt.data(True, False)
     @override_waffle_switch(SSP_PAID_RENEWAL, True)
     @mock.patch(
         "enterprise_access.apps.customer_billing.stripe_event_handlers.LicenseManagerApiClient",
         autospec=True,
     )
-    def test_subscription_deleted_during_grace_period_keeps_year_one_active(self, mock_lms_client):
+    def test_subscription_deleted_while_past_due(self, in_grace_period, mock_lms_client):
         """
-        When Stripe cancels a subscription whose renewal charge kept failing (past_due, in the grace week),
+        When Stripe cancels a past_due subscription whose renewal charge kept failing (in the grace week),
         year 1 is not deactivated: its expiration date is already the grace end, and license-manager expires
-        it then and moves enrollments to Audit. The grace flag is cleared and no cancel date is kept.
+        it then and moves enrollments to Audit.
+
+        Past due for any other reason (e.g. a failed mid-term invoice), the current plan was not paid for, so
+        it is deactivated now. Either way the grace flag is cleared and no cancel date is kept.
         """
         mock_client = mock_lms_client.return_value
-        subscription_id = 'sub_test_grace_deletion'
+        mock_client.update_subscription_plan.return_value = {}
+        subscription_id = 'sub_test_past_due_deletion'
         renewal = SelfServiceSubscriptionRenewalFactory.create(
             checkout_intent=self.checkout_intent,
             stripe_subscription_id=subscription_id,
@@ -1357,17 +1377,22 @@ class TestStripeEventHandler(TestCase):
             renewed_subscription_plan_uuid=uuid.uuid4(),
             processed_at=timezone.now() - timedelta(days=370),
         )
-        self.checkout_intent.in_renewal_grace_period = True
+        self.checkout_intent.in_renewal_grace_period = in_grace_period
         self.checkout_intent.save(update_fields=['in_renewal_grace_period'])
 
         self._dispatch_subscription_deleted(
             subscription_id,
-            # Stripe has already moved the period to the unpaid next term.
+            # In the grace week Stripe has already moved the period to the unpaid next term.
             current_period_end=timezone.now() + timedelta(days=360),
             prior_status=StripeSubscriptionStatus.PAST_DUE,
         )
 
-        mock_client.update_subscription_plan.assert_not_called()
+        if in_grace_period:
+            mock_client.update_subscription_plan.assert_not_called()
+        else:
+            mock_client.update_subscription_plan.assert_called_once_with(
+                str(renewal.renewed_subscription_plan_uuid), is_active=False,
+            )
         renewal.refresh_from_db()
         self.assertTrue(renewal.is_canceled)
         self.assertIsNone(renewal.subscription_cancel_at)

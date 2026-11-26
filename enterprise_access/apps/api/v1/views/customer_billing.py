@@ -663,13 +663,9 @@ def _get_first_renewal_for_subscription_plan(subscription_plan_uuid):
 
     The trial->paid renewal links the trial plan and the first paid plan, so both plans find the same record.
     """
-    # TODO: Once paid->paid renewals are generated, filter only on prior_subscription_plan_uuid
-    # and drop the renewed_subscription_plan_uuid condition. Today we need both sides of the OR
-    # so that both the trial plan and the first paid plan can locate the same renewal record.
-    # Once paid->paid renewals exist, a paid plan could match two renewals (the one where it is
-    # the renewed plan, and a future one where it is the prior plan), making it ambiguous which
-    # to use, and it would be odd to key off an already-completed renewal for information about
-    # a future cancellation.
+    # A renewed paid plan also matches its paid->paid renewal (as the prior plan); this picks the earlier one.
+    # Both carry the same cancellation state, and the earlier one's renewed plan is this plan, which the caller drops.
+    # TODO: prefer the renewal where this is the prior plan.
     return SelfServiceSubscriptionRenewal.objects.filter(
         Q(prior_subscription_plan_uuid=subscription_plan_uuid) |
         Q(renewed_subscription_plan_uuid=subscription_plan_uuid)
@@ -771,7 +767,7 @@ class StripeEventSummaryViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
             checkout_intent_uuid = first_related_renewal.checkout_intent.uuid
             is_canceled = first_related_renewal.is_canceled
             # A renewed plan must not point at itself, or the admin portal hides it as a future renewal.
-            if str(first_related_renewal.renewed_subscription_plan_uuid) != str(subscription_plan_uuid).lower():
+            if first_related_renewal.renewed_subscription_plan_uuid != uuid.UUID(str(subscription_plan_uuid)):
                 renewed_subscription_plan_uuid = first_related_renewal.renewed_subscription_plan_uuid
             canceled_date = first_related_renewal.subscription_cancel_at
 

@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from datetime import timezone as tz
 from urllib.parse import urlencode
 
+import ddt
 from django.urls import reverse
 from django.utils import timezone
 from edx_django_utils.cache import RequestCache
@@ -193,6 +194,7 @@ class StripeEventSummaryTests(APITest):
         assert response.status_code == 403
 
 
+@ddt.ddt
 class StripeSubscriptionPlanInfoTests(APITest):
     """
     Tests for get_stripe_subscription_plan_info endpoint.
@@ -462,11 +464,12 @@ class StripeSubscriptionPlanInfoTests(APITest):
         assert response.data['canceled_date'] == '2022-03-01T00:00:00Z'
         assert response.data['is_canceled'] is False
 
+    @ddt.data(False, True)
     @override_waffle_switch(SSP_PAID_RENEWAL, True)
-    def test_get_stripe_subscription_plan_info_first_paid_plan(self):
+    def test_get_stripe_subscription_plan_info_first_paid_plan(self, hex_uuid):
         """
         The first paid plan has no event summaries of its own (they carry the trial plan's uuid), so its
-        enterprise and cancellation come from the trial->paid renewal.
+        enterprise and cancellation come from the trial->paid renewal. The uuid may also be sent without hyphens.
         """
         self.set_jwt_cookie([{
             'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
@@ -475,7 +478,8 @@ class StripeSubscriptionPlanInfoTests(APITest):
         self.self_service_renewal.subscription_cancel_at = datetime(2022, 3, 1, 0, 0, 0, tzinfo=tz.utc)
         self.self_service_renewal.save(update_fields=['subscription_cancel_at'])
 
-        query_params = {'subscription_plan_uuid': self.renewed_subscription_plan_uuid}
+        plan_uuid = self.renewed_subscription_plan_uuid
+        query_params = {'subscription_plan_uuid': uuid.UUID(plan_uuid).hex if hex_uuid else plan_uuid}
         url = reverse('api:v1:stripe-event-summary-get-stripe-subscription-plan-info')
         url += f"?{urlencode(query_params)}"
         response = self.client.get(url)

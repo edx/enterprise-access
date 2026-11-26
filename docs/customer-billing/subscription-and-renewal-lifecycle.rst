@@ -218,8 +218,11 @@ Stripe sends ``customer.subscription.deleted``.
 
 On subscription deletion:
 
-* Future License Manager subscription plans are deactivated via ``cancel_all_future_plans()`` (see
-  **Payment Errors** above for what counts as future with the ``ssp_paid_renewal`` switch on or off)
+* License Manager subscription plans are deactivated via ``cancel_all_future_plans()``. With the
+  ``ssp_paid_renewal`` switch on, the current paid plan is kept (``include_processed=False``) only if the
+  subscription was paid up (``active``, not in a renewal grace period) or in a renewal grace period. Otherwise,
+  e.g. a ``past_due`` subscription after a failed mid-term invoice, every renewed plan is deactivated, as with the
+  switch off.
 * ``SelfServiceSubscriptionRenewal`` records are updated: ``is_canceled=True``, ``subscription_cancel_at=None``
   (switch off). With the ``ssp_paid_renewal`` switch on, a subscription that was ``active`` keeps a cancel date
   instead: Stripe's ``ended_at`` for a deletion at the period end, or the period end for an early deletion (below).
