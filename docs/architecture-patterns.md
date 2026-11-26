@@ -152,6 +152,11 @@ PII clearing cannot be undone, so behavior that extends it (e.g. `COURSE_RUN_END
 switch in `enterprise_access/toggles.py`, off by default, and the switch must also stop PII clearing for rows
 already recorded under that behavior. Use `override_waffle_switch` on the test class to turn it on.
 
+`override_waffle_switch` used as a context manager or method decorator also writes its value into the switch's
+request cache and never removes it, so it leaks into later tests in the same process. Add
+`self.addCleanup(RequestCache.clear_all_namespaces)` (`edx_django_utils.cache`) in any test or class that uses it
+that way. As a decorator on a `TestCase` class it only changes the database row, so it doesn't leak.
+
 ### 21. Catalog lookups on scheduled jobs: only a 404 is "no metadata"
 
 A transient catalog failure must not be treated as "no metadata", or the job acts on incomplete data and records a
@@ -192,7 +197,37 @@ copy's other fields. For records where that can cost money (`LearnerCreditTopUp.
 The test database is SQLite, where `select_for_update()` does nothing: test with two copies of one row loaded
 before either writes, which proves the stored-state check but not the lock.
 
-### 25. Portable features: a pure core behind ports, one composition root
+### 25. Subsidy API connections: reuse, retry at the transport level, 503 when unreachable
+
+Production reaches enterprise-subsidy through its public hostname, out through the NAT gateway and back in through
+Cloudflare, and a TLS handshake is occasionally dropped (`SSLError ... UNEXPECTED_EOF_WHILE_READING`). By default
+`requests` makes one attempt: "Max retries exceeded" in that message means none were made.
+
+- **Always get a client from `get_versioned_subsidy_client()`.** It reuses one client per thread, so calls share
+  open connections, and mounts an `HTTPAdapter` that retries with `SUBSIDY_CLIENT_RETRY`. It sets no timeout:
+  calls that need one pass it themselves, as the transactions export does. A client is replaced after 60s because
+  the NAT gateway silently drops connections idle for 350s, and a POST sent on one can't safely be retried. It's
+  per thread rather than per request because nothing clears `RequestCache` between Celery tasks.
+- **Retries happen in urllib3, not in `@backoff` around a client method**, because only urllib3 knows whether the
+  request was sent. A failure to connect (refused, DNS, connect timeout) is retried for any method. A dropped
+  handshake is retried only for a GET: urllib3 raises the same `SSLError` for it as for a response cut off after the
+  request was sent, so a POST (a redeem, say) is never resent after one. A connection that broke after a GET was
+  sent is retried once. `SubsidyClientRetry` stops two resends urllib3 would otherwise make: a request that timed
+  out waiting for a response (urllib3 counts that as a read error, so it would rerun a slow transactions export),
+  and a POST after any `SSLError` (urllib3 retries those for every method). HTTP responses are never retried:
+  `respect_retry_after_header=False` matters, because otherwise a 503 with `Retry-After` comes back as a
+  `RetryError` instead of an `HTTPError`, and skips every `except HTTPError` handler.
+- **Connection errors aren't `HTTPError`s.** `SSLError`, `ConnectionError` and `Timeout` get past the
+  `except HTTPError` handlers in `subsidy_record()`, `credit_available()` and `LmsApiClient.get_enterprise_user()`.
+  A view that calls the Subsidy API should turn them into `SubsidyAPIUnavailableException` (503), as
+  `credits_available` does. It should catch `HTTPError` there too: a 5xx (a Cloudflare 525, a 502) isn't retried,
+  and `aggregates_for_policy()` doesn't catch it. Inner handlers that mean to handle an `HTTPError` (a soft-deleted
+  subsidy's 404) run first. Such a handler also catches LMS and catalog failures, so don't name the Subsidy API in
+  its log message.
+- **To test retries end to end**, patch `urllib3.connectionpool.HTTPConnectionPool._make_request` with one outcome
+  per attempt (see `GetVersionedSubsidyClientTests`). Patching higher, e.g. `HTTPAdapter.send`, skips the retry
+  logic. The root `conftest.py` clears cached clients between tests.
+### 26. Portable features: a pure core behind ports, one composition root
 
 When a feature should be reusable outside this service (another backend, a notebook, an offline harness), keep its
 logic in a `core/` package that imports only the standard library, and reach Django, HTTP clients and model SDKs
@@ -217,6 +252,24 @@ before `transaction.atomic()` opens, so the lock is never held across a network 
 - **Testing:** under `TestCase`, `connection.in_atomic_block` is always `True`; use a `TransactionTestCase` and record
   `connection.in_atomic_block` from the mocked client to prove the call happened outside the block. Example:
   `customer_billing/top_up_fulfillment.py`, `docs/references/learner_credit_top_ups.md`.
+### 27. Stripe webhook handlers: let a broker error fail the webhook, and queue once-per-event tasks last
+
+The Stripe webhook view re-raises handler errors on purpose, and Stripe redelivers a failed webhook for up to three
+days, so a handler needs no outbox of its own to survive a broker outage: let `.delay()` raise.
+
+Every redelivery runs the handler again, so for a task that must run once per Stripe event:
+
+- skip queuing it when the event's `StripeEventData.handled_at` is set (`_queue_checkout_segment_event`);
+- queue it as the handler's **last** step, after any work that can raise (license-manager calls, a missing renewal
+  raised on purpose to make Stripe retry). A handler that keeps failing is never marked handled, so a task queued
+  before that work would be queued on every redelivery, for longer than e.g. Segment de-duplicates a `messageId`.
+  The trade-off: the handler's other `.delay()` calls (e.g. emails) come before it, so a broker error that hits only
+  the last `.delay()` fails a webhook whose emails were already queued, and the redelivery queues them again. A
+  sustained outage fails the earlier calls first, so only a brief broker failure can send those emails twice;
+- make the task tolerate the rare second run (a broker error after the earlier work), e.g. with a fixed Segment
+  `messageId`;
+- if the task sends to Segment, use `track_event_or_raise` so the Celery retry covers delivery. `track_event` only
+  queues the event for analytics-python's background thread and swallows errors.
 
 ### Key Takeaways for Implementation:
 - Check permissions early using `@permission_required` decorator
