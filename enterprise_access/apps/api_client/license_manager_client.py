@@ -282,11 +282,11 @@ class LicenseManagerApiClient(BaseOAuthClient):
     def create_subscription_plan_renewal(
         self,
         prior_subscription_plan_uuid: str,
-        renewed_subscription_plan_uuid: str,
         salesforce_opportunity_line_item_id: str | None,
         effective_date: str,
         renewed_expiration_date: str,
         number_of_licenses: int,
+        renewed_subscription_plan_uuid: str | None = None,
         renewed_plan_title: str | None = None,
         license_types_to_copy: str | None = None,
         disable_auto_apply_licenses: bool = False,
@@ -304,8 +304,10 @@ class LicenseManagerApiClient(BaseOAuthClient):
             effective_date (str): ISO format date when the renewal becomes effective
             renewed_expiration_date (str): ISO format date when the renewed plan expires
             number_of_licenses (int): Number of licenses for the renewal
+            renewed_subscription_plan_uuid (str, optional): UUID of an existing future subscription plan.
+                Omit to let License Manager create the renewed plan when the renewal is processed. That plan
+                copies the prior plan's product, enterprise catalog and active state.
             renewed_plan_title (str, optional): Title for the renewed plan
-            renewed_subscription_plan_uuid (str, optional): UUID of the future subscription plan
             salesforce_opportunity_line_item_id (str, optional): Salesforce opportunity line item ID
             license_types_to_copy (list, optional): List of license statuses to copy
             disable_auto_apply_licenses (bool, optional): Whether to disable auto-apply
