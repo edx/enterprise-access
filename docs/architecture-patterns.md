@@ -255,6 +255,24 @@ Every redelivery runs the handler again, so for a task that must run once per St
 - if the task sends to Segment, use `track_event_or_raise` so the Celery retry covers delivery. `track_event` only
   queues the event for analytics-python's background thread and swallows errors.
 
+### 28. Stripe webhook handlers: don't let an older event overwrite state a newer one set
+
+Stripe doesn't deliver events in order, and redelivers failed ones for days, so a handler can see an older event
+after a newer one for the same object. A handler that copies a field from the payload into our own rows (e.g. the
+renewals' `subscription_cancel_at`) must first check that no later event for the object has been received:
+compare `event.created` with `StripeEventSummary.stripe_event_created_at` for the same `stripe_subscription_id`
+(`_is_superseded_subscription_event()`). Use a strict `>`: the event's own summary is saved before the handler
+runs, so `>=` would make every event supersede itself. Count only event types that carry the state you copy
+(`customer.subscription.updated`/`deleted`, not `invoice.*`). Skip the handler's other side effects for such an
+event too, not just the copy: emails decided by comparing with `checkout_intent.previous_summary(event)` compare
+with the summary before the *older* event, so a late "cancellation scheduled" would still email the admin after a
+reinstatement. Reads that pick the newest summary by `stripe_event_created_at` are already order-safe.
+`event.created` has one-second resolution, so two events in the same second aren't ordered.
+
+Scope every read and write to the event's Stripe subscription, not the whole checkout intent: a checkout intent can
+have several subscriptions (e.g. a new one after an earlier one ended). Filter renewals with
+`stripe_subscription_id=...`, and pass `stripe_subscription_id=` to `previous_summary()`.
+
 ### Key Takeaways for Implementation:
 - Check permissions early using `@permission_required` decorator
 - Use separate serializers for request/response

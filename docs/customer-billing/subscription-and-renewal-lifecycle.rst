@@ -178,7 +178,7 @@ When a customer schedules cancellation (e.g., via Stripe billing portal), Stripe
 
 On cancellation scheduling:
 
-* ``SelfServiceSubscriptionRenewal`` records are updated with ``subscription_cancel_at`` timestamp
+* The ``SelfServiceSubscriptionRenewal`` records of that Stripe subscription are updated with ``subscription_cancel_at`` timestamp
 * **Note:** License Manager subscription plans are NOT modified at this point - the subscription
   remains active until the actual cancellation date
 
@@ -194,9 +194,22 @@ When a customer reverses a scheduled cancellation (removes the ``cancel_at`` dat
 
 On reinstatement:
 
-* ``SelfServiceSubscriptionRenewal`` records are updated: ``is_canceled=False``, ``subscription_cancel_at=None``
+* The ``SelfServiceSubscriptionRenewal`` records of that Stripe subscription are updated: ``is_canceled=False``,
+  ``subscription_cancel_at=None``
 * **Note:** Because License Manager plans were never modified during cancellation scheduling,
   no License Manager changes are needed on reinstatement
+* The admin portal reads the cleared ``subscription_cancel_at`` as ``canceled_date`` (Subscription card status back to
+  Active), and the Billing tab reads ``cancel_at_period_end=False`` from the newest subscription summary
+* Paid Teams and Essentials subscriptions renew as usual at the period end (see
+  ``docs/references/ssp_annual_renewals.md``); for Essentials, onto the same academy, because the renewal product
+  comes from the subscription's Stripe Price
+* An older ``customer.subscription.updated`` delivered after a newer updated or deleted event for the same
+  subscription is ignored (``_is_superseded_subscription_event()``): it doesn't change the renewals' cancellation
+  state, send a cancellation or reinstatement email, or handle a status change. So a late "cancellation scheduled"
+  event can't undo a reinstatement or tell the admin the subscription is being canceled
+* A checkout intent can have more than one Stripe subscription (e.g. a new one after an earlier one ended). The
+  created, updated and deleted handlers only change the renewals of the event's own subscription, and an update is
+  compared with that subscription's previous event only, so an ended subscription's state can't leak into a new one
 
 *Braze Emails:*
 
@@ -211,7 +224,8 @@ Stripe sends ``customer.subscription.deleted``.
 On subscription deletion:
 
 * All future License Manager subscription plans are deactivated via ``cancel_all_future_plans()``
-* ``SelfServiceSubscriptionRenewal`` records are updated: ``is_canceled=True``, ``subscription_cancel_at=None``
+* The ``SelfServiceSubscriptionRenewal`` records of that Stripe subscription are updated: ``is_canceled=True``,
+  ``subscription_cancel_at=None``
 * Cancellation reason/feedback is tracked to Segment analytics
 
 *Braze Emails:*

@@ -549,6 +549,69 @@ class TestAnnualRenewal(TestCase):
             SelfServiceSubscriptionRenewal.objects.get(stripe_invoice_id=RENEWAL_INVOICE_ID).processed_at,
         )
 
+    def _subscription_updated_event(self, created, cancel_at=None):
+        """A customer.subscription.updated event for the paid (active) subscription, created at ``created``."""
+        subscription_data = {
+            'id': STRIPE_SUBSCRIPTION_ID,
+            'object': 'subscription',
+            'customer': STRIPE_CUSTOMER_ID,
+            'status': 'active',
+            'cancel_at': int(cancel_at.timestamp()) if cancel_at else None,
+            'cancel_at_period_end': bool(cancel_at),
+            'metadata': {
+                'checkout_intent_id': str(self.checkout_intent.id),
+                'checkout_intent_uuid': str(self.checkout_intent.uuid),
+            },
+        }
+        event = stripe.Event()
+        event.id = f'evt_test_customer_subscription_updated_{randint(1, 10 ** 9)}'
+        event.created = int(created.timestamp())
+        event.type = 'customer.subscription.updated'
+        event.data = stripe.StripeObject()
+        event.data.object = AttrDict.wrap(subscription_data)
+        return event
+
+    @ddt.data(
+        (TEAMS_SLUG, TEAMS_PRICE_ID, 'Teams'),
+        ('ai-academy-yearly', 'price_ai_academy', 'Essentials AI Academy'),
+        ('data-academy-yearly', 'price_data_academy', 'Essentials Data Science Academy'),
+    )
+    @ddt.unpack
+    def test_reinstated_subscription_renews_onto_the_same_product(self, product_slug, price_id, product_name):
+        """
+        ENT-11535: an admin schedules the paid subscription's cancellation, then reinstates it before year 1 ends.
+        The reinstatement clears the cancellation without touching License Manager, and the next renewal invoice
+        renews onto year 2 of the same product (for Essentials, the same academy).
+        """
+        self._set_up_paid_subscriber(product_slug)
+        reinstate_patch = self._patch(f'{HANDLERS_MODULE}.send_paid_reinstatement_email_task')
+        self._patch(f'{HANDLERS_MODULE}.send_paid_cancellation_email_task')
+
+        StripeEventHandler.dispatch(self._subscription_updated_event(
+            created=self.period_start - timedelta(days=30), cancel_at=self.period_start,
+        ))
+        renewal = self.checkout_intent.renewals.get()
+        self.assertEqual(renewal.subscription_cancel_at, self.period_start)
+
+        StripeEventHandler.dispatch(self._subscription_updated_event(created=self.period_start - timedelta(days=10)))
+
+        renewal.refresh_from_db()
+        self.assertFalse(renewal.is_canceled)
+        self.assertIsNone(renewal.subscription_cancel_at)
+        reinstate_patch.delay.assert_called_once_with(checkout_intent_id=self.checkout_intent.id)
+        self.mock_lm_client.update_subscription_plan.assert_not_called()
+
+        StripeEventHandler.dispatch(self._renewal_invoice_event(price_ids=(price_id,)))
+
+        year_two_end = self.period_start + relativedelta(years=1)
+        self.assertEqual(
+            self.mock_lm_client.create_subscription_plan_renewal.call_args.kwargs['renewed_plan_title'],
+            f"Renewing Enterprise 25 SUBS {year_two_end.strftime('%B %Y')} - {product_name} PAID",
+        )
+        year_two = SelfServiceSubscriptionRenewal.objects.get(stripe_invoice_id=RENEWAL_INVOICE_ID)
+        self.assertEqual(year_two.renewed_subscription_plan_uuid, self.year_two_plan_uuid)
+        self.assertIsNotNone(year_two.processed_at)
+
     def test_invoice_paid_halts_when_license_manager_returns_no_renewed_plan(self):
         """A processed renewal without a renewed plan is a halt: nothing is activated and no emails are sent."""
         self._set_up_paid_subscriber()
