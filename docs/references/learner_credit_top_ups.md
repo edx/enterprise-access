@@ -187,6 +187,15 @@ to move if, for example, the allowed range were narrowed after it was paid. Not 
   columns that aren't `blank=True`. As a result, field choices (`currency`, `payment_method_type`) aren't validated.
 - Queryset `.update()` and `.delete()` bypass all of this. Don't use them on this table.
 
+### Django admin
+
+`LearnerCreditTopUpAdmin` (`customer_billing/admin.py`) is view-only, for ops and support to find a top-up and read
+its state, `last_error` and history. Search by the top-up `uuid` (the transaction ID the admin sees), the enterprise,
+budget or subsidy UUID, the Stripe customer or PaymentIntent ID, or the `deposit_uuid`; filter by state.
+
+It can't add, change, delete or revert a top-up (`ViewOnlyHistoryAdmin`, `docs/architecture-patterns.md` §28).
+Recovering a failed top-up isn't done here.
+
 ## States
 
 `LearnerCreditTopUpState` and `ALLOWED_LEARNER_CREDIT_TOP_UP_STATE_TRANSITIONS` are in `customer_billing/constants.py`.
