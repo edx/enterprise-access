@@ -277,6 +277,29 @@ before `transaction.atomic()` opens, so the lock is never held across a network 
   `connection.in_atomic_block` from the mocked client to prove the call happened outside the block. Example:
   `customer_billing/top_up_fulfillment.py`, `docs/references/learner_credit_top_ups.md`.
 
+### 29. Retried tasks that own a record's state: catch permanent errors, record exhaustion in `on_failure`
+
+`LoggedTaskWithRetry` retries every `HTTPError` and has no failure hook, so a task whose record must end in an error
+state (e.g. `fulfill_learner_credit_top_up_task`) needs both halves itself:
+
+- **Permanent errors:** catch them in the task body (classify by status, e.g. 400/403/404/409/422, in the step that
+  makes the call, and raise a non-retryable exception class), write the error state, and return. Don't let them reach
+  `autoretry_for`.
+- **Retries run out:** subclass the base task and override `on_failure`, which Celery calls only when the task fails
+  for good, with the original exception. Mark the record retryable when `isinstance(exc, self.autoretry_for)`,
+  otherwise not (a bug fails the same way again). Guard the write: if it fails, log it and leave the record where a
+  recovery job finds it. Call `super().on_failure()` so `LoggedTask` still logs the failure.
+- **Extend, don't replace, `autoretry_for`:** `(*LoggedTaskWithRetry.autoretry_for, YourRetryableError,
+  SoftTimeLimitExceeded)`. A hung call without a timeout ends at the soft time limit, which isn't retried otherwise.
+- **The error write may lose a race:** a duplicate task may have finished the record. Catch the state machine's
+  invalid-transition error there and leave the record alone.
+- **Testing:** with `CELERY_TASK_ALWAYS_EAGER`, `task.apply()` runs every retry synchronously, without countdowns, and
+  then `on_failure`, so a call that keeps failing is made `1 + TASK_MAX_RETRIES` times. To check the backoff, patch
+  `celery.app.autoretry.get_exponential_backoff_interval` and assert its `factor`, `maximum` and `full_jitter`.
+  Celery's autoretry writes `countdown` into the shared `retry_kwargs` dict, so don't assert that dict is unchanged.
+
+Example: `customer_billing/tasks.py` (`LearnerCreditTopUpFulfillmentTask`), `docs/references/learner_credit_top_ups.md`.
+
 ### Key Takeaways for Implementation:
 - Check permissions early using `@permission_required` decorator
 - Use separate serializers for request/response

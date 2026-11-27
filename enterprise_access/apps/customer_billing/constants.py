@@ -105,6 +105,15 @@ LEARNER_CREDIT_TOP_UP_QUOTE_MINUTES = 30
 LEARNER_CREDIT_TOP_UP_MIN_AMOUNT_CENTS = 50_000
 LEARNER_CREDIT_TOP_UP_MAX_AMOUNT_CENTS = 2_000_000
 
+# The enterprise-subsidy SalesContractReferenceProvider slug of a top-up deposit; its reference ID is the PaymentIntent.
+LEARNER_CREDIT_TOP_UP_DEPOSIT_PROVIDER = 'stripe_payment_intent'
+
+# rerun_learner_credit_top_ups: how many times it resumes a retryable errored_fulfillment top-up on its own, and
+# how long a paid or deposited top-up must go unchanged before its fulfillment task is queued again. The wait is
+# longer than the task's own retries (about 25 minutes), so a task that is still retrying isn't doubled.
+LEARNER_CREDIT_TOP_UP_MAX_AUTOMATIC_RERUNS = 3
+LEARNER_CREDIT_TOP_UP_STALLED_MINUTES = 45
+
 
 class CheckoutIntentState(StrEnum):
     """
@@ -191,6 +200,8 @@ class LearnerCreditTopUpState(StrEnum):
     FULFILLED = 'fulfilled'
     EXPIRED = 'expired'
     ERRORED_FULFILLMENT = 'errored_fulfillment'
+    # Unused in Phase 1: there are no refunds in v1, so a top-up that can't be credited stays in errored_fulfillment
+    # until ops fix the cause and re-run it (Eng Lead, 2026-11-02). Kept for a future refund flow.
     REFUNDED = 'refunded'
 
 

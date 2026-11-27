@@ -8,14 +8,17 @@ from unittest import mock
 from uuid import uuid4
 
 import ddt
+import requests
 import stripe
 from braze.exceptions import BrazeClientError
+from celery.exceptions import SoftTimeLimitExceeded
 from django.conf import settings
 from django.test import TestCase, override_settings
 from django.utils import timezone
+from edx_django_utils.cache import RequestCache
 
 from enterprise_access.apps.core.tests.factories import UserFactory
-from enterprise_access.apps.customer_billing.constants import BRAZE_TIMESTAMP_FORMAT
+from enterprise_access.apps.customer_billing.constants import BRAZE_TIMESTAMP_FORMAT, LearnerCreditTopUpState
 from enterprise_access.apps.customer_billing.models import (
     CheckoutIntent,
     SspProduct,
@@ -25,7 +28,9 @@ from enterprise_access.apps.customer_billing.models import (
 from enterprise_access.apps.customer_billing.tasks import (
     _build_common_trigger_properties,
     _format_currency_for_braze,
+    _record_top_up_fulfillment_error,
     _send_cancelation_campaign,
+    fulfill_learner_credit_top_up_task,
     get_enterprise_admins,
     prepare_admin_braze_recipients,
     send_billing_error_email_task,
@@ -42,7 +47,13 @@ from enterprise_access.apps.customer_billing.tasks import (
     send_trial_ending_reminder_email_task,
     send_trial_reinstatement_email_task
 )
+from enterprise_access.apps.customer_billing.tests.test_top_up_fulfillment import SpendLimitStepTestMixin, http_error
 from enterprise_access.apps.customer_billing.tests.utils import AttrDict
+from enterprise_access.apps.customer_billing.top_up_fulfillment import (
+    RetryableFulfillmentError,
+    fulfill_deposit_step,
+    fulfill_spend_limit_step
+)
 from enterprise_access.utils import format_datetime_obj
 
 
@@ -2362,3 +2373,257 @@ class TestSendTrialEndAndSubscriptionStartedEmailTask(TestCase):
         assert 'billing_amount_formatted' not in props
         assert 'total_billing_amount' not in props
         assert 'total_billing_amount_formatted' not in props
+
+
+@ddt.ddt
+class TestFulfillLearnerCreditTopUpTask(SpendLimitStepTestMixin, TestCase):
+    """
+    Tests for ``fulfill_learner_credit_top_up_task``. Celery runs eagerly in tests, retries included (without their
+    countdowns), so a call that keeps failing is made once per attempt.
+    """
+    ATTEMPTS = 1 + settings.TASK_MAX_RETRIES
+    TASKS_MODULE = 'enterprise_access.apps.customer_billing.tasks'
+
+    def run_task(self, top_up_uuid):
+        """ Run the task eagerly, retries included, and return its result. """
+        return fulfill_learner_credit_top_up_task.apply(kwargs={'top_up_uuid': str(top_up_uuid)})
+
+    def assert_fulfilled(self, top_up):
+        """ Assert that ``top_up`` is fulfilled and its budget's spend limit was raised once. """
+        top_up.refresh_from_db()
+        self.assertEqual(top_up.state, LearnerCreditTopUpState.FULFILLED)
+        self.assertEqual(self.stored_spend_limit(), self.SPEND_LIMIT + self.AMOUNT)
+
+    def assert_errored(self, top_up, retryable):
+        """ Assert that ``top_up`` is errored_fulfillment with its error recorded, and the budget unchanged. """
+        top_up.refresh_from_db()
+        self.assertEqual(top_up.state, LearnerCreditTopUpState.ERRORED_FULFILLMENT)
+        self.assertIs(top_up.last_error_retryable, retryable)
+        self.assertTrue(top_up.last_error)
+        self.assertEqual(self.stored_spend_limit(), self.SPEND_LIMIT)
+
+    def test_fulfills_a_paid_top_up(self):
+        """
+        From paid, the deposit step runs and then the spend-limit step, and the top-up is fulfilled.
+        """
+        top_up = self.create_top_up(state=LearnerCreditTopUpState.PAID)
+
+        self.assertTrue(self.run_task(top_up.uuid).successful())
+
+        calls = [name for name, _, _ in self.mock_subsidy_client.mock_calls]
+        self.assertLess(calls.index('create_subsidy_deposit'), calls.index('retrieve_subsidy'))
+        self.assertEqual(list(self.deposits), [f'lc-top-up-{top_up.uuid}'])
+        self.assert_fulfilled(top_up)
+        self.assertEqual(str(top_up.deposit_uuid), self.deposits[f'lc-top-up-{top_up.uuid}']['uuid'])
+
+    def test_resumes_a_deposited_top_up(self):
+        """
+        From deposited, no deposit request is sent, and the spend-limit step fulfills the top-up.
+        """
+        top_up = self.create_top_up(state=LearnerCreditTopUpState.DEPOSITED)
+
+        self.run_task(top_up.uuid)
+
+        self.mock_subsidy_client.create_subsidy_deposit.assert_not_called()
+        self.assert_fulfilled(top_up)
+
+    @override_settings(FEATURE_TOP_UP_LEARNER_CREDIT=False)
+    def test_ignores_the_feature_flag(self):
+        """
+        Money already taken is credited even when FEATURE_TOP_UP_LEARNER_CREDIT is off.
+        """
+        top_up = self.create_top_up(state=LearnerCreditTopUpState.PAID)
+
+        self.run_task(top_up.uuid)
+
+        self.assert_fulfilled(top_up)
+
+    def test_clears_the_request_cache_first(self):
+        """
+        A value cached by an earlier task in the same worker is gone before any step runs.
+        """
+        top_up = self.create_top_up(state=LearnerCreditTopUpState.PAID)
+        RequestCache('earlier_task').set('subsidy_record', 'cached before this top-up was deposited')
+        cached_when_steps_ran = []
+
+        def record_cache(step):
+            def run_step(top_up):
+                cached_when_steps_ran.append(
+                    RequestCache('earlier_task').get_cached_response('subsidy_record').is_found
+                )
+                return step(top_up)
+            return run_step
+
+        with mock.patch(f'{self.TASKS_MODULE}.fulfill_deposit_step', side_effect=record_cache(fulfill_deposit_step)), \
+                mock.patch(f'{self.TASKS_MODULE}.fulfill_spend_limit_step',
+                           side_effect=record_cache(fulfill_spend_limit_step)):
+            self.run_task(top_up.uuid)
+
+        self.assertEqual(cached_when_steps_ran, [False, False])
+        self.assert_fulfilled(top_up)
+
+    @ddt.data(
+        LearnerCreditTopUpState.CREATED,
+        LearnerCreditTopUpState.REQUIRES_ACTION,
+        LearnerCreditTopUpState.EXPIRED,
+        LearnerCreditTopUpState.FULFILLED,
+        LearnerCreditTopUpState.ERRORED_FULFILLMENT,
+    )
+    def test_does_nothing_in_other_states(self, state):
+        """
+        Only paid and deposited top-ups are fulfilled; any other state is left as it is, with no call to
+        enterprise-subsidy.
+        """
+        top_up = self.create_top_up(state=state)
+        history_count = top_up.history.count()
+
+        self.assertTrue(self.run_task(top_up.uuid).successful())
+
+        self.assertEqual(self.mock_subsidy_client.mock_calls, [])
+        top_up.refresh_from_db()
+        self.assertEqual(top_up.state, state)
+        self.assertEqual(top_up.history.count(), history_count)
+
+    def test_unknown_top_up(self):
+        """
+        A UUID with no top-up is logged and does nothing.
+        """
+        self.assertTrue(self.run_task(uuid4()).successful())
+        self.assertEqual(self.mock_subsidy_client.mock_calls, [])
+
+    @ddt.data(400, 403, 404, 409, 422)
+    def test_permanent_deposit_error_is_not_retried(self, status):
+        """
+        A deposit answered with 400, 403, 404, 409 or 422 isn't retried: the top-up moves to errored_fulfillment,
+        not retryable, with the error recorded.
+        """
+        top_up = self.create_top_up(state=LearnerCreditTopUpState.PAID)
+        self.mock_subsidy_client.create_subsidy_deposit.side_effect = http_error(status)
+
+        self.assertTrue(self.run_task(top_up.uuid).successful())
+
+        self.assertEqual(self.mock_subsidy_client.create_subsidy_deposit.call_count, 1)
+        self.assert_errored(top_up, retryable=False)
+        self.assertIn(f'failed: {status}', top_up.last_error)
+
+    def test_spend_limit_validation_failure_is_not_retried(self):
+        """
+        A raise that fails validation with a fresh subsidy record isn't retried: errored_fulfillment, not retryable.
+        """
+        top_up = self.create_top_up(state=LearnerCreditTopUpState.DEPOSITED)
+        self.set_total_deposits(self.SPEND_LIMIT + self.AMOUNT - 1)
+
+        self.run_task(top_up.uuid)
+
+        # One read before the lock and one after the failure, in a single attempt.
+        self.assertEqual(self.mock_subsidy_client.retrieve_subsidy.call_count, 2)
+        self.assert_errored(top_up, retryable=False)
+
+    @ddt.data(
+        http_error(429),
+        http_error(503),
+        requests.exceptions.ConnectionError('connection reset'),
+        SoftTimeLimitExceeded(),
+    )
+    def test_retryable_error_is_retried(self, error):
+        """
+        A deposit that may succeed later is retried with the same idempotency key, and the top-up is fulfilled
+        with one deposit.
+        """
+        top_up = self.create_top_up(state=LearnerCreditTopUpState.PAID)
+        errors = [error]
+
+        def fail_once(**kwargs):
+            if errors:
+                raise errors.pop()
+            return self._create_deposit(**kwargs)
+        self.mock_subsidy_client.create_subsidy_deposit.side_effect = fail_once
+
+        self.run_task(top_up.uuid)
+
+        deposit_calls = self.mock_subsidy_client.create_subsidy_deposit.call_args_list
+        self.assertEqual([call.kwargs['idempotency_key'] for call in deposit_calls], [f'lc-top-up-{top_up.uuid}'] * 2)
+        self.assertEqual(len(self.deposits), 1)
+        self.assert_fulfilled(top_up)
+
+    def test_retries_use_the_shared_backoff(self):
+        """
+        A 429 is retried up to 5 times, with backoff from 60 seconds, doubling, capped at 10 minutes, with full
+        jitter: LoggedTaskWithRetry's settings.
+        """
+        top_up = self.create_top_up(state=LearnerCreditTopUpState.PAID)
+        self.mock_subsidy_client.create_subsidy_deposit.side_effect = http_error(429)
+
+        with mock.patch('celery.app.autoretry.get_exponential_backoff_interval', return_value=0) as backoff:
+            self.run_task(top_up.uuid)
+
+        self.assertEqual(self.mock_subsidy_client.create_subsidy_deposit.call_count, 1 + 5)
+        self.assertEqual([call.kwargs['retries'] for call in backoff.call_args_list], list(range(self.ATTEMPTS)))
+        settings_used = {(call.kwargs['factor'], call.kwargs['maximum'], call.kwargs['full_jitter'])
+                         for call in backoff.call_args_list}
+        self.assertEqual(settings_used, {(60, 600, True)})
+
+    @ddt.data(
+        (LearnerCreditTopUpState.PAID, 'create_subsidy_deposit', http_error(503)),
+        (LearnerCreditTopUpState.PAID, 'create_subsidy_deposit', http_error(429)),
+        (LearnerCreditTopUpState.DEPOSITED, 'retrieve_subsidy', http_error(503)),
+        (LearnerCreditTopUpState.DEPOSITED, 'retrieve_subsidy', requests.exceptions.Timeout('read timed out')),
+    )
+    @ddt.unpack
+    def test_retries_run_out(self, state, failing_call, error):
+        """
+        When every attempt fails with an error that may pass later, the top-up moves to errored_fulfillment, marked
+        retryable, so that rerun_learner_credit_top_ups resumes it.
+        """
+        top_up = self.create_top_up(state=state)
+        getattr(self.mock_subsidy_client, failing_call).side_effect = error
+
+        self.assertTrue(self.run_task(top_up.uuid).failed())
+
+        self.assertEqual(getattr(self.mock_subsidy_client, failing_call).call_count, self.ATTEMPTS)
+        self.assert_errored(top_up, retryable=True)
+        self.assertIn(RetryableFulfillmentError.__name__, top_up.last_error)
+
+    def test_unexpected_error_is_not_retryable(self):
+        """
+        An error that isn't retried, such as a bug, fails the task at once and moves the top-up to
+        errored_fulfillment, not retryable: it would fail the same way again.
+        """
+        top_up = self.create_top_up(state=LearnerCreditTopUpState.PAID)
+        self.mock_subsidy_client.create_subsidy_deposit.side_effect = None
+        self.mock_subsidy_client.create_subsidy_deposit.return_value = {}
+
+        self.assertTrue(self.run_task(top_up.uuid).failed())
+
+        self.assertEqual(self.mock_subsidy_client.create_subsidy_deposit.call_count, 1)
+        self.assert_errored(top_up, retryable=False)
+        self.assertIn('KeyError', top_up.last_error)
+
+    def test_failure_to_record_the_error_leaves_the_top_up_for_the_rerun_job(self):
+        """
+        If moving the top-up to errored_fulfillment fails too, the failure is logged and the top-up stays where it
+        was, for the re-run job to queue again.
+        """
+        top_up = self.create_top_up(state=LearnerCreditTopUpState.PAID)
+        self.mock_subsidy_client.create_subsidy_deposit.side_effect = http_error(503)
+
+        with mock.patch(f'{self.TASKS_MODULE}._record_top_up_fulfillment_error', side_effect=Exception('db down')), \
+                self.assertLogs(self.TASKS_MODULE, level='ERROR') as logs:
+            self.assertTrue(self.run_task(top_up.uuid).failed())
+
+        self.assertIn(f'Could not record the fulfillment failure of LearnerCreditTopUp {top_up.uuid}', logs.output[0])
+        top_up.refresh_from_db()
+        self.assertEqual(top_up.state, LearnerCreditTopUpState.PAID)
+
+    def test_error_not_recorded_after_another_run_fulfilled_it(self):
+        """
+        A failing duplicate task leaves a top-up that another run fulfilled as it is.
+        """
+        top_up = self.create_top_up(state=LearnerCreditTopUpState.FULFILLED)
+
+        _record_top_up_fulfillment_error(top_up.uuid, RetryableFulfillmentError('late duplicate'), retryable=True)
+
+        top_up.refresh_from_db()
+        self.assertEqual(top_up.state, LearnerCreditTopUpState.FULFILLED)
+        self.assertIsNone(top_up.last_error)
+        self.assertIsNone(top_up.last_error_retryable)

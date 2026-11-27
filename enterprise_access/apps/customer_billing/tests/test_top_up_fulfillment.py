@@ -2,7 +2,9 @@
 Tests for the learner credit top-up fulfillment steps.
 """
 from datetime import timedelta
+from decimal import Decimal
 from unittest import mock
+from uuid import UUID, uuid4
 
 import ddt
 import requests
@@ -13,12 +15,16 @@ from django.test import TestCase, TransactionTestCase
 from django.utils import timezone
 from freezegun import freeze_time
 
-from enterprise_access.apps.customer_billing.constants import LearnerCreditTopUpState
+from enterprise_access.apps.customer_billing.constants import (
+    LEARNER_CREDIT_TOP_UP_DEPOSIT_PROVIDER,
+    LearnerCreditTopUpState
+)
 from enterprise_access.apps.customer_billing.models import LearnerCreditTopUp
 from enterprise_access.apps.customer_billing.tests.factories import LearnerCreditTopUpFactory
 from enterprise_access.apps.customer_billing.top_up_fulfillment import (
     NonRetryableFulfillmentError,
     RetryableFulfillmentError,
+    fulfill_deposit_step,
     fulfill_spend_limit_step
 )
 from enterprise_access.apps.subsidy_access_policy.models import REQUEST_CACHE_NAMESPACE, SubsidyAccessPolicy
@@ -30,10 +36,21 @@ from enterprise_access.cache_utils import request_cache
 SUBSIDY_CLIENT_PATH = 'enterprise_access.apps.subsidy_access_policy.models.get_versioned_subsidy_client'
 
 
+def http_error(status_code):
+    """ An HTTPError like the subsidy client raises for an enterprise-subsidy answer with ``status_code``. """
+    response = requests.Response()
+    response.status_code = status_code
+    response._content = b'{"detail": "enterprise-subsidy said no"}'  # pylint: disable=protected-access
+    return requests.exceptions.HTTPError(f'{status_code} Error', response=response)
+
+
 class SpendLimitStepTestMixin:
     """
     A budget with a 500,000-cent spend limit, a mocked enterprise-subsidy client whose subsidy already holds the
     top-up's 100,000-cent deposit, and an empty request cache.
+
+    The mocked deposit call behaves like enterprise-subsidy's: a repeated idempotency key gets back the deposit it
+    already made. ``self.deposits`` holds the deposits made, by key.
     """
     SPEND_LIMIT = 500_000
     AMOUNT = 100_000
@@ -49,6 +66,17 @@ class SpendLimitStepTestMixin:
 
         self.policy = PerLearnerSpendCapLearnerCreditAccessPolicyFactory(spend_limit=self.SPEND_LIMIT)
         self.set_total_deposits(self.SPEND_LIMIT + self.AMOUNT)
+
+        self.deposits = {}
+        self.mock_subsidy_client.create_subsidy_deposit.side_effect = self._create_deposit
+
+    def _create_deposit(self, **kwargs):
+        """ Make a deposit, or return the one already made with the same idempotency key. """
+        return self.deposits.setdefault(kwargs['idempotency_key'], {
+            'uuid': str(uuid4()),
+            'transaction': str(uuid4()),
+            'desired_deposit_quantity': kwargs['desired_deposit_quantity'],
+        })
 
     @staticmethod
     def _clear_request_cache():
@@ -73,6 +101,7 @@ class SpendLimitStepTestMixin:
         return LearnerCreditTopUpFactory(
             subsidy_access_policy=self.policy,
             amount_cents=kwargs.pop('amount_cents', self.AMOUNT),
+            stripe_payment_intent_id=kwargs.pop('stripe_payment_intent_id', f'pi_{uuid4().hex}'),
             state=state,
             **{**timestamps, **kwargs},
         )
@@ -391,6 +420,115 @@ class TestFulfillSpendLimitStep(SpendLimitStepTestMixin, TestCase):
         self.assertGreater(len(locked_models), 1)
         self.assertTrue(issubclass(locked_models[0], SubsidyAccessPolicy))
         self.assertTrue(all(model is LearnerCreditTopUp for model in locked_models[1:]))
+
+
+@ddt.ddt
+class TestFulfillDepositStep(SpendLimitStepTestMixin, TestCase):
+    """
+    Tests for ``fulfill_deposit_step()``.
+    """
+
+    @freeze_time('2026-11-27 12:00:00')
+    def test_deposits_and_moves_to_deposited(self):
+        """
+        The full amount is deposited once, keyed by the top-up, with the PaymentIntent as its reference, and the
+        returned deposit is recorded on the move to deposited.
+        """
+        top_up = self.create_top_up(
+            state=LearnerCreditTopUpState.PAID, discount_rate=Decimal('0.1000'), discount_cents=10_000,
+        )
+
+        self.assertTrue(fulfill_deposit_step(top_up))
+
+        self.mock_subsidy_client.create_subsidy_deposit.assert_called_once_with(
+            subsidy_uuid=self.policy.subsidy_uuid,
+            desired_deposit_quantity=self.AMOUNT,
+            sales_contract_reference_id=top_up.stripe_payment_intent_id,
+            sales_contract_reference_provider=LEARNER_CREDIT_TOP_UP_DEPOSIT_PROVIDER,
+            metadata={
+                'source': 'learner_credit_top_up',
+                'learner_credit_top_up_uuid': str(top_up.uuid),
+                'top_up_policy_uuid': str(self.policy.uuid),
+                'stripe_payment_intent_id': top_up.stripe_payment_intent_id,
+                'discount_rate': '0.1000',
+                'charge_amount_cents': self.AMOUNT - 10_000,
+            },
+            idempotency_key=f'lc-top-up-{top_up.uuid}',
+        )
+        deposit = self.deposits[f'lc-top-up-{top_up.uuid}']
+        top_up.refresh_from_db()
+        self.assertEqual(top_up.state, LearnerCreditTopUpState.DEPOSITED)
+        self.assertEqual(top_up.deposit_uuid, UUID(deposit['uuid']))
+        self.assertEqual(top_up.ledger_transaction_uuid, UUID(deposit['transaction']))
+        self.assertEqual(top_up.deposited_at, timezone.now())
+        # The spend limit is the next step's job.
+        self.assertEqual(self.stored_spend_limit(), self.SPEND_LIMIT)
+
+    @ddt.data(
+        LearnerCreditTopUpState.CREATED,
+        LearnerCreditTopUpState.DEPOSITED,
+        LearnerCreditTopUpState.FULFILLED,
+        LearnerCreditTopUpState.ERRORED_FULFILLMENT,
+    )
+    def test_sends_nothing_unless_paid(self, state):
+        """
+        A top-up that isn't paid, including one already deposited, sends no deposit and is left as it was.
+        """
+        top_up = self.create_top_up(state=state)
+
+        self.assertFalse(fulfill_deposit_step(top_up))
+
+        self.mock_subsidy_client.create_subsidy_deposit.assert_not_called()
+        top_up.refresh_from_db()
+        self.assertEqual(top_up.state, state)
+
+    @ddt.data(
+        (http_error(400), NonRetryableFulfillmentError),
+        (http_error(403), NonRetryableFulfillmentError),
+        (http_error(404), NonRetryableFulfillmentError),
+        (http_error(409), NonRetryableFulfillmentError),
+        (http_error(422), NonRetryableFulfillmentError),
+        (http_error(429), RetryableFulfillmentError),
+        (http_error(500), RetryableFulfillmentError),
+        (http_error(503), RetryableFulfillmentError),
+        (requests.exceptions.ConnectionError('connection reset'), RetryableFulfillmentError),
+        (requests.exceptions.Timeout('read timed out'), RetryableFulfillmentError),
+    )
+    @ddt.unpack
+    def test_failed_deposit(self, error, expected_error):
+        """
+        A failed deposit leaves the top-up paid with no deposit recorded. 400, 403, 404, 409 and 422 would fail the
+        same way again; anything else may pass later.
+        """
+        top_up = self.create_top_up(state=LearnerCreditTopUpState.PAID)
+        self.mock_subsidy_client.create_subsidy_deposit.side_effect = error
+
+        with self.assertRaises(expected_error) as context:
+            fulfill_deposit_step(top_up)
+
+        self.assertIs(context.exception.__cause__, error)
+        top_up.refresh_from_db()
+        self.assertEqual(top_up.state, LearnerCreditTopUpState.PAID)
+        self.assertIsNone(top_up.deposit_uuid)
+        self.assertIsNone(top_up.deposited_at)
+
+    def test_another_run_fulfilled_it_meanwhile(self):
+        """
+        A duplicate run whose deposit call is answered (with the same deposit) after another run has deposited and
+        fulfilled the top-up records nothing and doesn't raise.
+        """
+        top_up = self.create_top_up(state=LearnerCreditTopUpState.PAID)
+
+        def other_run_fulfills_it(**kwargs):
+            LearnerCreditTopUp.objects.filter(uuid=top_up.uuid).update(state=LearnerCreditTopUpState.FULFILLED)
+            return self._create_deposit(**kwargs)
+        self.mock_subsidy_client.create_subsidy_deposit.side_effect = other_run_fulfills_it
+
+        self.assertFalse(fulfill_deposit_step(top_up))
+
+        top_up.refresh_from_db()
+        self.assertEqual(top_up.state, LearnerCreditTopUpState.FULFILLED)
+        self.assertIsNone(top_up.deposit_uuid)
 
 
 class TestFulfillSpendLimitStepNetworkCalls(SpendLimitStepTestMixin, TransactionTestCase):

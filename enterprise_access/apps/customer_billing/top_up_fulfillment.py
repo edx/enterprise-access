@@ -3,13 +3,13 @@ Fulfillment steps for learner credit top-ups (``LearnerCreditTopUp``).
 
 A paid top-up is fulfilled in two steps, each safe to run again:
 
-1. Deposit (``paid -> deposited``): not built yet (impl-plan chunk 8).
+1. Deposit (``paid -> deposited``): ``fulfill_deposit_step()``.
 2. Spend limit (``deposited -> fulfilled``): ``fulfill_spend_limit_step()``.
 
 A step that fails leaves the top-up in the state it started in, and raises
 ``RetryableFulfillmentError`` when a later run may succeed, or ``NonRetryableFulfillmentError``
 when a later run would fail the same way until someone fixes the cause. The caller (the
-fulfillment task, chunk 10) decides what to do with each.
+fulfillment task, ``tasks.fulfill_learner_credit_top_up_task``) decides what to do with each.
 """
 import logging
 
@@ -17,11 +17,19 @@ import requests
 from django.core.exceptions import ValidationError
 from django.db import transaction
 
-from enterprise_access.apps.customer_billing.constants import LearnerCreditTopUpState
-from enterprise_access.apps.customer_billing.models import LearnerCreditTopUp
+from enterprise_access.apps.customer_billing.constants import (
+    LEARNER_CREDIT_TOP_UP_DEPOSIT_PROVIDER,
+    LearnerCreditTopUpState
+)
+from enterprise_access.apps.customer_billing.models import InvalidLearnerCreditTopUpTransition, LearnerCreditTopUp
 from enterprise_access.apps.subsidy_access_policy.models import SubsidyAccessPolicy
 
 logger = logging.getLogger(__name__)
+
+# enterprise-subsidy deposit answers that a retry would get again (spec API Error Codes): a request that fails
+# validation, a missing operator grant or a soft-deleted subsidy, a deleted subsidy, an idempotency key reused with
+# other values, and a deposit to an expired subsidy. Any other failure (429, 5xx, connection error, timeout) may pass.
+NON_RETRYABLE_DEPOSIT_STATUSES = frozenset({400, 403, 404, 409, 422})
 
 
 class LearnerCreditTopUpFulfillmentError(Exception):
@@ -40,6 +48,91 @@ class NonRetryableFulfillmentError(LearnerCreditTopUpFulfillmentError):
     """
     A later run of the step would fail the same way until someone fixes the cause.
     """
+
+
+def fulfill_deposit_step(top_up: LearnerCreditTopUp) -> bool:
+    """
+    Deposit a paid top-up's ``amount_cents`` into its subsidy, once, and move the top-up to ``deposited``.
+
+    The step runs only from ``paid``, and checks the stored state rather than ``top_up``'s, so a top-up that is
+    already deposited sends no deposit. The deposit is keyed ``lc-top-up-<uuid>``: enterprise-subsidy answers a
+    repeated key with the deposit it already made (spec KD-5), so a retry after a lost answer never deposits twice.
+    ``top_up`` is reloaded from the database: unsaved changes to it are discarded.
+
+    Not covered yet (impl-plan chunk 8): the 30-second ``SUBSIDY_CLIENT_TIMEOUT`` on the call (spec G-14), and the
+    admin's LMS user ID in the deposit metadata (spec G-25). Without a timeout, a hung call ends at the task's soft
+    time limit, which the task retries.
+
+    Returns:
+        True if this call moved the top-up to ``deposited``. False if it was not ``paid`` (nothing was sent), or if
+        another run moved it on while this one waited for enterprise-subsidy.
+
+    Raises:
+        NonRetryableFulfillmentError: enterprise-subsidy answered 400, 403, 404, 409 or 422.
+        RetryableFulfillmentError: any other HTTP error (such as 429 or a 5xx), a connection error or a timeout.
+    """
+    top_up.refresh_from_db()
+    if top_up.state != LearnerCreditTopUpState.PAID:
+        logger.info(
+            'Skipping the deposit step for LearnerCreditTopUp %s: it is %s, not %s.',
+            top_up.uuid, top_up.state, LearnerCreditTopUpState.PAID,
+        )
+        return False
+
+    try:
+        deposit = top_up.subsidy_access_policy.subsidy_client.create_subsidy_deposit(
+            subsidy_uuid=top_up.subsidy_uuid,
+            desired_deposit_quantity=top_up.amount_cents,
+            sales_contract_reference_id=top_up.stripe_payment_intent_id,
+            sales_contract_reference_provider=LEARNER_CREDIT_TOP_UP_DEPOSIT_PROVIDER,
+            metadata={
+                # Keys that don't clash with ledger parameter names (spec Fulfillment rule 5).
+                'source': 'learner_credit_top_up',
+                'learner_credit_top_up_uuid': str(top_up.uuid),
+                'top_up_policy_uuid': str(top_up.subsidy_access_policy_id),
+                'stripe_payment_intent_id': top_up.stripe_payment_intent_id,
+                'discount_rate': None if top_up.discount_rate is None else str(top_up.discount_rate),
+                'charge_amount_cents': top_up.charge_amount_cents,
+            },
+            idempotency_key=f'lc-top-up-{top_up.uuid}',
+        )
+    except requests.exceptions.RequestException as exc:
+        raise _deposit_failure(top_up, exc) from exc
+
+    try:
+        moved = top_up.transition_to(
+            LearnerCreditTopUpState.DEPOSITED,
+            deposit_uuid=deposit['uuid'],
+            ledger_transaction_uuid=deposit['transaction'],
+        )
+    except InvalidLearnerCreditTopUpTransition:
+        # Another run made the same deposit (same key) and fulfilled the top-up while this one waited.
+        logger.info('Not recording the deposit of LearnerCreditTopUp %s: another run moved it to %s.',
+                    top_up.uuid, top_up.state)
+        return False
+    if moved:
+        logger.info('Deposited %s cents into subsidy %s for LearnerCreditTopUp %s: deposit %s.',
+                    top_up.amount_cents, top_up.subsidy_uuid, top_up.uuid, deposit['uuid'])
+    return moved
+
+
+def _deposit_failure(top_up: LearnerCreditTopUp, error: requests.exceptions.RequestException):
+    """
+    Return the error to raise for a failed deposit call: not retryable for the statuses in
+    ``NON_RETRYABLE_DEPOSIT_STATUSES``, retryable for anything else.
+    """
+    response = getattr(error, 'response', None)
+    status = None if response is None else response.status_code
+    detail = f'{status} {response.text[:500]}' if status else repr(error)
+    message = (
+        f'Deposit of {top_up.amount_cents} cents into subsidy {top_up.subsidy_uuid} for LearnerCreditTopUp '
+        f'{top_up.uuid} failed: {detail}'
+    )
+    if status in NON_RETRYABLE_DEPOSIT_STATUSES:
+        logger.error('%s Not retryable.', message)
+        return NonRetryableFulfillmentError(message)
+    logger.warning('%s Retryable.', message)
+    return RetryableFulfillmentError(message)
 
 
 def fulfill_spend_limit_step(top_up: LearnerCreditTopUp) -> bool:
