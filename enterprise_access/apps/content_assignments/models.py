@@ -26,6 +26,7 @@ from .constants import (
     AssignmentActionErrors,
     AssignmentActions,
     AssignmentActorTypes,
+    AssignmentAutomaticExpiredReason,
     AssignmentLearnerStates,
     AssignmentRecentActionTypes,
     AssignmentSources,
@@ -107,7 +108,7 @@ class AssignmentConfiguration(TimeStampedModel):
         if assignment.state != LearnerContentAssignmentStateChoices.EXPIRED:
             return False, False
 
-        last_expiration = assignment.get_last_successful_expiration_action()
+        last_expiration = assignment.get_last_acknowledgeable_expiration_action()
         expiration_last_acknowledged = assignment.get_last_successful_acknowledged_expired_action()
         if not last_expiration:
             logger.error(
@@ -466,7 +467,7 @@ class LearnerContentAssignment(TimeStampedModel):
         Returns whether or not the learner has acknowledged the assignment.
         """
         if self.state == LearnerContentAssignmentStateChoices.EXPIRED:
-            last_expired_action = self.get_last_successful_expiration_action()
+            last_expired_action = self.get_last_acknowledgeable_expiration_action()
             if not last_expired_action:
                 logger.warning(
                     'LearnerContentAssignment with UUID %s is in an expired state, but has no related '
@@ -676,6 +677,25 @@ class LearnerContentAssignment(TimeStampedModel):
         return LearnerContentAssignmentAction.filter_successful_expiration_email_actions(
             self.actions.all()
         ).order_by('-completed_at').first()
+
+    def get_last_acknowledgeable_expiration_action(self):
+        """
+        Returns the expiration action the learner acknowledges: the last "expiration email sent" action or, only
+        when there is none and the last scheduled_job EXPIRED row records BUDGET_RETIRED, that row. A retired
+        budget expires assignments silently, so no email row ever follows it and the race described in
+        ``get_last_successful_expiration_action()`` cannot occur. Every other reason waits for its email row.
+        """
+        email_action = self.get_last_successful_expiration_action()
+        if email_action:
+            return email_action
+        scheduled_action = self.actions.filter(
+            action_type=AssignmentActions.EXPIRED, source=AssignmentSources.SCHEDULED_JOB, error_reason=None,
+        ).order_by('-completed_at').first()
+        if scheduled_action and (scheduled_action.metadata or {}).get('expiration_reason') == (
+            AssignmentAutomaticExpiredReason.BUDGET_RETIRED
+        ):
+            return scheduled_action
+        return None
 
     def add_successful_expiration_action(self):
         """

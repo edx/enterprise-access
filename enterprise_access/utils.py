@@ -18,7 +18,10 @@ from enterprise_access.apps.enterprise_groups.constants import (
     BRAZE_GROUPS_EMAIL_CAMPAIGNS_THIRD_REMINDER_DAY
 )
 from enterprise_access.apps.subsidy_request.constants import SubsidyTypeChoices
-from enterprise_access.toggles import assignment_course_run_ended_expiration_enabled
+from enterprise_access.toggles import (
+    assignment_course_run_ended_expiration_enabled,
+    expire_assignments_on_retired_budgets_enabled
+)
 
 _MEMO_MISS = object()
 
@@ -136,6 +139,7 @@ def get_automatic_expiration_date_and_reason(
     *,
     course_run_metadata: dict = None,
     include_course_run_end: bool = True,
+    include_budget_retired: bool = True,
 ):
     """
     For the given assignment, returns the date at which this assignment expires due to:
@@ -143,9 +147,10 @@ def get_automatic_expiration_date_and_reason(
     * content enrollment deadline
     * course run end date
     * 90-day timeout from allocation
+    * budget (policy) retirement
 
-    Whichever of the four above dates is the earliest is returned, along with the reason
-    for the expiration as a dictionary.
+    Whichever of the five above dates is the earliest is returned, along with the reason
+    for the expiration as a dictionary. On a tie, the earlier entry in this list wins.
 
     Arguments:
         assignment (LearnerContentAssignment): The assignment to check for expiration.
@@ -160,6 +165,9 @@ def get_automatic_expiration_date_and_reason(
             only does so while the ``assignment_course_run_ended_expiration`` switch is on. Set to
             False to reproduce how legacy assignments (expired before the reason was recorded on the audit
             action) were evaluated before COURSE_RUN_ENDED existed.
+        [include_budget_retired] (bool): Whether a retired budget's ``retired_at`` competes as an expiration date.
+            It only does so while the ``expire_assignments_on_retired_budgets`` switch is on. Set to False to
+            reproduce how legacy assignments were evaluated before BUDGET_RETIRED existed.
     """
     # Import here to avoid circular import
     # pylint: disable=import-outside-toplevel
@@ -198,7 +206,11 @@ def get_automatic_expiration_date_and_reason(
     # 90-day timeout from allocation
     timeout_expiration_datetime = assignment.get_allocation_timeout_expiration()
 
-    # Determine which of the four expiration dates is the earliest
+    budget_retired_datetime = None
+    if include_budget_retired and expire_assignments_on_retired_budgets_enabled() and subsidy_access_policy.retired:
+        budget_retired_datetime = subsidy_access_policy.retired_at
+
+    # Determine which of the expiration dates is the earliest
     subsidy_expiration = {
         'date': subsidy_expiration_datetime,
         'reason': AssignmentAutomaticExpiredReason.SUBSIDY_EXPIRED,
@@ -215,7 +227,13 @@ def get_automatic_expiration_date_and_reason(
         'date': timeout_expiration_datetime,
         'reason': AssignmentAutomaticExpiredReason.NINETY_DAYS_PASSED,
     }
-    expiration_dates = [subsidy_expiration, enrollment_deadline, course_run_ended, timeout_expiration]
+    budget_retired = {
+        'date': budget_retired_datetime,
+        'reason': AssignmentAutomaticExpiredReason.BUDGET_RETIRED,
+    }
+    # sorted() is stable, so on a tie the earlier entry wins: BUDGET_RETIRED is last, so it never displaces
+    # a reason that would have been chosen without it.
+    expiration_dates = [subsidy_expiration, enrollment_deadline, course_run_ended, timeout_expiration, budget_retired]
     sorted_available_expiration_dates = sorted(
         filter(lambda x: x['date'] is not None, expiration_dates),
         key=lambda x: x['date'],
@@ -223,7 +241,7 @@ def get_automatic_expiration_date_and_reason(
     action_required_by = sorted_available_expiration_dates[0]
     message = (
         'action_required_by assignment=%s: subsidy_expiration=%s, enrollment_deadline=%s, '
-        'course_run_ended=%s, timeout_expiration_date=%s, action_required_by_datetime=%s, '
+        'course_run_ended=%s, timeout_expiration_date=%s, budget_retired=%s, action_required_by_datetime=%s, '
         'action_required_by_reason=%s'
     )
     logger.info(
@@ -233,6 +251,7 @@ def get_automatic_expiration_date_and_reason(
         enrollment_deadline_datetime,
         course_run_ended_datetime,
         timeout_expiration_datetime,
+        budget_retired_datetime,
         action_required_by['date'],
         action_required_by['reason'],
     )

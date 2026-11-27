@@ -24,6 +24,8 @@ from enterprise_access.apps.content_assignments.tests.factories import (
     LearnerContentAssignmentFactory
 )
 from enterprise_access.apps.subsidy_access_policy.tests.factories import AssignedLearnerCreditAccessPolicyFactory
+from enterprise_access.apps.subsidy_request.constants import SubsidyRequestStates
+from enterprise_access.apps.subsidy_request.tests.factories import LearnerCreditRequestFactory
 from enterprise_access.toggles import ASSIGNMENT_COURSE_RUN_ENDED_EXPIRATION
 
 COMMAND_PATH = 'enterprise_access.apps.content_assignments.management.commands.automatically_expire_assignments'
@@ -348,6 +350,77 @@ class TestAutomaticallyExpireAssignmentCommand(TestCase):
             state=LearnerContentAssignmentStateChoices.ALLOCATED,
         ).exists()
         assert mock_send_expired_email.call_count == len(extra) + 2
+
+    def _retire_budget_and_run(self, *args, switch_on=True):
+        """
+        Retire the budget, then run the command with a live subsidy and open enrollment, so retirement is the only
+        reason either assignment could expire. No learner email may be queued in any case.
+        """
+        self.assigned_learner_credit_policy.retired = True
+        self.assigned_learner_credit_policy.save()
+        future = (timezone.now() + timezone.timedelta(days=100)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        api_path = 'enterprise_access.apps.content_assignments.api'
+        with (
+            mock.patch('enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_client') as
+            mock_subsidy_client,
+            mock.patch('enterprise_access.apps.content_metadata.api.EnterpriseCatalogApiClient') as mock_catalog,
+            mock.patch(f'{api_path}.send_assignment_automatically_expired_email.delay') as mock_email,
+            mock.patch(f'{api_path}.send_bnr_automatically_expired_email.delay') as mock_bnr_email,
+            mock.patch('enterprise_access.utils.expire_assignments_on_retired_budgets_enabled', return_value=switch_on),
+        ):
+            mock_subsidy_client.retrieve_subsidy.return_value = {
+                'enterprise_customer_uuid': str(self.enterprise_uuid),
+                'expiration_datetime': future,
+                'is_active': True,
+            }
+            mock_catalog.return_value.catalog_content_metadata.return_value = {
+                'count': 2,
+                'results': [
+                    {'key': assignment.content_key, 'normalized_metadata': {'enroll_by_date': future}}
+                    for assignment in (self.alice_assignment, self.bob_assignment)
+                ],
+            }
+            self._call_command(self.command, *args)
+        mock_email.assert_not_called()
+        mock_bnr_email.assert_not_called()
+
+    def _assert_nothing_expired(self):
+        allocated = LearnerContentAssignmentStateChoices.ALLOCATED
+        assert not LearnerContentAssignment.objects.exclude(state=allocated).exists()
+        assert not LearnerContentAssignment.objects.filter(actions__action_type='expired').exists()
+
+    def test_expires_allocated_assignment_on_retired_budget(self):
+        self._retire_budget_and_run()
+
+        for assignment in (self.alice_assignment, self.bob_assignment):
+            assignment.refresh_from_db()
+            assert assignment.state == LearnerContentAssignmentStateChoices.EXPIRED
+            expiration_reason = self._scheduled_expiration_actions(assignment).get().metadata['expiration_reason']
+            assert expiration_reason == AssignmentAutomaticExpiredReason.BUDGET_RETIRED
+
+    def test_retired_budget_assignment_left_alone_with_switch_off(self):
+        self._retire_budget_and_run(switch_on=False)
+
+        self._assert_nothing_expired()
+
+    def test_approved_request_on_retired_budget_is_expired(self):
+        credit_request = LearnerCreditRequestFactory(
+            assignment=self.alice_assignment, state=SubsidyRequestStates.APPROVED,
+        )
+
+        self._retire_budget_and_run()
+
+        credit_request.refresh_from_db()
+        self.alice_assignment.refresh_from_db()
+        assert credit_request.state == SubsidyRequestStates.EXPIRED
+        assert self.alice_assignment.state == LearnerContentAssignmentStateChoices.EXPIRED
+
+    def test_dry_run_leaves_retired_budget_assignment_alone(self):
+        with self.assertLogs('enterprise_access.apps.content_assignments.api', level='INFO') as logs:
+            self._retire_budget_and_run('--dry-run')
+
+        assert sum('Reason: [BUDGET_RETIRED]' in line for line in logs.output) == 2
+        self._assert_nothing_expired()
 
     def _make_both_assignments_expirable(self):
         for assignment in (self.alice_assignment, self.bob_assignment):

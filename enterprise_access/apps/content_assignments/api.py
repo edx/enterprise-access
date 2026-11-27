@@ -31,7 +31,13 @@ from enterprise_access.apps.subsidy_request.constants import SubsidyRequestState
 from enterprise_access.toggles import assignment_course_run_ended_expiration_enabled
 from enterprise_access.utils import chunks, get_automatic_expiration_date_and_reason, localized_utcnow
 
-from .constants import AssignmentActions, AssignmentActorTypes, AssignmentSources, LearnerContentAssignmentStateChoices
+from .constants import (
+    AssignmentActions,
+    AssignmentActorTypes,
+    AssignmentAutomaticExpiredReason,
+    AssignmentSources,
+    LearnerContentAssignmentStateChoices
+)
 from .content_metadata_api import get_normalized_metadata_for_assignment
 from .models import AssignmentConfiguration, LearnerContentAssignment, LearnerContentAssignmentAction
 from .tasks import (
@@ -1380,6 +1386,9 @@ def _expire_assignment_and_notify(assignment, credit_request, automatic_expirati
     # the EXPIRED state is visible, and a failed commit would still email the learner about an assignment that
     # is going to be retried. If queuing then fails (e.g. the broker is down) the assignment stays EXPIRED
     # without an email; the exception reaches the nightly command, which reports it as a failure.
+    if automatic_expiration_reason == AssignmentAutomaticExpiredReason.BUDGET_RETIRED:
+        # Retiring a budget closes what is open on it silently: the learner is not emailed.
+        return True
     if credit_request:
         # This is a Browse & Request - send B&R-specific expiration email
         transaction.on_commit(lambda: send_bnr_automatically_expired_email.delay(credit_request.uuid))

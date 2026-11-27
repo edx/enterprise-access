@@ -220,6 +220,19 @@ class LearnerCreditRequestTests(TestCase):
         except ValidationError:
             self.fail("ValidationError raised unexpectedly!")
 
+    def test_expired_state_does_not_require_reviewer(self):
+        """
+        Ensure an automatic expiry, which nobody reviewed, is valid without a reviewer and timestamp.
+        """
+        self.learner_credit_request.state = SubsidyRequestStates.EXPIRED
+        self.learner_credit_request.full_clean()
+
+    @ddt.data(SubsidyRequestStates.APPROVED, SubsidyRequestStates.DECLINED, SubsidyRequestStates.CANCELLED)
+    def test_reviewed_states_still_require_reviewer(self, state):
+        self.learner_credit_request.state = state
+        with self.assertRaises(ValidationError):
+            self.learner_credit_request.full_clean()
+
     @ddt.data(
         SubsidyRequestStates.REQUESTED,
         SubsidyRequestStates.APPROVED,

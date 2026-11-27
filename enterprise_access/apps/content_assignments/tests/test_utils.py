@@ -512,3 +512,62 @@ class TestCourseRunMetadataParameter(TestCase):
         result, _ = self._get_expiration(ended_metadata)
 
         assert result['reason'] == AssignmentAutomaticExpiredReason.NINETY_DAYS_PASSED
+
+
+@ddt.ddt
+class TestBudgetRetiredExpiration(TestCase):
+    """
+    A retired budget's ``retired_at`` competes as an expiration date (BUDGET_RETIRED), but only while the
+    ``expire_assignments_on_retired_budgets`` switch is on.
+    """
+    ALLOCATED_AT = datetime.now(UTC) - timedelta(days=7)
+    RETIRED_AT = datetime.now(UTC) - timedelta(days=1)
+    NINETY_DAYS = {
+        'date': ALLOCATED_AT + timedelta(days=90),
+        'reason': AssignmentAutomaticExpiredReason.NINETY_DAYS_PASSED,
+    }
+
+    def _get_expiration(self, switch_on=True, enroll_by_date=None, policy=None, **kwargs):
+        """Expiration for an assignment allocated a week ago on a budget retired yesterday (unless overridden)."""
+        policy_fields = {'catalog_uuid': 'catalog-uuid', 'active': True, 'retired': True, 'retired_at': self.RETIRED_AT}
+        assignment = SimpleNamespace(
+            uuid='assignment-uuid',
+            content_key=RUN_1,
+            preferred_course_run_key=None,
+            assignment_configuration=SimpleNamespace(
+                subsidy_access_policy=SimpleNamespace(**{**policy_fields, **(policy or {})}),
+            ),
+            get_allocation_timeout_expiration=lambda: self.ALLOCATED_AT + timedelta(days=90),
+        )
+        content_metadata = {'normalized_metadata': {'enroll_by_date': enroll_by_date}}
+        with mock.patch(f'{UTILS_MODULE}._get_subsidy_expiration', return_value=None), \
+             mock.patch(f'{UTILS_MODULE}.expire_assignments_on_retired_budgets_enabled', return_value=switch_on):
+            return get_automatic_expiration_date_and_reason(assignment, content_metadata, **kwargs)
+
+    def test_retired_budget_reason_requires_switch(self):
+        """With the switch off, retirement changes nothing."""
+        assert self._get_expiration(switch_on=False) == self.NINETY_DAYS
+
+    def test_retired_budget_is_earliest_candidate(self):
+        assert self._get_expiration() == {
+            'date': self.RETIRED_AT,
+            'reason': AssignmentAutomaticExpiredReason.BUDGET_RETIRED,
+        }
+
+    @ddt.data(
+        {'retired': False, 'retired_at': None},  # live
+        {'active': False, 'retired': False, 'retired_at': None},  # deactivated only
+        {'retired_at': None},  # retired, but retired_at never set
+    )
+    def test_live_budget_never_gets_retired_reason(self, policy):
+        assert self._get_expiration(policy=policy) == self.NINETY_DAYS
+
+    def test_earlier_enrollment_deadline_wins_over_retirement(self):
+        result = self._get_expiration(enroll_by_date=_iso(-5))
+
+        assert result['reason'] == AssignmentAutomaticExpiredReason.ENROLLMENT_DATE_PASSED
+        assert result['date'] < self.RETIRED_AT
+
+    def test_include_budget_retired_false_ignores_retirement(self):
+        """The legacy recomputation path (PII clearing) must not let retirement win."""
+        assert self._get_expiration(include_budget_retired=False) == self.NINETY_DAYS
