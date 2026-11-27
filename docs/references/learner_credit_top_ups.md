@@ -126,8 +126,10 @@ Changing it needs a config change and a deploy, so turning it off again is not i
 Introduced for **ENT-12355** (impl-plan chunk 5), in `customer_billing/models.py`. One row per top-up, from quote to
 fulfillment: the audit record of every self-service deposit (who started it, how much, when, which payment, what
 discount). Rows must never be deleted (S-01): nothing enforces that beyond `PROTECT` on the policy, so don't add code
-that deletes them. `history` (simple-history) keeps every change. Nothing creates or moves a top-up yet: the quote,
-pay, webhook, deposit, spend-limit and ops chunks do that.
+that deletes them. `history` (simple-history) keeps every change. So far only fulfillment moves a top-up: the
+deposit and spend-limit steps, the fulfillment task that runs them, and the re-run command (see
+[Fulfillment](#fulfillment-task-and-re-runs)). Nothing queues the task in production yet: the quote, pay and webhook
+chunks create top-ups and hand them over to it.
 
 - **`uuid`** is the primary key and the source of both idempotency keys (`lc-top-up-<uuid>`, for the PaymentIntent
   and the deposit) and of the transaction ID shown to the admin.
@@ -215,7 +217,7 @@ stateDiagram-v2
     deposited --> errored_fulfillment: retries exhausted
     errored_fulfillment --> paid: ops re-run, no deposit yet
     errored_fulfillment --> deposited: ops re-run, deposit recorded
-    errored_fulfillment --> refunded: ops refund
+    errored_fulfillment --> refunded: ops refund (unused in Phase 1)
     fulfilled --> [*]
     refunded --> [*]
 ```
@@ -225,7 +227,8 @@ stateDiagram-v2
 - **`fulfilled` is reachable only from `deposited`,** so the spend limit is raised at most once. The ops re-run goes
   back to `paid` or `deposited` and takes the normal path, rather than jumping from `errored_fulfillment` straight to
   `fulfilled` as the spec's diagram shows (impl-plan Open Items 16).
-- `fulfilled` and `refunded` are final.
+- `fulfilled` and `refunded` are final. `refunded` is unused in Phase 1: there are no refunds in v1, so a top-up that
+  can't be credited stays in `errored_fulfillment` until ops fix the cause and re-run it (Eng Lead, 2026-11-02).
 
 ### `transition_to(new_state, **fields)`
 
@@ -250,6 +253,165 @@ The only way `state` changes (see Saving).
 - Whenever it raises, including when the save itself fails (a unique-index violation, a `post_save` receiver),
   nothing is written and the instance holds the stored values.
 - **Not checked here:** the data each state needs, for example a `deposit_uuid` before `deposited`, or none before an
-  ops re-run goes back to `paid`. The deposit (chunk 8) and ops re-run (chunk 10) steps must check it.
+  ops re-run goes back to `paid`. The deposit step records `deposit_uuid` on the move to `deposited`, and the re-run
+  command picks `deposited` or `paid` from it.
 - On SQLite, used by the tests, `select_for_update()` does nothing. The tests prove the stored-state checks, not the
   lock.
+
+## Spend-limit step (`deposited → fulfilled`)
+
+Introduced for **ENT-12512** (impl-plan chunk 9) as `fulfill_spend_limit_step(top_up)` in
+`customer_billing/top_up_fulfillment.py`. It makes deposited funds spendable: it raises the budget's `spend_limit` by
+`amount_cents`, once, and moves the top-up to `fulfilled`. The fulfillment task calls it, after the deposit step. It
+follows the spec's Fulfillment rule 3 and TR-5.
+
+| Outcome | Returns / raises | Top-up and budget afterwards |
+|---|---|---|
+| Fulfilled | `True` | `fulfilled`, `fulfilled_at` set. `spend_limit` raised by `amount_cents`, and `spend_limit_before` / `spend_limit_after` recorded. A budget with no spend limit is left without one, and both fields stay `NULL`. |
+| Not `deposited` (already fulfilled, not deposited yet, errored, ...) | `False` | Unchanged. The subsidy isn't read. |
+| The subsidy read fails: any HTTP error, a connection error or a timeout | `RetryableFulfillmentError` | Unchanged (`deposited`). |
+| The raised `spend_limit` fails the policy's validation, and the subsidy's `total_deposits` is unchanged when read again | `NonRetryableFulfillmentError` | Unchanged (`deposited`). A retry would fail the same way. |
+| The raised `spend_limit` fails the policy's validation, but `total_deposits` has grown when read again (another top-up of the subsidy was deposited and fulfilled during this run), or that read fails | `RetryableFulfillmentError` | Unchanged (`deposited`). A later run reads the new deposits and may succeed. |
+
+Both errors subclass `LearnerCreditTopUpFulfillmentError` and chain the original exception as `__cause__`. Moving a
+failed top-up to `errored_fulfillment`, and recording whether the error is retryable, is the caller's job (the
+fulfillment task, below).
+Database errors, such as a lock wait timeout, are not wrapped.
+
+How it works:
+
+1. **State check, before any network call.** The top-up is reloaded (unsaved changes to the instance are discarded),
+   and the step returns `False` unless it is `deposited`.
+2. **Fresh subsidy read, outside any transaction.** `policy.clear_cached_subsidy_record()`, then
+   `policy.subsidy_record(raise_on_error=True)`. Clearing is required: `subsidy_record()` returns a request-cached
+   record even with `raise_on_error=True`, and a record cached by the eligibility check earlier in the request, or by
+   an earlier task in the same worker, predates the deposit. With it, the raise would exceed `total_deposits` and fail
+   validation (TR-2). The request cache is keyed by enterprise and subsidy, so clearing it for one policy clears it for
+   every policy of that subsidy.
+3. **One `transaction.atomic()` block, no network calls.** It locks the policy row, **then** the top-up row
+   (`select_for_update()`, always in this order, TR-5), and checks the state again under the lock. A run overtaken by
+   another run during its read returns `False` here. It then raises and saves `spend_limit`, and calls
+   `transition_to(FULFILLED, spend_limit_before=..., spend_limit_after=...)`. `policy.save()` runs `full_clean()`, and
+   so `clean_spend_limit()`, which reads the record cached in step 2. The policy's history record has the change reason
+   `Learner credit top-up <uuid>`.
+4. **On a validation failure, read the subsidy again, after the block.** `clean_spend_limit()` compares the spend
+   limits of the subsidy's policies, read under the lock, with the `total_deposits` read in step 2. If another top-up
+   of the same subsidy was deposited and fulfilled in between, the spend limits include its raise but the deposits
+   read don't include its deposit, so validation fails although a run with a fresh read would pass. The block has
+   rolled back by then, so the second read holds no lock. If `total_deposits` grew, or the read fails, the error is
+   retryable; otherwise it isn't.
+
+Call the step outside any transaction. Inside one, its block is a savepoint, and InnoDB keeps the row locks after a
+savepoint rolls back until the outer transaction ends, so the read in step 4 would run under them.
+
+Testing notes:
+
+- Scenario 4 (no network call inside the block) is a `TransactionTestCase`, because under `TestCase`
+  `connection.in_atomic_block` is always `True`. It also checks that `subsidy_record()` *is* read inside the block,
+  from the cache.
+- SQLite ignores `select_for_update()`, so the lock order is tested by recording the models `select_for_update()` is
+  called on. Races are tested with copies loaded before either writes, and with a run that another run overtakes from
+  inside the mocked subsidy read.
+- The step-4 race is simulated from inside the first mocked subsidy read: it raises the stored spend limit (the other
+  top-up's raise) and makes the next read return the other deposit too. The `TransactionTestCase` also checks that
+  the second read happens outside the block.
+
+## Deposit step (`paid → deposited`)
+
+`fulfill_deposit_step(top_up)` in `customer_billing/top_up_fulfillment.py`. Added for **ENT-12513** so the fulfillment
+task works end to end; impl-plan chunk 8 owns it and still has to add the 30-second `SUBSIDY_CLIENT_TIMEOUT` on the
+call (spec G-14) and decide whether the admin's LMS user ID goes in the metadata (G-25).
+
+- Runs only from `paid` (stored state), so a `deposited` top-up sends no deposit.
+- Calls enterprise-subsidy's deposit endpoint with `desired_deposit_quantity = amount_cents`, the PaymentIntent as
+  the reference (provider `stripe_payment_intent`), the metadata of the spec's Fulfillment rule 5 except the LMS user
+  ID, and **idempotency key `lc-top-up-<uuid>`**: a repeated key gets the deposit already made (spec KD-5), so a retry
+  after a lost answer never deposits twice.
+- Records `deposit_uuid` and `ledger_transaction_uuid` on `transition_to(DEPOSITED, ...)`. If another run fulfilled
+  the top-up meanwhile, it records nothing and returns `False`.
+- 400, 403, 404, 409 or 422 → `NonRetryableFulfillmentError`; any other HTTP error (429, 5xx), a connection error or
+  a timeout → `RetryableFulfillmentError`. The message holds the status and the start of the response body.
+
+## Fulfillment task and re-runs
+
+Introduced for **ENT-12513** (impl-plan chunk 10; spec Fulfillment rules 3 and 6, Recovery jobs).
+
+### `fulfill_learner_credit_top_up_task(top_up_uuid)`
+
+In `customer_billing/tasks.py`. Takes only the top-up's UUID and re-reads the row, so a duplicate or late task does
+nothing.
+
+1. Clears the request cache (`RequestCache.clear_all_namespaces()`): nothing clears it between tasks in a worker,
+   so a subsidy record cached by an earlier task would predate this deposit.
+2. From `paid`: the deposit step, then the spend-limit step. From `deposited`: the spend-limit step only. Any other
+   state (or an unknown UUID): logs and returns.
+3. Ignores `FEATURE_TOP_UP_LEARNER_CREDIT`: money already taken must be credited.
+
+| Failure | What happens |
+|---|---|
+| `NonRetryableFulfillmentError` (deposit 400/403/404/409/422, or a spend-limit validation failure with a fresh record) | Caught by the task: `errored_fulfillment`, `last_error_retryable=False`, `last_error` set. Not retried. |
+| `RetryableFulfillmentError`, `requests` HTTP/connection/timeout errors, DB `OperationalError`, `SoftTimeLimitExceeded` | Retried with `LoggedTaskWithRetry`'s settings: 5 retries, backoff from 60 s, doubling, capped at 10 min, full jitter (about 25 min in all). The first attempt runs as soon as it is queued. |
+| Retries run out on one of those | `on_failure`: `errored_fulfillment`, `last_error_retryable=True`. The re-run job resumes it. |
+| Anything else (a bug) | Not retried. `on_failure`: `errored_fulfillment`, `last_error_retryable=False`. |
+| The top-up moved on meanwhile (a duplicate task fulfilled it) | `on_failure` leaves it as it is. |
+| Recording the failure fails too | Logged; the top-up stays in `paid` / `deposited`, and the re-run job queues it again after 45 minutes. |
+
+`LoggedTaskWithRetry` has no failure hook of its own, so the task's base class, `LearnerCreditTopUpFulfillmentTask`,
+adds `on_failure` (spec G-14). The task runs on the default queue: a dedicated queue is still Proposed.
+
+### Fields
+
+| Field | Meaning |
+|---|---|
+| `last_error_retryable` | Whether the error that moved the top-up to `errored_fulfillment` may pass on a later run. `NULL` until fulfillment first fails. `last_error` is free text, so the job can't tell the kinds apart from it. |
+| `automatic_rerun_count` | How many times the scheduled job has resumed the top-up. Manual runs don't count. |
+
+Neither is reset when a top-up is resumed or fulfilled: they describe its last error.
+
+### `rerun_learner_credit_top_ups`
+
+In `customer_billing/management/commands/`. Scheduled every 30 minutes by an edx-internal CronJob next to
+`mark_stalled_checkout_intents` (not added yet). Ignores the feature flag.
+
+| Selected | Action |
+|---|---|
+| `errored_fulfillment`, `last_error_retryable=True`, `automatic_rerun_count < 3` | Resume at `deposited` if `deposit_uuid` is set, otherwise `paid`; `automatic_rerun_count + 1`; queue the task once the change commits. |
+| `paid` or `deposited`, `modified` 45 minutes ago or more (e.g. a lost Celery message) | Queue the task again. No state change. |
+| `errored_fulfillment` and not retryable (`False` or `NULL`), or 3 automatic re-runs | Never, automatically: ops fix the cause and re-run by hand. |
+
+- **Two runs at once resume a top-up once.** Each resume locks the row and re-checks the selection under the lock,
+  then changes state through `transition_to()` and queues only when it returns `True`. A top-up that another run
+  resumed, or that its task has since moved on, is skipped, so `transition_to()` never sees a disallowed change and
+  `InvalidLearnerCreditTopUpTransition` can't escape (spec G-40). The 45-minute re-queue changes no state, so two runs
+  at once can queue that task twice; the second does nothing.
+- Resumes run before the stalled query, which reads `modified`, so a top-up just resumed isn't queued twice.
+- 45 minutes is longer than the task's own retries, so a task still retrying isn't doubled. The thresholds are
+  `LEARNER_CREDIT_TOP_UP_MAX_AUTOMATIC_RERUNS` and `LEARNER_CREDIT_TOP_UP_STALLED_MINUTES` in `constants.py`.
+- A broker error after a resume commits leaves the top-up in `paid` / `deposited` with no task; the next run queues
+  it once 45 minutes have passed.
+
+### Runbook: manual re-run
+
+```bash
+./manage.py rerun_learner_credit_top_ups --top-up-uuid <uuid> --dry-run   # what it would do
+./manage.py rerun_learner_credit_top_ups --top-up-uuid <uuid> [--top-up-uuid <uuid> ...]
+```
+
+- An `errored_fulfillment` top-up resumes at `deposited` or `paid` even when it isn't retryable or has reached the
+  cap; its count doesn't change. A `paid` or `deposited` one is queued again. Any other state is left as it is
+  (logged). An unknown UUID fails the command after the others have run.
+- Read `last_error` first and fix the cause, or it fails the same way: for a 403, restore the operator grant or the
+  subsidy; for a 404, restore the subsidy. For a 422 on an expired subsidy, extending the subsidy breaks S-02 (a
+  top-up never adds time); how to handle it is open (spec G-36).
+- `--dry-run` locks and reads only: it changes nothing, queues nothing, and logs and prints what it would do.
+
+### Testing notes
+
+- Tests run Celery eagerly, and `.apply()` runs every retry synchronously, without countdowns, then calls
+  `on_failure`. A call that keeps failing is therefore made `1 + TASK_MAX_RETRIES` times.
+- The backoff test patches `celery.app.autoretry.get_exponential_backoff_interval` and checks its arguments.
+- The command tests run with `captureOnCommitCallbacks(execute=True)`, because a resume queues on commit
+  (`docs/architecture-patterns.md` §19). The "two runs at once" test runs a second command from inside the first's
+  `_resume()`, after the first has selected the top-up.
+- The test mixin's mocked deposit call answers a repeated idempotency key with the deposit it already made, as
+  enterprise-subsidy does, so the "never deposits twice" tests count deposits by key.

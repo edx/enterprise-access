@@ -8,8 +8,10 @@ from datetime import datetime
 import stripe
 from braze.exceptions import BrazeClientError
 from celery import shared_task
+from celery.exceptions import SoftTimeLimitExceeded
 from django.conf import settings
 from django.db import OperationalError
+from edx_django_utils.cache import RequestCache
 
 from enterprise_access.apps.api_client.braze_client import BrazeApiClient
 from enterprise_access.apps.api_client.lms_client import LmsApiClient
@@ -17,9 +19,15 @@ from enterprise_access.apps.customer_billing.constants import (
     BRAZE_DATE_FORMAT_1,
     BRAZE_DATE_FORMAT_2,
     BRAZE_TIMESTAMP_FORMAT,
-    CheckoutSegmentEvents
+    CheckoutSegmentEvents,
+    LearnerCreditTopUpState
 )
-from enterprise_access.apps.customer_billing.models import CheckoutIntent, StripeEventSummary
+from enterprise_access.apps.customer_billing.models import (
+    CheckoutIntent,
+    InvalidLearnerCreditTopUpTransition,
+    LearnerCreditTopUp,
+    StripeEventSummary
+)
 from enterprise_access.apps.customer_billing.segment_payloads import (
     TRANSIENT_STRIPE_ERRORS,
     AcademyTitleUnavailableError,
@@ -32,6 +40,12 @@ from enterprise_access.apps.customer_billing.stripe_api import (
     get_stripe_payment_method,
     get_stripe_subscription,
     get_stripe_trialing_subscription
+)
+from enterprise_access.apps.customer_billing.top_up_fulfillment import (
+    NonRetryableFulfillmentError,
+    RetryableFulfillmentError,
+    fulfill_deposit_step,
+    fulfill_spend_limit_step
 )
 from enterprise_access.apps.customer_billing.utils import datetime_from_timestamp, get_campaign_id, get_product_type
 from enterprise_access.apps.provisioning.utils import validate_trial_subscription
@@ -1243,3 +1257,85 @@ def send_checkout_segment_event_task(
         return
     if sent:
         logger.info('Sent Segment event %s for order %s', event_name, order_id)
+
+
+def _record_top_up_fulfillment_error(top_up_uuid, error, retryable):
+    """
+    Move a top-up whose fulfillment failed for good to ``errored_fulfillment``, recording the error and whether a
+    later run may succeed. rerun_learner_credit_top_ups resumes only retryable ones on its own.
+
+    Does nothing if another run already moved the top-up on, for example a duplicate task that fulfilled it.
+    """
+    top_up = LearnerCreditTopUp.objects.filter(uuid=top_up_uuid).first()
+    if top_up is None:
+        return
+    try:
+        moved = top_up.transition_to(
+            LearnerCreditTopUpState.ERRORED_FULFILLMENT,
+            last_error=f'{type(error).__name__}: {error}',
+            last_error_retryable=retryable,
+        )
+    except InvalidLearnerCreditTopUpTransition:
+        logger.info('Not recording the fulfillment error of LearnerCreditTopUp %s: another run moved it to %s.',
+                    top_up_uuid, top_up.state)
+        return
+    if moved:
+        logger.error('LearnerCreditTopUp %s moved to %s (retryable=%s): %s',
+                     top_up_uuid, LearnerCreditTopUpState.ERRORED_FULFILLMENT, retryable, error)
+
+
+class LearnerCreditTopUpFulfillmentTask(LoggedTaskWithRetry):  # pylint: disable=abstract-method
+    """
+    Keeps the shared base task's retry settings (5 retries, backoff from 60 seconds, doubling, capped at 10 minutes,
+    with full jitter: about 25 minutes in all), and also retries a step's ``RetryableFulfillmentError`` and the soft
+    time limit, which a hung enterprise-subsidy call reaches. Every retry is safe: each step runs only from its own
+    starting state, and the deposit reuses its idempotency key.
+
+    When the task fails for good, ``on_failure`` moves the top-up to ``errored_fulfillment``: marked retryable when
+    its retries ran out on an error listed in ``autoretry_for``, and not retryable for anything else (a bug fails the
+    same way every time).
+    """
+    autoretry_for = (*LoggedTaskWithRetry.autoretry_for, RetryableFulfillmentError, SoftTimeLimitExceeded)
+
+    def on_failure(self, exc, task_id, args, kwargs, einfo):
+        top_up_uuid = (kwargs or {}).get('top_up_uuid') or next(iter(args or ()), None)
+        try:
+            _record_top_up_fulfillment_error(top_up_uuid, exc, retryable=isinstance(exc, self.autoretry_for))
+        except Exception:  # pylint: disable=broad-except
+            # Left in paid or deposited, the top-up is queued again by rerun_learner_credit_top_ups.
+            logger.exception('Could not record the fulfillment failure of LearnerCreditTopUp %s', top_up_uuid)
+        super().on_failure(exc, task_id, args, kwargs, einfo)
+
+
+@shared_task(base=LearnerCreditTopUpFulfillmentTask)
+def fulfill_learner_credit_top_up_task(top_up_uuid):
+    """
+    Fulfill a paid learner credit top-up from wherever it stopped: from ``paid``, the deposit step and then the
+    spend-limit step; from ``deposited``, the spend-limit step only. Any other state: nothing to do.
+
+    Takes only the top-up's UUID and re-reads the row. Queued by ``pay``, the ``payment_intent.succeeded`` webhook
+    and ``rerun_learner_credit_top_ups``; a duplicate or late task does nothing, since each step runs only from its
+    own starting state. It ignores ``FEATURE_TOP_UP_LEARNER_CREDIT``: money already taken must be credited.
+
+    A ``NonRetryableFulfillmentError`` (enterprise-subsidy answered the deposit with 400, 403, 404, 409 or 422, or
+    the raised spend limit failed validation with a fresh subsidy record) moves the top-up to
+    ``errored_fulfillment``, not retryable, at once. Anything retryable is retried; see
+    ``LearnerCreditTopUpFulfillmentTask``.
+    """
+    # Nothing clears the request cache between tasks in a worker, so a subsidy record cached by an earlier task
+    # would predate this top-up's deposit.
+    RequestCache.clear_all_namespaces()
+
+    top_up = LearnerCreditTopUp.objects.filter(uuid=top_up_uuid).first()
+    if top_up is None:
+        logger.error('Cannot fulfill LearnerCreditTopUp %s: it does not exist.', top_up_uuid)
+        return
+    if top_up.state not in (LearnerCreditTopUpState.PAID, LearnerCreditTopUpState.DEPOSITED):
+        logger.info('Nothing to fulfill for LearnerCreditTopUp %s: it is %s.', top_up_uuid, top_up.state)
+        return
+
+    try:
+        fulfill_deposit_step(top_up)
+        fulfill_spend_limit_step(top_up)
+    except NonRetryableFulfillmentError as exc:
+        _record_top_up_fulfillment_error(top_up_uuid, exc, retryable=False)

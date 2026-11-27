@@ -1679,6 +1679,20 @@ class LearnerCreditTopUp(TimeStampedModel):
         blank=True,
         help_text='The latest payment or fulfillment error.',
     )
+    last_error_retryable = models.BooleanField(
+        null=True,
+        blank=True,
+        default=None,
+        help_text=(
+            'Whether the fulfillment error that moved the top-up to errored_fulfillment may succeed on a later run. '
+            'Only retryable ones are re-run automatically. Null until fulfillment first fails.'
+        ),
+    )
+    automatic_rerun_count = models.PositiveIntegerField(
+        default=0,
+        help_text='How many times rerun_learner_credit_top_ups has resumed the top-up on its own. Manual runs '
+                  "don't count.",
+    )
     salesforce_opportunity_id = models.CharField(
         max_length=255,
         null=True,
