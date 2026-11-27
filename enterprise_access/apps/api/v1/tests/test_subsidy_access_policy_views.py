@@ -11,13 +11,17 @@ from uuid import UUID, uuid4
 import ddt
 from django.conf import settings
 from django.core.exceptions import ValidationError
+from django.test import SimpleTestCase
 from requests.exceptions import ConnectionError as RequestsConnectionError
 from requests.exceptions import ConnectTimeout, HTTPError, ReadTimeout, SSLError
 from rest_framework import status
 from rest_framework.reverse import reverse
 
 from enterprise_access.apps.api.serializers import SubsidyAccessPolicyCreditsAvailableResponseSerializer
-from enterprise_access.apps.api.v1.views.subsidy_access_policy import SubsidyAPIUnavailableException
+from enterprise_access.apps.api.v1.views.subsidy_access_policy import (
+    SubsidyAPIUnavailableException,
+    _get_reasons_for_no_redeemable_policies
+)
 from enterprise_access.apps.api_client.tests.test_utils import MockResponse
 from enterprise_access.apps.content_assignments.constants import (
     AssignmentAutomaticExpiredReason,
@@ -40,6 +44,7 @@ from enterprise_access.apps.subsidy_access_policy.constants import (
     REASON_LEARNER_NOT_ASSIGNED_CONTENT,
     REASON_LEARNER_NOT_IN_ENTERPRISE_GROUP,
     REASON_NOT_ENOUGH_VALUE_IN_SUBSIDY,
+    REASON_POLICY_EXPIRED,
     REASON_SUBSIDY_EXPIRED,
     AccessMethods,
     MissingSubsidyAccessReasonUserMessages,
@@ -2105,7 +2110,7 @@ class BaseCanRedeemTestMixin:
             'enterprise_access.apps.subsidy_access_policy.models.SubsidyAccessPolicy.subsidy_client'
         )
         subsidy_client_patcher = mock.patch(subsidy_client_path)
-        subsidy_client = subsidy_client_patcher.start()
+        subsidy_client = self.mock_subsidy_client = subsidy_client_patcher.start()
         subsidy_client.can_redeem.return_value = {
             'can_redeem': True,
             'active': True,
@@ -3517,6 +3522,70 @@ class TestAssignedSubsidyAccessPolicyCanRedeemView(BaseCanRedeemTestMixin, APITe
 
     @mock.patch('enterprise_access.apps.api.v1.views.subsidy_access_policy.LmsApiClient')
     @mock.patch('enterprise_access.apps.subsidy_access_policy.subsidy_api.get_and_cache_transactions_for_learner')
+    @ddt.data(
+        # The other budget is live, so its reason is the one the learner can act on.
+        {'other_subsidy_is_active': True, 'expected_reason': REASON_LEARNER_NOT_ASSIGNED_CONTENT},
+        # Every budget has ended, so "funds expired" is accurate.
+        {'other_subsidy_is_active': False, 'expected_reason': REASON_SUBSIDY_EXPIRED},
+    )
+    @ddt.unpack
+    def test_can_redeem_ended_budget_does_not_decide_display_reason(
+        self, mock_transactions_cache_for_learner, mock_lms_client, other_subsidy_is_active, expected_reason,
+    ):
+        """
+        Test that a budget whose subsidy expired doesn't decide ``display_reason`` while another budget is live.
+        The expired budget is evaluated first, because policies are sorted by expiration.
+        """
+        ended_policy = AssignedLearnerCreditAccessPolicyFactory(
+            enterprise_customer_uuid=self.enterprise_uuid,
+            active=True,
+            assignment_configuration=AssignmentConfigurationFactory(enterprise_customer_uuid=self.enterprise_uuid),
+            spend_limit=1000000,
+        )
+        subsidy_records = {
+            str(ended_policy.subsidy_uuid): {'is_active': False, 'expiration_datetime': '2020-01-01T00:00:00Z'},
+            str(self.assigned_learner_credit_policy.subsidy_uuid): {
+                'is_active': other_subsidy_is_active, 'expiration_datetime': '2099-01-01T00:00:00Z',
+            },
+        }
+        self.mock_subsidy_client.retrieve_subsidy.side_effect = (
+            lambda subsidy_uuid: subsidy_records[str(subsidy_uuid)]
+        )
+        self.mock_subsidy_client.can_redeem.side_effect = lambda subsidy_uuid, *args: {
+            'can_redeem': True, 'active': subsidy_records[str(subsidy_uuid)]['is_active'], 'all_transactions': [],
+        }
+        mock_transactions_cache_for_learner.return_value = {'transactions': [], 'aggregates': {'total_quantity': 0}}
+        mock_lms_client.return_value.get_enterprise_customer_data.return_value = {
+            'slug': 'sluggy',
+            'admin_users': [{'email': 'edx@example.org'}],
+        }
+        content_metadata = {'content_key': 'Unassigned+Content', 'content_price': 29900}
+        self.mock_get_content_metadata.return_value = content_metadata
+        self.mock_catalog_get_and_cache_content_metadata.return_value = {
+            'normalized_metadata': {'content_price': 299},
+            'normalized_metadata_by_run': {},
+        }
+
+        with mock.patch(
+            'enterprise_access.apps.content_assignments.api.get_and_cache_content_metadata',
+            return_value=content_metadata,
+        ):
+            response = self.client.get(
+                self.subsidy_access_policy_can_redeem_endpoint,
+                {'content_key': ['course-v1:Unassigned+Content+3T2020']},
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        response_element = response.json()[0]
+        assert response_element['display_reason']['reason'] == expected_reason
+        assert response_element['display_reason'] == response_element['reasons'][0]
+        # The expired budget's reason is still reported, just not first.
+        assert {reason['reason'] for reason in response_element['reasons']} == {
+            expected_reason, REASON_SUBSIDY_EXPIRED,
+        }
+
+    @mock.patch('enterprise_access.apps.api.v1.views.subsidy_access_policy.LmsApiClient')
+    @mock.patch('enterprise_access.apps.subsidy_access_policy.subsidy_api.get_and_cache_transactions_for_learner')
     def test_can_redeem_content_not_in_catalog_service_still_200_ok(
         self, mock_transactions_cache_for_learner, mock_lms_client,
     ):
@@ -3669,3 +3738,42 @@ class TestAssignedSubsidyAccessPolicyCanRedeemView(BaseCanRedeemTestMixin, APITe
             response = self.client.get(self.subsidy_access_policy_can_redeem_endpoint, query_params)
 
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+
+@ddt.ddt
+class TestReasonsForNoRedeemablePolicies(SimpleTestCase):
+    """
+    Tests for the order of the reasons ``can-redeem`` reports. The first one is the ``display_reason``.
+    """
+
+    @mock.patch('enterprise_access.apps.api.v1.views.subsidy_access_policy.LmsApiClient')
+    @ddt.data(
+        # An ended budget is evaluated first, because it has the earliest expiration, but is reported last.
+        {
+            'evaluated_reasons': [REASON_SUBSIDY_EXPIRED, REASON_LEARNER_NOT_ASSIGNED_CONTENT],
+            'expected_reasons': [REASON_LEARNER_NOT_ASSIGNED_CONTENT, REASON_SUBSIDY_EXPIRED],
+        },
+        # The ended-budget reasons keep their order relative to each other, and so do the rest.
+        {
+            'evaluated_reasons': [
+                REASON_POLICY_EXPIRED, REASON_CONTENT_NOT_IN_CATALOG,
+                REASON_SUBSIDY_EXPIRED, REASON_BEYOND_ENROLLMENT_DEADLINE,
+            ],
+            'expected_reasons': [
+                REASON_CONTENT_NOT_IN_CATALOG, REASON_BEYOND_ENROLLMENT_DEADLINE,
+                REASON_POLICY_EXPIRED, REASON_SUBSIDY_EXPIRED,
+            ],
+        },
+        # Every budget has ended, so that is the reason to show.
+        {'evaluated_reasons': [REASON_SUBSIDY_EXPIRED], 'expected_reasons': [REASON_SUBSIDY_EXPIRED]},
+        {'evaluated_reasons': [], 'expected_reasons': []},
+    )
+    @ddt.unpack
+    def test_ended_budget_reasons_are_reported_last(self, mock_lms_client, evaluated_reasons, expected_reasons):
+        mock_lms_client.return_value.get_enterprise_customer_data.return_value = {'admin_users': []}
+        policies_by_reason = {reason: [mock.Mock(uuid=uuid4())] for reason in evaluated_reasons}
+
+        reasons, display_reason = _get_reasons_for_no_redeemable_policies(uuid4(), policies_by_reason)
+
+        self.assertEqual([reason['reason'] for reason in reasons], expected_reasons)
+        self.assertEqual(display_reason, reasons[0] if reasons else None)
