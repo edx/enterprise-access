@@ -101,6 +101,7 @@ class CheckoutIntentAdmin(DjangoQLSearchMixin, admin.ModelAdmin):
         'enterprise_slug',
         'user_email',
         'state_display',
+        'in_renewal_grace_period',
         'quantity',
         'created',
         'time_remaining',
@@ -110,6 +111,7 @@ class CheckoutIntentAdmin(DjangoQLSearchMixin, admin.ModelAdmin):
 
     list_filter = (
         'state',
+        'in_renewal_grace_period',
         'created',
         'expires_at',
     )
@@ -128,6 +130,7 @@ class CheckoutIntentAdmin(DjangoQLSearchMixin, admin.ModelAdmin):
         'time_remaining',
         'admin_portal_url_display',
         'stripe_session_link',
+        'in_renewal_grace_period',
     )
 
     autocomplete_fields = [
@@ -155,6 +158,7 @@ class CheckoutIntentAdmin(DjangoQLSearchMixin, admin.ModelAdmin):
                 'state_display',
                 'time_remaining',
                 'expires_at',
+                'in_renewal_grace_period',
             )
         }),
         ('Timestamps', {

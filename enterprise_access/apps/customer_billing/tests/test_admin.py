@@ -41,6 +41,36 @@ class TestCheckoutIntentAdmin(TestCase):
 
         self.assertIn('ssp_product', integration_fields)
 
+    def test_renewal_grace_period_is_shown_read_only_and_filterable(self):
+        """
+        Support can see and filter by in_renewal_grace_period, but only the Stripe webhooks change it (ENT-11531).
+        """
+        admin_instance = CheckoutIntentAdmin(CheckoutIntent, admin.site)
+
+        status_fields = next(
+            fieldset['fields']
+            for name, fieldset in admin_instance.fieldsets
+            if name == 'Status'
+        )
+
+        self.assertIn('in_renewal_grace_period', status_fields)
+        self.assertIn('in_renewal_grace_period', admin_instance.readonly_fields)
+        self.assertIn('in_renewal_grace_period', admin_instance.list_filter)
+        self.assertIn('in_renewal_grace_period', admin_instance.list_display)
+
+    def test_renewal_grace_period_on_change_page(self):
+        """The change page renders the flag as read-only text, not a checkbox."""
+        self.client.force_login(UserFactory(is_staff=True, is_superuser=True))
+        intent = CheckoutIntentFactory(in_renewal_grace_period=True)
+
+        response = self.client.get(
+            reverse('admin:customer_billing_checkoutintent_change', args=[intent.pk])
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'In renewal grace period')
+        self.assertNotContains(response, 'name="in_renewal_grace_period"')
+
 
 class TestSspProductAdmin(TestCase):
     """Tests for the SspProduct admin configuration."""

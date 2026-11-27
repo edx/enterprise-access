@@ -30,6 +30,8 @@ the trial->paid path.
 
 `CheckoutIntent.in_renewal_grace_period` marks the rare case of a failed renewal charge: the customer is in the
 grace week, still on year 1. `invoice.created` alone (the normal short gap before payment) doesn't set it.
+The CheckoutIntent Django admin shows it read-only (list column, list filter and the Status section); only the
+Stripe webhooks change it.
 
 The flag is only cleared by a processed renewal or `customer.subscription.deleted`. If Stripe's dunning
 settings end a failed subscription as `unpaid` or leave it `past_due` instead of canceling it, the flag stays
