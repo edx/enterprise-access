@@ -7,6 +7,7 @@ Reference notes on specific features. These are Markdown files, read on GitHub r
 
 - `Algolia search <algolia_search.md>`_
 - `Assignment course run ended expiration <assignment_course_run_ended_expiration.md>`_
+- `Budget mode switching runbook <budget_mode_switching_runbook.md>`_
 - `Career discovery workflow <career_discovery_workflow.md>`_
 - `Checkout Segment events (order_completed, order_cancelled) <checkout_segment_events.md>`_
 - `Learner Credit spend (transactions) CSV export <learner_credit_transactions_export.md>`_

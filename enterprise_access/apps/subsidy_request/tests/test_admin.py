@@ -8,16 +8,19 @@ from django.http import HttpRequest
 from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.subsidy_request.admin import (
     LearnerCreditRequestAdmin,
+    LearnerCreditRequestConfigurationAdmin,
     LicenseRequestAdmin,
     SubsidyRequestCustomerConfigurationAdmin
 )
 from enterprise_access.apps.subsidy_request.constants import SubsidyRequestStates
 from enterprise_access.apps.subsidy_request.models import (
     LearnerCreditRequest,
+    LearnerCreditRequestConfiguration,
     LicenseRequest,
     SubsidyRequestCustomerConfiguration
 )
 from enterprise_access.apps.subsidy_request.tests.factories import (
+    LearnerCreditRequestConfigurationFactory,
     LearnerCreditRequestFactory,
     LicenseRequestFactory,
     SubsidyRequestCustomerConfigurationFactory
@@ -286,3 +289,35 @@ class AdminTests(TestCaseWithMockedDiscoveryApiClient):
             assert req.reviewer == reviewer
             assert req.decline_reason == "Declined via admin bulk action"
             assert req.reviewed_at is not None
+
+    def test_active_help_text_states_default_off(self):
+        """
+        The admin form's ``active`` checkbox says it is off by default and what ticking it does.
+        """
+        config_admin = LearnerCreditRequestConfigurationAdmin(LearnerCreditRequestConfiguration, AdminSite())
+        request = HttpRequest()
+        request.user = UserFactory(is_staff=True, is_superuser=True)
+        form_class = config_admin.get_form(request)
+        help_text = str(form_class.base_fields['active'].help_text)
+
+        assert 'Defaults to True' not in help_text
+        assert 'off by default' in help_text.lower()
+        assert 'assignment configuration' in help_text.lower()
+
+    def test_admin_form_refuses_untick_with_open_requests(self):
+        """
+        Unticking ``active`` while a request is open is a form error, not a server error.
+        """
+        config = LearnerCreditRequestConfigurationFactory(active=True)
+        LearnerCreditRequestFactory(learner_credit_request_config=config, state=SubsidyRequestStates.REQUESTED)
+        config_admin = LearnerCreditRequestConfigurationAdmin(LearnerCreditRequestConfiguration, AdminSite())
+        request = HttpRequest()
+        request.user = UserFactory(is_staff=True, is_superuser=True)
+        form_class = config_admin.get_form(request, obj=config)
+
+        # An unticked checkbox is absent from the POST data.
+        form = form_class(data={}, instance=config)
+
+        assert not form.is_valid()
+        assert '1 open' in str(form.errors)
+        assert LearnerCreditRequestConfiguration.objects.get(uuid=config.uuid).active

@@ -333,6 +333,16 @@ class LearnerCreditRequestConfigurationAdmin(DjangoQLSearchMixin, admin.ModelAdm
 
         model = models.LearnerCreditRequestConfiguration
 
+    def get_form(self, request, obj=None, change=False, **kwargs):
+        kwargs['help_texts'] = {
+            'active': (
+                'Off by default. Ticking it turns on Browse & Request for the attached budget '
+                'and gives that budget an assignment configuration if it has none.'
+            ),
+            **kwargs.get('help_texts', {}),
+        }
+        return super().get_form(request, obj, change, **kwargs)
+
 
 @admin.register(models.LearnerCreditRequestActions)
 class LearnerCreditRequestActionsAdmin(DjangoQLSearchMixin, admin.ModelAdmin):

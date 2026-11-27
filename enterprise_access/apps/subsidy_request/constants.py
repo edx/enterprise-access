@@ -34,6 +34,9 @@ class SubsidyRequestStates:
 
     CHOICES = COMMON_STATES + LC_REQUEST_STATES
 
+    # Learner credit request states still in flight; B&R cannot be switched off while any exist.
+    LC_OPEN_REQUEST_STATES = (REQUESTED, PENDING, APPROVED, ERROR)
+
 
 class LearnerCreditAdditionalActionStates:
     """ Additional states specifically for LearnerCreditRequestActions. """

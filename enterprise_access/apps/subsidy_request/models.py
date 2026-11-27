@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from django.db import models
+from django.db import models, transaction
 from django.db.models import Case, CharField, F, IntegerField, OuterRef, Q, Subquery, Value, When
 from django.dispatch import receiver
 from django.utils import timezone
@@ -347,10 +347,24 @@ class LearnerCreditRequestConfiguration(TimeStampedModel):
 
     def clean(self):
         """
-        Validate that only one subsidy type can have B&R enabled at a time.
+        Validate that only one subsidy type can have B&R enabled at a time, and that
+        a stored active config is not switched off while any of its requests is open.
         """
         super().clean()
         from enterprise_access.apps.subsidy_access_policy.models import SubsidyAccessPolicy
+        is_deactivating = not self.active and LearnerCreditRequestConfiguration.objects.filter(
+            pk=self.pk, active=True,
+        ).exists()
+        if is_deactivating:
+            open_count = self.learner_credit_requests.filter(
+                state__in=SubsidyRequestStates.LC_OPEN_REQUEST_STATES,
+            ).count()
+            if open_count:
+                raise ValidationError(
+                    f"Browse & Request cannot be turned off: this configuration has {open_count} open "
+                    "learner credit request(s) (requested, pending, approved or error). Decline or cancel "
+                    "them first, or retire the budget and let the nightly jobs close them."
+                )
         if self.active:
             policy = SubsidyAccessPolicy.objects.filter(
                 learner_credit_request_config=self
@@ -375,8 +389,22 @@ class LearnerCreditRequestConfiguration(TimeStampedModel):
                 )
 
     def save(self, *args, **kwargs):
+        """
+        Validate and save. When active, re-save the attached policy if it has no
+        assignment configuration, so the policy's own save() creates one; approving a
+        request needs it. Both writes share one transaction.
+        """
+        from enterprise_access.apps.subsidy_access_policy.models import PerLearnerSpendCreditAccessPolicy
         self.full_clean()
-        super().save(*args, **kwargs)
+        with transaction.atomic():
+            super().save(*args, **kwargs)
+            if self.active:
+                policy = PerLearnerSpendCreditAccessPolicy.objects.filter(
+                    learner_credit_request_config=self,
+                    assignment_configuration__isnull=True,
+                ).first()
+                if policy:
+                    policy.save()
 
 
 class LearnerCreditRequest(SubsidyRequest):
