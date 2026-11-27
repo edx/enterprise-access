@@ -1,9 +1,16 @@
 """Tests for the enterprise-access feature toggles."""
 import pytest
+from edx_django_utils.cache import RequestCache
 from edx_toggles.toggles import WaffleFlag, WaffleSwitch
 from edx_toggles.toggles.testutils import override_waffle_flag, override_waffle_switch
 
 from enterprise_access import toggles
+
+
+@pytest.fixture(autouse=True)
+def _clear_request_cache():
+    yield
+    RequestCache.clear_all_namespaces()
 
 
 def test_enable_multi_license_entitlements_bff_enabled(monkeypatch):

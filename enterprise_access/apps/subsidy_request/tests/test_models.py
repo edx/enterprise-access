@@ -6,6 +6,7 @@ from uuid import uuid4
 import ddt
 from django.forms import ValidationError
 from django.test import TestCase
+from edx_django_utils.cache import RequestCache
 from edx_toggles.toggles.testutils import override_waffle_switch
 from pytest import mark
 
@@ -566,6 +567,7 @@ class IsMultiPlanEnabledTests(TestCase):
 
     def setUp(self):
         super().setUp()
+        self.addCleanup(RequestCache.clear_all_namespaces)
         self.enterprise_customer_uuid = uuid4()
 
     @ddt.data(
