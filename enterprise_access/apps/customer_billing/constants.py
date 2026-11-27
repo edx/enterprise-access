@@ -1,6 +1,7 @@
 """
 Constants for customer_billing app.
 """
+from datetime import timedelta
 from enum import StrEnum
 
 CHECKOUT_SESSION_ERROR_CODES = {
@@ -234,6 +235,12 @@ BRAZE_DATE_FORMAT_1 = "%d %B %Y"
 BRAZE_DATE_FORMAT_2 = "%b %d, %Y"
 
 SUBSCRIPTION_ITEM_TYPE = "subscription_item_details"
+
+# Paid-to-paid renewal reminder email types, mapped to how long before the renewal date each is sent.
+RENEWAL_REMINDER_LEAD_TIMES = {
+    'renewal_reminder_40_day': timedelta(days=40),
+    'renewal_reminder_72_hour': timedelta(hours=72),
+}
 
 
 class StripeSubscriptionStatus(StrEnum):

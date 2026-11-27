@@ -236,6 +236,30 @@ created or activated here. Admins get the payment receipt plus
 *Gotcha:* the first paid invoice at the end of the trial also has ``billing_reason == 'subscription_cycle'``; the
 "earlier paid invoice" check is what keeps it on the trial→paid path.
 
+**Renewal Reminders (paid-to-paid)**
+
+Admins get a reminder 40 days and 72 hours before a paid subscription renews, so they can cancel before they are
+charged. The once-daily ``send_renewal_reminder_emails`` management command sends them. There is no Stripe event for
+this: ``invoice.upcoming`` fires at a single lead time set in the Stripe dashboard, so it can't serve two reminders.
+
+* For each lead time in ``RENEWAL_REMINDER_LEAD_TIMES``, the command picks the subscriptions whose term ends between
+  ``lead time`` and one day later, measured from the start of the hour the run began in, not the exact start time
+  (architecture pattern 28). Back-to-back daily windows then give each renewal exactly one of each reminder, at most
+  that start delay late, as long as every run starts within its scheduled hour.
+* A missed run is not made up, and a second run on the same day sends again, so turn Braze re-eligibility on for both
+  campaigns, with a window of a few days. With it off, an admin only ever gets each reminder for the first renewal.
+* Candidates come from ``StripeEventSummary``: an ``invoice.paid`` above $0 must exist for the subscription (trials
+  are left to the trial ending reminder), and its latest subscription event must show it ``active``, with no
+  ``cancel_at`` and the period end in the window.
+* ``send_renewal_reminder_email_task`` reads the subscription from Stripe again, uncached, and sends nothing if it is
+  no longer active or a cancellation is scheduled. The renewal amount is the ``amount_due`` of Stripe's preview of the
+  next invoice (``get_upcoming_invoice``), so coupons and pending invoice items (e.g. a CS adjustment) count. The
+  payment method is the subscription's, else the Stripe Customer's default. Transient Stripe and Braze errors retry.
+* Campaigns: ``BRAZE_SSP_RENEWAL_REMINDER_40_DAY_CAMPAIGN_UUID`` and ``BRAZE_SSP_RENEWAL_REMINDER_72_HOUR_CAMPAIGN_UUID``,
+  each shared by Teams and Essentials via ``product_type``. Trigger properties: ``renewal_date``, ``new_term_end_date``,
+  ``license_count``, ``renewal_amount``, ``payment_method``, ``billing_url`` (the admin portal's Billing tab) and the
+  common ``product_type``, ``product_type_display``, ``academy_name`` and ``organization``.
+
 Braze Campaign Summary
 ----------------------
 
@@ -267,6 +291,10 @@ Key: ``[BEP] = BRAZE_ENTERPRISE_PROVISION``
 | Cancelled paid subscription ends     | ``[BEP]_SUBSCRIPTION_ENDED_AND_CANCELLED_CAMPAIGN``             | Paid subscription ended notice                         |
 +--------------------------------------+-----------------------------------------------------------------+--------------------------------------------------------+
 | Annual renewal invoice paid          | ``[BEP]_SUBSCRIPTION_RENEWAL_NOTICE_CAMPAIGN``                  | Paid subscription renewal notice                       |
++--------------------------------------+-----------------------------------------------------------------+--------------------------------------------------------+
+| 40 days before a paid term ends      | ``BRAZE_SSP_RENEWAL_REMINDER_40_DAY_CAMPAIGN_UUID``             | Paid-to-paid renewal reminder (daily command)          |
++--------------------------------------+-----------------------------------------------------------------+--------------------------------------------------------+
+| 72 hours before a paid term ends     | ``BRAZE_SSP_RENEWAL_REMINDER_72_HOUR_CAMPAIGN_UUID``            | Final paid-to-paid renewal reminder (daily command)    |
 +--------------------------------------+-----------------------------------------------------------------+--------------------------------------------------------+
 
 Event Processing Flows

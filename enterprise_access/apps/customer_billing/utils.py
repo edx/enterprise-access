@@ -62,6 +62,8 @@ CAMPAIGN_SETTINGS_MAP = {
     ('paid_cancellation', 'teams'): 'BRAZE_PAID_CANCELLATION_CAMPAIGN',
     ('paid_subscription_ended', 'teams'): 'BRAZE_ENTERPRISE_PROVISION_SUBSCRIPTION_ENDED_AND_CANCELLED_CAMPAIGN',
     ('paid_subscription_renewal_notice', 'teams'): 'BRAZE_ENTERPRISE_PROVISION_SUBSCRIPTION_RENEWAL_NOTICE_CAMPAIGN',
+    ('renewal_reminder_40_day', 'teams'): 'BRAZE_SSP_RENEWAL_REMINDER_40_DAY_CAMPAIGN_UUID',
+    ('renewal_reminder_72_hour', 'teams'): 'BRAZE_SSP_RENEWAL_REMINDER_72_HOUR_CAMPAIGN_UUID',
 
     # Essentials campaigns (new)
     ('signup_confirmation', 'essentials'): 'BRAZE_ESSENTIALS_SIGNUP_CONFIRMATION_CAMPAIGN',
@@ -76,6 +78,8 @@ CAMPAIGN_SETTINGS_MAP = {
     ('paid_subscription_renewal_notice', 'essentials'): (
         'BRAZE_ENTERPRISE_PROVISION_SUBSCRIPTION_RENEWAL_NOTICE_CAMPAIGN'
     ),
+    ('renewal_reminder_40_day', 'essentials'): 'BRAZE_SSP_RENEWAL_REMINDER_40_DAY_CAMPAIGN_UUID',
+    ('renewal_reminder_72_hour', 'essentials'): 'BRAZE_SSP_RENEWAL_REMINDER_72_HOUR_CAMPAIGN_UUID',
 }
 
 
@@ -94,7 +98,8 @@ def get_campaign_id(email_type, ssp_product: 'SspProduct | None' = None):
         email_type (str): One of 'signup_confirmation', 'trial_ending_soon',
             'trial_cancellation', 'trial_ended_cancellation', 'payment_receipt',
             'trial_end_subscription_started', 'billing_error',
-            'paid_cancellation', 'paid_subscription_ended', 'paid_subscription_renewal_notice'.
+            'paid_cancellation', 'paid_subscription_ended', 'paid_subscription_renewal_notice',
+            'renewal_reminder_40_day', 'renewal_reminder_72_hour'.
         ssp_product (SspProduct|None): The CheckoutIntent's product.
 
     Returns:
