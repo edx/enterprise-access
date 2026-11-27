@@ -120,8 +120,12 @@ class SubsidyRequestCustomerConfigurationSerializer(serializers.ModelSerializer)
             'enterprise_customer_uuid',
             'subsidy_requests_enabled',
             'subsidy_type',
-            'changed_by_lms_user_id'
+            'changed_by_lms_user_id',
+            'enable_multi_plan_funding',
         ]
+        # Only Enterprise Customer Success sets this, in Django admin. The admin portal reads it to decide whether
+        # to show the multi-plan funding settings, but customers can't change it through the API.
+        read_only_fields = ['enable_multi_plan_funding']
 
     def update(self, instance, validated_data):
         # Pop enterprise_customer_uuid so that it's read-only for updates.

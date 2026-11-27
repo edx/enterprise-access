@@ -1362,6 +1362,71 @@ class TestSubsidyRequestCustomerConfigurationViewSet(APITestWithMocks):
         response = self.client.patch(f'{CUSTOMER_CONFIGURATIONS_LIST_ENDPOINT}{self.enterprise_customer_uuid_1}/', {})
         assert response.status_code == status.HTTP_403_FORBIDDEN
 
+    @ddt.data(True, False)
+    def test_retrieve_includes_enable_multi_plan_funding(self, enable_multi_plan_funding):
+        """
+        The admin portal reads ``enable_multi_plan_funding`` to decide whether to show the multi-plan funding
+        settings, so the API returns it.
+        """
+        self.set_jwt_cookie(roles_and_contexts=[
+            {
+                'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+                'context': self.enterprise_customer_uuid_1
+            },
+        ])
+        self.customer_configuration_1.enable_multi_plan_funding = enable_multi_plan_funding
+        self.customer_configuration_1.save()
+
+        response = self.client.get(f'{CUSTOMER_CONFIGURATIONS_LIST_ENDPOINT}{self.enterprise_customer_uuid_1}/')
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()['enable_multi_plan_funding'] is enable_multi_plan_funding
+
+    def test_create_ignores_enable_multi_plan_funding(self):
+        """Only Enterprise Customer Success sets ``enable_multi_plan_funding``, in Django admin."""
+        SubsidyRequestCustomerConfiguration.objects.all().delete()
+        self.set_jwt_cookie(roles_and_contexts=[
+            {
+                'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+                'context': self.enterprise_customer_uuid_1
+            },
+        ])
+        payload = {
+            'enterprise_customer_uuid': self.enterprise_customer_uuid_1,
+            'subsidy_requests_enabled': False,
+            'enable_multi_plan_funding': True,
+        }
+
+        response = self.client.post(CUSTOMER_CONFIGURATIONS_LIST_ENDPOINT, payload)
+
+        assert response.status_code == status.HTTP_201_CREATED
+        assert response.json()['enable_multi_plan_funding'] is False
+        assert not SubsidyRequestCustomerConfiguration.objects.get(
+            enterprise_customer_uuid=self.enterprise_customer_uuid_1
+        ).enable_multi_plan_funding
+
+    @ddt.data(True, False)
+    def test_partial_update_ignores_enable_multi_plan_funding(self, stored_value):
+        """An admin can't change ``enable_multi_plan_funding`` through the API, in either direction."""
+        self.set_jwt_cookie(roles_and_contexts=[
+            {
+                'system_wide_role': SYSTEM_ENTERPRISE_ADMIN_ROLE,
+                'context': self.enterprise_customer_uuid_1
+            },
+        ])
+        self.customer_configuration_1.enable_multi_plan_funding = stored_value
+        self.customer_configuration_1.save()
+
+        response = self.client.patch(
+            f'{CUSTOMER_CONFIGURATIONS_LIST_ENDPOINT}{self.enterprise_customer_uuid_1}/',
+            {'enable_multi_plan_funding': not stored_value},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()['enable_multi_plan_funding'] is stored_value
+        self.customer_configuration_1.refresh_from_db()
+        assert self.customer_configuration_1.enable_multi_plan_funding is stored_value
+
     def test_partial_update_happy_path(self):
         """
         Test that a customer configuration can be patched.

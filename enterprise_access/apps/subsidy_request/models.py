@@ -35,6 +35,7 @@ from enterprise_access.apps.subsidy_request.utils import (
     get_error_reason_choice,
     get_user_message_choice
 )
+from enterprise_access.toggles import multi_plan_funding_enabled
 from enterprise_access.utils import localized_utcnow
 
 
@@ -292,6 +293,15 @@ class SubsidyRequestCustomerConfiguration(TimeStampedModel):
         null=True,
     )
 
+    enable_multi_plan_funding = models.BooleanField(
+        default=False,
+        help_text=_(
+            "Whether this enterprise can fund an enrollment from more than one learner credit budget. "
+            "Also requires the enterprise_access.multi_plan_funding waffle switch to be on. "
+            "Set by Enterprise Customer Success; read-only in the API."
+        ),
+    )
+
     history = HistoricalRecords()
 
     @property
@@ -321,6 +331,22 @@ class SubsidyRequestCustomerConfiguration(TimeStampedModel):
     def save(self, *args, **kwargs):
         self.full_clean()
         super().save(*args, **kwargs)
+
+
+def is_multi_plan_enabled(enterprise_customer_uuid):
+    """
+    Return whether multi-plan learner credit funding is on for an enterprise customer.
+
+    True only when the global ``enterprise_access.multi_plan_funding`` waffle switch is on and the customer's
+    ``SubsidyRequestCustomerConfiguration`` exists with ``enable_multi_plan_funding`` turned on. A customer with no
+    configuration row is off. The switch is checked first, so no query runs while it is off.
+    """
+    if not multi_plan_funding_enabled():
+        return False
+    return SubsidyRequestCustomerConfiguration.objects.filter(
+        enterprise_customer_uuid=enterprise_customer_uuid,
+        enable_multi_plan_funding=True,
+    ).exists()
 
 
 class LearnerCreditRequestConfiguration(TimeStampedModel):

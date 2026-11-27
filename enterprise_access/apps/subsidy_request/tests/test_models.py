@@ -6,6 +6,8 @@ from uuid import uuid4
 import ddt
 from django.forms import ValidationError
 from django.test import TestCase
+from edx_django_utils.cache import RequestCache
+from edx_toggles.toggles.testutils import override_waffle_switch
 from pytest import mark
 
 from enterprise_access.apps.core.tests.factories import UserFactory
@@ -22,7 +24,9 @@ from enterprise_access.apps.subsidy_request.constants import (
 from enterprise_access.apps.subsidy_request.models import (
     LearnerCreditRequest,
     LearnerCreditRequestActions,
-    LearnerCreditRequestConfiguration
+    LearnerCreditRequestConfiguration,
+    SubsidyRequestCustomerConfiguration,
+    is_multi_plan_enabled
 )
 from enterprise_access.apps.subsidy_request.tasks import update_course_info_for_subsidy_request_task
 from enterprise_access.apps.subsidy_request.tests.factories import (
@@ -33,6 +37,7 @@ from enterprise_access.apps.subsidy_request.tests.factories import (
     LicenseRequestFactory,
     SubsidyRequestCustomerConfigurationFactory
 )
+from enterprise_access.toggles import MULTI_PLAN_FUNDING
 from test_utils import TestCaseWithMockedDiscoveryApiClient
 
 now = datetime.utcnow()
@@ -552,3 +557,90 @@ class SubsidyRequestCustomerConfigurationTests(TestCase):
             config_for_save.save()
 
         self.assertIn(expected_message, str(save_context.exception))
+
+
+@ddt.ddt
+class IsMultiPlanEnabledTests(TestCase):
+    """
+    Tests for ``is_multi_plan_enabled``: on only when the global switch and the customer's setting are both on.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.addCleanup(RequestCache.clear_all_namespaces)
+        self.enterprise_customer_uuid = uuid4()
+
+    @ddt.data(
+        # (switch_on, config_exists, enable_multi_plan_funding, expected)
+        (False, False, False, False),
+        (False, True, False, False),
+        (False, True, True, False),
+        (True, False, False, False),
+        (True, True, False, False),
+        (True, True, True, True),
+    )
+    @ddt.unpack
+    def test_is_multi_plan_enabled(self, switch_on, config_exists, enable_multi_plan_funding, expected):
+        if config_exists:
+            SubsidyRequestCustomerConfigurationFactory(
+                enterprise_customer_uuid=self.enterprise_customer_uuid,
+                enable_multi_plan_funding=enable_multi_plan_funding,
+            )
+
+        with override_waffle_switch(MULTI_PLAN_FUNDING, switch_on):
+            assert is_multi_plan_enabled(self.enterprise_customer_uuid) is expected
+
+    def test_is_scoped_to_the_given_customer(self):
+        """Another customer's setting doesn't turn it on."""
+        SubsidyRequestCustomerConfigurationFactory(enable_multi_plan_funding=True)
+        SubsidyRequestCustomerConfigurationFactory(
+            enterprise_customer_uuid=self.enterprise_customer_uuid,
+            enable_multi_plan_funding=False,
+        )
+
+        with override_waffle_switch(MULTI_PLAN_FUNDING, True):
+            assert is_multi_plan_enabled(self.enterprise_customer_uuid) is False
+
+    def test_accepts_a_string_uuid(self):
+        SubsidyRequestCustomerConfigurationFactory(
+            enterprise_customer_uuid=self.enterprise_customer_uuid,
+            enable_multi_plan_funding=True,
+        )
+
+        with override_waffle_switch(MULTI_PLAN_FUNDING, True):
+            assert is_multi_plan_enabled(str(self.enterprise_customer_uuid)) is True
+
+    def test_skips_the_query_while_the_switch_is_off(self):
+        SubsidyRequestCustomerConfigurationFactory(
+            enterprise_customer_uuid=self.enterprise_customer_uuid,
+            enable_multi_plan_funding=True,
+        )
+
+        with override_waffle_switch(MULTI_PLAN_FUNDING, False):
+            with self.assertNumQueries(0):
+                assert is_multi_plan_enabled(self.enterprise_customer_uuid) is False
+
+
+class SubsidyRequestCustomerConfigurationMultiPlanFieldTests(TestCase):
+    """
+    Tests for the ``enable_multi_plan_funding`` field on ``SubsidyRequestCustomerConfiguration``.
+    """
+
+    def test_defaults_to_off(self):
+        config = SubsidyRequestCustomerConfiguration.objects.create(enterprise_customer_uuid=uuid4())
+        config.refresh_from_db()
+        assert config.enable_multi_plan_funding is False
+
+    def test_changes_are_kept_in_history(self):
+        """Every change is recorded, with the user who made it, so ECS changes can be audited."""
+        user = UserFactory()
+        config = SubsidyRequestCustomerConfigurationFactory(enable_multi_plan_funding=False)
+
+        config.enable_multi_plan_funding = True
+        config.changed_by = user
+        config.save()
+
+        latest, previous = config.history.all()[:2]
+        assert latest.enable_multi_plan_funding is True
+        assert previous.enable_multi_plan_funding is False
+        assert latest.history_user == user

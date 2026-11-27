@@ -1,9 +1,16 @@
 """Tests for the enterprise-access feature toggles."""
 import pytest
+from edx_django_utils.cache import RequestCache
 from edx_toggles.toggles import WaffleFlag, WaffleSwitch
 from edx_toggles.toggles.testutils import override_waffle_flag, override_waffle_switch
 
 from enterprise_access import toggles
+
+
+@pytest.fixture(autouse=True)
+def _clear_request_cache():
+    yield
+    RequestCache.clear_all_namespaces()
 
 
 def test_enable_multi_license_entitlements_bff_enabled(monkeypatch):
@@ -126,3 +133,16 @@ def test_personalized_search_retention_purge_is_off_by_default_and_can_be_enable
     assert toggles.personalized_search_retention_purge_enabled() is False
     with override_waffle_switch(toggles.PERSONALIZED_SEARCH_RETENTION_PURGE, True):
         assert toggles.personalized_search_retention_purge_enabled() is True
+
+
+@pytest.mark.django_db
+def test_multi_plan_funding_is_a_switch_off_by_default_and_can_be_enabled():
+    """
+    A global kill switch, off until it's created and turned on. It must stay a switch: waffle honours ``?name=1``
+    URL overrides for flags only, so a flag would let anyone turn multi-plan funding on for themselves.
+    """
+    assert isinstance(toggles.MULTI_PLAN_FUNDING, WaffleSwitch)
+    assert toggles.MULTI_PLAN_FUNDING.name == 'enterprise_access.multi_plan_funding'
+    assert toggles.multi_plan_funding_enabled() is False
+    with override_waffle_switch(toggles.MULTI_PLAN_FUNDING, True):
+        assert toggles.multi_plan_funding_enabled() is True

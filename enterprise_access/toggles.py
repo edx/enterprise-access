@@ -245,3 +245,35 @@ SSP_PAID_RENEWAL = WaffleSwitch(
 def ssp_paid_renewal_enabled():
     """Return whether self-service paid-to-paid renewal handling is enabled."""
     return SSP_PAID_RENEWAL.is_enabled()
+
+
+# A switch, not a flag: it is a global kill switch read wherever multi-plan funding is decided, including
+# off-request code, and switches can't be turned on per user or with a ``?name=1`` URL override.
+#
+# .. toggle_name: enterprise_access.multi_plan_funding
+# .. toggle_implementation: WaffleSwitch
+# .. toggle_default: False
+# .. toggle_description: Global kill switch for multi-plan learner credit funding. Multi-plan funding is on for a
+#     customer only when this switch is on and Enterprise Customer Success has turned on
+#     ``enable_multi_plan_funding`` in that customer's SubsidyRequestCustomerConfiguration (Django admin). Use
+#     ``subsidy_request.models.is_multi_plan_enabled`` to check both. Turning the switch off stops multi-plan
+#     funding for every customer without changing their settings.
+# .. toggle_warning: This switch does not control the admin portal UI. The admin portal shows the multi-plan
+#     funding UI from the LMS waffle flag ``enterprise.multi_plan_funding_enabled`` (edx-enterprise), so turn both
+#     on together.
+# .. toggle_use_cases: open_edx
+# .. toggle_creation_date: 2026-11-24
+MULTI_PLAN_FUNDING = WaffleSwitch(
+    f'{ENTERPRISE_ACCESS_NAMESPACE}.multi_plan_funding',
+    __name__,
+)
+
+
+def multi_plan_funding_enabled():
+    """
+    Return whether the global multi-plan funding switch is on.
+
+    This is only the global half of the check. To ask whether a customer has multi-plan funding, use
+    ``subsidy_request.models.is_multi_plan_enabled``.
+    """
+    return MULTI_PLAN_FUNDING.is_enabled()

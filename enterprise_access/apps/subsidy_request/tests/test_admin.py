@@ -28,6 +28,22 @@ from test_utils import TestCaseWithMockedDiscoveryApiClient
 class AdminTests(TestCaseWithMockedDiscoveryApiClient):
     """ Tests for admin. """
 
+    def test_subsidy_request_config_admin_can_edit_enable_multi_plan_funding(self):
+        """
+        Enterprise Customer Success turns multi-plan funding on per customer in Django admin, so the field is in
+        the form for new and existing configurations, and is never read-only.
+        """
+        request = HttpRequest()
+        config_admin = SubsidyRequestCustomerConfigurationAdmin(
+            SubsidyRequestCustomerConfiguration,
+            AdminSite(),
+        )
+        obj = SubsidyRequestCustomerConfigurationFactory()
+
+        for instance in (None, obj):
+            assert 'enable_multi_plan_funding' in config_admin.get_form(request, instance).base_fields
+            assert 'enable_multi_plan_funding' not in config_admin.get_readonly_fields(request, instance)
+
     @mock.patch('enterprise_access.apps.subsidy_request.admin.get_data_from_jwt_payload')
     @mock.patch('enterprise_access.apps.subsidy_request.admin.get_user_from_request_session')
     def test_subsidy_request_config_admin(self, mock_get_user, mock_get_jwt_data):
