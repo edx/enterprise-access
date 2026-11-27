@@ -3,6 +3,7 @@
 from unittest import mock
 from uuid import uuid4
 
+import ddt
 import stripe
 from django.contrib import admin
 from django.contrib.messages.storage.fallback import FallbackStorage
@@ -11,10 +12,17 @@ from django.urls import reverse
 
 from enterprise_access.apps.core.tests.factories import UserFactory
 from enterprise_access.apps.customer_billing.admin import CheckoutIntentAdmin, SspProductAdmin
-from enterprise_access.apps.customer_billing.models import CheckoutIntent, EnterpriseStripeCustomer, SspProduct
+from enterprise_access.apps.customer_billing.constants import LearnerCreditTopUpState
+from enterprise_access.apps.customer_billing.models import (
+    CheckoutIntent,
+    EnterpriseStripeCustomer,
+    LearnerCreditTopUp,
+    SspProduct
+)
 from enterprise_access.apps.customer_billing.tests.factories import (
     CheckoutIntentFactory,
     EnterpriseStripeCustomerFactory,
+    LearnerCreditTopUpFactory,
     SelfServiceSubscriptionRenewalFactory
 )
 
@@ -44,7 +52,8 @@ class TestSspProductAdmin(TestCase):
 
 class TestEnterpriseStripeCustomerAdmin(TestCase):
     """
-    The EnterpriseStripeCustomer admin shows and searches mappings but can't add, change or delete them (ENT-12509).
+    The EnterpriseStripeCustomer admin shows and searches mappings but can't add, change, delete or revert them
+    (ENT-12509).
     """
 
     def test_mappings_can_be_viewed_and_searched_but_not_edited(self):
@@ -63,6 +72,11 @@ class TestEnterpriseStripeCustomerAdmin(TestCase):
         self.assertNotContains(detail_response, 'name="_save"')
         history_url = reverse('admin:customer_billing_enterprisestripecustomer_history', args=[mapping.pk])
         self.assertContains(self.client.get(history_url), 'cus_mapped')
+        revert_url = reverse(
+            'admin:customer_billing_enterprisestripecustomer_simple_history',
+            args=[mapping.pk, mapping.history.get().history_id],
+        )
+        self.assertEqual(self.client.post(revert_url, {}).status_code, 403)
         self.assertEqual(save_response.status_code, 403)
         self.assertEqual(
             self.client.get(reverse('admin:customer_billing_enterprisestripecustomer_add')).status_code, 403,
@@ -73,6 +87,64 @@ class TestEnterpriseStripeCustomerAdmin(TestCase):
             403,
         )
         self.assertEqual(EnterpriseStripeCustomer.objects.get(pk=mapping.pk).stripe_customer_id, 'cus_mapped')
+
+
+@ddt.ddt
+class TestLearnerCreditTopUpAdmin(TestCase):
+    """
+    The LearnerCreditTopUp admin shows and searches top-ups and their history, but can't add, change, delete or
+    revert one: each row is a payment audit record whose state changes only through transition_to().
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(UserFactory(is_staff=True, is_superuser=True))
+        self.top_up = LearnerCreditTopUpFactory(
+            state=LearnerCreditTopUpState.DEPOSITED,
+            stripe_payment_intent_id='pi_admin_lookup',
+            deposit_uuid=uuid4(),
+        )
+        LearnerCreditTopUpFactory()
+        self.changelist_url = reverse('admin:customer_billing_learnercredittopup_changelist')
+
+    @ddt.data(
+        'uuid',
+        'enterprise_customer_uuid',
+        'subsidy_access_policy_id',
+        'subsidy_uuid',
+        'stripe_customer_id',
+        'stripe_payment_intent_id',
+        'deposit_uuid',
+    )
+    def test_search_finds_the_top_up_by(self, attname):
+        response = self.client.get(self.changelist_url, {'q': str(getattr(self.top_up, attname))})
+
+        self.assertEqual(list(response.context['cl'].result_list), [self.top_up])
+
+    def test_top_up_and_its_history_can_be_viewed_but_not_changed(self):
+        pk = self.top_up.pk
+        version = self.top_up.history.get()
+        change_url = reverse('admin:customer_billing_learnercredittopup_change', args=[pk])
+        history_url = reverse('admin:customer_billing_learnercredittopup_history', args=[pk])
+        revert_url = reverse('admin:customer_billing_learnercredittopup_simple_history', args=[pk, version.history_id])
+
+        detail_response = self.client.get(change_url)
+        self.assertContains(detail_response, 'pi_admin_lookup')
+        self.assertNotContains(detail_response, 'name="_save"')
+        self.assertContains(self.client.get(history_url), revert_url)
+        version_response = self.client.get(revert_url)
+        self.assertContains(version_response, 'pi_admin_lookup')
+        self.assertNotContains(version_response, 'name="initiated_by"')
+
+        self.assertEqual(self.client.post(change_url, {'state': LearnerCreditTopUpState.FULFILLED}).status_code, 403)
+        self.assertEqual(self.client.post(revert_url, {}).status_code, 403)
+        self.assertEqual(self.client.get(reverse('admin:customer_billing_learnercredittopup_add')).status_code, 403)
+        self.assertEqual(
+            self.client.get(reverse('admin:customer_billing_learnercredittopup_delete', args=[pk])).status_code, 403,
+        )
+        stored = LearnerCreditTopUp.objects.get(pk=pk)
+        self.assertEqual(stored.state, LearnerCreditTopUpState.DEPOSITED)
+        self.assertEqual(stored.history.count(), 1)
 
 
 class TestBackfillSspProductSlug(TestCase):
