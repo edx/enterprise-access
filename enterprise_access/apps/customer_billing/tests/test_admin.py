@@ -41,6 +41,40 @@ class TestCheckoutIntentAdmin(TestCase):
 
         self.assertIn('ssp_product', integration_fields)
 
+    def test_renewal_grace_period_filter_lists_only_flagged_intents(self):
+        """
+        Support can find customers in the renewal grace period with the list filter and column (ENT-11531).
+        """
+        self.client.force_login(UserFactory(is_staff=True, is_superuser=True))
+        CheckoutIntentFactory(enterprise_slug='in-grace-co', in_renewal_grace_period=True)
+        CheckoutIntentFactory(enterprise_slug='not-in-grace-co', in_renewal_grace_period=False)
+
+        response = self.client.get(
+            reverse('admin:customer_billing_checkoutintent_changelist'),
+            {'in_renewal_grace_period__exact': '1'},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        changelist = response.context['cl']
+        self.assertEqual([intent.enterprise_slug for intent in changelist.result_list], ['in-grace-co'])
+        # Django accepts ?field__exact= for any plain field, so also check the sidebar filter and column exist.
+        self.assertIn('in renewal grace period', [spec.title for spec in changelist.filter_specs])
+        self.assertIn('in_renewal_grace_period', changelist.list_display)
+
+    def test_renewal_grace_period_on_change_page(self):
+        """The change page shows the flag's value read-only, not as a checkbox, so only Stripe webhooks change it."""
+        self.client.force_login(UserFactory(is_staff=True, is_superuser=True))
+        intent = CheckoutIntentFactory(in_renewal_grace_period=True)
+
+        response = self.client.get(
+            reverse('admin:customer_billing_checkoutintent_change', args=[intent.pk])
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'In renewal grace period')
+        self.assertContains(response, 'alt="True"')
+        self.assertNotContains(response, 'name="in_renewal_grace_period"')
+
 
 class TestSspProductAdmin(TestCase):
     """Tests for the SspProduct admin configuration."""
