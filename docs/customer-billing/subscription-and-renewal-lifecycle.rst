@@ -220,9 +220,14 @@ On subscription deletion:
 
 * License Manager subscription plans are deactivated via ``cancel_all_future_plans()``. With the
   ``ssp_paid_renewal`` switch on, the current paid plan is kept (``include_processed=False``) only if the
-  subscription was paid up (``active``, not in a renewal grace period) or in a renewal grace period. Otherwise,
-  e.g. a ``past_due`` subscription after a failed mid-term invoice, every renewed plan is deactivated, as with the
-  switch off.
+  subscription was paid up or in a renewal grace period. Paid up means ``active``, not in a renewal grace period,
+  not deleted for a ``payment_disputed`` or ``payment_failed`` reason, and with a processed renewal whose
+  ``effective_date`` is within a day of the item's ``current_period_start``. That last check matters because
+  Stripe moves the period to the next term before charging it (about an hour before a renewal charge, and at
+  trial end), so ``active`` alone can mean an unpaid period. Otherwise, e.g. a ``past_due`` subscription after a
+  failed mid-term invoice, every renewed plan is deactivated, as with the switch off. The same safe default applies
+  when EA has no earlier subscription event for it (unknown last status) or the payload has no subscription items
+  (unknown current period). Without ``ended_at``, the deletion time is when the webhook is processed.
 * ``SelfServiceSubscriptionRenewal`` records are updated: ``is_canceled=True``, ``subscription_cancel_at=None``
   (switch off). With the ``ssp_paid_renewal`` switch on, a subscription that was ``active`` keeps a cancel date
   instead: Stripe's ``ended_at`` for a deletion at the period end, or the period end for an early deletion (below).
