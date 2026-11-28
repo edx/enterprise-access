@@ -16,8 +16,6 @@ from enterprise_access.apps.customer_billing.stripe_api import (
     get_stripe_invoice,
     get_stripe_payment_intent,
     get_stripe_payment_method,
-    get_stripe_trialing_subscription,
-    get_upcoming_invoice,
     stripe_cache
 )
 from enterprise_access.apps.customer_billing.tests.utils import unsupported_stripe_params
@@ -468,12 +466,14 @@ class TestStripePaymentMethod(StripeApiFunctionsTests):
             get_stripe_payment_method(self.payment_method_id)
 
 
+@ddt.ddt
 class TestStripeCacheDecorator(TestCase):
     """Tests for the stripe_cache decorator itself."""
 
     def setUp(self):
-        """Set up test case."""
+        """Start and end each test with an empty cache."""
         TieredCache.dangerous_clear_all_tiers()
+        self.addCleanup(TieredCache.dangerous_clear_all_tiers)
 
     @mock.patch('edx_django_utils.cache.TieredCache.get_cached_response', autospec=True)
     @mock.patch('edx_django_utils.cache.TieredCache.set_all_tiers', autospec=True)
@@ -529,21 +529,23 @@ class TestStripeCacheDecorator(TestCase):
         call_kwargs = mock_set.call_args[1]
         self.assertEqual(call_kwargs, {'django_cache_timeout': 120})
 
-    @mock.patch('stripe.Invoice.create_preview')
-    def test_every_positional_argument_is_part_of_the_cache_key(self, mock_create_preview):
-        """Each of a customer's subscriptions gets its own upcoming invoice, not the one cached first."""
-        mock_create_preview.side_effect = lambda customer, subscription: {'subscription': subscription}
+    @ddt.data(
+        # One argument: the key the billing views rebuild to drop a cached customer.
+        (('cus_1',), {}, 'stripe_lookup_cus_1'),
+        # Every other argument is part of the key, so e.g. each of a customer's subscriptions gets its own
+        # upcoming invoice, and a lookup by another status isn't answered from the default status's entry.
+        (('cus_1', 'sub_1'), {}, 'stripe_lookup_cus_1:sub_1'),
+        (('cus_1',), {'status': 'active'}, 'stripe_lookup_cus_1:status=active'),
+    )
+    @ddt.unpack
+    def test_cache_key_holds_every_argument(self, args, kwargs, expected_key):
+        """The result is cached under a key made of the function's name and all of its arguments."""
+        @stripe_cache()
+        def lookup(resource_id, *other_args, **other_kwargs):
+            return {'id': resource_id, 'args': other_args, 'kwargs': other_kwargs}
 
-        results = [get_upcoming_invoice('cus_shared', sub_id) for sub_id in ('sub_1', 'sub_2', 'sub_1')]
+        result = lookup(*args, **kwargs)
 
-        self.assertEqual(results, [{'subscription': 'sub_1'}, {'subscription': 'sub_2'}, {'subscription': 'sub_1'}])
-        self.assertEqual(mock_create_preview.call_count, 2)  # the repeated call is served from the cache
-
-    @mock.patch('stripe.Subscription.list')
-    def test_keyword_arguments_are_part_of_the_cache_key(self, mock_list):
-        """A lookup by another status isn't answered with the subscription cached for the default status."""
-        mock_list.side_effect = lambda customer, status, limit: mock.Mock(data=[{'status': status}])
-
-        self.assertEqual(get_stripe_trialing_subscription('cus_1'), {'status': 'trialing'})
-        self.assertEqual(get_stripe_trialing_subscription('cus_1', status='active'), {'status': 'active'})
-        self.assertEqual(mock_list.call_count, 2)
+        cached = TieredCache.get_cached_response(expected_key)
+        self.assertTrue(cached.is_found)
+        self.assertEqual(cached.value, result)

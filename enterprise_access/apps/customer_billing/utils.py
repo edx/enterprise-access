@@ -8,6 +8,8 @@ from typing import Union
 from django.apps import apps
 from django.conf import settings
 
+from enterprise_access.apps.customer_billing.constants import SUBSCRIPTION_ITEM_TYPE
+
 
 def datetime_from_timestamp(timestamp: Union[int, float]) -> datetime:
     """
@@ -20,6 +22,25 @@ def datetime_from_timestamp(timestamp: Union[int, float]) -> datetime:
         datetime.datetime: A timezone-aware datetime object with tzinfo set to UTC.
     """
     return datetime.fromtimestamp(timestamp, tz=timezone.utc)
+
+
+def get_subscription_item_lines(invoice: dict) -> list[dict]:
+    """
+    Return the invoice lines that bill a subscription item. One-off invoice items (e.g. adjustments) are left out.
+    """
+    lines = (invoice.get('lines') or {}).get('data') or []
+    return [line for line in lines if (line.get('parent') or {}).get('type') == SUBSCRIPTION_ITEM_TYPE]
+
+
+def get_subscription_term_line(invoice: dict) -> dict | None:
+    """
+    Return the invoice line that bills the subscription's term: the first subscription item line that is not a
+    proration. None if there is no such line.
+    """
+    return next((
+        line for line in get_subscription_item_lines(invoice)
+        if not line['parent'].get('subscription_item_details', {}).get('proration')
+    ), None)
 
 
 logger = logging.getLogger(__name__)

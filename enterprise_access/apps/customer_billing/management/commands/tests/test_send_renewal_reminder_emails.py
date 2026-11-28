@@ -11,14 +11,23 @@ from django.test import TestCase
 from freezegun import freeze_time
 
 from enterprise_access.apps.core.tests.factories import UserFactory
-from enterprise_access.apps.customer_billing.models import CheckoutIntent, StripeEventData, StripeEventSummary
+from enterprise_access.apps.customer_billing.models import CheckoutIntent
+from enterprise_access.apps.customer_billing.tests.factories import (
+    StripeEventDataFactory,
+    get_stripe_object_for_event_type
+)
 
 NOW = datetime(2026, 11, 17, 14, 0, tzinfo=dt_timezone.utc)
 SUBSCRIPTION_ID = 'sub_renewing'
+RENEWAL = NOW + timedelta(days=40, hours=1)
 TASK_PATH = (
     'enterprise_access.apps.customer_billing.management.commands.'
     'send_renewal_reminder_emails.send_renewal_reminder_email_task'
 )
+
+
+def _timestamp(value):
+    return int(value.timestamp()) if value else None
 
 
 @ddt.ddt
@@ -33,30 +42,38 @@ class SendRenewalReminderEmailsCommandTests(TestCase):
         )
         self.event_count = 0
 
-    def _add_summary(self, event_type, subscription_id=SUBSCRIPTION_ID, **fields):
-        """Record a Stripe event summary for the subscription, each one later than the previous."""
+    def _add_event(self, event_type, checkout_intent, **stripe_object):
+        """
+        Record a Stripe event, each one later than the previous. As for a webhook, the StripeEventData post_save
+        signal builds its StripeEventSummary from the payload.
+        """
         self.event_count += 1
-        # The summary takes its event data's checkout intent when it has none, so both get the same one.
-        fields.setdefault('checkout_intent', self.checkout_intent)
-        event_data = StripeEventData.objects.create(
-            event_id=f'evt_{self.event_count}', event_type=event_type, checkout_intent=fields['checkout_intent'],
-            data={'created': 1700000000},
-        )
-        StripeEventSummary.objects.update_or_create(stripe_event_data=event_data, defaults={
-            'event_id': event_data.event_id, 'event_type': event_type, 'stripe_subscription_id': subscription_id,
-            'stripe_event_created_at': NOW - timedelta(days=100) + timedelta(minutes=self.event_count),
-            **fields,
+        created = NOW - timedelta(days=100) + timedelta(minutes=self.event_count)
+        StripeEventDataFactory(event_type=event_type, checkout_intent=checkout_intent, data={
+            'created': _timestamp(created),
+            'data': {'object': get_stripe_object_for_event_type(event_type, **stripe_object)},
         })
 
-    def _add_paid_subscription(self, period_end, subscription_id=SUBSCRIPTION_ID, amount_paid=500000):
+    def _add_invoice_paid(self, subscription_id=SUBSCRIPTION_ID, amount_paid=500000):
+        # The factory gives the invoice's subscription a random ID, unrelated to the subscription's own.
+        self._add_event(
+            'invoice.paid', self.checkout_intent,
+            amount_paid=amount_paid, parent={'subscription_details': {'subscription': subscription_id}},
+        )
+
+    def _add_subscription_event(self, period_end, subscription_id=SUBSCRIPTION_ID, **overrides):
+        """Record an update to an active subscription whose current term ends at ``period_end``."""
+        checkout_intent = overrides.pop('checkout_intent', self.checkout_intent)
+        self._add_event('customer.subscription.updated', checkout_intent, **{
+            'id': subscription_id, 'status': 'active', 'cancel_at': None,
+            'items': {'data': [{'current_period_end': _timestamp(period_end)}]},
+            **overrides,
+        })
+
+    def _add_paid_subscription(self, period_end, subscription_id=SUBSCRIPTION_ID):
         """Record a paid invoice and an active subscription whose current term ends at ``period_end``."""
-        self._add_summary(
-            'invoice.paid', subscription_id, stripe_object_type='invoice', invoice_amount_paid=amount_paid,
-        )
-        self._add_summary(
-            'customer.subscription.updated', subscription_id,
-            stripe_object_type='subscription', subscription_status='active', subscription_period_end=period_end,
-        )
+        self._add_invoice_paid(subscription_id)
+        self._add_subscription_event(period_end, subscription_id)
 
     def _assert_queued(self, mock_task, *expected):
         """Assert the command queued exactly these (subscription id, email type) reminders, in order."""
@@ -87,31 +104,30 @@ class SendRenewalReminderEmailsCommandTests(TestCase):
         expected = [(SUBSCRIPTION_ID, email_type)] if email_type else []
         self._assert_queued(mock_task, *expected)
 
-    def test_skips_subscription_never_paid(self, mock_task):
-        """A subscription with only a $0 (trial) invoice is not a paid-to-paid renewal."""
-        self._add_paid_subscription(NOW + timedelta(days=40, hours=1), amount_paid=0)
-
-        call_command('send_renewal_reminder_emails')
-
-        mock_task.delay.assert_not_called()
-
     @ddt.data(
-        {'subscription_status': 'past_due'},
-        {'subscription_status': 'canceled'},
-        {'subscription_cancel_at': NOW + timedelta(days=40, hours=1)},
+        {'latest': {'status': 'past_due'}},
+        {'latest': {'status': 'canceled'}},
+        {'latest': {'cancel_at': _timestamp(RENEWAL)}},
         # The renewal date moved since the earlier event.
-        {'subscription_period_end': NOW + timedelta(days=200)},
+        {'latest': {'period_end': NOW + timedelta(days=200)}},
         # The latest event isn't linked to a checkout intent, or has no period end.
-        {'checkout_intent': None},
-        {'subscription_period_end': None},
+        {'latest': {'checkout_intent': None}},
+        {'latest': {'period_end': None}},
+        # Only a $0 (trial) invoice: not a paid-to-paid renewal.
+        {'amount_paid': 0},
+        # The paid invoice is another subscription's.
+        {'paid_subscription_id': 'sub_other'},
     )
-    def test_latest_subscription_event_wins(self, latest_overrides, mock_task):
-        """A later event that cancels, ends, moves the renewal or lacks what the email needs blocks the reminder."""
-        renewal = NOW + timedelta(days=40, hours=1)
-        self._add_paid_subscription(renewal)
-        self._add_summary('customer.subscription.updated', stripe_object_type='subscription', **{
-            'subscription_status': 'active', 'subscription_period_end': renewal, **latest_overrides,
-        })
+    @ddt.unpack
+    def test_not_queued(self, mock_task, latest=None, amount_paid=500000, paid_subscription_id=SUBSCRIPTION_ID):
+        """
+        No reminder for a subscription that was never paid, or whose latest event cancels, ends, moves the renewal
+        or lacks what the email needs.
+        """
+        self._add_invoice_paid(paid_subscription_id, amount_paid)
+        self._add_subscription_event(RENEWAL)
+        if latest is not None:
+            self._add_subscription_event(**{'period_end': RENEWAL, **latest})
 
         call_command('send_renewal_reminder_emails')
 
@@ -150,7 +166,7 @@ class SendRenewalReminderEmailsCommandTests(TestCase):
 
     def test_dry_run_queues_nothing(self, mock_task):
         """--dry-run only logs."""
-        self._add_paid_subscription(NOW + timedelta(days=40, hours=1))
+        self._add_paid_subscription(RENEWAL)
 
         call_command('send_renewal_reminder_emails', dry_run=True)
 

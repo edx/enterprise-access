@@ -17,7 +17,7 @@ from django.utils import timezone
 from edx_django_utils.cache import TieredCache
 
 from enterprise_access.apps.core.tests.factories import UserFactory
-from enterprise_access.apps.customer_billing.constants import BRAZE_TIMESTAMP_FORMAT
+from enterprise_access.apps.customer_billing.constants import BRAZE_TIMESTAMP_FORMAT, SUBSCRIPTION_ITEM_TYPE
 from enterprise_access.apps.customer_billing.models import (
     CheckoutIntent,
     SspProduct,
@@ -500,6 +500,7 @@ class TestSendPaidSubscriptionLifecycleEmailTasks(TestCase):
         self.assertEqual(ended_props['product_type_display'], product_type_display)
         self.assertEqual(ended_props['organization'], 'Test Enterprise')
         self.assertEqual(ended_props['subscription_end_date'], 'Jan 01, 2027')
+        self.assertNotIn('billing_url', ended_props)  # Only the renewal reminders link to the Billing tab.
 
         renewal_props = renewal_call[1]['trigger_properties']
         self.assertEqual(renewal_props['product_type'], product_type)
@@ -510,6 +511,7 @@ class TestSendPaidSubscriptionLifecycleEmailTasks(TestCase):
         self.assertEqual(renewal_props['number_of_licenses'], 10)
         self.assertEqual(renewal_props['total_billing_amount_formatted'], '$5,000')
         self.assertEqual(renewal_props['invoice_url'], 'https://invoice.stripe.com/i/test')
+        self.assertNotIn('billing_url', renewal_props)
 
     @mock.patch("enterprise_access.apps.customer_billing.tasks.BrazeApiClient")
     @mock.patch("enterprise_access.apps.customer_billing.tasks.LmsApiClient")
@@ -565,14 +567,25 @@ class TestSendRenewalReminderEmailTask(TestCase):
         self.send_message = mock_braze_client.return_value.send_campaign_message
         self.mock_get_subscription = self.enterContext(mock.patch(f'{tasks_path}.stripe.Subscription.retrieve'))
         self.mock_get_subscription.return_value = self._subscription()
-        # The real, cached get_upcoming_invoice runs on a fake preview: a 10% coupon off the $12,000 list price.
+        # The real, cached get_upcoming_invoice runs on a fake preview: a 10% coupon off the $12,000 list price, and
+        # a $50 adjustment, which Stripe lists before the subscription's line.
         TieredCache.dangerous_clear_all_tiers()
         self.addCleanup(TieredCache.dangerous_clear_all_tiers)
         self.mock_create_preview = self.enterContext(mock.patch('stripe.Invoice.create_preview'))
-        self.mock_create_preview.return_value = {'amount_due': 1080000}
+        self.mock_create_preview.return_value = {'amount_due': 1085000, 'lines': {'data': [
+            {'parent': {'type': 'invoice_item_details'}, 'amount': 5000, 'quantity': 1},
+            {
+                'parent': {'type': SUBSCRIPTION_ITEM_TYPE, 'subscription_item_details': {'proration': False}},
+                'amount': 1200000, 'quantity': 10, 'discount_amounts': [{'amount': 120000}],
+            },
+        ]}}
         self.mock_get_customer = self.enterContext(mock.patch(f'{tasks_path}.get_stripe_customer'))
         self.mock_payment_method = self.enterContext(mock.patch(f'{tasks_path}.get_stripe_payment_method'))
         self.mock_payment_method.return_value = mock.Mock(type='card', card=mock.Mock(brand='visa', last4='1234'))
+        # Not the catalog call: an Essentials product's academy title.
+        self.enterContext(mock.patch.object(
+            SspProduct, 'academy_title', new_callable=mock.PropertyMock, return_value='AI Academy',
+        ))
 
     @staticmethod
     def _subscription(**overrides):
@@ -617,12 +630,16 @@ class TestSendRenewalReminderEmailTask(TestCase):
         props = self.send_message.call_args[1]['trigger_properties']
         self.assertEqual(props['product_type'], product_type)
         self.assertEqual(props['product_type_display'], product_type_display)
+        # Tells apart the same-day reminders for an enterprise's Essentials academies.
+        self.assertEqual(props.get('academy_name'), 'AI Academy' if academy_uuid else None)
         self.assertEqual(props['organization'], 'Test Enterprise')
         self.assertEqual(props['renewal_date'], 'Jan 01, 2027')
         self.assertEqual(props['new_term_end_date'], 'Jan 01, 2028')
         self.assertEqual(props['license_count'], 10)
-        # The upcoming invoice's amount due, not licenses x list price.
-        self.assertEqual(props['renewal_amount'], '$10,800.00 USD')
+        # The upcoming invoice's amount due and its subscription line per license, both after the coupon, not
+        # licenses x list price.
+        self.assertEqual(props['renewal_amount'], '$10,850.00 USD')
+        self.assertEqual(props['price_per_license'], '$1,080.00 USD')
         self.assertEqual(props['payment_method'], 'Visa ending in 1234')
         self.assertEqual(props['billing_url'], f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/test-enterprise/admin/billing')
         self.mock_get_subscription.assert_called_once_with('sub_test')
@@ -631,32 +648,36 @@ class TestSendRenewalReminderEmailTask(TestCase):
         self.mock_get_customer.assert_not_called()
 
     @ddt.data(
-        # The customer's default card is the one Stripe charges.
-        ('pm_customer', [mock.call('pm_customer')], 'Visa ending in 1234'),
-        # Neither has a payment method, so the email leaves the property out.
-        (None, [], '<absent>'),
+        # The subscription's own card.
+        ('pm_subscription', None, None, 'Visa ending in 1234'),
+        # Without one, the Stripe customer's default card, which is what Stripe charges.
+        (None, 'pm_customer', None, 'Visa ending in 1234'),
+        # Neither has a payment method: the property is left out.
+        (None, None, None, '<absent>'),
+        # Only a card is described: another payment method, e.g. a bank account, is left blank.
+        ('pm_subscription', None, mock.Mock(type='us_bank_account'), ''),
+        # One Stripe can't find is left blank too, rather than stopping the reminder.
+        ('pm_subscription', None, stripe.InvalidRequestError('No such PaymentMethod', param='id'), ''),
     )
     @ddt.unpack
-    def test_falls_back_to_customer_default_payment_method(self, customer_default, card_lookups, payment_method):
-        """Without a payment method of its own, the subscription is charged to the customer's default, if any."""
-        self.mock_get_subscription.return_value = self._subscription(default_payment_method=None)
-        customer = {'invoice_settings': {'default_payment_method': customer_default}}
+    def test_payment_method(self, subscription_payment_method, customer_payment_method, lookup, expected):
+        """The email describes the payment method Stripe will charge, when it is a card."""
+        self.mock_get_subscription.return_value = self._subscription(default_payment_method=subscription_payment_method)
+        customer = {'invoice_settings': {'default_payment_method': customer_payment_method}}
         self.mock_get_customer.return_value = AttrDict.wrap(customer)
+        if isinstance(lookup, Exception):
+            self.mock_payment_method.side_effect = lookup
+        elif lookup:
+            self.mock_payment_method.return_value = lookup
 
         send_renewal_reminder_email_task(self.checkout_intent.id, 'sub_test', 'renewal_reminder_40_day')
 
-        self.mock_get_customer.assert_called_once_with('cus_test')
-        self.assertEqual(self.mock_payment_method.call_args_list, card_lookups)
+        self.assertEqual(self.mock_get_customer.called, subscription_payment_method is None)
+        payment_method_id = subscription_payment_method or customer_payment_method
+        expected_lookups = [mock.call(payment_method_id)] if payment_method_id else []
+        self.assertEqual(self.mock_payment_method.call_args_list, expected_lookups)
         props = self.send_message.call_args[1]['trigger_properties']
-        self.assertEqual(props.get('payment_method', '<absent>'), payment_method)
-
-    def test_non_card_payment_method_is_left_blank(self):
-        """Only a card is described in the email; another payment method, e.g. a bank account, is left blank."""
-        self.mock_payment_method.return_value = mock.Mock(type='us_bank_account')
-
-        send_renewal_reminder_email_task(self.checkout_intent.id, 'sub_test', 'renewal_reminder_40_day')
-
-        self.assertEqual(self.send_message.call_args[1]['trigger_properties']['payment_method'], '')
+        self.assertEqual(props.get('payment_method', '<absent>'), expected)
 
     @ddt.data(
         {'status': 'past_due'},
@@ -707,34 +728,29 @@ class TestSendRenewalReminderEmailTask(TestCase):
         self.send_message.assert_called_once()
 
     @ddt.data(
-        ('mock_get_subscription', stripe.APIConnectionError('Stripe unreachable')),
-        ('mock_create_preview', stripe.RateLimitError('Too many requests')),
-        ('send_message', BrazeClientError('Braze API error')),
+        # A brief Stripe or Braze outage is retried...
+        ('mock_get_subscription', stripe.APIConnectionError('Stripe unreachable'), Retry),
+        ('mock_create_preview', stripe.RateLimitError('Too many requests'), Retry),
+        ('send_message', BrazeClientError('Braze API error'), Retry),
+        # ...but a request Stripe rejects would be rejected again.
+        (
+            'mock_get_subscription',
+            stripe.InvalidRequestError('No such subscription', param='id'),
+            stripe.InvalidRequestError,
+        ),
     )
     @ddt.unpack
-    def test_transient_errors_are_retried(self, failing_mock, error):
+    def test_only_transient_errors_are_retried(self, failing_mock, error, raised):
         """A brief Stripe or Braze outage is retried, since the command never sends a missed reminder again."""
         getattr(self, failing_mock).side_effect = error
 
         with mock.patch.object(send_renewal_reminder_email_task, 'retry', side_effect=Retry('retry')) as mock_retry:
-            with self.assertRaises(Retry):
+            with self.assertRaises(raised):
                 send_renewal_reminder_email_task.apply(
                     args=(self.checkout_intent.id, 'sub_test', 'renewal_reminder_40_day'), throw=True,
                 ).get()
 
-        mock_retry.assert_called_once()
-
-    def test_rejected_stripe_request_is_not_retried(self):
-        """A request Stripe rejects would be rejected again, so it fails without a retry."""
-        self.mock_get_subscription.side_effect = stripe.InvalidRequestError('No such subscription', param='id')
-
-        with mock.patch.object(send_renewal_reminder_email_task, 'retry') as mock_retry:
-            with self.assertRaises(stripe.InvalidRequestError):
-                send_renewal_reminder_email_task.apply(
-                    args=(self.checkout_intent.id, 'sub_test', 'renewal_reminder_40_day'), throw=True,
-                ).get()
-
-        mock_retry.assert_not_called()
+        self.assertEqual(mock_retry.called, raised is Retry)
 
 
 class TestSendBillingErrorEmailTask(TestCase):

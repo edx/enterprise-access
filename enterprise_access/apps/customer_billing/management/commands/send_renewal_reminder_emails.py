@@ -36,11 +36,12 @@ def get_renewing_subscription_summaries(window_start, window_end):
 
     summaries = []
     for subscription_id in sorted(candidate_ids):
-        # A later event may have moved the period end, scheduled a cancellation or ended the subscription.
+        # A later event may have moved the period end, scheduled a cancellation or ended the subscription. Stripe's
+        # event times are to the second, so the later row breaks a tie.
         latest = StripeEventSummary.objects.filter(
             stripe_object_type='subscription',
             stripe_subscription_id=subscription_id,
-        ).order_by('-stripe_event_created_at').first()
+        ).order_by('-stripe_event_created_at', '-pk').first()
         if (latest.checkout_intent_id and latest.subscription_status == StripeSubscriptionStatus.ACTIVE and
                 latest.subscription_cancel_at is None and latest.subscription_period_end is not None and
                 window_start <= latest.subscription_period_end < window_end):

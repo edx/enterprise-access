@@ -38,7 +38,12 @@ from enterprise_access.apps.customer_billing.stripe_api import (
     get_stripe_trialing_subscription,
     get_upcoming_invoice
 )
-from enterprise_access.apps.customer_billing.utils import datetime_from_timestamp, get_campaign_id, get_product_type
+from enterprise_access.apps.customer_billing.utils import (
+    datetime_from_timestamp,
+    get_campaign_id,
+    get_product_type,
+    get_subscription_term_line
+)
 from enterprise_access.apps.provisioning.utils import validate_trial_subscription
 from enterprise_access.apps.track.segment import SEGMENT_DELIVERY_ERRORS, track_event_or_raise
 from enterprise_access.tasks import LoggedTaskWithRetry
@@ -574,6 +579,40 @@ def send_paid_subscription_renewal_notice_email_task(checkout_intent_id: int, in
     )
 
 
+def _format_price_per_license(invoice):
+    """
+    The price per license an invoice charges for the subscription's term: its term line's amount less that line's
+    discounts, so a coupon shows in it as it does in the invoice total. None without a term line or quantity.
+    """
+    line = get_subscription_term_line(invoice)
+    if not line or not line.get('quantity'):
+        return None
+    discount = sum(discount_amount['amount'] for discount_amount in line.get('discount_amounts') or [])
+    return format_cents_for_user_display(round((line['amount'] - discount) / line['quantity']))
+
+
+def _get_renewal_card_display(subscription):
+    """
+    Describe the payment method Stripe will charge at renewal: the subscription's own, else the Stripe customer's
+    default. None if there is neither. Blank if Stripe can't find it: the line is informative only, so a failed
+    lookup mustn't stop the reminder.
+    """
+    payment_method_id = subscription.get('default_payment_method')
+    if not payment_method_id:
+        customer = get_stripe_customer(subscription['customer']).to_dict()
+        payment_method_id = (customer.get('invoice_settings') or {}).get('default_payment_method')
+    if not payment_method_id:
+        return None
+    try:
+        return _get_card_display(payment_method_id)
+    except stripe.InvalidRequestError as exc:
+        logger.warning(
+            'Renewal reminder for Stripe subscription %s sent without its payment method %s: %s',
+            subscription.get('id'), payment_method_id, exc,
+        )
+        return ''
+
+
 # autoretry_for replaces the base class's list, so its errors are listed again. Transient Stripe errors are retried
 # too: the command never makes up a missed day, so a failed reminder would never be sent.
 @shared_task(base=LoggedTaskWithRetry, autoretry_for=(*LoggedTaskWithRetry.autoretry_for, *TRANSIENT_STRIPE_ERRORS))
@@ -613,16 +652,8 @@ def send_renewal_reminder_email_task(checkout_intent_id: int, stripe_subscriptio
         return
     first_item = items[0]
     renewal_date = datetime_from_timestamp(first_item['current_period_end'])
-    license_count = first_item.get('quantity')
-    # What Stripe will charge at renewal: licenses x price, plus any coupon and pending invoice items.
-    renewal_amount = get_upcoming_invoice(subscription['customer'], stripe_subscription_id)['amount_due']
-
-    # The subscription's own payment method wins; otherwise Stripe charges the customer's default one.
-    payment_method_id = subscription.get('default_payment_method')
-    if not payment_method_id:
-        customer = get_stripe_customer(subscription['customer']).to_dict()
-        payment_method_id = (customer.get('invoice_settings') or {}).get('default_payment_method')
-
+    # What Stripe will charge at renewal: licenses x price, less any coupon, plus pending invoice items.
+    upcoming_invoice = get_upcoming_invoice(subscription['customer'], stripe_subscription_id)
     _send_paid_lifecycle_campaign(
         checkout_intent_id,
         email_type,
@@ -631,9 +662,10 @@ def send_renewal_reminder_email_task(checkout_intent_id: int, stripe_subscriptio
         new_term_end_date=format_datetime_obj(
             renewal_date + relativedelta(years=1), output_pattern=BRAZE_DATE_FORMAT_2,
         ),
-        license_count=license_count,
-        renewal_amount=format_cents_for_user_display(renewal_amount),
-        payment_method=_get_card_display(payment_method_id) if payment_method_id else None,
+        license_count=first_item.get('quantity'),
+        renewal_amount=format_cents_for_user_display(upcoming_invoice['amount_due']),
+        price_per_license=_format_price_per_license(upcoming_invoice),
+        payment_method=_get_renewal_card_display(subscription),
         with_billing_url=True,
     )
 

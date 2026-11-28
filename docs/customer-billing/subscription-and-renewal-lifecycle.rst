@@ -254,11 +254,13 @@ this: ``invoice.upcoming`` fires at a single lead time set in the Stripe dashboa
 * ``send_renewal_reminder_email_task`` reads the subscription from Stripe again, uncached, and sends nothing if it is
   no longer active or a cancellation is scheduled. The renewal amount is the ``amount_due`` of Stripe's preview of the
   next invoice (``get_upcoming_invoice``), so coupons and pending invoice items (e.g. a CS adjustment) count. The
-  payment method is the subscription's, else the Stripe Customer's default. Transient Stripe and Braze errors retry.
+  price per license is that preview's subscription line after its discounts, divided by its quantity. The payment
+  method is the subscription's, else the Stripe Customer's default; one Stripe can't find is left blank rather than
+  stopping the email. Transient Stripe and Braze errors retry.
 * Campaigns: ``BRAZE_SSP_RENEWAL_REMINDER_40_DAY_CAMPAIGN_UUID`` and ``BRAZE_SSP_RENEWAL_REMINDER_72_HOUR_CAMPAIGN_UUID``,
   each shared by Teams and Essentials via ``product_type``. Trigger properties: ``renewal_date``, ``new_term_end_date``,
-  ``license_count``, ``renewal_amount``, ``payment_method``, ``billing_url`` (the admin portal's Billing tab) and the
-  common ``product_type``, ``product_type_display``, ``academy_name`` and ``organization``.
+  ``license_count``, ``renewal_amount``, ``price_per_license``, ``payment_method``, ``billing_url`` (the admin portal's
+  Billing tab) and the common ``product_type``, ``product_type_display``, ``academy_name`` and ``organization``.
 
 Braze Campaign Summary
 ----------------------

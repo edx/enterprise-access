@@ -16,7 +16,6 @@ from simple_history.utils import bulk_update_with_history
 
 from enterprise_access.apps.api_client.license_manager_client import LicenseManagerApiClient
 from enterprise_access.apps.customer_billing.constants import (
-    SUBSCRIPTION_ITEM_TYPE,
     CheckoutSegmentEvents,
     StripeInvoiceBillingReason,
     StripeSegmentEvents,
@@ -45,7 +44,11 @@ from enterprise_access.apps.customer_billing.tasks import (
     send_trial_ending_reminder_email_task,
     send_trial_reinstatement_email_task
 )
-from enterprise_access.apps.customer_billing.utils import datetime_from_timestamp
+from enterprise_access.apps.customer_billing.utils import (
+    datetime_from_timestamp,
+    get_subscription_item_lines,
+    get_subscription_term_line
+)
 from enterprise_access.apps.track.segment import track_event
 from enterprise_access.toggles import ssp_paid_renewal_enabled
 
@@ -427,7 +430,7 @@ def _valid_invoice_event_type(event: stripe.Event):
     """
     invoice = event.data.object
     try:
-        return bool(_subscription_item_lines(invoice.to_dict()))
+        return bool(get_subscription_item_lines(invoice.to_dict()))
     except (AttributeError, KeyError, IndexError, TypeError):
         return False
 
@@ -465,22 +468,13 @@ def _subscription_is_canceled(checkout_intent: CheckoutIntent, invoice) -> bool:
     ).exists()
 
 
-def _subscription_item_lines(invoice_dict: dict) -> list[dict]:
-    """
-    Return the invoice lines that bill a subscription item. One-off invoice items (e.g. adjustments) are left out.
-    """
-    lines = (invoice_dict.get('lines') or {}).get('data') or []
-    return [line for line in lines if (line.get('parent') or {}).get('type') == SUBSCRIPTION_ITEM_TYPE]
-
-
 def _renewal_invoice_line(invoice_dict: dict, checkout_intent: CheckoutIntent) -> dict:
     """
     Return the invoice line that bills the renewed subscription term: the first subscription item line that is
     not a proration.
     """
-    for line in _subscription_item_lines(invoice_dict):
-        if not line['parent'].get('subscription_item_details', {}).get('proration'):
-            return line
+    if line := get_subscription_term_line(invoice_dict):
+        return line
     _halt_annual_renewal('the invoice has no subscription term line', checkout_intent, invoice_dict['id'])
 
 
@@ -563,7 +557,7 @@ def resolve_renewal_product(checkout_intent: CheckoutIntent, invoice) -> SspProd
     # Lines carry only the Price ID, not a Price object (see "Gotchas" in docs/references/ssp_annual_renewals.md).
     price_ids = {
         price_id
-        for line in _subscription_item_lines(invoice_dict)
+        for line in get_subscription_item_lines(invoice_dict)
         if (price_id := ((line.get('pricing') or {}).get('price_details') or {}).get('price'))
     }
     if not price_ids:
@@ -1123,7 +1117,7 @@ class StripeEventHandler:
         # Extract the invoice period start from line items to match against renewal effective_date
         try:
             # Not lines[0]: Stripe lists pending invoice items, such as adjustments, first.
-            invoice_period_start = _subscription_item_lines(invoice.to_dict())[0]['period']['start']
+            invoice_period_start = get_subscription_item_lines(invoice.to_dict())[0]['period']['start']
         except (KeyError, IndexError, TypeError):
             logger.error(
                 '[StripeEventHandler] invoice.created event %s missing period start in line items',
