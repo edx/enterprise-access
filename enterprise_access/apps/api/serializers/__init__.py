@@ -31,6 +31,7 @@ from .customer_billing import (
     PaymentMethodsListResponseSerializer,
     SetDefaultPaymentMethodRequestSerializer,
     SspEssentialsProductResponseSerializer,
+    StripeEventSummaryQueryParamsSerializer,
     StripeEventSummaryReadOnlySerializer,
     StripeSubscriptionPlanInfoResponseSerializer,
     StripeSubscriptionResponseSerializer,

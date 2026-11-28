@@ -290,6 +290,14 @@ class StripeEventSummaryReadOnlySerializer(serializers.ModelSerializer):
 
 
 # pylint: disable=abstract-method
+class StripeEventSummaryQueryParamsSerializer(serializers.Serializer):
+    """
+    Query parameters for the stripe-event-summary endpoints.
+    """
+    subscription_plan_uuid = serializers.UUIDField()
+
+
+# pylint: disable=abstract-method
 class StripeSubscriptionPlanInfoResponseSerializer(serializers.Serializer):
     """
     Response serializer for response body from GET /api/v1/stripe-event-summary/get-stripe-subscription-plan-info
