@@ -244,7 +244,7 @@ this: ``invoice.upcoming`` fires at a single lead time set in the Stripe dashboa
 
 * For each lead time in ``RENEWAL_REMINDER_LEAD_TIMES``, the command picks the subscriptions whose term ends between
   ``lead time`` and one day later, measured from the start of the hour the run began in, not the exact start time
-  (architecture pattern 28). Back-to-back daily windows then give each renewal exactly one of each reminder, at most
+  (architecture pattern 29). Back-to-back daily windows then give each renewal exactly one of each reminder, at most
   that start delay late, as long as every run starts within its scheduled hour.
 * A missed run is not made up, and a second run on the same day sends again, so turn Braze re-eligibility on for both
   campaigns, with a window of a few days. With it off, an admin only ever gets each reminder for the first renewal.
