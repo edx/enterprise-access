@@ -8,6 +8,8 @@ from typing import Union
 from django.apps import apps
 from django.conf import settings
 
+from enterprise_access.apps.customer_billing.constants import SUBSCRIPTION_ITEM_TYPE
+
 
 def datetime_from_timestamp(timestamp: Union[int, float]) -> datetime:
     """
@@ -20,6 +22,25 @@ def datetime_from_timestamp(timestamp: Union[int, float]) -> datetime:
         datetime.datetime: A timezone-aware datetime object with tzinfo set to UTC.
     """
     return datetime.fromtimestamp(timestamp, tz=timezone.utc)
+
+
+def get_subscription_item_lines(invoice: dict) -> list[dict]:
+    """
+    Return the invoice lines that bill a subscription item. One-off invoice items (e.g. adjustments) are left out.
+    """
+    lines = (invoice.get('lines') or {}).get('data') or []
+    return [line for line in lines if (line.get('parent') or {}).get('type') == SUBSCRIPTION_ITEM_TYPE]
+
+
+def get_subscription_term_line(invoice: dict) -> dict | None:
+    """
+    Return the invoice line that bills the subscription's term: the first subscription item line that is not a
+    proration. None if there is no such line.
+    """
+    return next((
+        line for line in get_subscription_item_lines(invoice)
+        if not line['parent'].get('subscription_item_details', {}).get('proration')
+    ), None)
 
 
 logger = logging.getLogger(__name__)
@@ -62,6 +83,8 @@ CAMPAIGN_SETTINGS_MAP = {
     ('paid_cancellation', 'teams'): 'BRAZE_PAID_CANCELLATION_CAMPAIGN',
     ('paid_subscription_ended', 'teams'): 'BRAZE_ENTERPRISE_PROVISION_SUBSCRIPTION_ENDED_AND_CANCELLED_CAMPAIGN',
     ('paid_subscription_renewal_notice', 'teams'): 'BRAZE_ENTERPRISE_PROVISION_SUBSCRIPTION_RENEWAL_NOTICE_CAMPAIGN',
+    ('renewal_reminder_40_day', 'teams'): 'BRAZE_SSP_RENEWAL_REMINDER_40_DAY_CAMPAIGN_UUID',
+    ('renewal_reminder_72_hour', 'teams'): 'BRAZE_SSP_RENEWAL_REMINDER_72_HOUR_CAMPAIGN_UUID',
 
     # Essentials campaigns (new)
     ('signup_confirmation', 'essentials'): 'BRAZE_ESSENTIALS_SIGNUP_CONFIRMATION_CAMPAIGN',
@@ -76,6 +99,8 @@ CAMPAIGN_SETTINGS_MAP = {
     ('paid_subscription_renewal_notice', 'essentials'): (
         'BRAZE_ENTERPRISE_PROVISION_SUBSCRIPTION_RENEWAL_NOTICE_CAMPAIGN'
     ),
+    ('renewal_reminder_40_day', 'essentials'): 'BRAZE_SSP_RENEWAL_REMINDER_40_DAY_CAMPAIGN_UUID',
+    ('renewal_reminder_72_hour', 'essentials'): 'BRAZE_SSP_RENEWAL_REMINDER_72_HOUR_CAMPAIGN_UUID',
 }
 
 
@@ -94,7 +119,8 @@ def get_campaign_id(email_type, ssp_product: 'SspProduct | None' = None):
         email_type (str): One of 'signup_confirmation', 'trial_ending_soon',
             'trial_cancellation', 'trial_ended_cancellation', 'payment_receipt',
             'trial_end_subscription_started', 'billing_error',
-            'paid_cancellation', 'paid_subscription_ended', 'paid_subscription_renewal_notice'.
+            'paid_cancellation', 'paid_subscription_ended', 'paid_subscription_renewal_notice',
+            'renewal_reminder_40_day', 'renewal_reminder_72_hour'.
         ssp_product (SspProduct|None): The CheckoutIntent's product.
 
     Returns:

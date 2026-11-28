@@ -70,6 +70,8 @@ BRAZE_ENTERPRISE_SSP_PAID_SUBSCRIPTION_REINSTATED_CAMPAIGN = 'test-paid-subscrip
 BRAZE_ENTERPRISE_PROVISION_TRIAL_END_SUBSCRIPTION_ENDED_CAMPAIGN = 'test-trial-ended-cancellation-campaign'
 BRAZE_ENTERPRISE_PROVISION_SUBSCRIPTION_ENDED_AND_CANCELLED_CAMPAIGN = 'test-subscription-ended-cancelled-campaign'
 BRAZE_ENTERPRISE_PROVISION_SUBSCRIPTION_RENEWAL_NOTICE_CAMPAIGN = 'test-subscription-renewal-notice-campaign'
+BRAZE_SSP_RENEWAL_REMINDER_40_DAY_CAMPAIGN_UUID = 'test-renewal-reminder-40-day-campaign'
+BRAZE_SSP_RENEWAL_REMINDER_72_HOUR_CAMPAIGN_UUID = 'test-renewal-reminder-72-hour-campaign'
 
 # ============================================================
 # SSP Essentials Braze Campaign Settings (Test)

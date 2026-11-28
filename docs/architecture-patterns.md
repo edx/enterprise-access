@@ -269,6 +269,23 @@ view-only, but not under `SimpleHistoryAdmin` (django-simple-history 3.13). Its 
 `customer_billing.admin.ViewOnlyHistoryAdmin` makes every field read-only and refuses that POST. Use it for any
 view-only admin that keeps history, and test the POST to the version URL.
 
+### 29. Scheduled jobs that select by time window: anchor "now" to the schedule
+
+A cron job that picks records in `[now + lead, now + lead + interval)` covers each record exactly once only if
+consecutive runs start exactly one interval apart, and pods start late by a different few seconds or minutes each
+time. A later start leaves a gap between two runs' windows (nothing sent); an earlier one, an overlap (sent twice).
+Round `now` down to the scheduled unit, e.g. `timezone.now().replace(minute=0, second=0, microsecond=0)` for a job
+scheduled on the hour, and test two consecutive runs with different start delays (see `send_renewal_reminder_emails`).
+
+### 30. `stripe_api` getters are cached: call Stripe directly when a decision depends on current state
+
+The `@stripe_cache()` getters (`get_stripe_subscription`, `get_upcoming_invoice`, ...) return a copy up to 60s
+(`DEFAULT_STRIPE_CACHE_TIMEOUT`) old, so for a check like "is this still active?" call `stripe.<Resource>.retrieve`
+directly (see the cancel endpoint and `send_renewal_reminder_email_task`). The key holds every argument
+(`stripe_<function>_<first>:<rest>`), so each of a customer's subscriptions gets its own upcoming invoice; a
+one-argument key stays `stripe_<function>_<id>`, which the billing views rebuild to drop a cached customer. In tests,
+patch the getter, or patch the `stripe.<Resource>` call to return plain data and clear `TieredCache` before and after.
+
 ### Key Takeaways for Implementation:
 - Check permissions early using `@permission_required` decorator
 - Use separate serializers for request/response

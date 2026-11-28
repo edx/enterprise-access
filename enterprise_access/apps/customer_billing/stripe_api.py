@@ -150,9 +150,12 @@ def stripe_cache(timeout=settings.DEFAULT_STRIPE_CACHE_TIMEOUT):
     def decorator(func):
         @wraps(func)
         def wrapper(resource_id, *args, **kwargs):
-            # Create cache key based on function name and resource ID
+            # Key on every argument, not just the first: get_upcoming_invoice(customer, subscription) returns a
+            # different invoice for each of a customer's subscriptions. A one-argument key stays
+            # stripe_<function>_<id>, which the billing views rebuild to drop a cached customer.
             func_name = func.__name__
-            cache_key = f"stripe_{func_name}_{resource_id}"
+            extra_args = [*args, *(f'{name}={value}' for name, value in sorted(kwargs.items()))]
+            cache_key = f"stripe_{func_name}_{resource_id}" + ''.join(f':{arg}' for arg in extra_args)
 
             # Try to get from cache first
             cached_response = TieredCache.get_cached_response(cache_key)

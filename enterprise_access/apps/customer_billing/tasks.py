@@ -8,6 +8,7 @@ from datetime import datetime
 import stripe
 from braze.exceptions import BrazeClientError
 from celery import shared_task
+from dateutil.relativedelta import relativedelta
 from django.conf import settings
 from django.db import OperationalError
 
@@ -17,7 +18,9 @@ from enterprise_access.apps.customer_billing.constants import (
     BRAZE_DATE_FORMAT_1,
     BRAZE_DATE_FORMAT_2,
     BRAZE_TIMESTAMP_FORMAT,
-    CheckoutSegmentEvents
+    RENEWAL_REMINDER_LEAD_TIMES,
+    CheckoutSegmentEvents,
+    StripeSubscriptionStatus
 )
 from enterprise_access.apps.customer_billing.models import CheckoutIntent, StripeEventSummary
 from enterprise_access.apps.customer_billing.segment_payloads import (
@@ -28,12 +31,19 @@ from enterprise_access.apps.customer_billing.segment_payloads import (
     build_order_completed_properties
 )
 from enterprise_access.apps.customer_billing.stripe_api import (
+    get_stripe_customer,
     get_stripe_payment_intent,
     get_stripe_payment_method,
     get_stripe_subscription,
-    get_stripe_trialing_subscription
+    get_stripe_trialing_subscription,
+    get_upcoming_invoice
 )
-from enterprise_access.apps.customer_billing.utils import datetime_from_timestamp, get_campaign_id, get_product_type
+from enterprise_access.apps.customer_billing.utils import (
+    datetime_from_timestamp,
+    get_campaign_id,
+    get_product_type,
+    get_subscription_term_line
+)
 from enterprise_access.apps.provisioning.utils import validate_trial_subscription
 from enterprise_access.apps.track.segment import SEGMENT_DELIVERY_ERRORS, track_event_or_raise
 from enterprise_access.tasks import LoggedTaskWithRetry
@@ -52,6 +62,16 @@ def _format_currency_for_braze(amount_cents, suffix=''):
         suffix=suffix,
         include_currency_code=False,
     )
+
+
+def _get_card_display(payment_method_id):
+    """
+    Describe a saved payment method for an email, e.g. "Visa ending in 4242". Empty for anything but a card.
+    """
+    payment_method = get_stripe_payment_method(payment_method_id)
+    if payment_method.type != 'card':
+        return ''
+    return f'{payment_method.card.brand.capitalize()} ending in {payment_method.card.last4}'
 
 
 def _build_common_trigger_properties(ssp_product=None, organization_name=None, **extra):
@@ -443,16 +463,22 @@ def send_trial_ended_cancellation_email_task(checkout_intent_id: int):
     )
 
 
-def _send_paid_lifecycle_campaign(checkout_intent_id, email_type, email_description, **extra_properties):
+def _send_paid_lifecycle_campaign(
+    checkout_intent_id, email_type, email_description, *, with_billing_url=False, **extra_properties,
+):
     """
     Send a paid subscription lifecycle email to the enterprise admins.
 
     The campaign is shared by Teams and Essentials, which are told apart by the ``product_type``
-    trigger property. Not itself a Celery task; must be called from one.
+    trigger property. ``with_billing_url`` adds ``billing_url``, the admin portal's Billing tab.
+    Not itself a Celery task; must be called from one.
     """
     checkout_intent = _get_checkout_intent_with_product(checkout_intent_id)
     enterprise_slug = checkout_intent.enterprise_slug
     ssp_product = checkout_intent.ssp_product
+    admin_portal_url = f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/{enterprise_slug}'
+    if with_billing_url:
+        extra_properties['billing_url'] = f'{admin_portal_url}/admin/billing'
 
     admin_users = get_enterprise_admins(enterprise_slug, raise_if_empty=True)
     braze_client = BrazeApiClient()
@@ -473,7 +499,7 @@ def _send_paid_lifecycle_campaign(checkout_intent_id, email_type, email_descript
         organization_name=checkout_intent.enterprise_name,
         product_type=product_type,
         product_type_display=product_type.capitalize(),
-        enterprise_admin_portal_url=f'{settings.ENTERPRISE_ADMIN_PORTAL_URL}/{enterprise_slug}',
+        enterprise_admin_portal_url=admin_portal_url,
         **extra_properties,
     )
 
@@ -550,6 +576,97 @@ def send_paid_subscription_renewal_notice_email_task(checkout_intent_id: int, in
         'paid_subscription_renewal_notice',
         'paid subscription renewal notice email',
         **properties,
+    )
+
+
+def _format_price_per_license(invoice):
+    """
+    The price per license an invoice charges for the subscription's term: its term line's amount less that line's
+    discounts, so a coupon shows in it as it does in the invoice total. None without a term line or quantity.
+    """
+    line = get_subscription_term_line(invoice)
+    if not line or not line.get('quantity'):
+        return None
+    discount = sum(discount_amount['amount'] for discount_amount in line.get('discount_amounts') or [])
+    return format_cents_for_user_display(round((line['amount'] - discount) / line['quantity']))
+
+
+def _get_renewal_card_display(subscription):
+    """
+    Describe the payment method Stripe will charge at renewal: the subscription's own, else the Stripe customer's
+    default. None if there is neither. Blank if Stripe can't find it: the line is informative only, so a failed
+    lookup mustn't stop the reminder.
+    """
+    payment_method_id = subscription.get('default_payment_method')
+    if not payment_method_id:
+        customer = get_stripe_customer(subscription['customer']).to_dict()
+        payment_method_id = (customer.get('invoice_settings') or {}).get('default_payment_method')
+    if not payment_method_id:
+        return None
+    try:
+        return _get_card_display(payment_method_id)
+    except stripe.InvalidRequestError as exc:
+        logger.warning(
+            'Renewal reminder for Stripe subscription %s sent without its payment method %s: %s',
+            subscription.get('id'), payment_method_id, exc,
+        )
+        return ''
+
+
+# autoretry_for replaces the base class's list, so its errors are listed again. Transient Stripe errors are retried
+# too: the command never makes up a missed day, so a failed reminder would never be sent.
+@shared_task(base=LoggedTaskWithRetry, autoretry_for=(*LoggedTaskWithRetry.autoretry_for, *TRANSIENT_STRIPE_ERRORS))
+def send_renewal_reminder_email_task(checkout_intent_id: int, stripe_subscription_id: str, email_type: str):
+    """
+    Send a paid-to-paid renewal reminder email to the enterprise admins before a paid subscription renews.
+
+    Queued by the ``send_renewal_reminder_emails`` command. The subscription is read again from Stripe, so
+    nothing is sent if it was canceled, or stopped being active, after the command selected it.
+
+    Args:
+        checkout_intent_id (int): ID of the CheckoutIntent record
+        stripe_subscription_id (str): ID of the paid Stripe subscription that is about to renew
+        email_type (str): The reminder to send, a key of ``RENEWAL_REMINDER_LEAD_TIMES``.
+    """
+    if email_type not in RENEWAL_REMINDER_LEAD_TIMES:
+        raise ValueError(f'Unknown renewal reminder email type: {email_type}')
+
+    # Not get_stripe_subscription: its 60-second cache could hide a cancellation made just before this ran.
+    subscription = stripe.Subscription.retrieve(stripe_subscription_id).to_dict()
+    status = subscription.get('status')
+    cancel_at, cancel_at_period_end = subscription.get('cancel_at'), subscription.get('cancel_at_period_end')
+    if status != StripeSubscriptionStatus.ACTIVE or cancel_at or cancel_at_period_end:
+        logger.info(
+            'Renewal reminder email %s not sent: Stripe subscription %s will not renew '
+            '(status=%s, cancel_at=%s, cancel_at_period_end=%s)',
+            email_type, stripe_subscription_id, status, cancel_at, cancel_at_period_end,
+        )
+        return
+
+    items = (subscription.get('items') or {}).get('data') or []
+    if not items or not items[0].get('current_period_end'):
+        logger.error(
+            'Renewal reminder email %s not sent: Stripe subscription %s has no current period',
+            email_type, stripe_subscription_id,
+        )
+        return
+    first_item = items[0]
+    renewal_date = datetime_from_timestamp(first_item['current_period_end'])
+    # What Stripe will charge at renewal: licenses x price, less any coupon, plus pending invoice items.
+    upcoming_invoice = get_upcoming_invoice(subscription['customer'], stripe_subscription_id)
+    _send_paid_lifecycle_campaign(
+        checkout_intent_id,
+        email_type,
+        f'{email_type.replace("_", " ")} email',
+        renewal_date=format_datetime_obj(renewal_date, output_pattern=BRAZE_DATE_FORMAT_2),
+        new_term_end_date=format_datetime_obj(
+            renewal_date + relativedelta(years=1), output_pattern=BRAZE_DATE_FORMAT_2,
+        ),
+        license_count=first_item.get('quantity'),
+        renewal_amount=format_cents_for_user_display(upcoming_invoice['amount_due']),
+        price_per_license=_format_price_per_license(upcoming_invoice),
+        payment_method=_get_renewal_card_display(subscription),
+        with_billing_url=True,
     )
 
 
@@ -801,18 +918,9 @@ def send_trial_ending_reminder_email_task(checkout_intent_id):
         )
         license_count = first_item.quantity
 
-        # Get payment method details with card brand
         payment_method_info = ""
         if subscription.default_payment_method:
-            payment_method = stripe.PaymentMethod.retrieve(
-                subscription.default_payment_method
-            )
-            if payment_method.type == "card":
-                brand = (
-                    payment_method.card.brand.capitalize()
-                )  # e.g., "Visa", "Mastercard"
-                last4 = payment_method.card.last4
-                payment_method_info = f"{brand} ending in {last4}"
+            payment_method_info = _get_card_display(subscription.default_payment_method)
 
         total_paid_amount_formatted = "$0.00 USD"
         if subscription.id:

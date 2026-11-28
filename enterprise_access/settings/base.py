@@ -685,6 +685,10 @@ BRAZE_ENTERPRISE_PROVISION_TRIAL_END_SUBSCRIPTION_ENDED_CAMPAIGN = ''
 # used by both Teams and Essentials.
 BRAZE_ENTERPRISE_PROVISION_SUBSCRIPTION_ENDED_AND_CANCELLED_CAMPAIGN = ''
 BRAZE_ENTERPRISE_PROVISION_SUBSCRIPTION_RENEWAL_NOTICE_CAMPAIGN = ''
+# Shared Braze campaigns for the paid-to-paid renewal reminders sent 40 days and 72 hours before a paid
+# subscription renews, used by both Teams and Essentials. Sent by the send_renewal_reminder_emails command.
+BRAZE_SSP_RENEWAL_REMINDER_40_DAY_CAMPAIGN_UUID = ''
+BRAZE_SSP_RENEWAL_REMINDER_72_HOUR_CAMPAIGN_UUID = ''
 
 # ============================================================
 # SSP Essentials Braze Campaign Settings
