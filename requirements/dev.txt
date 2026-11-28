@@ -18,7 +18,7 @@ annotated-types==0.8.0
     # via
     #   -r requirements/validation.txt
     #   pydantic
-anthropic==2.12.0
+anthropic==2.14.0
     # via -r requirements/validation.txt
 anyio==4.16.0
     # via
@@ -61,7 +61,7 @@ build==1.6.1
     # via
     #   -r requirements/pip-tools.txt
     #   pip-tools
-cachetools==8.0.2
+cachetools==8.0.3
     # via
     #   -r requirements/validation.txt
     #   tox
@@ -84,7 +84,7 @@ cffi==2.1.1
     #   pynacl
 chardet==7.7.0
     # via diff-cover
-charset-normalizer==3.5.2
+charset-normalizer==3.5.3
     # via
     #   -r requirements/validation.txt
     #   requests
@@ -128,7 +128,7 @@ colorama==0.4.6
     #   tox
 confluent-kafka[avro,schema-registry]==2.6.1
     # via -r requirements/validation.txt
-coverage[toml]==7.17.4
+coverage[toml]==7.17.5
     # via
     #   -r requirements/validation.txt
     #   pytest-cov
@@ -152,7 +152,7 @@ dictdiffer==0.10.0
     # via
     #   -r requirements/validation.txt
     #   pytest-dictsdiff
-diff-cover==11.0.4
+diff-cover==11.0.5
     # via -r requirements/dev.in
 dill==0.4.1
     # via
@@ -238,7 +238,7 @@ django-waffle==5.0.0
     #   edx-django-utils
     #   edx-drf-extensions
     #   edx-toggles
-djangoql==0.19.1
+djangoql==0.19.2
     # via -r requirements/validation.txt
 djangorestframework==3.18.3
     # via
@@ -334,7 +334,7 @@ fastavro==1.13.1
     #   -r requirements/validation.txt
     #   confluent-kafka
     #   openedx-events
-filelock==4.2.12
+filelock==4.3.2
     # via
     #   -r requirements/validation.txt
     #   python-discovery
@@ -432,11 +432,11 @@ kombu==5.7.0
     # via
     #   -r requirements/validation.txt
     #   celery
-lxml[html-clean]==6.1.3
+lxml[html-clean]==6.2.0
     # via
     #   edx-i18n-tools
     #   lxml-html-clean
-lxml-html-clean==0.4.6
+lxml-html-clean==0.4.7
     # via lxml
 markdown-it-py==4.3.0
     # via
@@ -480,7 +480,7 @@ oauthlib==4.0.1
     #   -r requirements/validation.txt
     #   requests-oauthlib
     #   social-auth-core
-openai==3.57.0
+openai==3.60.0
     # via -r requirements/validation.txt
 openedx-atlas==0.7.2
     # via -r requirements/validation.txt
@@ -492,7 +492,7 @@ opentelemetry-api==1.45.2
     # via
     #   -r requirements/validation.txt
     #   anthropic
-packaging==26.3
+packaging==26.4
     # via
     #   -r requirements/pip-tools.txt
     #   -r requirements/validation.txt
@@ -508,7 +508,7 @@ path==17.1.1
     # via edx-i18n-tools
 pip-tools==7.5.3
     # via -r requirements/pip-tools.txt
-platformdirs==4.14.8
+platformdirs==4.14.9
     # via
     #   -r requirements/validation.txt
     #   pylint
@@ -593,7 +593,7 @@ pylint-plugin-utils==0.9.0
     #   pylint-django
 pymemcache==4.0.0
     # via -r requirements/validation.txt
-pymongo==4.20.1
+pymongo==4.20.2
     # via
     #   -r requirements/validation.txt
     #   edx-opaque-keys
@@ -629,7 +629,7 @@ python-dateutil==2.9.0.post0
     #   analytics-python
     #   celery
     #   freezegun
-python-discovery==1.9.6
+python-discovery==1.9.8
     # via
     #   -r requirements/validation.txt
     #   tox
@@ -660,7 +660,7 @@ readme-renderer==46.0
     # via
     #   -r requirements/validation.txt
     #   twine
-redis==8.1.0
+redis==8.2.0
     # via -r requirements/validation.txt
 referencing==0.37.0
     # via
@@ -765,13 +765,13 @@ tomli-w==1.2.0
     # via
     #   -r requirements/validation.txt
     #   tox
-tomlkit==0.15.2
+tomlkit==0.15.3
     # via
     #   -r requirements/validation.txt
     #   edx-lint
     #   pylint
     #   snowflake-connector-python
-tox==4.67.15
+tox==4.67.17
     # via -r requirements/validation.txt
 truststore==0.10.5
     # via
@@ -825,11 +825,11 @@ vine==5.1.0
     #   amqp
     #   celery
     #   kombu
-virtualenv==21.15.11
+virtualenv==21.15.14
     # via
     #   -r requirements/validation.txt
     #   tox
-wcwidth==0.9.4
+wcwidth==0.9.5
     # via
     #   -r requirements/validation.txt
     #   prompt-toolkit
