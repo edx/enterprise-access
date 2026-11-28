@@ -166,8 +166,16 @@ We rely on Stripe's Pending Updates feature to help prevent subscriptions from b
 before a payment is *successfully* processed. When a payment fails, the Stripe subscription enters a ``past_due``
 state via ``customer.subscription.updated``. When we observe this state:
 
-* All *future* License Manager subscription plans related to the Stripe subscription are deactivated (``is_active=False``)
-* We do this regardless of whether the corresponding renewal has been processed
+* *Future* License Manager subscription plans related to the Stripe subscription are deactivated
+  (``is_active=False``) via ``cancel_all_future_plans()``. Which plans count as future depends on the
+  ``enterprise_access.ssp_paid_renewal`` WaffleSwitch:
+
+  * **Switch off** (original MVP rule): the renewed plan of *every* renewal, processed or not. A processed
+    renewal's renewed plan is the *current* paid plan, so access ends at once.
+  * **Switch on** (``include_processed=False``): only the renewed plans of renewals that have **not been
+    processed** (e.g. the first paid plan while the customer is still in trial). Plans of processed renewals
+    are current or past plans; they stay active and end on their ``expiration_date``, when License Manager's
+    daily ``expire_subscriptions`` job moves enrollments to Audit.
 
 *Braze Emails:* ``BRAZE_BILLING_ERROR_CAMPAIGN`` - Notifies admins of payment failure with link to update payment method.
 
@@ -210,9 +218,43 @@ Stripe sends ``customer.subscription.deleted``.
 
 On subscription deletion:
 
-* All future License Manager subscription plans are deactivated via ``cancel_all_future_plans()``
+* License Manager subscription plans are deactivated via ``cancel_all_future_plans()``. With the
+  ``ssp_paid_renewal`` switch on, the current paid plan is kept (``include_processed=False``) only if the
+  subscription was paid up or in a renewal grace period. Paid up means ``active``, not in a renewal grace period,
+  not deleted for a ``payment_disputed`` or ``payment_failed`` reason, and with a processed renewal whose
+  ``effective_date`` is within a day of the item's ``current_period_start``. That last check matters because
+  Stripe moves the period to the next term before charging it (about an hour before a renewal charge, and at
+  trial end), so ``active`` alone can mean an unpaid period. Otherwise, e.g. a ``past_due`` subscription after a
+  failed mid-term invoice, every renewed plan is deactivated, as with the switch off. The same safe default applies
+  when EA has no earlier subscription event for it (unknown last status) or the payload has no subscription items
+  (unknown current period). Without ``ended_at``, the deletion time is when the webhook is processed.
 * ``SelfServiceSubscriptionRenewal`` records are updated: ``is_canceled=True``, ``subscription_cancel_at=None``
+  (switch off). With the ``ssp_paid_renewal`` switch on, a subscription that was ``active`` keeps a cancel date
+  instead: Stripe's ``ended_at`` for a deletion at the period end, or the period end for an early deletion (below).
+  The admin portal card reads it as ``canceled_date`` and shows the expired paid plan as *Canceled*; clearing it
+  would show *Ended*, as if the plan had never been cancelled.
 * Cancellation reason/feedback is tracked to Segment analytics
+
+**Early deletion** (ENT-11534; switch on only). Stripe can delete a subscription before its
+``current_period_end``, e.g. an immediate cancel in the Stripe Dashboard. When the subscription was ``active``
+(a paid term) before the deletion:
+
+* The current paid plan is **not** deactivated: its renewal was processed, so ``cancel_all_future_plans()``
+  leaves it alone. Learners keep access until the plan's ``expiration_date``, then License Manager moves
+  enrollments to Audit.
+* ``subscription_cancel_at`` is set to ``current_period_end`` instead of ``None``, so the admin portal (which reads
+  it as ``canceled_date`` from ``get-stripe-subscription-plan-info``) shows the plan as *Pending Cancellation*
+  until then, not as Active.
+* The finalization and "subscription ended" emails give ``current_period_end`` as the end date, not the moment of
+  deletion.
+
+The cancel date and email date above do not apply to a trial, or to a ``past_due`` subscription whose renewal grace
+period lapsed: by then Stripe has moved ``current_period_end`` to the unpaid next term, so ``subscription_cancel_at``
+is cleared as before. In the lapsed-grace case year 1 is still not deactivated; its ``expiration_date`` is already
+the grace end (see ``docs/references/ssp_annual_renewals.md``), and License Manager expires it then.
+
+*Gotcha:* "keeps access until period end" relies on the License Manager plan's ``expiration_date`` matching Stripe's
+``current_period_end``. EA does not write it on cancellation.
 
 *Braze Emails:*
 

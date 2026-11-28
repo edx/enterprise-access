@@ -16,6 +16,7 @@ from django.test import TestCase, override_settings
 from django.utils import timezone
 from edx_django_utils.cache import RequestCache
 from edx_toggles.toggles.testutils import override_waffle_switch
+from freezegun import freeze_time
 from kombu.utils.json import dumps as json_dumps
 from kombu.utils.json import loads as json_loads
 
@@ -146,6 +147,9 @@ class TestStripeEventHandler(TestCase):
 
     def setUp(self):
         """Set up test data."""
+        # override_waffle_switch (as a method decorator or context manager) leaves its value in the
+        # request cache, which would leak into later tests.
+        self.addCleanup(RequestCache.clear_all_namespaces)
         self.user = UserFactory()
         self.checkout_intent = CheckoutIntent.create_intent(
             user=cast(Type[AbstractUser], self.user),
@@ -1165,6 +1169,507 @@ class TestStripeEventHandler(TestCase):
         self.assertEqual([], deactivated)
         self.assertFalse(mock_client.called)
 
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.LicenseManagerApiClient",
+        autospec=True,
+    )
+    def test_cancel_all_future_plans_exclude_processed_keeps_current_paid_plan(self, mock_lms_client):
+        """
+        With include_processed=False, a customer in their paid year (only a processed trial -> paid renewal)
+        has no future plans, so nothing is deactivated and license-manager is not called.
+        """
+        mock_client = mock_lms_client.return_value
+        SelfServiceSubscriptionRenewalFactory.create(
+            checkout_intent=self.checkout_intent,
+            prior_subscription_plan_uuid=uuid.uuid4(),
+            renewed_subscription_plan_uuid=uuid.uuid4(),
+            processed_at=timezone.now(),
+        )
+
+        deactivated = cancel_all_future_plans(self.checkout_intent, include_processed=False)
+
+        self.assertEqual([], deactivated)
+        mock_client.update_subscription_plan.assert_not_called()
+
+    def _dispatch_subscription_deleted(
+        self,
+        subscription_id,
+        current_period_end,
+        prior_status=StripeSubscriptionStatus.ACTIVE,
+        cancellation_reason=None,
+        ended_at=None,
+        current_period_start=None,
+        with_ended_at=True,
+        with_items=True,
+    ):
+        """
+        Dispatch a customer.subscription.deleted event for a subscription whose last known
+        status was ``prior_status``, with the given current period on its subscription item.
+        ``ended_at`` (default now) is when Stripe deleted it. ``with_ended_at`` and ``with_items``
+        leave those keys out of the payload.
+
+        Returns the (ended_at, current_period_end) Unix timestamps sent in the event.
+        """
+        self._create_existing_event_data_records(
+            subscription_id,
+            subscription_status=prior_status,
+        )
+        self.checkout_intent.enterprise_uuid = uuid.uuid4()
+        self.checkout_intent.save(update_fields=['enterprise_uuid'])
+        ended_at = int((ended_at or timezone.now()).timestamp())
+        period_end = int(current_period_end.timestamp())
+        item = {'current_period_end': period_end}
+        if current_period_start:
+            item['current_period_start'] = int(current_period_start.timestamp())
+        subscription_data = {
+            'id': subscription_id,
+            'status': 'canceled',
+            'metadata': self._create_mock_stripe_subscription(self.checkout_intent),
+        }
+        if with_ended_at:
+            subscription_data['ended_at'] = ended_at
+        if with_items:
+            subscription_data['items'] = {'data': [item]}
+        if cancellation_reason:
+            subscription_data['cancellation_details'] = {'reason': cancellation_reason}
+        mock_event = self._create_mock_stripe_event('customer.subscription.deleted', subscription_data)
+        StripeEventHandler.dispatch(mock_event)
+        return ended_at, period_end
+
+    @ddt.data(
+        # Webhook processed right away.
+        (timedelta(0), timedelta(days=200)),
+        # Webhook retried or replayed after the period end: still early, compared with Stripe's ended_at.
+        (-timedelta(days=10), -timedelta(days=5)),
+    )
+    @ddt.unpack
+    @override_waffle_switch(SSP_PAID_RENEWAL, True)
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_paid_subscription_ended_email_task"
+    )
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_finalized_cancelation_email_task"
+    )
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.LicenseManagerApiClient",
+        autospec=True,
+    )
+    def test_subscription_deleted_before_period_end_keeps_current_plan_active(
+        self, ended_at_offset, period_end_offset,
+        mock_lms_client, mock_send_cancelation_email, mock_send_ended_email,
+    ):
+        """
+        When Stripe deletes a paid subscription before current_period_end (e.g. an immediate cancel
+        in the Dashboard), the current paid plan stays active until its expiration date.
+
+        The renewal is marked canceled and keeps the period end as its cancel date, so the admin
+        portal shows the plan as pending cancellation until then. Both emails give the period
+        end as the date access ends, not the moment of deletion, even if the webhook arrives late.
+        """
+        mock_client = mock_lms_client.return_value
+        subscription_id = 'sub_test_early_deletion'
+        current_period_end = timezone.now() + period_end_offset
+        current_period_start = current_period_end - timedelta(days=365)
+        renewal = SelfServiceSubscriptionRenewalFactory.create(
+            checkout_intent=self.checkout_intent,
+            stripe_subscription_id=subscription_id,
+            prior_subscription_plan_uuid=uuid.uuid4(),
+            renewed_subscription_plan_uuid=uuid.uuid4(),
+            processed_at=timezone.now() - timedelta(days=100),
+            effective_date=current_period_start,
+        )
+
+        with self.assertLogs(
+            'enterprise_access.apps.customer_billing.stripe_event_handlers', level='INFO',
+        ) as logs:
+            _, period_end = self._dispatch_subscription_deleted(
+                subscription_id,
+                current_period_end=current_period_end,
+                current_period_start=current_period_start,
+                cancellation_reason='cancellation_requested',
+                ended_at=timezone.now() + ended_at_offset,
+            )
+
+        mock_client.update_subscription_plan.assert_not_called()
+        renewal.refresh_from_db()
+        self.assertTrue(renewal.is_canceled)
+        self.assertEqual(renewal.subscription_cancel_at, datetime_from_timestamp(period_end))
+        mock_send_cancelation_email.delay.assert_called_once_with(
+            checkout_intent_id=self.checkout_intent.id,
+            ended_at_timestamp=float(period_end),
+        )
+        mock_send_ended_email.delay.assert_called_once_with(
+            checkout_intent_id=self.checkout_intent.id,
+            ended_at_timestamp=float(period_end),
+        )
+        self.assertTrue(any('deleted before its current period end' in line for line in logs.output))
+
+    @ddt.data(
+        # Switch off: previous behaviour, the cancel date is cleared.
+        (False, StripeSubscriptionStatus.ACTIVE, timedelta(days=200), False, False),
+        # Deleted at the end of the period, after a scheduled cancellation: keeps the deletion time.
+        (True, StripeSubscriptionStatus.ACTIVE, -timedelta(minutes=1), False, True),
+        # Grace period lapsed: Stripe has already moved the period to the unpaid next term. Cleared.
+        (True, StripeSubscriptionStatus.PAST_DUE, timedelta(days=360), True, False),
+        # Renewal charge failed but the past_due update is not processed yet: same as a lapsed grace period.
+        (True, StripeSubscriptionStatus.ACTIVE, timedelta(days=360), True, False),
+    )
+    @ddt.unpack
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_finalized_cancelation_email_task"
+    )
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.LicenseManagerApiClient",
+        autospec=True,
+    )
+    def test_subscription_deleted_without_early_paid_deletion(
+        self, switch_enabled, prior_status, period_end_offset, in_grace_period, expect_cancel_date_kept,
+        mock_lms_client, mock_send_cancelation_email,
+    ):
+        """
+        When an active paid subscription is deleted at its period end (switch on), the renewal keeps
+        the deletion time as its cancel date, so the admin portal card shows the expired plan as
+        Canceled rather than Ended. Otherwise the cancel date is cleared as before. The finalization
+        email (sent only for a previously active subscription) uses the deletion time.
+        """
+        mock_lms_client.return_value.update_subscription_plan.return_value = {}
+        subscription_id = 'sub_test_not_early_paid_deletion'
+        current_period_end = timezone.now() + period_end_offset
+        current_period_start = current_period_end - timedelta(days=365)
+        renewal = SelfServiceSubscriptionRenewalFactory.create(
+            checkout_intent=self.checkout_intent,
+            stripe_subscription_id=subscription_id,
+            prior_subscription_plan_uuid=uuid.uuid4(),
+            renewed_subscription_plan_uuid=uuid.uuid4(),
+            processed_at=timezone.now() - timedelta(days=100),
+            subscription_cancel_at=timezone.now(),
+            effective_date=current_period_start,
+        )
+        self.checkout_intent.in_renewal_grace_period = in_grace_period
+        self.checkout_intent.save(update_fields=['in_renewal_grace_period'])
+
+        with override_waffle_switch(SSP_PAID_RENEWAL, switch_enabled):
+            ended_at, _ = self._dispatch_subscription_deleted(
+                subscription_id,
+                current_period_end=current_period_end,
+                current_period_start=current_period_start,
+                prior_status=prior_status,
+            )
+
+        renewal.refresh_from_db()
+        self.assertTrue(renewal.is_canceled)
+        if expect_cancel_date_kept:
+            self.assertEqual(renewal.subscription_cancel_at, datetime_from_timestamp(ended_at))
+        else:
+            self.assertIsNone(renewal.subscription_cancel_at)
+        if prior_status == StripeSubscriptionStatus.ACTIVE:
+            mock_send_cancelation_email.delay.assert_called_once_with(
+                checkout_intent_id=self.checkout_intent.id,
+                ended_at_timestamp=ended_at,
+            )
+        else:
+            mock_send_cancelation_email.delay.assert_not_called()
+
+    @ddt.data(
+        # Renewal invoice created but not charged yet: Stripe has moved the period to the next term,
+        # while the latest paid renewal started the previous one.
+        (-timedelta(days=365), timezone.now(), 'cancellation_requested'),
+        # Trial ended, first paid invoice not charged yet: its trial -> paid renewal is not processed.
+        (timedelta(0), None, 'cancellation_requested'),
+        # Paid period, but Stripe deleted the subscription over a disputed or failed payment.
+        (timedelta(0), timezone.now(), 'payment_disputed'),
+        (timedelta(0), timezone.now(), 'payment_failed'),
+    )
+    @ddt.unpack
+    @override_waffle_switch(SSP_PAID_RENEWAL, True)
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_finalized_cancelation_email_task"
+    )
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.LicenseManagerApiClient",
+        autospec=True,
+    )
+    def test_subscription_deleted_with_unpaid_current_period_ends_access_now(
+        self, effective_date_offset, processed_at, cancellation_reason,
+        mock_lms_client, mock_send_cancelation_email,
+    ):
+        """
+        An active subscription deleted before its period end keeps access only if that period was paid. If
+        it was not charged yet, or the deletion is for a disputed or failed payment, the current plan is
+        deactivated now, no cancel date is kept, and the finalization email gives the deletion time.
+        """
+        mock_client = mock_lms_client.return_value
+        mock_client.update_subscription_plan.return_value = {}
+        subscription_id = 'sub_test_unpaid_period_deletion'
+        current_period_start = timezone.now() - timedelta(minutes=30)
+        renewal = SelfServiceSubscriptionRenewalFactory.create(
+            checkout_intent=self.checkout_intent,
+            stripe_subscription_id=subscription_id,
+            prior_subscription_plan_uuid=uuid.uuid4(),
+            renewed_subscription_plan_uuid=uuid.uuid4(),
+            processed_at=processed_at,
+            effective_date=current_period_start + effective_date_offset,
+        )
+
+        ended_at, _ = self._dispatch_subscription_deleted(
+            subscription_id,
+            current_period_end=current_period_start + timedelta(days=365),
+            current_period_start=current_period_start,
+            cancellation_reason=cancellation_reason,
+        )
+
+        mock_client.update_subscription_plan.assert_called_once_with(
+            str(renewal.renewed_subscription_plan_uuid), is_active=False,
+        )
+        renewal.refresh_from_db()
+        self.assertTrue(renewal.is_canceled)
+        self.assertIsNone(renewal.subscription_cancel_at)
+        mock_send_cancelation_email.delay.assert_called_once_with(
+            checkout_intent_id=self.checkout_intent.id,
+            ended_at_timestamp=ended_at,
+        )
+
+    @ddt.data(
+        # No ended_at, deleted at the period end: the cancel date falls back to the time it is processed.
+        (False, True, -timedelta(minutes=1), False),
+        # No ended_at, deleted before the period end: access and the cancel date run to the period end.
+        (False, True, timedelta(days=200), True),
+        # No items: the current period is unknown, so it is not treated as paid and access ends now.
+        (True, False, timedelta(days=200), False),
+    )
+    @ddt.unpack
+    @freeze_time('2026-06-01 12:00:00')
+    @override_waffle_switch(SSP_PAID_RENEWAL, True)
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_finalized_cancelation_email_task"
+    )
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.LicenseManagerApiClient",
+        autospec=True,
+    )
+    def test_subscription_deleted_payload_fallbacks(
+        self, with_ended_at, with_items, period_end_offset, expect_access_kept,
+        mock_lms_client, mock_send_cancelation_email,
+    ):
+        """
+        A deletion payload without ``ended_at`` uses the time it is processed as the deletion time. One without
+        subscription items has no current period, so the current plan is deactivated now and no cancel date is kept.
+        """
+        mock_client = mock_lms_client.return_value
+        mock_client.update_subscription_plan.return_value = {}
+        subscription_id = 'sub_test_payload_fallbacks'
+        current_period_end = timezone.now() + period_end_offset
+        current_period_start = current_period_end - timedelta(days=365)
+        renewal = SelfServiceSubscriptionRenewalFactory.create(
+            checkout_intent=self.checkout_intent,
+            stripe_subscription_id=subscription_id,
+            prior_subscription_plan_uuid=uuid.uuid4(),
+            renewed_subscription_plan_uuid=uuid.uuid4(),
+            processed_at=current_period_start,
+            effective_date=current_period_start,
+        )
+
+        self._dispatch_subscription_deleted(
+            subscription_id,
+            current_period_end=current_period_end,
+            current_period_start=current_period_start,
+            cancellation_reason='cancellation_requested',
+            with_ended_at=with_ended_at,
+            with_items=with_items,
+        )
+
+        renewal.refresh_from_db()
+        self.assertTrue(renewal.is_canceled)
+        if not with_items:
+            mock_client.update_subscription_plan.assert_called_once_with(
+                str(renewal.renewed_subscription_plan_uuid), is_active=False,
+            )
+            self.assertIsNone(renewal.subscription_cancel_at)
+            expected_end = timezone.now()
+        else:
+            mock_client.update_subscription_plan.assert_not_called()
+            expected_end = current_period_end if expect_access_kept else timezone.now()
+            self.assertEqual(renewal.subscription_cancel_at, expected_end)
+        mock_send_cancelation_email.delay.assert_called_once_with(
+            checkout_intent_id=self.checkout_intent.id,
+            ended_at_timestamp=expected_end.timestamp(),
+        )
+
+    @ddt.data(True, False)
+    @override_waffle_switch(SSP_PAID_RENEWAL, True)
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.LicenseManagerApiClient",
+        autospec=True,
+    )
+    def test_subscription_deleted_while_past_due(self, in_grace_period, mock_lms_client):
+        """
+        When Stripe cancels a past_due subscription whose renewal charge kept failing (in the grace week),
+        year 1 is not deactivated: its expiration date is already the grace end, and license-manager expires
+        it then and moves enrollments to Audit.
+
+        Past due for any other reason (e.g. a failed mid-term invoice), the current plan was not paid for, so
+        it is deactivated now. Either way the grace flag is cleared and no cancel date is kept.
+        """
+        mock_client = mock_lms_client.return_value
+        mock_client.update_subscription_plan.return_value = {}
+        subscription_id = 'sub_test_past_due_deletion'
+        renewal = SelfServiceSubscriptionRenewalFactory.create(
+            checkout_intent=self.checkout_intent,
+            stripe_subscription_id=subscription_id,
+            prior_subscription_plan_uuid=uuid.uuid4(),
+            renewed_subscription_plan_uuid=uuid.uuid4(),
+            processed_at=timezone.now() - timedelta(days=370),
+        )
+        self.checkout_intent.in_renewal_grace_period = in_grace_period
+        self.checkout_intent.save(update_fields=['in_renewal_grace_period'])
+
+        self._dispatch_subscription_deleted(
+            subscription_id,
+            # In the grace week Stripe has already moved the period to the unpaid next term.
+            current_period_end=timezone.now() + timedelta(days=360),
+            prior_status=StripeSubscriptionStatus.PAST_DUE,
+        )
+
+        if in_grace_period:
+            mock_client.update_subscription_plan.assert_not_called()
+        else:
+            mock_client.update_subscription_plan.assert_called_once_with(
+                str(renewal.renewed_subscription_plan_uuid), is_active=False,
+            )
+        renewal.refresh_from_db()
+        self.assertTrue(renewal.is_canceled)
+        self.assertIsNone(renewal.subscription_cancel_at)
+        self.checkout_intent.refresh_from_db()
+        self.assertFalse(self.checkout_intent.in_renewal_grace_period)
+
+    @override_waffle_switch(SSP_PAID_RENEWAL, False)
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_finalized_cancelation_email_task"
+    )
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.LicenseManagerApiClient",
+        autospec=True,
+    )
+    def test_subscription_deleted_before_period_end_switch_off_deactivates_current_plan(
+        self, mock_lms_client, mock_send_cancelation_email,  # pylint: disable=unused-argument
+    ):
+        """With the switch off, an early deletion still deactivates the current plan (previous behaviour)."""
+        mock_client = mock_lms_client.return_value
+        subscription_id = 'sub_test_early_deletion_legacy'
+        current_paid_plan_uuid = uuid.uuid4()
+        SelfServiceSubscriptionRenewalFactory.create(
+            checkout_intent=self.checkout_intent,
+            stripe_subscription_id=subscription_id,
+            prior_subscription_plan_uuid=uuid.uuid4(),
+            renewed_subscription_plan_uuid=current_paid_plan_uuid,
+            processed_at=timezone.now() - timedelta(days=100),
+        )
+
+        self._dispatch_subscription_deleted(
+            subscription_id, current_period_end=timezone.now() + timedelta(days=200),
+        )
+
+        mock_client.update_subscription_plan.assert_called_once_with(
+            str(current_paid_plan_uuid),
+            is_active=False,
+        )
+
+    @override_waffle_switch(SSP_PAID_RENEWAL, True)
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_trial_ended_cancellation_email_task"
+    )
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.LicenseManagerApiClient",
+        autospec=True,
+    )
+    def test_subscription_deleted_during_trial_switch_on_still_deactivates_paid_plan(
+        self, mock_lms_client, mock_trial_ended_email,  # pylint: disable=unused-argument
+    ):
+        """
+        With the switch on, deleting a subscription during its trial still deactivates the
+        first paid plan, because its trial -> paid renewal has not been processed yet.
+        """
+        mock_client = mock_lms_client.return_value
+        subscription_id = 'sub_test_trial_deletion'
+        first_paid_plan_uuid = uuid.uuid4()
+        SelfServiceSubscriptionRenewalFactory.create(
+            checkout_intent=self.checkout_intent,
+            stripe_subscription_id=subscription_id,
+            prior_subscription_plan_uuid=uuid.uuid4(),
+            renewed_subscription_plan_uuid=first_paid_plan_uuid,
+            processed_at=None,
+        )
+        self._create_existing_event_data_records(
+            subscription_id,
+            subscription_status=StripeSubscriptionStatus.TRIALING,
+        )
+        self.checkout_intent.enterprise_uuid = uuid.uuid4()
+        self.checkout_intent.save(update_fields=['enterprise_uuid'])
+        mock_event = self._create_mock_stripe_event(
+            'customer.subscription.deleted',
+            {
+                'id': subscription_id,
+                'status': 'canceled',
+                'metadata': self._create_mock_stripe_subscription(self.checkout_intent),
+            },
+        )
+
+        StripeEventHandler.dispatch(mock_event)
+
+        mock_client.update_subscription_plan.assert_called_once_with(
+            str(first_paid_plan_uuid),
+            is_active=False,
+        )
+
+    @override_waffle_switch(SSP_PAID_RENEWAL, True)
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.send_billing_error_email_task"
+    )
+    @mock.patch(
+        "enterprise_access.apps.customer_billing.stripe_event_handlers.LicenseManagerApiClient",
+        autospec=True,
+    )
+    def test_subscription_updated_past_due_trial_to_paid_switch_on_still_deactivates_paid_plan(
+        self, mock_lms_client, mock_send_billing_error,
+    ):
+        """
+        With the switch on, a failed first paid charge (trial -> paid, renewal not processed yet)
+        still deactivates the first paid plan and sends the billing error email, as before.
+        """
+        mock_client = mock_lms_client.return_value
+        subscription_id = 'sub_test_trial_to_paid_past_due'
+        first_paid_plan_uuid = uuid.uuid4()
+        SelfServiceSubscriptionRenewalFactory.create(
+            checkout_intent=self.checkout_intent,
+            stripe_subscription_id=subscription_id,
+            prior_subscription_plan_uuid=uuid.uuid4(),
+            renewed_subscription_plan_uuid=first_paid_plan_uuid,
+            processed_at=None,
+        )
+        self._create_existing_event_data_records(
+            subscription_id,
+            subscription_status=StripeSubscriptionStatus.TRIALING,
+        )
+        self.checkout_intent.enterprise_uuid = uuid.uuid4()
+        self.checkout_intent.save(update_fields=['enterprise_uuid'])
+        mock_event = self._create_mock_stripe_event(
+            'customer.subscription.updated',
+            {
+                'id': subscription_id,
+                'status': 'past_due',
+                'default_payment_method': None,
+                'metadata': self._create_mock_stripe_subscription(self.checkout_intent),
+            },
+        )
+
+        StripeEventHandler.dispatch(mock_event)
+
+        mock_client.update_subscription_plan.assert_called_once_with(
+            str(first_paid_plan_uuid),
+            is_active=False,
+        )
+        mock_send_billing_error.delay.assert_called_once()
+
     @mock.patch('stripe.Subscription.modify')
     def test_subscription_updated_handles_default_payment_method_change(self, mock_subs_modify):
         """
@@ -1195,6 +1700,13 @@ class TestStripeEventHandler(TestCase):
             proration_behavior='always_invoice',
         )
 
+    @ddt.data(
+        # Before automated renewals: every renewal's plan is deactivated, including the paid plan in effect.
+        {'renewal_switch_on': False, 'expected_kwargs': {}},
+        # With automated renewals, the paid plan in effect stays active until its expiration date.
+        {'renewal_switch_on': True, 'expected_kwargs': {'include_processed': False}},
+    )
+    @ddt.unpack
     @mock.patch(
         "enterprise_access.apps.customer_billing.stripe_event_handlers.cancel_all_future_plans"
     )
@@ -1202,14 +1714,22 @@ class TestStripeEventHandler(TestCase):
         "enterprise_access.apps.customer_billing.stripe_event_handlers.send_finalized_cancelation_email_task"
     )
     def test_subscription_deleted_cancels_future_plans(
-        self, mock_send_cancelation_email, mock_cancel,
+        self, mock_send_cancelation_email, mock_cancel, renewal_switch_on, expected_kwargs,
     ):
         """Subscription deleted event triggers cancel_all_future_plans and sends finalized cancellation email."""
         subscription_id = "sub_test_past_due_123"
+        current_period_start = timezone.now() - timedelta(days=100)
+        SelfServiceSubscriptionRenewalFactory.create(
+            checkout_intent=self.checkout_intent,
+            stripe_subscription_id=subscription_id,
+            processed_at=current_period_start,
+            effective_date=current_period_start,
+        )
         subscription_data = {
             "id": subscription_id,
             "status": "canceled",
             "default_payment_method": None,
+            "items": {"data": [{"current_period_start": int(current_period_start.timestamp())}]},
             "metadata": self._create_mock_stripe_subscription(self.checkout_intent),
         }
 
@@ -1226,9 +1746,10 @@ class TestStripeEventHandler(TestCase):
             "customer.subscription.deleted", subscription_data
         )
 
-        StripeEventHandler.dispatch(mock_event)
+        with override_waffle_switch(SSP_PAID_RENEWAL, renewal_switch_on):
+            StripeEventHandler.dispatch(mock_event)
 
-        mock_cancel.assert_called_once_with(self.checkout_intent)
+        mock_cancel.assert_called_once_with(self.checkout_intent, **expected_kwargs)
         mock_send_cancelation_email.delay.assert_called_once()
         trial_end_value = mock_send_cancelation_email.delay.call_args_list[0].kwargs['ended_at_timestamp']
         # Test that we use a default trial end of now if no value can be found in the event.
@@ -1583,6 +2104,7 @@ class TestStripeEventHandler(TestCase):
         mock_cancel.assert_called_once_with(self.checkout_intent)
         mock_send_trial_ended_email.delay.assert_called_once_with(checkout_intent_id=self.checkout_intent.id)
 
+    @ddt.data(True, False)
     @mock.patch(
         "enterprise_access.apps.customer_billing.stripe_event_handlers.cancel_all_future_plans"
     )
@@ -1593,9 +2115,12 @@ class TestStripeEventHandler(TestCase):
         "enterprise_access.apps.customer_billing.stripe_event_handlers.send_finalized_cancelation_email_task"
     )
     def test_subscription_deleted_no_previous_summary_sends_no_email(
-        self, mock_send_cancelation_email, mock_send_trial_ended_email, mock_cancel,
+        self, switch_enabled, mock_send_cancelation_email, mock_send_trial_ended_email, mock_cancel,
     ):
-        """Subscription deleted event with no prior summary sends no email and does not raise."""
+        """
+        Subscription deleted event with no prior summary sends no email and does not raise. With the switch on
+        too, an unknown last status is not treated as paid up: every plan is deactivated and no cancel date kept.
+        """
         subscription_id = "sub_test_no_prior_summary_123"
         subscription_data = {
             "id": subscription_id,
@@ -1603,6 +2128,12 @@ class TestStripeEventHandler(TestCase):
             "ended_at": 1234567890,
             "metadata": self._create_mock_stripe_subscription(self.checkout_intent),
         }
+        renewal = SelfServiceSubscriptionRenewalFactory.create(
+            checkout_intent=self.checkout_intent,
+            stripe_subscription_id=subscription_id,
+            processed_at=timezone.now(),
+            subscription_cancel_at=timezone.now(),
+        )
 
         # Deliberately do not create any prior StripeEventSummary records.
 
@@ -1613,9 +2144,13 @@ class TestStripeEventHandler(TestCase):
             "customer.subscription.deleted", subscription_data
         )
 
-        StripeEventHandler.dispatch(mock_event)
+        with override_waffle_switch(SSP_PAID_RENEWAL, switch_enabled):
+            StripeEventHandler.dispatch(mock_event)
 
         mock_cancel.assert_called_once_with(self.checkout_intent)
+        renewal.refresh_from_db()
+        self.assertTrue(renewal.is_canceled)
+        self.assertIsNone(renewal.subscription_cancel_at)
         mock_send_cancelation_email.delay.assert_not_called()
         mock_send_trial_ended_email.delay.assert_not_called()
 
